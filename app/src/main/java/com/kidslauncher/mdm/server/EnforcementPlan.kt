@@ -43,8 +43,8 @@ data class EnforcementPlan(
     val denyCallPermissions: Boolean,
     /**
      * `UserManager.DISALLOW_CONFIG_DATE_TIME` (plus automatic time) while managed, so the clock
-     * can't be turned back to stretch a schedule or an override. Lifted with every other
-     * restriction while an override is active.
+     * can't be turned back to stretch a schedule, an override or the callback window after an
+     * emergency call. Lifted while an override is active - unless calls are managed.
      */
     val lockDateTime: Boolean,
 )
@@ -115,7 +115,9 @@ fun computeEnforcementPlan(
         lockTaskFeatures = features,
         neverRestrict = neverRestrict,
         restrictOutgoingCalls = restrictOutgoingCalls,
-        lockDateTime = appsManaged,
+        // Also while calls are managed: the callback window compares call-log times with the wall
+        // clock (QA step 2 #4). Not lifted by an override then.
+        lockDateTime = appsManaged || callState.managed,
         restrictSms = restrictSms,
         denyCallPermissions = callState.managed,
     )

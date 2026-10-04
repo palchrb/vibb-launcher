@@ -155,8 +155,8 @@ class CallRulesTest {
     private val now = 10_000_000_000L
     private val minute = 60_000L
 
-    private fun window(vararg calls: LoggedCall, lastConnectedEnd: Long? = null, p: (String) -> Boolean? = platform) =
-        callbackWindowUntil(now, calls.toList(), lastConnectedEnd, p)
+    private fun window(vararg calls: LoggedCall, recordedUntil: Long? = null, p: (String) -> Boolean? = platform) =
+        callbackWindowUntil(now, calls.toList(), recordedUntil, p)
 
     @Test
     fun `a connected emergency call opens the window for an hour`() {
@@ -183,8 +183,27 @@ class CallRulesTest {
 
     @Test
     fun `the InCallService record also opens it`() {
-        assertEquals(now - minute + CALLBACK_WINDOW_MS, window(lastConnectedEnd = now - minute))
-        assertNull(window(lastConnectedEnd = now - 61 * minute))
+        assertEquals(now + 59 * minute, window(recordedUntil = now + 59 * minute))
+        assertNull(window(recordedUntil = now - minute))
+    }
+
+    /** QA step 2 #4: the recorded window is checked by elapsed time and boot count too. */
+    @Test
+    fun `a clock change or reboot can't reopen the recorded window`() {
+        val start = com.kidslauncher.mdm.server.WindowStart(untilWallMs = now + 60 * minute, elapsedStartMs = 1_000, bootCount = 5)
+        fun open(wall: Long, elapsed: Long, boot: Int) =
+            com.kidslauncher.mdm.server.timedWindowActive(start, wall, elapsed, boot, CALLBACK_WINDOW_MS)
+        assertTrue(open(now + minute, 1_000 + minute, 5))
+        // Two hours later, with the wall clock set back to just after the call: still closed.
+        assertFalse(open(now + minute, 1_000 + 120 * minute, 5))
+        // After a reboot: closed.
+        assertFalse(open(now + minute, 1_000 + minute, 6))
+    }
+
+    @Test
+    fun `call log entries outside their own hour don't open the window`() {
+        // An old connected call and a newer unconnected one: closed.
+        assertNull(window(LoggedCall("112", now - 3 * 60 * minute, 30), LoggedCall("112", now - minute, 0)))
     }
 
     @Test

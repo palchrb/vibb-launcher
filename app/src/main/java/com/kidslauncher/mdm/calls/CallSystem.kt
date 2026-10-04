@@ -2,9 +2,12 @@ package com.kidslauncher.mdm.calls
 
 import android.app.role.RoleManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.CallLog
+import android.provider.Settings
 import android.provider.Telephony
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
@@ -12,6 +15,8 @@ import android.util.Log
 import android.widget.Toast
 import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.server.WindowStart
+import com.kidslauncher.mdm.server.timedWindowActive
 import java.time.Instant
 
 private const val LOG_TAG = "CallSystem"
@@ -74,8 +79,19 @@ object CallSystem {
     }
 
     /** Outgoing calls in the system call log since [sinceMs] (needs READ_CALL_LOG, which the
-     * dialer role grants; empty if we can't read it). */
-    fun recentOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall> = try {
+     * dialer role grants; empty if we can't read it - see [callLogReadable]). */
+    fun recentOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall> =
+        readOutgoingCalls(context, sinceMs).orEmpty()
+
+    /** Whether the call log can be read. If not, the callback window can only open from our own
+     * record, which we rarely have (the preloaded dialer shows emergency calls) - reported to the
+     * server as a warning (QA step 2 #7). */
+    fun callLogReadable(context: Context): Boolean =
+        context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED &&
+            readOutgoingCalls(context, System.currentTimeMillis()) != null
+
+    /** `null` when the call log can't be read. */
+    private fun readOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall>? = try {
         context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
             arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.DATE, CallLog.Calls.DURATION),
@@ -88,10 +104,10 @@ object CallSystem {
                     add(LoggedCall(cursor.getString(0), cursor.getLong(1), cursor.getLong(2)))
                 }
             }
-        }.orEmpty()
+        }
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Couldn't read the call log", e)
-        emptyList()
+        null
     }
 
     /** See [callbackWindowUntil]. Reads the call log, so not for every call - only when a call
@@ -100,7 +116,7 @@ object CallSystem {
         callbackWindowUntil(
             nowMs,
             recentOutgoingCalls(context, nowMs - 2 * CALLBACK_WINDOW_MS),
-            CallPrefs.lastConnectedEmergencyEndMs(context),
+            CallPrefs.recordedWindowUntil(context),
             platformEmergency(context),
         )
 
@@ -111,7 +127,7 @@ object CallSystem {
         val fromLog = recentOutgoingCalls(context, nowMs - 7 * 24 * CALLBACK_WINDOW_MS)
             .filter { Emergency.platformConfirms(it.number, platform) }
             .maxOfOrNull { it.startMs }
-        return listOfNotNull(fromLog, CallPrefs.lastConnectedEmergencyEndMs(context)).maxOrNull()
+        return listOfNotNull(fromLog, CallPrefs.recordedEmergencyAtMs(context)).maxOrNull()
     }
 
     fun isoOrNull(ms: Long?): String? = ms?.let { Instant.ofEpochMilli(it).toString() }
@@ -124,7 +140,9 @@ object CallSystem {
  */
 object CallPrefs {
     private const val DIALER_ROLE_TAKEN_BY_US = "mdm.calls.dialer_role_taken_by_us"
-    private const val LAST_CONNECTED_EMERGENCY_END_MS = "mdm.calls.last_connected_emergency_end_ms"
+    private const val EMERGENCY_UNTIL_WALL_MS = "mdm.calls.emergency_window_until_wall_ms"
+    private const val EMERGENCY_ELAPSED_START_MS = "mdm.calls.emergency_window_elapsed_start_ms"
+    private const val EMERGENCY_BOOT = "mdm.calls.emergency_window_boot"
     private const val ROLE_PROMPT_LAST_MS = "mdm.calls.role_prompt_last_ms"
     private const val LAST_ERROR = "mdm.calls.last_error"
 
@@ -136,11 +154,46 @@ object CallPrefs {
         prefs(context).edit().putBoolean(DIALER_ROLE_TAKEN_BY_US, value).commit()
     }
 
-    fun lastConnectedEmergencyEndMs(context: Context): Long? =
-        prefs(context).getLong(LAST_CONNECTED_EMERGENCY_END_MS, 0).takeIf { it > 0 }
+    /**
+     * Records "a platform-confirmed emergency call is connected now": the callback window then
+     * lasts [CALLBACK_WINDOW_MS] by the wall clock AND by elapsed realtime in this boot
+     * ([timedWindowActive]), so a clock change or a reboot can't reopen it (QA step 2 #4).
+     */
+    fun recordEmergencyConnected(context: Context) {
+        val start = WindowStart(
+            untilWallMs = System.currentTimeMillis() + CALLBACK_WINDOW_MS,
+            elapsedStartMs = SystemClock.elapsedRealtime(),
+            bootCount = bootCount(context),
+        )
+        prefs(context).edit()
+            .putLong(EMERGENCY_UNTIL_WALL_MS, start.untilWallMs)
+            .putLong(EMERGENCY_ELAPSED_START_MS, start.elapsedStartMs)
+            .putInt(EMERGENCY_BOOT, start.bootCount)
+            .commit()
+    }
 
-    fun lastConnectedEmergencyEndMs(context: Context, value: Long) {
-        prefs(context).edit().putLong(LAST_CONNECTED_EMERGENCY_END_MS, value).commit()
+    private fun recordedWindow(context: Context): WindowStart? {
+        val prefs = prefs(context)
+        val until = prefs.getLong(EMERGENCY_UNTIL_WALL_MS, 0).takeIf { it > 0 } ?: return null
+        return WindowStart(until, prefs.getLong(EMERGENCY_ELAPSED_START_MS, 0), prefs.getInt(EMERGENCY_BOOT, -1))
+    }
+
+    /** The recorded window's end, if it is still open by every clock. */
+    fun recordedWindowUntil(context: Context): Long? {
+        val window = recordedWindow(context) ?: return null
+        val open = timedWindowActive(
+            window, System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(context), CALLBACK_WINDOW_MS,
+        )
+        return if (open) window.untilWallMs else null
+    }
+
+    /** When the recorded emergency call connected (for the status report only). */
+    fun recordedEmergencyAtMs(context: Context): Long? = recordedWindow(context)?.let { it.untilWallMs - CALLBACK_WINDOW_MS }
+
+    private fun bootCount(context: Context): Int = try {
+        Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT)
+    } catch (e: Exception) {
+        -1
     }
 
     fun rolePromptLastMs(context: Context) = prefs(context).getLong(ROLE_PROMPT_LAST_MS, 0)

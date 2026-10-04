@@ -29,7 +29,8 @@ data class StatusReportRequest(
  * `handlers::calls::call_warnings`). No defaults on purpose: every field is always sent.
  * [state] is "unmanaged", "managed" or "fail_closed". Times are ISO-8601 (UTC).
  * [lastEmergencyCallAt]/[callbackWindowUntil] report an emergency call and the window in which
- * anyone may call back (QA blocker 2) so the parent is told.
+ * anyone may call back (QA blocker 2) so the parent is told. [callLogReadable] false means the
+ * callback window can't open from the call log (QA step 2 #7), shown as a warning.
  */
 @Serializable
 data class CallState(
@@ -44,4 +45,5 @@ data class CallState(
     val lastError: String?,
     val lastEmergencyCallAt: String?,
     val callbackWindowUntil: String?,
+    val callLogReadable: Boolean,
 )

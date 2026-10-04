@@ -36,6 +36,7 @@ object CallStateReport {
             lastError = CallPrefs.lastError(context),
             lastEmergencyCallAt = CallSystem.isoOrNull(CallSystem.lastEmergencyCallMs(context, now)),
             callbackWindowUntil = CallSystem.isoOrNull(CallSystem.callbackWindowUntil(context, now)),
+            callLogReadable = CallSystem.callLogReadable(context),
         )
     }
 }

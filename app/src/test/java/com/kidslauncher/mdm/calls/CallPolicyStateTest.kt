@@ -63,7 +63,11 @@ class CallPolicyStateTest {
         assertEquals(CallPrefsUpdate(false, null), callPrefsUpdate(unmanagedCalls))
         val update = callPrefsUpdate(withCalls)!!
         assertEquals(true, update.callsManagedLast)
-        assertEquals(rules, decodeCallRules(update.lastCallRules))
+        val decoded = decodeCallRules(update.lastCallRules)!!
+        assertEquals(rules, decoded)
+        // The derived sets aren't part of equals; the fallback rules must still match numbers.
+        assertEquals(setOf("+4791234567"), decoded.inbound)
+        assertEquals(setOf("+4791234567"), decoded.outbound)
     }
 
     @Test

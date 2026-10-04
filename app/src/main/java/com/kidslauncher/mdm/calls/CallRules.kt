@@ -160,20 +160,23 @@ data class LoggedCall(val number: String?, val startMs: Long, val durationSec: L
 /**
  * When the callback window closes, or `null` if it's closed. It opens only after an emergency call
  * that the platform confirms as an emergency number AND that connected (QA blocker 2): an
- * outgoing call-log entry with a duration, or [lastConnectedEmergencyEndMs] (recorded by our
- * InCallService when it saw such a call become active, already platform-confirmed). Dialling
- * `08`/`000`, or 112 without the call connecting, never opens it.
+ * outgoing call-log entry with a duration, or [recordedUntilMs] - the window our InCallService
+ * recorded when it saw such a call become active, already checked against elapsed time and the
+ * boot count (CallSystem, `timedWindowActive`), so changing the clock or rebooting can't reopen it.
+ * Call-log dates are wall-clock times; the clock is locked (`DISALLOW_CONFIG_DATE_TIME`, auto
+ * time) whenever calls are managed. Dialling `08`/`000`, or 112 without the call connecting, never
+ * opens it.
  */
 fun callbackWindowUntil(
     nowMs: Long,
     outgoingCalls: List<LoggedCall>,
-    lastConnectedEmergencyEndMs: Long?,
+    recordedUntilMs: Long?,
     platform: (String) -> Boolean?,
 ): Long? {
     val fromLog = outgoingCalls
         .filter { it.durationSec > 0 && Emergency.platformConfirms(it.number, platform) }
-        .maxOfOrNull { it.startMs + it.durationSec * 1000 }
-    val lastEnd = listOfNotNull(fromLog, lastConnectedEmergencyEndMs).maxOrNull() ?: return null
-    val until = lastEnd + CALLBACK_WINDOW_MS
-    return if (nowMs in lastEnd..until) until else null
+        .map { it.startMs + it.durationSec * 1000 }
+        .filter { end -> nowMs in end..end + CALLBACK_WINDOW_MS }
+        .maxOfOrNull { it + CALLBACK_WINDOW_MS }
+    return listOfNotNull(fromLog, recordedUntilMs?.takeIf { it > nowMs }).maxOrNull()
 }

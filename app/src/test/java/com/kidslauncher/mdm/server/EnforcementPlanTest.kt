@@ -147,6 +147,14 @@ class EnforcementPlanTest {
         assertEquals(setOf(SMS), plan.suspend)
     }
 
+    /** QA step 2 #4: the callback window reads wall-clock call-log times. */
+    @Test
+    fun `date and time stay locked while calls are managed, override or not`() {
+        assertTrue(plan(null, calls = callsOn).lockDateTime)
+        assertTrue(plan(emptyList(), overrideActive = true, calls = failClosed).lockDateTime)
+        assertFalse(plan(emptyList(), overrideActive = true).lockDateTime)
+    }
+
     @Test
     fun `call permissions are denied whenever calls are managed`() {
         assertFalse(plan(emptyList()).denyCallPermissions)

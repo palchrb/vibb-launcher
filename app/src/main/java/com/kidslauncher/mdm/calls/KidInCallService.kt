@@ -77,7 +77,7 @@ class KidInCallService : InCallService() {
         if (!connected) return
         val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
         if (Emergency.platformConfirms(raw, CallSystem.platformEmergency(this))) {
-            CallPrefs.lastConnectedEmergencyEndMs(this, System.currentTimeMillis())
+            CallPrefs.recordEmergencyConnected(this)
         }
     }
 
