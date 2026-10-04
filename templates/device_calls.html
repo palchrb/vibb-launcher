@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% include "partials/app_header.html" %}
+<main class="container">
+    <div class="page-header">
+        <h1>{{ device.name }}: Calls &amp; SMS</h1>
+        <a href="/devices/{{ device.id }}" class="button-small button-secondary">Back to device</a>
+    </div>
+
+    {% if !warnings.is_empty() %}
+    <div class="card">
+        <h2>Check this phone</h2>
+        {% for warning in warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/devices/{{ device.id }}/calls/settings" class="card">
+        <h2>Settings</h2>
+        <p class="subtitle">Each switch saves itself immediately.</p>
+        <label class="checkbox-row">
+            <input type="checkbox" name="managed" value="on" {% if managed %}checked{% endif %} onchange="this.form.submit()">
+            Manage calls and SMS on this phone
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="calls_enabled" value="on" {% if calls_enabled %}checked{% endif %} onchange="this.form.submit()">
+            Calls on (only with the contacts below)
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="sms_enabled" value="on" {% if sms_enabled %}checked{% endif %} onchange="this.form.submit()">
+            SMS on (turning it off also blocks the phone's Messages app, because of RCS chat)
+        </label>
+        <label for="default_message_app">Message button opens, unless a contact says otherwise</label>
+        <select id="default_message_app" name="default_message_app" onchange="this.form.submit()">
+            {% for option in default_message_options %}
+            <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+        </select>
+        <p class="subtitle">Emergency numbers (112, 110, 113) always work, whether or not they are in the phone book. Add them below if you want buttons for them. The offline-override PIN and "pause all restrictions" do not open calls.</p>
+        <p class="subtitle">Calls from other numbers are rejected, but the carrier may still send them to voicemail: dial <strong>##004#</strong> on the phone once to turn off forwarding to voicemail, and don't allow the voicemail number. Directory and connect services (1881, 1880, ...) can put a call through to any number, so don't add them. A caller can fake a contact's number; the phone rejects calls the network marks as failed verification.</p>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
+    <div class="card">
+        <h2>Contacts</h2>
+        {% if contacts.is_empty() %}
+        <p class="subtitle">No contacts yet. While calls are managed, only emergency numbers work.</p>
+        {% else %}
+        <p class="subtitle">In: may call this phone. Out: in the phone book, the kid can call them. Home: also a call button on the home screen. The name is shared by every phone that has this number.</p>
+        {% for contact in contacts %}
+        <div class="contact-row">
+            <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}">
+                <strong>{{ contact.name }}</strong> <span class="subtitle">{{ contact.number }}</span>
+                <label class="checkbox-row">
+                    <input type="checkbox" name="inbound" value="on" {% if contact.inbound %}checked{% endif %} onchange="this.form.submit()"> In
+                </label>
+                <label class="checkbox-row">
+                    <input type="checkbox" name="outbound" value="on" {% if contact.outbound %}checked{% endif %} onchange="this.form.submit()"> Out
+                </label>
+                <label class="checkbox-row">
+                    <input type="checkbox" name="show_on_home" value="on" {% if contact.show_on_home %}checked{% endif %} onchange="this.form.submit()"> Home
+                </label>
+                <select name="message_app" onchange="this.form.submit()">
+                    {% for option in contact.message_options %}
+                    <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="message_address" value="{{ contact.message_address }}" placeholder="Matrix ID for Element, e.g. @name:matrix.org" maxlength="255" onchange="this.form.submit()">
+                <noscript><button type="submit" class="button-small">Save</button></noscript>
+            </form>
+            <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/remove">
+                <button type="submit" class="button-small button-danger">Remove</button>
+            </form>
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
+
+    <form method="post" action="/devices/{{ device.id }}/contacts" class="card">
+        <h2>Add a contact</h2>
+        {% if let Some(error) = error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        <label for="contact_name">Name</label>
+        <input type="text" id="contact_name" name="name" value="{{ form_name }}" maxlength="60" required>
+        <label for="contact_number">Phone number</label>
+        <input type="tel" id="contact_number" name="number" value="{{ form_number }}" required>
+        <p class="subtitle">Without a country code, +{{ default_country_code }} is used.</p>
+        <button type="submit">Add</button>
+    </form>
+
+    <form method="post" action="/settings/calls" class="card">
+        <h2>Default country code</h2>
+        <p class="subtitle">For every phone. Numbers already saved keep the code they were saved with.</p>
+        <input type="hidden" name="device_id" value="{{ device.id }}">
+        <input type="text" name="default_country_code" value="{{ default_country_code }}" inputmode="numeric" pattern="[1-9][0-9]{0,2}" maxlength="3">
+        <button type="submit" class="button-small">Save</button>
+    </form>
+</main>
+</body>
+</html>

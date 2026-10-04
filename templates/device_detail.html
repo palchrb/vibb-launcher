@@ -49,6 +49,12 @@
     </div>
 
     <div class="card">
+        <h2>Calls &amp; SMS</h2>
+        <p class="subtitle">{{ calls_summary }}</p>
+        <a href="/devices/{{ device.id }}/calls" class="button-small">Calls, contacts and SMS</a>
+    </div>
+
+    <div class="card">
         <h2>Conversations</h2>
         <p class="subtitle">Messages, photos/videos, and calls synced from this device's messenger, if it's running one that supports the journal integration.</p>
         <a href="/devices/{{ device.id }}/journal" class="button-small">View conversations</a>

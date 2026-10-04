@@ -201,6 +201,21 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             "/devices/{id}/delete",
             post(handlers::devices::delete_device),
         )
+        .route("/devices/{id}/calls", get(handlers::calls::show_calls))
+        .route(
+            "/devices/{id}/calls/settings",
+            post(handlers::calls::save_settings),
+        )
+        .route("/devices/{id}/contacts", post(handlers::calls::add_contact))
+        .route(
+            "/devices/{id}/contacts/{contact_id}",
+            post(handlers::calls::update_contact),
+        )
+        .route(
+            "/devices/{id}/contacts/{contact_id}/remove",
+            post(handlers::calls::remove_contact),
+        )
+        .route("/settings/calls", post(handlers::calls::save_call_settings))
         .route("/devices/locate", get(handlers::locate::show_locate))
         .route(
             "/devices/{id}/locations.json",

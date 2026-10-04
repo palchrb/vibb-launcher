@@ -235,6 +235,8 @@ struct DeviceDetailTemplate {
     quick_control_bluetooth: bool,
     quick_control_brightness: bool,
     latest_status: Option<DeviceStatus>,
+    /// One line for the "Calls & SMS" card, e.g. "Managed - 4 contacts".
+    calls_summary: String,
 }
 
 pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> impl IntoResponse {
@@ -413,9 +415,36 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
         .as_ref()
         .is_some_and(|s| s.restrictions_paused);
 
+    let contact_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_contacts WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+    let calls_summary = if !policy.calls_managed {
+        "Not managed - calls and SMS work as on any phone.".to_string()
+    } else {
+        let contacts = match contact_count {
+            1 => "1 contact".to_string(),
+            n => format!("{n} contacts"),
+        };
+        let calls = if policy.calls_enabled {
+            "calls on"
+        } else {
+            "calls off"
+        };
+        let sms = if policy.sms_enabled {
+            "SMS on"
+        } else {
+            "SMS off"
+        };
+        format!("Managed - {contacts}, {calls}, {sms}.")
+    };
+
     Html(
         DeviceDetailTemplate {
             title: device.name.clone(),
+            calls_summary,
             any_app_installing,
             pin_configured: policy.override_pin_hash.is_some(),
             offline_override_used,
@@ -813,6 +842,15 @@ pub async fn delete_device(
         .execute(&state.db)
         .await
         .ok();
+    // device_contacts rows went with the device (ON DELETE CASCADE); drop address-book entries
+    // no other device has.
+    sqlx::query(
+        "DELETE FROM contacts WHERE NOT EXISTS \
+         (SELECT 1 FROM device_contacts WHERE contact_id = contacts.id)",
+    )
+    .execute(&state.db)
+    .await
+    .ok();
 
     Redirect::to("/")
 }
