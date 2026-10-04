@@ -67,6 +67,7 @@ No prior programming experience - build features directly rather than explaining
 ## Fail closed
 
 - **`GET /api/devices/policy` never answers with a default policy** (`handlers::device_api::build_policy`): a missing `device_policy` row, an unparseable `allowlist_json`, or any DB error is an empty 500 (logged). The launcher treats non-2xx as "no fresh policy" and keeps enforcing its cache. A `NULL` allowlist is still served as `null` (a new device before its first heartbeat); `"[]"` is served as `[]` and means "nothing allowed" on the launcher. Upstream returned `DevicePolicy::default()` (kiosk off, no allowlist) on these errors, which unlocked the phone.
+- **The launcher reports what it did with the policy** (`StatusReportRequest.policy_state`, migration `0021`): `"ok"`, `"cache_corrupt"`, `"rejected_suspect"` or `"fresh_decode_failed"` - anything but `"ok"` (or `NULL` from an older launcher) shows a warning on the device page. `restrictions_paused` reports the launcher's PIN-gated, time-limited "pause all restrictions" switch, also shown as a warning.
 - **`create_device` inserts the device and its policy row in one transaction** and returns 500 if either fails, so a device without a policy row can't be created through the UI.
 
 ## Tests
@@ -91,7 +92,7 @@ No prior programming experience - build features directly rather than explaining
 - `devices` - one row per kid's phone: name, enrollment code (+ expiry, cleared on use), hashed bearer token, enrolled/last-seen timestamps
 - `device_policy` - one row per device: allowlist JSON, schedule windows (only used when `custom_schedule_enabled`, see `global_schedule`/Schedules below), `kiosk_desired` (always `1` now), `lock_task_features` (bitmask), `override_pin_hash`/`override_pin_salt`
 - `global_schedule` - singleton (`id = 1`), same pattern as `dns_filter_settings`; the schedule every device follows unless its own `device_policy.custom_schedule_enabled` is set
-- `device_status` - append-only heartbeat log: lock reason, kiosk-engaged, installed-app snapshot, app version, timestamp, `offline_override_used`
+- `device_status` - append-only heartbeat log: lock reason, kiosk-engaged, installed-app snapshot, app version, timestamp, `offline_override_used`, `policy_state`, `restrictions_paused`
 - `security_events` / `banned_ips` - admin login audit trail and lockout tracking
 - `tracked_apps` - one row per app in the global catalog (including the launcher itself, `is_launcher`), GitHub-sourced or manually-uploaded - see the "Apps tab"/"global catalog" bullets above
 - `device_tracked_apps` - per-device opt-in join table (device_id, tracked_app_id) scoping which catalog apps actually get pushed to which device - see the "global catalog" bullet above
@@ -104,7 +105,7 @@ No prior programming experience - build features directly rather than explaining
 - `POST /api/devices/enroll` - `{enrollment_code}` → `{device_id, device_token}`
 - `GET /api/devices/policy` (bearer) → allowlist, effective schedule (resolved server-side from `global_schedule` or the device's own override - see `handlers::schedules`), `kiosk_desired`, `lock_task_features`, `override_pin_hash`/`override_pin_salt`, `pending_command`
 - `POST /api/devices/command-result` (bearer) - `{command_id, success, message}` → 204, never sent for a `wipe` command
-- `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location}` → 204
+- `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused}` → 204
 - `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download, scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above
 
 ## Architecture change in progress (2026-08-07): on-device DNS filtering + embedded tsnet

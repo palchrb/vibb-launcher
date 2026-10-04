@@ -71,6 +71,9 @@ pub struct DeviceStatus {
     pub app_version_code: Option<i64>,
     pub offline_override_used: bool,
     pub reported_at: String,
+    /// See migrations/0021_device_status_policy_state.sql. `None` from older launchers.
+    pub policy_state: Option<String>,
+    pub restrictions_paused: bool,
 }
 
 #[derive(sqlx::FromRow, Clone)]
@@ -299,6 +302,13 @@ pub struct StatusReportRequest {
     #[serde(default)]
     pub offline_override_used: bool,
     pub location: Option<LocationReport>,
+    /// `"ok"` or why the launcher didn't apply a fresh policy - see
+    /// migrations/0021_device_status_policy_state.sql. Absent from older launchers.
+    #[serde(default)]
+    pub policy_state: Option<String>,
+    /// The launcher's PIN-gated "pause all restrictions" switch is on.
+    #[serde(default)]
+    pub restrictions_paused: bool,
 }
 
 /// Attached to a status report whenever the device has a location reading

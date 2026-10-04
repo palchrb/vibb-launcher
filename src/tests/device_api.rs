@@ -1,4 +1,5 @@
 use axum::http::{Method, StatusCode};
+use axum::response::IntoResponse;
 use serde_json::json;
 
 use super::TestApp;
@@ -390,4 +391,78 @@ async fn admin_pages_redirect_to_login_without_session() {
         "expected a redirect, got {}",
         res.status
     );
+}
+
+async fn post_status(app: &TestApp, token: &str, extra: serde_json::Value) {
+    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
+    for (key, value) in extra.as_object().unwrap() {
+        report[key] = value.clone();
+    }
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(token),
+            Some(report),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}
+
+async fn device_page(app: &TestApp, id: i64) -> String {
+    let response = crate::handlers::devices::view_device(
+        axum::extract::State(app.state.clone()),
+        axum::extract::Path(id),
+    )
+    .await
+    .into_response();
+    super::read_response(response).await.text()
+}
+
+#[tokio::test]
+async fn status_report_stores_policy_state_and_pause() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    post_status(
+        &app,
+        &token,
+        json!({ "policy_state": "cache_corrupt", "restrictions_paused": true }),
+    )
+    .await;
+
+    let (state, paused): (Option<String>, bool) = sqlx::query_as(
+        "SELECT policy_state, restrictions_paused FROM device_status WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(state.as_deref(), Some("cache_corrupt"));
+    assert!(paused);
+
+    let page = device_page(&app, id).await;
+    assert!(page.contains("read its saved policy"), "{page}");
+    assert!(page.contains("All restrictions are paused"));
+}
+
+#[tokio::test]
+async fn status_report_from_older_launcher_has_no_warnings() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    post_status(&app, &token, json!({})).await;
+
+    let (state, paused): (Option<String>, bool) = sqlx::query_as(
+        "SELECT policy_state, restrictions_paused FROM device_status WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(state, None);
+    assert!(!paused);
+
+    post_status(&app, &token, json!({ "policy_state": "ok" })).await;
+    let page = device_page(&app, id).await;
+    assert!(!page.contains("saved policy"));
+    assert!(!page.contains("All restrictions are paused"));
 }

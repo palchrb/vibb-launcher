@@ -226,6 +226,10 @@ struct DeviceDetailTemplate {
     any_app_installing: bool,
     pin_configured: bool,
     offline_override_used: bool,
+    /// The last status report's `policy_state` when it isn't "ok" - the phone isn't applying
+    /// the server's current policy (see migrations/0021_device_status_policy_state.sql).
+    policy_problem: Option<String>,
+    restrictions_paused: bool,
     vpn_filter_enabled: bool,
     quick_control_wifi: bool,
     quick_control_bluetooth: bool,
@@ -400,6 +404,14 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
         .map(|s| s.offline_override_used)
         .unwrap_or(false);
     let any_app_installing = apps.iter().any(|a| a.is_installing);
+    let policy_problem = latest_status
+        .as_ref()
+        .and_then(|s| s.policy_state.clone())
+        .filter(|state| state != "ok")
+        .map(|state| policy_problem_text(&state));
+    let restrictions_paused = latest_status
+        .as_ref()
+        .is_some_and(|s| s.restrictions_paused);
 
     Html(
         DeviceDetailTemplate {
@@ -407,6 +419,8 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
             any_app_installing,
             pin_configured: policy.override_pin_hash.is_some(),
             offline_override_used,
+            policy_problem,
+            restrictions_paused,
             vpn_filter_enabled: policy.vpn_filter_enabled,
             quick_control_wifi: policy.quick_controls_mask & QUICK_CONTROL_WIFI != 0,
             quick_control_bluetooth: policy.quick_controls_mask & QUICK_CONTROL_BLUETOOTH != 0,
@@ -419,6 +433,24 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
         .unwrap(),
     )
     .into_response()
+}
+
+/// Parent-facing explanation of a non-"ok" `device_status.policy_state`.
+fn policy_problem_text(state: &str) -> String {
+    match state {
+        "cache_corrupt" => "The phone can't read its saved policy. It keeps the restrictions it \
+            already had, but won't pick up changes until it gets a good policy from this server."
+            .to_string(),
+        "rejected_suspect" => "The phone ignored the last policy from this server because it \
+            looked like a server falling back to defaults (no app list after it had one). Check \
+            this server's log and version."
+            .to_string(),
+        "fresh_decode_failed" => "The phone couldn't read the last policy from this server - \
+            the launcher and server versions probably don't match. It keeps its current \
+            restrictions."
+            .to_string(),
+        other => format!("The phone reported a policy problem: {other}"),
+    }
 }
 
 /// Flips one row of the unified Apps list for one device - a standalone auto-submitting toggle

@@ -30,6 +30,12 @@
         <p>App version: {{ v }}</p>
         {% endif %}
         <p class="subtitle">Last reported {{ status.reported_at }}</p>
+        {% if let Some(problem) = policy_problem %}
+        <div class="error">{{ problem }}</div>
+        {% endif %}
+        {% if restrictions_paused %}
+        <div class="error">All restrictions are paused on the phone (someone entered the PIN in its Settings). The pause ends by itself.</div>
+        {% endif %}
         {% else %}
         <p class="subtitle">No status reported yet.</p>
         {% endif %}
@@ -136,7 +142,7 @@
         {% if pin_configured %}
         <label class="checkbox-row">
             <input type="checkbox" name="clear_pin" value="on">
-            Remove the PIN instead (no offline override will be possible)
+            Remove the PIN instead (no offline override, and no pausing restrictions on the phone, will be possible)
         </label>
         {% endif %}
 

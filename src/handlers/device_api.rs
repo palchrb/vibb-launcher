@@ -387,10 +387,17 @@ pub async fn status(
         .as_ref()
         .and_then(|apps| serde_json::to_string(apps).ok());
 
+    // Stored as-is apart from a length cap; the device page only compares it against "ok".
+    let policy_state = report
+        .policy_state
+        .as_deref()
+        .map(|state| state.chars().take(64).collect::<String>());
+
     sqlx::query(
         "INSERT INTO device_status \
-         (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, offline_override_used) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+         (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
+          offline_override_used, policy_state, restrictions_paused) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -399,6 +406,8 @@ pub async fn status(
     .bind(&report.app_version)
     .bind(report.app_version_code)
     .bind(report.offline_override_used)
+    .bind(&policy_state)
+    .bind(report.restrictions_paused)
     .execute(&state.db)
     .await
     .ok();
