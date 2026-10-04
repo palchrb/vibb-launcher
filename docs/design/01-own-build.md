@@ -388,3 +388,49 @@ QA findings override this doc where they conflict. Binding for implementation:
 - **Rollback:** `update.sh` backs up the SQLite DB before migrating; the runbook documents
   that a release launcher can't be downgraded, so a broken release is fixed forward with a
   higher versionCode.
+
+## Implementation status (2026-10-04)
+
+Done on branch `handy` in both forks (not pushed). Every commit builds and passes its tests.
+
+| Repo | Commit | What |
+|---|---|---|
+| S | `34b0758` | `ForkConfig` (§2.1): repo/component/URL/checksum from env, no checksum = banner and no QR; `KPS_REPO` in `install.sh`/`update.sh` (validated), `@REPO@` substituted into `actions.sh`; watcher schema 5; `update.sh` backs up DB + old binary to `/var/backups/kid-phone-server/` (QA #15, #20); DEPLOY.md: checksum, launcher catalog row, server rollback |
+| S | `dba579c` | `build_policy` fail closed (§3.1): missing row / corrupt allowlist / DB error = empty 500; command popped last with one `UPDATE … RETURNING`; transactional `create_device` |
+| S | `be54ee3` | `device_status.policy_state` + `restrictions_paused` (migration 0021), warnings on the device page |
+| L | `6c21ad2` | Release `signingConfig` from env/properties, `-PrequireReleaseSigning`, `-PversionCode/-PversionName`, keep rules (§1.2, 1.3, 1.5) |
+| L | `53507fe` | CI (§1.4, QA #13, #14): build/test on push/PR only; tag job builds unsigned (no secrets) → sign+verify in environment `release` (no checkout/Gradle) → publish; RC tags are prereleases with `makeLatest: false`; tag must be on master/main; tsnet/anet/gomobile pinned in `mobile/go.mod`+`go.sum`; actions pinned by SHA |
+| L | `8e6319d` | `PolicyGate` (§3.2 + QA #11, #12), `computeEnforcementPlan` with the system dialer never suspended/hidden and keyguard forced on (QA #1, decision 1), `[]` = nothing allowed, `policyState` in status reports |
+| L | `0ed31ca` | "Pause all restrictions": PIN required (unavailable without one), 2 h limit, reported (decision 2) |
+
+Tests: server 29 (`cargo test`; `missing_policy_row_does_not_unlock` is a normal passing test now), launcher 49 JVM unit tests
+(`PolicyGateTest`, `PolicyResponseCompatTest`, `EnforcementPlanTest`, `RestrictionsPauseTest`, existing `KidModeEnforcerTest`).
+T1 checked locally with a throwaway key (not committed): signed `assembleRelease` verifies with `apksigner`, `aapt2` shows no
+`application-debuggable`, `-PrequireReleaseSigning=true` without a keystore fails, unsigned release and debug still build.
+`grep -r siesta5787 src deploy` in S is empty.
+
+Choices made where the docs left room:
+- RC versionCode = the final release's code − 1 (`v0.24.0-rc.N` → 23999 for every N). It installs over the previous release
+  and the final release installs over it; equal codes between RCs are allowed by Android.
+- The system dialer is not added to the kiosk packages by the launcher, but stays pinned if a parent explicitly allowlists
+  it (otherwise allowlisted calling would break before 02). 02 can tighten this to "never" (its T8).
+- Without a checksum the provision page hides the whole QR, which also disables the in-app "Scan setup QR" for that server.
+- Known gap: when an override or pause ends while the cache is unusable (`KeepCurrentState`), the phone stays as the
+  override left it (open) until the next good sync. Fixing that needs a persisted "last enforced plan"; not done.
+
+Left for the user:
+1. Generate the release keystore (§1.1) offline; back it up twice. Compute `RELEASE_CERT_SHA256` (hex) and the base64url
+   checksum (§2.3).
+2. GitHub, `palchrb/kids-launcher-mdm`: create environment `release` (required reviewer, deployment rule: tags `v*` only),
+   put `ANDROID_RELEASE_KEYSTORE_B64`, `ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS` in that environment
+   (not as repo secrets), set repo variable `RELEASE_CERT_SHA256`, enable 2FA. Push `handy`/merge to master, then check the
+   first CI run: the pinned Go 1.27.1/tsnet v1.104.0 build and the `git diff --exit-code mobile/go.mod go.sum` guard are
+   untested here (no NDK/x86_64). Test an `-rc.1` tag first (prerelease, `latest` unchanged), then `v0.24.0`.
+3. Pi: re-run `install.sh` (watcher schema 5), set `LAUNCHER_SIGNATURE_CHECKSUM` in `.env`, add the launcher catalog row
+   (DEPLOY.md).
+4. Device checks (cannot be done here): T6 items in qa-01-02.md - release install + `dpm set-device-owner`, `run-as`
+   fails, DNS filter and tsnet on mobile data under R8, no `ClassNotFound`; kiosk + `allowlist=[]` reboot without
+   deadlock, keyguard emergency button and the preloaded dialer's in-call UI; server stopped / policy row deleted keeps
+   restrictions after "Sync now" and reboot; dialer visible and unsuspended on a managed phone; pause refuses without a
+   PIN, ends after 2 h and shows on the server; recovery drill (`adb install -r` of a higher versionCode, server rollback
+   from `/var/backups/kid-phone-server`).

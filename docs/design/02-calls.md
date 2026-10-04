@@ -458,8 +458,12 @@ Tasks 1-7 are independent of the device and can land first. Each later task is a
 
 QA findings override this doc where they conflict. Binding for implementation:
 
-- **Emergency buttons:** 112, 110 and 113 are built-in home-screen buttons, not contacts the
-  parent can remove; emergency numbers are always allowed regardless of the allowlist.
+- **Phone book, no fixed emergency buttons:** the kid calls from a phone-book screen in the
+  launcher (the primary place to call from), listing the contacts the parent allowed for
+  outgoing calls. No built-in emergency buttons for now; the parent adds 112/110/113 as
+  ordinary contacts if wanted. Enforcement still always allows emergency numbers, whether or
+  not they are in the phone book. The per-contact "home screen" flag stays: flagged contacts
+  also get a call button directly on the home screen (user confirmed 2026-10-04).
 - **Callback window after an emergency call** (blocker 2): opens only when
   `TelephonyManager.isEmergencyNumber` confirms the number AND the call connected; never from
   the static fallback list. The parent is notified via the status report.
@@ -475,3 +479,12 @@ QA findings override this doc where they conflict. Binding for implementation:
 - **Voicemail, RCS, MMI/USSD codes:** handled as in qa-01-02.md (should-fix list).
 - **Number matching:** ASCII digits only on both sides, `sip:`/`tel:` URIs parsed, one shared
   test-vector file used by both the Rust and Kotlin tests.
+- **Separate switches for calls and SMS** per device (user, 2026-10-04).
+- **Contact actions:** tapping Call in the phone book or a home-screen button calls
+  immediately, no confirmation. A contact can also have a Message button that opens the
+  messaging app the parent chose for that contact (default set per device): SMS
+  (`smsto:` intent, only when SMS is on), Element X (Matrix ID, `https://matrix.to/#/<mxid>`
+  with the package set) or Signal/Molly (`https://signal.me/#p/<number>`). The button is
+  hidden when that app isn't installed and allowlisted. Server: per-contact
+  `message_app` + `message_address` fields, per-device default. Deep-link handling per app
+  [needs device test].
