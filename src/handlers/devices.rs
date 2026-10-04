@@ -438,8 +438,13 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
 /// Parent-facing explanation of a non-"ok" `device_status.policy_state`.
 fn policy_problem_text(state: &str) -> String {
     match state {
-        "cache_corrupt" => "The phone can't read its saved policy. It keeps the restrictions it \
-            already had, but won't pick up changes until it gets a good policy from this server."
+        "cache_corrupt" => "The phone can't read its saved policy. It enforces the last app list \
+            it had (or nothing but the launcher), and won't pick up changes until it gets a good \
+            policy from this server."
+            .to_string(),
+        "server_error" => "This server answered the phone's policy request with an error, so the \
+            phone keeps its last policy. Check this server's log (\"failed to build device \
+            policy\")."
             .to_string(),
         "rejected_suspect" => "The phone ignored the last policy from this server because it \
             looked like a server falling back to defaults (no app list after it had one). Check \

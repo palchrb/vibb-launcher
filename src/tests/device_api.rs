@@ -537,3 +537,11 @@ async fn heartbeat_bootstraps_only_a_null_allowlist() {
     post_status(&app, &token, apps).await;
     assert_eq!(allowlist_json(&app, id).await.as_deref(), Some("[]"));
 }
+
+#[tokio::test]
+async fn server_error_policy_state_is_shown() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    post_status(&app, &token, json!({ "policy_state": "server_error" })).await;
+    assert!(device_page(&app, id).await.contains("answered the phone"));
+}
