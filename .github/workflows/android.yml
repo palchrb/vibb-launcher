@@ -120,6 +120,7 @@ jobs:
     - uses: ./.github/actions/build-tsnet
       with:
         gomobile-version: ${{ env.GOMOBILE_VERSION }}
+        go-cache: "false"
     - name: Build unsigned release APK
       # No keystore in this job: it runs Gradle plugins and downloads dependencies, so it never
       # gets the signing secrets. Signing happens in release-sign.

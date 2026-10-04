@@ -6,6 +6,12 @@ inputs:
   gomobile-version:
     description: golang.org/x/mobile version for the gomobile command; must match mobile/go.mod
     required: true
+  go-cache:
+    description: >
+      Restore/save the Go build cache. The release build passes "false": a restored GOCACHE
+      isn't covered by `go mod verify`.
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -14,6 +20,7 @@ runs:
       with:
         go-version-file: mobile/go.mod
         cache-dependency-path: mobile/go.sum
+        cache: ${{ inputs.go-cache }}
     - name: Install Android NDK
       shell: bash
       run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;28.1.13356709"
