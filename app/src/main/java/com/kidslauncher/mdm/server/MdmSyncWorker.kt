@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.BuildConfig
+import com.kidslauncher.mdm.calls.callPrefsUpdate
 import com.kidslauncher.mdm.notifyAppInstallResult
 import com.kidslauncher.mdm.notifyAppInstalling
 import com.kidslauncher.mdm.server.dto.CommandResultRequest
@@ -83,9 +84,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
             Log.w(LOG_TAG, "Server policy doesn't decode, keeping the current one: ${fetched.error}")
             FreshOutcome.DECODE_FAILED
         }
-        is FreshDecode.Ok -> when (judgeFresh(fetched.policy, cached, policyEverApplied)) {
+        is FreshDecode.Ok -> when (judgeFresh(fetched.policy, cached, policyEverApplied, mdm.callsManagedLast())) {
             FreshVerdict.REJECT_SUSPECT -> {
-                Log.w(LOG_TAG, "Ignoring a server policy with no allowlist on a managed phone")
+                Log.w(LOG_TAG, "Ignoring a server policy without an allowlist or call_policy on a managed phone")
                 FreshOutcome.REJECTED_SUSPECT
             }
             FreshVerdict.ACCEPT -> {
@@ -455,16 +456,25 @@ private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
     }
 }
 
-/** Caches an accepted policy, its [LastEnforcedPlan] and the "a policy has been applied" flag, in
- * one synchronous `commit()` - they must never disagree, and the generated preference setters only `apply()`
- * asynchronously (see CLAUDE.md on writes racing a process death). */
+/** Caches an accepted policy, its [LastEnforcedPlan], the "a policy has been applied" flag and the
+ * call prefs ([callPrefsUpdate]: `calls_managed_last` only from an explicit `managed`, and the last
+ * managed call rules) in one synchronous `commit()` - they must never disagree, and the generated
+ * preference setters only `apply()` asynchronously (see CLAUDE.md on writes racing a process death). */
 private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
     val keys = LauncherPreferences.mdm().keys()
-    val ok = PreferenceManager.getDefaultSharedPreferences(context).edit()
+    val editor = PreferenceManager.getDefaultSharedPreferences(context).edit()
         .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), policy))
         .putBoolean(keys.policyEverApplied(), true)
         .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
-        .commit()
+    callPrefsUpdate(policy)?.let { update ->
+        editor.putBoolean(keys.callsManagedLast(), update.callsManagedLast)
+        if (update.lastCallRules != null) {
+            editor.putString(keys.lastCallRules(), update.lastCallRules)
+        } else {
+            editor.remove(keys.lastCallRules())
+        }
+    }
+    val ok = editor.commit()
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
 }
 

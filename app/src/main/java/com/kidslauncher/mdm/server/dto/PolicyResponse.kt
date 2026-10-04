@@ -30,6 +30,8 @@ import kotlinx.serialization.Serializable
  * were still on the device - [MdmSyncWorker] uninstalls each silently (Device Owner privilege, no
  * confirmation dialog) on every sync where this is non-empty; the server clears an entry once a
  * later status report confirms the package is actually gone, not on any client-side acknowledgement.
+ * [callPolicy] is the calls & SMS rules ([CallPolicy]); `null` only from a server that predates
+ * them.
  */
 @Serializable
 data class PolicyResponse(
@@ -50,4 +52,5 @@ data class PolicyResponse(
     val dnsFilterVersion: String? = null,
     val dnsUpstreamProvider: String = "cloudflare",
     val packagesToUninstall: List<String> = emptyList(),
+    val callPolicy: CallPolicy? = null,
 )

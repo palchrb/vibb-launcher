@@ -58,15 +58,30 @@ fun decodeFresh(json: String?): FreshDecode {
 enum class FreshVerdict { ACCEPT, REJECT_SUSPECT }
 
 /**
- * Whether a freshly fetched policy may replace what the phone enforces now. The one pattern
- * rejected is "no allowlist" (`allowlist == null`, i.e. unmanaged) arriving at a phone that was
- * already managed: our server never sets a managed allowlist back to NULL (unchecking the last
- * app writes `[]`), so this only comes from an old or buggy server falling back to a default
- * policy. "Already managed" is: the cached policy has an allowlist, or the cache is unusable
- * (corrupt, or missing although a policy was applied before) - in those cases we can't prove the
- * phone was unmanaged, so we don't open it up. A legitimate `[]`, or removing the PIN, is accepted.
+ * Whether a freshly fetched policy may replace what the phone enforces now. Two patterns are
+ * rejected, both "a server falling back to defaults" rather than a parent's choice:
+ * - "no allowlist" (`allowlist == null`, i.e. unmanaged) arriving at a phone that was already
+ *   managed: our server never sets a managed allowlist back to NULL (unchecking the last app
+ *   writes `[]`). "Already managed" is: the cached policy has an allowlist, or the cache is
+ *   unusable (corrupt, or missing although a policy was applied before) - in those cases we can't
+ *   prove the phone was unmanaged, so we don't open it up.
+ * - no `call_policy` at all on a phone whose calls were managed ([callsManagedLast], written with
+ *   the cache, or a cached managed `call_policy`): our server always sends it with an explicit
+ *   `managed`, so a missing key is a rolled-back, buggy or forged response (QA blocker 3). The
+ *   cached policy, with the last managed call rules, stays in force.
+ * A legitimate `[]`, removing the PIN, or `call_policy.managed = false` is accepted.
  */
-fun judgeFresh(fresh: PolicyResponse, cached: CachedPolicy, policyEverApplied: Boolean): FreshVerdict {
+fun judgeFresh(
+    fresh: PolicyResponse,
+    cached: CachedPolicy,
+    policyEverApplied: Boolean,
+    callsManagedLast: Boolean = false,
+): FreshVerdict {
+    if (fresh.callPolicy == null) {
+        val callsWereManaged = callsManagedLast ||
+            (cached is CachedPolicy.Ok && cached.policy.callPolicy?.managed == true)
+        if (callsWereManaged) return FreshVerdict.REJECT_SUSPECT
+    }
     if (fresh.allowlist != null) return FreshVerdict.ACCEPT
     val wasManaged = when (cached) {
         is CachedPolicy.Ok -> cached.policy.allowlist != null

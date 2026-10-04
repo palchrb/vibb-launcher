@@ -57,6 +57,13 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // server.LastEnforcedPlan JSON, written in the same commit as kid_mode_policy:
                         // what to re-lock to if that cache ever can't be read.
                         @Preference(name = "last_enforced_plan", type = String.class),
+                        // Calls (calls.CallPolicyStates): the last accepted policy's explicit
+                        // call_policy.managed, and its rules as calls.CallRules JSON - both written
+                        // in the same commit as kid_mode_policy, read by calls.CallPolicyStore
+                        // (directly from SharedPreferences, so the call services don't depend on
+                        // this class being initialised).
+                        @Preference(name = "calls_managed_last", type = boolean.class, defaultValue = "false"),
+                        @Preference(name = "last_call_rules", type = String.class),
                         // Current lock decision, persisted so LockActivity/HomeActivity can react
                         // via the usual SharedPreferences-listener pattern instead of a broadcast.
                         @Preference(name = "lock_reason", type = LockReason.class, defaultValue = "NONE"),
