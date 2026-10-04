@@ -17,11 +17,20 @@ import com.kidslauncher.mdm.calls.CallPrefs
 import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.RoleAction
 import com.kidslauncher.mdm.calls.dialerRoleAction
+import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.ui.HomeActivity
 
 private const val LOG_TAG = "AppEnforcer"
+
+/** Self-granted while calls are managed - see [AppEnforcer.applyCallPermissions]. */
+private val OWN_CALL_PERMISSIONS = listOf(
+    android.Manifest.permission.READ_CONTACTS,
+    android.Manifest.permission.CALL_PHONE,
+    android.Manifest.permission.READ_PHONE_STATE,
+    android.Manifest.permission.READ_CALL_LOG,
+)
 
 /** applicationId of the kids-mdm-browser fork - see [AppEnforcer.applyBrowserPolicy]. */
 private const val BROWSER_PACKAGE_NAME = "com.kidsmdm.browser"
@@ -134,6 +143,7 @@ object AppEnforcer {
             systemDialer = systemDialerPackage(context),
             callState = callState,
             ourDialerActive = CallSystem.dialerRoleHeld(context),
+            smsPackages = smsPackages(CallSystem.defaultSmsPackage(context)),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -141,6 +151,10 @@ object AppEnforcer {
         // (redirection + in-call services) screens outgoing calls - see
         // EnforcementPlan.restrictOutgoingCalls. Emergency calls are exempt from this restriction.
         setRestriction(dpm, admin, UserManager.DISALLOW_OUTGOING_CALLS, plan.restrictOutgoingCalls)
+        // SMS off (or rules unknown): no SMS in or out. The SMS apps are suspended by the plan too,
+        // for RCS. Not lifted by an override.
+        setRestriction(dpm, admin, UserManager.DISALLOW_SMS, plan.restrictSms)
+        applyCallPermissions(context, dpm, admin, plan.denyCallPermissions)
 
         for (packageName in installedPackages) {
             if (packageName == ownPackage) continue
@@ -206,6 +220,53 @@ object AppEnforcer {
         applySideloadRestriction(dpm, admin, blockSideloading = !overrideActive)
 
         applyBrowserPolicy(dpm, admin, context, locked = !overrideActive)
+    }
+
+    /**
+     * While calls are managed: our own call permissions are self-granted (READ_CONTACTS so
+     * screening sees every number, CALL_PHONE for the phone book, READ_PHONE_STATE, READ_CALL_LOG
+     * for the callback window - the dialer role grants most of them too), and every third-party
+     * app's CALL_PHONE/ANSWER_PHONE_CALLS is denied ("blocked by admin"). Unmanaged, those go back
+     * to DEFAULT. Grant states are only written when they differ (re-setting re-notifies, see
+     * CLAUDE.md).
+     */
+    private fun applyCallPermissions(context: Context, dpm: DevicePolicyManager, admin: ComponentName, deny: Boolean) {
+        if (deny) {
+            for (permission in OWN_CALL_PERMISSIONS) {
+                QuickControls.selfGrantPermission(context, dpm, admin, permission)
+            }
+        }
+        val requested = try {
+            context.packageManager.getInstalledPackages(
+                PackageManager.PackageInfoFlags.of((PackageManager.GET_PERMISSIONS or PackageManager.MATCH_UNINSTALLED_PACKAGES).toLong())
+            ).filter { (it.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM == 0 }
+                .associate { it.packageName to it.requestedPermissions.orEmpty().toList() }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't list installed packages for call permissions", e)
+            return
+        }
+        for (packageName in callPermissionTargets(requested, context.packageName)) {
+            setCallPermissions(dpm, admin, packageName, requested[packageName].orEmpty(), deny)
+        }
+    }
+
+    private fun setCallPermissions(
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        packageName: String,
+        requested: Collection<String>,
+        deny: Boolean,
+    ) {
+        val wanted = if (deny) DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED else DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
+        for (permission in requested.filter { it in CALL_PERMISSIONS }) {
+            try {
+                if (dpm.getPermissionGrantState(admin, packageName, permission) != wanted) {
+                    dpm.setPermissionGrantState(admin, packageName, permission, wanted)
+                }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't set $permission for $packageName", e)
+            }
+        }
     }
 
     /**
@@ -525,9 +586,24 @@ object AppEnforcer {
             ownPackage = context.packageName,
             systemDialer = systemDialerPackage(context),
         )
+        val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
+        // A newly installed app can't sneak in its own calls while calls are managed.
+        CallPolicyStore.ensureLoaded(context)
+        if (CallPolicyStore.state.managed) {
+            try {
+                val info = context.packageManager.getPackageInfo(
+                    packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
+                )
+                val isSystem = (info.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM != 0
+                if (!isSystem && packageName != context.packageName) {
+                    setCallPermissions(dpm, admin, packageName, info.requestedPermissions.orEmpty().toList(), deny = true)
+                }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't check call permissions of $packageName", e)
+            }
+        }
         if (!suspend) return
 
-        val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         try {
             val notSuspended = dpm.setPackagesSuspended(admin, arrayOf(packageName), true)
             if (!notSuspended.isNullOrEmpty()) {

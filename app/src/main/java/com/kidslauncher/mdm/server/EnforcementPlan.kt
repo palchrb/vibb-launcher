@@ -120,3 +120,27 @@ fun computeEnforcementPlan(
         denyCallPermissions = callState.managed,
     )
 }
+
+/** Runtime permissions that let an app place or answer calls itself, around our dialer. */
+val CALL_PERMISSIONS = setOf("android.permission.CALL_PHONE", "android.permission.ANSWER_PHONE_CALLS")
+
+/** Messaging apps suspended while SMS is blocked, besides the default SMS app: Google Messages
+ * (RCS chats over data with any number - DISALLOW_SMS doesn't cover RCS, QA #8), AOSP Messaging,
+ * and the SIM toolkit (can send SMS/USSD). Only installed, controllable ones are touched. */
+val KNOWN_SMS_PACKAGES = setOf(
+    "com.google.android.apps.messaging",
+    "com.android.messaging",
+    "com.android.mms",
+    "com.android.stk",
+)
+
+fun smsPackages(defaultSmsPackage: String?): Set<String> = KNOWN_SMS_PACKAGES + setOfNotNull(defaultSmsPackage)
+
+/**
+ * Third-party apps whose call permissions are denied while calls are managed: every non-system
+ * package except ours that requests one of [CALL_PERMISSIONS] ([requested]: non-system packages
+ * only, mapped to their requested permissions). System apps are left alone - denying them is
+ * risky, and the redirection/in-call services cover their calls.
+ */
+fun callPermissionTargets(requested: Map<String, Collection<String>>, ownPackage: String): Set<String> =
+    requested.filter { (pkg, perms) -> pkg != ownPackage && perms.any { it in CALL_PERMISSIONS } }.keys

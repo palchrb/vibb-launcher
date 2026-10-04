@@ -192,6 +192,24 @@ class EnforcementPlanTest {
     }
 
     @Test
+    fun `call permission targets are third-party apps asking for call permissions`() {
+        val requested = mapOf(
+            "org.example.voip" to listOf("android.permission.INTERNET", "android.permission.CALL_PHONE"),
+            "org.example.answer" to listOf("android.permission.ANSWER_PHONE_CALLS"),
+            "org.example.game" to listOf("android.permission.INTERNET"),
+            OWN to listOf("android.permission.CALL_PHONE"),
+        )
+        assertEquals(setOf("org.example.voip", "org.example.answer"), callPermissionTargets(requested, OWN))
+    }
+
+    @Test
+    fun `sms packages include the default SMS app`() {
+        assertTrue("com.example.sms" in smsPackages("com.example.sms"))
+        assertTrue(SMS in smsPackages(null))
+        assertTrue("com.android.stk" in smsPackages(null))
+    }
+
+    @Test
     fun `keyguard is always forced on`() {
         assertEquals(LOCK_TASK_FEATURE_KEYGUARD, plan(emptyList(), features = 0).lockTaskFeatures)
         assertEquals(63, plan(emptyList(), features = 63).lockTaskFeatures)
