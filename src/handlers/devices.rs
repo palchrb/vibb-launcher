@@ -80,41 +80,54 @@ pub async fn new_device_form() -> impl IntoResponse {
 
 #[derive(Deserialize)]
 pub struct CreateDeviceForm {
-    name: String,
+    pub(crate) name: String,
 }
 
 pub async fn create_device(
     State(state): State<AppState>,
     Form(form): Form<CreateDeviceForm>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    match insert_device_with_policy(&state, &form.name).await {
+        Ok(id) => Redirect::to(&format!("/devices/{id}")).into_response(),
+        Err(err) => {
+            tracing::error!(?err, "failed to create device");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't create the device - nothing was saved. Check the server log.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// The device row and its `device_policy` row go in one transaction: a device without a policy
+/// row can't exist, since `device_api::build_policy` refuses to serve one (500) rather than
+/// invent a default.
+async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, sqlx::Error> {
     let code = security::generate_enrollment_code();
+    let mut tx = state.db.begin().await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO devices (name, enrollment_code, enrollment_code_expires_at) \
          VALUES (?, ?, datetime('now', ?)) RETURNING id",
     )
-    .bind(&form.name)
+    .bind(name)
     .bind(&code)
     .bind(format!("+{ENROLLMENT_CODE_MINUTES} minutes"))
-    .fetch_one(&state.db)
-    .await
-    .expect("failed to create device");
+    .fetch_one(&mut *tx)
+    .await?;
 
-    // Kiosk mode on, with the full always-on feature set, is the default for every newly
-    // enrolled device now - previously every new device started wide open, requiring an admin to
-    // remember to turn kiosk mode on (and, before that got simplified too, separately check the
-    // notifications/power-button boxes) every single time. Still just a starting point, not
-    // mandatory: the "Restrict this phone to only the apps allowed below" checkbox on the device's
-    // own page is untouched, so unchecking it after enrollment still fully disables kiosk mode.
+    // Kiosk mode on, with the full always-on feature set, for every device - see
+    // `update_policy` and this repo's CLAUDE.md (`kiosk_desired` is no longer admin-configurable).
     sqlx::query(
         "INSERT INTO device_policy (device_id, kiosk_desired, lock_task_features) VALUES (?, 1, ?)",
     )
     .bind(id)
     .bind(DEFAULT_LOCK_TASK_FEATURES)
-    .execute(&state.db)
-    .await
-    .ok();
+    .execute(&mut *tx)
+    .await?;
 
-    Redirect::to(&format!("/devices/{id}"))
+    tx.commit().await?;
+    Ok(id)
 }
 
 pub async fn regenerate_code(

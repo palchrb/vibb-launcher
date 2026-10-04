@@ -12,10 +12,10 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::AppState;
 use crate::models::{
-    BrowserHistoryUpload, CommandResultRequest, Device, DeviceCommand, DevicePolicy,
-    DnsBlocklistCategory, DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse,
-    GlobalSchedule, InstallProgressReport, InstalledApp, JournalEntryUpload, PendingCommand,
-    PolicyResponse, StatusReportRequest, TrackedApp, TrackedAppUpdate,
+    BrowserHistoryUpload, CommandResultRequest, Device, DevicePolicy, DnsBlocklistCategory,
+    DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse, GlobalSchedule,
+    InstallProgressReport, InstalledApp, JournalEntryUpload, PendingCommand, PolicyResponse,
+    StatusReportRequest, TrackedApp, TrackedAppUpdate,
 };
 use crate::security::{self, AuthedDevice};
 
@@ -61,30 +61,70 @@ pub async fn enroll(
     .into_response()
 }
 
+/// Why `build_policy` couldn't produce a policy. Every variant becomes an empty 500 - see
+/// `policy`.
+#[derive(Debug)]
+pub(crate) enum PolicyError {
+    Db(sqlx::Error),
+    /// No `device_policy` row. `devices::create_device` inserts it in the same transaction as
+    /// the device, so this only happens after manual DB edits or a restore gone wrong.
+    MissingRow,
+    CorruptAllowlist(serde_json::Error),
+}
+
+impl std::fmt::Display for PolicyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PolicyError::Db(err) => write!(f, "database error: {err}"),
+            PolicyError::MissingRow => write!(f, "no device_policy row"),
+            PolicyError::CorruptAllowlist(err) => write!(f, "allowlist_json is not valid: {err}"),
+        }
+    }
+}
+
+impl From<sqlx::Error> for PolicyError {
+    fn from(err: sqlx::Error) -> Self {
+        PolicyError::Db(err)
+    }
+}
+
+/// Fails closed: anything this server can't read correctly becomes a 500 with an empty body,
+/// never a default policy. Upstream answered a missing row or a DB error with
+/// `DevicePolicy::default()` (kiosk off, no allowlist), which the launcher applied as "no
+/// restrictions". The launcher treats any non-2xx as "no fresh policy" and keeps enforcing its
+/// cached one.
 pub async fn policy(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
 ) -> impl IntoResponse {
+    match build_policy(&state, device.id).await {
+        Ok(policy) => Json(policy).into_response(),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "failed to build device policy");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+pub(crate) async fn build_policy(
+    state: &AppState,
+    device_id: i64,
+) -> Result<PolicyResponse, PolicyError> {
     let policy =
         sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
-            .bind(device.id)
+            .bind(device_id)
             .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(DevicePolicy {
-                device_id: device.id,
-                // bool::default() is false - a brand new device (no device_policy row saved
-                // yet) must still default to filtering ON, matching the DB column's own
-                // DEFAULT 1, or a device's very first policy fetch would report filtering off.
-                vpn_filter_enabled: true,
-                ..Default::default()
-            });
+            .await?
+            .ok_or(PolicyError::MissingRow)?;
 
+    // NULL stays None: a genuinely unmanaged new device, before its first heartbeat bootstraps
+    // the allowlist (see `status`). Anything stored but unparseable is an error, not "open".
     let allowlist = policy
         .allowlist_json
         .as_deref()
-        .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok());
+        .map(serde_json::from_str::<Vec<String>>)
+        .transpose()
+        .map_err(PolicyError::CorruptAllowlist)?;
 
     // Follows the global default schedule unless this device has its own override turned on -
     // see migrations/0017_schedules_page.sql and handlers::schedules.
@@ -105,12 +145,12 @@ pub async fn policy(
             policy.bedtime_end_minutes,
         )
     } else {
+        // A missing singleton row means "no schedule" (its migration seeds it); a query error
+        // is a 500.
         let global =
             sqlx::query_as::<_, GlobalSchedule>("SELECT * FROM global_schedule WHERE id = 1")
                 .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten()
+                .await?
                 .unwrap_or_default();
         (
             global.weekday_start_minutes,
@@ -122,54 +162,40 @@ pub async fn policy(
         )
     };
 
-    // The oldest undelivered command, if any - marked delivered right here,
-    // in the same request that serves it, so a second poll before the device
-    // acknowledges never hands out the same command twice. See
-    // migrations/0010_find_my_device.sql and handlers::locate.
-    let pending = sqlx::query_as::<_, DeviceCommand>(
-        "SELECT * FROM device_commands WHERE device_id = ? AND delivered_at IS NULL \
-         ORDER BY requested_at ASC LIMIT 1",
-    )
-    .bind(device.id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-
-    let pending_command = if let Some(cmd) = pending {
-        sqlx::query("UPDATE device_commands SET delivered_at = datetime('now') WHERE id = ?")
-            .bind(cmd.id)
-            .execute(&state.db)
-            .await
-            .ok();
-        Some(PendingCommand {
-            id: cmd.id,
-            command: cmd.command,
-        })
-    } else {
-        None
-    };
-
     let dns_upstream_provider =
         sqlx::query_as::<_, DnsFilterSettings>("SELECT * FROM dns_filter_settings WHERE id = 1")
             .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
+            .await?
             .map(|s| s.upstream)
             .unwrap_or_else(|| "cloudflare".to_string());
 
-    let dns_filter_version = compute_dns_filter_version(&state, device.id).await;
+    let dns_filter_version = compute_dns_filter_version(state, device_id).await?;
 
     let packages_to_uninstall: Vec<String> = sqlx::query_scalar(
         "SELECT package_name FROM device_pending_uninstalls WHERE device_id = ?",
     )
-    .bind(device.id)
+    .bind(device_id)
     .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    .await?;
 
-    Json(PolicyResponse {
+    // Popped last, after every read above has succeeded, and in one statement: a 500 never
+    // consumes a command, and two concurrent polls can't both get the same one. Delivery is
+    // still at-most-once - a command popped into a response the launcher then refuses (it
+    // rejects a suspicious policy, or can't decode it) is lost, which is why every command
+    // (ring/stop_ring/lock/wipe) must be safe to simply queue again. See
+    // migrations/0010_find_my_device.sql and handlers::locate.
+    let pending_command = sqlx::query_as::<_, (i64, String)>(
+        "UPDATE device_commands SET delivered_at = datetime('now') WHERE id = \
+         (SELECT id FROM device_commands WHERE device_id = ? AND delivered_at IS NULL \
+          ORDER BY requested_at ASC, id ASC LIMIT 1) \
+         RETURNING id, command",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await?
+    .map(|(id, command)| PendingCommand { id, command });
+
+    Ok(PolicyResponse {
         allowlist,
         weekday_start_minutes,
         weekday_end_minutes,
@@ -188,7 +214,6 @@ pub async fn policy(
         dns_upstream_provider,
         packages_to_uninstall,
     })
-    .into_response()
 }
 
 /// Opaque per-device token combining the global compiled blocklist's content
@@ -196,7 +221,10 @@ pub async fn policy(
 /// client can tell "has my effective blocklist changed since I last fetched
 /// it" (see `PolicyResponse.dns_filter_version`'s doc comment) without
 /// needing to compare the full ~100k+ domain list on every poll.
-async fn compute_dns_filter_version(state: &AppState, device_id: i64) -> String {
+async fn compute_dns_filter_version(
+    state: &AppState,
+    device_id: i64,
+) -> Result<String, sqlx::Error> {
     use sha2::{Digest, Sha256};
 
     let global_hash = state.dns_compiled.read().await.content_hash.clone();
@@ -207,8 +235,7 @@ async fn compute_dns_filter_version(state: &AppState, device_id: i64) -> String 
     )
     .bind(device_id)
     .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    .await?;
     overrides.sort();
 
     let mut custom: Vec<(String, String)> = sqlx::query_as(
@@ -216,8 +243,7 @@ async fn compute_dns_filter_version(state: &AppState, device_id: i64) -> String 
     )
     .bind(device_id)
     .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    .await?;
     custom.sort();
 
     let mut hasher = Sha256::new();
@@ -228,7 +254,7 @@ async fn compute_dns_filter_version(state: &AppState, device_id: i64) -> String 
     for (domain, list_type) in custom {
         hasher.update(format!("\ncd:{list_type}:{domain}").as_bytes());
     }
-    hex::encode(hasher.finalize())
+    Ok(hex::encode(hasher.finalize()))
 }
 
 /// This device's fully-resolved effective blocklist: every feed the global
