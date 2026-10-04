@@ -122,6 +122,11 @@ object AppEnforcer {
             systemDialer = systemDialerPackage(context),
         )
 
+        // Set before the loop below can release the dialer, so its keypad is never usable for
+        // ordinary numbers in between; cleared when unmanaged or under an override - see
+        // EnforcementPlan.restrictOutgoingCalls. Emergency calls are exempt from this restriction.
+        setRestriction(dpm, admin, UserManager.DISALLOW_OUTGOING_CALLS, plan.restrictOutgoingCalls)
+
         for (packageName in installedPackages) {
             if (packageName == ownPackage) continue
 
@@ -165,6 +170,8 @@ object AppEnforcer {
 
         applyKioskState(dpm, admin, plan.kioskPackages, plan.lockTaskFeatures)
 
+        applyDateTimeLock(dpm, admin, plan.lockDateTime)
+
         clearRadioRestrictions(dpm, admin)
 
         // Same "fully open" treatment as everything else while an override is active - confirmed
@@ -184,6 +191,19 @@ object AppEnforcer {
         applySideloadRestriction(dpm, admin, blockSideloading = !overrideActive)
 
         applyBrowserPolicy(dpm, admin, context, locked = !overrideActive)
+    }
+
+    /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that
+     * was already wrong gets corrected before it's locked. */
+    private fun applyDateTimeLock(dpm: DevicePolicyManager, admin: ComponentName, lock: Boolean) {
+        if (lock) {
+            try {
+                dpm.setAutoTimeEnabled(admin, true)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Failed to turn on automatic time", e)
+            }
+        }
+        setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DATE_TIME, lock)
     }
 
     private fun isHidden(dpm: DevicePolicyManager, admin: ComponentName, packageName: String): Boolean =

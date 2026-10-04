@@ -2,6 +2,8 @@ package com.kidslauncher.mdm.apps
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.UserManager
+import com.kidslauncher.mdm.server.systemDialerPackage
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import java.util.Locale
 
@@ -18,10 +20,12 @@ class AppFilter(
         val hidden = LauncherPreferences.apps().hidden() ?: setOf()
         val pinned = LauncherPreferences.minimalist().apps() ?: setOf()
 
+        val blockedDialer = blockedSystemDialer()
         apps = apps.filter { info ->
             hiddenVisibility.predicate(hidden, info)
                     && pinnedVisibility.predicate(pinned, info)
                     && !isMdmSuspended(info)
+                    && (info.getRawInfo() as? AppInfo)?.packageName != blockedDialer
         }
 
         return apps
@@ -40,6 +44,22 @@ class AppFilter(
         } catch (e: PackageManager.NameNotFoundException) {
             false
         }
+    }
+
+    /**
+     * The system dialer is never suspended (it's the in-call UI for emergency calls - see
+     * `EnforcementPlan`), so [isMdmSuspended] doesn't hide it. While outgoing calls are
+     * restricted (managed phone, dialer not allowlisted) it's left off Home and the app list
+     * anyway: its keypad can only place emergency calls then, which the lock screen also offers.
+     */
+    private fun blockedSystemDialer(): String? {
+        val restricted = try {
+            context.getSystemService(UserManager::class.java)
+                ?.hasUserRestriction(UserManager.DISALLOW_OUTGOING_CALLS) == true
+        } catch (e: Exception) {
+            false
+        }
+        return if (restricted) systemDialerPackage(context) else null
     }
 
     companion object {

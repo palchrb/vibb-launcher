@@ -90,6 +90,27 @@ class EnforcementPlanTest {
         assertEquals(setOf(OWN), plan.neverRestrict)
     }
 
+    /** QA step 1 #1: an unsuspended dialer must not be a free keypad. */
+    @Test
+    fun `outgoing calls are restricted while managed unless the dialer is allowlisted`() {
+        assertTrue(plan(emptyList()).restrictOutgoingCalls)
+        assertTrue(plan(listOf("org.example.music")).restrictOutgoingCalls)
+        assertTrue(plan(listOf("org.example.music"), kioskDesired = false).restrictOutgoingCalls)
+        assertFalse(plan(listOf(DIALER)).restrictOutgoingCalls)
+        assertFalse(plan(null).restrictOutgoingCalls)
+        assertFalse(plan(emptyList(), overrideActive = true).restrictOutgoingCalls)
+        // No known system dialer: nothing is exempt, so any dialer is simply suspended.
+        assertFalse(plan(emptyList(), dialer = null).restrictOutgoingCalls)
+    }
+
+    @Test
+    fun `date and time are locked while managed and released otherwise`() {
+        assertTrue(plan(emptyList()).lockDateTime)
+        assertTrue(plan(listOf("org.example.music"), kioskDesired = false).lockDateTime)
+        assertFalse(plan(null).lockDateTime)
+        assertFalse(plan(listOf("org.example.music"), overrideActive = true).lockDateTime)
+    }
+
     @Test
     fun `keyguard is always forced on`() {
         assertEquals(LOCK_TASK_FEATURE_KEYGUARD, plan(emptyList(), features = 0).lockTaskFeatures)
