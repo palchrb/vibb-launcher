@@ -3,6 +3,7 @@ package com.kidslauncher.mdm.preferences
 import android.content.Context
 import android.util.Log
 import com.kidslauncher.mdm.BuildConfig
+import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractAppInfo
 import com.kidslauncher.mdm.apps.AbstractAppInfo.Companion.INVALID_USER
 import com.kidslauncher.mdm.apps.AppInfo
@@ -88,7 +89,17 @@ fun migratePreferencesToNewVersion(context: Context) {
 
 fun resetPreferences(context: Context) {
     Log.i(TAG, "Resetting preferences")
+    // The call-policy memory survives a reset (QA direct-boot note 3): without it a reset phone
+    // read as "calls unmanaged" and allowed every call. CallPolicyStore's DE witness backs this up.
+    val prefs = LauncherPreferences.getSharedPreferences()
+    val managedLastKey = context.getString(R.string.settings_mdm_calls_managed_last_key)
+    val lastRulesKey = context.getString(R.string.settings_mdm_last_call_rules_key)
+    val managedLast = prefs.getBoolean(managedLastKey, false)
+    val lastRules = prefs.getString(lastRulesKey, null)
     LauncherPreferences.clear()
+    if (managedLast || lastRules != null) {
+        prefs.edit().putBoolean(managedLastKey, managedLast).putString(lastRulesKey, lastRules).commit()
+    }
     LauncherPreferences.internal().versionCode(PREFERENCE_VERSION)
 
     val hidden: MutableSet<AbstractAppInfo> = mutableSetOf()
