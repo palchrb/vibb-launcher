@@ -1,5 +1,7 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.calls.CallPolicyState
+import com.kidslauncher.mdm.calls.CallRules
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -8,7 +10,7 @@ import org.junit.Test
 
 class EnforcementPlanTest {
 
-    private val controllable = listOf(OWN, DIALER, "org.example.music", "org.example.game", "com.android.chrome")
+    private val controllable = listOf(OWN, DIALER, "org.example.music", "org.example.game", "com.android.chrome", SMS)
 
     private fun plan(
         allowlist: List<String>?,
@@ -16,7 +18,18 @@ class EnforcementPlanTest {
         features: Long = 0,
         overrideActive: Boolean = false,
         dialer: String? = DIALER,
-    ) = computeEnforcementPlan(allowlist, kioskDesired, features, overrideActive, controllable, OWN, dialer)
+        calls: CallPolicyState = CallPolicyState.Unmanaged,
+        ourDialer: Boolean = true,
+    ) = computeEnforcementPlan(
+        allowlist, kioskDesired, features, overrideActive, controllable, OWN, dialer,
+        callState = calls, ourDialerActive = ourDialer, smsPackages = setOf(SMS, "not.installed"),
+    )
+
+    private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = true))
+    private val callsOff = CallPolicyState.Managed(CallRules(callsEnabled = false, smsEnabled = true))
+    private val smsOff = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = false))
+    private val failClosed = CallPolicyState.UnknownFailClosed
+    private val allCallStates = listOf(CallPolicyState.Unmanaged, callsOn, callsOff, smsOff, failClosed)
 
     @Test
     fun `null allowlist suspends nothing and has no kiosk`() {
@@ -28,14 +41,14 @@ class EnforcementPlanTest {
     @Test
     fun `empty allowlist suspends everything except own and dialer and pins only own`() {
         val plan = plan(emptyList())
-        assertEquals(setOf("org.example.music", "org.example.game", "com.android.chrome"), plan.suspend)
+        assertEquals(setOf("org.example.music", "org.example.game", "com.android.chrome", SMS), plan.suspend)
         assertEquals(setOf(OWN), plan.kioskPackages)
     }
 
     @Test
     fun `allowlist suspends the rest and pins allowed plus own`() {
         val plan = plan(listOf("org.example.music"))
-        assertEquals(setOf("org.example.game", "com.android.chrome"), plan.suspend)
+        assertEquals(setOf("org.example.game", "com.android.chrome", SMS), plan.suspend)
         assertEquals(setOf("org.example.music", OWN), plan.kioskPackages)
     }
 
@@ -43,7 +56,7 @@ class EnforcementPlanTest {
     fun `kiosk not desired means no pinning but still suspends`() {
         val plan = plan(listOf("org.example.music"), kioskDesired = false)
         assertNull(plan.kioskPackages)
-        assertEquals(setOf("org.example.game", "com.android.chrome"), plan.suspend)
+        assertEquals(setOf("org.example.game", "com.android.chrome", SMS), plan.suspend)
     }
 
     @Test
@@ -67,11 +80,78 @@ class EnforcementPlanTest {
         for (allowlist in listOf(null, emptyList(), listOf("org.example.music"))) {
             for (kiosk in listOf(true, false)) {
                 for (override in listOf(true, false)) {
-                    val plan = plan(allowlist, kioskDesired = kiosk, overrideActive = override)
-                    assertFalse("suspended for $allowlist", DIALER in plan.suspend)
-                    assertTrue(DIALER in plan.neverRestrict)
+                    for (calls in allCallStates) {
+                        val plan = plan(allowlist, kioskDesired = kiosk, overrideActive = override, calls = calls)
+                        assertFalse("suspended for $allowlist $calls", DIALER in plan.suspend)
+                        assertTrue(DIALER in plan.neverRestrict)
+                    }
                 }
             }
+        }
+    }
+
+    /** QA 02 criterion T8. */
+    @Test
+    fun `system dialer is never pinned while calls are managed, even if allowlisted`() {
+        for (calls in listOf(callsOn, callsOff, smsOff, failClosed)) {
+            assertFalse(DIALER in plan(listOf(DIALER, "org.example.music"), calls = calls).kioskPackages.orEmpty())
+            assertEquals(LOCK_TASK_FEATURE_KEYGUARD, plan(emptyList(), calls = calls).lockTaskFeatures and LOCK_TASK_FEATURE_KEYGUARD)
+        }
+    }
+
+    @Test
+    fun `with calls managed, our dialer replaces the outgoing-call restriction`() {
+        // Our dialer screens outgoing calls: allowed contacts can be called.
+        assertFalse(plan(emptyList(), calls = callsOn).restrictOutgoingCalls)
+        assertFalse(plan(null, calls = callsOn).restrictOutgoingCalls)
+        // Without it the system dialer's keypad is unscreened: emergency only.
+        assertTrue(plan(emptyList(), calls = callsOn, ourDialer = false).restrictOutgoingCalls)
+        assertTrue(plan(listOf(DIALER), calls = callsOn, ourDialer = false).restrictOutgoingCalls)
+        // Calls off, or rules unknown: emergency only.
+        assertTrue(plan(emptyList(), calls = callsOff).restrictOutgoingCalls)
+        assertTrue(plan(null, calls = failClosed).restrictOutgoingCalls)
+    }
+
+    @Test
+    fun `override and pause never lift call rules`() {
+        assertTrue(plan(emptyList(), overrideActive = true, calls = callsOff).restrictOutgoingCalls)
+        assertTrue(plan(emptyList(), overrideActive = true, calls = failClosed).restrictOutgoingCalls)
+        assertTrue(plan(emptyList(), overrideActive = true, calls = smsOff).restrictSms)
+        assertTrue(plan(emptyList(), overrideActive = true, calls = callsOn).denyCallPermissions)
+        // ...while app restrictions are lifted.
+        assertEquals(emptySet<String>(), plan(emptyList(), overrideActive = true, calls = callsOn).suspend)
+    }
+
+    @Test
+    fun `SMS off restricts SMS and suspends the SMS apps whatever the allowlist says`() {
+        for (allowlist in listOf(null, emptyList(), listOf(SMS))) {
+            for (override in listOf(true, false)) {
+                val plan = plan(allowlist, overrideActive = override, calls = smsOff)
+                assertTrue(plan.restrictSms)
+                assertTrue("$allowlist $override", SMS in plan.suspend)
+                assertFalse("only installed controllable packages", "not.installed" in plan.suspend)
+            }
+        }
+        assertTrue(plan(null, calls = failClosed).restrictSms)
+        assertFalse(plan(listOf(SMS), calls = callsOn).restrictSms)
+        assertFalse(SMS in plan(listOf(SMS), calls = callsOn).suspend)
+        assertFalse(plan(listOf(SMS)).restrictSms)
+    }
+
+    @Test
+    fun `the dialer and our own package are never suspended as SMS apps`() {
+        val plan = computeEnforcementPlan(
+            null, true, 0, false, controllable, OWN, DIALER,
+            callState = smsOff, smsPackages = setOf(OWN, DIALER, SMS),
+        )
+        assertEquals(setOf(SMS), plan.suspend)
+    }
+
+    @Test
+    fun `call permissions are denied whenever calls are managed`() {
+        assertFalse(plan(emptyList()).denyCallPermissions)
+        for (calls in listOf(callsOn, callsOff, smsOff, failClosed)) {
+            assertTrue(plan(null, calls = calls).denyCallPermissions)
         }
     }
 
@@ -121,5 +201,6 @@ class EnforcementPlanTest {
     private companion object {
         const val OWN = "com.kidslauncher.mdm"
         const val DIALER = "com.android.dialer"
+        const val SMS = "com.google.android.apps.messaging"
     }
 }
