@@ -221,6 +221,22 @@ class CallRulesTest {
         assertEquals(Verdict.ALLOW, unknown("+4799999999", unmanaged))
     }
 
+    // Dial target (QA step 2 #6)
+
+    @Test
+    fun `the stored number is dialled when the typed string differs`() {
+        fun target(raw: String?, state: CallPolicyState = managed) = outgoingDialTarget(raw, state, emergency(raw))
+        assertEquals("+4791234567", target("91234567"))
+        assertEquals("+4791234567", target("091234567"))
+        assertEquals("+4791234567", target("0047 91234567"))
+        assertNull("already the stored form", target("+47 912 34 567"))
+        assertNull(target("1881"))
+        assertNull("emergency is never rewritten", target("112"))
+        assertNull("not allowed: nothing to rewrite", target("+4799999999"))
+        assertNull("inbound-only isn't dialled", target(bestemor.number.removePrefix("+47")))
+        assertNull(target("91234567", unmanaged))
+    }
+
     @Test
     fun `stranger calls are allowed at 59 minutes and blocked at 61`() {
         fun at(minutesAgo: Long) = decideIncoming("+4799999999", true, false, managed) {

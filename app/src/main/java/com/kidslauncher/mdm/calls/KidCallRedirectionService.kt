@@ -27,14 +27,22 @@ class KidCallRedirectionService : CallRedirectionService() {
 
     override fun onPlaceCall(handle: Uri, initialPhoneAccount: PhoneAccountHandle, allowInteractiveResponsePostRedirect: Boolean) {
         val state = CallPolicyStore.state
+        var target: String? = null
         val verdict = try {
             val raw = PhoneNumbers.numberFromHandle(handle.toString())
-            decideOutgoing(raw, state, CallSystem.isEmergencyOutgoing(this, raw))
+            val emergency = CallSystem.isEmergencyOutgoing(this, raw)
+            decideOutgoing(raw, state, emergency).also {
+                if (it == Verdict.ALLOW) target = outgoingDialTarget(raw, state, emergency)
+            }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Outgoing call check failed", e)
             if (state is CallPolicyState.Unmanaged) Verdict.ALLOW else Verdict.BLOCK
         }
-        if (verdict == Verdict.ALLOW) {
+        val redirectTo = target
+        if (verdict == Verdict.ALLOW && redirectTo != null) {
+            // Dial the number we checked, not the string typed (QA step 2 #6).
+            redirectCall(Uri.fromParts("tel", redirectTo, null), initialPhoneAccount, false)
+        } else if (verdict == Verdict.ALLOW) {
             placeCallUnmodified()
         } else {
             cancelCall()

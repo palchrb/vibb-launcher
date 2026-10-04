@@ -140,9 +140,11 @@ class PhoneBookActivity : UIObjectActivity() {
             return
         }
         val name = (state as? CallPolicyState.Managed)?.rules?.contactFor(raw)?.name ?: raw
+        // The stored number we checked, not the string in the link (QA step 2 #6).
+        val dial = outgoingDialTarget(raw, state, CallSystem.isEmergencyOutgoing(this, raw)) ?: raw
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.calls_confirm_title, name))
-            .setPositiveButton(R.string.calls_call) { _, _ -> CallSystem.placeCall(this, raw) }
+            .setPositiveButton(R.string.calls_call) { _, _ -> CallSystem.placeCall(this, dial) }
             .setNegativeButton(R.string.calls_cancel, null)
             .show()
     }

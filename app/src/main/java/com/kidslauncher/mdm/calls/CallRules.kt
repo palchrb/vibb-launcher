@@ -194,3 +194,17 @@ fun decideUnknownDirection(raw: String?, state: CallPolicyState, isEmergency: Bo
     matches(raw, state.rules, state.rules.inbound + state.rules.outbound) -> Verdict.ALLOW
     else -> Verdict.BLOCK
 }
+
+/**
+ * What to actually dial for an allowed outgoing [raw] number (QA step 2 #6): the number we checked,
+ * not the string typed. Returns the stored contact number when the dialled string differs from it
+ * after stripping separators (e.g. a national `91234567`, or a `0`-prefixed form the rules
+ * accepted), `null` to dial [raw] unchanged (it already is that number, it's an emergency number,
+ * or calls aren't managed).
+ */
+fun outgoingDialTarget(raw: String?, state: CallPolicyState, isEmergency: Boolean): String? {
+    if (isEmergency || raw == null) return null
+    val rules = (state as? CallPolicyState.Managed)?.rules ?: return null
+    val number = rules.contactFor(raw)?.takeIf { it.outbound }?.number ?: return null
+    return if (PhoneNumbers.stripSeparators(raw) == number) null else number
+}
