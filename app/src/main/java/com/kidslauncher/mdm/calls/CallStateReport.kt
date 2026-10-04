@@ -5,6 +5,10 @@ import android.os.UserManager
 import com.kidslauncher.mdm.server.dto.CallState
 import com.kidslauncher.mdm.server.systemDialerPackage
 
+/** Status-report capability: this launcher enforces the server's `call_policy` (screening,
+ * redirection, in-call backstop, restrictions). The server warns when a managed phone lacks it. */
+const val CALL_POLICY_CAPABILITY = "call_policy_v1"
+
 /** What the status report says about calls (`StatusReportRequest.callState`). */
 object CallStateReport {
     fun build(context: Context): CallState {

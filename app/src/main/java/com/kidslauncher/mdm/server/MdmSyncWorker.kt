@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.BuildConfig
+import com.kidslauncher.mdm.calls.CALL_POLICY_CAPABILITY
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallStateReport
 import com.kidslauncher.mdm.calls.callPrefsUpdate
@@ -160,6 +161,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 location = currentLocationReport(context, dpm, admin, forceFreshLocation),
                 policyState = policyState(freshOutcome, cached, policyEverApplied),
                 restrictionsPaused = RestrictionsPause.isActive(),
+                capabilities = listOf(CALL_POLICY_CAPABILITY),
                 callState = CallStateReport.build(context),
             )
         )

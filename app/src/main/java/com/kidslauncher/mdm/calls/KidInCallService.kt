@@ -21,6 +21,7 @@ class KidInCallService : InCallService() {
 
     private val callback = object : Call.Callback() {
         override fun onStateChanged(call: Call, state: Int) {
+            recordEmergency(call, state)
             showUi(call, startActivity = false)
             OngoingCalls.changed()
         }
@@ -50,9 +51,34 @@ class KidInCallService : InCallService() {
             Toast.makeText(applicationContext, R.string.calls_not_allowed, Toast.LENGTH_LONG).show()
             return
         }
+        // Backstop for incoming calls screening didn't decide: withheld numbers (never screened),
+        // a screening timeout, or the service not bound. Rejected without any UI; a withheld call
+        // may ring for a moment first.
+        if (call.details.callDirection == Call.Details.DIRECTION_INCOMING && incomingVerdict(this, call.details) == Verdict.BLOCK) {
+            Log.i(LOG_TAG, "Rejecting an incoming call")
+            call.reject(Call.REJECT_REASON_DECLINED)
+            return
+        }
         OngoingCalls.add(call)
         call.registerCallback(callback)
+        recordEmergency(call, call.details.state)
         showUi(call)
+    }
+
+    /**
+     * Opens the callback window (CallSystem.callbackWindowUntil) for an emergency call that
+     * connected, if we see one at all - normally the preloaded dialer shows emergency calls and
+     * the call log is what opens the window. Only the platform's answer counts.
+     */
+    private fun recordEmergency(call: Call, state: Int) {
+        if (call.details.callDirection != Call.Details.DIRECTION_OUTGOING) return
+        val connected = state == Call.STATE_ACTIVE ||
+            (state == Call.STATE_DISCONNECTED && call.details.connectTimeMillis > 0)
+        if (!connected) return
+        val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
+        if (Emergency.platformConfirms(raw, CallSystem.platformEmergency(this))) {
+            CallPrefs.lastConnectedEmergencyEndMs(this, System.currentTimeMillis())
+        }
     }
 
     override fun onCallRemoved(call: Call) {

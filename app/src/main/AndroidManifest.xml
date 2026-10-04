@@ -198,6 +198,15 @@
                 <action android:name="android.telecom.InCallService" />
             </intent-filter>
         </service>
+        <!-- Screens incoming calls; Telecom binds the default dialer's screening service. -->
+        <service
+            android:name=".calls.KidCallScreeningService"
+            android:exported="true"
+            android:permission="android.permission.BIND_SCREENING_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
         <!-- Stops not-allowed outgoing calls before they're placed. Needs ROLE_CALL_REDIRECTION
              (adb at provisioning, or the system prompt from Home). -->
         <service
