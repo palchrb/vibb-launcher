@@ -580,3 +580,39 @@ apply - items 7, 12 and T15 especially):
 13. Injected startup crash (throw in `initRest`): the process stays up and C is still rejected (QA #10, T11).
 14. Old server (no `call_policy`) after managed: response rejected (`policy_state = rejected_suspect`), rules kept;
     explicit `managed: false`: role handed back to the system dialer, restrictions cleared.
+
+### Fix round after qa-step2-code.md (2026-10-04)
+
+Should-fix items 1-7 addressed on the same branches (not pushed):
+
+| # | Repo | Commit | Fix |
+|---|---|---|---|
+| 1 | L | `0f4d3a9` | `phoneBookView`: contacts with an emergency number stay in the phone book and on Home when calls are off or only the last rules are known; with no readable rules a single "Emergency call" row (112, confirmed). The platform's emergency-dialer intent isn't public API, so the row dials 112 via Telecom |
+| 2 | L | `d77e373` | `BootClock.init` and `LauncherPreferences.init` run inside the guard |
+| 3 | L | `ada1417` | `DISALLOW_CONFIG_DEFAULT_APPS` as soon as the dialer role is held |
+| 4, 7 | L | `548e18e` | recorded emergency window checked by wall clock + elapsed realtime + boot count; date/time locked whenever calls are managed (override or not); `callLogReadable` in `callState` |
+| 5 | L | `9aed061` | `decideUnknownDirection`: unknown-direction calls kept only if emergency or a contact allowed either way, else disconnected |
+| 6 | L | `f03c009` | `outgoingDialTarget`: redirection service `redirectCall`s to the stored E.164 number when the dialled string differs; phone-book `tel:` links dial the stored number |
+| 7 | S | `50acb95` | warning on the calls/device page when `call_log_readable` is false |
+| - | L | `d72f18b` | CLAUDE.md |
+
+Tests now: server 57 (warning assertion added to an existing test), launcher 123 JVM tests (pure tests for every
+launcher fix: phone book view, clock rollback/reboot, unknown direction, dial target, date lock, default-apps lock,
+decoded rules' `inbound`/`outbound`). fmt/clippy unchanged (23), `assembleRelease` builds.
+
+Still open from this review:
+- #2 (rest): the global uncaught-exception handler still kills the process for a throw on any thread later on;
+  making it spare the call path isn't trivial (a dead main looper can't run the services anyway). Device test 13
+  should also inject the throw into `BootClock.init`.
+- #3 (rest): `ROLE_CALL_SCREENING` not held separately; whether `DISALLOW_CONFIG_DEFAULT_APPS` blocks the
+  call-redirection prompt is a device check - grant redirection with adb at provisioning (make it a handover gate, #8).
+- #4: call-log times are still wall-clock (protected by the date/time lock, not by elapsed time).
+- #6 (optional part): the trunk-`0` drop for countries without a trunk prefix (47, 45) is unchanged; dialling the
+  stored number makes it harmless.
+- Notes #8-#13 not changed (redirection role as handover gate, looser Matrix ID check, "SMS on" wording, unmanaged
+  pinned dialer, self-update gap).
+
+Device checklist additions: with calls off and screen lock None, a 112 contact on Home/phone book calls (emergency UI
+appears, never test against 112 itself - use emergency test mode); an allowed contact dialled in national or
+`0`-prefixed form is placed as the stored `+47…` number (check the outgoing call log); `call_state.call_log_readable`
+is true on the Jelly Star; after a reboot the recorded callback window is closed.
