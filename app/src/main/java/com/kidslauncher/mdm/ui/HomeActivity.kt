@@ -12,6 +12,11 @@ import android.view.MotionEvent
 import androidx.activity.OnBackPressedCallback
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import android.app.role.RoleManager
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.CallPrefs
+import com.kidslauncher.mdm.calls.CallSystem
+import com.kidslauncher.mdm.calls.shouldPromptForRole
 import com.kidslauncher.mdm.databinding.ActivityHomeBinding
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.TsnetClient
@@ -184,6 +189,26 @@ class HomeActivity : UIObjectActivity() {
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return
         minimalistAdapter.updateAppsList()
+        promptForCallRoleIfNeeded()
+    }
+
+    /**
+     * Fallback when the device-owner call couldn't make us the default phone app (an error was
+     * recorded): the system's own role prompt, at most once a day, for the parent to accept.
+     */
+    private fun promptForCallRoleIfNeeded() {
+        val state = CallPolicyStore.state
+        val now = System.currentTimeMillis()
+        val dialerHeld = CallSystem.dialerRoleHeld(this)
+        if (CallPrefs.lastError(this) == null) return
+        if (!shouldPromptForRole(state, dialerHeld, now, CallPrefs.rolePromptLastMs(this))) return
+        CallPrefs.rolePromptLastMs(this, now)
+        try {
+            val roleManager = getSystemService(RoleManager::class.java) ?: return
+            startActivity(roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER))
+        } catch (e: Exception) {
+            android.util.Log.w("HomeActivity", "Couldn't show the default phone app prompt", e)
+        }
     }
 
     /** @return true if currently locked (and [LockActivity] was launched). */

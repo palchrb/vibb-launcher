@@ -26,6 +26,8 @@ const val COMMAND_LISTENER_NOTIFICATION_ID = 1002
 val NOTIFICATION_CHANNEL_VPN_FILTER = "launcher:vpn_filter"
 const val VPN_FILTER_NOTIFICATION_ID = 1003
 val NOTIFICATION_CHANNEL_APP_INSTALL = "launcher:app_install"
+/** Incoming and ongoing calls (calls.CallNotifications) - HIGH, like any phone app's. */
+const val NOTIFICATION_CHANNEL_CALLS = "launcher:calls"
 private const val APP_INSTALL_NOTIFICATION_ID_BASE = 2000
 
 fun createNotificationChannels(context: Context) {
@@ -44,6 +46,15 @@ fun createNotificationChannels(context: Context) {
         // screen while Find My Device's ring is playing - the whole point is to give the kid an
         // obvious, immediate way to silence it once they unlock the device, not something that
         // silently sits in the shade.
+        // Silent: Telecom plays the ringtone itself (we don't declare IN_CALL_SERVICE_RINGING),
+        // this only carries the call UI and its full-screen intent.
+        notificationManager.createNotificationChannel(
+            NotificationChannel(
+                NOTIFICATION_CHANNEL_CALLS,
+                context.getString(R.string.notification_channel_calls),
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply { setSound(null, null) }
+        )
         notificationManager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL_RING,

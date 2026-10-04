@@ -11,6 +11,12 @@ import android.os.Bundle
 import android.os.UserManager
 import android.telecom.TelecomManager
 import android.util.Log
+import com.kidslauncher.mdm.calls.CallPolicyState
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.CallPrefs
+import com.kidslauncher.mdm.calls.CallSystem
+import com.kidslauncher.mdm.calls.RoleAction
+import com.kidslauncher.mdm.calls.dialerRoleAction
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.ui.HomeActivity
@@ -109,6 +115,12 @@ object AppEnforcer {
 
         enforceDefaultHome(dpm, admin, context)
 
+        // Calls: never lifted by an override or pause. The dialer role first - whether our dialer
+        // is in place decides the outgoing-call restriction below.
+        CallPolicyStore.ensureLoaded(context)
+        val callState = CallPolicyStore.state
+        applyDialerRole(context, dpm, admin, callState)
+
         val ownPackage = context.packageName
         val pm = context.packageManager
         val installedPackages = controllablePackages(pm)
@@ -191,6 +203,27 @@ object AppEnforcer {
         applySideloadRestriction(dpm, admin, blockSideloading = !overrideActive)
 
         applyBrowserPolicy(dpm, admin, context, locked = !overrideActive)
+    }
+
+    /**
+     * Makes us the default dialer while calls are managed ([dialerRoleAction]):
+     * `DevicePolicyManager.setDefaultDialerApplication` (device owner, no prompt). If that throws,
+     * the error is reported to the server and HomeActivity falls back to the system's role
+     * prompt once a day ([com.kidslauncher.mdm.calls.shouldPromptForRole]).
+     */
+    private fun applyDialerRole(context: Context, dpm: DevicePolicyManager, admin: ComponentName, state: CallPolicyState) {
+        val held = CallSystem.dialerRoleHeld(context)
+        when (dialerRoleAction(state, held, CallPrefs.dialerRoleTakenByUs(context))) {
+            RoleAction.TAKE -> try {
+                dpm.setDefaultDialerApplication(context.packageName)
+                CallPrefs.dialerRoleTakenByUs(context, true)
+                CallPrefs.lastError(context, null)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "setDefaultDialerApplication failed", e)
+                CallPrefs.lastError(context, "setDefaultDialerApplication: ${e.javaClass.simpleName}: ${e.message}".take(300))
+            }
+            RoleAction.RELEASE, RoleAction.NONE -> if (held) CallPrefs.lastError(context, null)
+        }
     }
 
     /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that

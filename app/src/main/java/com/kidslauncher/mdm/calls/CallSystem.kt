@@ -1,0 +1,159 @@
+package com.kidslauncher.mdm.calls
+
+import android.app.role.RoleManager
+import android.content.Context
+import android.net.Uri
+import android.os.Bundle
+import android.provider.CallLog
+import android.provider.Telephony
+import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
+import android.util.Log
+import android.widget.Toast
+import androidx.preference.PreferenceManager
+import com.kidslauncher.mdm.R
+import java.time.Instant
+
+private const val LOG_TAG = "CallSystem"
+
+/**
+ * The thin Android side of the call path: platform lookups, the call log, placing a call and a
+ * few prefs. Every decision is in the pure files of this package.
+ */
+object CallSystem {
+
+    /** `TelephonyManager.isEmergencyNumber`, or `null` when it throws (no telephony, or the
+     * service isn't ready) - [Emergency] then falls back to its static list where allowed. */
+    fun platformEmergency(context: Context): (String) -> Boolean? = { number ->
+        try {
+            context.getSystemService(TelephonyManager::class.java)?.isEmergencyNumber(number)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "isEmergencyNumber failed", e)
+            null
+        }
+    }
+
+    fun isEmergencyOutgoing(context: Context, raw: String?): Boolean =
+        Emergency.isEmergencyOutgoing(raw, CallPolicyStore.defaultCc, platformEmergency(context))
+
+    fun roleHeld(context: Context, role: String): Boolean = try {
+        context.getSystemService(RoleManager::class.java)?.isRoleHeld(role) == true
+    } catch (e: Exception) {
+        false
+    }
+
+    fun dialerRoleHeld(context: Context) = roleHeld(context, RoleManager.ROLE_DIALER)
+
+    fun redirectionRoleHeld(context: Context) = roleHeld(context, RoleManager.ROLE_CALL_REDIRECTION)
+
+    fun defaultDialer(context: Context): String? = try {
+        context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage
+    } catch (e: Exception) {
+        null
+    }
+
+    fun defaultSmsPackage(context: Context): String? = try {
+        Telephony.Sms.getDefaultSmsPackage(context)
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Places a call through Telecom (emergency numbers too - the platform's recommendation for a
+     * default dialer). Our redirection and in-call services still check it. Returns false (and
+     * says so) if Telecom refuses, e.g. while outgoing calls are restricted.
+     */
+    fun placeCall(context: Context, number: String): Boolean = try {
+        context.getSystemService(TelecomManager::class.java)
+            .placeCall(Uri.fromParts("tel", number, null), Bundle())
+        true
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "placeCall failed", e)
+        Toast.makeText(context, R.string.calls_could_not_call, Toast.LENGTH_LONG).show()
+        false
+    }
+
+    /** Outgoing calls in the system call log since [sinceMs] (needs READ_CALL_LOG, which the
+     * dialer role grants; empty if we can't read it). */
+    fun recentOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall> = try {
+        context.contentResolver.query(
+            CallLog.Calls.CONTENT_URI,
+            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.DATE, CallLog.Calls.DURATION),
+            "${CallLog.Calls.TYPE} = ? AND ${CallLog.Calls.DATE} >= ?",
+            arrayOf(CallLog.Calls.OUTGOING_TYPE.toString(), sinceMs.toString()),
+            "${CallLog.Calls.DATE} DESC",
+        )?.use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(LoggedCall(cursor.getString(0), cursor.getLong(1), cursor.getLong(2)))
+                }
+            }
+        }.orEmpty()
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't read the call log", e)
+        emptyList()
+    }
+
+    /** See [callbackWindowUntil]. Reads the call log, so not for every call - only when a call
+     * would otherwise be blocked. */
+    fun callbackWindowUntil(context: Context, nowMs: Long = System.currentTimeMillis()): Long? =
+        callbackWindowUntil(
+            nowMs,
+            recentOutgoingCalls(context, nowMs - 2 * CALLBACK_WINDOW_MS),
+            CallPrefs.lastConnectedEmergencyEndMs(context),
+            platformEmergency(context),
+        )
+
+    /** The last outgoing call to a platform-confirmed emergency number in the last week (connected
+     * or not), for the status report - the parent is told about every emergency call. */
+    fun lastEmergencyCallMs(context: Context, nowMs: Long = System.currentTimeMillis()): Long? {
+        val platform = platformEmergency(context)
+        val fromLog = recentOutgoingCalls(context, nowMs - 7 * 24 * CALLBACK_WINDOW_MS)
+            .filter { Emergency.platformConfirms(it.number, platform) }
+            .maxOfOrNull { it.startMs }
+        return listOfNotNull(fromLog, CallPrefs.lastConnectedEmergencyEndMs(context)).maxOrNull()
+    }
+
+    fun isoOrNull(ms: Long?): String? = ms?.let { Instant.ofEpochMilli(it).toString() }
+}
+
+/**
+ * Small call-path prefs, written with `commit()` (a call can end with the process being killed).
+ * Plain SharedPreferences keys rather than LauncherPreferences entries, so the call services
+ * don't depend on Application.onCreate having initialised that class.
+ */
+object CallPrefs {
+    private const val DIALER_ROLE_TAKEN_BY_US = "mdm.calls.dialer_role_taken_by_us"
+    private const val LAST_CONNECTED_EMERGENCY_END_MS = "mdm.calls.last_connected_emergency_end_ms"
+    private const val ROLE_PROMPT_LAST_MS = "mdm.calls.role_prompt_last_ms"
+    private const val LAST_ERROR = "mdm.calls.last_error"
+
+    private fun prefs(context: Context) = PreferenceManager.getDefaultSharedPreferences(context)
+
+    fun dialerRoleTakenByUs(context: Context) = prefs(context).getBoolean(DIALER_ROLE_TAKEN_BY_US, false)
+
+    fun dialerRoleTakenByUs(context: Context, value: Boolean) {
+        prefs(context).edit().putBoolean(DIALER_ROLE_TAKEN_BY_US, value).commit()
+    }
+
+    fun lastConnectedEmergencyEndMs(context: Context): Long? =
+        prefs(context).getLong(LAST_CONNECTED_EMERGENCY_END_MS, 0).takeIf { it > 0 }
+
+    fun lastConnectedEmergencyEndMs(context: Context, value: Long) {
+        prefs(context).edit().putLong(LAST_CONNECTED_EMERGENCY_END_MS, value).commit()
+    }
+
+    fun rolePromptLastMs(context: Context) = prefs(context).getLong(ROLE_PROMPT_LAST_MS, 0)
+
+    fun rolePromptLastMs(context: Context, value: Long) {
+        prefs(context).edit().putLong(ROLE_PROMPT_LAST_MS, value).commit()
+    }
+
+    /** The last problem applying the call rules (reported to the server), or null. */
+    fun lastError(context: Context): String? = prefs(context).getString(LAST_ERROR, null)
+
+    fun lastError(context: Context, value: String?) {
+        if (value == lastError(context)) return
+        prefs(context).edit().apply { if (value == null) remove(LAST_ERROR) else putString(LAST_ERROR, value) }.commit()
+    }
+}

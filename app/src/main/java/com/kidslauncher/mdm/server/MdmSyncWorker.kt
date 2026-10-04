@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.BuildConfig
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.CallStateReport
 import com.kidslauncher.mdm.calls.callPrefsUpdate
 import com.kidslauncher.mdm.notifyAppInstallResult
 import com.kidslauncher.mdm.notifyAppInstalling
@@ -98,6 +100,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
+        // The call services read the rules from memory, never per call.
+        CallPolicyStore.refresh(context)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.
@@ -156,6 +160,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 location = currentLocationReport(context, dpm, admin, forceFreshLocation),
                 policyState = policyState(freshOutcome, cached, policyEverApplied),
                 restrictionsPaused = RestrictionsPause.isActive(),
+                callState = CallStateReport.build(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,

@@ -104,6 +104,10 @@ class Application : android.app.Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // First, and on its own: the call services (screening, redirection, in-call) run in this
+        // process and read the rules from memory. If anything below throws, they must still have
+        // the real rules - and CallPolicyStore starts fail-closed, never open (QA #10).
+        com.kidslauncher.mdm.calls.CallPolicyStore.refresh(this)
         // Before anything can ask whether an override/pause is active - see server.BootClock.
         com.kidslauncher.mdm.server.BootClock.init(this)
         // TODO  Error: Invalid resource ID 0x00000000.
@@ -117,6 +121,20 @@ class Application : android.app.Application() {
 
         val preferences = PreferenceManager.getDefaultSharedPreferences(this)
         LauncherPreferences.init(preferences, this.resources)
+
+        // An exception from the rest of the setup used to reach the handler above and kill the
+        // process - taking the call screening/in-call services with it, so calls would ring
+        // unscreened (screening times out open, Telecom falls back to the preloaded dialer). Now
+        // it's reported and the process stays up.
+        try {
+            initRest()
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "Setup failed, continuing", e)
+            sendCrashNotification(this, e)
+        }
+    }
+
+    private fun initRest() {
 
         // Try to restore old preferences
         migratePreferencesToNewVersion(this)

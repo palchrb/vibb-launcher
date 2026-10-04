@@ -67,6 +67,17 @@
          ContentProvider (the kids-mdm-browser fork's history journal). See
          server.BrowserHistorySync.kt - same signing-key requirement applies. -->
     <uses-permission android:name="com.kidsmdm.browser.ACCESS_JOURNAL" />
+    <!-- Calls (calls/ package, design 02-calls.md): placing calls from the phone book, reading the
+         caller's number, contact-independent screening (CallScreeningService only sees numbers
+         outside the user's contacts unless READ_CONTACTS is granted), the call log for the
+         callback window after an emergency call, and the in-call screen. Device owner self-grants
+         the runtime ones (AppEnforcer.applyCallPermissions); the dialer role grants most too. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".Application"
@@ -133,6 +144,63 @@
         <activity
             android:name=".ui.quickcontrols.BluetoothDevicesActivity"
             android:configChanges="orientation|screenSize"
+            android:exported="false" />
+
+        <!-- Calls. The dialer role needs a DIAL activity (plain and tel:) and an exported
+             InCallService with IN_CALL_SERVICE_UI; without them setDefaultDialerApplication
+             throws. VIEW tel:/voicemail: and CALL_BUTTON are here too so links and the call
+             button land in the phone book rather than the system keypad (QA #6; which handler
+             wins is a device check). exported="true" on the services is safe: their
+             android:permission means only Telecom can bind. -->
+        <activity
+            android:name=".calls.PhoneBookActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tel" />
+                <data android:scheme="voicemail" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.CALL_BUTTON" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".calls.InCallActivity"
+            android:configChanges="orientation|screenSize"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:taskAffinity="${applicationId}.call"
+            android:turnScreenOn="true" />
+        <service
+            android:name=".calls.KidInCallService"
+            android:exported="true"
+            android:permission="android.permission.BIND_INCALL_SERVICE">
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="true" />
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+        <!-- Only our own notification PendingIntents (Answer / Hang up). -->
+        <receiver
+            android:name=".calls.CallActionReceiver"
             android:exported="false" />
 
         <receiver
