@@ -1,6 +1,5 @@
 package com.kidslauncher.mdm
 
-import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -10,7 +9,6 @@ import android.content.pm.LauncherApps
 import android.content.pm.ShortcutInfo
 import android.os.Build
 import android.os.Build.VERSION_CODES
-import android.os.Bundle
 import android.os.UserHandle
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.MutableLiveData
@@ -30,6 +28,13 @@ import kotlin.system.exitProcess
 
 
 class Application : android.app.Application() {
+    companion object {
+        /** For KidAppComponentFactory; set first thing in onCreate. */
+        @Volatile
+        var instance: Application? = null
+            private set
+    }
+
     val apps = MutableLiveData<List<AbstractDetailedAppInfo>>()
 
     private val profileAvailabilityBroadcastReceiver = object : BroadcastReceiver() {
@@ -106,6 +111,7 @@ class Application : android.app.Application() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         // First, and on its own: the call services (screening, redirection, in-call) run in this
         // process and read the rules from memory. If anything below throws, they must still have
         // the real rules - and CallPolicyStore starts fail-closed, never open (QA #10). Before the
@@ -141,7 +147,6 @@ class Application : android.app.Application() {
 
     private var unlockedInitDone = false
     private var unlockReceiver: BroadcastReceiver? = null
-    private var unlockActivityCallbacks: ActivityLifecycleCallbacks? = null
 
     /**
      * The setup that needs credential-encrypted storage; runs once per process, on the main thread.
@@ -154,8 +159,6 @@ class Application : android.app.Application() {
         unlockedInitDone = true
         unlockReceiver?.let { runCatching { unregisterReceiver(it) } }
         unlockReceiver = null
-        unlockActivityCallbacks?.let { unregisterActivityLifecycleCallbacks(it) }
-        unlockActivityCallbacks = null
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)
             initRest()
@@ -166,39 +169,31 @@ class Application : android.app.Application() {
     }
 
     /**
-     * Runs [initUnlocked] on the first of: ACTION_USER_UNLOCKED (only delivered to registered
-     * receivers), an activity being created after the unlock (Home can start in this process
-     * before that broadcast arrives), or the user already being unlocked once both are
-     * registered (no missed-broadcast race). Refreshes the call rules from CE storage first.
+     * For a process started before the first unlock: refreshes the call rules from CE storage and
+     * runs [initUnlocked]. Called by KidAppComponentFactory right before a component that isn't
+     * direct-boot-aware is created (proof that CE storage is unlocked, even while the user is
+     * still "unlocking" and isUserUnlocked() is false), and on ACTION_USER_UNLOCKED. Main thread.
+     */
+    fun ensureUnlockedInit() {
+        if (unlockedInitDone) return
+        com.kidslauncher.mdm.calls.CallPolicyStore.refresh(this, ceReadable = true)
+        initUnlocked()
+    }
+
+    /**
+     * ACTION_USER_UNLOCKED (only delivered to registered receivers) covers the case where no
+     * other component of ours starts after the unlock; the component factory covers the rest.
+     * Checked once more after registering, so an unlock in between isn't missed.
      */
     private fun deferUntilUnlocked() {
-        val runIfUnlocked = {
-            val store = com.kidslauncher.mdm.calls.CallPolicyStore
-            if (!unlockedInitDone && store.userUnlocked(this)) {
-                store.refresh(this)
-                initUnlocked()
-            }
-        }
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) = runIfUnlocked()
+            override fun onReceive(context: Context?, intent: Intent?) = ensureUnlockedInit()
         }
         unlockReceiver = receiver
         ContextCompat.registerReceiver(
             this, receiver, IntentFilter(Intent.ACTION_USER_UNLOCKED), ContextCompat.RECEIVER_NOT_EXPORTED
         )
-        val callbacks = object : ActivityLifecycleCallbacks {
-            override fun onActivityPreCreated(activity: Activity, savedInstanceState: Bundle?) = runIfUnlocked()
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
-            override fun onActivityStarted(activity: Activity) {}
-            override fun onActivityResumed(activity: Activity) {}
-            override fun onActivityPaused(activity: Activity) {}
-            override fun onActivityStopped(activity: Activity) {}
-            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-            override fun onActivityDestroyed(activity: Activity) {}
-        }
-        unlockActivityCallbacks = callbacks
-        registerActivityLifecycleCallbacks(callbacks)
-        runIfUnlocked()
+        if (com.kidslauncher.mdm.calls.CallPolicyStore.userUnlocked(this)) ensureUnlockedInit()
     }
 
     private fun initRest() {

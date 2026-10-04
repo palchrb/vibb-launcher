@@ -83,6 +83,7 @@
 
     <application
         android:name=".Application"
+        android:appComponentFactory="com.kidslauncher.mdm.KidAppComponentFactory"
         android:allowBackup="true"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
@@ -91,7 +92,8 @@
         android:supportsRtl="true"
         android:theme="@style/launcherBaseTheme"
         android:usesCleartextTraffic="true"
-        tools:ignore="UnusedAttribute">
+        tools:ignore="UnusedAttribute"
+        tools:replace="android:appComponentFactory">
 
         <activity
             android:name=".ui.HomeActivity"
