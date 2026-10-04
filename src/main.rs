@@ -2,6 +2,7 @@ mod config;
 mod dns_engine;
 mod handlers;
 mod models;
+mod phone;
 mod security;
 #[cfg(test)]
 mod tests;
