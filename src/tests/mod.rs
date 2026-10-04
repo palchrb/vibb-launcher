@@ -9,7 +9,7 @@ mod provisioning;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
-use axum::http::{Method, Request, StatusCode, header};
+use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
@@ -17,7 +17,7 @@ use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
 use crate::config::ForkConfig;
-use crate::{AppState, build_router, connect_db, dns_engine};
+use crate::{AppState, build_router, connect_db, dns_engine, security};
 
 pub struct TestApp {
     pub router: Router,
@@ -30,6 +30,7 @@ pub struct TestApp {
 
 pub struct TestResponse {
     pub status: StatusCode,
+    pub headers: HeaderMap,
     pub body: Vec<u8>,
 }
 
@@ -47,6 +48,7 @@ impl TestResponse {
 /// Status and body of a response from a handler called directly (see `TestApp::state`).
 pub async fn read_response(response: axum::response::Response) -> TestResponse {
     let status = response.status();
+    let headers = response.headers().clone();
     let body = response
         .into_body()
         .collect()
@@ -54,12 +56,23 @@ pub async fn read_response(response: axum::response::Response) -> TestResponse {
         .expect("failed to read body")
         .to_bytes()
         .to_vec();
-    TestResponse { status, body }
+    TestResponse {
+        status,
+        headers,
+        body,
+    }
 }
 
 impl TestResponse {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
+    }
+
+    /// The `Location` header of a redirect.
+    pub fn location(&self) -> Option<&str> {
+        self.headers
+            .get(header::LOCATION)
+            .and_then(|v| v.to_str().ok())
     }
 }
 
@@ -111,31 +124,114 @@ impl TestApp {
             }
             None => Body::empty(),
         };
-        let mut request = builder.body(body).expect("failed to build request");
-        // Handlers that rate-limit by client address extract ConnectInfo, which a real server
-        // inserts per connection.
+        self.send(builder.body(body).expect("failed to build request"))
+            .await
+    }
+
+    /// Sends a request through the router as a real connection would: with a fixed loopback
+    /// `ConnectInfo` (handlers that rate-limit by client address extract it).
+    async fn send(&self, mut request: Request<Body>) -> TestResponse {
         request
             .extensions_mut()
             .insert(ConnectInfo(std::net::SocketAddr::from((
                 [127, 0, 0, 1],
                 40000,
             ))));
-
         let response = self
             .router
             .clone()
             .oneshot(request)
             .await
             .expect("router returned an error");
-        let status = response.status();
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .expect("failed to read body")
-            .to_bytes()
-            .to_vec();
-        TestResponse { status, body }
+        read_response(response).await
+    }
+
+    /// A urlencoded form POST (or other method) with an optional session cookie, as a browser
+    /// sends the admin UI's forms. Repeated keys are sent repeatedly.
+    pub async fn request_form(
+        &self,
+        method: Method,
+        uri: &str,
+        cookie: Option<&str>,
+        fields: &[(&str, &str)],
+    ) -> TestResponse {
+        let body = form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(fields)
+            .finish();
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, cookie);
+        }
+        self.send(
+            builder
+                .body(Body::from(body))
+                .expect("failed to build request"),
+        )
+        .await
+    }
+
+    /// A GET with a session cookie (an admin page).
+    pub async fn get_page(&self, uri: &str, cookie: &str) -> TestResponse {
+        let request = Request::builder()
+            .uri(uri)
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .expect("failed to build request");
+        self.send(request).await
+    }
+
+    /// Logs in through the real `/login` and `/auth/verify-2fa` forms as a fully onboarded admin
+    /// (password changed, TOTP enrolled with a fixed secret) and returns the session cookie
+    /// (`name=value`) for `request_form`/`get_page`, so admin routes run behind the real
+    /// session/2FA middleware.
+    pub async fn admin_cookie(&self) -> String {
+        const USERNAME: &str = "parent";
+        const PASSWORD: &str = "correct horse battery staple";
+        const TOTP_SECRET: &str = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+        sqlx::query(
+            "INSERT OR IGNORE INTO admin_users \
+             (username, password_hash, must_change_password, totp_secret, totp_enabled) \
+             VALUES (?, ?, 0, ?, 1)",
+        )
+        .bind(USERNAME)
+        .bind(security::hash_password(PASSWORD))
+        .bind(TOTP_SECRET)
+        .execute(&self.db)
+        .await
+        .expect("failed to seed the admin user");
+
+        let login = self
+            .request_form(
+                Method::POST,
+                "/login",
+                None,
+                &[("username", USERNAME), ("password", PASSWORD)],
+            )
+            .await;
+        assert_eq!(
+            login.location(),
+            Some("/auth/verify-2fa"),
+            "{}",
+            login.text()
+        );
+        let cookie = session_cookie(&login).expect("login set no session cookie");
+
+        let code = security::totp_for_secret(TOTP_SECRET, USERNAME)
+            .generate_current()
+            .expect("system clock before 1970");
+        let verify = self
+            .request_form(
+                Method::POST,
+                "/auth/verify-2fa",
+                Some(&cookie),
+                &[("code", &code)],
+            )
+            .await;
+        assert_eq!(verify.location(), Some("/"), "{}", verify.text());
+        session_cookie(&verify).unwrap_or(cookie)
     }
 
     /// Inserts a device the way `handlers::devices::create_device` does (kiosk on, policy row
@@ -177,4 +273,14 @@ impl TestApp {
             .to_string();
         (id, token)
     }
+}
+
+/// `name=value` of the first `Set-Cookie` header, if any.
+fn session_cookie(response: &TestResponse) -> Option<String> {
+    response
+        .headers
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .map(str::to_string)
 }

@@ -411,6 +411,18 @@ async fn admin_pages_redirect_to_login_without_session() {
     );
 }
 
+#[tokio::test]
+async fn admin_cookie_logs_in_through_password_and_totp() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let res = app.get_page("/devices", &cookie).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert!(res.text().contains("Devices"));
+    // A made-up cookie is not a session.
+    let res = app.get_page("/devices", "id=not-a-session").await;
+    assert!(res.status.is_redirection());
+}
+
 async fn post_status(app: &TestApp, token: &str, extra: serde_json::Value) {
     let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
     for (key, value) in extra.as_object().unwrap() {
