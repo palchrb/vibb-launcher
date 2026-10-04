@@ -2,6 +2,8 @@ mod dns_engine;
 mod handlers;
 mod models;
 mod security;
+#[cfg(test)]
+mod tests;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -57,23 +59,7 @@ async fn main() {
 
     std::fs::create_dir_all("data").expect("failed to create data directory");
 
-    let connect_options = SqliteConnectOptions::from_str(&database_url)
-        .expect("invalid DATABASE_URL")
-        .create_if_missing(true)
-        .foreign_keys(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .synchronous(SqliteSynchronous::Normal)
-        .busy_timeout(std::time::Duration::from_secs(5));
-
-    let db = SqlitePoolOptions::new()
-        .connect_with(connect_options)
-        .await
-        .expect("failed to connect to database");
-
-    sqlx::migrate!("./migrations")
-        .run(&db)
-        .await
-        .expect("failed to run migrations");
+    let db = connect_db(&database_url).await;
 
     security::bootstrap_admin(&db).await;
 
@@ -111,6 +97,34 @@ async fn main() {
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
 
+    tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
+    tokio::task::spawn(handlers::backups::run_live_mirror(state.clone()));
+    tokio::task::spawn(handlers::system_update::run_scheduled_app_update_check(
+        state.clone(),
+    ));
+    tokio::task::spawn(handlers::tracked_apps::run_scheduled_tracked_app_sync(
+        state.clone(),
+    ));
+    tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
+    tokio::task::spawn(handlers::dns_filter::run_dns_event_pruning(state.clone()));
+    tokio::task::spawn(handlers::locate::run_location_pruning(state.clone()));
+
+    let app = build_router(state, session_layer);
+
+    tracing::info!("listening on {bind_addr}");
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .unwrap();
+}
+
+/// Every route, middleware and the session layer, given ready-made state. Split out of `main()`
+/// so tests can drive the exact same router in-process (see `tests`) - nothing here may spawn
+/// background tasks or touch the filesystem beyond what serving a request does.
+pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteStore>) -> Router {
     // Reachable without any session at all. /sw.js lives here too - a
     // service-worker fetch has no session cookie context the way a page
     // load does, so it can't sit behind require_full_auth.
@@ -404,19 +418,7 @@ async fn main() {
             security::require_device_token,
         ));
 
-    tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
-    tokio::task::spawn(handlers::backups::run_live_mirror(state.clone()));
-    tokio::task::spawn(handlers::system_update::run_scheduled_app_update_check(
-        state.clone(),
-    ));
-    tokio::task::spawn(handlers::tracked_apps::run_scheduled_tracked_app_sync(
-        state.clone(),
-    ));
-    tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
-    tokio::task::spawn(handlers::dns_filter::run_dns_event_pruning(state.clone()));
-    tokio::task::spawn(handlers::locate::run_location_pruning(state.clone()));
-
-    let app = Router::new()
+    Router::new()
         .merge(public_routes)
         .merge(onboarding_routes)
         .merge(admin_routes)
@@ -424,14 +426,28 @@ async fn main() {
         .merge(device_authed_routes)
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state)
-        .layer(session_layer);
+        .layer(session_layer)
+}
 
-    tracing::info!("listening on {bind_addr}");
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await
-    .unwrap();
+/// Opens the SQLite pool with this app's connection settings and runs all migrations.
+pub async fn connect_db(database_url: &str) -> SqlitePool {
+    let connect_options = SqliteConnectOptions::from_str(database_url)
+        .expect("invalid DATABASE_URL")
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(5));
+
+    let db = SqlitePoolOptions::new()
+        .connect_with(connect_options)
+        .await
+        .expect("failed to connect to database");
+
+    sqlx::migrate!("./migrations")
+        .run(&db)
+        .await
+        .expect("failed to run migrations");
+
+    db
 }
