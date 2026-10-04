@@ -16,9 +16,13 @@ Package/applicationId stays `com.kidslauncher.mdm` (user decision). Release buil
 keytool -genkeypair -v -storetype PKCS12 -keystore handy-release.p12 -alias handy \
   -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=handy launcher, O=palchrb"
 # PKCS12 uses one password for store and key; give the same value to both env vars below.
-base64 -w0 handy-release.p12 | gh secret set ANDROID_RELEASE_KEYSTORE_B64 -R palchrb/kids-launcher-mdm
-gh secret set ANDROID_RELEASE_KEYSTORE_PASSWORD -R palchrb/kids-launcher-mdm   # prompts
-gh secret set ANDROID_RELEASE_KEY_ALIAS -R palchrb/kids-launcher-mdm -b handy
+# First create the GitHub environment "release" in the repo settings (required reviewer,
+# deployment rule: tags v* only). Environment secrets are only readable by jobs that run in it;
+# repo secrets would be readable by any workflow run on any pushed branch. Don't let `gh` create
+# the environment implicitly - it would have no protection.
+base64 -w0 handy-release.p12 | gh secret set ANDROID_RELEASE_KEYSTORE_B64 --env release -R palchrb/kids-launcher-mdm
+gh secret set ANDROID_RELEASE_KEYSTORE_PASSWORD --env release -R palchrb/kids-launcher-mdm   # prompts
+gh secret set ANDROID_RELEASE_KEY_ALIAS --env release -R palchrb/kids-launcher-mdm -b handy
 ```
 Losing this key means no more silent self-updates (PackageInstaller needs the same cert) and a re-provision of every phone.
 Back it up twice. Key rotation later is possible with APK Signature Scheme v3 (`apksigner rotate`). Out of scope here.
@@ -389,7 +393,7 @@ QA findings override this doc where they conflict. Binding for implementation:
   that a release launcher can't be downgraded, so a broken release is fixed forward with a
   higher versionCode.
 
-## Implementation status (2026-10-04)
+## Implementation status (2026-10-04, updated after qa-step1-code.md)
 
 Done on branch `handy` in both forks (not pushed). Every commit builds and passes its tests.
 
@@ -398,39 +402,61 @@ Done on branch `handy` in both forks (not pushed). Every commit builds and passe
 | S | `34b0758` | `ForkConfig` (§2.1): repo/component/URL/checksum from env, no checksum = banner and no QR; `KPS_REPO` in `install.sh`/`update.sh` (validated), `@REPO@` substituted into `actions.sh`; watcher schema 5; `update.sh` backs up DB + old binary to `/var/backups/kid-phone-server/` (QA #15, #20); DEPLOY.md: checksum, launcher catalog row, server rollback |
 | S | `dba579c` | `build_policy` fail closed (§3.1): missing row / corrupt allowlist / DB error = empty 500; command popped last with one `UPDATE … RETURNING`; transactional `create_device` |
 | S | `be54ee3` | `device_status.policy_state` + `restrictions_paused` (migration 0021), warnings on the device page |
+| S | `435bfd2` | code QA #5: heartbeat bootstrap is one `UPDATE … WHERE allowlist_json IS NULL`; `add/remove_from_allowlist` run in a transaction and return an error on a read error or corrupt JSON (`toggle_app` → 500, nothing written) |
+| S | `7edc736` | code QA #6/#7: `update.sh` uses `curl -f`, unpacks and checks the release before stopping the service, restarts it from an `ERR` trap, prunes backups only after the new version runs |
+| S | `64e8f94` | code QA #11: device page explains `policy_state = "server_error"` |
 | L | `6c21ad2` | Release `signingConfig` from env/properties, `-PrequireReleaseSigning`, `-PversionCode/-PversionName`, keep rules (§1.2, 1.3, 1.5) |
 | L | `53507fe` | CI (§1.4, QA #13, #14): build/test on push/PR only; tag job builds unsigned (no secrets) → sign+verify in environment `release` (no checkout/Gradle) → publish; RC tags are prereleases with `makeLatest: false`; tag must be on master/main; tsnet/anet/gomobile pinned in `mobile/go.mod`+`go.sum`; actions pinned by SHA |
-| L | `8e6319d` | `PolicyGate` (§3.2 + QA #11, #12), `computeEnforcementPlan` with the system dialer never suspended/hidden and keyguard forced on (QA #1, decision 1), `[]` = nothing allowed, `policyState` in status reports |
+| L | `8e6319d` | `PolicyGate` (§3.2 + QA #11, #12), `computeEnforcementPlan` with the system dialer never suspended/hidden and keyguard forced on, `[]` = nothing allowed, `policyState` in status reports |
 | L | `0ed31ca` | "Pause all restrictions": PIN required (unavailable without one), 2 h limit, reported (decision 2) |
+| L | `c45ddc2` | code QA #4: pause and offline override end when either the wall clock or `elapsedRealtime` says 2 h have passed, or on reboot (boot count) |
+| L | `e876455` | code QA #1/#2: managed + dialer not allowlisted → `DISALLOW_OUTGOING_CALLS` (emergency calls exempt), dialer kept off Home; comments corrected (LockTaskController lets the system dialer run in kiosk with KEYGUARD); `DISALLOW_CONFIG_DATE_TIME` + auto time while managed |
+| L | `96b33ab` | code QA #3/#11: `LastEnforcedPlan` stored with every accepted policy; unusable cache → `Fallback` to it (or nothing allowed + kiosk), so an ending override/pause re-locks; 5xx reported as `server_error` |
+| L | `b587e4f` | code QA #10 (part): release build's tsnet step runs without a restored Go cache |
 
-Tests: server 29 (`cargo test`; `missing_policy_row_does_not_unlock` is a normal passing test now), launcher 49 JVM unit tests
-(`PolicyGateTest`, `PolicyResponseCompatTest`, `EnforcementPlanTest`, `RestrictionsPauseTest`, existing `KidModeEnforcerTest`).
-T1 checked locally with a throwaway key (not committed): signed `assembleRelease` verifies with `apksigner`, `aapt2` shows no
-`application-debuggable`, `-PrequireReleaseSigning=true` without a keystore fails, unsigned release and debug still build.
+Tests: server 33 (`cargo test`; `missing_policy_row_does_not_unlock` is a normal passing test), launcher 55 JVM unit tests
+(`PolicyGateTest`, `PolicyResponseCompatTest`, `EnforcementPlanTest`, `RestrictionsPauseTest`, `KidModeEnforcerTest`).
+`cargo fmt --check` clean, clippy at 24 warnings (was 25 before step 1). T1 checked locally with a throwaway key (not
+committed): signed `assembleRelease` verifies with `apksigner`, `aapt2` shows no `application-debuggable`,
+`-PrequireReleaseSigning=true` without a keystore fails, unsigned release and debug still build. `update.sh` failure
+paths (curl 404, bad tarball, failed backup, service not starting) were exercised with stubbed `systemctl`/`curl`.
 `grep -r siesta5787 src deploy` in S is empty.
 
 Choices made where the docs left room:
 - RC versionCode = the final release's code − 1 (`v0.24.0-rc.N` → 23999 for every N). It installs over the previous release
   and the final release installs over it; equal codes between RCs are allowed by Android.
-- The system dialer is not added to the kiosk packages by the launcher, but stays pinned if a parent explicitly allowlists
-  it (otherwise allowlisted calling would break before 02). 02 can tighten this to "never" (its T8).
+- The system dialer stays pinned/unrestricted if a parent explicitly allowlists it (then outgoing calls are not restricted).
+  02 replaces this with its own call rules.
 - Without a checksum the provision page hides the whole QR, which also disables the in-app "Scan setup QR" for that server.
-- Known gap: when an override or pause ends while the cache is unusable (`KeepCurrentState`), the phone stays as the
-  override left it (open) until the next good sync. Fixing that needs a persisted "last enforced plan"; not done.
+- The fallback plan carries allowlist, kiosk, lock-task features and the schedule; VPN filter, quick controls and PIN come
+  from their own cached prefs/defaults.
+
+Open (code QA notes, not fixed):
+- #9: the master-ancestry check is advisory - add a tag ruleset restricting who may create `v*` tags; the environment
+  reviewer must check the tag commit is on master.
+- #10: action SHAs were looked up via the GitHub API here, but check once more with `gh api repos/<o>/<r>/git/ref/tags/<tag>`;
+  the signed APK is only as trustworthy as `release-build`'s Gradle/Maven chain.
+- #11 (server part): the device page still parses a corrupt allowlist as empty without a warning (the phone now reports
+  `server_error`, which is shown).
+- #12: no `DISALLOW_FACTORY_RESET`/`DISALLOW_DEBUGGING_FEATURES`/`DISALLOW_SAFE_BOOT`; first-heartbeat bootstrap
+  allowlists Android Settings; launcher Settings is open without a server PIN (server URL can be re-pointed). PLAN phase 2.
 
 Left for the user:
 1. Generate the release keystore (§1.1) offline; back it up twice. Compute `RELEASE_CERT_SHA256` (hex) and the base64url
    checksum (§2.3).
-2. GitHub, `palchrb/kids-launcher-mdm`: create environment `release` (required reviewer, deployment rule: tags `v*` only),
-   put `ANDROID_RELEASE_KEYSTORE_B64`, `ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS` in that environment
-   (not as repo secrets), set repo variable `RELEASE_CERT_SHA256`, enable 2FA. Push `handy`/merge to master, then check the
-   first CI run: the pinned Go 1.27.1/tsnet v1.104.0 build and the `git diff --exit-code mobile/go.mod go.sum` guard are
-   untested here (no NDK/x86_64). Test an `-rc.1` tag first (prerelease, `latest` unchanged), then `v0.24.0`.
+2. GitHub, `palchrb/kids-launcher-mdm`: create environment `release` first (required reviewer, deployment rule: tags `v*`
+   only), then put the three secrets in it with `--env release` (§1.1), set repo variable `RELEASE_CERT_SHA256`, enable
+   2FA, add a tag ruleset for `v*`. Merge `handy` to master, then check the first CI run: the pinned Go 1.27.1/tsnet
+   v1.104.0 build and the `git diff --exit-code mobile/go.mod go.sum` guard are untested here (no NDK/x86_64). Test an
+   `-rc.1` tag first (prerelease, `latest` unchanged), then `v0.24.0`.
 3. Pi: re-run `install.sh` (watcher schema 5), set `LAUNCHER_SIGNATURE_CHECKSUM` in `.env`, add the launcher catalog row
    (DEPLOY.md).
 4. Device checks (cannot be done here): T6 items in qa-01-02.md - release install + `dpm set-device-owner`, `run-as`
    fails, DNS filter and tsnet on mobile data under R8, no `ClassNotFound`; kiosk + `allowlist=[]` reboot without
-   deadlock, keyguard emergency button and the preloaded dialer's in-call UI; server stopped / policy row deleted keeps
-   restrictions after "Sync now" and reboot; dialer visible and unsuspended on a managed phone; pause refuses without a
-   PIN, ends after 2 h and shows on the server; recovery drill (`adb install -r` of a higher versionCode, server rollback
-   from `/var/backups/kid-phone-server`).
+   deadlock, keyguard emergency button and the preloaded dialer's in-call UI; **with outgoing calls restricted: 112 still
+   connects, the Phone icon is not on Home, a normal number is refused, and `tel:`/`*21*…#`/USSD from a link in an
+   allowlisted app (kiosk on and off) is refused even though the dialer opens**; automatic time on and date/time settings
+   blocked; server stopped / policy row deleted keeps restrictions after "Sync now" and reboot; corrupt cache + ended
+   override re-locks on the next sync; pause refuses without a PIN, ends after 2 h, after a reboot, and is not extended by
+   setting the clock back, and shows on the server; recovery drill (`adb install -r` of a higher versionCode, server
+   rollback from `/var/backups/kid-phone-server`).
