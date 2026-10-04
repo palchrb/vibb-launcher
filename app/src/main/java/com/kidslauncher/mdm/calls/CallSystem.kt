@@ -136,7 +136,10 @@ object CallSystem {
 /**
  * Small call-path prefs, written with `commit()` (a call can end with the process being killed).
  * Plain SharedPreferences keys rather than LauncherPreferences entries, so the call services
- * don't depend on Application.onCreate having initialised that class.
+ * don't depend on Application.onCreate having initialised that class. The emergency-call record
+ * lives in device-protected storage (timestamps only), so the callback window also works before
+ * the first unlock after a reboot (task 15); the rest is credential-encrypted and only used
+ * unlocked.
  */
 object CallPrefs {
     private const val DIALER_ROLE_TAKEN_BY_US = "mdm.calls.dialer_role_taken_by_us"
@@ -147,6 +150,10 @@ object CallPrefs {
     private const val LAST_ERROR = "mdm.calls.last_error"
 
     private fun prefs(context: Context) = PreferenceManager.getDefaultSharedPreferences(context)
+
+    /** Device-protected: readable before the first unlock. */
+    private fun bootPrefs(context: Context) =
+        context.createDeviceProtectedStorageContext().getSharedPreferences("call_boot_state", Context.MODE_PRIVATE)
 
     fun dialerRoleTakenByUs(context: Context) = prefs(context).getBoolean(DIALER_ROLE_TAKEN_BY_US, false)
 
@@ -165,7 +172,7 @@ object CallPrefs {
             elapsedStartMs = SystemClock.elapsedRealtime(),
             bootCount = bootCount(context),
         )
-        prefs(context).edit()
+        bootPrefs(context).edit()
             .putLong(EMERGENCY_UNTIL_WALL_MS, start.untilWallMs)
             .putLong(EMERGENCY_ELAPSED_START_MS, start.elapsedStartMs)
             .putInt(EMERGENCY_BOOT, start.bootCount)
@@ -173,7 +180,7 @@ object CallPrefs {
     }
 
     private fun recordedWindow(context: Context): WindowStart? {
-        val prefs = prefs(context)
+        val prefs = bootPrefs(context)
         val until = prefs.getLong(EMERGENCY_UNTIL_WALL_MS, 0).takeIf { it > 0 } ?: return null
         return WindowStart(until, prefs.getLong(EMERGENCY_ELAPSED_START_MS, 0), prefs.getInt(EMERGENCY_BOOT, -1))
     }

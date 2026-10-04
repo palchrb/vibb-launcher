@@ -69,7 +69,7 @@ class InCallActivity : AppCompatActivity() {
         }
         val number = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
-        binding.inCallName.text = rules?.contactFor(number)?.name ?: number ?: getString(R.string.calls_unknown_caller)
+        binding.inCallName.text = rules?.contactFor(number)?.name?.takeIf { it.isNotBlank() } ?: number ?: getString(R.string.calls_unknown_caller)
 
         val state = call.details.state
         binding.inCallStatus.text = when (state) {

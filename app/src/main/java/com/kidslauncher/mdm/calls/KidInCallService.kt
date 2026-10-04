@@ -123,7 +123,7 @@ class KidInCallService : InCallService() {
         if (call.details.state == Call.STATE_DISCONNECTED) return
         val number = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
-        val name = rules?.contactFor(number)?.name ?: number ?: getString(R.string.calls_unknown_caller)
+        val name = rules?.contactFor(number)?.name?.takeIf { it.isNotBlank() } ?: number ?: getString(R.string.calls_unknown_caller)
         CallNotifications.show(this, call, name)
         if (startActivity) {
             try {
