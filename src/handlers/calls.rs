@@ -141,7 +141,7 @@ async fn load_page(
             message_address: c.message_address.unwrap_or_default(),
         })
         .collect();
-    let warnings = Vec::new();
+    let warnings = call_warnings(state, &policy).await?;
 
     Ok(Some(DeviceCallsTemplate {
         title: format!("{} - Calls & SMS", device.name),
@@ -157,6 +157,136 @@ async fn load_page(
         form_number: form_number.to_string(),
         device,
     }))
+}
+
+/// What the parent should know about this phone's calls, from its latest status report: the
+/// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer or
+/// call-redirection role isn't ours, an error, the fail-closed state, an allowlisted Messages
+/// app while SMS is off (QA #8), and recent emergency calls / an open callback window (QA #2).
+/// Emergency calls are reported whether or not calls are managed now.
+pub(crate) async fn call_warnings(
+    state: &AppState,
+    policy: &DevicePolicy,
+) -> Result<Vec<String>, sqlx::Error> {
+    let latest: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT capabilities_json, call_state_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(policy.device_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((capabilities_json, call_state_json)) = latest else {
+        return Ok(Vec::new());
+    };
+    let capable = capabilities_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+        .is_some_and(|caps| caps.iter().any(|c| c == CALL_POLICY_CAPABILITY));
+    let call_state: serde_json::Value = call_state_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+    let flag = |key: &str| call_state.get(key).and_then(serde_json::Value::as_bool);
+    let text = |key: &str| {
+        call_state
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+
+    let mut warnings = Vec::new();
+    let now = chrono::Utc::now();
+    if let Some(at) = text("last_emergency_call_at").and_then(|t| parse_time(&t))
+        && now - at < chrono::Duration::days(7)
+    {
+        warnings.push(format!(
+            "An emergency call was made from this phone at {} (UTC).",
+            at.format("%Y-%m-%d %H:%M")
+        ));
+    }
+    if let Some(until) = text("callback_window_until").and_then(|t| parse_time(&t))
+        && until > now
+    {
+        warnings.push(format!(
+            "After the emergency call, anyone can call this phone until {} (UTC), so the \
+             emergency services can call back.",
+            until.format("%H:%M")
+        ));
+    }
+
+    if !policy.calls_managed {
+        return Ok(warnings);
+    }
+    if !capable {
+        let had_it: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM device_status WHERE device_id = ? \
+             AND capabilities_json LIKE ?)",
+        )
+        .bind(policy.device_id)
+        .bind(format!("%\"{CALL_POLICY_CAPABILITY}\"%"))
+        .fetch_one(&state.db)
+        .await?;
+        warnings.push(if had_it {
+            "This phone's launcher stopped reporting that it enforces calls - an older launcher \
+             may have been installed. Calls are probably not screened any more."
+                .to_string()
+        } else {
+            "This phone's launcher does not enforce calls yet. Update the launcher.".to_string()
+        });
+        return Ok(warnings);
+    }
+    if text("state").as_deref() == Some("fail_closed") {
+        warnings.push(
+            "The phone can't read its call rules, so only emergency calls work until it gets a \
+             good policy from this server."
+                .to_string(),
+        );
+    }
+    if flag("dialer_role_held") == Some(false) {
+        warnings.push(
+            "Phone app role not active: the launcher isn't the phone's default phone app, so \
+             calls are not screened and the phone can only call emergency numbers. Open the \
+             launcher's home screen on the phone and accept the \"default phone app\" prompt."
+                .to_string(),
+        );
+    }
+    if flag("redirection_role_held") == Some(false) {
+        warnings.push(
+            "Call-redirection role not active: calls to numbers that aren't allowed are only hung \
+             up after they start, so the other phone may ring briefly. Run `adb shell cmd role \
+             add-role-holder android.app.role.CALL_REDIRECTION <launcher package>` or accept the \
+             prompt on the phone."
+                .to_string(),
+        );
+    }
+    if let Some(error) = text("last_error") {
+        warnings.push(format!("The phone reported a calls problem: {error}"));
+    }
+    if !policy.sms_enabled
+        && let Some(sms_app) = text("default_sms_package")
+    {
+        let allowed = policy
+            .allowlist_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .is_some_and(|list| list.contains(&sms_app));
+        if allowed {
+            warnings.push(format!(
+                "SMS is off, but the Messages app ({sms_app}) is allowed. The phone keeps it \
+                 suspended anyway (RCS chat would bypass the SMS block); uncheck it in Apps."
+            ));
+        }
+    }
+    Ok(warnings)
+}
+
+/// Capability the launcher reports when it enforces `call_policy`.
+pub(crate) const CALL_POLICY_CAPABILITY: &str = "call_policy_v1";
+
+fn parse_time(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
 }
 
 fn db_error(device_id: i64, err: sqlx::Error) -> Response {
@@ -290,7 +420,7 @@ pub async fn add_contact(
     .await;
     match result {
         Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Ok(true) => back_to_calls(&state, id),
+        Ok(true) => back_to_calls(state, id),
         Err(err) => db_error(id, err),
     }
 }

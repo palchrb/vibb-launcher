@@ -68,7 +68,6 @@ pub struct DeviceContactRow {
     /// `None` = the device's `default_message_app`.
     pub message_app: Option<String>,
     pub message_address: Option<String>,
-    pub sort_order: i64,
 }
 
 /// Singleton (always `id = 1`) - the schedule every device follows unless it has its own
@@ -99,11 +98,8 @@ pub struct DeviceStatus {
     /// See migrations/0021_device_status_policy_state.sql. `None` from older launchers.
     pub policy_state: Option<String>,
     pub restrictions_paused: bool,
-    /// JSON array of capability strings, see migrations/0022_calls.sql. `None` from older
-    /// launchers.
-    pub capabilities_json: Option<String>,
-    /// The launcher's `CallState` object as JSON, see migrations/0022_calls.sql.
-    pub call_state_json: Option<String>,
+    // capabilities_json/call_state_json (migrations/0022_calls.sql) are read directly by
+    // handlers::calls::call_warnings.
 }
 
 #[derive(sqlx::FromRow, Clone)]
@@ -370,6 +366,13 @@ pub struct StatusReportRequest {
     /// The launcher's PIN-gated "pause all restrictions" switch is on.
     #[serde(default)]
     pub restrictions_paused: bool,
+    /// What this launcher can enforce, e.g. "call_policy_v1". Empty from older launchers.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// The launcher's applied call state (dialer role, restrictions, emergency calls), stored as
+    /// JSON text. Kept as an opaque value so a newer launcher's extra fields aren't lost.
+    #[serde(default)]
+    pub call_state: Option<serde_json::Value>,
 }
 
 /// Attached to a status report whenever the device has a location reading

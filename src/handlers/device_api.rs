@@ -274,7 +274,7 @@ pub(crate) async fn device_contacts(
 ) -> Result<Vec<DeviceContactRow>, sqlx::Error> {
     sqlx::query_as::<_, DeviceContactRow>(
         "SELECT c.id AS contact_id, c.name, c.phone_number, dc.allow_inbound, dc.allow_outbound, \
-         dc.show_on_home, dc.message_app, dc.message_address, dc.sort_order \
+         dc.show_on_home, dc.message_app, dc.message_address \
          FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
          WHERE dc.device_id = ? ORDER BY dc.sort_order, c.name",
     )
@@ -460,11 +460,24 @@ pub async fn status(
         .as_deref()
         .map(|state| state.chars().take(64).collect::<String>());
 
+    // Opaque JSON, capped so a misbehaving launcher can't grow the status log without bound.
+    let capabilities_json = Some(&report.capabilities)
+        .filter(|caps| !caps.is_empty())
+        .and_then(|caps| serde_json::to_string(caps).ok())
+        .filter(|json| json.len() <= 4096);
+    let call_state_json = report
+        .call_state
+        .as_ref()
+        .filter(|state| state.is_object())
+        .map(|state| state.to_string())
+        .filter(|json| json.len() <= 4096);
+
     sqlx::query(
         "INSERT INTO device_status \
          (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
-          offline_override_used, policy_state, restrictions_paused) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          offline_override_used, policy_state, restrictions_paused, capabilities_json, \
+          call_state_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -475,6 +488,8 @@ pub async fn status(
     .bind(report.offline_override_used)
     .bind(&policy_state)
     .bind(report.restrictions_paused)
+    .bind(&capabilities_json)
+    .bind(&call_state_json)
     .execute(&state.db)
     .await
     .ok();

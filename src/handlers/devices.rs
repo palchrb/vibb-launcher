@@ -237,6 +237,8 @@ struct DeviceDetailTemplate {
     latest_status: Option<DeviceStatus>,
     /// One line for the "Calls & SMS" card, e.g. "Managed - 4 contacts".
     calls_summary: String,
+    /// `calls::call_warnings` - emergency calls, a launcher that can't enforce calls, roles.
+    call_warnings: Vec<String>,
 }
 
 pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> impl IntoResponse {
@@ -441,10 +443,18 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
         format!("Managed - {contacts}, {calls}, {sms}.")
     };
 
+    let call_warnings = crate::handlers::calls::call_warnings(&state, &policy)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "failed to read call warnings");
+            vec!["Couldn't read this phone's call state - check the server log.".to_string()]
+        });
+
     Html(
         DeviceDetailTemplate {
             title: device.name.clone(),
             calls_summary,
+            call_warnings,
             any_app_installing,
             pin_configured: policy.override_pin_hash.is_some(),
             offline_override_used,

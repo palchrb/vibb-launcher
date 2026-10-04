@@ -51,6 +51,9 @@
     <div class="card">
         <h2>Calls &amp; SMS</h2>
         <p class="subtitle">{{ calls_summary }}</p>
+        {% for warning in call_warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
         <a href="/devices/{{ device.id }}/calls" class="button-small">Calls, contacts and SMS</a>
     </div>
 

@@ -529,3 +529,219 @@ async fn device_page_summarises_calls() {
     );
     assert!(page.contains(&format!("/devices/{id}/calls")));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Status report: capabilities and call state, and the warnings built from them.
+// ---------------------------------------------------------------------------------------------
+
+async fn post_status(app: &TestApp, token: &str, extra: Value) {
+    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
+    for (key, value) in extra.as_object().unwrap() {
+        report[key] = value.clone();
+    }
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(token),
+            Some(report),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}
+
+fn good_call_state() -> Value {
+    json!({
+        "state": "managed",
+        "dialer_role_held": true,
+        "redirection_role_held": true,
+        "default_dialer": "com.kidslauncher.mdm",
+        "system_dialer": "com.android.dialer",
+        "sms_restricted": false,
+        "outgoing_restricted": false,
+        "default_sms_package": "com.google.android.apps.messaging",
+        "last_error": null
+    })
+}
+
+async fn calls_page(app: &TestApp, cookie: &str, id: i64) -> String {
+    let res = app.get_page(&format!("/devices/{id}/calls"), cookie).await;
+    assert_eq!(res.status, StatusCode::OK);
+    res.text()
+}
+
+#[tokio::test]
+async fn status_stores_capabilities_and_call_state() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
+    )
+    .await;
+    let (caps, call_state): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT capabilities_json, call_state_json FROM device_status WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(caps.as_deref(), Some(r#"["call_policy_v1"]"#));
+    let call_state: Value = serde_json::from_str(&call_state.unwrap()).unwrap();
+    assert_eq!(call_state, good_call_state());
+
+    // An older launcher sends neither; a non-object call_state is not stored.
+    post_status(&app, &token, json!({ "call_state": "garbage" })).await;
+    let (caps, call_state): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT capabilities_json, call_state_json FROM device_status WHERE device_id = ? \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!((caps, call_state), (None, None));
+}
+
+#[tokio::test]
+async fn calls_page_warns_without_capability() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_managed(&app, id, true, true).await;
+
+    post_status(&app, &token, json!({})).await;
+    let page = calls_page(&app, &cookie, id).await;
+    assert!(page.contains("does not enforce calls yet"), "{page}");
+
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
+    )
+    .await;
+    let page = calls_page(&app, &cookie, id).await;
+    assert!(!page.contains("Check this phone"), "{page}");
+
+    // QA #22: a launcher that used to enforce calls and stops reporting it.
+    post_status(&app, &token, json!({})).await;
+    let page = calls_page(&app, &cookie, id).await;
+    assert!(page.contains("stopped reporting"), "{page}");
+
+    // Unmanaged: no capability warning.
+    set_unmanaged(&app, id).await;
+    assert!(
+        !calls_page(&app, &cookie, id)
+            .await
+            .contains("Check this phone")
+    );
+}
+
+async fn set_unmanaged(app: &TestApp, id: i64) {
+    sqlx::query("UPDATE device_policy SET calls_managed = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn calls_page_shows_role_problems_and_fail_closed() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_managed(&app, id, true, true).await;
+    let mut call_state = good_call_state();
+    call_state["state"] = json!("fail_closed");
+    call_state["dialer_role_held"] = json!(false);
+    call_state["redirection_role_held"] = json!(false);
+    call_state["last_error"] = json!("setDefaultDialerApplication: IllegalArgumentException");
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
+    )
+    .await;
+    let page = calls_page(&app, &cookie, id).await;
+    for expected in [
+        "only emergency calls work",
+        "Phone app role not active",
+        "Call-redirection role not active",
+        "setDefaultDialerApplication: IllegalArgumentException",
+    ] {
+        assert!(page.contains(expected), "{expected}: {page}");
+    }
+}
+
+#[tokio::test]
+async fn allowlisted_messages_app_with_sms_off_is_flagged() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_managed(&app, id, true, false).await;
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(r#"["com.google.android.apps.messaging"]"#)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
+    )
+    .await;
+    assert!(
+        calls_page(&app, &cookie, id)
+            .await
+            .contains("SMS is off, but the Messages app")
+    );
+
+    set_managed(&app, id, true, true).await;
+    assert!(
+        !calls_page(&app, &cookie, id)
+            .await
+            .contains("SMS is off, but")
+    );
+}
+
+#[tokio::test]
+async fn emergency_call_is_shown_on_the_device_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_managed(&app, id, true, true).await;
+    let now = chrono::Utc::now();
+    let mut call_state = good_call_state();
+    call_state["last_emergency_call_at"] = json!((now - chrono::Duration::minutes(5)).to_rfc3339());
+    call_state["callback_window_until"] = json!((now + chrono::Duration::minutes(55)).to_rfc3339());
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("An emergency call was made"), "{page}");
+    assert!(page.contains("anyone can call this phone until"), "{page}");
+
+    // Old ones are not alerted again.
+    let mut call_state = good_call_state();
+    call_state["last_emergency_call_at"] = json!((now - chrono::Duration::days(8)).to_rfc3339());
+    call_state["callback_window_until"] = json!((now - chrono::Duration::days(8)).to_rfc3339());
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("emergency"), "{page}");
+}
