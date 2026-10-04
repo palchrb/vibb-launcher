@@ -1,0 +1,52 @@
+name: Build tsnet.aar
+description: >
+  Builds app/libs/tsnet.aar from mobile/tsembed with gomobile, using only the versions committed
+  in mobile/go.mod and mobile/go.sum (tsnet, anet, x/mobile) - nothing is resolved "@latest".
+inputs:
+  gomobile-version:
+    description: golang.org/x/mobile version for the gomobile command; must match mobile/go.mod
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: set up Go
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      with:
+        go-version-file: mobile/go.mod
+        cache-dependency-path: mobile/go.sum
+    - name: Install Android NDK
+      shell: bash
+      run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;28.1.13356709"
+    - name: Build tsnet.aar with gomobile
+      # tsnet (tailscale.com/tsnet) gives the launcher its own embeddable tailnet connection - see
+      # this repo's CLAUDE.md. Binds against mobile/tsembed, a thin wrapper (gobind can't bind
+      # tsnet.Server directly - see mobile/tsembed's package doc). arm64-only, see CLAUDE.md.
+      shell: bash
+      env:
+        GOMOBILE_VERSION: ${{ inputs.gomobile-version }}
+      run: |
+        set -euo pipefail
+        export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.1.13356709"
+        cd mobile
+        pinned="$(go list -m -f '{{.Version}}' golang.org/x/mobile)"
+        if [ "$pinned" != "$GOMOBILE_VERSION" ]; then
+          echo "GOMOBILE_VERSION ($GOMOBILE_VERSION) doesn't match mobile/go.mod ($pinned)" >&2
+          exit 1
+        fi
+        go mod download
+        go mod verify
+        go install "golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION"
+        go install "golang.org/x/mobile/cmd/gobind@$GOMOBILE_VERSION"
+        mkdir -p ../app/libs
+        gomobile init
+        # -checklinkname=0: anet uses //go:linkname, which Go 1.23+ restricts by default - see
+        # github.com/wlynxg/anet's build notes. anet works around tailscale/tailscale#17311
+        # (net.Interfaces() blocked by Android's SELinux policy), see tsembed.go's init().
+        gomobile bind -o ../app/libs/tsnet.aar -target=android/arm64 -androidapi 34 -ldflags="-checklinkname=0" ./tsembed
+        # gomobile ships its JNI keep rules as consumer ProGuard rules inside the aar; R8 in the
+        # release build relies on them (plus our own copies in app/proguard-rules.pro).
+        unzip -l ../app/libs/tsnet.aar | grep 'proguard.txt' >/dev/null \
+          || { echo "tsnet.aar has no proguard.txt" >&2; exit 1; }
+        # The build must use exactly the committed versions - fail if anything above had to
+        # resolve or add a module.
+        git diff --exit-code -- go.mod go.sum
