@@ -466,3 +466,74 @@ async fn status_report_from_older_launcher_has_no_warnings() {
     assert!(!page.contains("saved policy"));
     assert!(!page.contains("All restrictions are paused"));
 }
+
+async fn toggle(app: &TestApp, id: i64, package: &str, selected: bool) -> axum::http::StatusCode {
+    let mut form = std::collections::HashMap::new();
+    form.insert("package_name".to_string(), package.to_string());
+    if selected {
+        form.insert("selected".to_string(), "on".to_string());
+    }
+    crate::handlers::devices::toggle_app(
+        axum::extract::State(app.state.clone()),
+        axum::extract::Path(id),
+        axum::Form(form),
+    )
+    .await
+    .status()
+}
+
+async fn allowlist_json(app: &TestApp, id: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn toggle_app_adds_and_removes() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    set_allowlist_json(&app, id, Some(r#"["a"]"#)).await;
+
+    assert!(toggle(&app, id, "b", true).await.is_redirection());
+    assert_eq!(
+        allowlist_json(&app, id).await.as_deref(),
+        Some(r#"["a","b"]"#)
+    );
+    assert!(toggle(&app, id, "a", false).await.is_redirection());
+    assert_eq!(allowlist_json(&app, id).await.as_deref(), Some(r#"["b"]"#));
+}
+
+/// A corrupt stored allowlist used to be read as `[]`: unchecking then silently did nothing (the
+/// app stayed allowed) and checking overwrote the list.
+#[tokio::test]
+async fn toggle_app_with_corrupt_allowlist_fails_without_writing() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    set_allowlist_json(&app, id, Some("not json")).await;
+
+    assert_eq!(
+        toggle(&app, id, "a", false).await,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        toggle(&app, id, "a", true).await,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(allowlist_json(&app, id).await.as_deref(), Some("not json"));
+}
+
+#[tokio::test]
+async fn heartbeat_bootstraps_only_a_null_allowlist() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let apps = json!({ "installed_apps": [{ "package_name": "a", "label": "A" }] });
+
+    post_status(&app, &token, apps.clone()).await;
+    assert_eq!(allowlist_json(&app, id).await.as_deref(), Some(r#"["a"]"#));
+
+    set_allowlist_json(&app, id, Some("[]")).await;
+    post_status(&app, &token, apps).await;
+    assert_eq!(allowlist_json(&app, id).await.as_deref(), Some("[]"));
+}

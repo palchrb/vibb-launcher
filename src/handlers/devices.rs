@@ -482,7 +482,7 @@ pub async fn toggle_app(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let checked = form.contains_key("selected");
     let package_name = form
         .get("package_name")
@@ -502,8 +502,10 @@ pub async fn toggle_app(
             .await
             .ok();
         }
-        if !package_name.is_empty() {
-            add_to_allowlist(&state, id, &package_name).await;
+        if !package_name.is_empty()
+            && let Err(err) = add_to_allowlist(&state, id, &package_name).await
+        {
+            return allowlist_error_response(id, &package_name, err);
         }
     } else {
         if let Some(tid) = tracked_app_id {
@@ -517,7 +519,9 @@ pub async fn toggle_app(
             .ok();
         }
         if !package_name.is_empty() {
-            remove_from_allowlist(&state, id, &package_name).await;
+            if let Err(err) = remove_from_allowlist(&state, id, &package_name).await {
+                return allowlist_error_response(id, &package_name, err);
+            }
             let (installed, preinstalled) = installed_app_status(&state, id, &package_name).await;
             if installed && !preinstalled {
                 sqlx::query(
@@ -534,7 +538,23 @@ pub async fn toggle_app(
     }
 
     let _ = state.command_notify.send(id);
-    Redirect::to(&format!("/devices/{id}"))
+    Redirect::to(&format!("/devices/{id}")).into_response()
+}
+
+fn allowlist_error_response(
+    device_id: i64,
+    package_name: &str,
+    err: AllowlistError,
+) -> axum::response::Response {
+    tracing::error!(device_id, package_name, %err, "failed to change allowlist");
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        format!(
+            "Couldn't change the allowed apps for this device ({err}). Nothing was changed - \
+             check the server log."
+        ),
+    )
+        .into_response()
 }
 
 /// Whether the device's most recent status report lists this package as installed, and if so,
@@ -565,77 +585,100 @@ async fn installed_app_status(
     }
 }
 
+/// Why [add_to_allowlist]/[remove_from_allowlist] couldn't change the allowlist. Neither ever
+/// guesses: a read error or a stored allowlist that isn't valid JSON leaves the row untouched and
+/// is reported, instead of being treated as an empty list (which used to silently overwrite a
+/// corrupt list on add, and silently keep an "unchecked" app allowed on remove).
+#[derive(Debug)]
+pub(crate) enum AllowlistError {
+    Db(sqlx::Error),
+    MissingPolicyRow,
+    Corrupt(serde_json::Error),
+}
+
+impl std::fmt::Display for AllowlistError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AllowlistError::Db(err) => write!(f, "database error: {err}"),
+            AllowlistError::MissingPolicyRow => write!(f, "no device_policy row"),
+            AllowlistError::Corrupt(err) => write!(f, "stored allowlist is not valid JSON: {err}"),
+        }
+    }
+}
+
+impl From<sqlx::Error> for AllowlistError {
+    fn from(err: sqlx::Error) -> Self {
+        AllowlistError::Db(err)
+    }
+}
+
+/// Read-modify-write of one device's allowlist in a single transaction, so a concurrent writer
+/// (another toggle, the heartbeat bootstrap) can't be lost in between. `edit` returns whether it
+/// changed anything; nothing is written if not. A `NULL` allowlist (unmanaged) starts as empty.
+async fn edit_allowlist(
+    state: &AppState,
+    device_id: i64,
+    edit: impl FnOnce(&mut Vec<String>) -> bool,
+) -> Result<(), AllowlistError> {
+    let mut tx = state.db.begin().await?;
+    let current: Option<Option<String>> =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let current = current.ok_or(AllowlistError::MissingPolicyRow)?;
+    let mut packages: Vec<String> = match current.as_deref() {
+        Some(json) => serde_json::from_str(json).map_err(AllowlistError::Corrupt)?,
+        None => Vec::new(),
+    };
+    if !edit(&mut packages) {
+        return Ok(());
+    }
+    let json = serde_json::to_string(&packages).expect("a list of strings always serializes");
+    sqlx::query(
+        "UPDATE device_policy SET allowlist_json = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
+    )
+    .bind(&json)
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Adds one package to a device's allowlist if it isn't already there. Used by
 /// [toggle_app] - see its own doc comment for why. `updated_at` is bumped like every other
 /// `device_policy` write, so the "changed since last sync" nudge story stays consistent even though
 /// this isn't going through the normal `update_policy` form save.
-pub(crate) async fn add_to_allowlist(state: &AppState, device_id: i64, package_name: &str) {
-    let current: Option<String> =
-        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-
-    let mut packages: Vec<String> = current
-        .as_deref()
-        .and_then(|j| serde_json::from_str(j).ok())
-        .unwrap_or_default();
-
-    if packages.iter().any(|p| p == package_name) {
-        return;
-    }
-    packages.push(package_name.to_string());
-
-    let Ok(json) = serde_json::to_string(&packages) else {
-        return;
-    };
-    sqlx::query(
-        "UPDATE device_policy SET allowlist_json = ?, updated_at = datetime('now') \
-         WHERE device_id = ?",
-    )
-    .bind(&json)
-    .bind(device_id)
-    .execute(&state.db)
+pub(crate) async fn add_to_allowlist(
+    state: &AppState,
+    device_id: i64,
+    package_name: &str,
+) -> Result<(), AllowlistError> {
+    edit_allowlist(state, device_id, |packages| {
+        if packages.iter().any(|p| p == package_name) {
+            return false;
+        }
+        packages.push(package_name.to_string());
+        true
+    })
     .await
-    .ok();
 }
 
 /// Removes one package from a device's allowlist if present - the uncheck-side counterpart to
 /// [add_to_allowlist], used by [toggle_app].
-async fn remove_from_allowlist(state: &AppState, device_id: i64, package_name: &str) {
-    let current: Option<String> =
-        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-
-    let mut packages: Vec<String> = current
-        .as_deref()
-        .and_then(|j| serde_json::from_str(j).ok())
-        .unwrap_or_default();
-
-    let original_len = packages.len();
-    packages.retain(|p| p != package_name);
-    if packages.len() == original_len {
-        return;
-    }
-
-    let Ok(json) = serde_json::to_string(&packages) else {
-        return;
-    };
-    sqlx::query(
-        "UPDATE device_policy SET allowlist_json = ?, updated_at = datetime('now') \
-         WHERE device_id = ?",
-    )
-    .bind(&json)
-    .bind(device_id)
-    .execute(&state.db)
+pub(crate) async fn remove_from_allowlist(
+    state: &AppState,
+    device_id: i64,
+    package_name: &str,
+) -> Result<(), AllowlistError> {
+    edit_allowlist(state, device_id, |packages| {
+        let original_len = packages.len();
+        packages.retain(|p| p != package_name);
+        packages.len() != original_len
+    })
     .await
-    .ok();
 }
 
 /// Handles everything on a device's page *except* the Apps list, which is now its own set of

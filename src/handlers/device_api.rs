@@ -454,34 +454,27 @@ pub async fn status(
     // page. Only ever fires once per device - `allowlist_json` being non-null (even "[]") means an
     // admin or an earlier toggle has already taken ownership of it, so this never overwrites a
     // real, intentional selection.
-    if let Some(installed) = &report.installed_apps {
-        if !installed.is_empty() {
-            let allowlist_already_set = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT allowlist_json FROM device_policy WHERE device_id = ?",
-            )
-            .bind(device.id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .flatten()
-            .is_some();
-
-            if !allowlist_already_set {
-                let package_names: Vec<&str> =
-                    installed.iter().map(|a| a.package_name.as_str()).collect();
-                if let Ok(json) = serde_json::to_string(&package_names) {
-                    sqlx::query(
-                        "UPDATE device_policy SET allowlist_json = ?, updated_at = datetime('now') \
-                         WHERE device_id = ?",
-                    )
-                    .bind(&json)
-                    .bind(device.id)
-                    .execute(&state.db)
-                    .await
-                    .ok();
-                }
-            }
+    // One conditional UPDATE, not read-then-write: a read error used to count as "not set" and
+    // overwrite the parent's allowlist with every installed app, and a separate read and write
+    // raced `toggle_app`.
+    if let Some(installed) = report
+        .installed_apps
+        .as_ref()
+        .filter(|apps| !apps.is_empty())
+    {
+        let package_names: Vec<&str> = installed.iter().map(|a| a.package_name.as_str()).collect();
+        let json =
+            serde_json::to_string(&package_names).expect("a list of strings always serializes");
+        if let Err(err) = sqlx::query(
+            "UPDATE device_policy SET allowlist_json = ?, updated_at = datetime('now') \
+             WHERE device_id = ? AND allowlist_json IS NULL",
+        )
+        .bind(&json)
+        .bind(device.id)
+        .execute(&state.db)
+        .await
+        {
+            tracing::error!(device_id = device.id, %err, "allowlist bootstrap failed");
         }
     }
 
@@ -543,8 +536,12 @@ pub async fn status(
                     .execute(&state.db)
                     .await
                     .ok();
-                crate::handlers::devices::add_to_allowlist(&state, device.id, &app.package_name)
-                    .await;
+                if let Err(err) =
+                    crate::handlers::devices::add_to_allowlist(&state, device.id, &app.package_name)
+                        .await
+                {
+                    tracing::error!(device_id = device.id, %err, "failed to allowlist a backfilled app");
+                }
             }
         }
     }
