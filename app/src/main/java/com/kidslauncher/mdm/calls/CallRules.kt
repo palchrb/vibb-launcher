@@ -180,3 +180,17 @@ fun callbackWindowUntil(
         .maxOfOrNull { it + CALLBACK_WINDOW_MS }
     return listOfNotNull(fromLog, recordedUntilMs?.takeIf { it > nowMs }).maxOrNull()
 }
+
+/**
+ * A call Telecom reports with an unknown direction (a handover, a conference parent, some
+ * connection services): neither the incoming nor the outgoing rules fit, so while managed it is
+ * kept only if it's an emergency call or the number is a contact allowed in either direction.
+ */
+fun decideUnknownDirection(raw: String?, state: CallPolicyState, isEmergency: Boolean): Verdict = when {
+    isEmergency -> Verdict.ALLOW
+    state is CallPolicyState.Unmanaged -> Verdict.ALLOW
+    state !is CallPolicyState.Managed -> Verdict.BLOCK
+    !state.rules.callsEnabled -> Verdict.BLOCK
+    matches(raw, state.rules, state.rules.inbound + state.rules.outbound) -> Verdict.ALLOW
+    else -> Verdict.BLOCK
+}

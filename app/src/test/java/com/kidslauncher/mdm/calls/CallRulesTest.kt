@@ -206,6 +206,21 @@ class CallRulesTest {
         assertNull(window(LoggedCall("112", now - 3 * 60 * minute, 30), LoggedCall("112", now - minute, 0)))
     }
 
+    // Unknown direction (QA step 2 #5)
+
+    @Test
+    fun `unknown-direction calls are kept only for emergency or contacts allowed either way`() {
+        fun unknown(raw: String?, state: CallPolicyState = managed) = decideUnknownDirection(raw, state, emergency(raw))
+        assertEquals(Verdict.ALLOW, unknown(bestemor.number)) // inbound only
+        assertEquals(Verdict.ALLOW, unknown(mormor.number)) // outbound only
+        assertEquals(Verdict.BLOCK, unknown("+4799999999"))
+        assertEquals(Verdict.BLOCK, unknown(null))
+        assertEquals(Verdict.BLOCK, unknown(mamma.number, disabled))
+        assertEquals(Verdict.BLOCK, unknown(mamma.number, failClosed))
+        assertEquals(Verdict.ALLOW, unknown("112", failClosed))
+        assertEquals(Verdict.ALLOW, unknown("+4799999999", unmanaged))
+    }
+
     @Test
     fun `stranger calls are allowed at 59 minutes and blocked at 61`() {
         fun at(minutesAgo: Long) = decideIncoming("+4799999999", true, false, managed) {

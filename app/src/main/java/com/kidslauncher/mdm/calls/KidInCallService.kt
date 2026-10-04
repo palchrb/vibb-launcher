@@ -59,6 +59,13 @@ class KidInCallService : InCallService() {
             call.reject(Call.REJECT_REASON_DECLINED)
             return
         }
+        // Unknown direction (handover, conference parent, some connection services): kept only if
+        // it's an emergency call or a contact allowed either way (QA step 2 #5).
+        if (call.details.callDirection == Call.Details.DIRECTION_UNKNOWN && unknownVerdict(call) == Verdict.BLOCK) {
+            Log.i(LOG_TAG, "Disconnecting a not-allowed call of unknown direction")
+            call.disconnect()
+            return
+        }
         OngoingCalls.add(call)
         call.registerCallback(callback)
         recordEmergency(call, call.details.state)
@@ -95,6 +102,17 @@ class KidInCallService : InCallService() {
             decideOutgoing(raw, state, CallSystem.isEmergencyOutgoing(this, raw))
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Outgoing call check failed", e)
+            if (state is CallPolicyState.Unmanaged) Verdict.ALLOW else Verdict.BLOCK
+        }
+    }
+
+    private fun unknownVerdict(call: Call): Verdict {
+        val state = CallPolicyStore.state
+        return try {
+            val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
+            decideUnknownDirection(raw, state, CallSystem.isEmergencyOutgoing(this, raw))
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Unknown-direction call check failed", e)
             if (state is CallPolicyState.Unmanaged) Verdict.ALLOW else Verdict.BLOCK
         }
     }
