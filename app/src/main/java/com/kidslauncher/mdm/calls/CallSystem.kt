@@ -111,11 +111,17 @@ object CallSystem {
     }
 
     /** See [callbackWindowUntil]. Reads the call log, so not for every call - only when a call
-     * would otherwise be blocked. */
+     * would otherwise be blocked. Not before the first unlock: the call log is credential-encrypted
+     * and its provider may be unavailable or block then, past the screening budget (task 15) - only
+     * our own device-protected record counts until the user unlocks. */
     fun callbackWindowUntil(context: Context, nowMs: Long = System.currentTimeMillis()): Long? =
         callbackWindowUntil(
             nowMs,
-            recentOutgoingCalls(context, nowMs - 2 * CALLBACK_WINDOW_MS),
+            if (CallPolicyStore.userUnlocked(context)) {
+                recentOutgoingCalls(context, nowMs - 2 * CALLBACK_WINDOW_MS)
+            } else {
+                emptyList()
+            },
             CallPrefs.recordedWindowUntil(context),
             platformEmergency(context),
         )
