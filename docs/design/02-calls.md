@@ -634,8 +634,8 @@ be unlocked). While `UserManager.isUserUnlocked()` is false, `Application.onCrea
 no `LauncherPreferences`, `initRest`, `AppEnforcer` (no lock task, no DPM call), services or tsnet. Home stays
 non-aware, so `FallbackHome` + keyguard behave as today; `InCallActivity` exists only during a call, never dismisses
 the keyguard and finishes after the last call. The rest of the setup runs once, on the first of: `ACTION_USER_UNLOCKED`
-(registered receiver - "only sent to registered receivers" [Intent]), an activity being created, or
-`isUserUnlocked()` already true right after registering (no missed-broadcast race).
+(registered receiver - "only sent to registered receivers" [Intent]), our `appComponentFactory` creating any
+non-direct-boot component (proof CE is unlocked), or `isUserUnlocked()` already true right after registering.
 
 **Mirrored to DE.** Key `boot_call_policy` in a DE SharedPreferences file (`createDeviceProtectedStorageContext()`
 [Ctx]), strict JSON: `{"v":1,"mode":"managed|unmanaged|fail_closed","calls_enabled":b,"default_cc":"47",
@@ -675,4 +675,10 @@ with the DE policy loaded (warm for the 5 s screening budget) and logs the state
    unlock; after unlock the file is rewritten and B rings again. 7. Set B inbound-off, sync, reboot: B rejected BFU.
 
 Status: implemented on L `handy` (`5fc7271` pure policy + tests, `e642051` DE mirror, `08031a4` manifest/Application,
-`f421a49` CLAUDE.md, `51c534e` no call-log read while locked); 135 JVM tests, debug + release build. Not device-tested.
+`f421a49` CLAUDE.md, `51c534e` no call-log read while locked). Fix round after qa-direct-boot.md: `5333879` (#2, #8,
+note 3: mirror compared with what was really committed and retried, self-checked, `callState.bootPolicy`; unmatchable
+numbers left out; a managed DE copy makes a wiped CE fail closed, only explicit `managed:false` unmanages; pure
+`refreshPlan` + `CallPolicyRefreshTest`), `b0d32f0` (`resetPreferences` keeps the call keys), `f15d130` (#1:
+`KidAppComponentFactory` runs the unlocked setup before any non-direct-boot component, replacing the activity hook),
+`14a4af1` CLAUDE.md. 149 JVM tests, debug + release build. Not device-tested; the server stores `boot_policy` in
+`call_state_json` but doesn't warn on it yet.
