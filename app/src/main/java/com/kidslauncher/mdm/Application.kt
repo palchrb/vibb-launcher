@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm
 
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -9,6 +10,7 @@ import android.content.pm.LauncherApps
 import android.content.pm.ShortcutInfo
 import android.os.Build
 import android.os.Build.VERSION_CODES
+import android.os.Bundle
 import android.os.UserHandle
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.MutableLiveData
@@ -106,7 +108,8 @@ class Application : android.app.Application() {
         super.onCreate()
         // First, and on its own: the call services (screening, redirection, in-call) run in this
         // process and read the rules from memory. If anything below throws, they must still have
-        // the real rules - and CallPolicyStore starts fail-closed, never open (QA #10).
+        // the real rules - and CallPolicyStore starts fail-closed, never open (QA #10). Before the
+        // first unlock after a reboot this reads the device-protected copy (task 15).
         com.kidslauncher.mdm.calls.CallPolicyStore.refresh(this)
         // Before anything can ask whether an override/pause is active - see server.BootClock.
         // Guarded like everything below: an exception here must not take the call services down
@@ -124,11 +127,35 @@ class Application : android.app.Application() {
             exitProcess(1)
         }
 
+        // Before the first unlock (only our direct-boot-aware call components can have started the
+        // process) credential-encrypted storage can't be read: everything else - preferences,
+        // enforcement, kiosk, services, tsnet - waits for the unlock. Nothing here may start lock
+        // task or an activity before unlock (the BFU lockout incidents in CLAUDE.md).
+        if (com.kidslauncher.mdm.calls.CallPolicyStore.userUnlocked(this)) {
+            initUnlocked()
+        } else {
+            android.util.Log.i("Application", "Started before the first unlock: call path only")
+            deferUntilUnlocked()
+        }
+    }
 
-        // An exception from the rest of the setup used to reach the handler above and kill the
-        // process - taking the call screening/in-call services with it, so calls would ring
-        // unscreened (screening times out open, Telecom falls back to the preloaded dialer). Now
-        // it's reported and the process stays up.
+    private var unlockedInitDone = false
+    private var unlockReceiver: BroadcastReceiver? = null
+    private var unlockActivityCallbacks: ActivityLifecycleCallbacks? = null
+
+    /**
+     * The setup that needs credential-encrypted storage; runs once per process, on the main thread.
+     * An exception from it used to reach the handler above and kill the process - taking the call
+     * screening/in-call services with it, so calls would ring unscreened (screening times out
+     * open, Telecom falls back to the preloaded dialer). Now it's reported and the process stays up.
+     */
+    private fun initUnlocked() {
+        if (unlockedInitDone) return
+        unlockedInitDone = true
+        unlockReceiver?.let { runCatching { unregisterReceiver(it) } }
+        unlockReceiver = null
+        unlockActivityCallbacks?.let { unregisterActivityLifecycleCallbacks(it) }
+        unlockActivityCallbacks = null
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)
             initRest()
@@ -136,6 +163,42 @@ class Application : android.app.Application() {
             android.util.Log.e("Application", "Setup failed, continuing", e)
             sendCrashNotification(this, e)
         }
+    }
+
+    /**
+     * Runs [initUnlocked] on the first of: ACTION_USER_UNLOCKED (only delivered to registered
+     * receivers), an activity being created after the unlock (Home can start in this process
+     * before that broadcast arrives), or the user already being unlocked once both are
+     * registered (no missed-broadcast race). Refreshes the call rules from CE storage first.
+     */
+    private fun deferUntilUnlocked() {
+        val runIfUnlocked = {
+            val store = com.kidslauncher.mdm.calls.CallPolicyStore
+            if (!unlockedInitDone && store.userUnlocked(this)) {
+                store.refresh(this)
+                initUnlocked()
+            }
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) = runIfUnlocked()
+        }
+        unlockReceiver = receiver
+        ContextCompat.registerReceiver(
+            this, receiver, IntentFilter(Intent.ACTION_USER_UNLOCKED), ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        val callbacks = object : ActivityLifecycleCallbacks {
+            override fun onActivityPreCreated(activity: Activity, savedInstanceState: Bundle?) = runIfUnlocked()
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityResumed(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        }
+        unlockActivityCallbacks = callbacks
+        registerActivityLifecycleCallbacks(callbacks)
+        runIfUnlocked()
     }
 
     private fun initRest() {

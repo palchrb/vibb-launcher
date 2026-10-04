@@ -78,6 +78,8 @@
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- LOCKED_BOOT_COMPLETED for calls.BootCallReceiver (direct boot, task 15). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".Application"
@@ -151,7 +153,12 @@
              throws. VIEW tel:/voicemail: and CALL_BUTTON are here too so links and the call
              button land in the phone book rather than the system keypad (QA #6; which handler
              wins is a device check). exported="true" on the services is safe: their
-             android:permission means only Telecom can bind. -->
+             android:permission means only Telecom can bind.
+             Direct boot (task 15, 02-calls.md): the call services, the in-call screen, its
+             notification receiver and BootCallReceiver are directBootAware, so calls are screened
+             before the first unlock after a reboot, from a device-protected copy of the rules.
+             Nothing else is - in particular not HomeActivity/LockActivity (the BFU lockout
+             incidents in CLAUDE.md) and not the phone book. -->
         <activity
             android:name=".calls.PhoneBookActivity"
             android:configChanges="orientation|screenSize"
@@ -180,6 +187,7 @@
         </activity>
         <activity
             android:name=".calls.InCallActivity"
+            android:directBootAware="true"
             android:configChanges="orientation|screenSize"
             android:excludeFromRecents="true"
             android:exported="false"
@@ -189,6 +197,7 @@
             android:turnScreenOn="true" />
         <service
             android:name=".calls.KidInCallService"
+            android:directBootAware="true"
             android:exported="true"
             android:permission="android.permission.BIND_INCALL_SERVICE">
             <meta-data
@@ -201,6 +210,7 @@
         <!-- Screens incoming calls; Telecom binds the default dialer's screening service. -->
         <service
             android:name=".calls.KidCallScreeningService"
+            android:directBootAware="true"
             android:exported="true"
             android:permission="android.permission.BIND_SCREENING_SERVICE">
             <intent-filter>
@@ -211,6 +221,7 @@
              (adb at provisioning, or the system prompt from Home). -->
         <service
             android:name=".calls.KidCallRedirectionService"
+            android:directBootAware="true"
             android:exported="true"
             android:permission="android.permission.BIND_CALL_REDIRECTION_SERVICE">
             <intent-filter>
@@ -220,7 +231,19 @@
         <!-- Only our own notification PendingIntents (Answer / Hang up). -->
         <receiver
             android:name=".calls.CallActionReceiver"
+            android:directBootAware="true"
             android:exported="false" />
+
+        <!-- Only gets the process up with the device-protected call policy loaded after a reboot;
+             LOCKED_BOOT_COMPLETED is a protected broadcast, so exported="false" is fine. -->
+        <receiver
+            android:name=".calls.BootCallReceiver"
+            android:directBootAware="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name=".server.MdmDeviceAdminReceiver"
