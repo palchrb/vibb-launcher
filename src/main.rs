@@ -1,3 +1,4 @@
+mod config;
 mod dns_engine;
 mod handlers;
 mod models;
@@ -34,6 +35,9 @@ pub struct AppState {
     /// harmless - that device just picks the command up on its next regular poll instead, same as
     /// before this existed.
     pub command_notify: tokio::sync::broadcast::Sender<i64>,
+    /// Fork-specific settings from env vars (release repo, launcher provisioning values) - see
+    /// `config::ForkConfig`.
+    pub config: std::sync::Arc<config::ForkConfig>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -89,11 +93,20 @@ async fn main() {
         .with_expiry(Expiry::OnInactivity(CookieDuration::days(30)))
         .with_secure(!insecure_cookies);
 
+    let fork_config = config::ForkConfig::from_env();
+    if fork_config.launcher_signature_checksum.is_none() {
+        tracing::warn!(
+            "LAUNCHER_SIGNATURE_CHECKSUM is not set - the provisioning page shows no QR code \
+             until it is (see DEPLOY.md)"
+        );
+    }
+
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
     let state = AppState {
         db,
         dns_compiled: dns_engine::empty_compiled_blocklist(),
         command_notify,
+        config: std::sync::Arc::new(fork_config),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
 

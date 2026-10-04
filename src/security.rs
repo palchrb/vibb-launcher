@@ -280,7 +280,7 @@ pub async fn installed_watcher_version() -> Option<String> {
 /// comparing raw version strings directly was the wrong check (it fired on
 /// every single app release regardless of whether the watcher itself had
 /// changed at all).
-pub const REQUIRED_WATCHER_SCHEMA: u32 = 4;
+pub const REQUIRED_WATCHER_SCHEMA: u32 = 5;
 
 async fn installed_watcher_schema() -> Option<u32> {
     let raw = tokio::fs::read_to_string("data/watcher_schema_version")
@@ -301,8 +301,14 @@ pub async fn watcher_needs_update() -> bool {
 
 /// Re-run hint shown wherever the watcher version is displayed - the
 /// root-side watcher/scheduler scripts are only ever refreshed by re-running
-/// install.sh (the in-app "Update now" button only swaps the app binary).
-pub const REINSTALL_HINT: &str = "curl -sSL https://raw.githubusercontent.com/siesta5787/kid-phone-server/master/deploy/install.sh | sudo bash";
+/// install.sh (the in-app "Update now" button only swaps the app binary). `repo` is
+/// `config::ForkConfig::server_release_repo`. The `KPS_REPO=` prefix keeps a re-run installing
+/// from the same repo even when it isn't install.sh's built-in default.
+pub fn reinstall_hint(repo: &str) -> String {
+    format!(
+        "curl -sSL https://raw.githubusercontent.com/{repo}/master/deploy/install.sh | sudo KPS_REPO={repo} bash"
+    )
+}
 
 /// Creates the first admin account from ADMIN_USERNAME/ADMIN_PASSWORD env
 /// vars if the admin_users table is empty - there's no self-registration, so

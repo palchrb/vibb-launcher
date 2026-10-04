@@ -21,12 +21,12 @@ struct UpdatesTemplate {
     os: system_maintenance::OsUpdateData,
 }
 
-pub(crate) async fn render_page(_state: &AppState, message: Option<String>) -> Html<String> {
+pub(crate) async fn render_page(state: &AppState, message: Option<String>) -> Html<String> {
     Html(
         UpdatesTemplate {
             title: "Software updates".to_string(),
             message,
-            app: system_update::gather().await,
+            app: system_update::gather(state).await,
             os: system_maintenance::gather().await,
         }
         .render()

@@ -26,8 +26,6 @@ use crate::handlers::updates;
 use crate::security::{self, CurrentAdmin};
 
 const FLAG_FILE: &str = "data/update_requested";
-const REPO_API_URL: &str =
-    "https://api.github.com/repos/siesta5787/kid-phone-server/releases/latest";
 const SCHEDULE_FILE: &str = "data/app_update_schedule.conf";
 const LAST_CHECK_FILE: &str = "data/app_update_last_check";
 
@@ -36,13 +34,15 @@ struct LatestRelease {
     tag_name: String,
 }
 
-async fn latest_release_tag() -> Option<String> {
+/// `repo` is `config::ForkConfig::server_release_repo` (`owner/repo`).
+async fn latest_release_tag(repo: &str) -> Option<String> {
     let client = reqwest::Client::builder()
         .user_agent("kid-phone-server (self-hosted, github.com)")
         .timeout(Duration::from_secs(8))
         .build()
         .ok()?;
-    let response = client.get(REPO_API_URL).send().await.ok()?;
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let response = client.get(url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -139,14 +139,14 @@ pub(crate) struct AppUpdateData {
     pub(crate) check_failed: bool,
     pub(crate) watcher_version: Option<String>,
     pub(crate) watcher_needs_update: bool,
-    pub(crate) reinstall_hint: &'static str,
+    pub(crate) reinstall_hint: String,
     pub(crate) schedule: AppUpdateScheduleConfig,
     pub(crate) schedule_summary: String,
 }
 
-pub(crate) async fn gather() -> AppUpdateData {
+pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
     let current_version = crate::APP_VERSION.to_string();
-    let latest_version = latest_release_tag().await;
+    let latest_version = latest_release_tag(&state.config.server_release_repo).await;
     let check_failed = latest_version.is_none();
     let update_available = latest_version
         .as_deref()
@@ -161,7 +161,7 @@ pub(crate) async fn gather() -> AppUpdateData {
         check_failed,
         watcher_version: security::installed_watcher_version().await,
         watcher_needs_update: security::watcher_needs_update().await,
-        reinstall_hint: security::REINSTALL_HINT,
+        reinstall_hint: security::reinstall_hint(&state.config.server_release_repo),
         schedule,
         schedule_summary,
     }
@@ -278,7 +278,7 @@ pub async fn save_app_update_schedule(
 /// watcher has understood since it was first introduced - so unlike the
 /// OS-update/format-drive actions, this one has no watcher-version-skew
 /// concern to worry about.
-pub async fn run_scheduled_app_update_check(_state: AppState) {
+pub async fn run_scheduled_app_update_check(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
     loop {
         interval.tick().await;
@@ -297,7 +297,7 @@ pub async fn run_scheduled_app_update_check(_state: AppState) {
             continue;
         }
 
-        let Some(latest) = latest_release_tag().await else {
+        let Some(latest) = latest_release_tag(&state.config.server_release_repo).await else {
             continue;
         };
         if latest != crate::APP_VERSION {

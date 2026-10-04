@@ -6,53 +6,8 @@ use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
+use crate::config::ForkConfig;
 use crate::models::{Device, ProvisioningSettings};
-
-/// Android's standard zero-touch Device Owner provisioning flow: on a
-/// factory-reset device, tap the Welcome screen 6 times in the same spot,
-/// then scan a QR code encoding this JSON payload. Works on any Android
-/// device whose setup wizard implements the standard `ManagedProvisioning`
-/// hand-off (stock Android, most custom ROMs) - notably, as of this writing,
-/// NOT on GrapheneOS, whose own setup wizard has no `ManagedProvisioning`
-/// trigger of any kind (QR or NFC) built in yet - see
-/// github.com/GrapheneOS/platform_packages_apps_SetupWizard2/pull/40
-/// (open, unmerged). Built anyway so it works everywhere else already, and
-/// on GrapheneOS the moment that PR (or equivalent) lands.
-///
-/// The same QR/JSON is also read by the launcher's own in-app "Scan setup QR" flow
-/// (`ui/settings/launcher/SettingsFragmentLauncher` client-side) for exactly the
-/// GrapheneOS case above - once Device Owner is granted some other way
-/// (currently only `adb shell dpm set-device-owner`), scanning this same
-/// code applies `admin_extras`'s three fields and enrolls, collapsing what
-/// would otherwise be three manual Settings entries into one scan. The
-/// native ManagedProvisioning path ignores `PROVISIONING_ADMIN_EXTRAS_BUNDLE`'s
-/// contents entirely and just hands it to the app unopened via
-/// `DeviceAdminReceiver.onProfileProvisioningComplete` - see
-/// `MdmDeviceAdminReceiver.kt` on the client for that side.
-///
-/// The admin component and signature checksum are effectively constant -
-/// they only change if the receiver class is renamed or the signing key is
-/// ever rotated, not per release. The download location is the `kids-launcher-mdm`
-/// repo's rolling `pre-release` GitHub Release tag (`allowUpdates: true`,
-/// always the latest `master` build - see that repo's CLAUDE.md), so this
-/// QR code stays valid across every new build with nothing to regenerate.
-const ADMIN_COMPONENT: &str =
-    "com.kidslauncher.mdm.debug/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver";
-
-/// SHA-256 digest of the signing certificate embedded in every release APK
-/// (from the repo's `ANDROID_DEBUG_KEYSTORE` CI secret), base64url-encoded
-/// with no padding - the format `PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM`
-/// requires. Computed via:
-///   apksigner verify --print-certs app-debug.apk   # gives the SHA-256 digest as hex
-/// then hex -> raw bytes -> base64 -> replace + with -, / with _, strip
-/// trailing =. Matches the SHA-1 fingerprint (a70b3763f8a378e3e32da9154b7c2808891bf5f4)
-/// already trusted elsewhere in this project's deploy discipline - same
-/// certificate, different digest algorithm. Recompute and update this
-/// constant if the signing key is ever rotated.
-const SIGNATURE_CHECKSUM: &str = "TLXcVaskQBZyh0S88O29PvHa9RaiCCl-7TybpGlbmkg";
-
-const APK_DOWNLOAD_URL: &str =
-    "https://github.com/siesta5787/kids-launcher-mdm/releases/download/pre-release/app-debug.apk";
 
 /// android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE's contents - Android's own
 /// documented mechanism for passing arbitrary DPC-defined data through zero-touch/QR/NFC
@@ -60,20 +15,20 @@ const APK_DOWNLOAD_URL: &str =
 /// top-level PROVISIONING_* keys, which are Android's), read back on the client via
 /// `ProvisioningExtras.fromBundle`/`fromJson` - keep both sides in sync if these change.
 #[derive(Serialize)]
-struct AdminExtras {
-    server_url: String,
-    tailscale_auth_key: String,
-    enrollment_code: String,
+pub(crate) struct AdminExtras {
+    pub(crate) server_url: String,
+    pub(crate) tailscale_auth_key: String,
+    pub(crate) enrollment_code: String,
 }
 
 #[derive(Serialize)]
 struct ProvisioningPayload {
     #[serde(rename = "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME")]
-    admin_component: &'static str,
+    admin_component: String,
     #[serde(rename = "android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM")]
-    signature_checksum: &'static str,
+    signature_checksum: String,
     #[serde(rename = "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION")]
-    download_location: &'static str,
+    download_location: String,
     #[serde(
         rename = "android.app.extra.PROVISIONING_WIFI_SSID",
         skip_serializing_if = "Option::is_none"
@@ -98,8 +53,12 @@ struct ProvisioningPayload {
 struct ProvisionQrTemplate {
     title: String,
     device: Device,
+    /// Empty when `missing_checksum` is set - no QR is rendered at all then.
     qr_svg: String,
     missing_server_url: bool,
+    /// `LAUNCHER_SIGNATURE_CHECKSUM` isn't configured: the page shows a banner instead of a QR
+    /// code, rather than falling back to any built-in (upstream's) checksum.
+    missing_checksum: bool,
     wifi_ssid: String,
 }
 
@@ -149,46 +108,37 @@ pub async fn provision_form(
 
     let ssid = params.wifi_ssid.trim();
     let password = params.wifi_password.trim();
+    let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string()));
 
-    let payload = ProvisioningPayload {
-        admin_component: ADMIN_COMPONENT,
-        signature_checksum: SIGNATURE_CHECKSUM,
-        download_location: APK_DOWNLOAD_URL,
-        wifi_ssid: if ssid.is_empty() {
-            None
-        } else {
-            Some(ssid.to_string())
-        },
-        wifi_password: if ssid.is_empty() || password.is_empty() {
-            None
-        } else {
-            Some(password.to_string())
-        },
-        wifi_security_type: if ssid.is_empty() || password.is_empty() {
-            None
-        } else {
-            Some("WPA")
-        },
-        admin_extras: AdminExtras {
+    let payload = provisioning_payload(
+        &state.config,
+        AdminExtras {
             server_url: settings.server_url.clone(),
             tailscale_auth_key: settings.tailscale_auth_key,
             enrollment_code: code,
         },
-    };
+        wifi,
+    );
 
-    let json = serde_json::to_string(&payload).expect("provisioning payload always serializes");
-    let code = QrCode::new(json.as_bytes()).expect("provisioning payload always fits a QR code");
-    let qr_svg = code
-        .render()
-        .min_dimensions(320, 320)
-        .dark_color(svg::Color("#000000"))
-        .light_color(svg::Color("#ffffff"))
-        .build();
+    let qr_svg = match &payload {
+        Some(payload) => {
+            let json = payload.to_string();
+            QrCode::new(json.as_bytes())
+                .expect("provisioning payload always fits a QR code")
+                .render()
+                .min_dimensions(320, 320)
+                .dark_color(svg::Color("#000000"))
+                .light_color(svg::Color("#ffffff"))
+                .build()
+        }
+        None => String::new(),
+    };
 
     Html(
         ProvisionQrTemplate {
             title: format!("Provision {}", device.name),
             missing_server_url: settings.server_url.is_empty(),
+            missing_checksum: payload.is_none(),
             wifi_ssid: ssid.to_string(),
             device,
             qr_svg,
@@ -196,4 +146,64 @@ pub async fn provision_form(
         .render()
         .unwrap(),
     )
+}
+
+/// Android's standard zero-touch Device Owner provisioning flow: on a
+/// factory-reset device, tap the Welcome screen 6 times in the same spot,
+/// then scan a QR code encoding this JSON payload. Works on any Android
+/// device whose setup wizard implements the standard `ManagedProvisioning`
+/// hand-off (stock Android, most custom ROMs) - notably, as of this writing,
+/// NOT on GrapheneOS, whose own setup wizard has no `ManagedProvisioning`
+/// trigger of any kind (QR or NFC) built in yet - see
+/// github.com/GrapheneOS/platform_packages_apps_SetupWizard2/pull/40
+/// (open, unmerged). Built anyway so it works everywhere else already, and
+/// on GrapheneOS the moment that PR (or equivalent) lands.
+///
+/// The same QR/JSON is also read by the launcher's own in-app "Scan setup QR" flow
+/// (`ui/settings/launcher/SettingsFragmentLauncher` client-side) for exactly the
+/// GrapheneOS case above - once Device Owner is granted some other way
+/// (currently only `adb shell dpm set-device-owner`), scanning this same
+/// code applies `admin_extras`'s three fields and enrolls, collapsing what
+/// would otherwise be three manual Settings entries into one scan. The
+/// native ManagedProvisioning path ignores `PROVISIONING_ADMIN_EXTRAS_BUNDLE`'s
+/// contents entirely and just hands it to the app unopened via
+/// `DeviceAdminReceiver.onProfileProvisioningComplete` - see
+/// `MdmDeviceAdminReceiver.kt` on the client for that side.
+///
+/// The admin component, signature checksum and download URL come from `config::ForkConfig`
+/// (env vars, defaulting to our own fork) - they only change if the receiver class is renamed or
+/// the signing key is ever rotated, not per release. The default download URL is the
+/// `kids-launcher-mdm` fork's `releases/latest/download/kids-launcher-mdm.apk`, a stable asset
+/// name on every normal release, so this QR code stays valid across releases with nothing to
+/// regenerate.
+///
+/// The signature checksum is the SHA-256 digest of the launcher's signing *certificate* (not of
+/// the APK), base64url-encoded with no padding - the format
+/// `PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM` requires. It has no default on purpose: see
+/// `ForkConfig`'s doc comment and DEPLOY.md for how to compute it.
+///
+/// The JSON the provisioning QR encodes, or `None` when no launcher signing checksum is
+/// configured - there is deliberately no fallback value (see `config::ForkConfig`). `wifi` is
+/// `(ssid, password)`; an empty password means an open network.
+pub(crate) fn provisioning_payload(
+    config: &ForkConfig,
+    admin_extras: AdminExtras,
+    wifi: Option<(String, String)>,
+) -> Option<serde_json::Value> {
+    let signature_checksum = config.launcher_signature_checksum.clone()?;
+    let (wifi_ssid, wifi_password) = match wifi {
+        Some((ssid, password)) if !password.is_empty() => (Some(ssid), Some(password)),
+        Some((ssid, _)) => (Some(ssid), None),
+        None => (None, None),
+    };
+    let payload = ProvisioningPayload {
+        admin_component: config.launcher_admin_component.clone(),
+        signature_checksum,
+        download_location: config.launcher_apk_url.clone(),
+        wifi_security_type: wifi_password.as_ref().map(|_| "WPA"),
+        wifi_ssid,
+        wifi_password,
+        admin_extras,
+    };
+    Some(serde_json::to_value(&payload).expect("provisioning payload always serializes"))
 }

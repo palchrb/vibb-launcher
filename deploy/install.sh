@@ -3,7 +3,12 @@
 # systemd box).
 #
 # Usage (as root, e.g. via sudo):
-#   curl -sSL https://raw.githubusercontent.com/siesta5787/kid-phone-server/master/deploy/install.sh | sudo bash
+#   curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/install.sh | sudo bash
+#
+# To install from a different fork, set KPS_REPO=owner/repo (e.g.
+# `... | sudo KPS_REPO=someone/kid-phone-server bash`). This script never
+# reads the app's .env: that file is writable by the service user, and this
+# runs as root.
 #
 # Safe to re-run: it won't overwrite an existing .env or database, it just
 # re-installs the binary/service/watcher scripts (useful for re-running
@@ -11,7 +16,13 @@
 
 set -euo pipefail
 
-REPO="siesta5787/kid-phone-server"
+REPO="${KPS_REPO:-palchrb/kid-phone-server}"
+# Substituted into the root-run actions.sh below, so it must be a plain
+# owner/repo and nothing else.
+if ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    echo "KPS_REPO must look like owner/repo, got: $REPO" >&2
+    exit 1
+fi
 INSTALL_DIR="/opt/kid-phone-server"
 SERVICE_USER="kidphone"
 
@@ -22,7 +33,7 @@ SERVICE_USER="kidphone"
 # against its own required minimum (security::REQUIRED_WATCHER_SCHEMA) to
 # decide whether re-running this installer is actually necessary, rather
 # than just checking whether the release version strings happen to match.
-WATCHER_SCHEMA_VERSION="4"
+WATCHER_SCHEMA_VERSION="5"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Please run this as root (e.g. 'sudo bash install.sh')." >&2
@@ -95,6 +106,19 @@ DATABASE_URL=sqlite://data/kidphone.db
 BIND_ADDR=127.0.0.1:3100
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=$ADMIN_PASSWORD
+
+# Which GitHub repo the in-app update check looks at (owner/repo).
+SERVER_RELEASE_REPO=$REPO
+# Provisioning QR (Devices > Provision). The defaults point at the palchrb
+# launcher fork; only change them if you build your own launcher.
+LAUNCHER_ADMIN_COMPONENT=com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+LAUNCHER_APK_URL=https://github.com/palchrb/kids-launcher-mdm/releases/latest/download/kids-launcher-mdm.apk
+# SHA-256 of the launcher's signing certificate, base64url without padding
+# (43 characters). No QR code is shown until this is set. Compute it from a
+# release APK with:
+#   apksigner verify --print-certs kids-launcher-mdm.apk | sed -n 's/.*SHA-256 digest: //p' | xxd -r -p | openssl base64 -A | tr '+/' '-_' | tr -d '='
+# (DEPLOY.md has the same command, plus one that reads the keystore.)
+#LAUNCHER_SIGNATURE_CHECKSUM=
 EOF
     PRINT_CREDENTIALS=1
 else
@@ -168,12 +192,13 @@ cat >"$UPDATER_DIR/actions.sh" <<'ACTIONS_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="siesta5787/kid-phone-server"
+# Filled in by install.sh (sed below) with the repo it was installed from.
+REPO="@REPO@"
 DATA_DIR="/opt/kid-phone-server/data"
 BACKUP_DIR="$DATA_DIR/backups"
 
 action_app_update() {
-    curl -sSL "https://raw.githubusercontent.com/$REPO/master/deploy/update.sh" | bash
+    curl -sSL "https://raw.githubusercontent.com/$REPO/master/deploy/update.sh" | KPS_REPO="$REPO" bash
 }
 
 action_app_restart() {
@@ -319,6 +344,7 @@ action_restore_backup() {
     echo "Restore complete."
 }
 ACTIONS_EOF
+sed -i "s|@REPO@|$REPO|" "$UPDATER_DIR/actions.sh"
 
 cat >"$UPDATER_DIR/watcher.sh" <<'WATCHER_EOF'
 #!/usr/bin/env bash

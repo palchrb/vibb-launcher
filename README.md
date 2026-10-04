@@ -1,6 +1,6 @@
 # Kids Device MDM
 
-A self-hosted parental-control admin server for Android phones running in [Device Owner mode](https://developer.android.com/work/dpc/build-dpc). Built to pair with [`kids-launcher-mdm`](https://github.com/siesta5787/kids-launcher-mdm), a custom Android launcher that doubles as the on-device management agent - this repo is the parent-facing web app that controls it.
+A self-hosted parental-control admin server for Android phones running in [Device Owner mode](https://developer.android.com/work/dpc/build-dpc). Built to pair with [`kids-launcher-mdm`](https://github.com/palchrb/kids-launcher-mdm), a custom Android launcher that doubles as the on-device management agent - this repo is the parent-facing web app that controls it.
 
 Designed to run on very light hardware (a Raspberry Pi Zero 2 W is the reference target) and to actually be usable by a non-technical parent: every setting is a real web form, there's no database console involved.
 
@@ -25,7 +25,7 @@ Rust + [Axum](https://github.com/tokio-rs/axum) + SQLite (via `sqlx`, WAL mode) 
 See [DEPLOY.md](DEPLOY.md) for the full walkthrough. Short version, on a 64-bit Raspberry Pi (or any aarch64 Linux box):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/siesta5787/kid-phone-server/master/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/install.sh | sudo bash
 ```
 
 This installs a systemd service listening on `127.0.0.1:3100` only - put it behind [Tailscale](https://tailscale.com/) (or your own reverse proxy/VPN) to reach it remotely. It prints a one-time admin password on first install; you'll be forced to change it and set up two-factor login before anything else works.

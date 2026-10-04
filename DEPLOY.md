@@ -7,7 +7,7 @@ These steps get Kids Device MDM running on a Raspberry Pi Zero 2 W. Only 64-bit 
 SSH into the Pi, then run:
 
 ```
-curl -sSL https://raw.githubusercontent.com/siesta5787/kid-phone-server/master/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/install.sh | sudo bash
 ```
 
 This downloads the latest release binary, sets it up as a background service that starts on boot, and prints an admin username/password at the end — **save that password**, you'll need it to log in the first time (and you'll be asked to change it immediately after).
@@ -29,10 +29,72 @@ This gives you `https://<hostname>.<tailnet>.ts.net`, reachable only from your o
 ## Updating
 
 ```
-curl -sSL https://raw.githubusercontent.com/siesta5787/kid-phone-server/master/deploy/update.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/update.sh | sudo bash
 ```
 
-Downloads the latest release and swaps the binary in place. Doesn't touch your `.env` or database.
+Downloads the latest release and swaps the binary in place. Doesn't touch your `.env`. Before the swap it copies the
+database and the old binary to `/var/backups/kid-phone-server/<timestamp>/` (the newest 3 are kept), because the new
+version may migrate the database on its first start.
+
+To install from a different fork, prefix `bash` with `KPS_REPO=owner/repo` (for both `install.sh` and `update.sh`):
+`... | sudo KPS_REPO=someone/kid-phone-server bash`. The root-side updater remembers the repo it was installed from.
+
+### Rolling back the server
+
+An older binary refuses to start against a database that a newer version has already migrated, so roll back both
+together, from the backup `update.sh` made:
+
+```
+sudo systemctl stop kid-phone-server
+B=/var/backups/kid-phone-server/<timestamp>        # the one taken just before the bad update
+sudo cp "$B/kid_phone_server" /opt/kid-phone-server/kid_phone_server
+sudo rm -f /opt/kid-phone-server/data/kidphone.db-wal /opt/kid-phone-server/data/kidphone.db-shm
+sudo cp "$B"/kidphone.db* /opt/kid-phone-server/data/
+sudo chown kidphone:kidphone /opt/kid-phone-server/kid_phone_server /opt/kid-phone-server/data/kidphone.db*
+sudo systemctl start kid-phone-server
+```
+
+Anything the devices reported after that backup (status, locations, journal) is lost. Turn off scheduled automatic
+updates on the Updates page first, or the next scheduled check installs the bad version again.
+
+## Launcher provisioning settings
+
+The server needs to know which launcher build to provision. These live in `/opt/kid-phone-server/.env` (restart the
+service after editing: `sudo systemctl restart kid-phone-server`):
+
+| Setting | Default |
+|---|---|
+| `LAUNCHER_ADMIN_COMPONENT` | `com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` |
+| `LAUNCHER_APK_URL` | `https://github.com/palchrb/kids-launcher-mdm/releases/latest/download/kids-launcher-mdm.apk` |
+| `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
+| `SERVER_RELEASE_REPO` | `palchrb/kid-phone-server` (where the Updates page looks for new server versions) |
+
+`LAUNCHER_SIGNATURE_CHECKSUM` is the SHA-256 of the launcher's **signing certificate** (not of the APK file),
+base64url-encoded without padding: 43 characters. Until it is set, Devices > Provision shows a warning and no QR code.
+Compute it either from the release keystore or from a release APK; both must print the same value:
+
+```
+keytool -exportcert -alias handy -keystore handy-release.p12 \
+  | openssl dgst -binary -sha256 | openssl base64 -A | tr '+/' '-_' | tr -d '='
+
+apksigner verify --print-certs kids-launcher-mdm.apk | sed -n 's/.*SHA-256 digest: //p' \
+  | xxd -r -p | openssl base64 -A | tr '+/' '-_' | tr -d '='
+```
+
+An invalid value (wrong length, `+`/`/`/`=` characters) is logged at startup and ignored.
+
+### The launcher's own self-update
+
+The launcher updates itself through the Apps catalog, like any other app. Add it once under **Apps > Add**:
+
+- source: GitHub, repo `palchrb/kids-launcher-mdm`
+- asset filename filter: `kids-launcher-mdm.apk`
+- "include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
+- package name: `com.kidslauncher.mdm`
+- then, on the app's page, turn on "This is the launcher app"
+
+A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is
+broken, fix it forward by releasing the old (or fixed) code under a higher version tag.
 
 ## Useful commands on the Pi
 
@@ -53,7 +115,7 @@ If a kid's phone uses [Molly](https://molly.im/) (a de-Googled Signal fork) and 
 1. Install it the same way as the main server:
 
     ```
-    curl -sSL https://raw.githubusercontent.com/siesta5787/kid-phone-server/master/deploy/install_mollysocket.sh | sudo bash
+    curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/install_mollysocket.sh | sudo bash
     ```
 
    This sets up its own systemd service (`mollysocket`), listening on `127.0.0.1:8020` only, same "local by default" posture as the main server.

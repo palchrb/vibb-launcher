@@ -3,6 +3,7 @@
 //! requests sent straight to the router - no network, no background tasks.
 
 mod device_api;
+mod provisioning;
 
 use axum::Router;
 use axum::body::Body;
@@ -14,10 +15,14 @@ use tower::ServiceExt;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
+use crate::config::ForkConfig;
 use crate::{AppState, build_router, connect_db, dns_engine};
 
 pub struct TestApp {
     pub router: Router,
+    /// The same state the router was built with - lets tests call an admin handler directly
+    /// (skipping the session/2FA middleware) or build a second router with different config.
+    pub state: AppState,
     pub db: SqlitePool,
     _dir: tempfile::TempDir,
 }
@@ -35,6 +40,25 @@ impl TestResponse {
                 String::from_utf8_lossy(&self.body)
             )
         })
+    }
+}
+
+/// Status and body of a response from a handler called directly (see `TestApp::state`).
+pub async fn read_response(response: axum::response::Response) -> TestResponse {
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("failed to read body")
+        .to_bytes()
+        .to_vec();
+    TestResponse { status, body }
+}
+
+impl TestResponse {
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
     }
 }
 
@@ -57,10 +81,12 @@ impl TestApp {
             db: db.clone(),
             dns_compiled: dns_engine::empty_compiled_blocklist(),
             command_notify,
+            config: std::sync::Arc::new(ForkConfig::for_tests()),
         };
 
         TestApp {
-            router: build_router(state, session_layer),
+            router: build_router(state.clone(), session_layer),
+            state,
             db,
             _dir: dir,
         }

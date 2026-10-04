@@ -11,6 +11,12 @@
     </div>
     <p class="subtitle">This QR code carries a fresh one-shot enrollment code for this device, plus your server URL and Tailscale key from <a href="/settings/provisioning">Provisioning settings</a> - scanning it does setup and enrollment in one step. It goes stale the moment you leave this page or generate another one, same as a plain enrollment code.</p>
 
+    {% if missing_checksum %}
+    <div class="card" style="border-color:#dc2626;">
+        <p><strong>Launcher signing checksum not configured (see DEPLOY.md).</strong> Without it, Android can't check that the launcher it downloads is your own build, so no QR code is shown. Set <code>LAUNCHER_SIGNATURE_CHECKSUM</code> in <code>/opt/kid-phone-server/.env</code> and restart the server.</p>
+    </div>
+    {% endif %}
+
     {% if missing_server_url %}
     <div class="card" style="border-color:#dc2626;">
         <p><strong>No server URL configured yet.</strong> Set one on the <a href="/settings/provisioning">Provisioning settings</a> page first, or this QR code won't be able to auto-enroll the device - you'd still need to type it in by hand afterward.</p>
@@ -39,10 +45,12 @@
         </form>
     </div>
 
+    {% if !missing_checksum %}
     <div class="card">
         <h2>Scan this</h2>
         <div class="qr-code">{{ qr_svg|safe }}</div>
     </div>
+    {% endif %}
 </main>
 </body>
 </html>
