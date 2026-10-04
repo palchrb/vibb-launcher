@@ -31,6 +31,7 @@
     <string name="calls_phone_book_empty">There\'s nobody to call yet. Emergency numbers (112, 110, 113) always work from the lock screen\'s Emergency button.</string>
     <string name="calls_off">Calls are turned off on this phone. Emergency numbers still work.</string>
     <string name="calls_call">Call</string>
+    <string name="calls_emergency">Emergency call</string>
     <string name="calls_message">Message</string>
     <string name="calls_confirm_title">Call %1$s?</string>
     <string name="calls_cancel">Cancel</string>

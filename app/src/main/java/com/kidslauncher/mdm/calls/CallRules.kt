@@ -208,3 +208,26 @@ fun outgoingDialTarget(raw: String?, state: CallPolicyState, isEmergency: Boolea
     val number = rules.contactFor(raw)?.takeIf { it.outbound }?.number ?: return null
     return if (PhoneNumbers.stripSeparators(raw) == number) null else number
 }
+
+/**
+ * What the phone book and Home show (QA step 2 #1): with calls on, every phone-book contact;
+ * otherwise (calls off, rules unknown) only contacts whose number is an emergency number - those
+ * calls always go through. [emergencyDialer]: rules can't be read at all, so there are no contacts
+ * - show one "Emergency call" row (calls 112), so 112 is never out of reach (the
+ * system dialer is hidden while calls are managed, and a phone without a screen lock has no
+ * lock-screen Emergency button).
+ */
+data class PhoneBookView(val contacts: List<RuleContact>, val emergencyDialer: Boolean) {
+    val isEmpty: Boolean get() = contacts.isEmpty() && !emergencyDialer
+    val home: List<RuleContact> get() = contacts.filter { it.showOnHome }
+}
+
+fun phoneBookView(state: CallPolicyState, isEmergency: (String) -> Boolean): PhoneBookView = when (state) {
+    CallPolicyState.Unmanaged -> PhoneBookView(emptyList(), false)
+    CallPolicyState.UnknownFailClosed -> PhoneBookView(emptyList(), true)
+    is CallPolicyState.Managed -> if (state.rules.callsEnabled) {
+        PhoneBookView(state.rules.phoneBook, false)
+    } else {
+        PhoneBookView(state.rules.phoneBook.filter { isEmergency(it.number) }, false)
+    }
+}

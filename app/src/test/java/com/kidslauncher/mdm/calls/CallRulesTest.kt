@@ -237,6 +237,25 @@ class CallRulesTest {
         assertNull(target("91234567", unmanaged))
     }
 
+    // Phone book (QA step 2 #1)
+
+    @Test
+    fun `emergency contacts stay in the phone book when calls are off`() {
+        val politi = RuleContact(9, "Politi", "112", outbound = true, showOnHome = true)
+        val withPoliti = rules.copy(contacts = rules.contacts + politi)
+        val isEmergency: (String) -> Boolean = { emergency(it) }
+        val on = phoneBookView(CallPolicyState.Managed(withPoliti), isEmergency)
+        assertEquals(withPoliti.phoneBook, on.contacts)
+        assertEquals(listOf(mamma, politi), on.home)
+        val off = phoneBookView(CallPolicyState.Managed(withPoliti.copy(callsEnabled = false)), isEmergency)
+        assertEquals(listOf(politi), off.contacts)
+        assertFalse(off.emergencyDialer)
+        // Rules unreadable: no contacts, but a way to the emergency dialer.
+        val unknown = phoneBookView(failClosed, isEmergency)
+        assertTrue(unknown.emergencyDialer && unknown.contacts.isEmpty() && !unknown.isEmpty)
+        assertTrue(phoneBookView(unmanaged, isEmergency).isEmpty)
+    }
+
     @Test
     fun `stranger calls are allowed at 59 minutes and blocked at 61`() {
         fun at(minutesAgo: Long) = decideIncoming("+4799999999", true, false, managed) {

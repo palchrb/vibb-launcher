@@ -69,17 +69,33 @@ class PhoneBookActivity : UIObjectActivity() {
     private fun render() {
         list.removeAllViews()
         list.addView(text(getString(R.string.calls_phone_book), 28f))
-        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
-        when {
-            rules == null || !rules.callsEnabled -> list.addView(text(getString(R.string.calls_off), 18f))
-            rules.phoneBook.isEmpty() -> list.addView(text(getString(R.string.calls_phone_book_empty), 18f))
-            else -> {
-                val usable = usablePackages()
-                val smsPackage = CallSystem.defaultSmsPackage(this)
-                for (contact in rules.phoneBook) {
-                    list.addView(contactRow(contact, resolveMessageButton(contact, rules.smsEnabled, smsPackage, usable)))
-                }
-            }
+        val state = CallPolicyStore.state
+        val rules = (state as? CallPolicyState.Managed)?.rules
+        val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
+        if (rules == null || !rules.callsEnabled) list.addView(text(getString(R.string.calls_off), 18f))
+        if (view.emergencyDialer) list.addView(emergencyRow())
+        if (rules != null && rules.callsEnabled && view.contacts.isEmpty()) {
+            list.addView(text(getString(R.string.calls_phone_book_empty), 18f))
+        }
+        val usable = usablePackages()
+        val smsPackage = CallSystem.defaultSmsPackage(this)
+        for (contact in view.contacts) {
+            val message = rules?.let { resolveMessageButton(contact, it.smsEnabled, smsPackage, usable) }
+            list.addView(contactRow(contact, message))
+        }
+    }
+
+    /** Only when no call rules can be read at all: 112 (an emergency number on every GSM phone;
+     * Telecom routes it to the preloaded dialer, exempt from every call restriction), confirmed
+     * first. The platform's own emergency-dialer intent isn't public API. */
+    private fun emergencyRow() = Button(this).apply {
+        setText(R.string.calls_emergency)
+        setOnClickListener {
+            AlertDialog.Builder(this@PhoneBookActivity)
+                .setTitle(getString(R.string.calls_confirm_title, "112"))
+                .setPositiveButton(R.string.calls_call) { _, _ -> CallSystem.placeCall(this@PhoneBookActivity, "112") }
+                .setNegativeButton(R.string.calls_cancel, null)
+                .show()
         }
     }
 

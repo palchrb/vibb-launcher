@@ -8,7 +8,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.calls.CallPolicyState
+import com.kidslauncher.mdm.calls.phoneBookView
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.PhoneBookActivity
@@ -22,7 +22,8 @@ import com.kidslauncher.mdm.calls.RuleContact
 @SuppressLint("NotifyDataSetChanged")
 class ContactsHomeAdapter(private val activity: Activity) : RecyclerView.Adapter<ContactsHomeAdapter.ViewHolder>() {
 
-    /** `null` = the phone-book row. */
+    /** `null` = the phone-book row. Unless calls are on, only emergency contacts (and, with no
+     * readable rules, the phone-book row leading to the emergency dialer) - [phoneBookView]. */
     private val rows = mutableListOf<RuleContact?>()
 
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -52,10 +53,10 @@ class ContactsHomeAdapter(private val activity: Activity) : RecyclerView.Adapter
 
     fun update() {
         rows.clear()
-        val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
-        if (rules != null && rules.callsEnabled) {
+        val view = phoneBookView(CallPolicyStore.state) { CallSystem.isEmergencyOutgoing(activity, it) }
+        if (!view.isEmpty) {
             rows += null
-            rows += rules.homeContacts
+            rows += view.home
         }
         notifyDataSetChanged()
     }
