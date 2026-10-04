@@ -273,7 +273,10 @@ object AppEnforcer {
      * Makes us the default dialer while calls are managed ([dialerRoleAction]):
      * `DevicePolicyManager.setDefaultDialerApplication` (device owner, no prompt). If that throws,
      * the error is reported to the server and HomeActivity falls back to the system's role
-     * prompt once a day ([com.kidslauncher.mdm.calls.shouldPromptForRole]).
+     * prompt once a day ([com.kidslauncher.mdm.calls.shouldPromptForRole]). When calls are not
+     * managed (an explicit `managed: false`, or an old server on a phone whose calls never were),
+     * a role we took is handed back to the system dialer, so the phone is never left with our
+     * dialer and no rules.
      */
     private fun applyDialerRole(context: Context, dpm: DevicePolicyManager, admin: ComponentName, state: CallPolicyState) {
         val held = CallSystem.dialerRoleHeld(context)
@@ -286,7 +289,18 @@ object AppEnforcer {
                 Log.w(LOG_TAG, "setDefaultDialerApplication failed", e)
                 CallPrefs.lastError(context, "setDefaultDialerApplication: ${e.javaClass.simpleName}: ${e.message}".take(300))
             }
-            RoleAction.RELEASE, RoleAction.NONE -> if (held) CallPrefs.lastError(context, null)
+            RoleAction.RELEASE -> {
+                val systemDialer = systemDialerPackage(context)
+                try {
+                    if (systemDialer != null) dpm.setDefaultDialerApplication(systemDialer)
+                    CallPrefs.dialerRoleTakenByUs(context, false)
+                    CallPrefs.lastError(context, null)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Handing the dialer role back to $systemDialer failed", e)
+                    CallPrefs.lastError(context, "release dialer role: ${e.javaClass.simpleName}: ${e.message}".take(300))
+                }
+            }
+            RoleAction.NONE -> if (held || !state.managed) CallPrefs.lastError(context, null)
         }
     }
 
