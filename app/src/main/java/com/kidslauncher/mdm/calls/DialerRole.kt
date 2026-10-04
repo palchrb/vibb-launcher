@@ -28,8 +28,9 @@ fun shouldPromptForRole(state: CallPolicyState, roleHeld: Boolean, nowMs: Long, 
     state.managed && !roleHeld && (nowMs - lastPromptMs >= ROLE_PROMPT_INTERVAL_MS || nowMs < lastPromptMs)
 
 /**
- * `DISALLOW_CONFIG_DEFAULT_APPS` once our dialer is in place while calls are managed, so the kid
- * can't switch the default phone app back in Settings (task 14). Cleared before the role is
- * handed back.
+ * `DISALLOW_CONFIG_DEFAULT_APPS` once our roles are in place while calls are managed, so the kid
+ * can't switch the default phone app back in Settings (task 14). [rolesHeld]: the dialer AND the
+ * call-redirection role - not before, because the restriction may also block the system's role
+ * prompt we fall back to [device check]. Cleared before the dialer role is handed back.
  */
-fun lockDefaultApps(state: CallPolicyState, roleHeld: Boolean): Boolean = state.managed && roleHeld
+fun lockDefaultApps(state: CallPolicyState, rolesHeld: Boolean): Boolean = state.managed && rolesHeld

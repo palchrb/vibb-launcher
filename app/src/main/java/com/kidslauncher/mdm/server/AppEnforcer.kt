@@ -17,6 +17,7 @@ import com.kidslauncher.mdm.calls.CallPrefs
 import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.RoleAction
 import com.kidslauncher.mdm.calls.dialerRoleAction
+import com.kidslauncher.mdm.calls.lockDefaultApps
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -280,7 +281,10 @@ object AppEnforcer {
      */
     private fun applyDialerRole(context: Context, dpm: DevicePolicyManager, admin: ComponentName, state: CallPolicyState) {
         val held = CallSystem.dialerRoleHeld(context)
-        when (dialerRoleAction(state, held, CallPrefs.dialerRoleTakenByUs(context))) {
+        val action = dialerRoleAction(state, held, CallPrefs.dialerRoleTakenByUs(context))
+        // Changing the default dialer with DISALLOW_CONFIG_DEFAULT_APPS set may be refused.
+        if (action != RoleAction.NONE) setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, false)
+        when (action) {
             RoleAction.TAKE -> try {
                 dpm.setDefaultDialerApplication(context.packageName)
                 CallPrefs.dialerRoleTakenByUs(context, true)
@@ -302,6 +306,8 @@ object AppEnforcer {
             }
             RoleAction.NONE -> if (held || !state.managed) CallPrefs.lastError(context, null)
         }
+        val rolesHeld = CallSystem.dialerRoleHeld(context) && CallSystem.redirectionRoleHeld(context)
+        setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, lockDefaultApps(state, rolesHeld))
     }
 
     /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that
