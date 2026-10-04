@@ -306,8 +306,7 @@ object AppEnforcer {
             }
             RoleAction.NONE -> if (held || !state.managed) CallPrefs.lastError(context, null)
         }
-        val rolesHeld = CallSystem.dialerRoleHeld(context) && CallSystem.redirectionRoleHeld(context)
-        setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, lockDefaultApps(state, rolesHeld))
+        setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, lockDefaultApps(state, CallSystem.dialerRoleHeld(context)))
     }
 
     /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that

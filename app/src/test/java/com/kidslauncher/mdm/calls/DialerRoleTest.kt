@@ -53,10 +53,10 @@ class DialerRoleTest {
     }
 
     @Test
-    fun `default apps are locked only with our roles in place while managed`() {
-        assertTrue(lockDefaultApps(managed, rolesHeld = true))
-        assertTrue(lockDefaultApps(failClosed, rolesHeld = true))
-        assertFalse(lockDefaultApps(managed, rolesHeld = false))
-        assertFalse(lockDefaultApps(unmanaged, rolesHeld = true))
+    fun `default apps are locked as soon as our dialer role is held while managed`() {
+        assertTrue(lockDefaultApps(managed, dialerRoleHeld = true))
+        assertTrue(lockDefaultApps(failClosed, dialerRoleHeld = true))
+        assertFalse(lockDefaultApps(managed, dialerRoleHeld = false))
+        assertFalse(lockDefaultApps(unmanaged, dialerRoleHeld = true))
     }
 }
