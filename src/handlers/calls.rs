@@ -162,7 +162,8 @@ async fn load_page(
 /// What the parent should know about this phone's calls, from its latest status report: the
 /// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer or
 /// call-redirection role isn't ours, an error, the fail-closed state, an allowlisted Messages
-/// app while SMS is off (QA #8), and recent emergency calls / an open callback window (QA #2).
+/// app while SMS is off (QA #8), an unreadable call log (QA step 2 #7), and recent emergency calls
+/// / an open callback window (QA #2).
 /// Emergency calls are reported whether or not calls are managed now.
 pub(crate) async fn call_warnings(
     state: &AppState,
@@ -256,6 +257,14 @@ pub(crate) async fn call_warnings(
              up after they start, so the other phone may ring briefly. Run `adb shell cmd role \
              add-role-holder android.app.role.CALL_REDIRECTION <launcher package>` or accept the \
              prompt on the phone."
+                .to_string(),
+        );
+    }
+    if flag("call_log_readable") == Some(false) {
+        warnings.push(
+            "The launcher can't read the phone's call log, so after an emergency call the \
+             emergency services may not be able to call back (the callback window can't open). \
+             Check that the launcher is the default phone app."
                 .to_string(),
         );
     }

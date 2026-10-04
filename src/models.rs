@@ -369,7 +369,7 @@ pub struct StatusReportRequest {
     /// What this launcher can enforce, e.g. "call_policy_v1". Empty from older launchers.
     #[serde(default)]
     pub capabilities: Vec<String>,
-    /// The launcher's applied call state (dialer role, restrictions, emergency calls), stored as
+    /// The launcher's applied call state (dialer role, restrictions, emergency calls, call-log access), stored as
     /// JSON text. Kept as an opaque value so a newer launcher's extra fields aren't lost.
     #[serde(default)]
     pub call_state: Option<serde_json::Value>,

@@ -560,7 +560,8 @@ fn good_call_state() -> Value {
         "sms_restricted": false,
         "outgoing_restricted": false,
         "default_sms_package": "com.google.android.apps.messaging",
-        "last_error": null
+        "last_error": null,
+        "call_log_readable": true
     })
 }
 
@@ -657,6 +658,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     call_state["dialer_role_held"] = json!(false);
     call_state["redirection_role_held"] = json!(false);
     call_state["last_error"] = json!("setDefaultDialerApplication: IllegalArgumentException");
+    call_state["call_log_readable"] = json!(false);
     post_status(
         &app,
         &token,
@@ -669,6 +671,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
         "Phone app role not active",
         "Call-redirection role not active",
         "setDefaultDialerApplication: IllegalArgumentException",
+        "read the phone",
     ] {
         assert!(page.contains(expected), "{expected}: {page}");
     }
