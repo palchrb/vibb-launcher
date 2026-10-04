@@ -32,9 +32,12 @@ This gives you `https://<hostname>.<tailnet>.ts.net`, reachable only from your o
 curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/update.sh | sudo bash
 ```
 
-Downloads the latest release and swaps the binary in place. Doesn't touch your `.env`. Before the swap it copies the
-database and the old binary to `/var/backups/kid-phone-server/<timestamp>/` (the newest 3 are kept), because the new
-version may migrate the database on its first start.
+Downloads the latest release and swaps the binary in place. Doesn't touch your `.env`. The download is unpacked and
+checked before the service is stopped, so a failed download leaves the old version running; if anything fails after the
+stop, the service is started again. Before the swap it copies the database and the old binary to
+`/var/backups/kid-phone-server/<timestamp>/`, because the new version may migrate the database on its first start. Old
+backups are pruned (newest 3 kept) only after the new version is running, so failed retries can't push out the
+pre-update copy.
 
 To install from a different fork, prefix `bash` with `KPS_REPO=owner/repo` (for both `install.sh` and `update.sh`):
 `... | sudo KPS_REPO=someone/kid-phone-server bash`. The root-side updater remembers the repo it was installed from.

@@ -16,8 +16,10 @@ not code: `src/config.rs` (`ForkConfig`, `AppState.config`) reads `SERVER_RELEAS
 checksum has no default: without it the provisioning page shows a banner and no QR (never upstream's checksum). An
 invalid value is logged and treated as unset. The root-run deploy scripts never read `.env` (it's writable by the
 service user): `install.sh`/`update.sh` take `KPS_REPO=owner/repo` (validated), and `install.sh` substitutes it into
-`actions.sh` at install time. `update.sh` copies the DB and the old binary to `/var/backups/kid-phone-server/` before
-every swap (rollback steps in DEPLOY.md). Production launchers are the release build, package `com.kidslauncher.mdm`
+`actions.sh` at install time. `update.sh` downloads with `curl -f` and unpacks/checks the release before stopping the
+service, restarts it from an `ERR` trap if anything fails after the stop, copies the DB and the old binary to
+`/var/backups/kid-phone-server/` before every swap, and prunes old backups only once the new version is running
+(rollback steps in DEPLOY.md). Production launchers are the release build, package `com.kidslauncher.mdm`
 (no `.debug` suffix), from normal GitHub releases with the stable asset name `kids-launcher-mdm.apk` - so the
 launcher's catalog row has `include_prereleases` **off** (release candidates are prereleases). Some bullets below
 describe upstream's rolling `pre-release` debug builds; that's history, not how this fork ships.

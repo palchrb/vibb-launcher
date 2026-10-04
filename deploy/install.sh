@@ -80,7 +80,7 @@ fi
 mkdir -p "$INSTALL_DIR"
 TARBALL_URL="https://github.com/$REPO/releases/latest/download/kid-phone-server-$TARGET.tar.gz"
 echo "Downloading latest release from $TARBALL_URL ..."
-curl -sSL "$TARBALL_URL" -o /tmp/kid-phone-server.tar.gz
+curl -fsSL "$TARBALL_URL" -o /tmp/kid-phone-server.tar.gz
 tar -xzf /tmp/kid-phone-server.tar.gz -C "$INSTALL_DIR"
 rm /tmp/kid-phone-server.tar.gz
 chmod +x "$INSTALL_DIR/kid_phone_server"
