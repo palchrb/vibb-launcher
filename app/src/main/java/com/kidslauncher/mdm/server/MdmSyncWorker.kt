@@ -124,7 +124,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         freshPolicy.packagesToUninstall.forEach { AppInstaller.uninstallSilently(context, it) }
     }
 
-    val overrideActive = OfflineOverride.isActive() || LauncherPreferences.mdm().restrictionsPaused()
+    val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
     val reason = when (val decision = choosePolicy(freshPolicy, cached, policyEverApplied)) {
         is PolicyToApply.Apply -> {
             val reason = if (overrideActive) LockReason.NONE else {
@@ -162,6 +162,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 offlineOverrideUsed = mdm.offlineOverrideUsedPendingReport(),
                 location = currentLocationReport(context, dpm, admin, forceFreshLocation),
                 policyState = policyState(freshOutcome, cached, policyEverApplied),
+                restrictionsPaused = RestrictionsPause.isActive(),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -492,7 +493,7 @@ fun cachedPolicy(): CachedPolicy {
  */
 fun reevaluateLockReasonFromCache() {
     val mdm = LauncherPreferences.mdm()
-    val reason = if (OfflineOverride.isActive() || LauncherPreferences.mdm().restrictionsPaused()) {
+    val reason = if (OfflineOverride.isActive() || RestrictionsPause.isActive()) {
         LockReason.NONE
     } else {
         when (val decision = choosePolicy(null, cachedPolicy(), mdm.policyEverApplied())) {

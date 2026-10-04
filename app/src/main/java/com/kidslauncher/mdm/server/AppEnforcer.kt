@@ -101,11 +101,11 @@ object AppEnforcer {
         }
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
 
-        // While a locally-entered offline override is active, or a parent has flipped the manual
-        // "pause all restrictions" kill-switch in Settings, everything is released - the
+        // While a locally-entered offline override is active, or a parent has turned on the
+        // PIN-gated "pause all restrictions" switch in Settings, everything is released - the
         // plan below treats an active override like "no policy", and so does every restriction
         // further down.
-        val overrideActive = OfflineOverride.isActive() || LauncherPreferences.mdm().restrictionsPaused()
+        val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
 
         enforceDefaultHome(dpm, admin, context)
 
@@ -465,7 +465,7 @@ object AppEnforcer {
         val suspend = shouldSuspendNewPackage(
             packageName = packageName,
             decision = decision,
-            overrideActive = OfflineOverride.isActive() || LauncherPreferences.mdm().restrictionsPaused(),
+            overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive(),
             ownPackage = context.packageName,
             systemDialer = systemDialerPackage(context),
         )

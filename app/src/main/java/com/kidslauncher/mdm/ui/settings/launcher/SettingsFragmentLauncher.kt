@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.SwitchPreference
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
@@ -21,8 +22,10 @@ import com.kidslauncher.mdm.copyToClipboard
 import com.kidslauncher.mdm.getDeviceInfo
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.PolicyToApply
 import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.UnifiedPushRegistrationReceiver
 import com.kidslauncher.mdm.server.UnifiedPushRelay
 import com.kidslauncher.mdm.server.applyProvisioningExtras
@@ -148,39 +151,30 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
-        val restrictionsPaused = findPreference<Preference>(mdm.keys().restrictionsPaused())
-        restrictionsPaused?.setOnPreferenceChangeListener { _, _ ->
-            // The Preference framework persists the new value right after this listener returns
-            // true, synchronously within the same click - posting defers just past that write so
-            // AppEnforcer.apply()/reevaluateLockReasonFromCache() (which both re-read the
-            // preference themselves, rather than taking it as a parameter) see the new value.
-            // No network call: this is what makes the toggle take effect immediately instead of
-            // only on the next sync (which is what made it look broken while testing offline).
-            //
-            // The posted block itself must stay tiny and hand off to a background coroutine
-            // rather than call AppEnforcer.apply() directly - confirmed live this froze the UI
-            // thread for several seconds and triggered an ANR/force-close once apply() started
-            // (re)starting KidVpnService, whose onCreate() does a synchronous disk read
-            // (DnsFilterEngine.loadFromDisk) that's too slow for the main thread. AppEnforcer.apply()
-            // was never actually cheap either (a DevicePolicyManager Binder call per changed
-            // package), it just hadn't been reached by a slow enough operation to notice before.
+        val restrictionsPaused = findPreference<SwitchPreference>(mdm.keys().restrictionsPaused())
+        // isActive() clears a pause that has run out, so the switch never shows a stale "on".
+        restrictionsPaused?.isChecked = RestrictionsPause.isActive()
+        restrictionsPaused?.setOnPreferenceChangeListener { _, newValue ->
             val context = requireContext()
-            //
-            // A corrupt cache (or none, after a policy was applied) leaves enforcement as it is
-            // rather than reading it as "no restrictions" - see PolicyGate.
-            view?.post {
-                CoroutineScope(Dispatchers.IO).launch {
-                    val everApplied = LauncherPreferences.mdm().policyEverApplied()
-                    when (val decision = choosePolicy(null, cachedPolicy(), everApplied)) {
-                        is PolicyToApply.Apply -> AppEnforcer.apply(context, decision.policy)
-                        PolicyToApply.KeepCurrentState -> if (mdm.restrictionsPaused()) {
-                            AppEnforcer.apply(context, null)
-                        }
+            if (newValue == true) {
+                // Turning it on always takes the PIN, even though Settings itself is PIN-gated:
+                // without a PIN configured on the server, Settings is open to anyone, and a pause
+                // must not be. The switch only flips once the PIN checks out (see below).
+                if (!OfflineOverride.isConfigured()) {
+                    Toast.makeText(context, R.string.toast_mdm_pause_needs_pin, Toast.LENGTH_LONG).show()
+                } else {
+                    showPausePinDialog(context) {
+                        RestrictionsPause.start()
+                        restrictionsPaused.isChecked = true
+                        reapplyAfterPauseChange(context)
                     }
-                    reevaluateLockReasonFromCache()
                 }
+                false
+            } else {
+                RestrictionsPause.clear()
+                reapplyAfterPauseChange(context)
+                true
             }
-            true
         }
 
         val unifiedPushEnabled =
@@ -219,6 +213,65 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
      * custom (dark) theme - it renders with invisible text/buttons. Uses the same themed
      * AlertDialog approach as the app-rename dialog instead.
      */
+    /**
+     * Re-runs enforcement right away, offline, after the pause switch changes - rather than
+     * waiting for the next sync. Hands off to a background coroutine: AppEnforcer.apply() can
+     * (re)start KidVpnService, whose onCreate() reads the blocklist from disk synchronously -
+     * confirmed live this froze the UI thread for seconds and caused an ANR when run on it.
+     * Ending a pause with no usable cached policy (and a policy applied before) leaves things as
+     * they are until the next good sync, same as every other KeepCurrentState case.
+     */
+    private fun reapplyAfterPauseChange(context: Context) {
+        CoroutineScope(Dispatchers.IO).launch {
+            if (RestrictionsPause.isActive()) {
+                AppEnforcer.apply(context, null)
+            } else {
+                val everApplied = LauncherPreferences.mdm().policyEverApplied()
+                when (val decision = choosePolicy(null, cachedPolicy(), everApplied)) {
+                    is PolicyToApply.Apply -> AppEnforcer.apply(context, decision.policy)
+                    PolicyToApply.KeepCurrentState ->
+                        Log.w(LOG_TAG, "Pause ended with no usable cached policy - waiting for the next sync")
+                }
+            }
+            reevaluateLockReasonFromCache()
+        }
+    }
+
+    /** Asks for the offline-override PIN; [onVerified] runs only on a match. Shares the PIN's
+     * attempt counter and 15-minute lockout with the lock screen and the Settings gate. */
+    private fun showPausePinDialog(context: Context, onVerified: () -> Unit) {
+        if (OfflineOverride.isLockedOut()) {
+            Toast.makeText(context, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
+            return
+        }
+        val dialog = AlertDialog.Builder(context, R.style.AlertDialogCustom).apply {
+            setTitle(R.string.settings_mdm_restrictions_paused_pin_title)
+            setView(R.layout.dialog_offline_override_pin)
+            setNegativeButton(android.R.string.cancel) { d, _ -> d.cancel() }
+            setPositiveButton(android.R.string.ok, null)
+        }.create()
+        dialog.show()
+        // Overridden after show() so a wrong PIN re-prompts instead of dismissing.
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val input = dialog.findViewById<EditText>(R.id.dialog_offline_override_pin_input)
+            val pin = input?.text?.toString().orEmpty()
+            when {
+                OfflineOverride.verifyPin(pin) -> {
+                    dialog.dismiss()
+                    onVerified()
+                }
+                OfflineOverride.isLockedOut() -> {
+                    Toast.makeText(context, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
+                    dialog.dismiss()
+                }
+                else -> {
+                    Toast.makeText(context, R.string.lock_unlock_code_wrong, Toast.LENGTH_SHORT).show()
+                    input?.text?.clear()
+                }
+            }
+        }
+    }
+
     private fun showEditTextDialog(
         context: Context,
         title: String,

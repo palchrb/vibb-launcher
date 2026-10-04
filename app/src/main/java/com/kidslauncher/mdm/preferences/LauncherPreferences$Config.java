@@ -82,13 +82,12 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // StatusReportRequest.offlineOverrideUsed on the next successful sync, then
                         // cleared - so the parent notices even though the event itself was offline.
                         @Preference(name = "offline_override_used_pending_report", type = boolean.class, defaultValue = "false"),
-                        // Manual emergency kill-switch, gated behind the same Settings PIN as
-                        // enroll/sync - unlike offline_override_active this does NOT auto-clear on
-                        // the next successful sync or after any timer; it stays off until a parent
-                        // deliberately re-enables it, so it's a safe escape hatch if a policy or
-                        // build ever ships a breaking restriction. See AppEnforcer.apply and
-                        // MdmSyncWorker's lock-reason computation.
+                        // Manual emergency kill-switch in Settings. Only turned on after entering
+                        // the offline-override PIN, and only until restrictions_paused_until - see
+                        // server.RestrictionsPause, the only place that should read or write these.
+                        // Unlike offline_override_active it doesn't end on the next successful sync.
                         @Preference(name = "restrictions_paused", type = boolean.class, defaultValue = "false"),
+                        @Preference(name = "restrictions_paused_until", type = long.class, defaultValue = "0"),
                         // JSON blob: per-package {lastInstalledTag, lastFailedTag} for apps
                         // tracked from GitHub Releases (see server.TrackedAppUpdateState) - stops
                         // an already-installed or already-failed release from being re-downloaded
