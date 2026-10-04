@@ -12,10 +12,10 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::AppState;
 use crate::models::{
-    BrowserHistoryUpload, CommandResultRequest, Device, DevicePolicy, DnsBlocklistCategory,
-    DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse, GlobalSchedule,
-    InstallProgressReport, InstalledApp, JournalEntryUpload, PendingCommand, PolicyResponse,
-    StatusReportRequest, TrackedApp, TrackedAppUpdate,
+    BrowserHistoryUpload, CallPolicy, CommandResultRequest, Device, DeviceContactRow, DevicePolicy,
+    DnsBlocklistCategory, DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse,
+    GlobalSchedule, InstallProgressReport, InstalledApp, JournalEntryUpload, PendingCommand,
+    PolicyContact, PolicyResponse, StatusReportRequest, TrackedApp, TrackedAppUpdate,
 };
 use crate::security::{self, AuthedDevice};
 
@@ -178,6 +178,8 @@ pub(crate) async fn build_policy(
     .fetch_all(&state.db)
     .await?;
 
+    let call_policy = build_call_policy(state, &policy).await?;
+
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
     // consumes a command, and two concurrent polls can't both get the same one. Delivery is
     // still at-most-once - a command popped into a response the launcher then refuses (it
@@ -213,7 +215,72 @@ pub(crate) async fn build_policy(
         dns_filter_version,
         dns_upstream_provider,
         packages_to_uninstall,
+        call_policy,
     })
+}
+
+/// Always explicit (QA blocker 3): an unmanaged device gets `managed: false` with defaults and no
+/// contacts, never a missing key - the launcher treats a missing `call_policy` after managed
+/// calls as a suspect response and keeps its last rules. Read errors are 500s like the rest of
+/// `build_policy`.
+async fn build_call_policy(
+    state: &AppState,
+    policy: &DevicePolicy,
+) -> Result<CallPolicy, PolicyError> {
+    let default_country_code: String =
+        sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
+            .fetch_one(&state.db)
+            .await?;
+    if !policy.calls_managed {
+        return Ok(CallPolicy {
+            managed: false,
+            calls_enabled: true,
+            sms_enabled: true,
+            default_country_code,
+            contacts: Vec::new(),
+        });
+    }
+
+    let contacts = device_contacts(state, policy.device_id)
+        .await?
+        .into_iter()
+        .map(|c| PolicyContact {
+            id: c.contact_id,
+            name: c.name,
+            number: c.phone_number,
+            inbound: c.allow_inbound,
+            outbound: c.allow_outbound,
+            show_on_home: c.show_on_home,
+            message_app: c
+                .message_app
+                .unwrap_or_else(|| policy.default_message_app.clone()),
+            message_address: c.message_address,
+        })
+        .collect();
+
+    Ok(CallPolicy {
+        managed: true,
+        calls_enabled: policy.calls_enabled,
+        sms_enabled: policy.sms_enabled,
+        default_country_code,
+        contacts,
+    })
+}
+
+/// The contacts attached to a device, in the order the parent sees them.
+pub(crate) async fn device_contacts(
+    state: &AppState,
+    device_id: i64,
+) -> Result<Vec<DeviceContactRow>, sqlx::Error> {
+    sqlx::query_as::<_, DeviceContactRow>(
+        "SELECT c.id AS contact_id, c.name, c.phone_number, dc.allow_inbound, dc.allow_outbound, \
+         dc.show_on_home, dc.message_app, dc.message_address, dc.sort_order \
+         FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+         WHERE dc.device_id = ? ORDER BY dc.sort_order, c.name",
+    )
+    .bind(device_id)
+    .fetch_all(&state.db)
+    .await
 }
 
 /// Opaque per-device token combining the global compiled blocklist's content

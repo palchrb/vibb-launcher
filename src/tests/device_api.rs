@@ -306,6 +306,7 @@ async fn policy_json_keys_snapshot() {
             "allowlist",
             "bedtime_end_minutes",
             "bedtime_start_minutes",
+            "call_policy",
             "dns_filter_version",
             "dns_upstream_provider",
             "kiosk_desired",
@@ -324,6 +325,7 @@ async fn policy_json_keys_snapshot() {
     );
 
     for non_null in [
+        "call_policy",
         "dns_filter_version",
         "dns_upstream_provider",
         "kiosk_desired",
@@ -334,6 +336,22 @@ async fn policy_json_keys_snapshot() {
     ] {
         assert!(!object[non_null].is_null(), "{non_null} is null");
     }
+
+    // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
+    let call_policy = object["call_policy"].as_object().unwrap();
+    let mut call_keys: Vec<&str> = call_policy.keys().map(String::as_str).collect();
+    call_keys.sort_unstable();
+    assert_eq!(
+        call_keys,
+        [
+            "calls_enabled",
+            "contacts",
+            "default_country_code",
+            "managed",
+            "sms_enabled",
+        ]
+    );
+    assert!(call_policy.values().all(|v| !v.is_null()));
 }
 
 #[tokio::test]

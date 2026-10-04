@@ -44,6 +44,31 @@ pub struct DevicePolicy {
     /// just whatever was last configured, ignored until this is turned on. See
     /// `handlers::schedules`.
     pub custom_schedule_enabled: bool,
+    /// Calls & SMS (migrations/0022_calls.sql). `calls_managed = false` sends
+    /// `call_policy.managed = false`; the other three only matter when it's true.
+    pub calls_managed: bool,
+    pub calls_enabled: bool,
+    pub sms_enabled: bool,
+    /// "none", "sms", "element" or "signal" - see [MESSAGE_APPS].
+    pub default_message_app: String,
+}
+
+/// The values `device_policy.default_message_app` and `device_contacts.message_app` may take.
+pub const MESSAGE_APPS: [&str; 4] = ["none", "sms", "element", "signal"];
+
+/// One contact attached to one device - `contacts` joined with `device_contacts`.
+#[derive(sqlx::FromRow, Clone)]
+pub struct DeviceContactRow {
+    pub contact_id: i64,
+    pub name: String,
+    pub phone_number: String,
+    pub allow_inbound: bool,
+    pub allow_outbound: bool,
+    pub show_on_home: bool,
+    /// `None` = the device's `default_message_app`.
+    pub message_app: Option<String>,
+    pub message_address: Option<String>,
+    pub sort_order: i64,
 }
 
 /// Singleton (always `id = 1`) - the schedule every device follows unless it has its own
@@ -74,6 +99,11 @@ pub struct DeviceStatus {
     /// See migrations/0021_device_status_policy_state.sql. `None` from older launchers.
     pub policy_state: Option<String>,
     pub restrictions_paused: bool,
+    /// JSON array of capability strings, see migrations/0022_calls.sql. `None` from older
+    /// launchers.
+    pub capabilities_json: Option<String>,
+    /// The launcher's `CallState` object as JSON, see migrations/0022_calls.sql.
+    pub call_state_json: Option<String>,
 }
 
 #[derive(sqlx::FromRow, Clone)]
@@ -280,6 +310,37 @@ pub struct PolicyResponse {
     /// report confirms the package is actually gone, so the instruction survives being missed by
     /// any single sync cycle.
     pub packages_to_uninstall: Vec<String>,
+    /// Calls & SMS rules - always present, with an explicit `managed` (QA blocker 3): once a
+    /// launcher has had managed calls, it rejects a response without this key, so a rolled-back
+    /// or buggy server can't silently unmanage calls. See `handlers::device_api::build_policy`.
+    pub call_policy: CallPolicy,
+}
+
+/// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and
+/// hands the dialer role back); the other fields are then defaults and `contacts` is empty.
+#[derive(Serialize)]
+pub struct CallPolicy {
+    pub managed: bool,
+    pub calls_enabled: bool,
+    pub sms_enabled: bool,
+    pub default_country_code: String,
+    pub contacts: Vec<PolicyContact>,
+}
+
+/// One contact as the launcher sees it. `number` is normalised (src/phone.rs) - the launcher
+/// normalises the other side of a call and compares strings. `message_app` is already resolved
+/// against the device default ("none", "sms", "element" or "signal"); `message_address` is the
+/// Matrix ID for "element".
+#[derive(Serialize)]
+pub struct PolicyContact {
+    pub id: i64,
+    pub name: String,
+    pub number: String,
+    pub inbound: bool,
+    pub outbound: bool,
+    pub show_on_home: bool,
+    pub message_app: String,
+    pub message_address: Option<String>,
 }
 
 /// The oldest undelivered [DeviceCommand] for this device, if any - `policy()`
