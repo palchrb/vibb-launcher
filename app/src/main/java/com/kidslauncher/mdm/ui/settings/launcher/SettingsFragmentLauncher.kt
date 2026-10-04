@@ -21,11 +21,13 @@ import com.kidslauncher.mdm.copyToClipboard
 import com.kidslauncher.mdm.getDeviceInfo
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.PolicyToApply
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.UnifiedPushRegistrationReceiver
 import com.kidslauncher.mdm.server.UnifiedPushRelay
 import com.kidslauncher.mdm.server.applyProvisioningExtras
 import com.kidslauncher.mdm.server.cachedPolicy
+import com.kidslauncher.mdm.server.choosePolicy
 import com.kidslauncher.mdm.server.createMdmApi
 import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
@@ -163,9 +165,18 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             // was never actually cheap either (a DevicePolicyManager Binder call per changed
             // package), it just hadn't been reached by a slow enough operation to notice before.
             val context = requireContext()
+            //
+            // A corrupt cache (or none, after a policy was applied) leaves enforcement as it is
+            // rather than reading it as "no restrictions" - see PolicyGate.
             view?.post {
                 CoroutineScope(Dispatchers.IO).launch {
-                    AppEnforcer.apply(context, cachedPolicy())
+                    val everApplied = LauncherPreferences.mdm().policyEverApplied()
+                    when (val decision = choosePolicy(null, cachedPolicy(), everApplied)) {
+                        is PolicyToApply.Apply -> AppEnforcer.apply(context, decision.policy)
+                        PolicyToApply.KeepCurrentState -> if (mdm.restrictionsPaused()) {
+                            AppEnforcer.apply(context, null)
+                        }
+                    }
                     reevaluateLockReasonFromCache()
                 }
             }

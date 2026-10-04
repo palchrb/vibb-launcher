@@ -49,6 +49,11 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         @Preference(name = "tailscale_auth_key", type = String.class),
                         @Preference(name = "enrolled", type = boolean.class, defaultValue = "false"),
                         @Preference(name = "kid_mode_policy", type = String.class),
+                        // Set (together with kid_mode_policy, in one synchronous commit) the first
+                        // time a server policy is accepted, never cleared. Once set, a missing or
+                        // unreadable cached policy means "keep current restrictions", not "never
+                        // managed, open up" - see server.PolicyGate.
+                        @Preference(name = "policy_ever_applied", type = boolean.class, defaultValue = "false"),
                         // Current lock decision, persisted so LockActivity/HomeActivity can react
                         // via the usual SharedPreferences-listener pattern instead of a broadcast.
                         @Preference(name = "lock_reason", type = LockReason.class, defaultValue = "NONE"),

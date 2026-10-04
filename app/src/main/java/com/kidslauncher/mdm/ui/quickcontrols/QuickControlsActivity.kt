@@ -11,6 +11,7 @@ import com.kidslauncher.mdm.databinding.ActivityQuickControlsBinding
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControlFeature
 import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.ui.UIObjectActivity
 
@@ -47,7 +48,7 @@ class QuickControlsActivity : UIObjectActivity() {
             return
         }
 
-        val mask = cachedPolicy()?.quickControlsMask ?: 0
+        val mask = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.quickControlsMask ?: 0
 
         var anyShown = false
 

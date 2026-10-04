@@ -3,7 +3,8 @@ package com.kidslauncher.mdm.server.dto
 import kotlinx.serialization.Serializable
 
 /**
- * Response from `GET /api/devices/policy`. [allowlist] null/empty means "no restriction". Minute
+ * Response from `GET /api/devices/policy`. [allowlist] null means unmanaged ("no restriction");
+ * `[]` means nothing is allowed (see [com.kidslauncher.mdm.server.computeEnforcementPlan]). Minute
  * fields are minutes-since-midnight, same representation [com.kidslauncher.mdm.server.KidModeEnforcer]
  * already expects - null or a matching start/end means "no restriction" for that window.
  * [kioskDesired] is the server-authoritative kiosk switch: the admin site sets it, the device

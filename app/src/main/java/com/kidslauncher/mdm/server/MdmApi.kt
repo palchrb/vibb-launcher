@@ -9,12 +9,8 @@ import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.EnrollResponse
 import com.kidslauncher.mdm.server.dto.InstallProgressReport
 import com.kidslauncher.mdm.server.dto.JournalEntryUpload
-import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
-import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonNamingStrategy
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
@@ -29,15 +25,6 @@ import retrofit2.http.Streaming
 import retrofit2.http.Url
 import java.util.concurrent.TimeUnit
 
-/** Shared JSON config for both Retrofit and the cached-policy preference blob. The server's JSON
- * is snake_case (Rust's serde default, no per-field renames); this maps it to/from idiomatic
- * camelCase Kotlin properties without needing an `@SerialName` on every field. */
-@OptIn(ExperimentalSerializationApi::class)
-val ServerJson: Json = Json {
-    ignoreUnknownKeys = true
-    namingStrategy = JsonNamingStrategy.SnakeCase
-}
-
 /**
  * Device-facing kid-phone-server REST endpoints. Enrollment is unauthenticated (the enrollment
  * code itself is the one-shot credential); policy/status require the bearer token issued at
@@ -48,8 +35,10 @@ interface MdmApi {
     @POST("api/devices/enroll")
     suspend fun enroll(@Body request: EnrollRequest): Response<EnrollResponse>
 
+    /** Raw body: decoded with [decodeFresh] so a body the launcher can't read is told apart from
+     * an unreachable server (see `MdmSyncWorker.fetchPolicy`). */
     @GET("api/devices/policy")
-    suspend fun getPolicy(): Response<PolicyResponse>
+    suspend fun getPolicy(): Response<ResponseBody>
 
     @POST("api/devices/status")
     suspend fun sendStatus(@Body report: StatusReportRequest): Response<Unit>

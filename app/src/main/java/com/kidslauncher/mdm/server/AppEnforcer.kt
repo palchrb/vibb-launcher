@@ -7,9 +7,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.os.UserManager
+import android.telecom.TelecomManager
 import android.util.Log
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -69,12 +69,28 @@ internal fun controllablePackages(pm: PackageManager): List<String> {
 }
 
 /**
- * Suspends/unsuspends installed apps to match [PolicyResponse.allowlist] (null/empty means no
- * restriction - nothing suspended), and - only when the server says so via
- * [PolicyResponse.kioskDesired] - pins the device to the allowed packages via Android's Device
- * Owner lock-task API, plus the WiFi/Bluetooth radio restrictions below. Only acts when this app
- * is device owner - a no-op otherwise, so it's safe to ship before the phone is actually
- * re-provisioned.
+ * `TelecomManager.getSystemDialerPackage()` - the preloaded dialer, which is the in-call UI for
+ * emergency calls. [computeEnforcementPlan] never suspends or hides it. `null` if the platform
+ * doesn't say (then nothing extra is exempted).
+ */
+internal fun systemDialerPackage(context: Context): String? =
+    try {
+        context.getSystemService(TelecomManager::class.java)?.systemDialerPackage
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't look up the system dialer package", e)
+        null
+    }
+
+/**
+ * Suspends and hides installed apps that aren't on [PolicyResponse.allowlist] (`null` means
+ * unmanaged: nothing suspended; `[]` means nothing allowed), and - only when the server says so
+ * via [PolicyResponse.kioskDesired] - pins the device to the allowed packages via Android's
+ * Device Owner lock-task API. The decisions themselves are [computeEnforcementPlan] (pure,
+ * unit-tested); this object applies them. Only acts when this app is device owner - a no-op
+ * otherwise, so it's safe to ship before the phone is actually re-provisioned.
+ *
+ * Callers decide *which* policy to pass with [choosePolicy]: `apply(null)` means "fully open"
+ * and is only right for a phone that has never had a policy, or while an override is active.
  */
 object AppEnforcer {
 
@@ -86,31 +102,41 @@ object AppEnforcer {
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
 
         // While a locally-entered offline override is active, or a parent has flipped the manual
-        // "pause all restrictions" kill-switch in Settings, treat the device exactly as if the
-        // server sent no policy at all - every branch below already means "fully open" for a null
-        // policy (no allowlist, kiosk not desired, WiFi/Bluetooth "open"), so this reuses the same
-        // code path rather than duplicating an "unlock everything" special case.
+        // "pause all restrictions" kill-switch in Settings, everything is released - the
+        // plan below treats an active override like "no policy", and so does every restriction
+        // further down.
         val overrideActive = OfflineOverride.isActive() || LauncherPreferences.mdm().restrictionsPaused()
-        val effectivePolicy = if (overrideActive) null else policy
 
         enforceDefaultHome(dpm, admin, context)
 
-        val allowedPackages = effectivePolicy?.allowlist?.takeIf { it.isNotEmpty() }?.toSet()
         val ownPackage = context.packageName
         val pm = context.packageManager
-
         val installedPackages = controllablePackages(pm)
+        val plan = computeEnforcementPlan(
+            allowlist = policy?.allowlist,
+            kioskDesired = policy?.kioskDesired == true,
+            serverLockTaskFeatures = policy?.lockTaskFeatures ?: 0,
+            overrideActive = overrideActive,
+            controllable = installedPackages,
+            ownPackage = ownPackage,
+            systemDialer = systemDialerPackage(context),
+        )
 
         for (packageName in installedPackages) {
             if (packageName == ownPackage) continue
 
-            val shouldBeSuspended = allowedPackages != null && packageName !in allowedPackages
+            val shouldBeSuspended = packageName in plan.suspend
             val currentlySuspended = try {
                 pm.isPackageSuspended(packageName)
             } catch (e: PackageManager.NameNotFoundException) {
                 continue
             }
-            if (shouldBeSuspended == currentlySuspended) continue
+            // The system dialer may still be hidden or suspended from an older build (or from a
+            // policy applied before it was exempt) - release it outright rather than trusting
+            // that its suspended and hidden states agree.
+            val mustRelease = packageName in plan.neverRestrict &&
+                (currentlySuspended || isHidden(dpm, admin, packageName))
+            if (shouldBeSuspended == currentlySuspended && !mustRelease) continue
 
             try {
                 // Both calls can fail *without* throwing - setPackagesSuspended returns the
@@ -137,11 +163,7 @@ object AppEnforcer {
             }
         }
 
-        applyKioskState(
-            dpm, admin, ownPackage, allowedPackages,
-            kioskDesired = effectivePolicy?.kioskDesired == true,
-            lockTaskFeatures = effectivePolicy?.lockTaskFeatures ?: 0,
-        )
+        applyKioskState(dpm, admin, plan.kioskPackages, plan.lockTaskFeatures)
 
         clearRadioRestrictions(dpm, admin)
 
@@ -164,24 +186,28 @@ object AppEnforcer {
         applyBrowserPolicy(dpm, admin, context, locked = !overrideActive)
     }
 
+    private fun isHidden(dpm: DevicePolicyManager, admin: ComponentName, packageName: String): Boolean =
+        try {
+            dpm.isApplicationHidden(admin, packageName)
+        } catch (e: Exception) {
+            false
+        }
+
     /**
-     * Only engages lock-task/kiosk pinning when BOTH an allowlist is configured AND the server
-     * says to via [PolicyResponse.kioskDesired] - the admin site is the sole source of truth for
-     * this, there is no on-device switch. Still gated on an allowlist existing at all: pinning
-     * with zero allowed packages would strand the device on nothing but the launcher itself.
+     * Pins [kioskPackages] (from [computeEnforcementPlan]: the allowlist plus our own package,
+     * only when the server wants kiosk mode), or unpins when it's `null`. An empty allowlist pins
+     * only our own package - safe, since it's HOME and holds LockActivity/Settings. There is no
+     * on-device switch for this; the admin site is the only source of truth.
      */
     private fun applyKioskState(
         dpm: DevicePolicyManager,
         admin: ComponentName,
-        ownPackage: String,
-        allowedPackages: Set<String>?,
-        kioskDesired: Boolean,
-        lockTaskFeatures: Long,
+        kioskPackages: Set<String>?,
+        lockTaskFeatures: Int,
     ) {
         val mdm = LauncherPreferences.mdm()
-        val shouldEngageKiosk = allowedPackages != null && kioskDesired
 
-        if (!shouldEngageKiosk) {
+        if (kioskPackages == null) {
             try {
                 dpm.setLockTaskPackages(admin, emptyArray())
                 mdm.kioskEnabled(false)
@@ -203,16 +229,15 @@ object AppEnforcer {
         // plain reboot, re-locks storage pre-decrypt with no keyguard reachable and no launcher
         // resolvable either - see kid-phone-server's CLAUDE.md for the full incident). Failing
         // closed to "not pinned this cycle" is safe either way, since apply() re-runs every ~2
-        // minutes (or sooner via SSE push) and will retry.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            if (!applyLockTaskFeaturesVerified(dpm, admin, lockTaskFeatures.toInt())) {
-                Log.w(LOG_TAG, "Refusing to pin kiosk this cycle - lock task features never verified")
-                return
-            }
+        // minutes (or sooner via SSE push) and will retry. [lockTaskFeatures] always includes
+        // LOCK_TASK_FEATURE_KEYGUARD (see computeEnforcementPlan), whatever the server sent.
+        if (!applyLockTaskFeaturesVerified(dpm, admin, lockTaskFeatures)) {
+            Log.w(LOG_TAG, "Refusing to pin kiosk this cycle - lock task features never verified")
+            return
         }
 
         try {
-            dpm.setLockTaskPackages(admin, (allowedPackages + ownPackage).toTypedArray())
+            dpm.setLockTaskPackages(admin, kioskPackages.toTypedArray())
             mdm.kioskEnabled(true)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to pin kiosk packages", e)
@@ -433,11 +458,18 @@ object AppEnforcer {
     fun enforceOnNewPackage(context: Context, packageName: String) {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         if (!dpm.isDeviceOwnerApp(context.packageName)) return
-        if (packageName == context.packageName) return
-        if (OfflineOverride.isActive() || LauncherPreferences.mdm().restrictionsPaused()) return
 
-        val allowedPackages = cachedPolicy()?.allowlist?.takeIf { it.isNotEmpty() }?.toSet() ?: return
-        if (packageName in allowedPackages) return
+        // Fails closed: with no usable cached policy on a phone that has had one, a new app is
+        // suspended until a real policy says otherwise (see shouldSuspendNewPackage).
+        val decision = choosePolicy(null, cachedPolicy(), LauncherPreferences.mdm().policyEverApplied())
+        val suspend = shouldSuspendNewPackage(
+            packageName = packageName,
+            decision = decision,
+            overrideActive = OfflineOverride.isActive() || LauncherPreferences.mdm().restrictionsPaused(),
+            ownPackage = context.packageName,
+            systemDialer = systemDialerPackage(context),
+        )
+        if (!suspend) return
 
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         try {
