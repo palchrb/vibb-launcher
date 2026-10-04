@@ -475,7 +475,7 @@ QA findings override this doc where they conflict. Binding for implementation:
 - **Outgoing calls are blocked before placement** with a `CallRedirectionService`; the
   in-call `disconnect()` stays as a backstop.
 - **Override PIN and pause never open calls.** Call rules stay in force; they only lift app
-  restrictions. (Proposed default, pending user confirmation.)
+  restrictions. SMS rules too (user confirmed 2026-10-04).
 - **Voicemail, RCS, MMI/USSD codes:** handled as in qa-01-02.md (should-fix list).
 - **Number matching:** ASCII digits only on both sides, `sip:`/`tel:` URIs parsed, one shared
   test-vector file used by both the Rust and Kotlin tests.
@@ -491,8 +491,8 @@ QA findings override this doc where they conflict. Binding for implementation:
 
 ## Implementation status (2026-10-04)
 
-Done on branch `handy` in both forks (not pushed). Every commit builds and passes its tests. Task 15 (direct boot) is
-**not done** and stays open; it is required before the phone goes to the kid (QA blocker 4).
+Done on branch `handy` in both forks (not pushed). Every commit builds and passes its tests. Task 15 (direct boot) was
+done later (see "Direct boot (task 15)"); its device checks gate handover (QA blocker 4).
 
 | Repo | Commit | Task | What |
 |---|---|---|---|
@@ -540,8 +540,8 @@ Choices made where the docs left room:
   calls page.
 
 Open items:
-- **Task 15 (direct-boot call path)**: not started; until then a rebooted, not-yet-unlocked phone rings unscreened.
-  Release gate.
+- **Task 15 (direct-boot call path)**: implemented (see "Direct boot (task 15)" below), not device-tested. Release
+  gate until its device checks pass.
 - **System keypad MMI/USSD (QA #6)**: with our dialer in place and calls on, `DISALLOW_OUTGOING_CALLS` is lifted, and
   the system dialer can still be opened (`intent://`, explicit component, LockTaskController's emergency exemption). If
   MMI codes (`*21*…#`, USSD) typed there execute without passing Telecom redirection, this is a blocker; possible
@@ -616,3 +616,63 @@ Device checklist additions: with calls off and screen lock None, a 112 contact o
 appears, never test against 112 itself - use emergency test mode); an allowed contact dialled in national or
 `0`-prefixed form is placed as the stored `+47…` number (check the outgoing call log); `call_state.call_log_readable`
 is true on the Jelly Star; after a reboot the recorded callback window is closed.
+
+## Direct boot (task 15)
+
+Closes QA blocker 4. Docs: [DB] = developer.android.com/privacy-and-security/direct-boot, [Ctx] =
+`Context.createDeviceProtectedStorageContext` reference, [Intent] = `Intent` reference.
+
+**Components.** Before the first unlock only `directBootAware` components run, and only device-protected (DE) storage
+is readable [DB]. Direct-boot-aware: `KidCallScreeningService`, `KidInCallService`, `KidCallRedirectionService`,
+`InCallActivity` + `CallActionReceiver` (to answer an allowed caller over the keyguard) and a new `BootCallReceiver`.
+CE-only, explicitly: `HomeActivity`, `LockActivity`, Settings, the phone book, `CommandListenerService`,
+`KidVpnService`, the device-admin and package receivers. That Telecom binds a direct-boot-aware default dialer's
+in-call and screening services before unlock is [needs device test].
+
+**No BFU deadlock** (L `CLAUDE.md`: kiosk without keyguard + a Home that can't run before unlock = a phone that can't
+be unlocked). While `UserManager.isUserUnlocked()` is false, `Application.onCreate` only loads the DE call policy:
+no `LauncherPreferences`, `initRest`, `AppEnforcer` (no lock task, no DPM call), services or tsnet. Home stays
+non-aware, so `FallbackHome` + keyguard behave as today; `InCallActivity` exists only during a call, never dismisses
+the keyguard and finishes after the last call. The rest of the setup runs once, on the first of: `ACTION_USER_UNLOCKED`
+(registered receiver - "only sent to registered receivers" [Intent]), an activity being created, or
+`isUserUnlocked()` already true right after registering (no missed-broadcast race).
+
+**Mirrored to DE.** Key `boot_call_policy` in a DE SharedPreferences file (`createDeviceProtectedStorageContext()`
+[Ctx]), strict JSON: `{"v":1,"mode":"managed|unmanaged|fail_closed","calls_enabled":b,"default_cc":"47",
+"inbound":[..],"outbound":[..]}` (normalised numbers, sorted). No names, message addresses, SMS flag, tokens, PIN
+hash or server URL: DE data is readable "before ... the user has authenticated", so limit it [Ctx]. The allowed
+numbers stay extractable from a seized locked phone; accepted. The emergency-call record (callback window: wall
+time, elapsed realtime, boot count - timestamps only) moves to DE so it works before unlock.
+
+**Consistency.** DE is a pure function of the CE-derived `CallPolicyState` (`bootPolicyFor`). `CallPolicyStore.refresh`
+(unlocked) reads CE as before, then `commit()`s DE only if the encoded string differs - on every unlocked process start
+and after every accepted sync (which calls `refresh` right after its CE `commit()`). DE lags CE only if the process
+dies between the two commits and the phone reboots before the next unlocked start: it then holds the previous accepted
+rules. A refresh whose CE read failed writes nothing (the store's initial fail-closed state is never mirrored).
+
+**Before unlock.** `refresh` reads only DE: `v1` → `Managed` (contacts rebuilt from the two lists, no names) /
+`Unmanaged` / `UnknownFailClosed`; missing, unparseable, unknown `v` or `mode`, an unknown key, or a number that
+doesn't normalise to itself → `UnknownFailClosed`. `decideIncoming`/`decideOutgoing` are unchanged: non-emergency
+incoming is rejected, emergency outgoing always allowed (platform ORed with the static list; Telecom skips
+redirection for emergency calls; the keyguard's emergency dialer is the system's). The callback window opens from
+the DE record only: the call log is CE and its provider may be missing or block before unlock, so it isn't queried
+then. If our in-call service didn't see the emergency call (the preloaded dialer shows those), a PSAP callback before
+the first unlock is rejected (residual risk, check 4).
+
+**`LOCKED_BOOT_COMPLETED`** (needs `RECEIVE_BOOT_COMPLETED` [Intent]): `BootCallReceiver` only gets the process up
+with the DE policy loaded (warm for the 5 s screening budget) and logs the state. No `BOOT_COMPLETED` handling.
+
+**Device checks** (Jelly Star, release, PIN set, calls managed, B = allowed in+out, C = unknown):
+1. Reboot, don't unlock: `adb logcat -s BootCallReceiver CallPolicyStore` shows the DE policy loaded as managed.
+2. Before unlock: B calls → rings, our in-call screen over the keyguard, answer/hang up work. C → rejected, no ring.
+   C withheld (`#31#`) → rejected by the backstop (note any ring blip).
+3. Before unlock: keyguard emergency button opens the system emergency dialer; an emergency-test-mode number
+   (`cmd phone emergency-number-test-mode`, never 112 itself) is placed and shown by the preloaded dialer.
+4. After 3 connected, still locked: C calls within 60 min → record whether the window opened (our DE record).
+5. No deadlock: reboot with kiosk on, PIN entry works, Home + kiosk come up after unlock, no crash notification,
+   `CommandListenerService` runs; repeat after answering a call before unlock (process started BFU, then unlocked).
+6. Debug build: delete `/data/user_de/0/<pkg>/shared_prefs/boot_call_policy.xml`, reboot: B rejected before
+   unlock; after unlock the file is rewritten and B rings again. 7. Set B inbound-off, sync, reboot: B rejected BFU.
+
+Status: implemented on L `handy` (`5fc7271` pure policy + tests, `e642051` DE mirror, `08031a4` manifest/Application,
+`f421a49` CLAUDE.md, `51c534e` no call-log read while locked); 135 JVM tests, debug + release build. Not device-tested.
