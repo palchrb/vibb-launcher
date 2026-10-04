@@ -43,7 +43,14 @@ object OfflineOverride {
     fun isActive(): Boolean {
         val mdm = LauncherPreferences.mdm()
         if (!mdm.offlineOverrideActive()) return false
-        if (System.currentTimeMillis() > mdm.offlineOverrideExpiresAt()) {
+        val start = WindowStart(
+            mdm.offlineOverrideExpiresAt(),
+            mdm.offlineOverrideElapsedStart(),
+            mdm.offlineOverrideBoot(),
+        )
+        // Both the wall clock and elapsed time since boot must agree the window is still open,
+        // so setting the clock back can't stretch it - see timedWindowActive.
+        if (!BootClock.isActive(start, OVERRIDE_DURATION_MS)) {
             clear()
             return false
         }
@@ -109,8 +116,11 @@ object OfflineOverride {
     /** Lifts all restrictions for [OVERRIDE_DURATION_MS] - call only after [verifyPin] succeeds. */
     fun activate(context: Context) {
         val mdm = LauncherPreferences.mdm()
+        val start = BootClock.windowStart(OVERRIDE_DURATION_MS)
+        mdm.offlineOverrideExpiresAt(start.untilWallMs)
+        mdm.offlineOverrideElapsedStart(start.elapsedStartMs)
+        mdm.offlineOverrideBoot(start.bootCount)
         mdm.offlineOverrideActive(true)
-        mdm.offlineOverrideExpiresAt(System.currentTimeMillis() + OVERRIDE_DURATION_MS)
         mdm.offlineOverrideUsedPendingReport(true)
         AppEnforcer.apply(context, null)
     }

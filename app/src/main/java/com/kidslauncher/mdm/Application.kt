@@ -104,6 +104,8 @@ class Application : android.app.Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Before anything can ask whether an override/pause is active - see server.BootClock.
+        com.kidslauncher.mdm.server.BootClock.init(this)
         // TODO  Error: Invalid resource ID 0x00000000.
         // DynamicColors.applyToActivitiesIfAvailable(this)
 

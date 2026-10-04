@@ -51,12 +51,16 @@
     <string name="settings_mdm_override_pin_salt_key" translatable="false">mdm.override_pin_salt</string>
     <string name="settings_mdm_offline_override_active_key" translatable="false">mdm.offline_override_active</string>
     <string name="settings_mdm_offline_override_expires_at_key" translatable="false">mdm.offline_override_expires_at</string>
+    <string name="settings_mdm_offline_override_elapsed_start_key" translatable="false">mdm.offline_override_elapsed_start</string>
+    <string name="settings_mdm_offline_override_boot_key" translatable="false">mdm.offline_override_boot</string>
     <string name="settings_mdm_offline_override_failed_attempts_key" translatable="false">mdm.offline_override_failed_attempts</string>
     <string name="settings_mdm_offline_override_locked_until_key" translatable="false">mdm.offline_override_locked_until</string>
     <string name="settings_mdm_offline_override_used_pending_report_key" translatable="false">mdm.offline_override_used_pending_report</string>
     <string name="settings_mdm_last_failed_update_version_code_key" translatable="false">mdm.last_failed_update_version_code</string>
     <string name="settings_mdm_restrictions_paused_key" translatable="false">mdm.restrictions_paused</string>
     <string name="settings_mdm_restrictions_paused_until_key" translatable="false">mdm.restrictions_paused_until</string>
+    <string name="settings_mdm_restrictions_paused_elapsed_start_key" translatable="false">mdm.restrictions_paused_elapsed_start</string>
+    <string name="settings_mdm_restrictions_paused_boot_key" translatable="false">mdm.restrictions_paused_boot</string>
     <string name="settings_mdm_tracked_app_update_state_key" translatable="false">mdm.tracked_app_update_state</string>
     <string name="settings_mdm_last_active_location_fetch_at_ms_key" translatable="false">mdm.last_active_location_fetch_at_ms</string>
     <string name="settings_mdm_cached_location_json_key" translatable="false">mdm.cached_location_json</string>

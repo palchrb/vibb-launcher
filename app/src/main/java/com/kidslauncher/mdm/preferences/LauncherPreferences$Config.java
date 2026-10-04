@@ -74,6 +74,10 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // has passed, whichever comes first - see AppEnforcer.isOfflineOverrideActive.
                         @Preference(name = "offline_override_active", type = boolean.class, defaultValue = "false"),
                         @Preference(name = "offline_override_expires_at", type = long.class, defaultValue = "0"),
+                        // SystemClock.elapsedRealtime() and Settings.Global.BOOT_COUNT when the
+                        // override started - see server.timedWindowActive (clock set-back guard).
+                        @Preference(name = "offline_override_elapsed_start", type = long.class, defaultValue = "0"),
+                        @Preference(name = "offline_override_boot", type = int.class, defaultValue = "-1"),
                         // Purely local brute-force throttling for the offline PIN entry dialog -
                         // never synced to the server, since this must keep working with zero network.
                         @Preference(name = "offline_override_failed_attempts", type = int.class, defaultValue = "0"),
@@ -88,6 +92,8 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // Unlike offline_override_active it doesn't end on the next successful sync.
                         @Preference(name = "restrictions_paused", type = boolean.class, defaultValue = "false"),
                         @Preference(name = "restrictions_paused_until", type = long.class, defaultValue = "0"),
+                        @Preference(name = "restrictions_paused_elapsed_start", type = long.class, defaultValue = "0"),
+                        @Preference(name = "restrictions_paused_boot", type = int.class, defaultValue = "-1"),
                         // JSON blob: per-package {lastInstalledTag, lastFailedTag} for apps
                         // tracked from GitHub Releases (see server.TrackedAppUpdateState) - stops
                         // an already-installed or already-failed release from being re-downloaded
