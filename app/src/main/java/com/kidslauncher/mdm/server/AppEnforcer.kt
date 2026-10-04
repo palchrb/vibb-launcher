@@ -479,9 +479,9 @@ object AppEnforcer {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         if (!dpm.isDeviceOwnerApp(context.packageName)) return
 
-        // Fails closed: with no usable cached policy on a phone that has had one, a new app is
-        // suspended until a real policy says otherwise (see shouldSuspendNewPackage).
-        val decision = choosePolicy(null, cachedPolicy(), LauncherPreferences.mdm().policyEverApplied())
+        // Fails closed: with no usable cached policy on a phone that has had one, the
+        // last-enforced plan (or nothing allowed) decides - see shouldSuspendNewPackage.
+        val decision = currentPolicyDecision()
         val suspend = shouldSuspendNewPackage(
             packageName = packageName,
             decision = decision,

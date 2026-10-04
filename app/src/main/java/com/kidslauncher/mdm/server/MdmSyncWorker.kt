@@ -79,7 +79,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     var freshPolicy: PolicyResponse? = null
     val freshOutcome = when (val fetched = fetchPolicy(api)) {
         null -> FreshOutcome.UNREACHABLE
-        is FreshDecode.Failed -> {
+        is FreshDecode.Failed -> if (fetched === POLICY_SERVER_ERROR) FreshOutcome.SERVER_ERROR else {
             Log.w(LOG_TAG, "Server policy doesn't decode, keeping the current one: ${fetched.error}")
             FreshOutcome.DECODE_FAILED
         }
@@ -125,23 +125,15 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     }
 
     val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
-    val reason = when (val decision = choosePolicy(freshPolicy, cached, policyEverApplied)) {
-        is PolicyToApply.Apply -> {
-            val reason = if (overrideActive) LockReason.NONE else {
-                KidModeEnforcer.evaluate(decision.policy, Calendar.getInstance())
-            }
-            mdm.lockReason(reason)
-            AppEnforcer.apply(context, decision.policy)
-            reason
-        }
-        // No usable policy on a phone that has had one: leave the suspensions, kiosk pinning and
-        // lock decision exactly as the OS has them (they persist on their own). An active
-        // override was already applied when it was turned on.
-        PolicyToApply.KeepCurrentState -> {
-            Log.w(LOG_TAG, "No usable policy (cache unreadable or missing) - keeping current restrictions")
-            mdm.lockReason()
-        }
+    val decision = choosePolicy(freshPolicy, cached, policyEverApplied, lastEnforcedPlan())
+    if (decision is PolicyToApply.Fallback) {
+        Log.w(LOG_TAG, "No usable cached policy - enforcing the last-enforced plan")
     }
+    val reason = if (overrideActive) LockReason.NONE else {
+        KidModeEnforcer.evaluate(decision.policy, Calendar.getInstance())
+    }
+    mdm.lockReason(reason)
+    AppEnforcer.apply(context, decision.policy)
 
     // A `ring`/`locate` command means the admin explicitly wants to know where the device is right
     // now, worth the cost of an active GPS/network fix - every other sync (the background chain,
@@ -441,16 +433,20 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
         .distinctBy { it.packageName }
 }
 
-/** `null` when the server couldn't be reached or answered non-2xx (the server answers 500 rather
- * than a default policy when it can't build one); otherwise the decoded body or why it didn't
- * decode. Doesn't cache anything - only an accepted policy is cached, see [storeAcceptedPolicy]. */
+/** A 5xx from the policy endpoint: the server is up but couldn't build this device's policy
+ * (kid-phone-server answers 500 rather than a default) - reported as `server_error`. */
+private val POLICY_SERVER_ERROR = FreshDecode.Failed("server error")
+
+/** `null` when the server couldn't be reached (or answered a non-5xx error), [POLICY_SERVER_ERROR]
+ * (compared by identity) on a 5xx, otherwise the decoded body or why it didn't decode. Doesn't
+ * cache anything - only an accepted policy is cached, see [storeAcceptedPolicy]. */
 private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
     return try {
         val response = api.getPolicy()
         if (!response.isSuccessful) {
             Log.w(LOG_TAG, "Policy fetch returned HTTP ${response.code()}, keeping the current policy")
             response.errorBody()?.close()
-            return null
+            return if (response.code() >= 500) POLICY_SERVER_ERROR else null
         }
         decodeFresh(response.body()?.use { it.string() })
     } catch (e: Exception) {
@@ -459,22 +455,24 @@ private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
     }
 }
 
-/** Caches an accepted policy and marks that a policy has been applied, in one synchronous
- * `commit()` - the two must never disagree, and the generated preference setters only `apply()`
+/** Caches an accepted policy, its [LastEnforcedPlan] and the "a policy has been applied" flag, in
+ * one synchronous `commit()` - they must never disagree, and the generated preference setters only `apply()`
  * asynchronously (see CLAUDE.md on writes racing a process death). */
 private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
     val keys = LauncherPreferences.mdm().keys()
     val ok = PreferenceManager.getDefaultSharedPreferences(context).edit()
         .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), policy))
         .putBoolean(keys.policyEverApplied(), true)
+        .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
         .commit()
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
 }
 
 /**
  * The last accepted policy, straight from the local cache - no network call. Feed it to
- * [choosePolicy]: a [CachedPolicy.Corrupt] (or [CachedPolicy.Absent] on a phone that has had a
- * policy) means "keep the current restrictions", never "no restrictions".
+ * [choosePolicy] (or use [currentPolicyDecision]): a [CachedPolicy.Corrupt] (or
+ * [CachedPolicy.Absent] on a phone that has had a policy) means "enforce the last-enforced plan",
+ * never "no restrictions".
  */
 fun cachedPolicy(): CachedPolicy {
     val cached = decodeCached(LauncherPreferences.mdm().kidModePolicy())
@@ -488,18 +486,22 @@ fun cachedPolicy(): CachedPolicy {
  * Re-checks the bedtime/screen-time lock decision against the last-cached policy and the
  * device's own clock - no network call, so it works offline and doesn't wait for the next sync.
  * The home screen and lock screen both call this on a local timer while visible so the schedule
- * engages and releases promptly on both edges, not just whenever a sync happens to land. With no
- * usable cached policy on a phone that has had one, the current decision is left alone.
+ * engages and releases promptly on both edges, not just whenever a sync happens to land.
  */
+/** The [LastEnforcedPlan] stored with the last accepted policy, or `null` if missing/unreadable. */
+fun lastEnforcedPlan(): LastEnforcedPlan? = LastEnforcedPlan.decode(LauncherPreferences.mdm().lastEnforcedPlan())
+
+/** What to enforce right now without a network call: the cache, the last-enforced plan, or
+ * (never-managed phone) nothing. */
+fun currentPolicyDecision(): PolicyToApply =
+    choosePolicy(null, cachedPolicy(), LauncherPreferences.mdm().policyEverApplied(), lastEnforcedPlan())
+
 fun reevaluateLockReasonFromCache() {
     val mdm = LauncherPreferences.mdm()
     val reason = if (OfflineOverride.isActive() || RestrictionsPause.isActive()) {
         LockReason.NONE
     } else {
-        when (val decision = choosePolicy(null, cachedPolicy(), mdm.policyEverApplied())) {
-            is PolicyToApply.Apply -> KidModeEnforcer.evaluate(decision.policy, Calendar.getInstance())
-            PolicyToApply.KeepCurrentState -> return
-        }
+        KidModeEnforcer.evaluate(currentPolicyDecision().policy, Calendar.getInstance())
     }
     if (mdm.lockReason() != reason) {
         mdm.lockReason(reason)

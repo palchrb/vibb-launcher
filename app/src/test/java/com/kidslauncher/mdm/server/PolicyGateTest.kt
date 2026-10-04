@@ -108,7 +108,7 @@ class PolicyGateTest {
     fun `fresh policy wins`() {
         assertEquals(
             PolicyToApply.Apply(nothingAllowed),
-            choosePolicy(nothingAllowed, CachedPolicy.Ok(managed), policyEverApplied = true)
+            choosePolicy(nothingAllowed, CachedPolicy.Ok(managed), policyEverApplied = true, lastEnforced = null)
         )
     }
 
@@ -116,7 +116,7 @@ class PolicyGateTest {
     fun `without fresh policy the cache applies`() {
         assertEquals(
             PolicyToApply.Apply(managed),
-            choosePolicy(null, CachedPolicy.Ok(managed), policyEverApplied = true)
+            choosePolicy(null, CachedPolicy.Ok(managed), policyEverApplied = true, lastEnforced = null)
         )
     }
 
@@ -124,28 +124,46 @@ class PolicyGateTest {
     fun `never synced applies no policy so setup works`() {
         assertEquals(
             PolicyToApply.Apply(null),
-            choosePolicy(null, CachedPolicy.Absent, policyEverApplied = false)
+            choosePolicy(null, CachedPolicy.Absent, policyEverApplied = false, lastEnforced = null)
         )
     }
 
+    private val lastPlan = LastEnforcedPlan.of(managed.copy(bedtimeStartMinutes = 1260, bedtimeEndMinutes = 420))
+
     @Test
-    fun `absent cache after a policy was applied keeps current state`() {
-        assertEquals(
-            PolicyToApply.KeepCurrentState,
-            choosePolicy(null, CachedPolicy.Absent, policyEverApplied = true)
-        )
+    fun `absent cache after a policy was applied falls back to the last enforced plan`() {
+        val decision = choosePolicy(null, CachedPolicy.Absent, policyEverApplied = true, lastEnforced = lastPlan)
+        assertEquals(PolicyToApply.Fallback(lastPlan.toPolicy()), decision)
+        assertEquals(listOf("org.example.music"), decision.policy?.allowlist)
+        assertEquals(true, decision.policy?.kioskDesired)
+        assertEquals(1260, decision.policy?.bedtimeStartMinutes)
     }
 
     @Test
-    fun `corrupt cache keeps current state`() {
-        assertEquals(
-            PolicyToApply.KeepCurrentState,
-            choosePolicy(null, CachedPolicy.Corrupt("boom"), policyEverApplied = false)
-        )
-        assertEquals(
-            PolicyToApply.KeepCurrentState,
-            choosePolicy(null, CachedPolicy.Corrupt("boom"), policyEverApplied = true)
-        )
+    fun `corrupt cache falls back to the last enforced plan`() {
+        for (everApplied in listOf(true, false)) {
+            assertEquals(
+                PolicyToApply.Fallback(lastPlan.toPolicy()),
+                choosePolicy(null, CachedPolicy.Corrupt("boom"), everApplied, lastPlan)
+            )
+        }
+    }
+
+    /** QA step 1 #3: an override or pause ending with an unusable cache must re-lock, not stay open. */
+    @Test
+    fun `with no last enforced plan either, nothing is allowed and kiosk is on`() {
+        val decision = choosePolicy(null, CachedPolicy.Corrupt("boom"), policyEverApplied = true, lastEnforced = null)
+        assertEquals(PolicyToApply.Fallback(NOTHING_ALLOWED_FALLBACK), decision)
+        assertEquals(emptyList<String>(), decision.policy?.allowlist)
+        assertEquals(true, decision.policy?.kioskDesired)
+    }
+
+    @Test
+    fun `last enforced plan round trips and tolerates garbage`() {
+        assertEquals(lastPlan, LastEnforcedPlan.decode(LastEnforcedPlan.encode(lastPlan)))
+        assertEquals(null, LastEnforcedPlan.decode("{not json"))
+        assertEquals(null, LastEnforcedPlan.decode(null))
+        assertEquals(LastEnforcedPlan(), LastEnforcedPlan.decode("""{"some_future_field": 1}"""))
     }
 
     // policyState
@@ -158,6 +176,7 @@ class PolicyGateTest {
         assertEquals("ok", policyState(FreshOutcome.UNREACHABLE, CachedPolicy.Absent, false))
         assertEquals("rejected_suspect", policyState(FreshOutcome.REJECTED_SUSPECT, ok, true))
         assertEquals("fresh_decode_failed", policyState(FreshOutcome.DECODE_FAILED, ok, true))
+        assertEquals("server_error", policyState(FreshOutcome.SERVER_ERROR, ok, true))
         assertEquals("cache_corrupt", policyState(FreshOutcome.UNREACHABLE, CachedPolicy.Corrupt("x"), true))
         assertEquals("cache_corrupt", policyState(FreshOutcome.UNREACHABLE, CachedPolicy.Absent, true))
     }
@@ -193,16 +212,18 @@ class PolicyGateTest {
     }
 
     @Test
-    fun `new package with no usable policy fails closed`() {
-        assertTrue(suspendNew("org.example.game", PolicyToApply.KeepCurrentState))
+    fun `new package with no usable policy follows the fallback`() {
+        assertTrue(suspendNew("org.example.game", PolicyToApply.Fallback(NOTHING_ALLOWED_FALLBACK)))
+        assertTrue(suspendNew("org.example.game", PolicyToApply.Fallback(managed)))
+        assertFalse(suspendNew("org.example.music", PolicyToApply.Fallback(managed)))
     }
 
     @Test
     fun `own package, system dialer and an active override are never suspended`() {
-        assertFalse(suspendNew(OWN, PolicyToApply.KeepCurrentState))
-        assertFalse(suspendNew(DIALER, PolicyToApply.KeepCurrentState))
+        assertFalse(suspendNew(OWN, PolicyToApply.Fallback(NOTHING_ALLOWED_FALLBACK)))
+        assertFalse(suspendNew(DIALER, PolicyToApply.Fallback(NOTHING_ALLOWED_FALLBACK)))
         assertFalse(suspendNew(DIALER, PolicyToApply.Apply(nothingAllowed)))
-        assertFalse(suspendNew("org.example.game", PolicyToApply.KeepCurrentState, overrideActive = true))
+        assertFalse(suspendNew("org.example.game", PolicyToApply.Fallback(NOTHING_ALLOWED_FALLBACK), overrideActive = true))
     }
 
     private companion object {

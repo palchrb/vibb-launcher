@@ -45,6 +45,7 @@
     <string name="settings_mdm_enrolled_key" translatable="false">mdm.enrolled</string>
     <string name="settings_mdm_kid_mode_policy_key" translatable="false">mdm.kid_mode_policy</string>
     <string name="settings_mdm_policy_ever_applied_key" translatable="false">mdm.policy_ever_applied</string>
+    <string name="settings_mdm_last_enforced_plan_key" translatable="false">mdm.last_enforced_plan</string>
     <string name="settings_mdm_lock_reason_key" translatable="false">mdm.lock_reason</string>
     <string name="settings_mdm_kiosk_enabled_key" translatable="false">mdm.kiosk_enabled</string>
     <string name="settings_mdm_override_pin_hash_key" translatable="false">mdm.override_pin_hash</string>

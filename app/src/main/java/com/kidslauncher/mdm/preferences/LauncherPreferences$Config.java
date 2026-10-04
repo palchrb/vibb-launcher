@@ -54,6 +54,9 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // unreadable cached policy means "keep current restrictions", not "never
                         // managed, open up" - see server.PolicyGate.
                         @Preference(name = "policy_ever_applied", type = boolean.class, defaultValue = "false"),
+                        // server.LastEnforcedPlan JSON, written in the same commit as kid_mode_policy:
+                        // what to re-lock to if that cache ever can't be read.
+                        @Preference(name = "last_enforced_plan", type = String.class),
                         // Current lock decision, persisted so LockActivity/HomeActivity can react
                         // via the usual SharedPreferences-listener pattern instead of a broadcast.
                         @Preference(name = "lock_reason", type = LockReason.class, defaultValue = "NONE"),

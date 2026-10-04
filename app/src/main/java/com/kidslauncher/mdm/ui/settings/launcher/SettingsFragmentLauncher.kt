@@ -23,14 +23,12 @@ import com.kidslauncher.mdm.getDeviceInfo
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.OfflineOverride
-import com.kidslauncher.mdm.server.PolicyToApply
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.UnifiedPushRegistrationReceiver
 import com.kidslauncher.mdm.server.UnifiedPushRelay
 import com.kidslauncher.mdm.server.applyProvisioningExtras
-import com.kidslauncher.mdm.server.cachedPolicy
-import com.kidslauncher.mdm.server.choosePolicy
+import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.createMdmApi
 import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
@@ -218,21 +216,12 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
      * waiting for the next sync. Hands off to a background coroutine: AppEnforcer.apply() can
      * (re)start KidVpnService, whose onCreate() reads the blocklist from disk synchronously -
      * confirmed live this froze the UI thread for seconds and caused an ANR when run on it.
-     * Ending a pause with no usable cached policy (and a policy applied before) leaves things as
-     * they are until the next good sync, same as every other KeepCurrentState case.
+     * Ending a pause with no usable cached policy re-locks to the last-enforced plan.
      */
     private fun reapplyAfterPauseChange(context: Context) {
         CoroutineScope(Dispatchers.IO).launch {
-            if (RestrictionsPause.isActive()) {
-                AppEnforcer.apply(context, null)
-            } else {
-                val everApplied = LauncherPreferences.mdm().policyEverApplied()
-                when (val decision = choosePolicy(null, cachedPolicy(), everApplied)) {
-                    is PolicyToApply.Apply -> AppEnforcer.apply(context, decision.policy)
-                    PolicyToApply.KeepCurrentState ->
-                        Log.w(LOG_TAG, "Pause ended with no usable cached policy - waiting for the next sync")
-                }
-            }
+            // apply() releases everything itself while the pause is active.
+            AppEnforcer.apply(context, currentPolicyDecision().policy)
             reevaluateLockReasonFromCache()
         }
     }

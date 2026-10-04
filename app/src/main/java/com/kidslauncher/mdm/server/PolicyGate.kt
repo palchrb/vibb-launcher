@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.PolicyResponse
+import kotlinx.serialization.Serializable
 
 /*
  * Fail-closed decisions about which policy to enforce - pure functions with no Android imports,
@@ -11,9 +12,8 @@ import com.kidslauncher.mdm.server.dto.PolicyResponse
  * Upstream treated every "no usable policy" case as `null`, and `AppEnforcer.apply(null)` means
  * "no restrictions": a corrupt cache, or a server answering a default policy after an error,
  * unsuspended every app and unpinned kiosk. Here only a phone that has genuinely never had a
- * policy gets that treatment (setup must still work); everything else keeps whatever the OS is
- * already enforcing (DPM suspensions, lock-task packages and user restrictions persist on their
- * own).
+ * policy gets that treatment (setup must still work); everything else enforces the last policy it
+ * accepted (the cache, or the small [LastEnforcedPlan] stored with it), or nothing allowed.
  */
 
 /** What the cached policy preference holds. */
@@ -76,33 +76,107 @@ fun judgeFresh(fresh: PolicyResponse, cached: CachedPolicy, policyEverApplied: B
     return if (wasManaged) FreshVerdict.REJECT_SUSPECT else FreshVerdict.ACCEPT
 }
 
-sealed interface PolicyToApply {
-    /** Enforce this policy; `null` means "no policy" (fully open). */
-    data class Apply(val policy: PolicyResponse?) : PolicyToApply
+/**
+ * The few fields needed to re-lock the phone when the cached policy can't be used: stored next to
+ * the cache, in the same commit, every time a policy is accepted. Deliberately tiny and separate
+ * from [PolicyResponse], so a launcher update that can't read an old cache blob can still read
+ * this. Unknown keys are ignored and every field has a default.
+ */
+@Serializable
+data class LastEnforcedPlan(
+    val allowlist: List<String>? = emptyList(),
+    val kioskDesired: Boolean = true,
+    val lockTaskFeatures: Long = LOCK_TASK_FEATURE_KEYGUARD.toLong(),
+    val weekdayStartMinutes: Int? = null,
+    val weekdayEndMinutes: Int? = null,
+    val weekendStartMinutes: Int? = null,
+    val weekendEndMinutes: Int? = null,
+    val bedtimeStartMinutes: Int? = null,
+    val bedtimeEndMinutes: Int? = null,
+) {
+    fun toPolicy(): PolicyResponse = PolicyResponse(
+        allowlist = allowlist,
+        kioskDesired = kioskDesired,
+        lockTaskFeatures = lockTaskFeatures,
+        weekdayStartMinutes = weekdayStartMinutes,
+        weekdayEndMinutes = weekdayEndMinutes,
+        weekendStartMinutes = weekendStartMinutes,
+        weekendEndMinutes = weekendEndMinutes,
+        bedtimeStartMinutes = bedtimeStartMinutes,
+        bedtimeEndMinutes = bedtimeEndMinutes,
+    )
 
-    /** Touch nothing: leave the suspensions, kiosk pinning and lock decision as they are. */
-    data object KeepCurrentState : PolicyToApply
+    companion object {
+        fun of(policy: PolicyResponse) = LastEnforcedPlan(
+            allowlist = policy.allowlist,
+            kioskDesired = policy.kioskDesired,
+            lockTaskFeatures = policy.lockTaskFeatures,
+            weekdayStartMinutes = policy.weekdayStartMinutes,
+            weekdayEndMinutes = policy.weekdayEndMinutes,
+            weekendStartMinutes = policy.weekendStartMinutes,
+            weekendEndMinutes = policy.weekendEndMinutes,
+            bedtimeStartMinutes = policy.bedtimeStartMinutes,
+            bedtimeEndMinutes = policy.bedtimeEndMinutes,
+        )
+
+        /** `null` if missing or unreadable. */
+        fun decode(json: String?): LastEnforcedPlan? {
+            if (json.isNullOrBlank()) return null
+            return try {
+                ServerJson.decodeFromString(serializer(), json)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        fun encode(plan: LastEnforcedPlan): String = ServerJson.encodeToString(serializer(), plan)
+    }
 }
+
+/** What to enforce. Callers pass [policy] to `AppEnforcer.apply`; `null` means "no policy". */
+sealed interface PolicyToApply {
+    val policy: PolicyResponse?
+
+    /** A real policy (fresh or cached), or `null` on a phone that has never had one. */
+    data class Apply(override val policy: PolicyResponse?) : PolicyToApply
+
+    /**
+     * No usable cached policy on a phone that has had one: enforce the last-enforced plan, or -
+     * if that's unreadable too - nothing allowed with kiosk on. Re-locks the phone when an
+     * override or pause ends, instead of leaving it as the override left it (open).
+     */
+    data class Fallback(override val policy: PolicyResponse) : PolicyToApply
+}
+
+/** Used when neither the cache nor the last-enforced plan can be read: only our own package. */
+val NOTHING_ALLOWED_FALLBACK: PolicyResponse = LastEnforcedPlan().toPolicy()
 
 /**
  * [fresh] must already have passed [judgeFresh] (pass `null` when there's no acceptable fresh
  * policy). Falls back to the cache; `Apply(null)` only for a phone that has never applied a
- * policy, so setup/enrollment still works on a brand-new device.
+ * policy, so setup/enrollment still works on a brand-new device; otherwise [PolicyToApply.Fallback].
  */
-fun choosePolicy(fresh: PolicyResponse?, cached: CachedPolicy, policyEverApplied: Boolean): PolicyToApply =
+fun choosePolicy(
+    fresh: PolicyResponse?,
+    cached: CachedPolicy,
+    policyEverApplied: Boolean,
+    lastEnforced: LastEnforcedPlan?,
+): PolicyToApply =
     when {
         fresh != null -> PolicyToApply.Apply(fresh)
         cached is CachedPolicy.Ok -> PolicyToApply.Apply(cached.policy)
         cached is CachedPolicy.Absent && !policyEverApplied -> PolicyToApply.Apply(null)
-        else -> PolicyToApply.KeepCurrentState
+        else -> PolicyToApply.Fallback(lastEnforced?.toPolicy() ?: NOTHING_ALLOWED_FALLBACK)
     }
 
 /** What the last sync did with the server's policy, as reported in `StatusReportRequest.policyState`. */
-enum class FreshOutcome { ACCEPTED, REJECTED_SUSPECT, DECODE_FAILED, UNREACHABLE }
+enum class FreshOutcome { ACCEPTED, REJECTED_SUSPECT, DECODE_FAILED, SERVER_ERROR, UNREACHABLE }
 
 /**
  * `"ok"` unless the phone isn't enforcing the server's current policy: `"fresh_decode_failed"`,
- * `"rejected_suspect"`, or `"cache_corrupt"` (no fresh policy and the cache is unreadable, or
+ * `"rejected_suspect"`, `"server_error"` (the server answered 5xx - it couldn't build a policy,
+ * see kid-phone-server's `build_policy`; this is the only way the parent learns of it), or
+ * `"cache_corrupt"` (no fresh policy and the cache is unreadable, or
  * missing after a policy was applied). The server shows anything but `"ok"` as a warning.
  */
 fun policyState(outcome: FreshOutcome, cached: CachedPolicy, policyEverApplied: Boolean): String =
@@ -110,6 +184,7 @@ fun policyState(outcome: FreshOutcome, cached: CachedPolicy, policyEverApplied: 
         FreshOutcome.ACCEPTED -> "ok"
         FreshOutcome.REJECTED_SUSPECT -> "rejected_suspect"
         FreshOutcome.DECODE_FAILED -> "fresh_decode_failed"
+        FreshOutcome.SERVER_ERROR -> "server_error"
         FreshOutcome.UNREACHABLE -> when {
             cached is CachedPolicy.Corrupt -> "cache_corrupt"
             cached is CachedPolicy.Absent && policyEverApplied -> "cache_corrupt"
@@ -120,9 +195,8 @@ fun policyState(outcome: FreshOutcome, cached: CachedPolicy, policyEverApplied: 
 /**
  * The pure core of [AppEnforcer.enforceOnNewPackage]: should a just-installed [packageName] be
  * suspended and hidden right away? Same rules as [computeEnforcementPlan] (never our own package
- * or the system dialer), and fail closed when there's no usable policy on a phone that has had
- * one ([PolicyToApply.KeepCurrentState]): a new app on a managed phone stays blocked until a real
- * policy says otherwise.
+ * or the system dialer); with no usable policy on a phone that has had one, the
+ * [PolicyToApply.Fallback] plan decides (nothing allowed if even that is unreadable).
  */
 fun shouldSuspendNewPackage(
     packageName: String,
@@ -133,11 +207,6 @@ fun shouldSuspendNewPackage(
 ): Boolean {
     if (overrideActive) return false
     if (packageName == ownPackage || packageName == systemDialer) return false
-    return when (decision) {
-        PolicyToApply.KeepCurrentState -> true
-        is PolicyToApply.Apply -> {
-            val allowlist = decision.policy?.allowlist ?: return false
-            packageName !in allowlist
-        }
-    }
+    val allowlist = decision.policy?.allowlist ?: return false
+    return packageName !in allowlist
 }
