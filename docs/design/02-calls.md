@@ -488,3 +488,95 @@ QA findings override this doc where they conflict. Binding for implementation:
   hidden when that app isn't installed and allowlisted. Server: per-contact
   `message_app` + `message_address` fields, per-device default. Deep-link handling per app
   [needs device test].
+
+## Implementation status (2026-10-04)
+
+Done on branch `handy` in both forks (not pushed). Every commit builds and passes its tests. Task 15 (direct boot) is
+**not done** and stays open; it is required before the phone goes to the kid (QA blocker 4).
+
+| Repo | Commit | Task | What |
+|---|---|---|---|
+| S | `a5f170e` | 1 | `src/phone.rs` + `testdata/phone_vectors.json` (shared vectors incl. QA #16 additions: unicode/fullwidth digits, `112#`, `1121234`, `112,123`, `#31#…`, `4791234567`, `sip:`/`tel:` handles) |
+| S | `412a446` | 2 | migration `0022_calls.sql` (per-device `calls_managed`/`calls_enabled`/`sms_enabled`/`default_message_app`, `contacts`, `device_contacts` with `message_app`/`message_address`, `call_settings`, status `capabilities_json`/`call_state_json`); `call_policy` always sent with explicit `managed`; key snapshot extended |
+| S | `3e86f87` | 3 | `TestApp::admin_cookie` (real `/login` + `/auth/verify-2fa`), `request_form`, `get_page` |
+| S | `cca3755` | 4 | `/devices/{id}/calls` page + forms, `/settings/calls`, device-page card; scoped flag/remove (404), transactions, nudges |
+| S | `fca25ee` | 5 | status `capabilities`/`call_state` stored; warnings on calls + device page (no capability / stopped reporting it, roles, fail-closed, last error, Messages allowlisted with SMS off, emergency call + callback window for 7 days) |
+| S | `aaa915e` | - | CLAUDE.md |
+| L | `fc94a3b` | 6 | `calls/PhoneNumbers.kt`, `calls/CallRules.kt` + `PhoneNumbersTest` (shared vectors) + `CallRulesTest` |
+| L | `ea3d69f` | 7 | `CallPolicy` DTO (deny defaults, `managed` defaults to true), `judgeFresh` explicit-managed rule, `calls_managed_last`/`last_call_rules` in the cache commit, `callPolicyState`, status DTO fields + compat tests |
+| L | `47e65c5` | 8 | `computeEnforcementPlan`: call state, our dialer, SMS apps (`restrictOutgoingCalls`, `restrictSms`, `denyCallPermissions`, dialer never pinned while managed) |
+| L | `0ea3506` | 9 | manifest, `KidInCallService`, `InCallActivity`, `CallStyle` notification, role via DPM + once-a-day prompt fallback, `CallPolicyStore`, `callState` in status, `Application.onCreate` guarded (QA #10) |
+| L | `969d3bb` | 10 | `PhoneBookActivity` (DIAL/VIEW tel:/CALL_BUTTON), Message buttons, Home buttons, `KidCallRedirectionService`, outgoing backstop, plan uses call rules |
+| L | `134b2d5` | 11 | `KidCallScreeningService`, incoming backstop, callback window recording, `call_policy_v1` capability |
+| L | `58ce621` | 12 | deny third-party `CALL_PHONE`/`ANSWER_PHONE_CALLS`, self-grants, `DISALLOW_SMS` + SMS-app suspension |
+| L | `2e8e1a8` | 13 | hand the dialer role back when unmanaged (only a role we took) |
+| L | `280a2ff` | 14 | `DISALLOW_CONFIG_DEFAULT_APPS` once both roles are held |
+| L | `bcf23eb` | - | CLAUDE.md |
+
+Tests: server 57 (`cargo test`, was 33), `cargo fmt --check` clean, clippy 23 warnings (24 before step 2). Launcher 117 JVM
+unit tests (was 55): new `PhoneNumbersTest`, `CallRulesTest`, `CallPolicyStateTest`, `DialerRoleTest`,
+`MessageButtonsTest`, plus additions to `EnforcementPlanTest` and `PolicyResponseCompatTest`. `assembleDebug` and
+`assembleRelease` (R8) build; the `calls` classes survive shrinking. Both vector copies are compared by both suites
+when the repos sit side by side (they do in this workspace). The calls page was checked through the real router in
+tests, not in a browser.
+
+Choices made where the docs left room:
+- **Shared vectors**: two repos can't share one file, so the server's `testdata/phone_vectors.json` is canonical and
+  the launcher keeps a byte-identical copy (`app/src/test/resources/`); each suite fails if the sibling copy differs.
+- **Override/pause** never lift call rules, `DISALLOW_SMS`, the SMS-app suspension, the call-permission denials or
+  `DISALLOW_OUTGOING_CALLS` while calls are managed (SMS treated as a call rule). Pending the user's confirmation.
+- **Outgoing restriction** with calls managed: `DISALLOW_OUTGOING_CALLS` is set while calls are off, the rules are
+  unknown, or **our dialer role isn't held** (then nothing of ours screens the system keypad). With calls unmanaged,
+  step 1's rule stays.
+- **Corrupt cache on a phone that never had managed calls** fails closed too (as in §4's test list), and takes the role.
+- **Message button**: `message_app` per device-contact (NULL = device default, resolved server-side),
+  `message_address` = Matrix ID (Element only); SMS/Signal use the contact's number; Signal needs an E.164 number and
+  tries kids-mdm-im (`com.kidsmdm.im`), Molly, Signal in that order. Phone book only (Home rows just call).
+- Phone-book `tel:` links from other apps ask "Call X?" (home rows and phone-book buttons call immediately).
+- Static emergency list = 112, 911 + the default country's numbers (47: 110, 113); never opens the callback window.
+- `DISALLOW_CONFIG_DEFAULT_APPS` only once **both** the dialer and the redirection role are held (the restriction may
+  block the role prompt we fall back to).
+- `voicemail:` handles are blocked while managed (QA #7); the `##004#` advice and the 1881/1880 warning are on the
+  calls page.
+
+Open items:
+- **Task 15 (direct-boot call path)**: not started; until then a rebooted, not-yet-unlocked phone rings unscreened.
+  Release gate.
+- **System keypad MMI/USSD (QA #6)**: with our dialer in place and calls on, `DISALLOW_OUTGOING_CALLS` is lifted, and
+  the system dialer can still be opened (`intent://`, explicit component, LockTaskController's emergency exemption). If
+  MMI codes (`*21*…#`, USSD) typed there execute without passing Telecom redirection, this is a blocker; possible
+  answers then: keep `DISALLOW_OUTGOING_CALLS` and place allowed calls differently, or `DISALLOW_CONFIG_MOBILE_NETWORKS`.
+- QA #13-15, #19-20 belong to step 1 (done there). QA #21 (Element/VoIP bypass Telecom) is out of scope, documented.
+- Server: new POST routes inherit the existing lack of CSRF protection (QA #18 note).
+- Changing the default country code does not renormalise stored numbers (shown on the page).
+
+Device checklist (Jelly Star, release build; in addition to §5 items 1-16 and QA criteria T9-T15, which all still
+apply - items 7, 12 and T15 especially):
+1. `cmd role get-role-holders android.app.role.DIALER` shows us without a prompt; grant redirection with
+   `adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION com.kidslauncher.mdm`; the server shows no role
+   warnings. If the DPM call fails, the Home prompt appears once a day, also in kiosk (check it isn't blocked by lock task).
+2. `setDefaultDialerApplication` still works with `DISALLOW_CONFIG_DEFAULT_APPS` set (unmanage, then manage again), and
+   Settings → Default apps → Phone is blocked.
+3. Phone book: contacts listed, Call works immediately, Message opens SMS (only with SMS on), Element X
+   (`matrix.to`) and Signal/Molly (`signal.me`) at the right conversation; the button is hidden when the app is missing,
+   suspended or not allowlisted.
+4. Home shows Phone book + Home-flagged contacts above the apps; they disappear with calls off or unmanaged.
+5. In-call screen: lock screen + screen off, in kiosk inside another app, on Home; speaker toggles via call endpoints,
+   mute, proximity blanks the screen, decline/hang up; the `CallStyle` notification's buttons work; no ringtone glitch.
+6. `VIEW tel:` from a browser/Element X opens our phone book (not the system keypad); `intent://…component=<dialer>`
+   and `*21*C#` / a USSD code from the system keypad do **not** execute (QA #6, blocker if they do); voicemail button
+   and `voicemail:` are refused.
+7. Redirection: C's handset never rings for any outgoing path in QA T10; with the redirection role removed, the in-call
+   backstop disconnects quickly (note whether C sees a missed call).
+8. Callback window: with emergency test mode (never 112 itself), a connected test call opens the window (a stranger
+   rings for 60 min, the server shows the emergency call and window); dialling `08`/`000` does not.
+9. Status `call_state` on the server matches reality (roles, restrictions, default SMS app). `READ_CALL_LOG` self-grant
+   works (it's a hard-restricted permission; the dialer role should grant it).
+10. A third-party app with `CALL_PHONE` shows it "blocked by admin" right after install; back to default after
+    unmanaging.
+11. SMS off: `DISALLOW_SMS` set, Google Messages/STK suspended (also with the PIN override active), RCS to C impossible;
+    SMS on: all back.
+12. Override PIN / pause: apps open up, calls stay allowlisted (C still rejected).
+13. Injected startup crash (throw in `initRest`): the process stays up and C is still rejected (QA #10, T11).
+14. Old server (no `call_policy`) after managed: response rejected (`policy_state = rejected_suspect`), rules kept;
+    explicit `managed: false`: role handed back to the system dialer, restrictions cleared.
