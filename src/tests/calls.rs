@@ -659,6 +659,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     call_state["redirection_role_held"] = json!(false);
     call_state["last_error"] = json!("setDefaultDialerApplication: IllegalArgumentException");
     call_state["call_log_readable"] = json!(false);
+    call_state["boot_policy"] = json!("write_failed");
     post_status(
         &app,
         &token,
@@ -672,6 +673,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
         "Call-redirection role not active",
         "setDefaultDialerApplication: IllegalArgumentException",
         "read the phone",
+        "right after a restart",
     ] {
         assert!(page.contains(expected), "{expected}: {page}");
     }

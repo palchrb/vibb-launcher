@@ -268,6 +268,20 @@ pub(crate) async fn call_warnings(
                 .to_string(),
         );
     }
+    match text("boot_policy").as_deref() {
+        Some("write_failed") => warnings.push(
+            "The phone couldn't save its call rules for use right after a restart, so until it's \
+             unlocked once after a reboot it rejects every call except emergency calls. It retries \
+             on every sync."
+                .to_string(),
+        ),
+        Some("unreadable") => warnings.push(
+            "The phone's copy of its call rules for use right after a restart can't be read, so \
+             until it's unlocked once after a reboot it rejects every call except emergency calls."
+                .to_string(),
+        ),
+        _ => {}
+    }
     if let Some(error) = text("last_error") {
         warnings.push(format!("The phone reported a calls problem: {error}"));
     }
