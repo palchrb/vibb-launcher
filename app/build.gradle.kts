@@ -37,6 +37,29 @@ if (!hasTsnet) {
     logger.warn("libs/tsnet.aar not found - building with the tsnet stub (no embedded tailnet)")
 }
 
+// Release signing. Each value comes from the env var first (CI), then from a Gradle property
+// (local builds: put them in ~/.gradle/gradle.properties, never in this repo). Without a store
+// file, assembleRelease still works and produces an unsigned APK, as before. PKCS12 keystores use
+// one password for store and key, so the key password falls back to the store password.
+fun releaseSecret(env: String, prop: String): String? =
+    providers.environmentVariable(env).orElse(providers.gradleProperty(prop)).orNull
+        ?.takeIf { it.isNotBlank() }
+val releaseStoreFile = releaseSecret("ANDROID_RELEASE_KEYSTORE_FILE", "handy.release.storeFile")
+if (releaseStoreFile == null && providers.gradleProperty("requireReleaseSigning").orNull == "true") {
+    throw GradleException(
+        "-PrequireReleaseSigning=true, but no keystore is configured: set " +
+            "ANDROID_RELEASE_KEYSTORE_FILE (or handy.release.storeFile) and the password/alias values"
+    )
+}
+
+// Release CI passes the version derived from the git tag (vMAJOR.MINOR.PATCH -> MAJOR*1_000_000 +
+// MINOR*1_000 + PATCH, see .github/workflows/android.yml). Local and debug builds use the
+// literals below - never bump those by hand for a release.
+val versionCodeOverride = providers.gradleProperty("versionCode").orNull?.let {
+    it.toIntOrNull() ?: throw GradleException("-PversionCode must be an integer, got '$it'")
+}
+val versionNameOverride = providers.gradleProperty("versionName").orNull
+
 android {
     namespace = "com.kidslauncher.mdm"
     compileSdk = 36
@@ -45,8 +68,8 @@ android {
         applicationId = "com.kidslauncher.mdm"
         minSdk = 34
         targetSdk = 36
-        versionCode = 116
-        versionName = "0.23.6"
+        versionCode = versionCodeOverride ?: 116
+        versionName = versionNameOverride ?: "0.23.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -55,8 +78,22 @@ android {
         generateLocaleConfig = true
     }
 
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = releaseSecret("ANDROID_RELEASE_KEYSTORE_PASSWORD", "handy.release.storePassword")
+                keyAlias = releaseSecret("ANDROID_RELEASE_KEY_ALIAS", "handy.release.keyAlias")
+                keyPassword = releaseSecret("ANDROID_RELEASE_KEY_PASSWORD", "handy.release.keyPassword")
+                    ?: storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // No isDebuggable line: release is non-debuggable, which also blocks `adb shell run-as`.
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

@@ -14,9 +14,8 @@
 #   public *;
 #}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Readable crash traces (class/method names are already kept by -dontobfuscate).
+-keepattributes SourceFile,LineNumberTable
 
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
@@ -37,3 +36,13 @@
 # dnsjava's optional adapter for the desktop-JDK-only sun.net.spi.nameservice SPI (plugging into
 # InetAddress's internal resolution) - doesn't exist on Android and this app never uses it.
 -dontwarn sun.net.spi.nameservice.**
+
+# R8 only shrinks here (-dontobfuscate -dontoptimize above). These keeps are belt and braces for
+# code the shrinker can't see being used:
+# - tsnet.aar's gomobile bindings are called from native code over JNI. gomobile ships the same
+#   rules as consumer rules inside the aar; keeping them here too costs nothing.
+# - pcap4j instantiates its packet factories per packet type at runtime (ServiceLoader +
+#   reflection), so KidVpnService's DNS filter would break if one were removed.
+-keep class go.** { *; }
+-keep class tsembed.** { *; }
+-keep class org.pcap4j.packet.** { *; }
