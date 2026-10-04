@@ -3,6 +3,8 @@ package com.kidslauncher.mdm.apps
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.UserManager
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.systemDialerPackage
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import java.util.Locale
@@ -48,9 +50,10 @@ class AppFilter(
 
     /**
      * The system dialer is never suspended (it's the in-call UI for emergency calls - see
-     * `EnforcementPlan`), so [isMdmSuspended] doesn't hide it. While outgoing calls are
-     * restricted (managed phone, dialer not allowlisted) it's left off Home and the app list
-     * anyway: its keypad can only place emergency calls then, which the lock screen also offers.
+     * `EnforcementPlan`), so [isMdmSuspended] doesn't hide it. While calls are managed (our phone
+     * book is the way to call) or outgoing calls are restricted it's left off Home and the app
+     * list anyway: its keypad can only place emergency calls then, which the lock screen also
+     * offers.
      */
     private fun blockedSystemDialer(): String? {
         val restricted = try {
@@ -59,7 +62,8 @@ class AppFilter(
         } catch (e: Exception) {
             false
         }
-        return if (restricted) systemDialerPackage(context) else null
+        val hide = restricted || CallPolicyStore.state.managed
+        return if (hide) systemDialerPackage(context) else null
     }
 
     companion object {

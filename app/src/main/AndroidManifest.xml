@@ -198,6 +198,16 @@
                 <action android:name="android.telecom.InCallService" />
             </intent-filter>
         </service>
+        <!-- Stops not-allowed outgoing calls before they're placed. Needs ROLE_CALL_REDIRECTION
+             (adb at provisioning, or the system prompt from Home). -->
+        <service
+            android:name=".calls.KidCallRedirectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_CALL_REDIRECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.CallRedirectionService" />
+            </intent-filter>
+        </service>
         <!-- Only our own notification PendingIntents (Answer / Hang up). -->
         <receiver
             android:name=".calls.CallActionReceiver"

@@ -10,6 +10,7 @@ import android.os.Looper
 import android.view.GestureDetector
 import android.view.MotionEvent
 import androidx.activity.OnBackPressedCallback
+import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import android.app.role.RoleManager
@@ -25,6 +26,7 @@ import com.kidslauncher.mdm.openAppsList
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.requestNotificationPermission
 import com.kidslauncher.mdm.setDefaultHomeScreen
+import com.kidslauncher.mdm.ui.minimalist.ContactsHomeAdapter
 import com.kidslauncher.mdm.ui.minimalist.MinimalistHomeAdapter
 import com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +48,7 @@ class HomeActivity : UIObjectActivity() {
 
     private lateinit var binding: ActivityHomeBinding
     private lateinit var minimalistAdapter: MinimalistHomeAdapter
+    private lateinit var contactsAdapter: ContactsHomeAdapter
     private lateinit var gestureDetector: GestureDetector
 
     private var sharedPreferencesListener =
@@ -56,6 +59,11 @@ class HomeActivity : UIObjectActivity() {
                 redirectToLockScreenIfLocked()
             } else if (prefKey == LauncherPreferences.mdm().keys().kioskEnabled()) {
                 reconcileKioskMode()
+            } else if (prefKey == LauncherPreferences.mdm().keys().kidModePolicy()) {
+                // A new policy may change the contacts; the sync refreshes the store too, but
+                // this listener can run before it does.
+                CallPolicyStore.refresh(this)
+                contactsAdapter.update()
             } else {
                 // covers minimalist. (added/removed), apps.hidden (hidden while shown here)
                 // and apps.custom_names (renamed) - all of which can change via the
@@ -84,8 +92,9 @@ class HomeActivity : UIObjectActivity() {
         setContentView(binding.root)
 
         minimalistAdapter = MinimalistHomeAdapter(this)
+        contactsAdapter = ContactsHomeAdapter(this)
         binding.homeMinimalistList.layoutManager = LinearLayoutManager(this)
-        binding.homeMinimalistList.adapter = minimalistAdapter
+        binding.homeMinimalistList.adapter = ConcatAdapter(contactsAdapter, minimalistAdapter)
 
         // Back does nothing on the home screen, same as stock Android launchers.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -189,25 +198,31 @@ class HomeActivity : UIObjectActivity() {
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return
         minimalistAdapter.updateAppsList()
+        contactsAdapter.update()
         promptForCallRoleIfNeeded()
     }
 
     /**
-     * Fallback when the device-owner call couldn't make us the default phone app (an error was
-     * recorded): the system's own role prompt, at most once a day, for the parent to accept.
+     * The system's role prompts, at most once a day, for the parent to accept: the dialer role
+     * when the device-owner call couldn't take it (an error was recorded), and call redirection,
+     * which has no device-owner API (unless granted with adb at provisioning).
      */
     private fun promptForCallRoleIfNeeded() {
         val state = CallPolicyStore.state
         val now = System.currentTimeMillis()
         val dialerHeld = CallSystem.dialerRoleHeld(this)
-        if (CallPrefs.lastError(this) == null) return
-        if (!shouldPromptForRole(state, dialerHeld, now, CallPrefs.rolePromptLastMs(this))) return
+        val role = when {
+            !dialerHeld && CallPrefs.lastError(this) != null -> RoleManager.ROLE_DIALER
+            dialerHeld && !CallSystem.redirectionRoleHeld(this) -> RoleManager.ROLE_CALL_REDIRECTION
+            else -> return
+        }
+        if (!shouldPromptForRole(state, roleHeld = false, now, CallPrefs.rolePromptLastMs(this))) return
         CallPrefs.rolePromptLastMs(this, now)
         try {
             val roleManager = getSystemService(RoleManager::class.java) ?: return
-            startActivity(roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER))
+            startActivity(roleManager.createRequestRoleIntent(role))
         } catch (e: Exception) {
-            android.util.Log.w("HomeActivity", "Couldn't show the default phone app prompt", e)
+            android.util.Log.w("HomeActivity", "Couldn't show the $role prompt", e)
         }
     }
 

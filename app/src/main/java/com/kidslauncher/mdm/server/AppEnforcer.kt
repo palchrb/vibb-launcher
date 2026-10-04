@@ -132,10 +132,13 @@ object AppEnforcer {
             controllable = installedPackages,
             ownPackage = ownPackage,
             systemDialer = systemDialerPackage(context),
+            callState = callState,
+            ourDialerActive = CallSystem.dialerRoleHeld(context),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
-        // ordinary numbers in between; cleared when unmanaged or under an override - see
+        // ordinary numbers in between; with calls managed it's lifted only while our own dialer
+        // (redirection + in-call services) screens outgoing calls - see
         // EnforcementPlan.restrictOutgoingCalls. Emergency calls are exempt from this restriction.
         setRestriction(dpm, admin, UserManager.DISALLOW_OUTGOING_CALLS, plan.restrictOutgoingCalls)
 

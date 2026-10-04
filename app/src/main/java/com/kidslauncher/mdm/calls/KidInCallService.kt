@@ -4,6 +4,8 @@ import android.telecom.Call
 import android.telecom.CallEndpoint
 import android.telecom.InCallService
 import android.util.Log
+import android.widget.Toast
+import com.kidslauncher.mdm.R
 
 private const val LOG_TAG = "KidInCallService"
 
@@ -40,6 +42,14 @@ class KidInCallService : InCallService() {
     }
 
     override fun onCallAdded(call: Call) {
+        // Backstop for outgoing calls our redirection service didn't stop (no redirection role,
+        // its timeout, or a path it doesn't see): hang up before it rings for long.
+        if (call.details.callDirection == Call.Details.DIRECTION_OUTGOING && outgoingVerdict(call) == Verdict.BLOCK) {
+            Log.i(LOG_TAG, "Disconnecting a not-allowed outgoing call")
+            call.disconnect()
+            Toast.makeText(applicationContext, R.string.calls_not_allowed, Toast.LENGTH_LONG).show()
+            return
+        }
         OngoingCalls.add(call)
         call.registerCallback(callback)
         showUi(call)
@@ -52,13 +62,24 @@ class KidInCallService : InCallService() {
         if (next == null) CallNotifications.cancel(this) else showUi(next, startActivity = false)
     }
 
+    private fun outgoingVerdict(call: Call): Verdict {
+        val state = CallPolicyStore.state
+        return try {
+            val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
+            decideOutgoing(raw, state, CallSystem.isEmergencyOutgoing(this, raw))
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Outgoing call check failed", e)
+            if (state is CallPolicyState.Unmanaged) Verdict.ALLOW else Verdict.BLOCK
+        }
+    }
+
     /** Notification plus a direct activity start: we're device owner and HOME, so the start is
      * allowed from the background and doesn't depend on heads-up/full-screen intents. */
     private fun showUi(call: Call, startActivity: Boolean = true) {
         if (call.details.state == Call.STATE_DISCONNECTED) return
         val number = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
-        val name = rules?.contactFor(number)?.name ?: number ?: getString(com.kidslauncher.mdm.R.string.calls_unknown_caller)
+        val name = rules?.contactFor(number)?.name ?: number ?: getString(R.string.calls_unknown_caller)
         CallNotifications.show(this, call, name)
         if (startActivity) {
             try {
