@@ -33,10 +33,20 @@ object CallPolicyStore {
     var state: CallPolicyState = CallPolicyState.UnknownFailClosed
         private set
 
-    private enum class Source { NONE, BOOT, CE }
-
     @Volatile
-    private var source = Source.NONE
+    private var source = PolicySource.NONE
+
+    /** The DE string this process last really committed (`null` after a failed write). Taken from
+     * disk only once, on the first read in this process; never re-read from the prefs afterwards:
+     * after a failed commit() their in-memory map already holds the new value (QA direct-boot #2). */
+    private var committed: String? = null
+    private var committedKnown = false
+
+    /** `callState.bootPolicy`: "ok", "write_failed" or "unreadable" (the copy wouldn't make the
+     * same decisions before unlock), "unknown" before the first unlocked refresh. */
+    @Volatile
+    var bootPolicyStatus: String = "unknown"
+        private set
 
     /** Whether credential-encrypted storage is readable. If we can't tell, assume it isn't: the DE
      * path never throws on a locked phone, the CE path would. */
@@ -46,55 +56,88 @@ object CallPolicyStore {
         false
     }
 
+    /** [ceReadable]: CE storage can be read - by default `isUserUnlocked()`; Application passes
+     * true when a component that isn't direct-boot-aware is starting (then CE is unlocked even if
+     * the user is still "unlocking"). */
     @Synchronized
-    fun refresh(context: Context) {
-        if (userUnlocked(context)) refreshFromCe(context) else refreshFromBoot(context)
+    fun refresh(context: Context, ceReadable: Boolean = userUnlocked(context)) {
+        val deJson = readBoot(context)
+        val ce = if (ceReadable) readCe(context) else null
+        if (!committedKnown && deJson != null) {
+            committed = deJson.getOrNull()
+            committedKnown = deJson.isSuccess
+        }
+        val plan = refreshPlan(ceReadable, ce, deJson?.getOrNull(), if (committedKnown) committed else null)
+        val newState = plan.state
+        if (newState == null) {
+            Log.e(LOG_TAG, "Couldn't read the call rules, keeping $state")
+            return
+        }
+        if (plan.source == PolicySource.BOOT && decodeBootPolicy(deJson?.getOrNull()) !is BootPolicyRead.Ok) {
+            Log.w(LOG_TAG, "No usable boot call policy, failing closed until unlock")
+        }
+        state = newState
+        source = plan.source
+        if (plan.source != PolicySource.CE) return
+        if (plan.repairManagedLast) repairManagedLast(context)
+        plan.bootWrite?.let { writeBoot(context, it) }
+        // After a CE refresh the copy on disk should be exactly what CE says; null = the write failed.
+        bootPolicyStatus = when {
+            committed == null -> "write_failed"
+            bootCopyFaithful(newState, committed) -> "ok"
+            else -> "unreadable"
+        }
+        if (bootPolicyStatus != "ok") Log.w(LOG_TAG, "Boot call policy: $bootPolicyStatus")
     }
 
     /** Loads the rules if nothing has been read yet, or only the boot copy while CE is readable now. */
     fun ensureLoaded(context: Context) {
         val current = source
-        if (current == Source.NONE || (current == Source.BOOT && userUnlocked(context))) refresh(context)
+        if (current == PolicySource.NONE || (current == PolicySource.BOOT && userUnlocked(context))) refresh(context)
     }
 
-    private fun refreshFromCe(context: Context) {
-        val derived = try {
-            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-            val cached = decodeCached(prefs.getString(context.getString(R.string.settings_mdm_kid_mode_policy_key), null))
-            val managedLast = prefs.getBoolean(context.getString(R.string.settings_mdm_calls_managed_last_key), false)
-            val lastRules = decodeCallRules(prefs.getString(context.getString(R.string.settings_mdm_last_call_rules_key), null))
-            callPolicyState(cached, managedLast, lastRules)
-        } catch (e: Exception) {
-            // Nothing mirrored either: the DE copy keeps the last rules we could read.
-            Log.e(LOG_TAG, "Couldn't read the call rules, keeping $state", e)
-            return
-        }
-        state = derived
-        source = Source.CE
-        mirrorToBoot(context, derived)
+    /** `null` = the DE file couldn't even be opened. */
+    private fun readBoot(context: Context): Result<String?>? = try {
+        Result.success(bootPrefs(context).getString(BOOT_KEY, null))
+    } catch (e: Exception) {
+        Log.e(LOG_TAG, "Couldn't read the boot call policy", e)
+        null
     }
 
-    /** Keeps the DE copy equal to what CE says; written only when it differs, synchronously (a
-     * reboot may follow). */
-    private fun mirrorToBoot(context: Context, derived: CallPolicyState) {
-        try {
-            val prefs = bootPrefs(context)
-            val rewrite = bootPolicyRewrite(prefs.getString(BOOT_KEY, null), derived) ?: return
-            if (!prefs.edit().putString(BOOT_KEY, rewrite).commit()) Log.w(LOG_TAG, "Couldn't write the boot call policy")
+    private fun readCe(context: Context): CeRead = try {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        CeRead.Ok(
+            decodeCached(prefs.getString(context.getString(R.string.settings_mdm_kid_mode_policy_key), null)),
+            prefs.getBoolean(context.getString(R.string.settings_mdm_calls_managed_last_key), false),
+            decodeCallRules(prefs.getString(context.getString(R.string.settings_mdm_last_call_rules_key), null)),
+        )
+    } catch (e: Exception) {
+        Log.e(LOG_TAG, "Couldn't read the call rules", e)
+        CeRead.Failed
+    }
+
+    private fun writeBoot(context: Context, json: String) {
+        val ok = try {
+            bootPrefs(context).edit().putString(BOOT_KEY, json).commit()
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Couldn't write the boot call policy", e)
+            false
         }
+        // On failure what's on disk is unknown: null makes every later refresh write again.
+        committed = if (ok) json else null
+        committedKnown = true
     }
 
-    private fun refreshFromBoot(context: Context) {
-        val read = try {
-            decodeBootPolicy(bootPrefs(context).getString(BOOT_KEY, null))
+    /** The DE copy saw managed calls but CE lost `calls_managed_last` (preferences reset): put it
+     * back, so policy acceptance (judgeFresh) treats the phone as managed too. */
+    private fun repairManagedLast(context: Context) {
+        try {
+            PreferenceManager.getDefaultSharedPreferences(context).edit()
+                .putBoolean(context.getString(R.string.settings_mdm_calls_managed_last_key), true).commit()
+            Log.w(LOG_TAG, "Calls were managed per the boot copy but CE had forgotten it: failing closed")
         } catch (e: Exception) {
-            BootPolicyRead.Corrupt(e.javaClass.simpleName)
+            Log.e(LOG_TAG, "Couldn't repair calls_managed_last", e)
         }
-        if (read !is BootPolicyRead.Ok) Log.w(LOG_TAG, "No usable boot call policy ($read), failing closed until unlock")
-        state = bootPolicyState(read)
-        source = Source.BOOT
     }
 
     private fun bootPrefs(context: Context): SharedPreferences =

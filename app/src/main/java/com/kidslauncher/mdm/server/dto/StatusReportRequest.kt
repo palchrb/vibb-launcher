@@ -30,7 +30,9 @@ data class StatusReportRequest(
  * [state] is "unmanaged", "managed" or "fail_closed". Times are ISO-8601 (UTC).
  * [lastEmergencyCallAt]/[callbackWindowUntil] report an emergency call and the window in which
  * anyone may call back (QA blocker 2) so the parent is told. [callLogReadable] false means the
- * callback window can't open from the call log (QA step 2 #7), shown as a warning.
+ * callback window can't open from the call log (QA step 2 #7), shown as a warning. [bootPolicy] is
+ * the device-protected copy of the call rules used before the first unlock (task 15): "ok",
+ * "write_failed", "unreadable" (it wouldn't make the same decisions) or "unknown".
  */
 @Serializable
 data class CallState(
@@ -46,4 +48,5 @@ data class CallState(
     val lastEmergencyCallAt: String?,
     val callbackWindowUntil: String?,
     val callLogReadable: Boolean,
+    val bootPolicy: String,
 )

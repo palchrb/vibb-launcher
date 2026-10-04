@@ -117,10 +117,8 @@ object CallSystem {
     fun callbackWindowUntil(context: Context, nowMs: Long = System.currentTimeMillis()): Long? =
         callbackWindowUntil(
             nowMs,
-            if (CallPolicyStore.userUnlocked(context)) {
+            callLogForWindow(CallPolicyStore.userUnlocked(context)) {
                 recentOutgoingCalls(context, nowMs - 2 * CALLBACK_WINDOW_MS)
-            } else {
-                emptyList()
             },
             CallPrefs.recordedWindowUntil(context),
             platformEmergency(context),

@@ -142,7 +142,7 @@ class PolicyResponseCompatTest {
                 state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false,
                 defaultDialer = "x", systemDialer = "y", smsRestricted = true, outgoingRestricted = false,
                 defaultSmsPackage = null, lastError = null, lastEmergencyCallAt = null, callbackWindowUntil = null,
-                callLogReadable = false,
+                callLogReadable = false, bootPolicy = "ok",
             ),
         )
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
@@ -152,7 +152,7 @@ class PolicyResponseCompatTest {
             setOf(
                 "state", "dialer_role_held", "redirection_role_held", "default_dialer", "system_dialer",
                 "sms_restricted", "outgoing_restricted", "default_sms_package", "last_error",
-                "last_emergency_call_at", "callback_window_until", "call_log_readable",
+                "last_emergency_call_at", "callback_window_until", "call_log_readable", "boot_policy",
             ),
             callState.keys,
         )
