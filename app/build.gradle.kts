@@ -29,6 +29,14 @@ abstract class GitCommitValueSource : ValueSource<String, ValueSourceParameters.
 val gitCommitProvider = providers.of(GitCommitValueSource::class) {}
 val gitCommit = gitCommitProvider.get()
 
+val hasTsnet = file("libs/tsnet.aar").exists()
+if (!hasTsnet) {
+    if (providers.gradleProperty("requireTsnet").orNull == "true") {
+        throw GradleException("libs/tsnet.aar is missing but -PrequireTsnet=true was given")
+    }
+    logger.warn("libs/tsnet.aar not found - building with the tsnet stub (no embedded tailnet)")
+}
+
 android {
     namespace = "com.kidslauncher.mdm"
     compileSdk = 36
@@ -64,6 +72,13 @@ android {
 
     defaultConfig {
         buildConfigField("String", "GIT_COMMIT", "\"${gitCommit}\"")
+    }
+
+    // libs/tsnet.aar is built by CI (Go + NDK, x86_64 only). Without it, compile a stub of its
+    // API instead so the app still builds and unit-tests locally; the stub fails every tailnet
+    // connect. CI passes -PrequireTsnet=true so a release can never ship the stub by accident.
+    if (!hasTsnet) {
+        sourceSets.getByName("main").java.srcDir("src/tsnetStub/java")
     }
 
     compileOptions {
@@ -105,7 +120,9 @@ dependencies {
     // gomobile" step, and mobile/go.mod) - not checked in, since it's a
     // multi-hundred-MB Go-toolchain build artifact. Gives the launcher its
     // own embeddable tailnet connection - see CLAUDE.md.
-    implementation(files("libs/tsnet.aar"))
+    if (hasTsnet) {
+        implementation(files("libs/tsnet.aar"))
+    }
     // IP/UDP packet parsing+construction (with automatic checksum/length
     // correction) and DNS message parsing, for KidVpnService's local packet
     // filter - same libraries (and versions, for pcap4j) DNS66 uses for this
