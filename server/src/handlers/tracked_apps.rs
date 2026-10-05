@@ -27,6 +27,24 @@ struct GithubAsset {
     id: i64,
     name: String,
     browser_download_url: String,
+    /// Bytes, as GitHub reports it; 0 if missing.
+    #[serde(default)]
+    size: u64,
+}
+
+/// An APK is a ZIP file: anything else (an HTML error page, a truncated download) must never be
+/// cached and offered to the phones. `expected_size` is GitHub's asset size (0 = unknown).
+fn check_apk_bytes(bytes: &[u8], expected_size: u64) -> Result<(), String> {
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return Err("downloaded asset is not an APK (no ZIP header)".to_string());
+    }
+    if expected_size != 0 && bytes.len() as u64 != expected_size {
+        return Err(format!(
+            "downloaded asset has {} bytes, GitHub lists {expected_size}",
+            bytes.len()
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -142,9 +160,12 @@ async fn sync_one_app(state: &AppState, app: &TrackedApp) -> Result<(), String> 
         .send()
         .await
         .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
         .bytes()
         .await
         .map_err(|e| e.to_string())?;
+    check_apk_bytes(&bytes, asset.size)?;
 
     let app_dir = format!("{TRACKED_APPS_DIR}/{}", app.id);
     tokio::fs::create_dir_all(&app_dir)
@@ -644,6 +665,7 @@ mod tests {
                     id: *id,
                     name: name.to_string(),
                     browser_download_url: format!("https://example.org/{name}"),
+                    size: 0,
                 })
                 .collect(),
         }
@@ -672,6 +694,16 @@ mod tests {
 
         let (r, a) = newest_matching_release(monorepo(), true, None).unwrap();
         assert_eq!((r.tag_name.as_str(), a.id), ("launcher-v0.31.0-rc.1", 3));
+    }
+
+    #[test]
+    fn only_a_complete_zip_is_accepted_as_an_apk() {
+        let apk = b"PK\x03\x04rest-of-the-zip";
+        assert!(check_apk_bytes(apk, 0).is_ok());
+        assert!(check_apk_bytes(apk, apk.len() as u64).is_ok());
+        assert!(check_apk_bytes(apk, apk.len() as u64 + 1).is_err());
+        assert!(check_apk_bytes(b"<!DOCTYPE html><html>Not Found", 0).is_err());
+        assert!(check_apk_bytes(b"", 0).is_err());
     }
 
     #[test]
