@@ -1,11 +1,15 @@
 package com.kidslauncher.mdm.calls
 
+import android.os.Handler
+import android.os.Looper
 import android.telecom.Call
 import android.telecom.CallEndpoint
 import android.telecom.InCallService
 import android.util.Log
 import android.widget.Toast
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.lock.LockMode
+import com.kidslauncher.mdm.lock.PinLockRuntime
 
 private const val LOG_TAG = "KidInCallService"
 
@@ -126,12 +130,34 @@ class KidInCallService : InCallService() {
         val name = rules?.contactFor(number)?.name?.takeIf { it.isNotBlank() } ?: number ?: getString(R.string.calls_unknown_caller)
         CallNotifications.show(this, call, name)
         if (startActivity) {
-            try {
-                startActivity(InCallActivity.intent(this))
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't start the in-call screen", e)
-            }
+            startInCallUi()
+            // Over handy's PIN lock the full-screen intent is probably suppressed with the shade
+            // (QA 10 #8): the direct start is all there is, so it gets one retry, and a failure is
+            // reported - an allowed call must always be answerable.
+            if (PinLockRuntime.mode == LockMode.LOCKED) handler.postDelayed({ retryIfHidden(call) }, 300L)
         }
+    }
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    private fun startInCallUi(): Boolean = try {
+        startActivity(InCallActivity.intent(this))
+        true
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't start the in-call screen", e)
+        false
+    }
+
+    private fun retryIfHidden(call: Call) {
+        if (call !in OngoingCalls.calls || InCallActivity.resumed) return
+        Log.w(LOG_TAG, "In-call screen not in front over the PIN lock - retrying once")
+        startInCallUi()
+        handler.postDelayed({
+            if (call in OngoingCalls.calls && call.details.state == Call.STATE_RINGING && !InCallActivity.resumed) {
+                Log.e(LOG_TAG, "In-call screen still not shown over the PIN lock")
+                CallPrefs.recordInCallUiFailed(this)
+            }
+        }, 1_000L)
     }
 
     override fun onMuteStateChanged(isMuted: Boolean) = OngoingCalls.audioChanged(muted = isMuted)

@@ -42,6 +42,7 @@ object CallStateReport {
             callbackWindowUntil = CallSystem.isoOrNull(CallSystem.callbackWindowUntil(context, now)),
             callLogReadable = CallSystem.callLogReadable(context),
             bootPolicy = CallPolicyStore.bootPolicyStatus,
+            inCallUiFailedAt = CallSystem.isoOrNull(CallPrefs.inCallUiFailedMs(context)),
         )
     }
 }

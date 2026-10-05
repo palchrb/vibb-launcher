@@ -161,6 +161,7 @@ object CallPrefs {
     private const val LAST_ERROR = "mdm.calls.last_error"
     private const val ROLES_SIGNALLED = "mdm.calls.roles_signalled"
     private const val OWN_PERMISSIONS_FIXED = "mdm.calls.own_permissions_fixed"
+    private const val IN_CALL_UI_FAILED_MS = "mdm.calls.in_call_ui_failed_ms"
 
     private fun prefs(context: Context) = PreferenceManager.getDefaultSharedPreferences(context)
 
@@ -217,6 +218,22 @@ object CallPrefs {
     }
 
     fun rolePromptLastMs(context: Context) = prefs(context).getLong(ROLE_PROMPT_LAST_MS, 0)
+
+    /** The in-call screen couldn't be shown over the PIN lock for a ringing call (step 10, QA 10
+     * #8). Only ever written while the PIN lock runs, i.e. after the first unlock (CE prefs). */
+    fun recordInCallUiFailed(context: Context, nowMs: Long = System.currentTimeMillis()) {
+        try {
+            prefs(context).edit().putLong(IN_CALL_UI_FAILED_MS, nowMs).commit()
+        } catch (e: Exception) {
+            // Before the first unlock CE prefs can't be written; nothing to report then.
+        }
+    }
+
+    fun inCallUiFailedMs(context: Context): Long? = try {
+        prefs(context).getLong(IN_CALL_UI_FAILED_MS, 0L).takeIf { it > 0L }
+    } catch (e: Exception) {
+        null
+    }
 
     fun rolePromptLastMs(context: Context, value: Long) {
         prefs(context).edit().putLong(ROLE_PROMPT_LAST_MS, value).commit()

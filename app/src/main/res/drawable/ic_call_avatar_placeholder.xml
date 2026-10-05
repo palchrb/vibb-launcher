@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The placeholder figure on #DCE7F2 (no contact photo), as in the call mockups. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="140dp"
+    android:height="140dp"
+    android:viewportWidth="140"
+    android:viewportHeight="140">
+    <path android:fillColor="#DCE7F2" android:pathData="M70,0a70,70 0,1 1,0 140a70,70 0,1 1,0 -140z" />
+    <path android:fillColor="#9CB8D4" android:pathData="M70,34a24,24 0,1 1,0 48a24,24 0,1 1,0 -48z" />
+    <path android:fillColor="#9CB8D4" android:pathData="M22,132c6,-26 26,-40 48,-40s42,14 48,40z" />
+</vector>
