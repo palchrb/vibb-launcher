@@ -217,3 +217,47 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
     let html = page(&app, &cookie, &format!("/devices/{id}")).await;
     assert!(html.contains("kiosk app block below is off"), "{html}");
 }
+
+#[tokio::test]
+async fn an_error_page_never_reloads_itself() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    sql(
+        &app,
+        "UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?",
+        id,
+    )
+    .await;
+    post_status(&app, &token, json!({ "capabilities": ["call_policy_v1"] })).await;
+    sql(
+        &app,
+        "UPDATE device_status SET reported_at = datetime('now', '-1 minute') WHERE device_id = ?",
+        id,
+    )
+    .await;
+    sql(
+        &app,
+        "UPDATE device_policy SET roles_changed_at = datetime('now') WHERE device_id = ?",
+        id,
+    )
+    .await;
+    // Waiting: the plain page reloads, a 400 with the typed contact doesn't (qa-09-code #9).
+    assert!(
+        page(&app, &cookie, &format!("/devices/{id}/calls"))
+            .await
+            .contains(r#"http-equiv="refresh""#)
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts"),
+            Some(&cookie),
+            &[("name", "Mamma"), ("number", "abc")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    assert!(html.contains("Mamma"));
+    assert!(!html.contains(r#"http-equiv="refresh""#));
+}

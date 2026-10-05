@@ -175,7 +175,9 @@ async fn load_page(
         contacts,
         default_country_code,
         warnings: report.warnings,
-        auto_refresh: report.auto_refresh,
+        // Never on an error render: a reload would lose the message and the typed contact
+        // (qa-09-code #9).
+        auto_refresh: report.auto_refresh && error.is_none(),
         error,
         form_name: form_name.to_string(),
         form_number: form_number.to_string(),
@@ -570,13 +572,52 @@ pub async fn add_contact(
 }
 
 /// A Matrix user ID as Element expects it: `@localpart:server`, no whitespace.
+/// The Matrix user-ID grammar (spec "User Identifiers"), the same check as the launcher's
+/// `isMatrixId`: localpart `a-z 0-9 . _ = - / +`, server a hostname, IPv4 or `[IPv6]` with an
+/// optional `:port` - so `?`, `#`, `&` and spaces never end up in the phone's `matrix:` URI
+/// (qa-09-code #8).
 fn valid_matrix_id(value: &str) -> bool {
-    value.len() <= 255
-        && value.starts_with('@')
-        && value
-            .split_once(':')
-            .is_some_and(|(local, server)| local.len() > 1 && !server.is_empty())
-        && !value.chars().any(char::is_whitespace)
+    let Some(rest) = value.strip_prefix('@') else {
+        return false;
+    };
+    let Some((local, server)) = rest.split_once(':') else {
+        return false;
+    };
+    let local_ok = !local.is_empty()
+        && local
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._=-/+".contains(c));
+    // "[IPv6]" or a host name / IPv4, then an optional ":port".
+    let (host_ok, port) = if let Some(v6) = server.strip_prefix('[') {
+        let Some((addr, after)) = v6.split_once(']') else {
+            return false;
+        };
+        let port = match after {
+            "" => None,
+            _ => match after.strip_prefix(':') {
+                Some(port) => Some(port),
+                None => return false,
+            },
+        };
+        let ok = !addr.is_empty()
+            && addr
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.');
+        (ok, port)
+    } else {
+        let (host, port) = match server.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (server, None),
+        };
+        let ok = !host.is_empty()
+            && host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        (ok, port)
+    };
+    let port_ok =
+        port.is_none_or(|p| (1..=5).contains(&p.len()) && p.chars().all(|c| c.is_ascii_digit()));
+    value.len() <= 255 && local_ok && host_ok && port_ok
 }
 
 /// Saves one contact's flags and Message button, scoped to this device: a contact that isn't
@@ -905,12 +946,21 @@ mod tests {
     fn matrix_ids() {
         assert!(valid_matrix_id("@mamma:matrix.org"));
         assert!(valid_matrix_id("@a.b-c:example.org:8448"));
+        assert!(valid_matrix_id("@a/b+c=d:[::1]:8448"));
+        assert!(valid_matrix_id("@a:[::1]"));
         for bad in [
             "mamma:matrix.org",
             "@:matrix.org",
             "@mamma",
             "@mamma:",
             "@ma mma:x.org",
+            "@a:b?action=join&via=x",
+            "@a#b:x.org",
+            "@a?b:x.org",
+            "@Mamma:x.org",
+            "@a:x.org/path",
+            "@a:x.org:port",
+            "@a:[::1]x",
         ] {
             assert!(!valid_matrix_id(bad), "{bad}");
         }
