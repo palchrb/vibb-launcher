@@ -210,6 +210,15 @@ launchable.
   launcher's Firebase config is injected at build time (CI variable / gradle
   property), not committed, so the fork stays generic. The UnifiedPush
   distributor (ntfy.sh relay) stays off unless F-Droid-flavoured apps need it.
+- **Own lock screen instead of Android's PIN** (user, 2026-10-05): Android screen
+  lock "None" + `setKeyguardDisabled(true)`; the launcher shows its own PIN lock
+  (kid's PIN set by the parent in the PWA, stored hashed) on screen-on, in the
+  same look as the rest, with an emergency button and incoming calls from
+  allowed contacts answerable. While it's up, lock-task features drop the
+  notification shade so nothing is readable before the PIN. Trade-offs: no
+  per-user storage encryption credential (FBE device key only); remote "lock"
+  uses our lock; the before-first-unlock state disappears (simpler calls).
+  Design together with the in-call screens in the next UI round.
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with
