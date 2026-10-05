@@ -45,11 +45,23 @@ class HardeningTest {
         assertTrue(plan.isSet(HardeningRestriction.CONFIG_VPN))
 
         val allOff = HardeningPolicy(false, false, false, false, false, false, false, false, false)
-        assertTrue(hardeningPlan(allOff, managed = true).restrictions.values.none { it })
+        // Every server switch off; the launcher-only wallpaper lock has no switch.
+        assertEquals(
+            setOf(HardeningRestriction.SET_WALLPAPER),
+            hardeningPlan(allOff, managed = true).restrictions.filterValues { it }.keys,
+        )
 
         // Airplane mode is only blocked when the parent says so, and like the rest only while managed.
         assertTrue(hardeningPlan(HardeningPolicy(disallowAirplaneMode = true), managed = true).isSet(HardeningRestriction.AIRPLANE_MODE))
         assertFalse(hardeningPlan(HardeningPolicy(disallowAirplaneMode = true), managed = false).isSet(HardeningRestriction.AIRPLANE_MODE))
+    }
+
+    @Test
+    fun `the wallpaper lock is set while managed and cleared when unmanaged`() {
+        for (policy in listOf(null, serverDefaults, HardeningPolicy(false, false, false, false, false, false, false, false, false))) {
+            assertTrue(hardeningPlan(policy, managed = true).isSet(HardeningRestriction.SET_WALLPAPER))
+            assertFalse(hardeningPlan(policy, managed = false).isSet(HardeningRestriction.SET_WALLPAPER))
+        }
     }
 
     @Test

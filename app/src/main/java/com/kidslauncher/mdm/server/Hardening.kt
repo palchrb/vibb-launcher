@@ -29,6 +29,12 @@ enum class HardeningRestriction(val defaultOn: Boolean) {
     CONFIG_LOCATION(true),
     /** `DISALLOW_AIRPLANE_MODE` - off by default: airplane mode stays allowed (travel). */
     AIRPLANE_MODE(false),
+    /** `DISALLOW_SET_WALLPAPER` (design 08 §3): only the launcher (device owner, exempt) sets
+     * the wallpaper the parent allowed and the kid picked. **Launcher-only** - there is no server
+     * switch ([value] is always null), so it is simply on while managed and cleared when
+     * unmanaged (after WallpaperApplier.resetIfOurs put navy back); like every hardening
+     * restriction the override and the pause don't lift it. */
+    SET_WALLPAPER(true),
 }
 
 data class HardeningPlan(
@@ -51,6 +57,7 @@ private fun HardeningPolicy?.value(restriction: HardeningRestriction): Boolean? 
     HardeningRestriction.SAFE_BOOT -> this?.disallowSafeBoot
     HardeningRestriction.CONFIG_LOCATION -> this?.lockLocation
     HardeningRestriction.AIRPLANE_MODE -> this?.disallowAirplaneMode
+    HardeningRestriction.SET_WALLPAPER -> null
 }
 
 /**

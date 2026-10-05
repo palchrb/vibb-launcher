@@ -356,6 +356,11 @@ object AppEnforcer {
             if (QuickControls.isLocationEnabled(context) != wanted) QuickControls.setLocationEnabled(dpm, admin, wanted)
         }
         for ((restriction, set) in plan.restrictions) {
+            // Unmanaged: our wallpaper (maybe a private photo) goes before the parent may set
+            // their own (QA 08 #2).
+            if (restriction == HardeningRestriction.SET_WALLPAPER && !set) {
+                com.kidslauncher.mdm.ui.wallpaper.WallpaperApplier.resetIfOurs(context)
+            }
             setRestriction(dpm, admin, restriction.userManagerKey(), set)
         }
     }
@@ -370,6 +375,7 @@ object AppEnforcer {
         HardeningRestriction.SAFE_BOOT -> UserManager.DISALLOW_SAFE_BOOT
         HardeningRestriction.CONFIG_LOCATION -> UserManager.DISALLOW_CONFIG_LOCATION
         HardeningRestriction.AIRPLANE_MODE -> UserManager.DISALLOW_AIRPLANE_MODE
+        HardeningRestriction.SET_WALLPAPER -> UserManager.DISALLOW_SET_WALLPAPER
     }
 
     /**
