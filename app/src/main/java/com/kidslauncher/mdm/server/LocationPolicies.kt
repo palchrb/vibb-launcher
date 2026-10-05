@@ -53,3 +53,15 @@ fun locateResultMessage(action: LocationAction, accuracyMeters: Float?, ageSecon
         append(", ${ageSeconds.coerceAtLeast(0)} s old")
     }
 }
+
+/**
+ * The phone's system Location switch: `false` (off) when the parent chose location "off" - the
+ * device owner switches it off, and with the CONFIG_LOCATION hardening switch it then stays off
+ * (QA step 6 #7); `true` when that hardening switch wants it on for Find my device; `null` =
+ * leave it as it is. Emergency calls send their location through the platform's own path.
+ */
+fun systemLocationTarget(policy: LocationPolicy?, hardeningForcesOn: Boolean): Boolean? = when {
+    policy?.mode == "off" -> false
+    hardeningForcesOn -> true
+    else -> null
+}

@@ -27,6 +27,7 @@ import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.calls.withTimeRule
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.timerules.hasBudget
 import com.kidslauncher.mdm.timerules.key
 import com.kidslauncher.mdm.ui.HomeActivity
 
@@ -203,6 +204,7 @@ object AppEnforcer {
         // the lock screen uses. A rule without calls (school) also turns managed calls off.
         val lock = TimeRulesRuntime.currentLock(context, policy, overrideActive)
         val scheduleLocked = lock.locked
+        val timePolicy = KidModeEnforcer.timePolicyOf(policy)
 
         val ownPackage = context.packageName
         val pm = context.packageManager
@@ -223,6 +225,8 @@ object AppEnforcer {
             inputMethods = inputMethodPackages(context),
             lockUsableApps = lock.usableApps,
             ruleBlocksCalls = lock.callsBlocked,
+            timeRulesSet = timePolicy != null && (timePolicy.rules.isNotEmpty() || hasBudget(timePolicy)),
+            budgetSet = timePolicy != null && hasBudget(timePolicy),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -286,6 +290,7 @@ object AppEnforcer {
         applyKioskState(dpm, admin, plan.kioskPackages, plan.lockTaskFeatures)
 
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
+        setRestriction(dpm, admin, UserManager.DISALLOW_CREATE_WINDOWS, plan.restrictCreateWindows)
 
         clearRadioRestrictions(dpm, admin)
 
@@ -309,18 +314,26 @@ object AppEnforcer {
 
         // Last, after the always-on VPN is in place (DISALLOW_CONFIG_VPN). Not lifted by the
         // override or pause - see hardeningPlan.
-        applyHardening(context, dpm, admin, hardening)
+        applyHardening(context, dpm, admin, hardening, policy?.locationPolicy)
     }
 
     /**
-     * Sets or clears each [HardeningRestriction] as [plan] says. Location is turned on before its
-     * setting is locked (Find my device needs it; WifiNetworksActivity then finds it on and leaves
+     * Sets or clears each [HardeningRestriction] as [plan] says. Location is turned on (or off, for
+     * the parent's location "off", [systemLocationTarget]) before its setting is locked (Find my device needs it; WifiNetworksActivity then finds it on and leaves
      * it on). Clearing only ever removes what a device owner set - restrictions the platform or
      * OEM set themselves are untouched.
      */
-    private fun applyHardening(context: Context, dpm: DevicePolicyManager, admin: ComponentName, plan: HardeningPlan) {
-        if (plan.forceLocationOn && !QuickControls.isLocationEnabled(context)) {
-            QuickControls.setLocationEnabled(dpm, admin, true)
+    private fun applyHardening(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        plan: HardeningPlan,
+        locationPolicy: com.kidslauncher.mdm.server.dto.LocationPolicy?,
+    ) {
+        // Location "off" from the parent switches system location off (and the CONFIG_LOCATION
+        // switch below then keeps it off); otherwise that switch turns it on first.
+        systemLocationTarget(locationPolicy, plan.forceLocationOn)?.let { wanted ->
+            if (QuickControls.isLocationEnabled(context) != wanted) QuickControls.setLocationEnabled(dpm, admin, wanted)
         }
         for ((restriction, set) in plan.restrictions) {
             setRestriction(dpm, admin, restriction.userManagerKey(), set)
@@ -433,6 +446,12 @@ object AppEnforcer {
                 dpm.setAutoTimeEnabled(admin, true)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Failed to turn on automatic time", e)
+            }
+            // The rules run on the local zone too (QA step 6 #3).
+            try {
+                dpm.setAutoTimeZoneEnabled(admin, true)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Failed to turn on automatic time zone", e)
             }
         }
         setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DATE_TIME, lock)

@@ -51,9 +51,15 @@ data class EnforcementPlan(
     /**
      * `UserManager.DISALLOW_CONFIG_DATE_TIME` (plus automatic time) while managed, so the clock
      * can't be turned back to stretch a schedule, an override or the callback window after an
-     * emergency call. Lifted while an override is active - unless calls are managed.
+     * emergency call. Lifted while an override is active - unless calls are managed, or the policy
+     * has any time rule or budget (handy step 6, QA #3: the rules run on the wall clock and the
+     * zone, also on a phone with no allowlist, and a zone changed during an override would shift
+     * every rule afterwards). Automatic time zone is forced together with it.
      */
     val lockDateTime: Boolean,
+    /** `UserManager.DISALLOW_CREATE_WINDOWS` while a screen-time budget is set (QA step 6 #2:
+     * overlay windows over our free screens would be uncounted use). Lifted by an override. */
+    val restrictCreateWindows: Boolean = false,
 )
 
 /**
@@ -89,6 +95,8 @@ data class EnforcementPlan(
  *   allows them. [ruleBlocksCalls]: the active rule allows no calls (school) - outgoing calls are
  *   then restricted (emergency calls are exempt) and the system dialer isn't pinned, whatever the
  *   call state; with calls managed the caller also passes the rule-restricted call state.
+ * - [timeRulesSet]/[budgetSet]: the enforced time policy has any rule or budget / a budget (see
+ *   [EnforcementPlan.lockDateTime] and [EnforcementPlan.restrictCreateWindows]).
  * - [inputMethods]: the enabled/default keyboards, never suspended or hidden - the PIN dialogs
  *   (lock screen, Settings gate) need one (QA step 4 #3).
  *   The call restrictions don't change: allowed calls and emergency calls keep working
@@ -110,6 +118,8 @@ fun computeEnforcementPlan(
     inputMethods: Set<String> = emptySet(),
     lockUsableApps: Set<String> = emptySet(),
     ruleBlocksCalls: Boolean = false,
+    timeRulesSet: Boolean = false,
+    budgetSet: Boolean = false,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer) + inputMethods
     val features = serverLockTaskFeatures.toInt() or LOCK_TASK_FEATURE_KEYGUARD
@@ -160,9 +170,10 @@ fun computeEnforcementPlan(
         restrictOutgoingCalls = restrictOutgoingCalls,
         // Also while calls are managed: the callback window compares call-log times with the wall
         // clock (QA step 2 #4). Not lifted by an override then.
-        lockDateTime = appsManaged || callState.managed,
+        lockDateTime = appsManaged || callState.managed || timeRulesSet,
         restrictSms = restrictSms,
         denyCallPermissions = callState.managed,
+        restrictCreateWindows = budgetSet && !overrideActive,
     )
 }
 

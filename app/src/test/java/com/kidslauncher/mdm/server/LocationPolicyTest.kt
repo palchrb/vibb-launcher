@@ -46,4 +46,13 @@ class LocationPolicyTest {
         assertEquals(true to "fix ±12 m, 3 s old", locateResultMessage(LocationAction.FRESH, 12.7f, 3))
         assertEquals(true to "fix, 0 s old", locateResultMessage(LocationAction.FRESH, null, -4))
     }
+
+    @Test
+    fun `location off switches system location off, the hardening switch turns it on otherwise`() {
+        assertEquals(false, systemLocationTarget(LocationPolicy("off", 30), hardeningForcesOn = true))
+        assertEquals(false, systemLocationTarget(LocationPolicy("off", 30), hardeningForcesOn = false))
+        assertEquals(true, systemLocationTarget(LocationPolicy("on_request", 30), hardeningForcesOn = true))
+        assertEquals(null, systemLocationTarget(LocationPolicy("interval", 30), hardeningForcesOn = false))
+        assertEquals(true, systemLocationTarget(null, hardeningForcesOn = true))
+    }
 }

@@ -25,11 +25,13 @@ class EnforcementPlanTest {
         ime: Set<String> = emptySet(),
         usable: Set<String> = emptySet(),
         noCalls: Boolean = false,
+        rules: Boolean = false,
+        budget: Boolean = false,
     ) = computeEnforcementPlan(
         allowlist, kioskDesired, features, overrideActive, controllable, OWN, dialer,
         callState = calls, ourDialerActive = ourDialer, smsPackages = setOf(SMS, "not.installed"),
         scheduleLocked = locked, alarmApp = alarm, inputMethods = ime,
-        lockUsableApps = usable, ruleBlocksCalls = noCalls,
+        lockUsableApps = usable, ruleBlocksCalls = noCalls, timeRulesSet = rules, budgetSet = budget,
     )
 
     private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = true))
@@ -346,6 +348,21 @@ class EnforcementPlanTest {
         assertEquals(setOf(OWN), plan(listOf(DIALER, "org.example.music"), locked = true, noCalls = true).kioskPackages)
         assertFalse(plan(listOf(DIALER), overrideActive = true, locked = true, noCalls = true).restrictOutgoingCalls)
         assertFalse("only while locked", plan(listOf(DIALER), noCalls = true).restrictOutgoingCalls)
+    }
+
+    @Test
+    fun `date and time stay locked whenever there are time rules, override or calls unmanaged`() {
+        assertFalse(plan(null).lockDateTime)
+        assertTrue("bedtime-only phone", plan(null, rules = true).lockDateTime)
+        assertTrue("during an override", plan(listOf("org.example.music"), overrideActive = true, rules = true).lockDateTime)
+        assertFalse(plan(listOf("org.example.music"), overrideActive = true).lockDateTime)
+    }
+
+    @Test
+    fun `overlay windows are blocked while a budget is set, not under an override`() {
+        assertTrue(plan(null, budget = true).restrictCreateWindows)
+        assertFalse(plan(null, budget = true, overrideActive = true).restrictCreateWindows)
+        assertFalse(plan(listOf("org.example.music"), rules = true).restrictCreateWindows)
     }
 
     private companion object {
