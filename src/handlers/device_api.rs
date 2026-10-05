@@ -112,6 +112,9 @@ pub async fn policy(
     }
 }
 
+/// `DevicePolicyManager.LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK`.
+const LOCK_TASK_BLOCK_ACTIVITY_START: i64 = 64;
+
 pub(crate) async fn build_policy(
     state: &AppState,
     device_id: i64,
@@ -220,7 +223,10 @@ pub(crate) async fn build_policy(
         bedtime_start_minutes,
         bedtime_end_minutes,
         kiosk_desired: policy.kiosk_desired,
-        lock_task_features: policy.lock_task_features.unwrap_or(0),
+        // The block bit travels as `block_activity_start` only (see PolicyResponse).
+        lock_task_features: policy.lock_task_features.unwrap_or(0)
+            & !LOCK_TASK_BLOCK_ACTIVITY_START,
+        block_activity_start: policy.block_activity_start,
         override_pin_hash: policy.override_pin_hash,
         override_pin_salt: policy.override_pin_salt,
         quick_controls_mask: policy.quick_controls_mask,
@@ -578,8 +584,8 @@ pub async fn status(
          (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
           call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
-          install_mode_until_ms, play_window_active) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          install_mode_until_ms, play_window_active, play_store_suspendable) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -597,6 +603,7 @@ pub async fn status(
     .bind(&push_state_json)
     .bind(install_mode_until_ms)
     .bind(report.play_window_active)
+    .bind(report.play_store_suspendable)
     .execute(&state.db)
     .await
     .ok();

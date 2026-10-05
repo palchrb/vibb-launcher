@@ -1,6 +1,7 @@
 use askama::Template;
 use axum::extract::{Path, State};
-use axum::response::{Html, IntoResponse, Redirect};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 use serde::Deserialize;
 
@@ -262,10 +263,47 @@ struct DeviceDetailTemplate {
     push: PushCard,
 }
 
+/// The kiosk app block switch on the "Push and Play" card (handy step 9): with it on, kiosk mode
+/// stops every screen of an app that isn't allowed - also ones other apps open (Play, Google
+/// sign-in sheets). The off switch exists for a phone where it breaks something it shouldn't.
+pub async fn update_kiosk_block(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let result = sqlx::query(
+        "UPDATE device_policy SET block_activity_start = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
+    )
+    .bind(form.contains_key("block_activity_start"))
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(r) if r.rows_affected() == 0 => {
+            (StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&format!("/devices/{id}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed.",
+            )
+                .into_response()
+        }
+    }
+}
+
 /// The device page's "Push and Play" card: how changes reach the phone, and Play's state.
 pub(crate) struct PushCard {
     pub lines: Vec<String>,
     pub warnings: Vec<String>,
+    /// `device_policy.block_activity_start` (handy step 9).
+    pub block_activity_start: bool,
 }
 
 /// Builds [PushCard] from the server's FCM state, the phone's `device_push` row and its latest
@@ -391,7 +429,29 @@ pub(crate) async fn push_card(
                 .to_string(),
         );
     }
-    PushCard { lines, warnings }
+    let block_activity_start: bool =
+        sqlx::query_scalar("SELECT block_activity_start FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(true);
+    if latest.and_then(|s| s.play_store_suspendable) == Some(false) {
+        warnings.push(if block_activity_start {
+            "Play can't be suspended on this phone - Play is blocked only while kiosk is on."
+                .to_string()
+        } else {
+            "Play can't be suspended on this phone, and the kiosk app block below is off: apps \
+             can open the Play Store."
+                .to_string()
+        });
+    }
+    PushCard {
+        lines,
+        warnings,
+        block_activity_start,
+    }
 }
 
 struct RuleOption {

@@ -52,6 +52,11 @@ pub struct DevicePolicy {
     pub sms_enabled: bool,
     /// "none", "sms", "element" or "signal" - see [MESSAGE_APPS].
     pub default_message_app: String,
+    /// When `calls_managed` last changed (UTC, SQLite `datetime('now')`) - status reports older
+    /// than this may still show the previous role state (migrations/0029).
+    pub roles_changed_at: Option<String>,
+    /// `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` in kiosk (handy step 9, default on).
+    pub block_activity_start: bool,
     /// The hardening switches (migrations/0023_hardening.sql), sent as `PolicyResponse.hardening`.
     #[sqlx(flatten)]
     pub hardening: Hardening,
@@ -207,6 +212,8 @@ pub struct DeviceStatus {
     /// Play install mode end (wall-clock ms) while active (migrations/0026).
     pub install_mode_until_ms: Option<i64>,
     pub play_window_active: bool,
+    /// See `StatusReportRequest.play_store_suspendable` (migrations/0029).
+    pub play_store_suspendable: Option<bool>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -435,6 +442,12 @@ pub struct PolicyResponse {
     /// Whether the phone may rely on FCM nudges instead of the SSE stream (handy step 7) - always
     /// present. See `push::push_policy`.
     pub push: crate::push::PushPolicy,
+    /// `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` while kiosk is on (handy step 9): the
+    /// launcher ORs it in itself, together with the system helpers it pins for emergency calls,
+    /// permission dialogs and pickers. A separate key (never a `lock_task_features` bit) so an
+    /// older launcher without those helpers never gets it. The per-device off switch is the
+    /// remote kill switch.
+    pub block_activity_start: bool,
 }
 
 /// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and
@@ -517,6 +530,10 @@ pub struct StatusReportRequest {
     /// The nightly Play update window is in force (Play Store unsuspended, screen off).
     #[serde(default)]
     pub play_window_active: bool,
+    /// `false` when the platform refused to suspend the Play Store (it is the package verifier
+    /// on GMS phones) - Play is then blocked only while kiosk is on (handy step 9).
+    #[serde(default)]
+    pub play_store_suspendable: Option<bool>,
 }
 
 /// `StatusReportRequest.install_mode`.

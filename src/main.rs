@@ -270,6 +270,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             "/devices/{id}/calls/settings",
             post(handlers::calls::save_settings),
         )
+        .route(
+            "/devices/{id}/kiosk-block",
+            post(handlers::devices::update_kiosk_block),
+        )
         .route("/devices/{id}/contacts", post(handlers::calls::add_contact))
         .route(
             "/devices/{id}/contacts/{contact_id}",

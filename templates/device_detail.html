@@ -57,6 +57,13 @@
         {% for warning in push.warnings %}
         <div class="error">{{ warning }}</div>
         {% endfor %}
+        <form method="post" action="/devices/{{ device.id }}/kiosk-block">
+            <label class="checkbox-row">
+                <input type="checkbox" name="block_activity_start" value="on" {% if push.block_activity_start %}checked{% endif %} onchange="this.form.submit()">
+                Kiosk app block: in kiosk mode, screens of apps that aren't allowed never open - also when an allowed app opens them (Play Store, Google sign-in and payment sheets). Emergency calls, permission questions, the share sheet and photo/file pickers keep working. Install and sign in during install mode instead. Turn it off only if it breaks something on this phone.
+            </label>
+            <noscript><button type="submit" class="button-small">Save</button></noscript>
+        </form>
         <p class="subtitle">With FCM, changes reach a sleeping phone through Google's push service instead of a connection the phone keeps open, which saves battery. Either way the phone also checks in by itself every 30 minutes. If FCM stops working without an error, a ring, lock or lift can wait until that check-in; after two unanswered nudges the phone is told to use its own connection again. The Play Store stays paused on the phone except during install mode (in the phone's Settings, with the PIN) and a nightly update window while the screen is off.</p>
     </div>
     {% endif %}

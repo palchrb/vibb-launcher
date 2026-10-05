@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
+{% if auto_refresh %}<meta http-equiv="refresh" content="5">{% endif %}
 </head>
 <body>
 {% include "partials/app_header.html" %}

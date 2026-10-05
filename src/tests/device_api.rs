@@ -306,6 +306,7 @@ async fn policy_json_keys_snapshot() {
             "allowlist",
             "bedtime_end_minutes",
             "bedtime_start_minutes",
+            "block_activity_start",
             "call_policy",
             "dns_filter_version",
             "dns_upstream_provider",
@@ -330,6 +331,7 @@ async fn policy_json_keys_snapshot() {
     );
 
     for non_null in [
+        "block_activity_start",
         "call_policy",
         "dns_filter_version",
         "dns_upstream_provider",

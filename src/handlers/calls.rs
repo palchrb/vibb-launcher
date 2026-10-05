@@ -21,6 +21,12 @@ use crate::photos;
 /// Parent-facing names for `MESSAGE_APPS`, same order.
 const MESSAGE_APP_LABELS: [&str; 4] = ["No message button", "SMS", "Element X", "Signal / Molly"];
 
+/// How long after a change to `calls_managed` an older status report counts as "waiting for the
+/// phone" rather than as the phone's real state (QA 09 #5).
+const ROLES_PENDING_SECS: i64 = 5 * 60;
+/// The calls page reloads itself every 5 s for this long while it waits.
+const ROLES_REFRESH_SECS: i64 = 2 * 60;
+
 struct SelectOption {
     value: String,
     label: String,
@@ -86,6 +92,8 @@ struct DeviceCallsTemplate {
     contacts: Vec<ContactView>,
     default_country_code: String,
     warnings: Vec<String>,
+    /// Reload every 5 s: waiting for the phone to confirm a role change.
+    auto_refresh: bool,
     error: Option<String>,
     form_name: String,
     form_number: String,
@@ -156,7 +164,7 @@ async fn load_page(
             photo: c.photo_hash,
         })
         .collect();
-    let warnings = call_warnings(state, &policy).await?;
+    let report = call_report(state, &policy).await?;
 
     Ok(Some(DeviceCallsTemplate {
         title: format!("{} - Calls & SMS", device.name),
@@ -166,7 +174,8 @@ async fn load_page(
         default_message_options: message_app_options(Some(&policy.default_message_app), None),
         contacts,
         default_country_code,
-        warnings,
+        warnings: report.warnings,
+        auto_refresh: report.auto_refresh,
         error,
         form_name: form_name.to_string(),
         form_number: form_number.to_string(),
@@ -174,30 +183,88 @@ async fn load_page(
     }))
 }
 
-/// What the parent should know about this phone's calls, from its latest status report: the
-/// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer or
-/// call-redirection role isn't ours, an error, the fail-closed state, an allowlisted Messages
-/// app while SMS is off (QA #8), an unreadable call log (QA step 2 #7), and recent emergency calls
-/// / an open callback window (QA #2).
-/// Emergency calls are reported whether or not calls are managed now.
+/// What the calls page and the device page show about a phone's calls.
+pub(crate) struct CallReport {
+    pub warnings: Vec<String>,
+    /// Waiting for the phone to confirm a role change (reload the page).
+    pub auto_refresh: bool,
+}
+
+/// How far the latest status report can be trusted after the parent changed `calls_managed`
+/// (B1, QA 09 #5). Pure, unit-tested.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RoleReport {
+    /// The report is newer than the change (or nothing changed): its warnings are real - also
+    /// when it disagrees with what the page says (that is a warning, never "waiting").
+    Current,
+    /// Older than a change made less than 5 minutes ago: role warnings are replaced by "waiting".
+    Pending,
+    /// Older than a change made 5+ minutes ago: the real warnings, plus "not confirmed".
+    Unconfirmed,
+}
+
+pub(crate) fn role_report(
+    reported_at: chrono::NaiveDateTime,
+    roles_changed_at: Option<chrono::NaiveDateTime>,
+    now: chrono::NaiveDateTime,
+) -> RoleReport {
+    match roles_changed_at {
+        Some(changed) if reported_at < changed => {
+            if (now - changed).num_seconds() < ROLES_PENDING_SECS {
+                RoleReport::Pending
+            } else {
+                RoleReport::Unconfirmed
+            }
+        }
+        _ => RoleReport::Current,
+    }
+}
+
+/// SQLite `datetime('now')` text (UTC), with or without fractional seconds.
+fn parse_sqlite_time(value: &str) -> Option<chrono::NaiveDateTime> {
+    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").ok()
+}
+
+/// `call_report`'s warnings only (the device page).
 pub(crate) async fn call_warnings(
     state: &AppState,
     policy: &DevicePolicy,
 ) -> Result<Vec<String>, sqlx::Error> {
-    let latest: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT capabilities_json, call_state_json FROM device_status WHERE device_id = ? \
-         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    Ok(call_report(state, policy).await?.warnings)
+}
+
+/// What the parent should know about this phone's calls, from its latest status report: the
+/// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer or
+/// call-redirection role isn't ours, an error, the fail-closed state, an allowlisted Messages app
+/// while SMS is off (QA #8), an unreadable call log (QA step 2 #7), and recent emergency calls /
+/// an open callback window (QA #2). Right after the parent changed `calls_managed`, a report from
+/// before the change shows "waiting" instead of the role warnings - for at most 5 minutes; after
+/// that the real warnings plus "not confirmed", and a newer report that still disagrees is always
+/// a warning (B1, QA 09 #5).
+/// Emergency calls are reported whether or not calls are managed now.
+pub(crate) async fn call_report(
+    state: &AppState,
+    policy: &DevicePolicy,
+) -> Result<CallReport, sqlx::Error> {
+    let mut report = CallReport {
+        warnings: Vec::new(),
+        auto_refresh: false,
+    };
+    let latest: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT capabilities_json, call_state_json, reported_at FROM device_status \
+         WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(policy.device_id)
     .fetch_optional(&state.db)
     .await?;
-    let Some((capabilities_json, call_state_json)) = latest else {
-        return Ok(Vec::new());
+    let Some((capabilities_json, call_state_json, reported_at)) = latest else {
+        return Ok(report);
     };
-    let capable = capabilities_json
+    let capabilities: Vec<String> = capabilities_json
         .as_deref()
-        .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
-        .is_some_and(|caps| caps.iter().any(|c| c == CALL_POLICY_CAPABILITY));
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+    let capable = capabilities.iter().any(|c| c == CALL_POLICY_CAPABILITY);
     let call_state: serde_json::Value = call_state_json
         .as_deref()
         .and_then(|json| serde_json::from_str(json).ok())
@@ -209,8 +276,7 @@ pub(crate) async fn call_warnings(
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     };
-
-    let mut warnings = Vec::new();
+    let warnings = &mut report.warnings;
     let now = chrono::Utc::now();
     if let Some(at) = text("last_emergency_call_at").and_then(|t| parse_time(&t))
         && now - at < chrono::Duration::days(7)
@@ -230,8 +296,37 @@ pub(crate) async fn call_warnings(
         ));
     }
 
+    let reported = parse_sqlite_time(&reported_at);
+    let changed = policy
+        .roles_changed_at
+        .as_deref()
+        .and_then(parse_sqlite_time);
+    let roles = reported
+        .map(|r| role_report(r, changed, now.naive_utc()))
+        .unwrap_or(RoleReport::Current);
+    let last_report = reported
+        .map(|r| r.format("%H:%M").to_string())
+        .unwrap_or(reported_at);
+    match roles {
+        RoleReport::Pending => {
+            warnings.push(format!(
+                "Waiting for the phone to confirm the change (last report {last_report} UTC)."
+            ));
+            report.auto_refresh =
+                changed.is_some_and(|c| (now.naive_utc() - c).num_seconds() < ROLES_REFRESH_SECS);
+        }
+        RoleReport::Unconfirmed => warnings.push(format!(
+            "The phone hasn't confirmed the change made at {} UTC yet (last report {last_report} \
+             UTC) - it may be off or offline. The warnings below are from that last report.",
+            changed
+                .map(|c| c.format("%H:%M").to_string())
+                .unwrap_or_default()
+        )),
+        RoleReport::Current => {}
+    }
+
     if !policy.calls_managed {
-        return Ok(warnings);
+        return Ok(report);
     }
     if !capable {
         let had_it: bool = sqlx::query_scalar(
@@ -249,7 +344,11 @@ pub(crate) async fn call_warnings(
         } else {
             "This phone's launcher does not enforce calls yet. Update the launcher.".to_string()
         });
-        return Ok(warnings);
+        return Ok(report);
+    }
+    if roles == RoleReport::Pending {
+        // The role and call-log state in this report predates the change.
+        return Ok(report);
     }
     if text("state").as_deref() == Some("fail_closed") {
         warnings.push(
@@ -315,7 +414,7 @@ pub(crate) async fn call_warnings(
             ));
         }
     }
-    Ok(warnings)
+    Ok(report)
 }
 
 /// Capability the launcher reports when it enforces `call_policy`.
@@ -359,13 +458,20 @@ pub async fn save_settings(
     if !MESSAGE_APPS.contains(&default_message_app) {
         return bad_request("Unknown messaging app");
     }
+    let managed = form.contains_key("managed");
     let result = async {
         let mut tx = state.db.begin().await?;
+        // A change to calls_managed stamps roles_changed_at: reports from before it may still
+        // show the old role state (B1).
         let updated = sqlx::query(
-            "UPDATE device_policy SET calls_managed = ?, calls_enabled = ?, sms_enabled = ?, \
+            "UPDATE device_policy SET \
+             roles_changed_at = CASE WHEN calls_managed != ? THEN datetime('now') \
+                                     ELSE roles_changed_at END, \
+             calls_managed = ?, calls_enabled = ?, sms_enabled = ?, \
              default_message_app = ?, updated_at = datetime('now') WHERE device_id = ?",
         )
-        .bind(form.contains_key("managed"))
+        .bind(managed)
+        .bind(managed)
         .bind(form.contains_key("calls_enabled"))
         .bind(form.contains_key("sms_enabled"))
         .bind(default_message_app)
@@ -762,7 +868,38 @@ pub async fn save_call_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::valid_matrix_id;
+    use super::{RoleReport, role_report, valid_matrix_id};
+
+    fn t(value: &str) -> chrono::NaiveDateTime {
+        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").unwrap()
+    }
+
+    #[test]
+    fn role_report_pending_expires() {
+        let changed = t("2026-10-05 10:00:00");
+        let older = t("2026-10-05 09:59:00");
+        // Nothing changed, or a report newer than the change: current, also if it disagrees.
+        assert_eq!(
+            role_report(older, None, t("2026-10-05 10:01:00")),
+            RoleReport::Current
+        );
+        assert_eq!(
+            role_report(
+                t("2026-10-05 10:00:30"),
+                Some(changed),
+                t("2026-10-05 10:01:00")
+            ),
+            RoleReport::Current
+        );
+        assert_eq!(
+            role_report(older, Some(changed), t("2026-10-05 10:04:59")),
+            RoleReport::Pending
+        );
+        assert_eq!(
+            role_report(older, Some(changed), t("2026-10-05 10:05:00")),
+            RoleReport::Unconfirmed
+        );
+    }
 
     #[test]
     fn matrix_ids() {

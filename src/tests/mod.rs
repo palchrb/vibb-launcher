@@ -8,6 +8,7 @@ mod hardening;
 mod launcher_ui;
 mod provisioning;
 mod push;
+mod step9;
 mod time_rules;
 mod wallpapers;
 
