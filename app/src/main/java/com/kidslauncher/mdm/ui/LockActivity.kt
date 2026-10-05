@@ -6,7 +6,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -19,9 +18,9 @@ import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallSystem
+import com.kidslauncher.mdm.calls.EmergencyDialer
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
-import com.kidslauncher.mdm.server.systemDialerPackage
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.databinding.ActivityLockBinding
@@ -90,8 +89,10 @@ class LockActivity : UIObjectActivity() {
     /**
      * 112 through Telecom (emergency calls are exempt from every call restriction). CALL_PHONE is
      * self-granted first - it's only held while calls are managed otherwise. If Telecom still
-     * refuses, the system dialer (never suspended; allowed in kiosk by its emergency exemption)
-     * opens with 112 typed in.
+     * refuses, the platform's emergency dialer opens with 112 typed in - an explicit intent to the
+     * resolved system component, which kiosk pins as a lock-task helper (QA 09 #1). Never
+     * ACTION_DIAL: the default dialer isn't pinned while calls are managed or a rule blocks calls,
+     * so with the kiosk app block it would be blocked.
      */
     private fun callEmergency() {
         val dpm = getSystemService(DevicePolicyManager::class.java)
@@ -99,12 +100,8 @@ class LockActivity : UIObjectActivity() {
             QuickControls.selfGrantPermission(this, dpm, ComponentName(this, MdmDeviceAdminReceiver::class.java), Manifest.permission.CALL_PHONE)
         }
         if (CallSystem.placeCall(this, EMERGENCY_NUMBER)) return
-        try {
-            val dial = Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", EMERGENCY_NUMBER, null))
-            systemDialerPackage(this)?.let { dial.setPackage(it) }
-            startActivity(dial.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        } catch (e: Exception) {
-            Log.w("LockActivity", "Couldn't open the dialer for an emergency call", e)
+        if (!EmergencyDialer.open(this, EMERGENCY_NUMBER)) {
+            Log.w("LockActivity", "Neither Telecom nor the emergency dialer took the emergency call")
         }
     }
 
