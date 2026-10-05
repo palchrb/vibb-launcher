@@ -135,8 +135,8 @@ signing, fail-closed policy, calls/phone book/message buttons, direct boot,
 hardening. Not frozen: remaining features continue in parallel with device
 testing on the Jelly Star. Not built yet: full Tailscale (design in
 `docs/design/03-tailscale.md`), Vibb integration, AdGuard Home, launcher UI
-redesign, Play account (open: start without one; add if Play-only apps are
-needed).
+redesign. Play account: decided 2026-10-05 to start WITHOUT one (apps via the
+server catalog); add later only if Play-only apps are needed.
 
 ## Next features (agreed 2026-10-05)
 
@@ -145,6 +145,10 @@ needed).
   calls per contact with a missed-call icon), phone book as a grid with a
   Call/Message sheet, Android's own status bar visible (lock-task system info).
   Mockup: https://claude.ai/artifact/9aUGgCCZEPUnJYgtB78jJh
+- **Contact photos**: the parent uploads a photo per contact in the PWA; the
+  server stores it and sends a hash/URL with the call policy; the launcher
+  caches it and shows it in the phone book, on Home and in the contact card
+  (initial letter when there is none).
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with
