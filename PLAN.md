@@ -138,6 +138,18 @@ testing on the Jelly Star. Not built yet: full Tailscale (design in
 redesign, Play account (open: start without one; add if Play-only apps are
 needed).
 
+## Next features (agreed 2026-10-05)
+
+- **Launcher UI like Xplora One**: grid of round app icons and contacts with
+  notification badges (unread counts per app via NotificationListener; missed
+  calls per contact with a missed-call icon), phone book as a grid with a
+  Call/Message sheet, Android's own status bar visible (lock-task system info).
+  Mockup: https://claude.ai/artifact/9aUGgCCZEPUnJYgtB78jJh
+- **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
+  resources with `values-nb`, per-app language (generateLocaleConfig is already
+  on), language chosen per device by the parent. Server PWA: string catalog with
+  nb/en and a per-admin language setting.
+
 ## Phases
 
 Reviews of both forks are in `docs/review/` (launcher architecture, server
