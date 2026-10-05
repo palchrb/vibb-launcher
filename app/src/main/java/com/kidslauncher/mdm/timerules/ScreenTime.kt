@@ -38,6 +38,8 @@ data class ScreenTimeLedger(
     val anchorElapsedMs: Long = 0,
     val bootCount: Int = -1,
     val appliedBudgetLifts: List<Long> = emptyList(),
+    /** The stored record couldn't be read today ([unreadableLedger]); reported to the parent. */
+    val unreadable: Boolean = false,
 ) {
     fun date(): LocalDate? = day?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 }
@@ -67,7 +69,7 @@ fun observe(ledger: ScreenTimeLedger, clocks: Clocks, zone: ZoneId): Observation
     return when {
         current == null -> Observation(anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0), trusted, true)
         !clockDate.isAfter(current) -> Observation(anchored, trusted, false)
-        resetAllowed -> Observation(anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0), trusted, true)
+        resetAllowed -> Observation(anchored.copy(day = clockDate.toString(), usedMs = 0, extraMinutes = 0, unreadable = false), trusted, true)
         else -> Observation(anchored.copy(day = clockDate.toString()), trusted, false)
     }
 }
@@ -162,4 +164,41 @@ fun activeLiftIds(records: List<LiftRecord>, lifts: List<Lift>, ledger: ScreenTi
             else -> false
         }
     }.map { it.id }
+}
+
+/** Our screens whose time is free: the lock screen, the phone book, our in-call screen and
+ * Settings. Home is not on the list - other apps can be visible over it (picture-in-picture,
+ * overlays), QA step 6 #2. */
+val FREE_SCREENS = setOf(
+    "com.kidslauncher.mdm.ui.LockActivity",
+    "com.kidslauncher.mdm.calls.PhoneBookActivity",
+    "com.kidslauncher.mdm.calls.InCallActivity",
+    "com.kidslauncher.mdm.ui.settings.SettingsActivity",
+)
+
+/**
+ * Whether screen time counts right now: the screen is on and unlocked, unless one of [FREE_SCREENS]
+ * is in front and not sharing the screen (split screen / picture-in-picture). A call doesn't stop
+ * the count by itself - only our own in-call screen in front does (QA step 6 #1: otherwise a call
+ * or any app claiming a VoIP audio mode made every app free).
+ */
+fun screenTimeCounts(
+    interactive: Boolean,
+    keyguardLocked: Boolean,
+    freeScreenInFront: Boolean,
+    freeScreenSharesScreen: Boolean,
+): Boolean = interactive && !keyguardLocked && !(freeScreenInFront && !freeScreenSharesScreen)
+
+/**
+ * The ledger to use when the stored one can't be read (QA step 6 #6): today counts as used up
+ * (more than any budget plus extra minutes), and every budget lift still being delivered counts as
+ * applied, so a broken record can neither refill the day nor re-add lifts.
+ */
+fun unreadableLedger(clocks: Clocks, zone: ZoneId, lifts: List<Lift>): ScreenTimeLedger {
+    val fresh = observe(ScreenTimeLedger(), clocks, zone).ledger
+    return fresh.copy(
+        usedMs = 2L * MINUTES_PER_DAY * 60_000L,
+        appliedBudgetLifts = lifts.filter { it.target == TARGET_BUDGET }.map { it.id },
+        unreadable = true,
+    )
 }

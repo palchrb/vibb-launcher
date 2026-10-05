@@ -58,14 +58,16 @@ object TimeRulesRuntime {
 
     private fun overrideActive() = OfflineOverride.isActive() || RestrictionsPause.isActive()
 
-    private fun loadLedger(context: Context): ScreenTimeLedger = try {
-        prefs(context).getString(LEDGER_KEY, null)?.let { ServerJson.decodeFromString(ScreenTimeLedger.serializer(), it) }
-            ?: ScreenTimeLedger()
-    } catch (e: Exception) {
-        // An unreadable ledger restarts today's count at zero; the parent sees the day's usage
-        // in the status report, and the date/time lock keeps this from being a way to refill.
-        Log.e(LOG_TAG, "Screen-time ledger unreadable, starting over", e)
-        ScreenTimeLedger()
+    /** An unreadable record fails closed: today counts as used up and the budget lifts being
+     * delivered as applied ([unreadableLedger], QA step 6 #6); reported in `time_state`. */
+    private fun loadLedger(context: Context, lifts: List<Lift>, clocks: Clocks): ScreenTimeLedger {
+        val raw = prefs(context).getString(LEDGER_KEY, null) ?: return ScreenTimeLedger()
+        return try {
+            ServerJson.decodeFromString(ScreenTimeLedger.serializer(), raw)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Screen-time ledger unreadable: today counts as used up", e)
+            unreadableLedger(clocks, zone(), lifts)
+        }
     }
 
     private fun saveLedger(context: Context, before: ScreenTimeLedger, after: ScreenTimeLedger) {
@@ -77,7 +79,7 @@ object TimeRulesRuntime {
     /** The ledger moved to now, with new budget lifts applied - saved when it changed. */
     @Synchronized
     fun ledger(context: Context, policy: TimePolicy?, clocks: Clocks = clocks()): ScreenTimeLedger {
-        val before = loadLedger(context)
+        val before = loadLedger(context, policy?.lifts.orEmpty(), clocks)
         var after = observe(before, clocks, zone()).ledger
         if (policy != null) after = applyBudgetLifts(after, policy.lifts)
         saveLedger(context, before, after)
@@ -87,7 +89,7 @@ object TimeRulesRuntime {
     /** Adds a counted stretch that began at elapsed realtime [sinceElapsedMs]. */
     @Synchronized
     fun accrueScreenTime(context: Context, sinceElapsedMs: Long, clocks: Clocks = clocks()): ScreenTimeLedger {
-        val before = loadLedger(context)
+        val before = loadLedger(context, KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy)?.lifts.orEmpty(), clocks)
         val after = accrue(before, sinceElapsedMs, clocks, zone())
         saveLedger(context, before, after)
         return after
@@ -167,6 +169,7 @@ object TimeRulesRuntime {
             callsBlocked = snap.lock.callsBlocked,
             lockReason = lockReason.name,
             liftsActive = snap.ledger?.let { activeLiftIds(snap.records, snap.policy?.lifts.orEmpty(), it, snap.clocks) }.orEmpty(),
+            ledgerUnreadable = snap.ledger?.unreadable == true,
         )
     }
 

@@ -170,4 +170,32 @@ class ScreenTimeTest {
         assertEquals(listOf(20L, 30L), activeLiftIds(records, listOf(ruleLift, budgetLift), ledger, clocks(wall(12, 10), bootAt)))
         assertEquals(listOf(30L), activeLiftIds(records, listOf(ruleLift, budgetLift), ledger, clocks(wall(12, 40), bootAt)))
     }
+
+    // When screen time counts (QA step 6 #1, #2)
+
+    @Test
+    fun `screen time counts on Home and in other apps, also during calls, but not on our free screens`() {
+        assertTrue("an app or Home in front", screenTimeCounts(true, false, freeScreenInFront = false, freeScreenSharesScreen = false))
+        assertFalse("our lock screen, phone book, in-call or Settings", screenTimeCounts(true, false, true, false))
+        assertTrue("a free screen sharing the screen (split, PiP)", screenTimeCounts(true, false, true, true))
+        assertFalse("screen off", screenTimeCounts(false, false, false, false))
+        assertFalse("keyguard", screenTimeCounts(true, true, false, false))
+        assertEquals(4, FREE_SCREENS.size)
+        assertFalse(FREE_SCREENS.any { it.endsWith("HomeActivity") })
+    }
+
+    @Test
+    fun `an unreadable record fails closed`() {
+        val lifts = listOf(Lift(40, TARGET_BUDGET, null, 30, 0), Lift(41, TARGET_RULE, 1, 30, 0))
+        val ledger = unreadableLedger(clocks(wall(12), bootAt), zone, lifts)
+        assertEquals("2026-10-05", ledger.day)
+        assertTrue(ledger.unreadable)
+        assertEquals(listOf(40L), ledger.appliedBudgetLifts)
+        val use = budgetUse(applyBudgetLifts(ledger, lifts), TimePolicy(dailyBudgetMinutes = List(7) { MINUTES_PER_DAY }))!!
+        assertTrue("even the largest budget is used up, and the lift isn't re-added", use.exhausted)
+        // The next day is a normal day again.
+        val tomorrow = observe(ledger, Clocks(wall(7, days = 1), 10_000, 8), zone).ledger
+        assertEquals(0, tomorrow.usedMs)
+        assertFalse(tomorrow.unreadable)
+    }
 }

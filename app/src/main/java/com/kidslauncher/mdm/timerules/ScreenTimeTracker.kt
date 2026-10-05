@@ -4,14 +4,12 @@ import android.app.Activity
 import android.app.Application
 import android.app.KeyguardManager
 import android.content.Context
-import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.server.KidModeEnforcer
 import com.kidslauncher.mdm.server.currentPolicyDecision
 
@@ -21,18 +19,18 @@ private const val LOG_TAG = "ScreenTimeTracker"
 private const val CHECKPOINT_MS = 60_000L
 
 /**
- * Counts screen time (handy step 6): the screen is on and unlocked, no call is going on (our
- * in-call list, or the audio mode says a call or VoIP session), and none of our own activities is
- * in front (Home, phone book, lock screen, Settings don't count) - so the time an app is in use.
+ * Counts screen time (handy step 6): the screen is on and unlocked, unless one of our free screens
+ * (lock screen, phone book, our in-call screen, Settings - [FREE_SCREENS]) is in front and not
+ * sharing the screen ([screenTimeCounts]). Calls elsewhere and Home count (QA step 6 #1, #2).
  * Event-driven, never polling while the screen is off: [update] runs on screen on/off and user
- * present (CommandListenerService), on our activities' resume/pause, on audio-mode changes and on
- * every lock re-check. While counting, a checkpoint saves usage every [CHECKPOINT_MS] and a
+ * present (CommandListenerService), on our activities' resume/pause and on every lock re-check. While counting, a checkpoint saves usage every [CHECKPOINT_MS] and a
  * one-shot timer fires when the budget runs out (then [TimeRulesRuntime.recheck] locks). Main
  * thread only.
  */
 object ScreenTimeTracker {
     private val handler = Handler(Looper.getMainLooper())
-    private var resumedOwnActivities = 0
+    /** Our free screens currently resumed (see [FREE_SCREENS]). */
+    private val resumedFree = mutableSetOf<Activity>()
     private var countingSinceElapsed: Long? = null
     private var appContext: Context? = null
 
@@ -48,12 +46,12 @@ object ScreenTimeTracker {
         appContext = app.applicationContext
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
-                resumedOwnActivities++
+                if (activity.javaClass.name in FREE_SCREENS) resumedFree += activity
                 update(activity.applicationContext)
             }
 
             override fun onActivityPaused(activity: Activity) {
-                resumedOwnActivities = (resumedOwnActivities - 1).coerceAtLeast(0)
+                resumedFree -= activity
                 update(activity.applicationContext)
             }
 
@@ -61,25 +59,18 @@ object ScreenTimeTracker {
             override fun onActivityStarted(activity: Activity) {}
             override fun onActivityStopped(activity: Activity) {}
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-            override fun onActivityDestroyed(activity: Activity) {}
+            override fun onActivityDestroyed(activity: Activity) {
+                resumedFree -= activity
+            }
         })
-        try {
-            app.getSystemService(AudioManager::class.java)
-                ?.addOnModeChangedListener(app.mainExecutor) { update(app.applicationContext) }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "No audio-mode listener; calls are only seen through our in-call service", e)
-        }
     }
 
-    private fun appInUse(context: Context): Boolean {
-        val interactive = context.getSystemService(PowerManager::class.java)?.isInteractive == true
-        val locked = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false
-        val mode = context.getSystemService(AudioManager::class.java)?.mode ?: AudioManager.MODE_NORMAL
-        val inCall = OngoingCalls.calls.isNotEmpty() ||
-            mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION ||
-            mode == AudioManager.MODE_CALL_SCREENING || mode == AudioManager.MODE_RINGTONE
-        return interactive && !locked && !inCall && resumedOwnActivities == 0
-    }
+    private fun appInUse(context: Context): Boolean = screenTimeCounts(
+        interactive = context.getSystemService(PowerManager::class.java)?.isInteractive == true,
+        keyguardLocked = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false,
+        freeScreenInFront = resumedFree.isNotEmpty(),
+        freeScreenSharesScreen = resumedFree.any { it.isInMultiWindowMode || it.isInPictureInPictureMode },
+    )
 
     /** Folds the running stretch into the ledger and decides whether to keep counting. */
     fun update(context: Context) {

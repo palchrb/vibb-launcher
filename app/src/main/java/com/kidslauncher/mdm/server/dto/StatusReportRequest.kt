@@ -45,6 +45,8 @@ data class TimeState(
     val callsBlocked: Boolean,
     val lockReason: String,
     val liftsActive: List<Long>,
+    /** The screen-time record couldn't be read today, so it counts as used up (QA step 6 #6). */
+    val ledgerUnreadable: Boolean = false,
 )
 
 /**
