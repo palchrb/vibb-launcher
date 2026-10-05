@@ -45,7 +45,14 @@ object SyncRunner {
         val app = context.applicationContext
         synchronized(this) { pending++ }
         acquireWakeLock(app)
-        CommandListenerService.requestSync(app, reason)
+        if (!CommandListenerService.requestSync(app, reason)) {
+            // The service start failed: this request will never reach runInService (QA step 7 #7).
+            val idle = synchronized(this) {
+                if (pending > 0) pending--
+                pending == 0 && !coalescer.isRunning
+            }
+            if (idle) releaseWakeLock()
+        }
     }
 
     /** From [CommandListenerService] only (main thread). [fromRequest]: delivered for [request]. */

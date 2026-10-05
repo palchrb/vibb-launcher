@@ -22,6 +22,8 @@ import com.kidslauncher.mdm.push.PushState
 import com.kidslauncher.mdm.push.PushTransport
 import com.kidslauncher.mdm.push.SSE_READ_TIMEOUT_MS
 import com.kidslauncher.mdm.push.SyncRunner
+import com.kidslauncher.mdm.push.syncOnSseReopen
+import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.timerules.ScreenTimeTracker
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import java.util.concurrent.TimeUnit
@@ -71,6 +73,8 @@ class CommandListenerService : Service() {
     private var sseWanted = false
     private val connectRunnable = Runnable { connect() }
     private var firstStart = true
+    /** Elapsed realtime when the stream went down (`null`: never up in this process). */
+    private var sseDownSince: Long? = null
 
     private fun buildClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
@@ -213,9 +217,11 @@ class CommandListenerService : Service() {
                         reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
                         val wasDown = !PushState.sseConnected
                         PushState.sseConnected = true
-                        // Catch nudges missed while the stream was down; the sync re-arms the
-                        // backstop at the normal period afterwards.
-                        if (wasDown) SyncRunner.request(applicationContext, "sse_open")
+                        // Catch nudges missed while the stream was down - only if it was down long
+                        // enough to miss one (QA step 7 #5); the sync re-arms the backstop.
+                        val downFor = sseDownSince?.let { android.os.SystemClock.elapsedRealtime() - it }
+                        if (wasDown && syncOnSseReopen(downFor)) SyncRunner.request(applicationContext, "sse_open")
+                        sseDownSince = null
                     }
                 }
 
@@ -243,6 +249,7 @@ class CommandListenerService : Service() {
         eventSource = null
         val wasUp = PushState.sseConnected
         PushState.sseConnected = false
+        if (wasUp) sseDownSince = android.os.SystemClock.elapsedRealtime()
         // Only on the up -> down edge, and only ever earlier (15 min): a flapping stream must not
         // keep pushing the backstop out until it never fires.
         if (wasUp) BackstopAlarm.schedule(applicationContext, afterSync = false)
@@ -261,6 +268,9 @@ class CommandListenerService : Service() {
                     Log.w(LOG_TAG, "Re-check at screen off failed", e)
                 }
             } else {
+                // First, synchronously: end the Play update window before the keyguard can be
+                // passed (QA step 7 #8); the full re-apply follows in the background.
+                if (intent.action == Intent.ACTION_SCREEN_ON) PlayRuntime.suspendStoreAtScreenOn(applicationContext)
                 TimeRulesRuntime.recheck(applicationContext)
             }
         }
@@ -288,15 +298,15 @@ class CommandListenerService : Service() {
 
         /** Starts the anchor if needed and has it run a sync ([SyncRunner]). A device owner may
          * start a foreground service from the background. */
-        fun requestSync(context: Context, reason: String) {
-            try {
-                ContextCompat.startForegroundService(
-                    context,
-                    Intent(context, CommandListenerService::class.java).setAction(ACTION_SYNC).putExtra(EXTRA_SYNC_REASON, reason),
-                )
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't start the anchor service for a sync", e)
-            }
+        fun requestSync(context: Context, reason: String): Boolean = try {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, CommandListenerService::class.java).setAction(ACTION_SYNC).putExtra(EXTRA_SYNC_REASON, reason),
+            )
+            true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't start the anchor service for a sync", e)
+            false
         }
 
         /** After every sync: the policy's `push` may have changed the transport. */

@@ -48,6 +48,15 @@ fun backstopDelayMs(
  * (`SSE_KEEPALIVE_SECS`), so 300 s of silence means the stream is dead - reconnect. */
 const val SSE_READ_TIMEOUT_MS = 300_000L
 
+/**
+ * Whether reopening the SSE stream must sync: only when it was down long enough to have missed a
+ * nudge (QA step 7 #5) - longer than one server keepalive (120 s by default, at most 240 s) plus
+ * a margin. A stream that drops and reconnects quickly costs no sync.
+ */
+const val SSE_GAP_SYNC_MS = 150_000L
+
+fun syncOnSseReopen(downForMs: Long?): Boolean = downForMs == null || downForMs < 0 || downForMs >= SSE_GAP_SYNC_MS
+
 /** Hard limits for one sync run (policy + status + app updates, which can include a large APK
  * download over the tailnet; the journal and browser history run beside it). The wake lock is
  * released when the run ends, at the latest after [SYNC_WAKELOCK_MS]. */

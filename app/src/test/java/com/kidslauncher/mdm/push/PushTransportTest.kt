@@ -74,6 +74,26 @@ class PushTransportTest {
     }
 
     @Test
+    fun `a token the server knew and dropped is renewed at once`() {
+        val now = 10 * TOKEN_RENEW_INTERVAL_MS
+        val dropped = known.copy(fcmTokenHash = null, fcmOk = false)
+        assertEquals(TokenAction.RENEW, tokenAction(true, token, dropped, now - 60_000, now, serverKnewToken = true))
+        // Never known (first report not in yet): wait.
+        assertEquals(TokenAction.NONE, tokenAction(true, token, dropped, now - 60_000, now, serverKnewToken = false))
+        // Still known: nothing.
+        assertEquals(TokenAction.NONE, tokenAction(true, token, known, now - 60_000, now, serverKnewToken = true))
+    }
+
+    @Test
+    fun `a quick SSE reconnect doesn't sync, a long gap does`() {
+        assertFalse(syncOnSseReopen(5_000))
+        assertFalse(syncOnSseReopen(SSE_GAP_SYNC_MS - 1))
+        assertTrue(syncOnSseReopen(SSE_GAP_SYNC_MS))
+        assertTrue(syncOnSseReopen(null))
+        assertTrue(syncOnSseReopen(-1))
+    }
+
+    @Test
     fun `priority names`() {
         assertEquals("high", priorityName(1))
         assertEquals("normal", priorityName(2))

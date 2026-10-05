@@ -104,6 +104,27 @@ object PlayRuntime {
         return edges.minOrNull()
     }
 
+    /**
+     * Screen on while the enforced plan has the update window open: suspend the Play Store right
+     * here, synchronously (one Binder call), instead of waiting for the background apply that may
+     * queue behind a running sync (QA step 7 #8). Not during install mode; the re-check's full
+     * apply follows and agrees.
+     */
+    fun suspendStoreAtScreenOn(context: Context) {
+        val enforced = AppEnforcer.lastEnforcedPlayState ?: return
+        if (!enforced.updateWindow || installModeActive(context)) return
+        try {
+            val dpm = context.getSystemService(android.app.admin.DevicePolicyManager::class.java) ?: return
+            if (!dpm.isDeviceOwnerApp(context.packageName)) return
+            if (currentPolicyDecision().policy?.allowlist == null) return
+            if (overrideActive()) return
+            val admin = android.content.ComponentName(context, com.kidslauncher.mdm.server.MdmDeviceAdminReceiver::class.java)
+            dpm.setPackagesSuspended(admin, arrayOf(PLAY_STORE), true)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't suspend the Play Store at screen on", e)
+        }
+    }
+
     // Install mode
 
     private fun overrideActive() = OfflineOverride.isActive() || RestrictionsPause.isActive()
