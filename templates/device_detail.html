@@ -54,6 +54,12 @@
         {% if time.launcher_without_rules %}
         <div class="error">This phone's launcher doesn't know time rules yet. Until it updates it keeps the old schedule exactly as it was before time rules were introduced - changes here don't reach it.</div>
         {% endif %}
+        {% if time.incoming_calls_unblocked %}
+        <div class="error">Incoming calls aren't blocked: calls are unmanaged on this device. A rule without calls (school) only stops outgoing calls here - manage calls on the Calls &amp; SMS page to block incoming ones.</div>
+        {% endif %}
+        {% if time.ledger_unreadable %}
+        <div class="error">The phone's screen-time record was unreadable; today's budget counts as used up.</div>
+        {% endif %}
         {% if time.rules_error %}
         <div class="error">Couldn't read the time rules - check the server log.</div>
         {% endif %}
@@ -264,7 +270,7 @@
         </label>
 
         <h2>Offline override PIN</h2>
-        <p class="subtitle">A failsafe for when the phone can't reach the server at all. Entering this PIN directly on the phone lifts the app restrictions and the schedule for up to two hours (not calls or phone hardening); they come back the moment the phone can sync again. The same PIN opens the launcher's own Settings on the phone - without a PIN, those Settings can't be opened at all.</p>
+        <p class="subtitle">A failsafe for when the phone can't reach the server at all. Entering this PIN directly on the phone lifts the app restrictions and the time rules for up to two hours - including school's call block, but calls never go beyond the call rules (only allowed contacts), and phone hardening stays; they come back the moment the phone can sync again. The same PIN opens the launcher's own Settings on the phone - without a PIN, those Settings can't be opened at all.</p>
         {% if pin_configured %}
         <p class="subtitle">A PIN is currently set.</p>
         {% else %}

@@ -124,6 +124,9 @@
     {% if let Some(sel) = selected %}
     <form method="post" action="/schedules/device/{{ sel.id }}" class="card">
         <h2>{{ sel.name }}</h2>
+        {% if sel.incoming_calls_unblocked %}
+        <div class="error">Incoming calls aren't blocked: calls are unmanaged on this device. A rule without calls (school) only stops outgoing calls here.</div>
+        {% endif %}
         <label class="checkbox-row">
             <input type="checkbox" name="custom_schedule_enabled" value="on" {% if sel.custom_enabled %}checked{% endif %}>
             Use this device's own rules and screen time instead of the global ones

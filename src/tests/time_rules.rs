@@ -738,3 +738,409 @@ async fn legacy_fields_are_still_sent_for_older_launchers() {
     assert_eq!(p["bedtime_start_minutes"], 1260);
     assert_eq!(p["bedtime_end_minutes"], 420);
 }
+
+// QA step 6 fix round
+
+async fn count(app: &TestApp, sql: &str) -> i64 {
+    sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
+}
+
+#[tokio::test]
+async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    sqlx::query(
+        "INSERT INTO time_rules (id, device_id, name, kind, calls_allowed, days_json) \
+         VALUES (7, NULL, 'Skole', 'school', 0, '[null,null,null,null,null,null,null]')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO time_lifts (id, device_id, target, rule_id, minutes, expires_at) \
+         VALUES (3, ?, 'rule', 7, 30, datetime('now', '+30 minutes'))",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let before_policy: (String, String, i64) = sqlx::query_as(
+        "SELECT daily_budget_json, location_mode, custom_schedule_enabled FROM device_policy \
+         WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let before_global: String =
+        sqlx::query_scalar("SELECT daily_budget_json FROM global_schedule WHERE id = 1")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let mut nudges = app.state.command_notify.subscribe();
+
+    let routes: Vec<(String, Vec<(&str, &str)>)> = vec![
+        ("/schedules/rules".into(), SCHOOL_FORM.to_vec()),
+        ("/schedules/rules/7".into(), SCHOOL_FORM.to_vec()),
+        ("/schedules/rules/7/delete".into(), vec![("scope", "")]),
+        ("/schedules/global".into(), vec![("b0", "5")]),
+        (
+            format!("/schedules/device/{id}"),
+            vec![("custom_schedule_enabled", "on"), ("b0", "5")],
+        ),
+        (
+            format!("/devices/{id}/lifts"),
+            vec![("target", "budget"), ("minutes", "15")],
+        ),
+        (format!("/devices/{id}/lifts/3/end"), vec![]),
+        (
+            format!("/devices/{id}/location-policy"),
+            vec![("mode", "off")],
+        ),
+        (format!("/devices/{id}/command/locate"), vec![]),
+    ];
+    for (path, fields) in &routes {
+        let res = app.request_form(Method::POST, path, None, fields).await;
+        assert!(
+            res.location() == Some("/login") || res.status == StatusCode::UNAUTHORIZED,
+            "{path}: {} {:?}",
+            res.status,
+            res.location()
+        );
+    }
+
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM time_rules").await, 1);
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM time_rules WHERE name = 'Skole' AND calls_allowed = 0"
+        )
+        .await,
+        1
+    );
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM time_lifts").await, 1);
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM time_lifts WHERE ended_early_at IS NOT NULL"
+        )
+        .await,
+        0
+    );
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM device_commands").await, 0);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'time_%' OR event_type LIKE 'location_%' OR event_type = 'screen_time_saved' OR event_type = 'device_command_queued'").await, 0);
+    let after_policy: (String, String, i64) = sqlx::query_as(
+        "SELECT daily_budget_json, location_mode, custom_schedule_enabled FROM device_policy \
+         WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(before_policy, after_policy);
+    let after_global: String =
+        sqlx::query_scalar("SELECT daily_budget_json FROM global_schedule WHERE id = 1")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(before_global, after_global);
+    assert!(nudges.try_recv().is_err());
+
+    // The read-only JSON for the locate page is behind the session too.
+    let res = app
+        .request(
+            Method::GET,
+            &format!("/devices/{id}/locate-result.json"),
+            None,
+            None,
+        )
+        .await;
+    assert!(res.location() == Some("/login") || res.status == StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_calls_off_rule_on_a_device_with_unmanaged_calls_warns() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    const WARNING: &str = "Incoming calls aren't blocked: calls are unmanaged";
+    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    assert!(!page.text().contains(WARNING), "no rule yet");
+
+    app.request_form(Method::POST, "/schedules/rules", Some(&cookie), SCHOOL_FORM)
+        .await;
+    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    assert!(page.text().contains(WARNING), "{}", page.text());
+    let page = app
+        .get_page(&format!("/schedules?device={id}"), &cookie)
+        .await;
+    assert!(page.text().contains(WARNING));
+
+    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    assert!(!page.text().contains(WARNING));
+    let page = app
+        .get_page(&format!("/schedules?device={id}"), &cookie)
+        .await;
+    assert!(!page.text().contains(WARNING));
+
+    // Calls unmanaged but every rule allows calls: no warning.
+    sqlx::query("UPDATE device_policy SET calls_managed = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE time_rules SET calls_allowed = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    assert!(!page.text().contains(WARNING));
+}
+
+async fn report_time_state(app: &TestApp, token: &str, state: serde_json::Value) {
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(token),
+            Some(json!({
+                "lock_reason": "NONE", "kiosk_engaged": true,
+                "capabilities": ["call_policy_v1", "time_rules_v1"],
+                "time_state": state
+            })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}
+
+fn time_state(lifts_active: serde_json::Value) -> serde_json::Value {
+    json!({
+        "day": "2026-10-05", "used_minutes": 1, "budget_minutes": null, "extra_minutes": 0,
+        "active_rule_id": null, "active_rule_name": null, "calls_blocked": false,
+        "lock_reason": "NONE", "lifts_active": lifts_active
+    })
+}
+
+#[tokio::test]
+async fn lift_status_comes_from_the_phone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    app.request_form(Method::POST, "/schedules/rules", Some(&cookie), SCHOOL_FORM)
+        .await;
+    let rule: i64 = sqlx::query_scalar("SELECT id FROM time_rules")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    // An older report: the phone hasn't seen the lift yet.
+    report_time_state(&app, &token, time_state(json!([]))).await;
+    sqlx::query("UPDATE device_status SET reported_at = datetime('now', '-1 minute')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/lifts"),
+        Some(&cookie),
+        &[
+            ("target", "rule"),
+            ("rule", &rule.to_string()),
+            ("minutes", "30"),
+        ],
+    )
+    .await;
+    let lift: i64 = sqlx::query_scalar("SELECT id FROM time_lifts")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let text = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        text.contains("Waiting for the phone - server expiry"),
+        "{text}"
+    );
+
+    report_time_state(&app, &token, time_state(json!([lift]))).await;
+    let text = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        text.contains("Active on the phone - server expiry"),
+        "{text}"
+    );
+
+    // A reboot ended it on the phone, though the server's expiry hasn't passed.
+    report_time_state(&app, &token, time_state(json!([]))).await;
+    let text = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        text.contains("Ended on the phone - server expiry"),
+        "{text}"
+    );
+}
+
+#[test]
+fn rule_lift_status_cases() {
+    use crate::handlers::devices::rule_lift_status;
+    let state = json!({"lifts_active": [4, 5]});
+    let at = "2026-10-05 10:00:00";
+    let exp = "2026-10-05 10:30:00";
+    assert!(rule_lift_status(4, at, exp, None).starts_with("Waiting"));
+    assert!(
+        rule_lift_status(4, at, exp, Some(("2026-10-05 09:59:59", &state))).starts_with("Waiting")
+    );
+    assert!(rule_lift_status(4, at, exp, Some((at, &state))).starts_with("Active on the phone"));
+    assert!(rule_lift_status(6, at, exp, Some((at, &state))).starts_with("Ended on the phone"));
+    assert!(rule_lift_status(4, at, exp, Some((at, &json!({})))).starts_with("Ended"));
+}
+
+#[tokio::test]
+async fn an_unreadable_ledger_is_shown() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let mut state = time_state(json!([]));
+    report_time_state(&app, &token, state.clone()).await;
+    let text = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!text.contains("screen-time record was unreadable"));
+    state["ledger_unreadable"] = json!(true);
+    report_time_state(&app, &token, state).await;
+    let text = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        text.contains("screen-time record was unreadable; today's budget counts as used up"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn parent_edits_are_in_the_security_log() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    app.request_form(Method::POST, "/schedules/rules", Some(&cookie), SCHOOL_FORM)
+        .await;
+    let rule: i64 = sqlx::query_scalar("SELECT id FROM time_rules")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    app.request_form(
+        Method::POST,
+        &format!("/schedules/rules/{rule}"),
+        Some(&cookie),
+        SCHOOL_FORM,
+    )
+    .await;
+    app.request_form(
+        Method::POST,
+        &format!("/schedules/rules/{rule}/delete"),
+        Some(&cookie),
+        &[("scope", "")],
+    )
+    .await;
+    app.request_form(
+        Method::POST,
+        "/schedules/global",
+        Some(&cookie),
+        &[("b0", "60")],
+    )
+    .await;
+    app.request_form(
+        Method::POST,
+        &format!("/schedules/device/{id}"),
+        Some(&cookie),
+        &[("b0", "30")],
+    )
+    .await;
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/location-policy"),
+        Some(&cookie),
+        &[("mode", "interval"), ("interval_minutes", "15")],
+    )
+    .await;
+    let events: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT event_type, username, detail FROM security_events \
+         WHERE event_type IN ('time_rule_created', 'time_rule_updated', 'time_rule_deleted', \
+         'screen_time_saved', 'location_policy_changed') ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let kinds: Vec<&str> = events.iter().map(|e| e.0.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "time_rule_created",
+            "time_rule_updated",
+            "time_rule_deleted",
+            "screen_time_saved",
+            "screen_time_saved",
+            "location_policy_changed"
+        ]
+    );
+    assert!(events.iter().all(|e| e.1 == "parent"));
+    assert_eq!(events[0].2, "global: Skole");
+    assert!(events[4].2.starts_with(&format!("device {id}: ")));
+    assert_eq!(events[5].2, format!("device {id}: interval, every 15 min"));
+}
+
+#[tokio::test]
+async fn the_phones_locate_answer_is_shown() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let res = app
+        .get_page(&format!("/devices/{id}/locate-result.json"), &cookie)
+        .await;
+    assert_eq!(res.json(), json!({}));
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/command/locate"),
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    let cmd = policy(&app, &token).await["pending_command"]["id"]
+        .as_i64()
+        .unwrap();
+    let res = app
+        .get_page(&format!("/devices/{id}/locate-result.json"), &cookie)
+        .await;
+    assert_eq!(res.json(), json!({"id": cmd, "result": null}));
+    app.request(
+        Method::POST,
+        "/api/devices/command-result",
+        Some(&token),
+        Some(json!({"command_id": cmd, "success": false, "message": "location is off for this device"})),
+    )
+    .await;
+    let res = app
+        .get_page(&format!("/devices/{id}/locate-result.json"), &cookie)
+        .await;
+    assert_eq!(
+        res.json(),
+        json!({"id": cmd, "result": "location is off for this device"})
+    );
+    let text = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(text.contains("location is off for this device"), "{text}");
+    assert!(text.contains("Off - location switched off on the phone"));
+}

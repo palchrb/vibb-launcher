@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use askama::Template;
+use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -19,6 +20,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use crate::AppState;
 use crate::models::{Device, DevicePolicy, GlobalSchedule, InstalledApp};
+use crate::security::{self, CurrentAdmin};
 use crate::time_rules::{
     self, DayWindow, MAX_EXEMPT_APPS, MAX_RULE_NAME_CHARS, RULE_KINDS, TimeRuleRow,
 };
@@ -86,6 +88,8 @@ struct SelectedDevice {
     id: i64,
     name: String,
     custom_enabled: bool,
+    /// A calls-off rule applies to this device but its calls are unmanaged (QA step 6 #5).
+    incoming_calls_unblocked: bool,
     view: ScopeView,
 }
 
@@ -322,11 +326,18 @@ pub async fn show_schedules(
                 .into_response();
         };
         let policy = policy.unwrap_or_default();
+        let applied =
+            time_rules::effective_rule_rows(&state.db, device.id, policy.custom_schedule_enabled)
+                .await
+                .unwrap_or_default();
+        let incoming_calls_unblocked =
+            !policy.calls_managed && applied.iter().any(|r| !r.calls_allowed);
         let apps = reported_apps(&state, &[device.id]).await;
         selected = Some(SelectedDevice {
             id: device.id,
             name: device.name,
             custom_enabled: policy.custom_schedule_enabled,
+            incoming_calls_unblocked,
             view: scope_view(
                 device.id.to_string(),
                 &rules,
@@ -462,11 +473,34 @@ async fn parse_scope(state: &AppState, raw: &str) -> Result<Option<i64>, Box<Res
     }
 }
 
+/// Parent edits to time rules and budgets go to the security log, like lifts (QA step 6 #9).
+async fn log_change(
+    state: &AppState,
+    admin: &crate::models::AdminUser,
+    event: &str,
+    scope: Option<i64>,
+    what: &str,
+) {
+    let scope = scope.map_or("global".to_string(), |id| format!("device {id}"));
+    security::record_security_event(
+        &state.db,
+        event,
+        Some(&admin.username),
+        None,
+        Some(&format!("{scope}: {what}")),
+    )
+    .await;
+}
+
 fn form_pairs(body: &Bytes) -> Vec<(String, String)> {
     form_urlencoded::parse(body).into_owned().collect()
 }
 
-pub async fn create_rule(State(state): State<AppState>, body: Bytes) -> Response {
+pub async fn create_rule(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    body: Bytes,
+) -> Response {
     let fields = form_pairs(&body);
     let scope = match parse_scope(&state, field(&fields, "scope")).await {
         Ok(scope) => scope,
@@ -493,6 +527,7 @@ pub async fn create_rule(State(state): State<AppState>, body: Bytes) -> Response
     if let Err(err) = result {
         return server_error(err, "failed to add a time rule");
     }
+    log_change(&state, &admin, "time_rule_created", scope, &input.name).await;
     nudge(&state, scope).await;
     redirect_for(scope)
 }
@@ -519,6 +554,7 @@ async fn rule_in_scope(
 
 pub async fn update_rule(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(rule_id): Path<i64>,
     body: Bytes,
 ) -> Response {
@@ -550,12 +586,14 @@ pub async fn update_rule(
     if let Err(err) = result {
         return server_error(err, "failed to save a time rule");
     }
+    log_change(&state, &admin, "time_rule_updated", scope, &input.name).await;
     nudge(&state, scope).await;
     redirect_for(scope)
 }
 
 pub async fn delete_rule(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(rule_id): Path<i64>,
     body: Bytes,
 ) -> Response {
@@ -564,9 +602,10 @@ pub async fn delete_rule(
         Ok(scope) => scope,
         Err(response) => return *response,
     };
-    if let Err(response) = rule_in_scope(&state, rule_id, scope).await {
-        return *response;
-    }
+    let rule = match rule_in_scope(&state, rule_id, scope).await {
+        Ok(rule) => rule,
+        Err(response) => return *response,
+    };
     if let Err(err) = sqlx::query("DELETE FROM time_rules WHERE id = ? AND device_id IS ?")
         .bind(rule_id)
         .bind(scope)
@@ -575,6 +614,7 @@ pub async fn delete_rule(
     {
         return server_error(err, "failed to delete a time rule");
     }
+    log_change(&state, &admin, "time_rule_deleted", scope, &rule.name).await;
     nudge(&state, scope).await;
     redirect_for(scope)
 }
@@ -597,7 +637,11 @@ pub(crate) fn parse_budget_form(fields: &[(String, String)]) -> Result<String, S
 }
 
 /// The global screen-time budget.
-pub async fn save_global_schedule(State(state): State<AppState>, body: Bytes) -> Response {
+pub async fn save_global_schedule(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    body: Bytes,
+) -> Response {
     let budget = match parse_budget_form(&form_pairs(&body)) {
         Ok(budget) => budget,
         Err(message) => return bad_request(message),
@@ -612,6 +656,7 @@ pub async fn save_global_schedule(State(state): State<AppState>, body: Bytes) ->
     {
         return server_error(err, "failed to save the global screen time");
     }
+    log_change(&state, &admin, "screen_time_saved", None, &budget).await;
     nudge(&state, None).await;
     redirect_for(None)
 }
@@ -619,6 +664,7 @@ pub async fn save_global_schedule(State(state): State<AppState>, body: Bytes) ->
 /// A device's override switch and its own budget.
 pub async fn save_device_schedule(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     body: Bytes,
 ) -> Response {
@@ -642,6 +688,11 @@ pub async fn save_device_schedule(
             (StatusCode::NOT_FOUND, "Device not found").into_response()
         }
         Ok(_) => {
+            let detail = format!(
+                "own rules {}, budget {budget}",
+                if custom_enabled { "on" } else { "off" }
+            );
+            log_change(&state, &admin, "screen_time_saved", Some(id), &detail).await;
             nudge(&state, Some(id)).await;
             redirect_for(Some(id))
         }

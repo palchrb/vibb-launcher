@@ -285,6 +285,35 @@ struct TimeCard {
     /// The launcher reported capabilities without `time_rules_v1`: it still runs the old schedule.
     launcher_without_rules: bool,
     rules_error: bool,
+    /// A calls-off rule (school) applies but calls are unmanaged: incoming calls still ring.
+    incoming_calls_unblocked: bool,
+    /// The phone couldn't read its screen-time record and counts today's budget as used up.
+    ledger_unreadable: bool,
+}
+
+/// Status of a rule lift that the server still considers running, from what the phone last
+/// reported (`time_state.lifts_active`): the phone's view wins - a reboot or late delivery can
+/// end a lift there before the server's expiry (QA step 6 #8).
+pub(crate) fn rule_lift_status(
+    lift_id: i64,
+    created_at: &str,
+    expires_at: &str,
+    report: Option<(&str, &serde_json::Value)>,
+) -> String {
+    let expiry = format!("server expiry {expires_at} (UTC)");
+    match report {
+        Some((reported_at, state)) if reported_at >= created_at => {
+            let active = state["lifts_active"]
+                .as_array()
+                .is_some_and(|ids| ids.iter().any(|id| id.as_i64() == Some(lift_id)));
+            if active {
+                format!("Active on the phone - {expiry}")
+            } else {
+                format!("Ended on the phone - {expiry}")
+            }
+        }
+        _ => format!("Waiting for the phone - {expiry}"),
+    }
 }
 
 /// The two summary lines from the launcher's `time_state` JSON (design 06 "Wire").
@@ -332,6 +361,15 @@ async fn time_card(
         .and_then(|s| s.time_state_json.as_deref())
         .map(time_state_lines)
         .unwrap_or((None, None));
+    let reported_state: Option<(String, serde_json::Value)> = latest.and_then(|s| {
+        s.time_state_json
+            .as_deref()
+            .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
+            .map(|v| (s.reported_at.clone(), v))
+    });
+    let ledger_unreadable = reported_state
+        .as_ref()
+        .is_some_and(|(_, v)| v["ledger_unreadable"].as_bool() == Some(true));
     let launcher_without_rules = latest.is_some_and(|s| {
         !s.capabilities_json
             .as_deref()
@@ -347,8 +385,9 @@ async fn time_card(
     )
     .await;
     let rules_error = rules.is_err();
+    let rules = rules.unwrap_or_default();
+    let incoming_calls_unblocked = !policy.calls_managed && rules.iter().any(|r| !r.calls_allowed);
     let rules = rules
-        .unwrap_or_default()
         .into_iter()
         .map(|r| RuleOption {
             id: r.id,
@@ -379,7 +418,12 @@ async fn time_card(
                     .unwrap_or_else(|| "All rules".to_string());
                 let status = match (&lift.ended_early_at, active) {
                     (Some(at), _) => format!("Ended early {at}"),
-                    (None, true) => format!("Active until {} (UTC)", lift.expires_at),
+                    (None, true) => rule_lift_status(
+                        lift.id,
+                        &lift.created_at,
+                        &lift.expires_at,
+                        reported_state.as_ref().map(|(at, v)| (at.as_str(), v)),
+                    ),
                     (None, false) => "Over".to_string(),
                 };
                 (
@@ -413,6 +457,8 @@ async fn time_card(
         lifts,
         launcher_without_rules,
         rules_error,
+        incoming_calls_unblocked,
+        ledger_unreadable,
     }
 }
 

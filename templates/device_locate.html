@@ -38,6 +38,9 @@
         {% else %}
         <p class="subtitle">No location reported yet.</p>
         {% endif %}
+        {% if let Some(result) = locate_result %}
+        <p>Phone's answer to the last "Update location now": <strong>{{ result }}</strong></p>
+        {% endif %}
         {% if waiting_for_fix %}
         <p id="fix_wait" class="subtitle">Waiting for a fresh fix from the phone&hellip;</p>
         {% endif %}
@@ -45,12 +48,12 @@
             <button type="submit" class="button-small">Update location now</button>
         </form>
         {% if location_mode == "off" %}
-        <div class="error" style="margin-top:8px;">Location is off for this phone, so it won't take a fix even when asked. Choose "Only when asked" below first.</div>
+        <div class="error" style="margin-top:8px;">Location is off for this phone: the launcher switches the phone's location off and won't take a fix even when asked. Choose "Only when asked" below first.</div>
         {% endif %}
         <form method="post" action="/devices/{{ device.id }}/location-policy" style="margin-top:12px;">
             <label for="location_mode">When the phone takes a location fix</label>
             <select id="location_mode" name="mode" onchange="this.form.submit()">
-                <option value="off" {% if location_mode == "off" %}selected{% endif %}>Never (location off)</option>
+                <option value="off" {% if location_mode == "off" %}selected{% endif %}>Off - location switched off on the phone</option>
                 <option value="on_request" {% if location_mode == "on_request" %}selected{% endif %}>Only when asked (Update location now, Ring)</option>
                 <option value="interval" {% if location_mode == "interval" %}selected{% endif %}>Regularly</option>
             </select>
@@ -170,10 +173,21 @@
                     }
                 })
                 .catch(function () {});
+            // The phone's own answer ("location is off", "no location fix", "fix ±12 m, 3 s old").
+            fetch('/devices/{{ device.id }}/locate-result.json')
+                .then(function (r) { return r.json(); })
+                .then(function (cmd) {
+                    if (cmd.result) {
+                        var el = document.getElementById('fix_wait');
+                        if (el) el.textContent = "The phone answered: " + cmd.result;
+                        if (cmd.result.indexOf('fix ') !== 0) clearInterval(timer);
+                    }
+                })
+                .catch(function () {});
             if (tries >= 12) {
                 clearInterval(timer);
                 var el = document.getElementById('fix_wait');
-                if (el) el.textContent = 'No new fix yet - the phone may be offline or indoors. The command waits for it; reload later.';
+                if (el && el.textContent.indexOf('The phone answered') !== 0) el.textContent = 'No answer yet - the phone may be offline. The command waits for it; reload later.';
             }
         }, 5000);
     })();

@@ -38,6 +38,34 @@ struct LocateTemplate {
     last_fix_at: String,
     /// Just pressed "Update location now": the page polls for a fresh fix.
     waiting_for_fix: bool,
+    /// The phone's answer to the newest `locate` command ("fix ±12 m, 3 s old", "location is
+    /// off for this device", "no location fix"), once it has answered (QA step 6 #7).
+    locate_result: Option<String>,
+}
+
+/// The newest `locate` command for a device: `(id, result)`.
+async fn latest_locate(state: &AppState, device_id: i64) -> Option<(i64, Option<String>)> {
+    sqlx::query_as(
+        "SELECT id, result FROM device_commands WHERE device_id = ? AND command = 'locate' \
+         ORDER BY requested_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+}
+
+/// `{"id": .., "result": ".." | null}` of the newest `locate` command (`{}` if none) - the
+/// locate page's wait shows the phone's answer as soon as it arrives.
+pub async fn locate_result_json(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    match latest_locate(&state, id).await {
+        Some((cmd, result)) => Json(serde_json::json!({ "id": cmd, "result": result })),
+        None => Json(serde_json::json!({})),
+    }
 }
 
 /// "3 min ago (±12 m)" for a fix captured at `captured_at` (RFC 3339 from the phone).
@@ -113,6 +141,7 @@ async fn render_locate_page(
         .as_ref()
         .map(|l| describe_fix(&l.captured_at, l.accuracy_meters, chrono::Utc::now()));
     let last_fix_at = newest.map(|l| l.captured_at).unwrap_or_default();
+    let locate_result = latest_locate(state, selected_id).await.and_then(|(_, r)| r);
 
     Html(
         LocateTemplate {
@@ -128,6 +157,7 @@ async fn render_locate_page(
             last_fix,
             last_fix_at,
             waiting_for_fix,
+            locate_result,
         }
         .render()
         .unwrap(),
@@ -258,6 +288,7 @@ pub async fn locate(
 /// value, 404 for an unknown device; nudges the phone.
 pub async fn update_location_policy(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> axum::response::Response {
@@ -289,6 +320,19 @@ pub async fn update_location_policy(
             (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
         }
         Ok(_) => {
+            security::record_security_event(
+                &state.db,
+                "location_policy_changed",
+                Some(&admin.username),
+                None,
+                Some(&format!(
+                    "device {id}: {mode}{}",
+                    interval
+                        .map(|m| format!(", every {m} min"))
+                        .unwrap_or_default()
+                )),
+            )
+            .await;
             let _ = state.command_notify.send(id);
             Redirect::to(&format!("/devices/locate?device={id}")).into_response()
         }

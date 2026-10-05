@@ -270,6 +270,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             "/devices/{id}/locations.json",
             get(handlers::locate::locations_json),
         )
+        .route(
+            "/devices/{id}/locate-result.json",
+            get(handlers::locate::locate_result_json),
+        )
         .route("/devices/{id}/command/ring", post(handlers::locate::ring))
         .route(
             "/devices/{id}/command/stop-ring",
