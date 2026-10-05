@@ -60,10 +60,14 @@ class Application : android.app.Application() {
             // similar main-thread AppEnforcer call in SettingsFragmentLauncher).
             p0?.let { packageName ->
                 CoroutineScope(Dispatchers.IO).launch {
-                    val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName)
-                    // A new app the parent hasn't allowed (e.g. from Play): report it now, so the
-                    // device page lists it for allowlisting (handy step 7).
-                    if (blocked) com.kidslauncher.mdm.push.SyncRunner.request(this@Application, "package_added")
+                    try {
+                        val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName)
+                        // A new app the parent hasn't allowed (e.g. from Play): report it now, so
+                        // the device page lists it for allowlisting (handy step 7).
+                        if (blocked) com.kidslauncher.mdm.push.SyncRunner.request(this@Application, "package_added")
+                    } catch (e: Exception) {
+                        android.util.Log.w("Application", "New-package enforcement failed for $packageName", e)
+                    }
                 }
             }
         }

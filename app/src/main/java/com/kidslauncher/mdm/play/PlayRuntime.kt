@@ -134,16 +134,17 @@ object PlayRuntime {
         Log.i(LOG_TAG, "Install mode on until ${Date(start.untilWallMs)}")
         showNotification(app, start.untilWallMs)
         scope.launch {
-            AppEnforcer.apply(app, currentPolicyDecision().policy)
-            TimeRuleAlarm.schedule(app)
+            // Never let an exception reach the crash handler (it would end the call path too).
             try {
+                AppEnforcer.apply(app, currentPolicyDecision().policy)
+                TimeRuleAlarm.schedule(app)
                 val launch = app.packageManager.getLaunchIntentForPackage(PLAY_STORE)
                 if (launch != null) app.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                // The server logs it (status `install_mode`).
+                SyncRunner.request(app, "install_mode")
             } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't open the Play Store", e)
+                Log.w(LOG_TAG, "Starting install mode failed", e)
             }
-            // The server logs it (status `install_mode`).
-            SyncRunner.request(app, "install_mode")
         }
     }
 
@@ -152,10 +153,14 @@ object PlayRuntime {
         val app = context.applicationContext
         prefs(app).edit().clear().commit()
         scope.launch {
-            AppEnforcer.apply(app, currentPolicyDecision().policy)
-            onInstallModeEnded(app)
-            TimeRuleAlarm.schedule(app)
-            SyncRunner.request(app, "install_mode_end")
+            try {
+                AppEnforcer.apply(app, currentPolicyDecision().policy)
+                onInstallModeEnded(app)
+                TimeRuleAlarm.schedule(app)
+                SyncRunner.request(app, "install_mode_end")
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Ending install mode failed", e)
+            }
         }
     }
 

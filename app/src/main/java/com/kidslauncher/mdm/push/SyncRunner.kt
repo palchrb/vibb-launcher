@@ -37,15 +37,23 @@ object SyncRunner {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var wakeLock: PowerManager.WakeLock? = null
 
+    /** Requests whose service start hasn't reached [runInService] yet - the wake lock stays
+     * held for them even when a run ends in between. */
+    private var pending = 0
+
     fun request(context: Context, reason: String) {
         val app = context.applicationContext
+        synchronized(this) { pending++ }
         acquireWakeLock(app)
         CommandListenerService.requestSync(app, reason)
     }
 
-    /** From [CommandListenerService] only (main thread). */
-    fun runInService(context: Context, reason: String) {
-        val start = synchronized(this) { coalescer.request(reason) }
+    /** From [CommandListenerService] only (main thread). [fromRequest]: delivered for [request]. */
+    fun runInService(context: Context, reason: String, fromRequest: Boolean = false) {
+        val start = synchronized(this) {
+            if (fromRequest && pending > 0) pending--
+            coalescer.request(reason)
+        }
         if (start) launchRun(context.applicationContext)
     }
 
@@ -72,8 +80,11 @@ object SyncRunner {
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "After-sync work failed", e)
             }
-            val again = synchronized(this@SyncRunner) { coalescer.finished() }
-            if (again) launchRun(context) else releaseWakeLock()
+            val (again, idle) = synchronized(this@SyncRunner) {
+                val again = coalescer.finished()
+                again to (!again && pending == 0)
+            }
+            if (again) launchRun(context) else if (idle) releaseWakeLock()
         }
     }
 

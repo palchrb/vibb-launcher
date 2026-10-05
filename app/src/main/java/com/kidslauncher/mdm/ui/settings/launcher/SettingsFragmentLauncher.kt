@@ -489,7 +489,10 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
 
         CoroutineScope(Dispatchers.IO).launch {
             val reachedServer = try {
-                performMdmSync(context)
+                performMdmSync(context).also {
+                    com.kidslauncher.mdm.server.CommandListenerService.onSyncFinished(context)
+                    com.kidslauncher.mdm.push.BackstopAlarm.schedule(context, afterSync = true)
+                }
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Manual sync failed", e)
                 false

@@ -33,18 +33,27 @@ object BackstopAlarm {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    fun schedule(context: Context) {
+    /** Elapsed-realtime target of the armed alarm (0 = none known in this process). */
+    @Volatile
+    private var armedAt = 0L
+
+    /**
+     * [afterSync] (a sync just ran, or the anchor starts): arm at the computed delay. Otherwise
+     * (the SSE stream went down) only ever move the alarm earlier - a stream that keeps dropping
+     * must not keep pushing the backstop out until it never fires.
+     */
+    fun schedule(context: Context, afterSync: Boolean = true) {
         try {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
             val policy = currentPolicyDecision().policy
             val locationPolicy = policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
             val sinceLastFix = System.currentTimeMillis() - LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
             val delay = backstopDelayMs(PushState.lastDecision.transport, PushState.sseConnected, locationPolicy, sinceLastFix)
-            alarms.setAndAllowWhileIdle(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + delay,
-                pendingIntent(context),
-            )
+            val target = SystemClock.elapsedRealtime() + delay
+            val armed = armedAt
+            if (!afterSync && armed > SystemClock.elapsedRealtime() && armed <= target) return
+            armedAt = target
+            alarms.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, target, pendingIntent(context))
             Log.i(LOG_TAG, "Next backstop sync in ${delay / 60_000} min")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't schedule the backstop sync", e)

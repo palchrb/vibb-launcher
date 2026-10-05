@@ -33,7 +33,9 @@ class PlayLinkBlockedActivity : Activity() {
         if (data != null && isPlayLink(data.scheme, data.host, data.path) && playStoreOpen()) {
             try {
                 startActivity(
-                    Intent(intent).setComponent(null).setPackage(PLAY_STORE)
+                    // A fresh intent: never pass on the caller's extras, ClipData or URI grants
+                    // under our identity.
+                    Intent(Intent.ACTION_VIEW, data).setPackage(PLAY_STORE)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 )
             } catch (e: Exception) {

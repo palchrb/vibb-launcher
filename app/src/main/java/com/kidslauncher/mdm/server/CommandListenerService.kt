@@ -70,6 +70,7 @@ class CommandListenerService : Service() {
     private var stopped = false
     private var sseWanted = false
     private val connectRunnable = Runnable { connect() }
+    private var firstStart = true
 
     private fun buildClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
@@ -105,14 +106,20 @@ class CommandListenerService : Service() {
         FcmSupport.ensureInitialized(applicationContext)
         reevaluateTransport()
         BackstopAlarm.schedule(applicationContext)
-        // One sync at every process start: catches nudges missed while we were down.
-        SyncRunner.runInService(applicationContext, "start")
+        // The sync at start runs from onStartCommand (always delivered after onCreate), so a cold
+        // start through requestSync runs one sync, not two.
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val start = firstStart
+        firstStart = false
+        if (intent?.action != ACTION_SYNC && start) {
+            // One sync at every process start: catches nudges missed while we were down.
+            SyncRunner.runInService(applicationContext, "start")
+        }
         if (intent?.action == ACTION_SYNC) {
             val reason = intent.getStringExtra(EXTRA_SYNC_REASON) ?: "request"
-            SyncRunner.runInService(applicationContext, reason)
+            SyncRunner.runInService(applicationContext, reason, fromRequest = true)
             // The backstop also restarts a stalled SSE reconnect loop (Handler time stops in
             // deep sleep).
             if (sseWanted && !PushState.sseConnected) {
@@ -202,10 +209,13 @@ class CommandListenerService : Service() {
                 override fun onOpen(eventSource: EventSource, response: Response) {
                     Log.i(LOG_TAG, "Command stream connected")
                     handler.post {
+                        if (eventSource !== this@CommandListenerService.eventSource || !sseWanted) return@post
                         reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
                         val wasDown = !PushState.sseConnected
                         PushState.sseConnected = true
-                        if (wasDown) BackstopAlarm.schedule(applicationContext)
+                        // Catch nudges missed while the stream was down; the sync re-arms the
+                        // backstop at the normal period afterwards.
+                        if (wasDown) SyncRunner.request(applicationContext, "sse_open")
                     }
                 }
 
@@ -233,9 +243,9 @@ class CommandListenerService : Service() {
         eventSource = null
         val wasUp = PushState.sseConnected
         PushState.sseConnected = false
-        // Only on the up -> down edge: re-arming on every failed reconnect would keep pushing the
-        // backstop out and it would never fire.
-        if (wasUp) BackstopAlarm.schedule(applicationContext)
+        // Only on the up -> down edge, and only ever earlier (15 min): a flapping stream must not
+        // keep pushing the backstop out until it never fires.
+        if (wasUp) BackstopAlarm.schedule(applicationContext, afterSync = false)
         scheduleReconnect()
     }
 

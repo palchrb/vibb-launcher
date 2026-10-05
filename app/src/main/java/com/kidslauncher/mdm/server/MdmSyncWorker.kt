@@ -440,6 +440,10 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
             // is async, so this attempt is still unresolved until AppInstallReceiver's
             // recordInstalled/recordFailed lands (or the timeout above reclaims it if that
             // callback never fires).
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // The sync's timeout: stop here; the next sync retries (the attempt marker times out).
+            TrackedAppUpdateState.clearAttempt(context, key)
+            throw e
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Update check failed for ${update.packageName}", e)
             notifyAppInstallResult(context, update.id, update.name, success = false)
@@ -643,6 +647,13 @@ fun reevaluateLockReasonFromCache(context: Context): LockReason? {
     scheduleScope.launch {
         try {
             AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+            // The Play state may have moved while that apply ran (screen on right after screen
+            // off in the update window): apply again until what's enforced is what's current,
+            // so the window really ends at once on screen-on.
+            var tries = 0
+            while (tries++ < 3 && AppEnforcer.lastEnforcedPlayState?.key() != PlayRuntime.state(appContext).key()) {
+                AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+            }
             if (installModeEnded) PlayRuntime.onInstallModeEnded(appContext)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Re-applying enforcement after a lock change failed", e)
