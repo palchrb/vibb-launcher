@@ -22,8 +22,12 @@ import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallPrefs
 import com.kidslauncher.mdm.calls.CallSystem
+import com.kidslauncher.mdm.calls.EmergencyDialer
 import com.kidslauncher.mdm.calls.RoleAction
+import com.kidslauncher.mdm.calls.RoleSnapshot
 import com.kidslauncher.mdm.calls.dialerRoleAction
+import com.kidslauncher.mdm.calls.roleReportNeeded
+import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.calls.lockDefaultApps
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -207,6 +211,7 @@ object AppEnforcer {
         CallPolicyStore.ensureLoaded(context)
         val callState = CallPolicyStore.state
         applyDialerRole(context, dpm, admin, callState)
+        signalRoleChange(context)
 
         // A time rule or the used-up budget: suspend everything but our own package, the system
         // dialer and the lock's usable apps (see computeEnforcementPlan), from the same decision
@@ -243,6 +248,8 @@ object AppEnforcer {
             timeRulesSet = timePolicy != null && (timePolicy.rules.isNotEmpty() || hasBudget(timePolicy)),
             budgetSet = timePolicy != null && hasBudget(timePolicy),
             playState = playState,
+            blockActivityStart = policy?.blockActivityStart == true,
+            lockTaskHelpers = if (policy?.blockActivityStart == true) resolveLockTaskHelpers(context) else emptySet(),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -286,6 +293,11 @@ object AppEnforcer {
                     if (!notSuspended.isNullOrEmpty()) {
                         Log.w(LOG_TAG, "Platform refused to ${if (shouldBeSuspended) "suspend" else "unsuspend"} $packageName (setPackagesSuspended)")
                     }
+                    // The Play Store is the package verifier on GMS phones and can't be suspended
+                    // there (B4) - reported, so the server can say Play is blocked only in kiosk.
+                    if (packageName == PLAY_STORE && shouldBeSuspended) {
+                        PlayRuntime.recordStoreSuspendable(context, notSuspended.isNullOrEmpty())
+                    }
                 }
                 if (shouldBeHidden != currentlyHidden) {
                     val hiddenOk = dpm.setApplicationHidden(admin, packageName, shouldBeHidden)
@@ -305,6 +317,8 @@ object AppEnforcer {
         lastEnforcedPlayState = playState
 
         applyKioskState(dpm, admin, plan.kioskPackages, plan.lockTaskFeatures)
+
+        applyKeyguardFeatures(dpm, admin, managed = policy?.allowlist != null || callState.managed)
 
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
         setRestriction(dpm, admin, UserManager.DISALLOW_CREATE_WINDOWS, plan.restrictCreateWindows)
@@ -456,6 +470,9 @@ object AppEnforcer {
     private fun applyDialerRole(context: Context, dpm: DevicePolicyManager, admin: ComponentName, state: CallPolicyState) {
         val held = CallSystem.dialerRoleHeld(context)
         val action = dialerRoleAction(state, held, CallPrefs.dialerRoleTakenByUs(context))
+        // Before the role changes hands: our own role-grantable permissions become POLICY_FIXED,
+        // so the hand-back's revocation skips them and doesn't kill our process (QA 09 #6).
+        if (action != RoleAction.NONE || state.managed) fixOwnPermissions(context, dpm, admin)
         // Changing the default dialer with DISALLOW_CONFIG_DEFAULT_APPS set may be refused.
         if (action != RoleAction.NONE) setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, false)
         when (action) {
@@ -480,7 +497,117 @@ object AppEnforcer {
             }
             RoleAction.NONE -> if (held || !state.managed) CallPrefs.lastError(context, null)
         }
+        // Re-set in the same pass (QA 09 #11).
         setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, lockDefaultApps(state, CallSystem.dialerRoleHeld(context)))
+        // A role change can leave another app's screen (the system dialer, a camera) on top of
+        // Home in kiosk: bring Home back (device owner + HOME may start from the background, B2).
+        if (action != RoleAction.NONE && LauncherPreferences.mdm().kioskEnabled()) bringHomeToFront(context)
+    }
+
+    private fun bringHomeToFront(context: Context) {
+        try {
+            context.startActivity(
+                Intent(context, HomeActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            )
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't bring Home to front after a role change", e)
+        }
+    }
+
+    /** See [ownPermissionsToFix]: every role-grantable permission our manifest requests. */
+    private fun fixOwnPermissions(context: Context, dpm: DevicePolicyManager, admin: ComponentName) {
+        val requested = try {
+            context.packageManager.getPackageInfo(
+                context.packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()),
+            ).requestedPermissions.orEmpty().toList()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't read our own requested permissions", e)
+            return
+        }
+        for (permission in ownPermissionsToFix(requested)) QuickControls.fixOwnPermission(context, dpm, admin, permission)
+    }
+
+    /**
+     * B1: when a call role changed since the server last heard (a TAKE/RELEASE here, or the
+     * platform/the parent changing it), ask for a sync so the calls page sees it now rather than
+     * with the next sync. Coalesced by [SyncRunner]; once per change ([roleReportNeeded]).
+     */
+    private fun signalRoleChange(context: Context) {
+        val now = RoleSnapshot(CallSystem.dialerRoleHeld(context), CallSystem.redirectionRoleHeld(context))
+        if (!roleReportNeeded(CallPrefs.rolesSignalled(context), now)) return
+        CallPrefs.rolesSignalled(context, now)
+        try {
+            SyncRunner.request(context, "role-changed")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't request a sync after a role change", e)
+        }
+    }
+
+    /** See [keyguardDisabledFeatures] - set only when it differs. */
+    private fun applyKeyguardFeatures(dpm: DevicePolicyManager, admin: ComponentName, managed: Boolean) {
+        try {
+            val current = dpm.getKeyguardDisabledFeatures(admin)
+            val wanted = keyguardDisabledFeatures(current, managed)
+            if (wanted != current) dpm.setKeyguardDisabledFeatures(admin, wanted)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the keyguard camera feature", e)
+        }
+    }
+
+    /**
+     * The system helpers to pin with the kiosk app block (B4, QA 09 #2), resolved from intents on
+     * this phone - package names differ per device. Only system apps count ([lockTaskHelpers]);
+     * Settings, the camera, the system dialer and Play are never pinned this way.
+     */
+    private fun resolveLockTaskHelpers(context: Context): Set<String> {
+        val pm = context.packageManager
+        fun info(pkg: String?): ResolvedHelper? = pkg?.let {
+            try {
+                val flags = pm.getApplicationInfo(it, PackageManager.MATCH_UNINSTALLED_PACKAGES).flags
+                ResolvedHelper(it, (flags and ApplicationInfo.FLAG_SYSTEM) != 0)
+            } catch (e: Exception) {
+                null
+            }
+        }
+        fun activity(intent: Intent): ResolvedHelper? = try {
+            info(pm.queryIntentActivities(intent, PackageManager.MATCH_SYSTEM_ONLY).firstOrNull()?.activityInfo?.packageName)
+        } catch (e: Exception) {
+            null
+        }
+        val roleRequest = try {
+            context.getSystemService(android.app.role.RoleManager::class.java)
+                ?.createRequestRoleIntent(android.app.role.RoleManager.ROLE_DIALER)
+        } catch (e: Exception) {
+            null
+        }
+        val cellBroadcast = try {
+            pm.queryBroadcastReceivers(Intent(android.provider.Telephony.Sms.Intents.SMS_CB_RECEIVED_ACTION), PackageManager.MATCH_SYSTEM_ONLY)
+                .map { it.activityInfo.packageName }
+                .sortedByDescending { it.contains("cellbroadcast") }
+                .firstOrNull()
+        } catch (e: Exception) {
+            null
+        }
+        val resolved = mapOf(
+            HelperKind.EMERGENCY_DIALER to info(EmergencyDialer.resolve(context)?.packageName),
+            HelperKind.TELECOM to activity(Intent(Intent.ACTION_CALL, android.net.Uri.fromParts("tel", "112", null))),
+            HelperKind.PERMISSION_CONTROLLER to (
+                activity(Intent("android.content.pm.action.REQUEST_PERMISSIONS"))
+                    ?: roleRequest?.let { activity(it) }
+                ),
+            HelperKind.CHOOSER to activity(Intent(Intent.ACTION_CHOOSER)),
+            HelperKind.DOCUMENTS to activity(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")),
+            HelperKind.PHOTO_PICKER to activity(Intent(android.provider.MediaStore.ACTION_PICK_IMAGES)),
+            HelperKind.CELL_BROADCAST to info(cellBroadcast),
+        )
+        val forbidden = setOfNotNull(
+            activity(Intent(Settings.ACTION_SETTINGS))?.packageName,
+            activity(Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE))?.packageName,
+            activity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))?.packageName,
+            systemDialerPackage(context),
+        )
+        return lockTaskHelpers(resolved, forbidden)
     }
 
     /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that

@@ -131,9 +131,11 @@ fun computeEnforcementPlan(
     timeRulesSet: Boolean = false,
     budgetSet: Boolean = false,
     playState: PlayState = PlayState(),
+    blockActivityStart: Boolean = false,
+    lockTaskHelpers: Set<String> = emptySet(),
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer) + inputMethods + PLAY_NEVER_RESTRICT
-    val features = serverLockTaskFeatures.toInt() or LOCK_TASK_FEATURE_KEYGUARD
+    val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
     val appsManaged = allowlist != null && !overrideActive
     val locked = scheduleLocked && !overrideActive
     val allowed = allowlist.orEmpty().toSet()
@@ -175,7 +177,12 @@ fun computeEnforcementPlan(
             allowed + ownPackage
         }
         val withoutDialer = if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
-        (withoutDialer - PLAY_CORE) + setOfNotNull(PLAY_STORE.takeIf { installModePin })
+        // The block bit has no emergency exemption: the resolved system helpers (emergency
+        // dialer, Telecom, permission dialogs, pickers, emergency alerts) are pinned with it - also
+        // during a time-rule lock. Never the system dialer (its pinning stays under the call
+        // rules, QA 09 #3), Settings or Play (lockTaskHelpers).
+        val helpers = if (blockActivityStart) lockTaskHelpers - setOfNotNull(systemDialer) - PLAY_CORE else emptySet()
+        (withoutDialer - PLAY_CORE) + helpers + setOfNotNull(PLAY_STORE.takeIf { installModePin })
     } else {
         null
     }

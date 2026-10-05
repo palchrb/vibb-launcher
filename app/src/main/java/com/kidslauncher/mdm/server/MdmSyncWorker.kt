@@ -211,6 +211,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 push = PushState.report(context, FcmSupport.configured, FcmSupport.gmsAvailable(context)),
                 installMode = PlayRuntime.installModeReport(context),
                 playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
+                playStoreSuspendable = PlayRuntime.storeSuspendable(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,

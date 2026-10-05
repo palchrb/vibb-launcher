@@ -32,6 +32,8 @@ data class StatusReportRequest(
     val installMode: InstallModeReport? = null,
     /** The nightly Play update window is in force (Play Store unsuspended, screen off). */
     val playWindowActive: Boolean = false,
+    /** `false` when the platform refused to suspend the Play Store (step 9 B4); `null` = not tried. */
+    val playStoreSuspendable: Boolean? = null,
 )
 
 /**

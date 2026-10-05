@@ -20,14 +20,18 @@ object CallStateReport {
             false
         }
         val now = System.currentTimeMillis()
+        val dialerHeld = CallSystem.dialerRoleHeld(context)
+        val redirectionHeld = CallSystem.redirectionRoleHeld(context)
+        // What the server will now know (B1: apply() asks for a sync when this changes).
+        CallPrefs.rolesSignalled(context, RoleSnapshot(dialerHeld, redirectionHeld))
         return CallState(
             state = when (state) {
                 CallPolicyState.Unmanaged -> "unmanaged"
                 is CallPolicyState.Managed -> "managed"
                 CallPolicyState.UnknownFailClosed -> "fail_closed"
             },
-            dialerRoleHeld = CallSystem.dialerRoleHeld(context),
-            redirectionRoleHeld = CallSystem.redirectionRoleHeld(context),
+            dialerRoleHeld = dialerHeld,
+            redirectionRoleHeld = redirectionHeld,
             defaultDialer = CallSystem.defaultDialer(context),
             systemDialer = systemDialerPackage(context),
             smsRestricted = restricted(UserManager.DISALLOW_SMS),

@@ -143,6 +143,27 @@ object QuickControls {
     }
 
     /**
+     * Grants one of our own permissions by policy (POLICY_FIXED) unless the DPM already holds it
+     * granted - unlike [selfGrantPermission], which skips anything `checkSelfPermission` reports
+     * as granted, including a grant a role made (then a role hand-back revokes it and kills us,
+     * QA 09 #6). See [shouldFixOwnPermission].
+     */
+    internal fun fixOwnPermission(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        permission: String,
+    ) {
+        try {
+            val state = dpm.getPermissionGrantState(admin, context.packageName, permission)
+            if (!shouldFixOwnPermission(state, selfGranted = true)) return
+            dpm.setPermissionGrantState(admin, context.packageName, permission, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to fix own permission $permission", e)
+        }
+    }
+
+    /**
      * [DevicePolicyManager.setSystemSetting] is a Device-Owner-only API restricted to a small
      * whitelist of settings keys - [Settings.System.SCREEN_BRIGHTNESS] is one of them, so this
      * works silently with no permission prompt (unlike a regular app, which needs the special

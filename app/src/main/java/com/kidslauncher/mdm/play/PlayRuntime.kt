@@ -69,6 +69,21 @@ object PlayRuntime {
 
     fun installModeReport(context: Context): InstallModeReport? = installModeUntil(context)?.let { InstallModeReport(it) }
 
+    /** Whether the platform let us suspend the Play Store the last time we tried (`null` = never
+     * tried). It refuses for the package verifier, which Play is on GMS phones (step 9 B4). */
+    fun storeSuspendable(context: Context): Boolean? {
+        val prefs = context.getSharedPreferences(SUSPENDABLE_PREFS, Context.MODE_PRIVATE)
+        return if (prefs.contains(SUSPENDABLE_KEY)) prefs.getBoolean(SUSPENDABLE_KEY, true) else null
+    }
+
+    fun recordStoreSuspendable(context: Context, suspendable: Boolean) {
+        val prefs = context.getSharedPreferences(SUSPENDABLE_PREFS, Context.MODE_PRIVATE)
+        if (storeSuspendable(context) != suspendable) prefs.edit().putBoolean(SUSPENDABLE_KEY, suspendable).apply()
+    }
+
+    private const val SUSPENDABLE_PREFS = "play_store_state"
+    private const val SUSPENDABLE_KEY = "suspendable"
+
     private fun minuteOfDay(): Int = LocalTime.now().let { it.hour * 60 + it.minute }
 
     private fun screenInteractive(context: Context): Boolean = try {

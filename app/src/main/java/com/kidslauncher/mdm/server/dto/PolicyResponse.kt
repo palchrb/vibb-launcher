@@ -69,6 +69,9 @@ data class PolicyResponse(
     /** How sync nudges reach this phone (handy step 7) - see [PushPolicy]; `null` from a server
      * without FCM support, which means the SSE stream. */
     val push: PushPolicy? = null,
+    /** `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` in kiosk (handy step 9) - our server
+     * always sends it; the per-device off switch is the remote kill switch (QA 09 #4). */
+    val blockActivityStart: Boolean = true,
 )
 
 /**

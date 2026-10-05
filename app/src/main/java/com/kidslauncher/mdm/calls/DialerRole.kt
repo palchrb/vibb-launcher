@@ -35,3 +35,14 @@ fun shouldPromptForRole(state: CallPolicyState, roleHeld: Boolean, nowMs: Long, 
  * check. Cleared before the dialer role is taken or handed back.
  */
 fun lockDefaultApps(state: CallPolicyState, dialerRoleHeld: Boolean): Boolean = state.managed && dialerRoleHeld
+
+/** The call roles as the server last heard about them (or as a sync was last asked to report). */
+data class RoleSnapshot(val dialerHeld: Boolean, val redirectionHeld: Boolean)
+
+/**
+ * Whether a role changed since the server was last told (B1): `apply()` also runs outside a sync
+ * (pause, re-checks, Home), so a TAKE/RELEASE there would otherwise reach the server only with the
+ * next sync. Compared with the snapshot last reported *or* last requested - so a phone that can't
+ * reach the server asks once per change, not on every apply.
+ */
+fun roleReportNeeded(lastSignalled: RoleSnapshot?, now: RoleSnapshot): Boolean = lastSignalled != now

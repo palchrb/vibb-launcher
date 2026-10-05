@@ -159,6 +159,7 @@ object CallPrefs {
     private const val EMERGENCY_BOOT = "mdm.calls.emergency_window_boot"
     private const val ROLE_PROMPT_LAST_MS = "mdm.calls.role_prompt_last_ms"
     private const val LAST_ERROR = "mdm.calls.last_error"
+    private const val ROLES_SIGNALLED = "mdm.calls.roles_signalled"
 
     private fun prefs(context: Context) = PreferenceManager.getDefaultSharedPreferences(context)
 
@@ -218,6 +219,19 @@ object CallPrefs {
 
     fun rolePromptLastMs(context: Context, value: Long) {
         prefs(context).edit().putLong(ROLE_PROMPT_LAST_MS, value).commit()
+    }
+
+    /** The role state last reported to the server or last asked to be reported ([roleReportNeeded]). */
+    fun rolesSignalled(context: Context): RoleSnapshot? =
+        prefs(context).getString(ROLES_SIGNALLED, null)?.split(',')?.takeIf { it.size == 2 }?.let {
+            RoleSnapshot(it[0] == "1", it[1] == "1")
+        }
+
+    fun rolesSignalled(context: Context, value: RoleSnapshot) {
+        val encoded = "${if (value.dialerHeld) 1 else 0},${if (value.redirectionHeld) 1 else 0}"
+        if (prefs(context).getString(ROLES_SIGNALLED, null) != encoded) {
+            prefs(context).edit().putString(ROLES_SIGNALLED, encoded).commit()
+        }
     }
 
     /** The last problem applying the call rules (reported to the server), or null. */

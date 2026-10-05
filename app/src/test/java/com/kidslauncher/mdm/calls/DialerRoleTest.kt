@@ -59,4 +59,13 @@ class DialerRoleTest {
         assertFalse(lockDefaultApps(managed, dialerRoleHeld = false))
         assertFalse(lockDefaultApps(unmanaged, dialerRoleHeld = true))
     }
+
+    @Test
+    fun `a role change is signalled once per change (B1)`() {
+        val held = RoleSnapshot(dialerHeld = true, redirectionHeld = true)
+        assertTrue(roleReportNeeded(null, held))
+        assertFalse(roleReportNeeded(held, held))
+        assertTrue(roleReportNeeded(held, held.copy(dialerHeld = false)))
+        assertTrue(roleReportNeeded(held, held.copy(redirectionHeld = false)))
+    }
 }

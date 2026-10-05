@@ -122,6 +122,8 @@ data class LastEnforcedPlan(
     val hardening: HardeningPolicy? = null,
     /** The time rules and budget, without lifts (`null` = the windows above, converted). */
     val timePolicy: TimePolicy? = null,
+    /** The kiosk app block switch (step 9). */
+    val blockActivityStart: Boolean = true,
 ) {
     fun toPolicy(): PolicyResponse = PolicyResponse(
         allowlist = allowlist,
@@ -135,6 +137,7 @@ data class LastEnforcedPlan(
         bedtimeEndMinutes = bedtimeEndMinutes,
         hardening = hardening,
         timePolicy = timePolicy,
+        blockActivityStart = blockActivityStart,
     )
 
     companion object {
@@ -150,6 +153,7 @@ data class LastEnforcedPlan(
             bedtimeEndMinutes = policy.bedtimeEndMinutes,
             hardening = policy.hardening,
             timePolicy = policy.timePolicy?.copy(lifts = emptyList()),
+            blockActivityStart = policy.blockActivityStart,
         )
 
         /** `null` if missing or unreadable. */
