@@ -521,8 +521,9 @@ private val scheduleScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
  * [CommandListenerService] every minute and on screen-on, so the schedule engages and releases
  * promptly on both edges, not just whenever a sync happens to land. When the decision changes,
  * [AppEnforcer.apply] runs again in the background: the lock suspends every app but ours and the
- * system dialer, and its end releases them (qa-security P0 #3). Returns the new reason if it
- * changed, `null` otherwise.
+ * system dialer, and its end releases them (qa-security P0 #3) - also when the reason is
+ * unchanged but the last apply didn't enforce it. Returns the new reason if it changed, `null`
+ * otherwise.
  */
 fun reevaluateLockReasonFromCache(context: Context): LockReason? {
     val mdm = LauncherPreferences.mdm()
@@ -532,8 +533,12 @@ fun reevaluateLockReasonFromCache(context: Context): LockReason? {
         OfflineOverride.isActive() || RestrictionsPause.isActive(),
         Calendar.getInstance(),
     )
-    if (mdm.lockReason() == reason) return null
-    mdm.lockReason(reason)
+    val changed = mdm.lockReason() != reason
+    // Also when the last apply didn't enforce this lock (it failed, the process died, or none
+    // ran yet in this process) - the pref alone would say "no change" (QA step 4 #10).
+    val enforced = AppEnforcer.lastEnforcedScheduleLock == (reason != LockReason.NONE)
+    if (!changed && enforced) return null
+    if (changed) mdm.lockReason(reason)
     val appContext = context.applicationContext
     scheduleScope.launch {
         try {
@@ -542,7 +547,7 @@ fun reevaluateLockReasonFromCache(context: Context): LockReason? {
             Log.w(LOG_TAG, "Re-applying enforcement after a schedule change failed", e)
         }
     }
-    return reason
+    return if (changed) reason else null
 }
 
 // The periodic backstop sync used to be driven by a WorkManager OneTimeWorkRequest chain (each

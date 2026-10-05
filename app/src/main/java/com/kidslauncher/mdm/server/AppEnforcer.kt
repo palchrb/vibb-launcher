@@ -146,6 +146,16 @@ internal fun inputMethodPackages(context: Context): Set<String> = try {
 object AppEnforcer {
 
     /**
+     * Whether the last completed [apply] enforced the schedule lock (`null` until one ran in this
+     * process). [reevaluateLockReasonFromCache] re-applies whenever this disagrees with the
+     * current lock, so a failed or interrupted apply at a schedule edge is retried on the next
+     * minute check instead of waiting for the sync (QA step 4 #10).
+     */
+    @Volatile
+    var lastEnforcedScheduleLock: Boolean? = null
+        private set
+
+    /**
      * Synchronized: the sync, the pause switch, the offline override and the schedule re-check
      * ([reevaluateLockReasonFromCache]) can all call this from different threads, and two passes
      * interleaving their suspend/unsuspend loops could leave a mix of both. Never call it on the
@@ -166,6 +176,19 @@ object AppEnforcer {
         val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
 
         enforceDefaultHome(dpm, admin, context)
+
+        // Hardening that the server switched off is cleared first, before anything below can
+        // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
+        // restrictions that stay on are (re)set at the end, after the always-on VPN.
+        CallPolicyStore.ensureLoaded(context)
+        val hardening = hardeningPlan(policy?.hardening, hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed))
+        try {
+            for ((restriction, set) in hardening.restrictions) {
+                if (!set) setRestriction(dpm, admin, restriction.userManagerKey(), false)
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Clearing hardening restrictions failed", e)
+        }
 
         // Calls: never lifted by an override or pause. The dialer role first - whether our dialer
         // is in place decides the outgoing-call restriction below.
@@ -253,6 +276,7 @@ object AppEnforcer {
                 )
             }
         }
+        lastEnforcedScheduleLock = scheduleLocked
 
         applyKioskState(dpm, admin, plan.kioskPackages, plan.lockTaskFeatures)
 
@@ -280,10 +304,7 @@ object AppEnforcer {
 
         // Last, after the always-on VPN is in place (DISALLOW_CONFIG_VPN). Not lifted by the
         // override or pause - see hardeningPlan.
-        applyHardening(
-            context, dpm, admin,
-            hardeningPlan(policy?.hardening, hardeningManaged(policy?.allowlist, callState.managed)),
-        )
+        applyHardening(context, dpm, admin, hardening)
     }
 
     /**
