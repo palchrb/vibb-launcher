@@ -1,7 +1,9 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.calls.toRules
 import com.kidslauncher.mdm.server.dto.CallPolicy
 import com.kidslauncher.mdm.server.dto.CallState
+import com.kidslauncher.mdm.server.dto.LauncherUi
 import com.kidslauncher.mdm.server.dto.PolicyContact
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
@@ -156,6 +158,37 @@ class PolicyResponseCompatTest {
             ),
             callState.keys,
         )
+    }
+
+    /** Step 5 keys: `launcher_ui`, a contact's `photo`, `notification_listener_enabled`. */
+    @Test
+    fun `launcher_ui and contact photos decode, and their absence means defaults`() {
+        val photo = "ab".repeat(32)
+        val withUi = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            """
+            "call_policy": {"managed": true, "calls_enabled": true, "sms_enabled": true, "default_country_code": "47",
+              "contacts": [{"id": 3, "name": "Mamma", "number": "+4790000001", "inbound": true, "outbound": true,
+                "show_on_home": true, "message_app": "sms", "message_address": null, "photo": "$photo"}]},
+            "launcher_ui": {"language": "nb", "home_columns": 4},
+            "packages_to_uninstall"
+            """.trimIndent()
+        )
+        val policy = (decodeCached(withUi) as CachedPolicy.Ok).policy
+        assertEquals(LauncherUi("nb", 4), policy.launcherUi)
+        assertEquals(photo, policy.callPolicy!!.contacts[0].photo)
+        assertEquals(photo, policy.callPolicy!!.toRules().contacts[0].photo)
+        val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
+
+        // An older server: no launcher_ui, no photo.
+        val old = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        assertNull(old.launcherUi)
+        assertEquals(LauncherUi("system", 3), LauncherUi())
+
+        val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, notificationListenerEnabled = false)
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals("false", json["notification_listener_enabled"].toString())
     }
 
     /** Documents the missing `coerceInputValues`: one null in a non-nullable field fails the whole

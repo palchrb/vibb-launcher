@@ -20,4 +20,5 @@ data class HardeningPolicy(
     val disallowDebuggingFeatures: Boolean? = null,
     val disallowSafeBoot: Boolean? = null,
     val lockLocation: Boolean? = null,
+    val disallowAirplaneMode: Boolean? = null,
 )

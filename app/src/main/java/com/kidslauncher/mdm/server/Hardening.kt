@@ -27,6 +27,8 @@ enum class HardeningRestriction(val defaultOn: Boolean) {
     SAFE_BOOT(false),
     /** `DISALLOW_CONFIG_LOCATION`, with location turned on first (Find my device). */
     CONFIG_LOCATION(true),
+    /** `DISALLOW_AIRPLANE_MODE` - off by default: airplane mode stays allowed (travel). */
+    AIRPLANE_MODE(false),
 }
 
 data class HardeningPlan(
@@ -48,6 +50,7 @@ private fun HardeningPolicy?.value(restriction: HardeningRestriction): Boolean? 
     HardeningRestriction.DEBUGGING_FEATURES -> this?.disallowDebuggingFeatures
     HardeningRestriction.SAFE_BOOT -> this?.disallowSafeBoot
     HardeningRestriction.CONFIG_LOCATION -> this?.lockLocation
+    HardeningRestriction.AIRPLANE_MODE -> this?.disallowAirplaneMode
 }
 
 /**

@@ -28,6 +28,8 @@ data class RuleContact(
     val messageApp: String = "none",
     /** The Matrix ID for "element". */
     val messageAddress: String? = null,
+    /** SHA-256 of the contact's photo ([ContactPhotos]); never written to the DE boot copy. */
+    val photo: String? = null,
 )
 
 /**

@@ -331,6 +331,7 @@ object AppEnforcer {
         HardeningRestriction.DEBUGGING_FEATURES -> UserManager.DISALLOW_DEBUGGING_FEATURES
         HardeningRestriction.SAFE_BOOT -> UserManager.DISALLOW_SAFE_BOOT
         HardeningRestriction.CONFIG_LOCATION -> UserManager.DISALLOW_CONFIG_LOCATION
+        HardeningRestriction.AIRPLANE_MODE -> UserManager.DISALLOW_AIRPLANE_MODE
     }
 
     /**

@@ -32,7 +32,8 @@ import kotlinx.serialization.Serializable
  * later status report confirms the package is actually gone, not on any client-side acknowledgement.
  * [callPolicy] is the calls & SMS rules ([CallPolicy]); `null` only from a server that predates
  * them. [hardening] is the phone-hardening switches ([HardeningPolicy]); `null` (older server)
- * means every switch's default.
+ * means every switch's default. [launcherUi] is the parent's language and home-grid choice
+ * ([LauncherUi]); `null` (older server) means the defaults.
  */
 @Serializable
 data class PolicyResponse(
@@ -55,4 +56,14 @@ data class PolicyResponse(
     val packagesToUninstall: List<String> = emptyList(),
     val callPolicy: CallPolicy? = null,
     val hardening: HardeningPolicy? = null,
+    val launcherUi: LauncherUi? = null,
+)
+
+/** `PolicyResponse.launcherUi` - see kid-phone-server's `LauncherUi`. [language] is "system", "nb"
+ * or "en" ([com.kidslauncher.mdm.ui.resolveLauncherLocale]); [homeColumns] 3 or 4
+ * ([com.kidslauncher.mdm.ui.home.gridColumns]). Anything else falls back to the default. */
+@Serializable
+data class LauncherUi(
+    val language: String = "system",
+    val homeColumns: Int = 3,
 )

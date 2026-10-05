@@ -22,6 +22,8 @@ data class StatusReportRequest(
     val restrictionsPaused: Boolean = false,
     val capabilities: List<String> = emptyList(),
     val callState: CallState? = null,
+    /** Our notification listener (app badges) has access - see `BadgeListenerService`. */
+    val notificationListenerEnabled: Boolean? = null,
 )
 
 /**

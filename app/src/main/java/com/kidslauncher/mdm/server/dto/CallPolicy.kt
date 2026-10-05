@@ -22,7 +22,8 @@ data class CallPolicy(
 
 /** One contact. [number] is normalised server-side (E.164 or a 3-6 digit short number);
  * [messageApp] is "none", "sms", "element" or "signal", already resolved against the device
- * default; [messageAddress] is the Matrix ID for "element". */
+ * default; [messageAddress] is the Matrix ID for "element"; [photo] is the SHA-256 (hex) of the
+ * contact's photo, fetched by [com.kidslauncher.mdm.calls.ContactPhotos], or null. */
 @Serializable
 data class PolicyContact(
     val id: Long = 0,
@@ -33,4 +34,5 @@ data class PolicyContact(
     val showOnHome: Boolean = false,
     val messageApp: String = "none",
     val messageAddress: String? = null,
+    val photo: String? = null,
 )

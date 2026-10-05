@@ -17,7 +17,7 @@ fun CallPolicy.toRules() = CallRules(
     smsEnabled = smsEnabled,
     defaultCc = defaultCountryCode,
     contacts = contacts.map {
-        RuleContact(it.id, it.name, it.number, it.inbound, it.outbound, it.showOnHome, it.messageApp, it.messageAddress)
+        RuleContact(it.id, it.name, it.number, it.inbound, it.outbound, it.showOnHome, it.messageApp, it.messageAddress, it.photo)
     },
 )
 
