@@ -134,6 +134,8 @@ pub struct DevicePush {
     pub send_pending: bool,
     pub unacked_sends: i64,
     pub last_ack_at: Option<i64>,
+    /// Hash of the last token FCM rejected (see [record_report]).
+    pub rejected_token_hash: Option<String>,
 }
 
 impl DevicePush {
@@ -239,7 +241,7 @@ pub async fn record_report(
     report: &PushReport,
 ) -> Result<(), sqlx::Error> {
     let now = chrono::Utc::now().timestamp();
-    let token = report.fcm_token.as_deref().filter(|t| valid_token(t));
+    let reported = report.fcm_token.as_deref().filter(|t| valid_token(t));
     let last_nudge_at = report
         .last_nudge_ms
         .and_then(chrono::DateTime::from_timestamp_millis)
@@ -254,6 +256,10 @@ pub async fn record_report(
         .execute(&state.db)
         .await?;
     let row = load(&state.db, device_id).await?.unwrap_or_default();
+    // A token FCM already rejected for this device is ignored until the phone renews it (QA step
+    // 7 #2): storing it again would test-nudge, fail and log it on every report for up to a day.
+    let token =
+        reported.filter(|t| row.rejected_token_hash.as_deref() != Some(token_hash(t).as_str()));
 
     let token_changed = row.fcm_token.as_deref() != token;
     let health = if token_changed {
@@ -263,6 +269,18 @@ pub async fn record_report(
     };
 
     if token_changed {
+        // One device per token (QA step 7 #3): a re-enrolled phone keeps its Firebase token, and
+        // the old row would otherwise keep test-nudging it and its nonces would race this row's.
+        if let Some(t) = token {
+            sqlx::query(
+                "UPDATE device_push SET fcm_token = NULL, fcm_ok = 0, send_pending = 0, \
+                 unacked_sends = 0, last_send_nonce = NULL WHERE fcm_token = ? AND device_id != ?",
+            )
+            .bind(t)
+            .bind(device_id)
+            .execute(&state.db)
+            .await?;
+        }
         sqlx::query(
             "UPDATE device_push SET fcm_token = ?, fcm_token_updated_at = datetime('now'), \
              last_fcm_error = NULL, last_fcm_error_at = NULL WHERE device_id = ?",
@@ -362,10 +380,11 @@ async fn clear_dead_token(
     let cleared = sqlx::query(
         "UPDATE device_push SET fcm_token = NULL, fcm_token_updated_at = datetime('now'), \
          fcm_ok = 0, send_pending = 0, unacked_sends = 0, last_send_nonce = NULL, \
-         last_fcm_error = ?, last_fcm_error_at = datetime('now') \
+         last_fcm_error = ?, last_fcm_error_at = datetime('now'), rejected_token_hash = ? \
          WHERE device_id = ? AND fcm_token = ?",
     )
     .bind(format!("token rejected by FCM ({code})"))
+    .bind(token_hash(token))
     .bind(device_id)
     .bind(token)
     .execute(&state.db)
@@ -390,13 +409,16 @@ async fn clear_dead_token(
 
 /// Every device that has a token.
 async fn devices_with_token(db: &sqlx::SqlitePool) -> Vec<i64> {
-    sqlx::query_scalar("SELECT device_id FROM device_push WHERE fcm_token IS NOT NULL")
-        .fetch_all(db)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::error!(%err, "can't list devices with an FCM token");
-            Vec::new()
-        })
+    sqlx::query_scalar(
+        "SELECT p.device_id FROM device_push p JOIN devices d ON d.id = p.device_id \
+         WHERE p.fcm_token IS NOT NULL AND d.token_hash IS NOT NULL",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(%err, "can't list devices with an FCM token");
+        Vec::new()
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -488,14 +510,16 @@ async fn run_dispatcher(state: AppState, permits: Arc<Semaphore>) {
 /// One health pass: settle every device's pending send and send due test nudges.
 pub async fn health_tick(state: &AppState, permits: &Arc<Semaphore>) {
     let now = chrono::Utc::now().timestamp();
-    let rows =
-        sqlx::query_as::<_, DevicePush>("SELECT * FROM device_push WHERE fcm_token IS NOT NULL")
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_else(|err| {
-                tracing::error!(%err, "FCM health tick: can't read device_push");
-                Vec::new()
-            });
+    let rows = sqlx::query_as::<_, DevicePush>(
+        "SELECT p.* FROM device_push p JOIN devices d ON d.id = p.device_id \
+             WHERE p.fcm_token IS NOT NULL AND d.token_hash IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(%err, "FCM health tick: can't read device_push");
+        Vec::new()
+    });
     for row in rows {
         let before = row.health();
         let after = before.clone().on_tick(now);
