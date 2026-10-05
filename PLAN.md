@@ -166,7 +166,9 @@ server catalog); add later only if Play-only apps are needed.
   budget is used up, calls (phone book) and the messaging apps chosen for contacts
   stay usable, everything else locks; during school mode nothing works except
   emergency calls (no calls or messages in or out). Screen time = time with the
-  screen on and an app in use; calls don't count. Open: per-rule app exemptions
+  screen on and an app in use; calls don't count. The parent can lift an active
+  rule from the PWA for a set time (e.g. "end school mode for 30 min"), delivered
+  instantly via the existing SSE nudge, then call. Open: per-rule app exemptions
   (calendar, Vibb at bedtime). Implement after the
   UI/photos/i18n step (same launcher files).
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
