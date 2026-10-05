@@ -103,9 +103,12 @@ object DnsFilterEngine {
 
     /** Walks label suffixes (same technique the server's own `is_blocked` uses in `dns_engine.rs`)
      * so a block entry for "example.com" also matches "ads.example.com" - returns the matched
-     * category, or null if not blocked. */
+     * category, or null if not blocked (always for the FCM hosts, [com.kidslauncher.mdm.push.isFcmHost]). */
     fun classify(domainRaw: String): String? {
         val domain = domainRaw.trimEnd('.').lowercase()
+        // FCM's own hosts are never blocked (handy step 7, QA #10): a blocklist entry for them or
+        // a parent (google.com, googleapis.com) would silently stop every sync nudge.
+        if (com.kidslauncher.mdm.push.isFcmHost(domain)) return null
         var start = 0
         while (start < domain.length) {
             blockedDomains[domain.substring(start)]?.let { return it }
