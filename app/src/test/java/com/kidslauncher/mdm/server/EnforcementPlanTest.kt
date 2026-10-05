@@ -21,10 +21,12 @@ class EnforcementPlanTest {
         calls: CallPolicyState = CallPolicyState.Unmanaged,
         ourDialer: Boolean = true,
         locked: Boolean = false,
+        alarm: String? = null,
+        ime: Set<String> = emptySet(),
     ) = computeEnforcementPlan(
         allowlist, kioskDesired, features, overrideActive, controllable, OWN, dialer,
         callState = calls, ourDialerActive = ourDialer, smsPackages = setOf(SMS, "not.installed"),
-        scheduleLocked = locked,
+        scheduleLocked = locked, alarmApp = alarm, inputMethods = ime,
     )
 
     private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = true))
@@ -244,8 +246,10 @@ class EnforcementPlanTest {
     @Test
     fun `schedule lock pins only our own package`() {
         assertEquals(setOf(OWN), plan(listOf("org.example.music"), locked = true).kioskPackages)
-        // An allowlisted system dialer isn't pinned either; its emergency exemption still applies.
-        assertEquals(setOf(OWN), plan(listOf(DIALER, "org.example.music"), locked = true).kioskPackages)
+        // An allowlisted system dialer stays pinned while calls are unmanaged (its in-call UI),
+        // never while they are managed.
+        assertEquals(setOf(OWN, DIALER), plan(listOf(DIALER, "org.example.music"), locked = true).kioskPackages)
+        assertEquals(setOf(OWN), plan(listOf(DIALER, "org.example.music"), calls = callsOn, locked = true).kioskPackages)
         assertEquals(setOf(OWN), plan(listOf("org.example.music"), calls = callsOn, locked = true).kioskPackages)
         // Kiosk itself still follows the server: no kiosk wanted, no pinning.
         assertNull(plan(listOf("org.example.music"), kioskDesired = false, locked = true).kioskPackages)
@@ -265,6 +269,44 @@ class EnforcementPlanTest {
                     assertEquals(case, open.denyCallPermissions, locked.denyCallPermissions)
                     assertEquals(case, open.lockDateTime, locked.lockDateTime)
                 }
+            }
+        }
+    }
+
+    @Test
+    fun `schedule lock suspends allowed apps without hiding them`() {
+        val plan = plan(listOf("org.example.music"), locked = true)
+        assertTrue("org.example.music" in plan.suspend)
+        assertEquals(setOf("org.example.game", "com.android.chrome", SMS), plan.hide)
+        assertTrue(plan.suspend.containsAll(plan.hide))
+        // Unmanaged allowlist: suspended, nothing hidden.
+        assertTrue(plan(null, locked = true).hide.isEmpty())
+        // Without the lock, suspended = hidden as before.
+        val open = plan(listOf("org.example.music"))
+        assertEquals(open.suspend, open.hide)
+    }
+
+    @Test
+    fun `schedule lock spares the alarm app but the allowlist still applies to it`() {
+        val clock = "org.example.game"
+        assertFalse(clock in plan(listOf(clock), locked = true, alarm = clock).suspend)
+        assertFalse(clock in plan(null, locked = true, alarm = clock).suspend)
+        // Not allowlisted: suspended and hidden as usual, lock or not.
+        val notAllowed = plan(listOf("org.example.music"), locked = true, alarm = clock)
+        assertTrue(clock in notAllowed.suspend && clock in notAllowed.hide)
+        // Never pinned.
+        assertFalse(clock in plan(listOf(clock), locked = true, alarm = clock).kioskPackages.orEmpty())
+    }
+
+    @Test
+    fun `keyboards are never suspended or hidden`() {
+        val ime = "com.android.chrome"
+        for (locked in listOf(true, false)) {
+            for (allowlist in listOf(null, emptyList(), listOf("org.example.music"))) {
+                val plan = plan(allowlist, locked = locked, ime = setOf(ime))
+                assertFalse(ime in plan.suspend)
+                assertFalse(ime in plan.hide)
+                assertTrue(ime in plan.neverRestrict)
             }
         }
     }

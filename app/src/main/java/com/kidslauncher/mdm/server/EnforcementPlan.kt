@@ -13,8 +13,15 @@ import com.kidslauncher.mdm.calls.managed
 const val LOCK_TASK_FEATURE_KEYGUARD = 32
 
 data class EnforcementPlan(
-    /** Packages that must be suspended and hidden. Everything else controllable is released. */
+    /** Packages that must be suspended. Everything else controllable is unsuspended. */
     val suspend: Set<String>,
+    /**
+     * Packages that must also be hidden: the ones not allowed at all (allowlist, SMS off). A
+     * subset of [suspend]. Allowed apps suspended only by the schedule lock stay visible: hiding a
+     * package broadcasts PACKAGE_REMOVED, which drops its alarms, jobs and widgets every night (QA
+     * step 4 #2).
+     */
+    val hide: Set<String>,
     /** Packages to pin with `setLockTaskPackages`, or `null` for "kiosk off". */
     val kioskPackages: Set<String>?,
     /** Lock-task features to set before pinning; only meaningful when [kioskPackages] is set. */
@@ -71,9 +78,13 @@ data class EnforcementPlan(
  *   services see every call. [smsPackages]: the default SMS app and the like (Messages, STK);
  *   while SMS is blocked they're suspended whatever the allowlist says, override or not.
  * - [scheduleLocked]: bedtime or outside screen time ([KidModeEnforcer.lockReasonNow] isn't NONE,
- *   so never under an override). Every controllable package except [neverRestrict] is suspended
+ *   so never under an override). Every controllable package except [neverRestrict] and
+ *   [alarmApp] (the default alarm/clock app, so alarms ring) is suspended - but not hidden -
  *   whatever the allowlist (also an unmanaged one - the lock comes from a server policy), and
- *   kiosk pins only our own package, which holds LockActivity, the phone book and the in-call UI.
+ *   kiosk pins only our own package (which holds LockActivity, the phone book and the in-call UI)
+ *   plus an allowlisted system dialer while calls are unmanaged.
+ * - [inputMethods]: the enabled/default keyboards, never suspended or hidden - the PIN dialogs
+ *   (lock screen, Settings gate) need one (QA step 4 #3).
  *   The call restrictions don't change: allowed calls and emergency calls keep working
  *   (qa-security P0 #3 - the overlay alone could be escaped through Recents or a notification).
  */
@@ -89,8 +100,10 @@ fun computeEnforcementPlan(
     ourDialerActive: Boolean = false,
     smsPackages: Set<String> = emptySet(),
     scheduleLocked: Boolean = false,
+    alarmApp: String? = null,
+    inputMethods: Set<String> = emptySet(),
 ): EnforcementPlan {
-    val neverRestrict = setOfNotNull(ownPackage, systemDialer)
+    val neverRestrict = setOfNotNull(ownPackage, systemDialer) + inputMethods
     val features = serverLockTaskFeatures.toInt() or LOCK_TASK_FEATURE_KEYGUARD
     val appsManaged = allowlist != null && !overrideActive
     val locked = scheduleLocked && !overrideActive
@@ -107,19 +120,25 @@ fun computeEnforcementPlan(
         is CallPolicyState.Managed -> !callState.rules.callsEnabled || !ourDialerActive
     }
 
-    val suspend = mutableSetOf<String>()
-    if (locked) controllable.filterTo(suspend) { it !in neverRestrict }
-    if (appsManaged) controllable.filterTo(suspend) { it !in allowed && it !in neverRestrict }
-    if (restrictSms) controllable.filterTo(suspend) { it in smsPackages && it !in neverRestrict }
+    val hide = mutableSetOf<String>()
+    if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict }
+    if (restrictSms) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
+    val suspend = hide.toMutableSet()
+    // The alarm app is spared by the lock only, so an alarm set inside bedtime still rings; it
+    // isn't pinned, so in kiosk it can show its alarm but not be opened from Home.
+    if (locked) controllable.filterTo(suspend) { it !in neverRestrict && it != alarmApp }
 
     val kiosk = if (appsManaged && kioskDesired) {
-        val pinned = if (locked) setOf(ownPackage) else allowed + ownPackage
+        // During the lock: our package, plus an allowlisted system dialer while calls are
+        // unmanaged (then it is the in-call UI the parent allowed).
+        val pinned = if (locked) setOf(ownPackage) + allowed.filter { it == systemDialer } else allowed + ownPackage
         if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
     } else {
         null
     }
     return EnforcementPlan(
         suspend = suspend,
+        hide = hide,
         kioskPackages = kiosk,
         lockTaskFeatures = features,
         neverRestrict = neverRestrict,

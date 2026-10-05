@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import android.app.AlarmManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -9,6 +10,9 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.UserManager
+import android.provider.AlarmClock
+import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
 import android.telecom.TelecomManager
 import android.util.Log
 import com.kidslauncher.mdm.calls.CallPolicyState
@@ -99,6 +103,36 @@ internal fun systemDialerPackage(context: Context): String? =
     }
 
 /**
+ * The default alarm/clock app: the one holding the next alarm, else the resolver of
+ * `AlarmClock.ACTION_SHOW_ALARMS`. The schedule lock doesn't suspend it, so an alarm set inside
+ * bedtime still rings (QA step 4 #2). `null` if there's none or only a chooser.
+ */
+internal fun alarmAppPackage(context: Context): String? = try {
+    val next = context.getSystemService(AlarmManager::class.java)?.nextAlarmClock?.showIntent?.creatorPackage
+    next ?: context.packageManager
+        .resolveActivity(Intent(AlarmClock.ACTION_SHOW_ALARMS), PackageManager.MATCH_DEFAULT_ONLY)
+        ?.activityInfo?.packageName?.takeIf { it != "android" }
+} catch (e: Exception) {
+    Log.w(LOG_TAG, "Couldn't look up the alarm app", e)
+    null
+}
+
+/**
+ * The default and enabled keyboards - never suspended or hidden, or the PIN dialogs couldn't take
+ * input (QA step 4 #3).
+ */
+internal fun inputMethodPackages(context: Context): Set<String> = try {
+    val default = Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+        ?.let { ComponentName.unflattenFromString(it)?.packageName }
+    val enabled = context.getSystemService(InputMethodManager::class.java)
+        ?.enabledInputMethodList.orEmpty().map { it.packageName }
+    (enabled + listOfNotNull(default)).toSet()
+} catch (e: Exception) {
+    Log.w(LOG_TAG, "Couldn't look up the input methods", e)
+    emptySet()
+}
+
+/**
  * Suspends and hides installed apps that aren't on [PolicyResponse.allowlist] (`null` means
  * unmanaged: nothing suspended; `[]` means nothing allowed), and - only when the server says so
  * via [PolicyResponse.kioskDesired] - pins the device to the allowed packages via Android's
@@ -159,6 +193,8 @@ object AppEnforcer {
             ourDialerActive = CallSystem.dialerRoleHeld(context),
             smsPackages = smsPackages(CallSystem.defaultSmsPackage(context)),
             scheduleLocked = scheduleLocked,
+            alarmApp = alarmAppPackage(context),
+            inputMethods = inputMethodPackages(context),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -175,17 +211,19 @@ object AppEnforcer {
             if (packageName == ownPackage) continue
 
             val shouldBeSuspended = packageName in plan.suspend
+            // Only apps that aren't allowed at all are hidden; the schedule lock only suspends
+            // (hiding broadcasts PACKAGE_REMOVED and drops alarms/jobs - QA step 4 #2).
+            val shouldBeHidden = packageName in plan.hide
             val currentlySuspended = try {
                 pm.isPackageSuspended(packageName)
             } catch (e: PackageManager.NameNotFoundException) {
                 continue
             }
-            // The system dialer may still be hidden or suspended from an older build (or from a
-            // policy applied before it was exempt) - release it outright rather than trusting
-            // that its suspended and hidden states agree.
-            val mustRelease = packageName in plan.neverRestrict &&
-                (currentlySuspended || isHidden(dpm, admin, packageName))
-            if (shouldBeSuspended == currentlySuspended && !mustRelease) continue
+            // Checked separately, every cycle: the two states can disagree (an older build, a
+            // policy applied before an exemption, the lock ending), e.g. the system dialer left
+            // hidden must be released outright.
+            val currentlyHidden = isHidden(dpm, admin, packageName)
+            if (shouldBeSuspended == currentlySuspended && shouldBeHidden == currentlyHidden) continue
 
             try {
                 // Both calls can fail *without* throwing - setPackagesSuspended returns the
@@ -195,13 +233,17 @@ object AppEnforcer {
                 // that failure mode invisible - confirmed live with a carrier-privileged /product-
                 // partition system app that stayed reachable despite being correctly excluded
                 // from the allowlist, with nothing in logs to explain why.
-                val notSuspended = dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)
-                if (!notSuspended.isNullOrEmpty()) {
-                    Log.w(LOG_TAG, "Platform refused to ${if (shouldBeSuspended) "suspend" else "unsuspend"} $packageName (setPackagesSuspended)")
+                if (shouldBeSuspended != currentlySuspended) {
+                    val notSuspended = dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)
+                    if (!notSuspended.isNullOrEmpty()) {
+                        Log.w(LOG_TAG, "Platform refused to ${if (shouldBeSuspended) "suspend" else "unsuspend"} $packageName (setPackagesSuspended)")
+                    }
                 }
-                val hiddenOk = dpm.setApplicationHidden(admin, packageName, shouldBeSuspended)
-                if (!hiddenOk) {
-                    Log.w(LOG_TAG, "Platform refused to ${if (shouldBeSuspended) "hide" else "unhide"} $packageName (setApplicationHidden)")
+                if (shouldBeHidden != currentlyHidden) {
+                    val hiddenOk = dpm.setApplicationHidden(admin, packageName, shouldBeHidden)
+                    if (!hiddenOk) {
+                        Log.w(LOG_TAG, "Platform refused to ${if (shouldBeHidden) "hide" else "unhide"} $packageName (setApplicationHidden)")
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(
@@ -671,13 +713,15 @@ object AppEnforcer {
             }
         }
         if (!suspend) return
+        // Hidden only if not allowed at all - the schedule lock alone just suspends.
+        val hide = shouldSuspendNewPackage(packageName, decision, overrideActive, context.packageName, systemDialerPackage(context))
 
         try {
             val notSuspended = dpm.setPackagesSuspended(admin, arrayOf(packageName), true)
             if (!notSuspended.isNullOrEmpty()) {
                 Log.w(LOG_TAG, "Platform refused to suspend newly-installed $packageName")
             }
-            val hiddenOk = dpm.setApplicationHidden(admin, packageName, true)
+            val hiddenOk = !hide || dpm.setApplicationHidden(admin, packageName, true)
             if (!hiddenOk) {
                 Log.w(LOG_TAG, "Platform refused to hide newly-installed $packageName")
             }
