@@ -164,3 +164,85 @@ QA findings override this doc where they conflict. Binding:
 - Quick Controls bug: also cover failed decode keeping the old cache and non-device-owner
   installs; add a test banning Settings/wallpaper intents from the kid screens.
 - Pin the Nunito source URL + SHA-256; 48 dp touch targets.
+
+## Implementation status (2026-10-05)
+
+Done on branch `handy` in both repos (not pushed). Build/tests: S `cargo test` (144), `fmt --check`,
+`clippy --all-targets` (no new warnings); L `assembleDebug assembleRelease testDebugUnitTest`.
+
+**L (kids-launcher-mdm)**, one commit per task:
+1. `HomeModel.kt`: `showPhoneBookTile` (managed or fail-closed → always; a Home contact implies the
+   tile - JVM test over every state), `GridTile.Settings` last, `gridMetrics`, `contactRow` (76/28 →
+   64/16 → scroll with a half-avatar peek; at 288 dp four contacts already scroll), `tileColor`
+   (≥ 3:1 with white, grey #868E96 unchanged). `HomeModelTest`.
+2. Nunito: `scripts/nunito-static.sh` (fonttools `varLib.instancer --static`, weights 600/700/800) from
+   the variable font **v3.602** pinned in google/fonts:
+   `https://raw.githubusercontent.com/google/fonts/604936664fd62c14271209b51f98e7f495dd1a3e/ofl/nunito/Nunito%5Bwght%5D.ttf`
+   SHA-256 `bb55a5ca5c2042335b3991af27c4d0705d0ef41cac6164ac737fd8f2a1e85207` (identical to the
+   scratchpad copy); OFL from the same commit (`.../ofl/nunito/OFL.txt`, SHA-256
+   `580df76c95a1ec5ab878ceb25bb3d85c6a076804e9c970c8c6972aea775fdf65`), no Reserved Font Name, æøå in
+   the cmap. Shipped as `assets/licenses/OFL.txt` and in Open Source Licenses (`FontLicenseTest`).
+   Base theme `@font/nunito`; `sans-serif*` gone from layouts/styles (tested).
+3. Home: clock/date removed, padding 6 dp, contacts 14 dp, grid 18 dp; grid sizes from
+   `gridMetrics` + `GridGapDecoration`; contacts from `contactRow`; swipe-left guard for a scrollable
+   row (raw coordinates); icons rendered with the palette in `refreshApps` (Default dispatcher), the
+   adapter reads a bitmap map (QA #5; monochrome `mutate()`d; key = app + size + density).
+4. `ui/kidsettings/KidSettingsActivity` + `kidSettingsModel`/`controlsSection` (NotOwner /
+   NoPolicyYet / Unreadable / NoneEnabled / Rows, own nb/en text, logged as `KidSettings`), re-render
+   on `kidModePolicy`, `QuickControlsActivity` deleted, 48 dp back buttons, `KidScreensEscapeTest`
+   (QA #10). Switch rows are `SwitchCompat` with the label as their text (TalkBack).
+6. DTO `LauncherUi.wallpapers`/`PolicyWallpaper` (compat test without it), pure `Wallpapers.kt`
+   (`parseWallpapers`, `effectiveWallpaper`, `lockScreenFill`, `wallpaperCachePlan`, bounds and
+   sample size), `WallpaperStore` (sync after every accepted sync, deletes images no longer allowed,
+   one RGB_565 bitmap), picker in kid Settings (labels in nb/en for built-ins, "selected" announced).
+7. `WallpaperInk` (symmetric scrim in sRGB blending, worst stop per ink, photos mean ± sd in linear
+   light, min 0.15, cap 0.45 then label shadow), `WallpaperApplier` + `wallpaperApplyPlan` (managed
+   only, device owner + `isSetWallpaperAllowed`, id 0 = failure, one attempt per key per day, reset to
+   navy when unmanaged before the restriction is lifted), `HardeningRestriction.SET_WALLPAPER`
+   (launcher-only). Home, phone book and kid Settings show the system wallpaper behind a transparent
+   root when it is ours (`UIObject.showsSystemWallpaper`), else draw the fill themselves.
+
+**S (kid-phone-server)**, task 5: migration `0028_wallpapers.sql` (six built-ins with `builtin_key`,
+`device_wallpapers`, trigger gives new devices the built-ins, uploads start on no device,
+`lock_screen` opt-in per photo); `photos::process(bytes, Shape)` - crop computed on the upright size
+(EXIF 5-8 swap), then shrunk, then oriented; `Shape::Portrait` = centred 9:20, ≤ 1080×2400, never
+enlarged, ≤ 3 MB (re-encoded at q75/q65 before giving up); `photos::Store` (`CONTACT_PHOTOS`,
+`WALLPAPERS`: own lock, prune of its own dir only, zip prefix `wallpapers/`, `recover_missing` at
+startup - a lost image deletes its wallpaper); routes `/wallpapers` (page, upload, lock-screen, delete),
+`/wallpaper-images/{hash}`, `/devices/{id}/wallpapers`, device `GET /api/devices/wallpapers/{hash}`
+(404 unless ticked for this device); `launcher_ui.wallpapers` in the policy and the key snapshot.
+Tests `src/tests/wallpapers.rs`: EXIF-6 portrait and landscape upright at 1080×2400, small not
+enlarged, bad type/oversize → 400 and nothing stored, route scoping, untick/delete cascade + nudge,
+prune isolation both ways, backup entry + recovery.
+
+**Deviations / decisions**: built-in labels come from the launcher's strings (nb/en) by
+`builtin_key`; uploads use the parent's label. The lock-screen fallback for a photo is navy. The
+contact badge ring stays the ground navy (not the ink). Unmanaged reset uses navy rather than
+`WallpaperManager.clear()`.
+
+**Open (needs a device)**: the Quick Controls "no switches" root cause on the emulator was **not**
+recorded here - no emulator/adb in this environment; run the §2 diagnosis (`policy_state` on the device
+page, prefs grep, the `KidSettings` log line, which now names the case) and write the cause down
+before closing it. Everything under "[device]" in qa-08-design.md is untested.
+
+### Screenshot checklist (emulator ~320×568 dp, nb and en, side by side with the mockups)
+- [ ] 1. Home, 2 Home contacts, 3 cols, navy: no clock, light status icons, sizes/gaps ±2 dp, Nunito.
+- [ ] 2. Same with 4 cols; with 5 contacts (scroll + peek); with 1 contact; 4 contacts at 288 dp scroll.
+- [ ] 3. Calls managed + off, no emergency contact: Phone book tile present; calls unmanaged: absent
+      (`adb shell uiautomator dump`, look for "Phone book"/"Telefonbok").
+- [ ] 4. Icons: an app with a monochrome layer = white glyph on its colour; one without = full icon;
+      a legacy icon = inset on its colour.
+- [ ] 5. KidSettings with mask 7, 1, 0 (0: no card, no heading), not provisioned (own text), no policy
+      yet (own text); Wi-Fi toggle and slider work; a mask change on S updates the open screen.
+- [ ] 6. Each built-in + one light photo + one dark photo + a busy mid-grey photo on Home, phone book
+      and KidSettings: labels legible (4.5:1 sampled under labels), dark-ink wallpaper gives dark
+      status-bar icons, TalkBack reads the selected wallpaper.
+- [ ] 7. After picking: Home → recents/swipe-up and lock screen match (photo: lock screen navy unless
+      "also on the lock screen" is ticked).
+- [ ] 8. Settings → Wallpaper / Photos "set as wallpaper" blocked on a managed phone; our pick applies
+      (`setBitmap` id ≠ 0 in the log); unticking the applied photo on S replaces it within one sync;
+      unmanaging resets to navy, then lifts the restriction.
+- [ ] 9. PhoneBook and ContactCard unchanged except font and wallpaper; LockActivity at bedtime comes
+      up over Home, KidSettings and the Wi-Fi subscreen; 112 works.
+- [ ] 10. Slow phone: Home cold start with 20 apps, no frame > 32 ms from icon work
+      (`dumpsys gfxinfo`); heap with a photo wallpaper < 15 MB over the colour baseline.
