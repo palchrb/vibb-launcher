@@ -7,7 +7,9 @@ lift call or SMS rules, emergency always works. Claims: [verified: source] (AOSP
 `PermissionController/res/xml/roles.xml`; DPMS = `DevicePolicyManagerService.java`; ISH = telephony `InboundSmsHandler.java`;
 LTC = `wm/LockTaskController.java`; ASI = `wm/ActivityStartInterceptor.java`; CGH = SystemUI `camera/CameraGestureHelper.kt`.
 
-## Part A - SMS only with approved contacts
+## Part A - SMS only with approved contacts - **postponed (user, 2026-10-05)**
+Not implemented: SMS stays on/off only (`DISALLOW_SMS` + Messages suspended while off), as in
+step 2. Everything in Part A, its tasks 6-11 and checklist items 6-12 wait for a later step.
 ### A1. Platform facts
 | Fact | Source |
 |---|---|
@@ -191,3 +193,40 @@ defaults (proposed to the user, pending confirmation; easy to change):
   apps); updates/sign-in happen in PIN install mode; server off-switch per device.
 - Emergency: explicit ACTION_EMERGENCY_DIAL to an allowlisted emergency dialer from every
   lock/bedtime/school screen; never ACTION_DIAL to an unpinned app.
+
+## Implementation status (2026-10-05)
+
+Part A postponed (user, 2026-10-05) - no SMS role, receivers, UI, flags or migration exist.
+Part B and the Element X link fix are implemented; repos on branch `handy`, not pushed.
+
+| Item | Repo | Where | Tests |
+|---|---|---|---|
+| B3 call-log reads only with READ_CALL_LOG and after unlock | L | `calls/BootCallPolicy.kt` `canReadCallLog`, `CallSystem`, `MissedCallsRepo` | `CallPolicyRefreshTest` |
+| B1 pending rule: "waiting" only while the report predates the change **and** the change is < 5 min old; then real warnings + "hasn't confirmed"; a newer disagreeing report is always a warning; page reloads every 5 s for 2 min | S | migration `0029_step9_fixes.sql` (`roles_changed_at`, stamped when `calls_managed` changes), `calls::role_report`/`call_report` | `calls::tests::role_report_pending_expires`, `tests/step9.rs` |
+| B1 sync after a role change outside a sync, once per change | L | `DialerRole.kt` `roleReportNeeded`, `AppEnforcer.signalRoleChange`, `CallPrefs.rolesSignalled` (updated by the report) | `DialerRoleTest` |
+| B4 kiosk app block (`LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK`) from the server switch `block_activity_start` (default on, own policy key, masked out of `lock_task_features`), helpers resolved from intents (emergency dialer, Telecom, permission controller, intent resolver, DocumentsUI, photo picker, cell broadcast; system apps only; never Settings/camera/Play/GMS/GSF/system dialer), also during a time-rule lock | S+L | S: `device_api::build_policy`, `devices::update_kiosk_block`, Push and Play card. L: `server/LockTaskHelpers.kt`, `computeEnforcementPlan`, `AppEnforcer.resolveLockTaskHelpers` | `LockTaskHelpersTest`, `tests/step9.rs` |
+| B4 `play_store_suspendable` reported; device page warns | S+L | `PlayRuntime.storeSuspendable`, `device_status.play_store_suspendable` | `tests/step9.rs` |
+| Emergency (QA #1): lock/bedtime/school screen and the phone book's 112 tile fall back to an explicit intent to the resolved **system** emergency dialer (`android.intent.action.DIAL_EMERGENCY`, then `com.android.phone.EmergencyDialer.DIAL`), never `ACTION_DIAL` | L | `calls/EmergencyDialer.kt`, `LockActivity`, `PhoneBookActivity` | `EmergencyDialerTest` |
+| B2 hand-back without a kill: every role-grantable permission we request granted by policy before a dialer role change, decided on the DPM grant state; `DISALLOW_CONFIG_DEFAULT_APPS` re-set in the same pass; Home brought to front after a role change in kiosk | L | `server/OwnPermissions.kt`, `QuickControls.fixOwnPermission`, `AppEnforcer.applyDialerRole` | `OwnPermissionsTest` (incl. the manifest) |
+| B2 `KEYGUARD_DISABLE_SECURE_CAMERA` ORed in while managed (only our bit cleared when unmanaged); runbook: camera gesture off before enrolling (`docs/testing/emulator.md`) | L | `keyguardDisabledFeatures`, `AppEnforcer.applyKeyguardFeatures` | `OwnPermissionsTest` |
+| Element X Message button: `matrix:u/<user id without @>?action=chat`, fallback `element://user/<mxid>`, both explicit to Element X; no call button (Element X has no call intent) | L | `MessageButtons.kt` `elementChatUri`, `ContactSheet.openMessage` | `MessageButtonsTest` |
+
+Notes: the role-setter calls stay off the main thread (every `AppEnforcer.apply` caller runs on
+IO). Home's cold start re-enters lock task from `onResume` (`reconcileKioskMode`) - acceptance D5
+is a device check. Residual: without a screen-lock PIN and with an allowlisted camera, only the
+runbook (gesture off) stops the camera gesture (QA #14). Pinned helpers expose their own pages
+(app permissions, "open with", default apps) - checked by QA #15 on the device.
+
+### Device checklist (Part B; Jelly Star release + Android 16 emulator)
+1. Kiosk + block on: an allowed app opening Play (explicit intent, `market://`, play.google.com link, Play notification) and Settings -> "app blocked" screen. [needs device test]
+2. D1: block on, school rule, calls unmanaged, `pm revoke ... CALL_PHONE`: the lock screen's Emergency call reaches the emergency dialer (emergency test mode, never real 112); keyguard emergency button works. [needs device test]
+3. D2: cell-broadcast test alert shows in kiosk; a runtime permission dialog of an allowed app works; share sheet, photo picker and file picker work; an alarm rings; the IME works; Settings opened from a pinned helper is blocked. [needs device test]
+4. D3: server switch off -> the block bit is cleared on the next apply (`dumpsys device_policy`). [needs device test]
+5. D4: after taking the dialer role, `dumpsys package <ours>` shows no role-granted runtime permission without POLICY_FIXED; calls managed ON->OFF->ON gives no `am_kill` of our package. [needs device test]
+6. D5: if a kill happens anyway, Home cold-starts back into lock task within 5 s with nothing on top. [needs device test]
+7. Power double-press / lock-screen camera with a PIN: no camera; reproduce the emulator case with the B2 diagnostics. [needs device test]
+8. Calls page after "manage calls": "Waiting for the phone to confirm", then the correct state; with the phone offline, after 5 min the real warnings plus "hasn't confirmed". [needs device test]
+9. Play suspension refused on the Jelly Star -> the device page says Play is blocked only in kiosk. [needs device test]
+10. Element X Message button: opens the DM directly vs the user's profile (`matrix:u/...?action=chat`, then `element://user/...`). [needs device test]
+11. Unmanaged phone: no call-log SecurityException in logcat on sync (B3). [needs device test]
+
