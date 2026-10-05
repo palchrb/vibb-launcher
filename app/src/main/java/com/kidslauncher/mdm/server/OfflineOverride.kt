@@ -6,18 +6,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import java.security.MessageDigest
-import java.security.spec.KeySpec
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.PBEKeySpec
 
 private const val LOG_TAG = "OfflineOverride"
-
-/** Must match PIN_PBKDF2_ROUNDS/PIN_HASH_LEN in kid-phone-server's src/security.rs - the server
- * computes the hash+salt this device caches and verifies against, so both sides need the exact
- * same PBKDF2 parameters or a correct PIN would simply never verify. */
-private const val PIN_PBKDF2_ROUNDS = 210_000
-private const val PIN_HASH_LEN_BYTES = 32
 
 private const val MAX_FAILED_ATTEMPTS = 5
 private const val LOCKOUT_MS = 15 * 60 * 1000L
@@ -80,7 +70,9 @@ object OfflineOverride {
      * with zero network. Pure verification only - does NOT lift restrictions; callers that want
      * the full "unlock the device" behavior must also call [activate] on success (see
      * [com.kidslauncher.mdm.ui.LockActivity]). Kept separate so the Settings PIN-gate can reuse
-     * the same code+PIN without also triggering a 2-hour restrictions-off window.
+     * the same code+PIN without also triggering a 2-hour restrictions-off window - and handy's
+     * PIN lock's "Parent code" link (step 10), which only unlocks that lock.
+     * PBKDF2 (PinHash, ~0.5 s): never call this on the main thread.
      */
     fun verifyPin(pin: String): Boolean {
         val mdm = LauncherPreferences.mdm()
@@ -88,19 +80,7 @@ object OfflineOverride {
         val saltHex = mdm.overridePinSalt()
         if (hashHex.isNullOrEmpty() || saltHex.isNullOrEmpty()) return false
 
-        val matches = try {
-            val salt = hexToBytes(saltHex)
-            val expected = hexToBytes(hashHex)
-            val spec: KeySpec =
-                PBEKeySpec(pin.toCharArray(), salt, PIN_PBKDF2_ROUNDS, PIN_HASH_LEN_BYTES * 8)
-            val actual = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-                .generateSecret(spec)
-                .encoded
-            MessageDigest.isEqual(actual, expected)
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to verify offline override PIN", e)
-            false
-        }
+        val matches = PinHash.verify(pin, hashHex, saltHex)
 
         if (matches) {
             mdm.offlineOverrideFailedAttempts(0)
@@ -141,7 +121,4 @@ object OfflineOverride {
         }
     }
 
-    private fun hexToBytes(hex: String): ByteArray = ByteArray(hex.length / 2) { i ->
-        ((Character.digit(hex[i * 2], 16) shl 4) + Character.digit(hex[i * 2 + 1], 16)).toByte()
-    }
 }
