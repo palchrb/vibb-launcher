@@ -19,6 +19,7 @@ object PushState {
     private const val LAST_NUDGE_ID = "last_nudge_id"
     private const val LAST_PRIORITY = "last_priority"
     private const val LAST_ORIGINAL_PRIORITY = "last_original_priority"
+    private const val SERVER_KNEW_HASH = "server_knew_hash"
 
     /** Live state of the SSE stream (only meaningful while the transport is SSE). */
     @Volatile
@@ -37,6 +38,13 @@ object PushState {
 
     fun markTokenRequested(context: Context, nowMs: Long) {
         prefs(context).edit().putLong(TOKEN_REQUESTED_AT, nowMs).commit()
+    }
+
+    /** The token hash the server last confirmed knowing (policy `fcm_token_hash`). */
+    fun serverKnewHash(context: Context): String? = prefs(context).getString(SERVER_KNEW_HASH, null)
+
+    fun setServerKnewHash(context: Context, hash: String?) {
+        if (serverKnewHash(context) != hash) prefs(context).edit().putString(SERVER_KNEW_HASH, hash).commit()
     }
 
     fun saveToken(context: Context, token: String?) {

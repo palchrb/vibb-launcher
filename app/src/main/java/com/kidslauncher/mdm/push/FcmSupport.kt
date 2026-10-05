@@ -104,7 +104,11 @@ object FcmSupport {
      */
     fun maintainToken(context: Context, server: PushPolicy?) {
         val now = System.currentTimeMillis()
-        val action = tokenAction(configured, PushState.token(context), server, PushState.tokenRequestedAt(context), now)
+        val token = PushState.token(context)
+        val ownHash = token?.takeIf { it.isNotBlank() }?.let { fcmTokenHash(it) }
+        if (ownHash != null && server?.fcmTokenHash == ownHash) PushState.setServerKnewHash(context, ownHash)
+        val serverKnew = ownHash != null && PushState.serverKnewHash(context) == ownHash
+        val action = tokenAction(configured, token, server, PushState.tokenRequestedAt(context), now, serverKnew)
         if (action == TokenAction.NONE) return
         if (!ensureInitialized(context) || !gmsAvailable(context)) return
         PushState.markTokenRequested(context, now)
@@ -113,6 +117,7 @@ object FcmSupport {
             if (action == TokenAction.RENEW) {
                 Tasks.await(messaging.deleteToken(), TOKEN_TIMEOUT_S, TimeUnit.SECONDS)
                 PushState.saveToken(context, null)
+                PushState.setServerKnewHash(context, null)
             }
             val token = Tasks.await(messaging.token, TOKEN_TIMEOUT_S, TimeUnit.SECONDS)
             if (!token.isNullOrBlank()) {

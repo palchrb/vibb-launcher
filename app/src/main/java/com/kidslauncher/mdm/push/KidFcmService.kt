@@ -28,7 +28,9 @@ class KidFcmService : FirebaseMessagingService() {
      * into the process's uncaught-exception handler - that would end the call path too. */
     override fun handleIntent(intent: Intent) {
         if (!FcmSupport.ensureInitialized(applicationContext)) {
-            Log.w(LOG_TAG, "Firebase isn't initialised - ignoring ${intent.action}, the backstop sync covers it")
+            // A sync needs no Firebase (QA step 7 #6): never let a ring/lock wait for the backstop.
+            Log.w(LOG_TAG, "Firebase isn't initialised - syncing without handling ${intent.action}")
+            SyncRunner.request(applicationContext, "fcm_uninit")
             return
         }
         try {

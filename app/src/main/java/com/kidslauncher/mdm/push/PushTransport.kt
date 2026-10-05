@@ -96,6 +96,8 @@ enum class TokenAction {
  * What to do about the FCM token on this sync. [lastRequestMs] is when we last asked Firebase
  * (0 = never); a time in the future (the clock went back) counts as long ago. Every status
  * report carries the token, so the server normally knows it from the next sync on.
+ * [serverKnewToken]: an earlier policy carried our token's hash - the server dropping it since
+ * means FCM rejected it.
  */
 fun tokenAction(
     fcmConfigured: Boolean,
@@ -103,6 +105,7 @@ fun tokenAction(
     server: PushPolicy?,
     lastRequestMs: Long,
     nowMs: Long,
+    serverKnewToken: Boolean = false,
 ): TokenAction {
     if (!fcmConfigured) return TokenAction.NONE
     val since = nowMs - lastRequestMs
@@ -112,6 +115,9 @@ fun tokenAction(
     }
     if (server == null || !server.fcmEnabled) return TokenAction.NONE
     if (server.fcmTokenHash == fcmTokenHash(token)) return TokenAction.NONE
+    // The server knew this token and dropped it: FCM rejected it (QA step 7 #2) - renew at once
+    // rather than reporting a dead token for up to a day.
+    if (serverKnewToken) return TokenAction.RENEW
     val stale = since < 0 || since >= TOKEN_RENEW_INTERVAL_MS
     return if (stale) TokenAction.RENEW else TokenAction.NONE
 }
