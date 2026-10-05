@@ -136,7 +136,10 @@ hardening. Not frozen: remaining features continue in parallel with device
 testing on the Jelly Star. Not built yet: full Tailscale (design in
 `docs/design/03-tailscale.md`), Vibb integration, AdGuard Home, launcher UI
 redesign. Play account: decided 2026-10-05 to start WITHOUT one (apps via the
-server catalog); add later only if Play-only apps are needed.
+server catalog); add later only if Play-only apps are needed. First likely
+case: Vipps (Vipps for children 7-15 exists; may require a Play-installed copy
+via Play Integrity licensing, and forces frequent updates). Test sideloaded
+first on the Jelly Star; add a dedicated Google account if it refuses.
 
 ## Next features (agreed 2026-10-05)
 
