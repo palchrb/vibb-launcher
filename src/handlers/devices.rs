@@ -314,6 +314,9 @@ pub(crate) async fn push_card(
                         Some("server_off") => " - FCM is off on this server",
                         Some("not_proven") => " - waiting for FCM to be confirmed",
                         Some("play_hidden") => " - the Play Store is missing",
+                        Some("token_unknown") => {
+                            " - this server doesn't have the phone's FCM token yet"
+                        }
                         _ => "",
                     };
                     format!("its own connection to this server (SSE){why}")
