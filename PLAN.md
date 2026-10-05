@@ -171,6 +171,18 @@ server catalog); add later only if Play-only apps are needed.
   instantly via the existing SSE nudge, then call. Open: per-rule app exemptions
   (calendar, Vibb at bedtime). Implement after the
   UI/photos/i18n step (same launcher files).
+- **Battery** (review 2026-10-05; not yet measured). Always-on work today:
+  SSE keepalive every 15 s (`device_api.rs:740`, wakes the radio ~5,800×/day,
+  likely the biggest drain on mobile data), periodic sync + status report every
+  5 min, schedule check every 60 s, active GPS fix at most every 10 min, plus
+  tsnet and the DNS-filter VPN. Plan: keepalive minutes not seconds (tune
+  against carrier NAT timeouts) or FCM as the nudge (works without a Google
+  account, but metadata goes to Google); sync every 15-30 min while the push
+  channel is up; one alarm at the next schedule boundary instead of polling;
+  location policy chosen by the parent (off / on request / every N min), active
+  fix only on request or after significant movement; "update location now"
+  button in the PWA. Measure first on the Jelly Star (`dumpsys batterystats`,
+  idle drain per day) before and after.
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with
