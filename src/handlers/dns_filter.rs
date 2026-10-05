@@ -138,6 +138,24 @@ pub async fn show_dns_filter(
     )
 }
 
+/// Nudges the devices a DNS change affects (handy step 7 fix round, QA #9): without it the change
+/// would wait for the phone's 30-minute backstop sync. `None` = a global change, every device.
+async fn nudge(state: &AppState, device: Option<i64>) {
+    match device {
+        Some(id) => {
+            let _ = state.command_notify.send(id);
+        }
+        None => match crate::time_rules::all_device_ids(&state.db).await {
+            Ok(ids) => {
+                for id in ids {
+                    let _ = state.command_notify.send(id);
+                }
+            }
+            Err(err) => tracing::error!(%err, "couldn't list devices to nudge"),
+        },
+    }
+}
+
 pub async fn set_upstream(
     State(state): State<AppState>,
     Form(form): Form<HashMap<String, String>>,
@@ -153,6 +171,7 @@ pub async fn set_upstream(
     .execute(&state.db)
     .await
     .ok();
+    nudge(&state, None).await;
 
     Redirect::to("/dns")
 }
@@ -173,6 +192,7 @@ pub async fn create_blocklist(
             .await
             .ok();
         dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
+        nudge(&state, None).await;
     }
 
     Redirect::to("/dns")
@@ -192,6 +212,7 @@ pub async fn toggle_blocklist(
         .ok();
 
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
+    nudge(&state, None).await;
     Redirect::to("/dns")
 }
 
@@ -206,6 +227,7 @@ pub async fn delete_blocklist(
         .ok();
 
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
+    nudge(&state, None).await;
     Redirect::to("/dns")
 }
 
@@ -238,6 +260,7 @@ pub async fn create_custom_domain(
         .await
         .ok();
         dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
+        nudge(&state, device_id).await;
     }
 
     Redirect::to(&redirect_to)
@@ -278,6 +301,7 @@ pub async fn set_device_blocklist_override(
         .await
         .ok();
     }
+    nudge(&state, Some(device_id)).await;
 
     Redirect::to(&format!("/dns?device={device_id}"))
 }
@@ -357,6 +381,7 @@ pub async fn delete_custom_domain(
         .ok();
 
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
+    nudge(&state, device_id).await;
 
     match device_id {
         Some(id) => Redirect::to(&format!("/dns?device={id}")),

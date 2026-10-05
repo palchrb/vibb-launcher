@@ -287,7 +287,7 @@ pub(crate) async fn push_card(
 
     match &state.fcm {
         None => lines.push(
-            "FCM isn't set up on this server, so the phone keeps its own connection to this              server open for instant changes (uses more battery)."
+            "FCM isn't set up on this server, so the phone keeps its own connection to this server open for instant changes (uses more battery)."
                 .to_string(),
         ),
         Some(sender) => {
@@ -335,7 +335,7 @@ pub(crate) async fn push_card(
                 let original = r.last_original_priority.as_deref().unwrap_or("unknown");
                 if priority != original {
                     warnings.push(format!(
-                        "FCM delivered the last nudge with {priority} priority instead of                          {original} - Android may delay nudges while the phone sleeps."
+                        "FCM delivered the last nudge with {priority} priority instead of {original} - Android may delay nudges while the phone sleeps."
                     ));
                 }
             }
@@ -347,12 +347,12 @@ pub(crate) async fn push_card(
                 lines.push("FCM confirmed working for this phone.".to_string());
             } else if row.unacked_sends >= crate::push::MAX_UNACKED {
                 warnings.push(
-                    "FCM nudges stopped reaching the phone, so it was told to use its own                      connection again. This server keeps testing FCM every hour."
+                    "FCM nudges stopped reaching the phone, so it was told to use its own connection again. This server keeps testing FCM every hour."
                         .to_string(),
                 );
             } else {
                 lines.push(
-                    "FCM isn't confirmed for this phone yet - it stays on its own connection                      until a test nudge comes back."
+                    "FCM isn't confirmed for this phone yet - it stays on its own connection until a test nudge comes back."
                         .to_string(),
                 );
             }
@@ -380,7 +380,7 @@ pub(crate) async fn push_card(
             .map(|t| t.format("%H:%M UTC").to_string())
             .unwrap_or_default();
         warnings.push(format!(
-            "Play install mode is on (until {until}): the Play Store can be opened on the phone.              Apps installed now stay hidden until you allow them below."
+            "Play install mode is on (until {until}): the Play Store can be opened on the phone. Apps installed now stay hidden until you allow them below."
         ));
     }
     if latest.is_some_and(|s| s.play_window_active) {
