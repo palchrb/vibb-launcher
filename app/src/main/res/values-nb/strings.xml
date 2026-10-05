@@ -80,6 +80,14 @@
     <string name="kid_settings_not_owner">Bryterne virker når mamma og pappa har satt opp telefonen.</string>
     <string name="kid_settings_no_policy">Bryterne kommer med neste oppdatering fra mamma og pappa.</string>
     <string name="kid_settings_unreadable">Bryterne kan ikke leses akkurat nå. Spør mamma eller pappa.</string>
+    <string name="kid_settings_wallpaper_selected">%1$s, valgt</string>
+    <string name="wallpaper_navy">Mørk blå</string>
+    <string name="wallpaper_forest">Skog</string>
+    <string name="wallpaper_plum">Plomme</string>
+    <string name="wallpaper_green">Grønn</string>
+    <string name="wallpaper_sky">Himmel</string>
+    <string name="wallpaper_sunset">Solnedgang</string>
+    <string name="wallpaper_photo">Bilde fra mamma og pappa</string>
     <string name="quick_controls_wifi">Wi-Fi</string>
     <string name="quick_controls_bluetooth">Bluetooth</string>
     <string name="quick_controls_brightness">Lysstyrke</string>

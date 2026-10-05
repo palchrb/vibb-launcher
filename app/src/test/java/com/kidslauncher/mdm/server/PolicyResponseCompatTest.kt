@@ -186,6 +186,25 @@ class PolicyResponseCompatTest {
         assertNull(old.launcherUi)
         assertEquals(LauncherUi("system", 3), LauncherUi())
 
+        // Step 8: launcher_ui.wallpapers as the server sends it (every key, nulls included); a
+        // step-5 launcher_ui without it decodes to no wallpapers (then navy).
+        val withWallpapers = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            """
+            "launcher_ui": {"language": "en", "home_columns": 3, "wallpapers": [
+              {"id": 1, "kind": "color", "colors": ["#14213D"], "image": null, "label": "Navy", "builtin_key": "navy", "lock_screen": false},
+              {"id": 7, "kind": "image", "colors": [], "image": "$photo", "label": "Hytta", "builtin_key": null, "lock_screen": true}
+            ]},
+            "packages_to_uninstall"
+            """.trimIndent()
+        )
+        val walls = (decodeCached(withWallpapers) as CachedPolicy.Ok).policy.launcherUi!!.wallpapers
+        assertEquals(2, walls.size)
+        assertEquals("navy", walls[0].builtinKey)
+        assertEquals(photo, walls[1].image)
+        assertTrue(walls[1].lockScreen)
+        assertEquals(emptyList<Any>(), policy.launcherUi!!.wallpapers)
+
         val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, notificationListenerEnabled = false)
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
         assertEquals("false", json["notification_listener_enabled"].toString())

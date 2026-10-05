@@ -19,6 +19,9 @@ import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import com.kidslauncher.mdm.ui.list.apps.showAppContextMenu
+import com.kidslauncher.mdm.ui.wallpaper.InkChoice
+import com.kidslauncher.mdm.ui.wallpaper.KidInk
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 
 /**
  * The home grid (mockup Main.dc.html, design 08): the phone book first, then the apps as
@@ -34,20 +37,20 @@ class HomeGridAdapter(private val activity: Activity) : RecyclerView.Adapter<Hom
     private var infos: Map<String, AbstractDetailedAppInfo> = emptyMap()
     private var icons: Map<String, Bitmap> = emptyMap()
     private var metrics: GridMetrics = gridMetrics(MOCKUP_CONTENT_DP, 3)
-    private var inkColor: Int = activity.getColor(R.color.kid_ink)
+    private var ink: InkChoice = WallpaperStore.state.ink
 
     fun submit(
         tiles: List<GridTile>,
         infos: Map<String, AbstractDetailedAppInfo>,
         icons: Map<String, Bitmap>,
         metrics: GridMetrics,
-        ink: Int,
+        ink: InkChoice,
     ) {
         this.tiles = tiles
         this.infos = infos
         this.icons = icons
         this.metrics = metrics
-        this.inkColor = ink
+        this.ink = ink
         notifyDataSetChanged()
     }
 
@@ -116,7 +119,7 @@ class HomeGridAdapter(private val activity: Activity) : RecyclerView.Adapter<Hom
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val context = holder.itemView.context
         holder.applyMetrics(metrics)
-        holder.label.setTextColor(inkColor)
+        KidInk.label(holder.label, ink)
         when (val tile = tiles[position]) {
             GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)
             GridTile.Settings -> glyphTile(holder, R.color.kid_settings_tile, R.drawable.ic_kid_settings, R.string.kid_settings_title)

@@ -99,4 +99,26 @@ data class LocationPolicy(
 data class LauncherUi(
     val language: String = "system",
     val homeColumns: Int = 3,
+    /** The wallpapers the parent allows on this phone, in order (design 08-ui-polish.md);
+     * missing from an older server = only the built-in navy
+     * ([com.kidslauncher.mdm.ui.wallpaper.effectiveWallpaper]). */
+    val wallpapers: List<PolicyWallpaper> = emptyList(),
+)
+
+/** One entry of `launcher_ui.wallpapers` - see kid-phone-server's `PolicyWallpaper`. Checked by
+ * [com.kidslauncher.mdm.ui.wallpaper.parseWallpapers]; anything it can't use is left out. */
+@Serializable
+data class PolicyWallpaper(
+    val id: Long = 0,
+    /** "color", "gradient" or "image". */
+    val kind: String = "",
+    /** "#RRGGBB": one for a colour, two for a gradient. */
+    val colors: List<String> = emptyList(),
+    /** SHA-256 of the image (`GET api/devices/wallpapers/{hash}`). */
+    val image: String? = null,
+    val label: String = "",
+    /** "navy", "forest", ... for the built-ins (labelled in the kid's language). */
+    val builtinKey: String? = null,
+    /** An image also goes on the lock screen; otherwise the lock screen gets navy (QA 08 #1). */
+    val lockScreen: Boolean = false,
 )

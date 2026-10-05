@@ -8,7 +8,14 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.graphics.Outline
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.ViewOutlineProvider
 import android.widget.CompoundButton
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import com.kidslauncher.mdm.R
@@ -22,6 +29,14 @@ import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import com.kidslauncher.mdm.ui.quickcontrols.BluetoothDevicesActivity
 import com.kidslauncher.mdm.ui.quickcontrols.WifiNetworksActivity
+import com.kidslauncher.mdm.ui.home.KidAvatars
+import com.kidslauncher.mdm.ui.wallpaper.InkChoice
+import com.kidslauncher.mdm.ui.wallpaper.KidInk
+import com.kidslauncher.mdm.ui.wallpaper.Wallpaper
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperFill
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperRender
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 
 /**
  * The kid's own Settings (design 08-ui-polish.md §2, mockup KidSettings.dc.html), opened by the
@@ -40,9 +55,14 @@ class KidSettingsActivity : UIObjectActivity() {
     private lateinit var admin: ComponentName
     private var lastLogged: String? = null
 
+    private val wallpaperListener: () -> Unit = { render() }
+
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
-            LauncherPreferences.mdm().keys().kidModePolicy() -> render()
+            LauncherPreferences.mdm().keys().kidModePolicy() -> {
+                render()
+                WallpaperStore.refreshAsync(this)
+            }
             // A time rule or the budget began while this screen was open: the lock comes first.
             LauncherPreferences.mdm().keys().lockReason() -> redirectIfLocked()
         }
@@ -88,16 +108,19 @@ class KidSettingsActivity : UIObjectActivity() {
     override fun onStart() {
         super.onStart()
         LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefsListener)
+        WallpaperStore.addListener(wallpaperListener)
     }
 
     override fun onResume() {
         super.onResume()
         if (redirectIfLocked()) return
+        WallpaperStore.ensureLoaded(this)
         render()
     }
 
     override fun onStop() {
         LauncherPreferences.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(prefsListener)
+        WallpaperStore.removeListener(wallpaperListener)
         super.onStop()
     }
 
@@ -107,8 +130,17 @@ class KidSettingsActivity : UIObjectActivity() {
         return true
     }
 
+    /** The kid's wallpaper behind this screen too, the same way as Home. */
+    override fun showsSystemWallpaper() = true
+
     private fun render() {
-        val section = controlsSection(dpm.isDeviceOwnerApp(packageName), cachedPolicy())
+        val wallpaper = WallpaperGround.apply(this, binding.root)
+        val model = kidSettingsModel(
+            dpm.isDeviceOwnerApp(packageName), cachedPolicy(), wallpaper.choices, wallpaper.current,
+        )
+        renderInk(wallpaper.ink)
+        renderWallpapers(model.wallpapers)
+        val section = model.controls
         val described = section.describe()
         if (described != lastLogged) {
             // So "no switches" can be told apart on a device (design 08 §2, QA 08 #9).
@@ -155,6 +187,98 @@ class KidSettingsActivity : UIObjectActivity() {
         if (rows?.brightness == true) {
             binding.kidSettingsBrightnessSeekbar.progress = QuickControls.currentBrightness(this)
         }
+    }
+
+    private fun renderInk(ink: InkChoice) {
+        for (view in listOf(
+            binding.kidSettingsTitle, binding.kidSettingsWallpaperHeading, binding.kidSettingsWallpaperCaption,
+            binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
+            binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel,
+        )) {
+            KidInk.label(view, ink)
+        }
+    }
+
+    /**
+     * The picker (mockup KidSettings): four 64 dp tiles a row, 8 dp apart, radius 12; the shown
+     * one with a 3 dp ring in the ink colour and a check, the others a thin ring. TalkBack reads
+     * the name and whether it is chosen. Our own grid only - never the system picker.
+     */
+    private fun renderWallpapers(tiles: List<WallpaperTile>) {
+        binding.kidSettingsWallpaperSection.visibility = if (tiles.isEmpty()) View.GONE else View.VISIBLE
+        val grid = binding.kidSettingsWallpapers
+        grid.removeAllViews()
+        if (tiles.isEmpty()) return
+        val ink = WallpaperStore.state.ink
+        val gap = KidAvatars.dp(this, 8f)
+        val tileHeight = KidAvatars.dp(this, 64f)
+        val radius = KidAvatars.dp(this, 12f).toFloat()
+        tiles.chunked(4).forEachIndexed { rowIndex, rowTiles ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, tileHeight).apply {
+                    if (rowIndex > 0) topMargin = gap
+                }
+            }
+            for (i in 0 until 4) {
+                val tile = rowTiles.getOrNull(i)
+                val cell = FrameLayout(this)
+                cell.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
+                    if (i > 0) marginStart = gap
+                }
+                if (tile != null) bindTile(cell, tile, ink, radius)
+                row.addView(cell)
+            }
+            grid.addView(row)
+        }
+    }
+
+    private fun bindTile(cell: FrameLayout, tile: WallpaperTile, ink: InkChoice, radius: Float) {
+        val wallpaper = tile.wallpaper
+        val fill = wallpaper.fill
+        val thumb = (fill as? WallpaperFill.Image)?.let { WallpaperStore.thumbnail(this, it.hash, KidAvatars.dp(this, 64f)) }
+        cell.background = WallpaperRender.GroundDrawable(fill, thumb, 0)
+        cell.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) =
+                outline.setRoundRect(0, 0, view.width, view.height, radius)
+        }
+        cell.clipToOutline = true
+        cell.foreground = GradientDrawable().apply {
+            cornerRadius = radius
+            if (tile.selected) {
+                setStroke(KidAvatars.dp(this@KidSettingsActivity, 3f), ink.ink)
+            } else {
+                setStroke(KidAvatars.dp(this@KidSettingsActivity, 1f), (0x40 shl 24) or (ink.ink and 0xFFFFFF))
+            }
+        }
+        if (tile.selected) {
+            val check = ImageView(this).apply {
+                setImageResource(R.drawable.ic_kid_check)
+                imageTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            val size = KidAvatars.dp(this, 22f)
+            cell.addView(check, FrameLayout.LayoutParams(size, size, Gravity.CENTER))
+        }
+        val label = wallpaperLabel(wallpaper)
+        cell.contentDescription = if (tile.selected) getString(R.string.kid_settings_wallpaper_selected, label) else label
+        cell.isSelected = tile.selected
+        cell.isClickable = true
+        cell.isFocusable = true
+        cell.setOnClickListener {
+            if (!tile.selected) WallpaperStore.pick(this, wallpaper.id)
+        }
+    }
+
+    /** Built-ins in the kid's language; uploads with the parent's name for them. */
+    private fun wallpaperLabel(wallpaper: Wallpaper): String = when (wallpaper.builtinKey) {
+        "navy" -> getString(R.string.wallpaper_navy)
+        "forest" -> getString(R.string.wallpaper_forest)
+        "plum" -> getString(R.string.wallpaper_plum)
+        "green" -> getString(R.string.wallpaper_green)
+        "sky" -> getString(R.string.wallpaper_sky)
+        "sunset" -> getString(R.string.wallpaper_sunset)
+        else -> wallpaper.label.ifBlank { getString(R.string.wallpaper_photo) }
     }
 
     /** Dims the "manage" link while its radio is off (a disabled TextView alone looks the same). */

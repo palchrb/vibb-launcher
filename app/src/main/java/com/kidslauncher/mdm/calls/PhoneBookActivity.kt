@@ -2,6 +2,9 @@ package com.kidslauncher.mdm.calls
 
 import android.content.Context
 import android.content.Intent
+import com.kidslauncher.mdm.ui.wallpaper.KidInk
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AlertDialog
@@ -31,6 +34,7 @@ class PhoneBookActivity : UIObjectActivity() {
     private lateinit var adapter: PhoneBookAdapter
     private var missed: Map<String, MissedSummary> = emptyMap()
     private val photoListener: () -> Unit = { render() }
+    private val wallpaperListener: () -> Unit = { render() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,19 +51,25 @@ class PhoneBookActivity : UIObjectActivity() {
         handleNumber(intent)
     }
 
+    /** The kid's wallpaper behind the phone book, like Home (design 08 §3). */
+    override fun showsSystemWallpaper() = true
+
     override fun onStart() {
         super.onStart()
         ContactPhotos.addListener(photoListener)
+        WallpaperStore.addListener(wallpaperListener)
     }
 
     override fun onResume() {
         super.onResume()
+        WallpaperStore.ensureLoaded(this)
         render()
         loadMissedCalls()
     }
 
     override fun onStop() {
         ContactPhotos.removeListener(photoListener)
+        WallpaperStore.removeListener(wallpaperListener)
         super.onStop()
     }
 
@@ -80,6 +90,9 @@ class PhoneBookActivity : UIObjectActivity() {
     }
 
     private fun render() {
+        val ink = WallpaperGround.apply(this, binding.root).ink
+        KidInk.label(binding.phoneBookTitle, ink)
+        KidInk.label(binding.phoneBookInfo, ink, dim = true)
         val state = CallPolicyStore.effectiveState()
         val rules = (state as? CallPolicyState.Managed)?.rules
         val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
@@ -95,7 +108,7 @@ class PhoneBookActivity : UIObjectActivity() {
         view.contacts.mapTo(tiles) {
             PhoneBookTile.Contact(it, CallSystem.isEmergencyOutgoing(this, it.number), missed[it.number])
         }
-        adapter.submit(tiles)
+        adapter.submit(tiles, ink)
     }
 
     /** Only when no call rules can be read at all: 112 (an emergency number on every GSM phone;

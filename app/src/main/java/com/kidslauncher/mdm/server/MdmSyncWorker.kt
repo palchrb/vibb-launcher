@@ -228,6 +228,17 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     // After enforcement and the report: photos are cosmetic and may take a moment to download.
     if (freshPolicy != null) ContactPhotos.sync(context, api)
+    // Wallpapers likewise (design 08): download the allowed photos, delete the rest, and put the
+    // shown one on the system wallpaper right away if it changed. Cosmetic - never fails a sync.
+    if (freshPolicy != null) {
+        try {
+            com.kidslauncher.mdm.ui.wallpaper.WallpaperStore.sync(context, api)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("MdmSyncWorker", "Wallpaper sync failed", e)
+        }
+    }
 
     checkForTrackedAppUpdates(context, api)
     reportBlockedDnsEvents(context, api)

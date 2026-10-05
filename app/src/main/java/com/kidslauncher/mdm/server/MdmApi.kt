@@ -65,6 +65,12 @@ interface MdmApi {
     @GET("api/devices/contact-photos/{hash}")
     suspend fun getContactPhoto(@Path("hash") hash: String): Response<ResponseBody>
 
+    /** A wallpaper image by its SHA-256 (`launcher_ui.wallpapers[].image`); 404 unless the
+     * parent allowed it on this phone. See [com.kidslauncher.mdm.ui.wallpaper.WallpaperStore]. */
+    @Streaming
+    @GET("api/devices/wallpapers/{hash}")
+    suspend fun getWallpaper(@Path("hash") hash: String): Response<ResponseBody>
+
     @POST("api/devices/dns-events")
     suspend fun sendDnsEvents(@Body events: List<DnsEventReport>): Response<Unit>
 

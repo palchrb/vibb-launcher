@@ -33,7 +33,7 @@ interface UIObject {
     fun modifyTheme(theme: Resources.Theme): Resources.Theme {
         LauncherPreferences.theme().colorTheme().applyToTheme(theme)
 
-        if (isHomeScreen()) {
+        if (showsSystemWallpaper()) {
             Background.TRANSPARENT.applyToTheme(theme)
         } else {
             Background.SOLID.applyToTheme(theme)
@@ -51,6 +51,10 @@ interface UIObject {
     fun isHomeScreen(): Boolean {
         return false
     }
+
+    /** The window shows Android's wallpaper behind it: Home, and the kid screens that draw the
+     * kid's wallpaper the same way (design 08, ui/wallpaper/WallpaperGround). */
+    fun showsSystemWallpaper(): Boolean = isHomeScreen()
 
 }
 

@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.ui.kidsettings
 
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.QuickControlFeature
+import com.kidslauncher.mdm.ui.wallpaper.Wallpaper
 
 /*
  * The kid's Settings screen as data (design 08-ui-polish.md §2) - pure, no Android imports,
@@ -56,3 +57,23 @@ fun controlsSection(isDeviceOwner: Boolean, cached: CachedPolicy): ControlsSecti
     )
     return if (rows.wifi || rows.bluetooth || rows.brightness) rows else ControlsSection.NoneEnabled
 }
+
+/** One wallpaper in the picker. */
+data class WallpaperTile(val wallpaper: Wallpaper, val selected: Boolean)
+
+/**
+ * The picker: the wallpapers the kid can choose now (allowed and usable), the shown one
+ * selected. Fewer than two: no picker at all - there is nothing to choose.
+ */
+fun wallpaperTiles(choices: List<Wallpaper>, current: Wallpaper): List<WallpaperTile> =
+    if (choices.size < 2) emptyList() else choices.map { WallpaperTile(it, it.id == current.id) }
+
+data class KidSettingsModel(val controls: ControlsSection, val wallpapers: List<WallpaperTile>)
+
+/** The whole screen (design 08 §2): the activity only renders this. */
+fun kidSettingsModel(
+    isDeviceOwner: Boolean,
+    cached: CachedPolicy,
+    choices: List<Wallpaper>,
+    current: Wallpaper,
+): KidSettingsModel = KidSettingsModel(controlsSection(isDeviceOwner, cached), wallpaperTiles(choices, current))

@@ -2,6 +2,9 @@ package com.kidslauncher.mdm.ui.kidsettings
 
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.ui.wallpaper.NAVY
+import com.kidslauncher.mdm.ui.wallpaper.Wallpaper
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperFill
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -35,5 +38,17 @@ class KidSettingsModelTest {
             ControlsSection.NoneEnabled, ControlsSection.Rows(true, false, true),
         )
         assertEquals(all.size, all.map { it.describe() }.toSet().size)
+    }
+
+    @Test
+    fun `picker shows the choices with the shown one selected, nothing when there is no choice`() {
+        val forest = Wallpaper(2, WallpaperFill.Solid(0xFF1E4D3A.toInt()), "Forest", "forest")
+        val tiles = wallpaperTiles(listOf(NAVY, forest), forest)
+        assertEquals(listOf(WallpaperTile(NAVY, false), WallpaperTile(forest, true)), tiles)
+        assertEquals(emptyList<WallpaperTile>(), wallpaperTiles(listOf(NAVY), NAVY))
+        assertEquals(emptyList<WallpaperTile>(), wallpaperTiles(emptyList(), NAVY))
+        val model = kidSettingsModel(true, ok(1), listOf(NAVY, forest), NAVY)
+        assertEquals(ControlsSection.Rows(wifi = true, bluetooth = false, brightness = false), model.controls)
+        assertEquals(2, model.wallpapers.size)
     }
 }

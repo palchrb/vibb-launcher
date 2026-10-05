@@ -26,6 +26,8 @@
          Quick Controls screen. Device Owner exempts us from the API 29+ restriction on WHO can
          toggle WiFi, but these are still required regardless of Device Owner status. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- The kid's wallpaper on the system wallpaper (ui/wallpaper/WallpaperApplier, design 08). -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <!-- Self-granted, required for WifiManager.startScan()/getScanResults() on Android 13+ -
          replaces the old ACCESS_FINE_LOCATION scanning requirement. neverForLocation since the

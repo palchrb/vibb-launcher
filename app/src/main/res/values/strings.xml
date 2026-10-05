@@ -100,6 +100,14 @@
     <string name="kid_settings_not_owner">These switches work once mum and dad have set up the phone.</string>
     <string name="kid_settings_no_policy">These switches come with the next update from mum and dad.</string>
     <string name="kid_settings_unreadable">The switches can\'t be read right now. Ask mum or dad.</string>
+    <string name="kid_settings_wallpaper_selected">%1$s, chosen</string>
+    <string name="wallpaper_navy">Dark blue</string>
+    <string name="wallpaper_forest">Forest</string>
+    <string name="wallpaper_plum">Plum</string>
+    <string name="wallpaper_green">Green</string>
+    <string name="wallpaper_sky">Sky</string>
+    <string name="wallpaper_sunset">Sunset</string>
+    <string name="wallpaper_photo">Photo from mum and dad</string>
     <string name="quick_controls_wifi">Wi-Fi</string>
     <string name="quick_controls_bluetooth">Bluetooth</string>
     <string name="quick_controls_brightness">Screen brightness</string>

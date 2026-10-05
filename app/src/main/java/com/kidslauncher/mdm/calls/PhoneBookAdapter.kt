@@ -7,6 +7,9 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import com.kidslauncher.mdm.ui.wallpaper.InkChoice
+import com.kidslauncher.mdm.ui.wallpaper.KidInk
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.ui.home.KidAvatars
 
@@ -24,9 +27,11 @@ class PhoneBookAdapter(
 ) : RecyclerView.Adapter<PhoneBookAdapter.ViewHolder>() {
 
     private var tiles: List<PhoneBookTile> = emptyList()
+    private var ink: InkChoice = WallpaperStore.state.ink
 
-    fun submit(tiles: List<PhoneBookTile>) {
+    fun submit(tiles: List<PhoneBookTile>, ink: InkChoice) {
         this.tiles = tiles
+        this.ink = ink
         notifyDataSetChanged()
     }
 
@@ -69,6 +74,7 @@ class PhoneBookAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val context = holder.itemView.context
+        KidInk.label(holder.name, ink)
         when (val tile = tiles[position]) {
             is PhoneBookTile.Contact -> {
                 KidAvatars.bindContact(holder.photo, holder.initial, tile.contact, tile.emergency, initialSp = 26f)

@@ -63,6 +63,10 @@ import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.gridColumns
 import com.kidslauncher.mdm.ui.home.homeGrid
 import com.kidslauncher.mdm.ui.home.showPhoneBookTile
+import com.kidslauncher.mdm.ui.wallpaper.InkChoice
+import com.kidslauncher.mdm.ui.wallpaper.KidInk
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -104,6 +108,7 @@ class HomeActivity : UIObjectActivity() {
         refreshHandler.postDelayed(badgeRender, BADGE_DEBOUNCE_MS)
     }
     private val photoListener: () -> Unit = { renderCallParts() }
+    private val wallpaperListener: () -> Unit = { renderWallpaper() }
 
     /** What [refreshApps] last produced off the main thread. */
     private class GridData(
@@ -130,9 +135,10 @@ class HomeActivity : UIObjectActivity() {
             } else if (prefKey == LauncherPreferences.mdm().keys().kioskEnabled()) {
                 reconcileKioskMode()
             } else if (prefKey == LauncherPreferences.mdm().keys().kidModePolicy()) {
-                // A new policy may change the contacts or the columns; the sync refreshes the
-                // store too, but this listener can run before it does.
+                // A new policy may change the contacts, the columns or the wallpapers; the sync
+                // refreshes the stores too, but this listener can run before it does.
                 CallPolicyStore.refresh(this)
+                WallpaperStore.refreshAsync(this)
                 render()
                 loadMissedCalls()
             } else {
@@ -263,6 +269,7 @@ class HomeActivity : UIObjectActivity() {
             .registerOnSharedPreferenceChangeListener(sharedPreferencesListener)
         BadgeStore.addListener(badgeListener)
         ContactPhotos.addListener(photoListener)
+        WallpaperStore.addListener(wallpaperListener)
         try {
             contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callLogObserver)
         } catch (e: SecurityException) {
@@ -292,6 +299,8 @@ class HomeActivity : UIObjectActivity() {
         if (redirectToLockScreenIfLocked()) return
         // The parent's language choice, now that Home is in front (no call screen or dialog).
         LauncherLocales.applyIfSafe(this)
+        WallpaperStore.ensureLoaded(this)
+        renderWallpaper()
         render()
         loadMissedCalls()
         promptForCallRoleIfNeeded()
@@ -358,6 +367,7 @@ class HomeActivity : UIObjectActivity() {
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)
         ContactPhotos.removeListener(photoListener)
+        WallpaperStore.removeListener(wallpaperListener)
         contentResolver.unregisterContentObserver(callLogObserver)
         super.onStop()
     }
@@ -444,6 +454,22 @@ class HomeActivity : UIObjectActivity() {
         }
     }
 
+    /**
+     * The wallpaper behind Home ([WallpaperGround]: transparent over the system wallpaper when it
+     * is ours) and its ink on the labels and status-bar icons (design 08 §3). Cheap: the store
+     * decoded everything in the background.
+     */
+    private fun renderWallpaper() {
+        if (!::gridAdapter.isInitialized) return
+        val state = WallpaperGround.apply(this, binding.root)
+        if (state.ink != shownInk) {
+            shownInk = state.ink
+            renderCallParts()
+        }
+    }
+
+    private var shownInk: InkChoice = WallpaperStore.state.ink
+
     /** The grid from the last filtered apps and the current badge counts (cheap). */
     private fun renderGrid() {
         if (!::gridAdapter.isInitialized) return
@@ -453,7 +479,7 @@ class HomeActivity : UIObjectActivity() {
             data.infos,
             data.icons,
             data.metrics,
-            getColor(R.color.kid_ink),
+            shownInk,
         )
     }
 
@@ -479,6 +505,7 @@ class HomeActivity : UIObjectActivity() {
             KidAvatars.bindBadge(item.findViewById(R.id.contact_badge), missedCount)
             item.findViewById<TextView>(R.id.contact_name).apply {
                 text = contact.name
+                KidInk.label(this, shownInk)
                 maxWidth = KidAvatars.dp(this@HomeActivity, layout.itemDp.toFloat())
             }
             item.contentDescription = if (missedCount > 0) {
