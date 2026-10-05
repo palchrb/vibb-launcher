@@ -99,6 +99,22 @@ The launcher updates itself through the Apps catalog, like any other app. Add it
 A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is
 broken, fix it forward by releasing the old (or fixed) code under a higher version tag.
 
+## FCM (optional)
+
+Without FCM every phone keeps its own connection to this server open (SSE) so changes arrive at once - that costs battery. With FCM, Google's push service wakes the phone instead; the phone still checks in by itself every 30 minutes and falls back to SSE whenever FCM isn't confirmed working (the device page's "Push and Play" card shows which one it uses). The launcher build must have the matching Firebase config (see the launcher repo).
+
+1. In the Firebase console, a project used for nothing else, with the Android app(s) of the launcher.
+2. In Google Cloud IAM for that project: a new service account with **only** the role "Firebase Cloud Messaging API Admin" (`roles/firebasecloudmessaging.admin`) - not the default Admin SDK account. Create a JSON key for it.
+3. Copy the key to the Pi outside the data directory (backups zip and mirror `data/`, the key must never be in a backup):
+   ```
+   sudo install -d -m 750 -o kidphone -g kidphone /etc/kid-phone-server
+   sudo install -m 600 -o kidphone -g kidphone key.json /etc/kid-phone-server/fcm-service-account.json
+   ```
+   then delete every other copy of it.
+4. In `/opt/kid-phone-server/.env`: `FCM_SERVICE_ACCOUNT_FILE=/etc/kid-phone-server/fcm-service-account.json`, then `sudo systemctl restart kid-phone-server`. The log says "FCM nudges on", or why FCM is off (a key readable by others or inside `data/` is refused).
+
+**Rotating the key**: create a new key for the same service account in the console, install it over the old file as in step 3, restart, check the log says "FCM nudges on" and a phone's card still says "FCM confirmed working" after its next check-in, then delete the old key in the console. If the key ever leaks: delete it in the console first (phones fall back to SSE), then install a new one.
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`
