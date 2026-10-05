@@ -237,6 +237,12 @@ launchable.
   low-battery shutdown) with the last known fix (no time for a fresh GPS fix), and
   an active fix + report when the battery drops to ~5% so a dying phone leaves a
   fresh position. Sudden power loss sends nothing; airplane mode means no network.
+- **Recovery / no soft-brick** (2026-10-05): DISALLOW_FACTORY_RESET only blocks
+  Settings; a recovery-mode wipe always works (first Jelly Star test: keys and
+  menu). After a wipe, FRP asks for the phone's Google account if one was added,
+  so keep its credentials. Offline, the override PIN lifts app/kiosk/lock but not
+  the step-4 hardening switches (server-only, by design). Keep an override PIN
+  set and written down, server backups on, and a "Recovery" runbook section.
 - **Rest mode during bedtime/school** (idea, 2026-10-05; after battery is measured):
   no or rarer location fixes, backstop sync every ~2 h (FCM still delivers),
   optional Wi-Fi/Bluetooth off at night (mobile stays for calls/FCM), skip
