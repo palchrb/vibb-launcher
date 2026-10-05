@@ -27,10 +27,8 @@ private const val BOOT_BLOCKS_KEY = "boot_call_blocks"
  * [TimeRulesRuntime.init], answers with them; without it the windows alone decide (restrictive).
  */
 object TimeRulesStore {
-    private enum class Source { NONE, CE, BOOT }
-
     @Volatile
-    private var source = Source.NONE
+    private var source = TimeRulesSource.NONE
 
     /** CE: the enforced policy's time rules (`null` = no policy, e.g. a never-managed phone). */
     @Volatile
@@ -56,7 +54,7 @@ object TimeRulesStore {
                 null
             }
             if (bootBlocks == null) Log.w(LOG_TAG, "No usable boot call blocks: only emergency calls until unlock")
-            source = Source.BOOT
+            source = TimeRulesSource.BOOT
             return
         }
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
@@ -67,7 +65,7 @@ object TimeRulesStore {
             LastEnforcedPlan.decode(prefs.getString(context.getString(R.string.settings_mdm_last_enforced_plan_key), null)),
         )
         policy = KidModeEnforcer.timePolicyOf(decision.policy)
-        source = Source.CE
+        source = TimeRulesSource.CE
         writeBoot(context, encodeBootCallBlocks(bootCallBlocksOf(policy)))
     }
 
@@ -85,17 +83,32 @@ object TimeRulesStore {
 
     /** Whether a rule that allows no calls is in force now. Any doubt blocks (emergency calls and
      * the callback window always pass anyway). */
-    fun callsBlockedNow(): Boolean = try {
-        when (source) {
-            Source.CE -> liveDecider?.invoke() ?: callsBlockedAt(policy, LocalDateTime.now(), false, RuleLifts())
-            Source.BOOT -> bootBlocks?.blockedAt(LocalDateTime.now()) ?: true
-            Source.NONE -> true
-        }
-    } catch (e: Exception) {
-        Log.e(LOG_TAG, "Couldn't evaluate the time rules for a call", e)
-        true
-    }
+    fun callsBlockedNow(): Boolean = callsBlockedFor(source, policy, bootBlocks, liveDecider, LocalDateTime.now())
 
     private fun bootPrefs(context: Context): SharedPreferences =
         context.createDeviceProtectedStorageContext().getSharedPreferences(BOOT_PREFS, Context.MODE_PRIVATE)
+}
+
+/** Where [TimeRulesStore] got the rules from: nothing yet, the CE cache, or the DE boot copy. */
+enum class TimeRulesSource { NONE, CE, BOOT }
+
+/**
+ * The call path's question, pure (tested in TimeRulesStoreTest): a no-calls rule is in force at
+ * [now]. Unlocked (CE) the live decider (lifts + override) answers, else the cached rules alone;
+ * before the first unlock the DE copy, missing = blocked; nothing loaded or any error = blocked.
+ */
+fun callsBlockedFor(
+    source: TimeRulesSource,
+    policy: TimePolicy?,
+    bootBlocks: BootCallBlocks?,
+    live: (() -> Boolean)?,
+    now: LocalDateTime,
+): Boolean = try {
+    when (source) {
+        TimeRulesSource.CE -> live?.invoke() ?: callsBlockedAt(policy, now, false, RuleLifts())
+        TimeRulesSource.BOOT -> bootBlocks?.blockedAt(now) ?: true
+        TimeRulesSource.NONE -> true
+    }
+} catch (e: Exception) {
+    true
 }
