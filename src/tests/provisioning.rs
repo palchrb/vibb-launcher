@@ -64,6 +64,7 @@ fn provision_payload_uses_configured_values() {
         launcher_admin_component: "org.example/org.example.Admin".to_string(),
         launcher_apk_url: "https://example.org/launcher.apk".to_string(),
         launcher_signature_checksum: Some("B".repeat(43)),
+        sse_keepalive_secs: 120,
     };
     let payload = provisioning::provisioning_payload(
         &config,

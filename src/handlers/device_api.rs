@@ -192,6 +192,7 @@ pub(crate) async fn build_policy(
     .await?;
 
     let call_policy = build_call_policy(state, &policy).await?;
+    let push = crate::push::push_policy(state, device_id).await?;
 
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
     // consumes a command, and two concurrent polls can't both get the same one. Delivery is
@@ -236,6 +237,7 @@ pub(crate) async fn build_policy(
         },
         time_policy,
         location_policy,
+        push,
     })
 }
 
@@ -449,7 +451,7 @@ pub async fn dns_blocklist(
             domains: list
                 .domains
                 .iter()
-                .filter(|d| !device_allow.contains(*d))
+                .filter(|d| !device_allow.contains(*d) && !crate::play::is_fcm_protected(d))
                 .cloned()
                 .collect(),
         })
@@ -459,7 +461,11 @@ pub async fn dns_blocklist(
         .global_custom_block
         .iter()
         .chain(device_block.iter())
-        .filter(|d| !device_allow.contains(*d) && !compiled.global_custom_allow.contains(*d))
+        .filter(|d| {
+            !device_allow.contains(*d)
+                && !compiled.global_custom_allow.contains(*d)
+                && !crate::play::is_fcm_protected(d)
+        })
         .cloned()
         .collect();
     if !custom_block.is_empty() {
@@ -534,12 +540,34 @@ pub async fn status(
         .map(|state| state.to_string())
         .filter(|json| json.len() <= 4096);
 
+    let push_state_json = report
+        .push
+        .as_ref()
+        .filter(|push| push.is_object())
+        .map(|push| push.to_string())
+        .filter(|json| json.len() <= 8192);
+    let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
+
+    // The previous report, for the security log below (install mode started, new apps).
+    let previous: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT installed_apps_json, install_mode_until_ms FROM device_status \
+         WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device.id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id = device.id, %err, "can't read the previous status");
+        None
+    });
+
     sqlx::query(
         "INSERT INTO device_status \
          (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
-          call_state_json, notification_listener_enabled, time_state_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
+          install_mode_until_ms, play_window_active) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -554,9 +582,23 @@ pub async fn status(
     .bind(&call_state_json)
     .bind(report.notification_listener_enabled)
     .bind(&time_state_json)
+    .bind(&push_state_json)
+    .bind(install_mode_until_ms)
+    .bind(report.play_window_active)
     .execute(&state.db)
     .await
     .ok();
+
+    log_play_events(&state, device.id, &report, previous).await;
+
+    if let Some(push) = report
+        .push
+        .as_ref()
+        .and_then(|p| serde_json::from_value::<crate::push::PushReport>(p.clone()).ok())
+        && let Err(err) = crate::push::record_report(&state, device.id, &push).await
+    {
+        tracing::error!(device_id = device.id, %err, "failed to record push state");
+    }
 
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now') WHERE id = ?")
         .bind(device.id)
@@ -608,7 +650,12 @@ pub async fn status(
         .as_ref()
         .filter(|apps| !apps.is_empty())
     {
-        let package_names: Vec<&str> = installed.iter().map(|a| a.package_name.as_str()).collect();
+        // Play Store/services/GSF are never the parent's to allow (handy step 7, `play`).
+        let package_names: Vec<&str> = installed
+            .iter()
+            .map(|a| a.package_name.as_str())
+            .filter(|p| !crate::play::is_play_core(p))
+            .collect();
         let json =
             serde_json::to_string(&package_names).expect("a list of strings always serializes");
         if let Err(err) = sqlx::query(
@@ -715,6 +762,69 @@ pub async fn status(
     StatusCode::NO_CONTENT
 }
 
+/// Security-log lines from a status report compared with the previous one: Play install mode
+/// started (a new `install_mode.until_ms`) and newly installed apps (with their installer). Only
+/// when there is a previous report, so enrollment doesn't log every preinstalled app.
+async fn log_play_events(
+    state: &AppState,
+    device_id: i64,
+    report: &StatusReportRequest,
+    previous: Option<(Option<String>, Option<i64>)>,
+) {
+    let Some((previous_apps, previous_until)) = previous else {
+        return;
+    };
+    if let Some(mode) = report.install_mode
+        && previous_until != Some(mode.until_ms)
+    {
+        let until = chrono::DateTime::from_timestamp_millis(mode.until_ms)
+            .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+            .unwrap_or_else(|| mode.until_ms.to_string());
+        crate::security::record_security_event(
+            &state.db,
+            "play_install_mode",
+            None,
+            None,
+            Some(&format!(
+                "device {device_id}: Play install mode until {until}"
+            )),
+        )
+        .await;
+    }
+    let (Some(previous_apps), Some(installed)) = (previous_apps, report.installed_apps.as_ref())
+    else {
+        return;
+    };
+    let before: std::collections::HashSet<String> =
+        serde_json::from_str::<Vec<InstalledApp>>(&previous_apps)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| a.package_name)
+            .collect();
+    if before.is_empty() {
+        return;
+    }
+    for app in installed
+        .iter()
+        .filter(|a| !before.contains(&a.package_name))
+        .take(20)
+    {
+        let source = app.installer.as_deref().unwrap_or("unknown source");
+        crate::security::record_security_event(
+            &state.db,
+            "app_installed",
+            None,
+            None,
+            Some(&format!(
+                "device {device_id}: {} ({}) installed from {source}",
+                app.label.chars().take(80).collect::<String>(),
+                app.package_name.chars().take(200).collect::<String>()
+            )),
+        )
+        .await;
+    }
+}
+
 /// The device reports back whether a delivered command actually succeeded -
 /// never called for `wipe` (the device is gone by the time it would report).
 /// Scoped to this device's own commands only, so one device can't ack
@@ -789,11 +899,17 @@ pub async fn commands_stream(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let device_id = device.id;
     let rx = state.command_notify.subscribe();
+    // A lagged receiver lost ids - possibly this device's - so it nudges (QA 07 #16): one extra
+    // sync is harmless, a lost ring isn't.
     let stream = BroadcastStream::new(rx).filter_map(move |msg| match msg {
         Ok(id) if id == device_id => Some(Ok(Event::default().data("command"))),
+        Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
+            Some(Ok(Event::default().data("command")))
+        }
         _ => None,
     });
-    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(state.config.sse_keepalive_secs)))
 }
 
 /// Every enabled tracked app that has a synced release AND is actually scoped to this device -

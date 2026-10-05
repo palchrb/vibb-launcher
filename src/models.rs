@@ -179,6 +179,11 @@ pub struct DeviceStatus {
     pub capabilities_json: Option<String>,
     /// The launcher's `time_state` (active rule, screen time used/budget) - migrations/0025.
     pub time_state_json: Option<String>,
+    /// The launcher's `push` object (migrations/0026).
+    pub push_state_json: Option<String>,
+    /// Play install mode end (wall-clock ms) while active (migrations/0026).
+    pub install_mode_until_ms: Option<i64>,
+    pub play_window_active: bool,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -333,6 +338,10 @@ pub struct InstalledApp {
     pub label: String,
     #[serde(default)]
     pub preinstalled: bool,
+    /// `InstallSourceInfo.installingPackageName` (handy step 7) - `com.android.vending` for an app
+    /// from Play. Absent from older launchers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installer: Option<String>,
 }
 
 // ---------------------------------------------------------------------
@@ -400,6 +409,9 @@ pub struct PolicyResponse {
     pub time_policy: crate::time_rules::TimePolicy,
     /// When the phone takes a location fix - always present.
     pub location_policy: crate::time_rules::LocationPolicy,
+    /// Whether the phone may rely on FCM nudges instead of the SSE stream (handy step 7) - always
+    /// present. See `push::push_policy`.
+    pub push: crate::push::PushPolicy,
 }
 
 /// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and
@@ -472,6 +484,22 @@ pub struct StatusReportRequest {
     /// opaque like `call_state`.
     #[serde(default)]
     pub time_state: Option<serde_json::Value>,
+    /// FCM token, transport, last nudge (handy step 7) - see `push::PushReport`. Kept raw so the
+    /// whole object can be stored capped, like `time_state`.
+    #[serde(default)]
+    pub push: Option<serde_json::Value>,
+    /// Play install mode: `{until_ms}` while active.
+    #[serde(default)]
+    pub install_mode: Option<InstallModeReport>,
+    /// The nightly Play update window is in force (Play Store unsuspended, screen off).
+    #[serde(default)]
+    pub play_window_active: bool,
+}
+
+/// `StatusReportRequest.install_mode`.
+#[derive(Deserialize, Debug, Clone, Copy)]
+pub struct InstallModeReport {
+    pub until_ms: i64,
 }
 
 /// Attached to a status report whenever the device has a location reading

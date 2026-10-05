@@ -256,6 +256,137 @@ struct DeviceDetailTemplate {
     badges_without_access: bool,
     /// "Time rules" card (handy step 6).
     time: TimeCard,
+    /// "Push and Play" card (handy step 7).
+    push: PushCard,
+}
+
+/// The device page's "Push and Play" card: how changes reach the phone, and Play's state.
+pub(crate) struct PushCard {
+    pub lines: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Builds [PushCard] from the server's FCM state, the phone's `device_push` row and its latest
+/// status report.
+pub(crate) async fn push_card(
+    state: &AppState,
+    device_id: i64,
+    latest: Option<&DeviceStatus>,
+) -> PushCard {
+    let mut lines = Vec::new();
+    let mut warnings = Vec::new();
+    let row = crate::push::load(&state.db, device_id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id, %err, "can't read device_push");
+            None
+        });
+    let report: Option<crate::push::PushReport> = latest
+        .and_then(|s| s.push_state_json.as_deref())
+        .and_then(|j| serde_json::from_str(j).ok());
+
+    match &state.fcm {
+        None => lines.push(
+            "FCM isn't set up on this server, so the phone keeps its own connection to this              server open for instant changes (uses more battery)."
+                .to_string(),
+        ),
+        Some(sender) => {
+            if let Some(problem) = sender.server_problem() {
+                warnings.push(format!("Push: this server can't reach FCM ({problem})."));
+            }
+        }
+    }
+    match &report {
+        None => lines.push(
+            match row.as_ref().and_then(|r| r.push_transport.as_deref()) {
+                Some(t) => format!("The phone last reported using {t}."),
+                None => "The phone hasn't reported how it gets changes yet.".to_string(),
+            },
+        ),
+        Some(r) => {
+            let transport = match r.transport.as_deref() {
+                Some("fcm") => "FCM nudges (low battery use)".to_string(),
+                _ => {
+                    let why = match r.reason.as_deref() {
+                        Some("no_config") => " - this launcher build has no FCM config",
+                        Some("no_gms") => " - Google Play services missing or disabled",
+                        Some("no_token") => " - no FCM registration yet",
+                        Some("server_off") => " - FCM is off on this server",
+                        Some("not_proven") => " - waiting for FCM to be confirmed",
+                        Some("play_hidden") => " - the Play Store is missing",
+                        _ => "",
+                    };
+                    format!("its own connection to this server (SSE){why}")
+                }
+            };
+            lines.push(format!("The phone gets changes via {transport}."));
+            if !r.fcm_configured {
+                lines.push("This launcher build has no FCM config.".to_string());
+            } else if !r.gms_available {
+                warnings.push(
+                    "Google Play services is missing or disabled on the phone, so FCM can't work."
+                        .to_string(),
+                );
+            }
+            if let Some(priority) = r.last_priority.as_deref() {
+                let original = r.last_original_priority.as_deref().unwrap_or("unknown");
+                if priority != original {
+                    warnings.push(format!(
+                        "FCM delivered the last nudge with {priority} priority instead of                          {original} - Android may delay nudges while the phone sleeps."
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(row) = &row {
+        if row.fcm_token.is_some() && state.fcm.is_some() {
+            if row.fcm_ok {
+                lines.push("FCM confirmed working for this phone.".to_string());
+            } else if row.unacked_sends >= crate::push::MAX_UNACKED {
+                warnings.push(
+                    "FCM nudges stopped reaching the phone, so it was told to use its own                      connection again. This server keeps testing FCM every hour."
+                        .to_string(),
+                );
+            } else {
+                lines.push(
+                    "FCM isn't confirmed for this phone yet - it stays on its own connection                      until a test nudge comes back."
+                        .to_string(),
+                );
+            }
+        }
+        if let (Some(since), Some(seen)) = (&row.fcm_token_updated_at, &row.fcm_token_seen_at)
+            && row.fcm_token.is_some()
+        {
+            lines.push(format!(
+                "FCM registration from {since} UTC, last reported {seen} UTC."
+            ));
+        }
+        if let Some(at) = &row.last_nudge_at {
+            lines.push(format!("Last FCM nudge received: {at} UTC."));
+        }
+        if let (Some(err), Some(at)) = (&row.last_fcm_error, &row.last_fcm_error_at) {
+            warnings.push(format!("Last FCM error ({at} UTC): {err}."));
+        }
+    }
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    if let Some(until) = latest
+        .and_then(|s| s.install_mode_until_ms)
+        .filter(|until| *until > now_ms)
+    {
+        let until = chrono::DateTime::from_timestamp_millis(until)
+            .map(|t| t.format("%H:%M UTC").to_string())
+            .unwrap_or_default();
+        warnings.push(format!(
+            "Play install mode is on (until {until}): the Play Store can be opened on the phone.              Apps installed now stay hidden until you allow them below."
+        ));
+    }
+    if latest.is_some_and(|s| s.play_window_active) {
+        lines.push(
+            "The nightly Play update window is open (screen off): Play is updating apps."
+                .to_string(),
+        );
+    }
+    PushCard { lines, warnings }
 }
 
 struct RuleOption {
@@ -556,13 +687,18 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
     // First pass: every app the device actually reports installed (preinstalled or otherwise),
     // matched against the catalog by package name where possible so an app that's both installed
     // *and* trackable still gets exactly one row.
-    for app in &installed {
+    for app in installed
+        .iter()
+        .filter(|a| !crate::play::is_play_core(&a.package_name))
+    {
         let tracked_match = all_tracked
             .iter()
             .find(|t| !t.package_name.is_empty() && t.package_name == app.package_name);
         apps.push(UnifiedAppRow {
             status_label: if app.preinstalled {
                 "Preinstalled".to_string()
+            } else if app.installer.as_deref() == Some(crate::play::PLAY_STORE) {
+                "Installed from Play".to_string()
             } else {
                 "Installed".to_string()
             },
@@ -582,7 +718,7 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
     // package name typed yet, which can never match an installed app by name) - the launcher's
     // own row is handled separately below, it never belongs here.
     for t in &all_tracked {
-        if t.is_launcher {
+        if t.is_launcher || crate::play::is_play_core(&t.package_name) {
             continue;
         }
         if !t.package_name.is_empty() && seen_packages.contains(&t.package_name) {
@@ -679,10 +815,12 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
         });
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
+    let push = push_card(&state, id, latest_status.as_ref()).await;
 
     Html(
         DeviceDetailTemplate {
             time,
+            push,
             title: device.name.clone(),
             calls_summary,
             call_warnings,
@@ -775,6 +913,43 @@ pub async fn toggle_app(
         .to_string();
     let tracked_app_id: Option<i64> = form.get("tracked_app_id").and_then(|s| s.parse().ok());
 
+    // Play Store/services/GSF are never the parent's to allow or remove (handy step 7): the
+    // launcher keeps them installed, unhidden and out of the kiosk whatever the allowlist says.
+    if crate::play::is_play_core(&package_name) {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "The Play Store, Play services and Google Services Framework are managed by the \
+             launcher itself and can't be allowed or removed here.",
+        )
+            .into_response();
+    }
+    // One source per package: the launcher can't update a Play-installed copy from the catalog
+    // (different signature, Android 14 update ownership).
+    if checked && let Some(tid) = tracked_app_id {
+        match catalog_conflicts_with_play(&state, id, tid).await {
+            Ok(Some(name)) => {
+                return (
+                    axum::http::StatusCode::CONFLICT,
+                    format!(
+                        "{name} is installed on this phone from the Play Store, so it can't also \
+                         be installed from the Apps catalog. Uninstall the Play copy first (uncheck \
+                         it, wait for the phone to report it gone), then select it here."
+                    ),
+                )
+                    .into_response();
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "catalog source check failed");
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Couldn't check where this app is installed from - nothing was changed.",
+                )
+                    .into_response();
+            }
+        }
+    }
+
     if checked {
         if let Some(tid) = tracked_app_id {
             sqlx::query(
@@ -839,6 +1014,39 @@ fn allowlist_error_response(
         ),
     )
         .into_response()
+}
+
+/// The catalog app's name when the device's latest status report shows its package installed from
+/// the Play Store; `None` when there's no conflict (no package name, not installed, other source).
+async fn catalog_conflicts_with_play(
+    state: &AppState,
+    device_id: i64,
+    tracked_app_id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    let app: Option<(String, String)> =
+        sqlx::query_as("SELECT name, package_name FROM tracked_apps WHERE id = ?")
+            .bind(tracked_app_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some((name, package)) = app.filter(|(_, package)| !package.is_empty()) else {
+        return Ok(None);
+    };
+    let json: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let installed: Vec<InstalledApp> = json
+        .flatten()
+        .as_deref()
+        .and_then(|j| serde_json::from_str(j).ok())
+        .unwrap_or_default();
+    let from_play = installed.iter().any(|a| {
+        a.package_name == package && a.installer.as_deref() == Some(crate::play::PLAY_STORE)
+    });
+    Ok(from_play.then_some(name))
 }
 
 /// Whether the device's most recent status report lists this package as installed, and if so,

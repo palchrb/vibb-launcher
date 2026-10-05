@@ -48,6 +48,19 @@
     </div>
     {% endif %}
 
+    {% if device.enrolled_at.is_some() %}
+    <div class="card">
+        <h2>Push and Play</h2>
+        {% for line in push.lines %}
+        <p>{{ line }}</p>
+        {% endfor %}
+        {% for warning in push.warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
+        <p class="subtitle">With FCM, changes reach a sleeping phone through Google's push service instead of a connection the phone keeps open, which saves battery. Either way the phone also checks in by itself every 30 minutes. If FCM stops working without an error, a ring, lock or lift can wait until that check-in; after two unanswered nudges the phone is told to use its own connection again. The Play Store stays paused on the phone except during install mode (in the phone's Settings, with the PIN) and a nightly update window while the screen is off.</p>
+    </div>
+    {% endif %}
+
     <div class="card">
         <h2>Time rules</h2>
         <p class="subtitle">{% if time.custom %}This phone has its own time rules and screen time.{% else %}This phone follows the global time rules and screen time.{% endif %} Emergency calls always work.</p>

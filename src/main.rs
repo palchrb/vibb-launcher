@@ -1,9 +1,12 @@
 mod config;
 mod dns_engine;
+mod fcm;
 mod handlers;
 mod models;
 mod phone;
 mod photos;
+mod play;
+mod push;
 mod security;
 #[cfg(test)]
 mod tests;
@@ -44,6 +47,9 @@ pub struct AppState {
     /// Where contact photos are stored (`data/contact_photos`; a temp dir in tests) - see
     /// `photos`.
     pub photo_dir: std::sync::Arc<std::path::PathBuf>,
+    /// The FCM sender (handy step 7), `None` when `FCM_SERVICE_ACCOUNT_FILE` isn't set or the key
+    /// isn't usable - then every phone uses the SSE stream. See `fcm` and `push`.
+    pub fcm: Option<fcm::SharedSender>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -107,6 +113,22 @@ async fn main() {
         );
     }
 
+    let fcm: Option<fcm::SharedSender> =
+        match fcm::HttpFcmSender::from_env(std::path::Path::new("data")) {
+            Ok(Some(sender)) => {
+                tracing::info!("FCM nudges on");
+                Some(std::sync::Arc::new(sender))
+            }
+            Ok(None) => {
+                tracing::info!("FCM_SERVICE_ACCOUNT_FILE not set - FCM off, phones use SSE");
+                None
+            }
+            Err(err) => {
+                tracing::error!(%err, "FCM off - phones use SSE");
+                None
+            }
+        };
+
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
     let state = AppState {
         db,
@@ -114,6 +136,7 @@ async fn main() {
         command_notify,
         config: std::sync::Arc::new(fork_config),
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
+        fcm,
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos that aren't on disk: take them from the
@@ -131,6 +154,7 @@ async fn main() {
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
     tokio::task::spawn(handlers::dns_filter::run_dns_event_pruning(state.clone()));
     tokio::task::spawn(handlers::locate::run_location_pruning(state.clone()));
+    push::spawn(state.clone());
 
     let app = build_router(state, session_layer);
 

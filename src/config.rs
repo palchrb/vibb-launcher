@@ -33,6 +33,15 @@ pub struct ForkConfig {
     /// certificate, base64url without padding (43 characters). `None` until configured - see
     /// the module doc comment and DEPLOY.md for how to compute it.
     pub launcher_signature_checksum: Option<String>,
+    /// `SSE_KEEPALIVE_SECS` (5-3600, default 120): how often the command stream sends a keepalive
+    /// comment. Only phones without working FCM hold the stream; their client read timeout is 300 s.
+    pub sse_keepalive_secs: u64,
+}
+
+pub const DEFAULT_SSE_KEEPALIVE_SECS: u64 = 120;
+
+fn is_valid_keepalive(value: &str) -> bool {
+    value.parse::<u64>().is_ok_and(|v| (5..=3600).contains(&v))
 }
 
 impl ForkConfig {
@@ -63,6 +72,9 @@ impl ForkConfig {
             launcher_apk_url: read("LAUNCHER_APK_URL", is_valid_url)
                 .unwrap_or_else(|| DEFAULT_LAUNCHER_APK_URL.to_string()),
             launcher_signature_checksum: read("LAUNCHER_SIGNATURE_CHECKSUM", is_valid_checksum),
+            sse_keepalive_secs: read("SSE_KEEPALIVE_SECS", is_valid_keepalive)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_SSE_KEEPALIVE_SECS),
         }
     }
 
