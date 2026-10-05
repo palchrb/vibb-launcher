@@ -130,16 +130,13 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 
 ## Status (2026-10-05)
 
-Scope frozen to a minimal usable phone before device testing: app allowlist in
-kiosk, calls only to/from approved contacts (incl. before first unlock), no
-opt-out, fail closed. Done in code (branch `handy` in both forks): own build and
-release signing, fail-closed policy, calls/phone book/message buttons, direct
-boot, hardening (step 4, `docs/design/04-hardening.md`: per-device restriction
-switches, schedule enforced by suspension, launcher Settings always behind the
-PIN). Next: device testing on the Jelly Star. Parked
-until the phone has been used for a while: full Tailscale (design in
-`docs/design/03-tailscale.md`), Vibb, AdGuard Home, Play account (open: start
-without one; add if Play-only apps are needed).
+Done in code (branch `handy` in both forks, QA-reviewed): own build and release
+signing, fail-closed policy, calls/phone book/message buttons, direct boot,
+hardening. Not frozen: remaining features continue in parallel with device
+testing on the Jelly Star. Not built yet: full Tailscale (design in
+`docs/design/03-tailscale.md`), Vibb integration, AdGuard Home, launcher UI
+redesign, Play account (open: start without one; add if Play-only apps are
+needed).
 
 ## Phases
 
