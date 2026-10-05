@@ -33,15 +33,21 @@ pub struct ForkConfig {
     /// certificate, base64url without padding (43 characters). `None` until configured - see
     /// the module doc comment and DEPLOY.md for how to compute it.
     pub launcher_signature_checksum: Option<String>,
-    /// `SSE_KEEPALIVE_SECS` (5-3600, default 120): how often the command stream sends a keepalive
-    /// comment. Only phones without working FCM hold the stream; their client read timeout is 300 s.
+    /// `SSE_KEEPALIVE_SECS` (5-240, default 120): how often the command stream sends a keepalive
+    /// comment. Only phones without working FCM hold the stream; their client read timeout is
+    /// 300 s (launcher `SSE_READ_TIMEOUT_MS`), so the cap keeps a 60 s margin - a value at or
+    /// above it would make every SSE phone drop and reopen the stream every 5 minutes.
     pub sse_keepalive_secs: u64,
 }
 
 pub const DEFAULT_SSE_KEEPALIVE_SECS: u64 = 120;
+/// 60 s under the launcher's 300 s SSE read timeout.
+pub const MAX_SSE_KEEPALIVE_SECS: u64 = 240;
 
 fn is_valid_keepalive(value: &str) -> bool {
-    value.parse::<u64>().is_ok_and(|v| (5..=3600).contains(&v))
+    value
+        .parse::<u64>()
+        .is_ok_and(|v| (5..=MAX_SSE_KEEPALIVE_SECS).contains(&v))
 }
 
 impl ForkConfig {
