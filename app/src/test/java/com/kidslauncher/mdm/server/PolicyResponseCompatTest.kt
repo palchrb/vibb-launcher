@@ -59,6 +59,13 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `a server without block_activity_start leaves the kiosk app block off (qa-09-code 7)`() {
+        assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").blockActivityStart)
+        assertEquals(true, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"block_activity_start":true}""").blockActivityStart)
+        assertEquals(false, LastEnforcedPlan.decode("{}")!!.blockActivityStart)
+    }
+
+    @Test
     fun `unknown keys are ignored`() {
         val withExtra = serverResponse.replace(
             "\"packages_to_uninstall\"",

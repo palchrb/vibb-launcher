@@ -70,8 +70,11 @@ data class PolicyResponse(
      * without FCM support, which means the SSE stream. */
     val push: PushPolicy? = null,
     /** `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` in kiosk (handy step 9) - our server
-     * always sends it; the per-device off switch is the remote kill switch (QA 09 #4). */
-    val blockActivityStart: Boolean = true,
+     * always sends it; the per-device off switch is the remote kill switch (QA 09 #4). Missing
+     * (a server without migration 0029) = **off** (qa-09-code #7): such a server has no off
+     * switch, and without the bit kiosk keeps AOSP's system-dialer exemption - emergency and
+     * the kill switch win over the extra lockdown. */
+    val blockActivityStart: Boolean = false,
 )
 
 /**
