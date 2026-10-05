@@ -47,8 +47,13 @@ server releases as `server-vX.Y.Z`. The root-side updater remembers the repo it 
 **Installs from before the monorepo** (installed from `palchrb/kid-phone-server`): the server itself follows the move
 (`SERVER_RELEASE_REPO=palchrb/kid-phone-server` and the old `LAUNCHER_APK_URL` in `.env` are read as the new defaults,
 and a launcher row in the Apps catalog that watches `palchrb/kids-launcher-mdm` is repointed by a migration), but the
-root-side updater still fetches `update.sh` from the old repo. Re-run the installer once from the new URL above (the
-Updates page asks for this too); it keeps `.env` and the database.
+root-side updater still fetches `update.sh` from the old repo. Re-run the installer once from the new URL above; it keeps
+`.env` and the database. Until then the server refuses "Update now" and scheduled auto-updates and shows the command.
+(The old repo's `deploy/update.sh` is replaced by a stub that forwards here - `docs/legacy/kid-phone-server-update.sh`.)
+
+Updates only ever go forward: the Updates page, the scheduler and `update.sh` refuse a release that isn't newer than the
+installed one. To go back on purpose (see "Rolling back" below for the database), run `update.sh` with
+`KPS_ALLOW_DOWNGRADE=1` - it then installs the newest release even if older.
 
 ### Rolling back the server
 

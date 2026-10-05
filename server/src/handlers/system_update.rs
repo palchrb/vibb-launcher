@@ -61,6 +61,41 @@ fn newest_server_version(releases: &[Release]) -> Option<String> {
         })
 }
 
+/// `vX.Y.Z` (or `X.Y.Z`) as a comparable triple; anything else is `None`.
+fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.strip_prefix('v').unwrap_or(version).split('.');
+    let mut next = || -> Option<u64> {
+        let p = parts.next()?;
+        if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        p.parse().ok()
+    };
+    let triple = (next()?, next()?, next()?);
+    parts.next().is_none().then_some(triple)
+}
+
+/// Only a strictly newer release is an update: an older one (a backport tag, or the newest
+/// release deleted) would refuse to start on a database the running version already migrated.
+/// Going back is a deliberate step over SSH (`KPS_ALLOW_DOWNGRADE=1`, DEPLOY.md).
+fn is_newer(latest: &str, current: &str) -> bool {
+    matches!((parse_version(latest), parse_version(current)), (Some(l), Some(c)) if l > c)
+}
+
+/// Why an update request must not be written right now, if it mustn't: the root-side scripts
+/// are older than this app needs. A pre-monorepo `actions.sh` would fetch the old repo's
+/// update.sh and install the old repo's last release over a database this version migrated.
+async fn update_blocked_reason(state: &AppState) -> Option<String> {
+    security::watcher_needs_update().await.then(|| {
+        format!(
+            "Not updating: the system helper scripts on this Pi are too old to update this \
+             version safely. Re-run the installer over SSH first (it keeps your settings and \
+             data): {}",
+            security::reinstall_hint(&state.config.server_release_repo)
+        )
+    })
+}
+
 /// `repo` is `config::ForkConfig::server_release_repo` (`owner/repo`).
 async fn latest_release_tag(repo: &str) -> Option<String> {
     let client = reqwest::Client::builder()
@@ -174,7 +209,7 @@ pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
     let check_failed = latest_version.is_none();
     let update_available = latest_version
         .as_deref()
-        .is_some_and(|latest| latest != current_version);
+        .is_some_and(|latest| is_newer(latest, &current_version));
     let schedule = AppUpdateScheduleConfig::load().await;
     let schedule_summary = schedule.summary();
 
@@ -213,6 +248,23 @@ pub async fn trigger_update(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
+    if let Some(reason) = update_blocked_reason(&state).await {
+        return updates::render_page(&state, Some(reason)).await;
+    }
+    // A failed check doesn't block the button (update.sh refuses a downgrade on its own), but a
+    // known release that isn't newer does.
+    if let Some(latest) = latest_release_tag(&state.config.server_release_repo).await
+        && !is_newer(&latest, crate::APP_VERSION)
+    {
+        return updates::render_page(
+            &state,
+            Some(format!(
+                "Not updating: the newest release ({latest}) isn't newer than this one ({}).",
+                crate::APP_VERSION
+            )),
+        )
+        .await;
+    }
     request_action(
         &state,
         &admin,
@@ -298,10 +350,8 @@ pub async fn save_app_update_schedule(
 /// Background task: checks for a new app release on the configured
 /// interval and, if auto-install is enabled and a new version is found,
 /// triggers the same "update" flag-file request the manual button uses.
-/// Only ever writes the word "update" - an action every version of the
-/// watcher has understood since it was first introduced - so unlike the
-/// OS-update/format-drive actions, this one has no watcher-version-skew
-/// concern to worry about.
+/// Like the button, it never asks while the watcher is too old
+/// (`update_blocked_reason`) and only for a strictly newer version.
 pub async fn run_scheduled_app_update_check(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
     loop {
@@ -321,10 +371,14 @@ pub async fn run_scheduled_app_update_check(state: AppState) {
             continue;
         }
 
+        if let Some(reason) = update_blocked_reason(&state).await {
+            tracing::warn!("auto-update skipped: {reason}");
+            continue;
+        }
         let Some(latest) = latest_release_tag(&state.config.server_release_repo).await else {
             continue;
         };
-        if latest != crate::APP_VERSION {
+        if is_newer(&latest, crate::APP_VERSION) {
             tracing::info!("auto-update: new version {latest} found, triggering update");
             let _ = tokio::fs::write(FLAG_FILE, "update").await;
         }
@@ -404,5 +458,18 @@ mod tests {
             newest_server_version(&[release("launcher-v1.0.0", false, false)]),
             None
         );
+    }
+
+    #[test]
+    fn only_a_strictly_newer_version_is_an_update() {
+        assert!(is_newer("v0.18.7", "v0.18.6"));
+        assert!(is_newer("v0.19.0", "v0.18.10"));
+        assert!(is_newer("v1.0.0", "v0.99.99"));
+        assert!(!is_newer("v0.18.6", "v0.18.6"));
+        assert!(!is_newer("v0.18.5", "v0.18.6"));
+        assert!(is_newer("v0.10.0", "v0.9.0"));
+        assert!(!is_newer("garbage", "v0.18.6"));
+        assert!(!is_newer("v0.19.0", "dev"));
+        assert!(!is_newer("v0.19.0.1", "v0.18.6"));
     }
 }
