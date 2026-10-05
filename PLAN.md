@@ -143,6 +143,16 @@ Store, and refuses phones with "unsafe" apps installed. So Vipps = a dedicated
 Google account on the phone, Play kept hidden from the kid but able to update.
 Device test: whether Vipps accepts a phone managed by our device-owner launcher
 (VPN, notification listener) or flags it as unsafe.
+**Decided 2026-10-05: support Play as a first-class app source** (alongside the
+server catalog). Needs: a dedicated Google account added after device-owner
+provisioning (runbook: before enrolling, or with "block account changes" off
+temporarily); Play Store and Play services never hidden or suspended (hiding
+= effectively uninstalled, no updates) but not in the kiosk/launcher, so the kid
+can't open Play (market:// links are blocked by lock task); a parent "install
+mode" on the phone (PIN) that lets Play run in kiosk for a limited time to
+install an app, after which the parent allowlists it in the PWA as today;
+Play auto-updates on. Device test: Play updates in the background while not
+launchable.
 
 ## Next features (agreed 2026-10-05)
 
