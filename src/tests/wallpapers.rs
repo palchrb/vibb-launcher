@@ -550,3 +550,42 @@ async fn backups_carry_wallpapers_and_a_restore_gets_them_back() {
         .unwrap();
     assert_eq!(left, 0, "a wallpaper whose image is lost is deleted");
 }
+
+#[tokio::test]
+async fn a_wallpaper_query_error_never_costs_the_phone_its_policy() {
+    let app = TestApp::new().await;
+    let (_, token) = app.enrolled_device("phone").await;
+    // Break the wallpaper query (the trigger names the table, so it goes first).
+    for sql in [
+        "DROP TRIGGER devices_get_builtin_wallpapers",
+        "DROP TABLE device_wallpapers",
+    ] {
+        sqlx::query(sql).execute(&app.db).await.unwrap();
+    }
+    let res = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let policy = res.json();
+    assert_eq!(policy["launcher_ui"]["wallpapers"], json!([]));
+    assert!(policy["time_policy"].is_object());
+    assert!(policy["call_policy"].is_object());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_deleted_during_a_backup_is_skipped() {
+    // A dangling link reads as NotFound - exactly what a prune between read_dir and read gives.
+    let dir = tempfile::tempdir().unwrap();
+    let gone = format!("{}.jpg", "d".repeat(64));
+    std::os::unix::fs::symlink(dir.path().join("nowhere"), dir.path().join(&gone)).unwrap();
+    let kept = "e".repeat(64);
+    std::fs::write(dir.path().join(format!("{kept}.jpg")), b"jpeg").unwrap();
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    crate::photos::WALLPAPERS
+        .add_to_zip(&mut writer, dir.path())
+        .expect("a vanished file doesn't fail the backup");
+    let mut archive = zip::ZipArchive::new(writer.finish().unwrap()).unwrap();
+    assert!(archive.by_name(&format!("wallpapers/{kept}.jpg")).is_ok());
+    assert_eq!(archive.len(), 1);
+}

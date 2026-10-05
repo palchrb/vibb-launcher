@@ -402,8 +402,15 @@ impl Store {
             let Some(hash) = name.strip_suffix(".jpg").filter(|h| is_valid_hash(h)) else {
                 continue;
             };
+            // Read before starting the entry: a file deleted (pruned) since `read_dir` is simply
+            // not in this backup, instead of failing the whole run (qa-08-code.md #8).
+            let bytes = match std::fs::read(entry.path()) {
+                Ok(bytes) => bytes,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err),
+            };
             writer.start_file(self.zip_entry(hash), options)?;
-            std::io::Write::write_all(writer, &std::fs::read(entry.path())?)?;
+            std::io::Write::write_all(writer, &bytes)?;
         }
         Ok(())
     }

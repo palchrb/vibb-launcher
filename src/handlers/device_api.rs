@@ -234,7 +234,18 @@ pub(crate) async fn build_policy(
         launcher_ui: LauncherUi {
             language: policy.launcher_language,
             home_columns: policy.home_columns,
-            wallpapers: crate::wallpapers::policy_wallpapers(&state.db, device_id).await?,
+            // Cosmetic: a failing wallpaper query must not cost the phone its time rules or
+            // calls - it gets no list (navy) this time, and the error is logged.
+            wallpapers: crate::wallpapers::policy_wallpapers(&state.db, device_id)
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::error!(
+                        device_id,
+                        %err,
+                        "couldn't load the wallpapers - policy sent without them"
+                    );
+                    Vec::new()
+                }),
         },
         time_policy,
         location_policy,
