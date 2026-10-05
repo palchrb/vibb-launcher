@@ -9,7 +9,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.CallLog
-import android.text.format.DateFormat
+import android.graphics.Bitmap
+import android.graphics.Rect
+import android.view.Gravity
 import android.view.GestureDetector
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -48,7 +50,14 @@ import com.kidslauncher.mdm.openAppsList
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.requestNotificationPermission
 import com.kidslauncher.mdm.setDefaultHomeScreen
+import com.kidslauncher.mdm.ui.home.GRID_COLUMN_GAP_DP
+import com.kidslauncher.mdm.ui.home.GRID_ROW_GAP_DP
 import com.kidslauncher.mdm.ui.home.GridApp
+import com.kidslauncher.mdm.ui.home.GridGapDecoration
+import com.kidslauncher.mdm.ui.home.GridMetrics
+import com.kidslauncher.mdm.ui.home.MOCKUP_CONTENT_DP
+import com.kidslauncher.mdm.ui.home.contactRow
+import com.kidslauncher.mdm.ui.home.gridMetrics
 import com.kidslauncher.mdm.ui.home.HomeGridAdapter
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.gridColumns
@@ -58,6 +67,7 @@ import com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -70,11 +80,12 @@ private const val BADGE_DEBOUNCE_MS = 300L
 
 /**
  * [HomeActivity] is the actual application launcher (design 05-ui-photos-i18n.md, mockup
- * Main.dc.html): clock and date, the parent's Home contacts as big round call buttons with
- * missed-call badges, then a grid with the phone book and every app the kid may use (the same
- * [AppFilter] as the drawer) with unread badges. Swiping up still opens the drawer (nothing more
- * than the grid, plus the PIN-gated Settings); swiping left opens Quick Controls. The lock screen,
- * kiosk and role checks in [onResume] run exactly as before the redesign.
+ * Main.dc.html, polish round 08-ui-polish.md): no clock (the status bar has it), the parent's Home
+ * contacts as big round call buttons with missed-call badges, then a grid with the phone book,
+ * every app the kid may use (the same [AppFilter] as the drawer) as coloured circles with unread
+ * badges, and the kid's Settings. Swiping up still opens the drawer (nothing more than the grid,
+ * plus the PIN-gated Settings); swiping left opens the kid's Settings. The lock screen, kiosk and
+ * role checks in [onResume] run exactly as before the redesign.
  */
 class HomeActivity : UIObjectActivity() {
 
@@ -94,9 +105,15 @@ class HomeActivity : UIObjectActivity() {
     }
     private val photoListener: () -> Unit = { renderCallParts() }
 
-    /** The grid's apps as last filtered off the main thread ([refreshApps]). */
-    private var gridApps: List<GridApp> = emptyList()
-    private var gridInfos: Map<String, AbstractDetailedAppInfo> = emptyMap()
+    /** What [refreshApps] last produced off the main thread. */
+    private class GridData(
+        val apps: List<GridApp>,
+        val infos: Map<String, AbstractDetailedAppInfo>,
+        val icons: Map<String, Bitmap>,
+        val metrics: GridMetrics,
+        val columns: Int,
+    )
+    private var gridData = GridData(emptyList(), emptyMap(), emptyMap(), gridMetrics(MOCKUP_CONTENT_DP, 3), 3)
     private var showPhoneBook = false
     private var appsJob: Job? = null
     private var missed: Map<String, MissedSummary> = emptyMap()
@@ -135,18 +152,17 @@ class HomeActivity : UIObjectActivity() {
         binding = ActivityHomeBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val locale = resources.configuration.locales[0]
-        binding.homeClock.format12Hour = "h:mm"
-        binding.homeClock.format24Hour = "H:mm"
-        DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM").let {
-            binding.homeDate.format12Hour = it
-            binding.homeDate.format24Hour = it
-        }
-
+        // No clock or date any more (design 08): the status bar shows the time.
         gridAdapter = HomeGridAdapter(this)
         gridLayout = GridLayoutManager(this, gridColumns(null))
         binding.homeGrid.layoutManager = gridLayout
         binding.homeGrid.adapter = gridAdapter
+        binding.homeGrid.addItemDecoration(
+            GridGapDecoration(
+                KidAvatars.dp(this, GRID_COLUMN_GAP_DP.toFloat()),
+                KidAvatars.dp(this, GRID_ROW_GAP_DP.toFloat()),
+            ) { gridLayout.spanCount }
+        )
         apps.observeForever(appsObserver)
 
         // Back does nothing on the home screen, same as stock Android launchers.
@@ -175,12 +191,13 @@ class HomeActivity : UIObjectActivity() {
                     openAppsList(this@HomeActivity)
                     return true
                 }
-                // The kid-facing replacement for Android's Quick Settings shade - see
-                // QuickControlsActivity's doc comment for why this screen exists at all instead
-                // of just using the real one.
+                // The kid's own settings (also the grid's last tile) - the replacement for
+                // Android's Quick Settings shade. A swipe that starts in the contacts row only
+                // counts once that row can't scroll further (same rule as the grid's swipe-up).
                 if (abs(diffX) > abs(diffY) &&
                     -diffX > SWIPE_LEFT_MIN_DISTANCE &&
-                    abs(velocityX) > SWIPE_LEFT_MIN_VELOCITY
+                    abs(velocityX) > SWIPE_LEFT_MIN_VELOCITY &&
+                    !(startedInContactsRow(e1) && binding.homeContactsScroll.canScrollHorizontally(1))
                 ) {
                     startActivity(Intent(this@HomeActivity, QuickControlsActivity::class.java))
                     return true
@@ -214,6 +231,16 @@ class HomeActivity : UIObjectActivity() {
             gestureDetector.onTouchEvent(event)
             false
         }
+    }
+
+    /** Whether a gesture's down event was inside the contacts row (screen coordinates: the
+     * detector gets events from the row, the grid and the activity, each in its own space). */
+    private fun startedInContactsRow(down: MotionEvent): Boolean {
+        val row = binding.homeContactsScroll
+        if (row.visibility != View.VISIBLE) return false
+        val rect = Rect()
+        if (!row.getGlobalVisibleRect(rect)) return false
+        return rect.contains(down.rawX.toInt(), down.rawY.toInt())
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -372,29 +399,47 @@ class HomeActivity : UIObjectActivity() {
         renderGrid()
     }
 
+    /** The grid's content width: the screen minus Home's 16 dp side padding. */
+    private fun contentWidthDp(): Float = (resources.configuration.screenWidthDp - 32).toFloat()
+
     /**
-     * [AppFilter] (a `isPackageSuspended` call per app) and the cached policy (columns) off the
-     * main thread; the newest run wins.
+     * [AppFilter] (a `isPackageSuspended` call per app), the cached policy (columns) and the
+     * rendered icons ([KidAvatars.renderAppIcon]: loading, palette, drawing) off the main thread;
+     * the newest run wins. `onBind` only reads the finished bitmaps (QA 08 #5).
      */
     private fun refreshApps() {
         val all = apps.value ?: return
         val context = applicationContext
+        val width = contentWidthDp()
         appsJob?.cancel()
         appsJob = CoroutineScope(Dispatchers.Main).launch {
-            val (filtered, columns) = withContext(Dispatchers.Default) {
+            val result = withContext(Dispatchers.Default) {
                 val visible = AppFilter(context).invoke(all)
                     .filter { (it.getRawInfo() as? AppInfo)?.packageName != packageName }
                 val infos = visible.associateBy { it.getRawInfo().serialize() }
                 val list = infos.map { (key, info) ->
                     GridApp(key, info.getCustomLabel(context), (info.getRawInfo() as? AppInfo)?.packageName)
                 }
-                (list to infos) to
-                    gridColumns((cachedPolicy() as? CachedPolicy.Ok)?.policy?.launcherUi?.homeColumns)
+                val columns = gridColumns((cachedPolicy() as? CachedPolicy.Ok)?.policy?.launcherUi?.homeColumns)
+                val metrics = gridMetrics(width, columns)
+                val sizePx = KidAvatars.dp(context, metrics.iconDp.toFloat())
+                val icons = HashMap<String, Bitmap>()
+                for ((key, info) in infos) {
+                    ensureActive()
+                    try {
+                        icons[key] = KidAvatars.renderAppIcon(context, key, { info.getIcon(context) }, sizePx)
+                    } catch (e: Exception) {
+                        android.util.Log.w("HomeActivity", "Couldn't draw the icon of $key", e)
+                    }
+                }
+                GridData(list, infos, icons, metrics, columns)
             }
             if (isDestroyed) return@launch
-            gridApps = filtered.first
-            gridInfos = filtered.second
-            if (gridLayout.spanCount != columns) gridLayout.spanCount = columns
+            gridData = result
+            if (gridLayout.spanCount != result.columns) {
+                gridLayout.spanCount = result.columns
+                binding.homeGrid.invalidateItemDecorations()
+            }
             renderGrid()
         }
     }
@@ -402,26 +447,40 @@ class HomeActivity : UIObjectActivity() {
     /** The grid from the last filtered apps and the current badge counts (cheap). */
     private fun renderGrid() {
         if (!::gridAdapter.isInitialized) return
-        gridAdapter.submit(homeGrid(gridApps, showPhoneBook, BadgeStore.counts), gridInfos)
+        val data = gridData
+        gridAdapter.submit(
+            homeGrid(data.apps, showPhoneBook, BadgeStore.counts),
+            data.infos,
+            data.icons,
+            data.metrics,
+            getColor(R.color.kid_ink),
+        )
     }
 
     private fun renderContacts(contacts: List<RuleContact>) {
         val row = binding.homeContacts
         row.removeAllViews()
         binding.homeContactsScroll.visibility = if (contacts.isEmpty()) View.GONE else View.VISIBLE
+        val layout = contactRow(contacts.size, contentWidthDp())
+        // Centred while everything fits, from the left (with the peek at the edge) when it scrolls.
+        row.gravity = if (layout.scrolls) Gravity.START else Gravity.CENTER_HORIZONTAL
         val inflater = LayoutInflater.from(this)
         for (contact in contacts) {
             val item = inflater.inflate(R.layout.item_kid_contact, row, false)
             val emergency = CallSystem.isEmergencyOutgoing(this, contact.number)
+            KidAvatars.sizeContact(item, layout.avatarDp)
             KidAvatars.bindContact(
                 item.findViewById<ImageView>(R.id.contact_photo),
                 item.findViewById<TextView>(R.id.contact_initial),
-                contact, emergency, initialSp = 30f,
+                contact, emergency, initialSp = 30f * layout.avatarDp / 76f,
             )
             item.findViewById<View>(R.id.contact_call_badge).visibility = View.VISIBLE
             val missedCount = missed[contact.number]?.count ?: 0
             KidAvatars.bindBadge(item.findViewById(R.id.contact_badge), missedCount)
-            item.findViewById<TextView>(R.id.contact_name).text = contact.name
+            item.findViewById<TextView>(R.id.contact_name).apply {
+                text = contact.name
+                maxWidth = KidAvatars.dp(this@HomeActivity, layout.itemDp.toFloat())
+            }
             item.contentDescription = if (missedCount > 0) {
                 resources.getQuantityString(R.plurals.call_contact_missed, missedCount, contact.name, missedCount)
             } else {
@@ -437,12 +496,10 @@ class HomeActivity : UIObjectActivity() {
                 ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
                 true
             }
+            // Each item is one avatar plus one gap wide, so avatars are a gap apart.
             item.layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply {
-                marginStart = KidAvatars.dp(this@HomeActivity, 6f)
-                marginEnd = KidAvatars.dp(this@HomeActivity, 6f)
-            }
+                KidAvatars.dp(this, layout.itemDp.toFloat()), LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
             row.addView(item)
         }
     }

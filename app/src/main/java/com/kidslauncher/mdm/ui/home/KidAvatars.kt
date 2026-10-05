@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PorterDuff
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -16,6 +17,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
+import androidx.palette.graphics.Palette
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.calls.ContactPhotos
 import com.kidslauncher.mdm.calls.MissedSummary
@@ -52,6 +54,29 @@ object KidAvatars {
         }
     }
 
+    /**
+     * Sizes an `item_kid_contact` for Home ([contactRow]): the avatar, a frame 12 dp wider and
+     * 6 dp taller for the badges, and the green call badge scaled with the avatar (28 dp at 76).
+     */
+    fun sizeContact(item: View, avatarDp: Int) {
+        val context = item.context
+        item.findViewById<View>(R.id.contact_frame).layoutParams.apply {
+            width = dp(context, avatarDp + 12f)
+            height = dp(context, avatarDp + 6f)
+        }
+        item.findViewById<View>(R.id.contact_avatar).layoutParams.apply {
+            width = dp(context, avatarDp.toFloat())
+            height = dp(context, avatarDp.toFloat())
+        }
+        val scale = avatarDp / 76f
+        item.findViewById<View>(R.id.contact_call_badge).apply {
+            layoutParams.width = dp(context, 28f * scale)
+            layoutParams.height = dp(context, 28f * scale)
+            val pad = dp(context, 7f * scale)
+            setPadding(pad, pad, pad, pad)
+        }
+    }
+
     /** The coloured ring around the sheet's photo, in the contact's colour. */
     fun ring(context: Context, contact: RuleContact, isEmergency: Boolean): Drawable =
         GradientDrawable().apply {
@@ -74,31 +99,92 @@ object KidAvatars {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
 
+    /** Cache key of a rendered app icon: the app, the size and the density (QA 08 #5). */
+    fun iconKey(context: Context, key: String, sizePx: Int): String =
+        "$key|$sizePx|${context.resources.displayMetrics.densityDpi}"
+
+    /** An already-rendered icon, or null. Never renders: safe on the main thread. */
+    fun cachedAppIcon(context: Context, key: String, sizePx: Int): Bitmap? =
+        iconCache.get(iconKey(context, key, sizePx))
+
     /**
-     * An app icon as a full circle: an adaptive icon's layers drawn edge to edge (the system's
-     * own mask is replaced by a circle), anything else centred on a light circle.
+     * An app icon as a coloured circle (design 08 §1) - **off the main thread only** (loading,
+     * drawing and the palette pass are too slow for `onBind`; [HomeActivity] calls this from its
+     * `refreshApps` pass):
+     * 1. an adaptive icon with a monochrome layer: that glyph in white on [tileColor] of the
+     *    icon's own colour;
+     * 2. an adaptive icon without one: its layers edge to edge in the circle;
+     * 3. a legacy bitmap icon: inset 1/8 on [tileColor] of its colour.
+     * The result is cached by app, size and density.
      */
-    fun roundAppIcon(context: Context, key: String, icon: () -> Drawable, sizePx: Int): Drawable {
-        val bitmap = iconCache.get(key) ?: run {
-            val drawable = icon()
-            val bmp = createBitmap(sizePx, sizePx)
-            val canvas = Canvas(bmp)
-            if (drawable is AdaptiveIconDrawable) {
+    fun renderAppIcon(context: Context, key: String, icon: () -> Drawable, sizePx: Int): Bitmap {
+        val cacheKey = iconKey(context, key, sizePx)
+        iconCache.get(cacheKey)?.let { return it }
+        val drawable = icon()
+        val bmp = createBitmap(sizePx, sizePx)
+        val canvas = Canvas(bmp)
+        val circle = Paint(Paint.ANTI_ALIAS_FLAG)
+        val monochrome = (drawable as? AdaptiveIconDrawable)?.monochrome
+        when {
+            drawable is AdaptiveIconDrawable && monochrome != null -> {
+                circle.color = tileColor(seedColour(drawable))
+                canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, circle)
+                // The layer is shared with every other user of this icon: mutate before tinting.
+                val glyph = monochrome.mutate()
+                glyph.setTintMode(PorterDuff.Mode.SRC_IN)
+                glyph.setTint(Color.WHITE)
+                val extra = sizePx / 4
+                glyph.setBounds(-extra, -extra, sizePx + extra, sizePx + extra)
+                glyph.draw(canvas)
+            }
+            drawable is AdaptiveIconDrawable -> {
                 // Layers are 108 dp with a 72 dp safe zone: draw them 1.5× and centred.
                 val extra = sizePx / 4
                 listOfNotNull(drawable.background, drawable.foreground).forEach {
                     it.setBounds(-extra, -extra, sizePx + extra, sizePx + extra)
                     it.draw(canvas)
                 }
-            } else {
-                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.kid_icon_fallback) }
-                canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, paint)
+            }
+            else -> {
+                circle.color = tileColor(seedColour(drawable))
+                canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, circle)
                 val inset = sizePx / 8
                 drawable.setBounds(inset, inset, sizePx - inset, sizePx - inset)
                 drawable.draw(canvas)
             }
-            bmp.also { iconCache.put(key, it) }
         }
-        return RoundedBitmapDrawableFactory.create(context.resources, bitmap).apply { isCircular = true }
+        iconCache.put(cacheKey, bmp)
+        return bmp
     }
+
+    /** The icon's own colour: vibrant swatch, else dominant, else grey (a 48 px render). */
+    private fun seedColour(drawable: Drawable): Int = try {
+        val small = createBitmap(SEED_PX, SEED_PX)
+        val canvas = Canvas(small)
+        val bounds = drawable.copyBounds()
+        if (drawable is AdaptiveIconDrawable) {
+            val extra = SEED_PX / 4
+            listOfNotNull(drawable.background, drawable.foreground).forEach {
+                val b = it.copyBounds()
+                it.setBounds(-extra, -extra, SEED_PX + extra, SEED_PX + extra)
+                it.draw(canvas)
+                it.bounds = b
+            }
+        } else {
+            drawable.setBounds(0, 0, SEED_PX, SEED_PX)
+            drawable.draw(canvas)
+            drawable.bounds = bounds
+        }
+        val palette = Palette.from(small).generate()
+        small.recycle()
+        palette.vibrantSwatch?.rgb ?: palette.dominantSwatch?.rgb ?: TILE_GREY
+    } catch (e: Exception) {
+        TILE_GREY
+    }
+
+    private const val SEED_PX = 48
+
+    /** The rendered icon as a circle for an ImageView. */
+    fun circular(context: Context, bitmap: Bitmap): Drawable =
+        RoundedBitmapDrawableFactory.create(context.resources, bitmap).apply { isCircular = true }
 }

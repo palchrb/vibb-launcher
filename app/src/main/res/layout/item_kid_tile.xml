@@ -1,17 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One round tile of the home grid (an app, or the phone book): 60 dp icon, unread badge,
-     13 sp label. -->
+<!-- One round tile of the home grid (an app, the phone book or Settings). Sizes come from
+     gridMetrics (design 08: 60 dp icon and 13 sp label at the mockup's 288 dp content width);
+     the frame is 4 dp taller than the icon so the unread badge can sit above it. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="?android:attr/selectableItemBackground"
     android:gravity="center_horizontal"
-    android:orientation="vertical"
-    android:paddingTop="7dp"
-    android:paddingBottom="7dp">
+    android:minHeight="48dp"
+    android:orientation="vertical">
 
     <FrameLayout
-        android:layout_width="72dp"
+        android:id="@+id/tile_frame"
+        android:layout_width="84dp"
         android:layout_height="64dp">
 
         <ImageView
@@ -37,10 +38,10 @@
         android:ellipsize="end"
         android:fontFamily="@font/nunito_bold"
         android:gravity="center"
+        android:includeFontPadding="false"
         android:maxLines="1"
         android:paddingStart="2dp"
         android:paddingEnd="2dp"
         android:textColor="@color/kid_ink"
-        android:textSize="13sp"
-        android:textStyle="bold" />
+        android:textSize="13sp" />
 </LinearLayout>

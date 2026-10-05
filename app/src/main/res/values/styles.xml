@@ -153,7 +153,7 @@
         <item name="android:includeFontPadding">false</item>
         <item name="android:paddingStart">6dp</item>
         <item name="android:paddingEnd">6dp</item>
-        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textColor">@android:color/white</item>
         <item name="android:textSize">14sp</item>
         <item name="android:visibility">gone</item>
     </style>
