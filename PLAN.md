@@ -219,6 +219,11 @@ launchable.
   per-user storage encryption credential (FBE device key only); remote "lock"
   uses our lock; the before-first-unlock state disappears (simpler calls).
   Design together with the in-call screens in the next UI round.
+- **Rest mode during bedtime/school** (idea, 2026-10-05; after battery is measured):
+  no or rarer location fixes, backstop sync every ~2 h (FCM still delivers),
+  optional Wi-Fi/Bluetooth off at night (mobile stays for calls/FCM), skip
+  non-essential jobs; maybe pause tsnet/DNS VPN. Not possible: airplane mode,
+  battery saver, mobile data off (device owner can't).
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with

@@ -222,3 +222,19 @@ lock at call end; `am crash` in an app with a bedtime rule → lock then bedtime
 `DISALLOW_SAFE_BOOT` (record what's reachable); runbook PIN removal → lock active within 5 s without a sync; first frame
 after screen-on is the lock (no content flash); PBKDF2 time on the phone (~0.5 s?); `setKeyguardDisabled` true on a
 fresh phone and no `FallbackHome` hang at boot.
+
+### Fix round after qa-10-code.md (2026-10-05)
+
+| Repo | Commit | What |
+|---|---|---|
+| L | `4abb43f` | #1 Back on the call screen does nothing while a call exists; the lock's resume during our call brings the call screen back (`LockEvent.LockResumed` → `showCall`). #2 any in-call SCREEN_OFF locks (proximity blanks send none) and a call ending with the screen off locks (`CallsEnded(interactive)`); the proximity sensor reading is gone. #3 LOCKED during our call starts the lock (the call screen then sits over it inside the lock task); a system-dialer call isn't covered, the re-front loop waits for its end. #4 alarm exemption only for the **system** clock app's `setAlarmClock` (creator package), 3 min, ended when the lock is back in front. #6 crash guard counts only crashes recorded by the uncaught-exception handler while the lock exists (no recreations, no kills; Java crashes only - a native crash isn't counted); `configChanges` adds mcc/mnc/locale/fontScale/density/layoutDirection. #7 the lock is started before the chrome change; helpers and the clock package resolved at init on a background thread |
+| L | `7aaf962` | #5 the system dialer is a kiosk-off lock helper only while our dialer role isn't held |
+| S | `67639ba` | #8 card text "4 wrong PINs are free; after the 5th 30 s"; #9 cross-check/hash in `spawn_blocking`, kid-PIN UPDATE `AND override_pin_hash IS NOT NULL` (0 rows → needs_override), override removal refused in SQL while a kid PIN is set |
+
+What stays reachable over the lock (#5): with our dialer role held, only our call screen (answer/decline, speaker/mute/hang
+up) and, for emergency calls, the system dialer's in-call UI. **With calls unmanaged** (our role not held) every call
+uses the system in-call UI, and its "Add call"/contacts entries very likely open the dialer's full UI (call log,
+contacts, keypad) while the call lasts - the lock re-fronts once the call ends [device check: kiosk off, calls
+unmanaged, answer over the lock → Add call]. Recommendation: manage calls on locked phones.
+Remaining device checks from this round: SCREEN_OFF during a proximity blank (logcat), Back/Home on the call screen over
+the lock, the lock flash before the call screen at screen-on during a call, alarm exemption with the default clock app.
