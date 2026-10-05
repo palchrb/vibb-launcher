@@ -34,7 +34,7 @@ object KidAvatars {
     fun bindContact(photo: ImageView, initial: TextView, contact: RuleContact, isEmergency: Boolean, initialSp: Float) {
         val context = photo.context
         val style = avatarStyle(contact, isEmergency)
-        val bitmap = if (isEmergency) null else ContactPhotos.bitmap(context, contact.photo)
+        val bitmap = if (isEmergency) null else ContactPhotos.cached(context, contact.photo)
         if (bitmap != null) {
             photo.backgroundTintList = null
             photo.setImageDrawable(

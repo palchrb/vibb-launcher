@@ -36,13 +36,20 @@ object ContactSheet {
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.BOTTOM)
         }
-        dialog.setOnDismissListener { onDone() }
-
-        KidAvatars.bindContact(
-            view.findViewById<ImageView>(R.id.sheet_photo),
-            view.findViewById<TextView>(R.id.sheet_initial),
-            contact, emergency, initialSp = 52f,
-        )
+        // The photo may still be decoding in the background: show it as soon as it's ready.
+        val bindPhoto: () -> Unit = {
+            KidAvatars.bindContact(
+                view.findViewById<ImageView>(R.id.sheet_photo),
+                view.findViewById<TextView>(R.id.sheet_initial),
+                contact, emergency, initialSp = 52f,
+            )
+        }
+        bindPhoto()
+        ContactPhotos.addListener(bindPhoto)
+        dialog.setOnDismissListener {
+            ContactPhotos.removeListener(bindPhoto)
+            onDone()
+        }
         view.findViewById<ImageView>(R.id.sheet_ring).setImageDrawable(KidAvatars.ring(activity, contact, emergency))
         KidAvatars.bindBadge(view.findViewById(R.id.sheet_badge), missed?.count ?: 0)
         view.findViewById<TextView>(R.id.sheet_name).text = contact.name
