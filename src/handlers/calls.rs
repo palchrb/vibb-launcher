@@ -592,19 +592,24 @@ async fn contact_on_device(
 }
 
 /// Sets (or, with `None`, clears) a contact's photo, prunes files nobody uses any more and nudges
-/// every device that has the contact.
-async fn set_photo(state: &AppState, id: i64, contact_id: i64, hash: Option<&str>) -> Response {
-    let result = async {
-        let mut tx = state.db.begin().await?;
-        sqlx::query("UPDATE contacts SET photo_hash = ? WHERE id = ?")
-            .bind(hash)
-            .bind(contact_id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        devices_with_contact(state, contact_id).await
-    }
-    .await;
+/// every device that has the contact. The caller holds `photos::lock_files()` across its store
+/// and this commit ([`photos::prune`] takes it again afterwards).
+async fn commit_photo(
+    state: &AppState,
+    contact_id: i64,
+    hash: Option<&str>,
+) -> Result<Vec<i64>, sqlx::Error> {
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE contacts SET photo_hash = ? WHERE id = ?")
+        .bind(hash)
+        .bind(contact_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    devices_with_contact(state, contact_id).await
+}
+
+async fn photo_saved(state: &AppState, id: i64, result: Result<Vec<i64>, sqlx::Error>) -> Response {
     match result {
         Ok(devices) => {
             photos::prune(state).await;
@@ -654,23 +659,23 @@ pub async fn upload_photo(
     let Some(bytes) = upload else {
         return photo_error(photos::PhotoError::Empty.message()).await;
     };
-    let processed = match tokio::task::spawn_blocking(move || photos::process(&bytes)).await {
-        Ok(Ok(processed)) => processed,
-        Ok(Err(err)) => return photo_error(err.message()).await,
-        Err(err) => {
-            tracing::error!(%err, "photo processing task failed");
-            return photo_error(photos::PhotoError::Undecodable.message()).await;
-        }
+    let processed = match photos::process_limited(bytes).await {
+        Ok(processed) => processed,
+        Err(err) => return photo_error(err.message()).await,
     };
-    if let Err(err) = photos::store(&state.photo_dir, &processed).await {
-        tracing::error!(%err, "couldn't store a contact photo");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't save the photo - nothing was changed. Check the server log.",
-        )
-            .into_response();
-    }
-    set_photo(&state, id, contact_id, Some(&processed.hash)).await
+    let result = {
+        let _files = photos::lock_files().await;
+        if let Err(err) = photos::store(&state.photo_dir, &processed).await {
+            tracing::error!(%err, "couldn't store a contact photo");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save the photo - nothing was changed. Check the server log.",
+            )
+                .into_response();
+        }
+        commit_photo(&state, contact_id, Some(&processed.hash)).await
+    };
+    photo_saved(&state, id, result).await
 }
 
 /// Removes a contact's photo (for every device that has the contact).
@@ -679,7 +684,13 @@ pub async fn remove_photo(
     Path((id, contact_id)): Path<(i64, i64)>,
 ) -> Response {
     match contact_on_device(&state, id, contact_id).await {
-        Ok(true) => set_photo(&state, id, contact_id, None).await,
+        Ok(true) => {
+            let result = {
+                let _files = photos::lock_files().await;
+                commit_photo(&state, contact_id, None).await
+            };
+            photo_saved(&state, id, result).await
+        }
         Ok(false) => (StatusCode::NOT_FOUND, "This contact isn't on this device").into_response(),
         Err(err) => db_error(id, err),
     }

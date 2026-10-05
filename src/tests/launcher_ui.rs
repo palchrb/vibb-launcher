@@ -413,3 +413,149 @@ async fn missing_notification_access_is_a_warning() {
         assert_eq!(page.contains(warning), shown);
     }
 }
+
+#[tokio::test]
+async fn admin_photo_route_needs_a_session() {
+    let app = TestApp::new().await;
+    let res = app
+        .request(
+            Method::GET,
+            &format!("/contact-photos/{}", "a".repeat(64)),
+            None,
+            None,
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+}
+
+/// Two parents at once: uploads and removes on different contacts, each followed by a prune,
+/// never delete a photo another request just stored (QA step 5 #3).
+#[tokio::test]
+async fn concurrent_uploads_and_removes_keep_referenced_photos() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    let mut contacts = Vec::new();
+    for i in 0..6 {
+        contacts.push(contact(&app, id, &format!("C{i}"), &format!("+479000000{i}")).await);
+    }
+    let jobs = contacts.iter().enumerate().map(|(i, &c)| {
+        let app = &app;
+        let cookie = cookie.clone();
+        async move {
+            let img =
+                DynamicImage::ImageRgb8(RgbImage::from_pixel(20, 20, Rgb([i as u8 * 40, 0, 0])));
+            upload(app, &cookie, id, c, &encode(&img, ImageFormat::Png)).await;
+            if i % 2 == 0 {
+                app.request_form(
+                    Method::POST,
+                    &format!("/devices/{id}/contacts/{c}/photo/remove"),
+                    Some(&cookie),
+                    &[],
+                )
+                .await;
+            }
+        }
+    });
+    futures_join_all(jobs).await;
+
+    let mut expected = Vec::new();
+    for (i, &c) in contacts.iter().enumerate() {
+        let hash = photo_hash(&app, c).await;
+        assert_eq!(hash.is_some(), i % 2 == 1);
+        if let Some(hash) = hash {
+            expected.push(format!("{hash}.jpg"));
+        }
+    }
+    expected.sort();
+    assert_eq!(stored_files(&app), expected);
+}
+
+async fn futures_join_all<F: std::future::Future<Output = ()>>(jobs: impl Iterator<Item = F>) {
+    let mut set = Vec::new();
+    for job in jobs {
+        set.push(Box::pin(job));
+    }
+    // Poll them together on this task (TestApp isn't 'static, so no spawn).
+    std::future::poll_fn(|cx| {
+        set.retain_mut(|job| job.as_mut().poll(cx).is_pending());
+        if set.is_empty() {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn backups_carry_photos_and_a_restore_gets_them_back() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let mamma = contact(&app, id, "Mamma", "+4790000001").await;
+    let pappa = contact(&app, id, "Pappa", "+4790000002").await;
+    upload(
+        &app,
+        &cookie,
+        id,
+        mamma,
+        &encode(&half_and_half(), ImageFormat::Png),
+    )
+    .await;
+    let hash = photo_hash(&app, mamma).await.unwrap();
+
+    // A backup zip as the Backups page builds it.
+    let backups = tempfile::tempdir().unwrap();
+    let db = backups.path().join("db");
+    std::fs::write(&db, b"not really a database").unwrap();
+    let zip_path = backups.path().join("backup-20261005-120000.zip");
+    crate::handlers::backups::build_backup_zip(
+        db.to_str().unwrap(),
+        zip_path.to_str().unwrap(),
+        &app.state.photo_dir,
+    )
+    .unwrap();
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
+    assert!(archive.by_name("kidphone.db").is_ok());
+    assert!(archive.by_name(&crate::photos::zip_entry(&hash)).is_ok());
+    drop(archive);
+
+    // "Restore": the database is back, the photo files are gone; Pappa names a photo that no
+    // backup has (and a corrupt copy of it in a newer zip doesn't count).
+    std::fs::remove_dir_all(&*app.state.photo_dir).unwrap();
+    let ghost = "b".repeat(64);
+    sqlx::query("UPDATE contacts SET photo_hash = ? WHERE id = ?")
+        .bind(&ghost)
+        .bind(pappa)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    {
+        let file =
+            std::fs::File::create(backups.path().join("backup-20261006-120000.zip")).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(
+                crate::photos::zip_entry(&ghost),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        std::io::Write::write_all(&mut writer, b"not the right bytes").unwrap();
+        writer.finish().unwrap();
+    }
+
+    crate::photos::recover_missing(&app.state, backups.path()).await;
+    assert_eq!(stored_files(&app), [format!("{hash}.jpg")]);
+    assert_eq!(photo_hash(&app, mamma).await, Some(hash.clone()));
+    assert_eq!(photo_hash(&app, pappa).await, None);
+    let res = app
+        .request(
+            Method::GET,
+            &format!("/api/devices/contact-photos/{hash}"),
+            Some(&token),
+            None,
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+}

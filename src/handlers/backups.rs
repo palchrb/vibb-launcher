@@ -19,7 +19,7 @@ use std::io::Write;
 use crate::AppState;
 use crate::security::{self, CurrentAdmin};
 
-const BACKUP_DIR: &str = "data/backups";
+pub(crate) const BACKUP_DIR: &str = "data/backups";
 const SCHEDULE_FILE: &str = "data/backup_schedule.conf";
 const LAST_RUN_FILE: &str = "data/backup_schedule_last_run";
 const EXTERNAL_MOUNT: &str = "/mnt/kid-phone-server-backup";
@@ -211,7 +211,14 @@ pub async fn prune_old_backups(retention_count: usize) {
     }
 }
 
-fn build_backup_zip(db_snapshot_path: &str, zip_path: &str) -> std::io::Result<()> {
+/// The database snapshot plus every contact photo (`contact_photos/<hash>.jpg`). A restore
+/// swaps in only the database (deploy/install.sh); the server puts back missing photos from
+/// the backups at startup (`photos::recover_missing`).
+pub(crate) fn build_backup_zip(
+    db_snapshot_path: &str,
+    zip_path: &str,
+    photo_dir: &std::path::Path,
+) -> std::io::Result<()> {
     let file = std::fs::File::create(zip_path)?;
     let mut writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
@@ -219,6 +226,7 @@ fn build_backup_zip(db_snapshot_path: &str, zip_path: &str) -> std::io::Result<(
 
     writer.start_file("kidphone.db", options)?;
     writer.write_all(&std::fs::read(db_snapshot_path)?)?;
+    crate::photos::add_to_zip(&mut writer, photo_dir)?;
 
     writer.finish()?;
     Ok(())
@@ -252,8 +260,9 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
 
     let snapshot_path_for_zip = snapshot_path.clone();
     let zip_path_for_zip = zip_path.clone();
+    let photo_dir = state.photo_dir.as_path().to_path_buf();
     let zip_result = tokio::task::spawn_blocking(move || {
-        build_backup_zip(&snapshot_path_for_zip, &zip_path_for_zip)
+        build_backup_zip(&snapshot_path_for_zip, &zip_path_for_zip, &photo_dir)
     })
     .await;
 

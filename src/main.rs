@@ -115,6 +115,9 @@ async fn main() {
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
+    // After a restore the database may name photos that aren't on disk: take them from the
+    // backups, or drop the reference (design 05).
+    photos::recover_missing(&state, std::path::Path::new(handlers::backups::BACKUP_DIR)).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
     tokio::task::spawn(handlers::backups::run_live_mirror(state.clone()));
