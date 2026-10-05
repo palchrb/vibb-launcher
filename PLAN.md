@@ -162,9 +162,12 @@ server catalog); add later only if Play-only apps are needed.
   (e.g. "Skole" Mon-Fri 08:15-14:00, "Leggetid", custom blocks), each showing a
   full-screen "time + rule name" screen with nothing else usable; plus a daily
   screen-time budget (minutes of use per day, per weekday) after which the phone
-  locks the same way. Emergency calls always work. Open: which calls (if any) get
-  through during school mode and when the budget is used up, and whether some
-  apps (calendar, Vibb at bedtime) can be exempt per rule. Implement after the
+  locks the same way. Emergency calls always work. Decided: when the screen-time
+  budget is used up, calls (phone book) and the messaging apps chosen for contacts
+  stay usable, everything else locks; during school mode nothing works except
+  emergency calls (no calls or messages in or out). Screen time = time with the
+  screen on and an app in use; calls don't count. Open: per-rule app exemptions
+  (calendar, Vibb at bedtime). Implement after the
   UI/photos/i18n step (same launcher files).
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
