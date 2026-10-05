@@ -149,6 +149,14 @@ server catalog); add later only if Play-only apps are needed.
   server stores it and sends a hash/URL with the call policy; the launcher
   caches it and shows it in the phone book, on Home and in the contact card
   (initial letter when there is none).
+- **Calendar**: an open-source calendar app in the server catalog (e.g. Fossify
+  Calendar) plus ICSx5/DAVx5 to subscribe to a family calendar by ICS/CalDAV URL
+  without a Google account. Later maybe "next event" on Home.
+- **Notification shade**: pulling down notifications like normal Android. Already
+  on in kiosk upstream (lock-task NOTIFICATIONS feature forced on). Check what
+  Quick Settings exposes there (airplane mode, Wi-Fi, Bluetooth, the Tailscale
+  tile) and add DISALLOW_AIRPLANE_MODE / tile restrictions where needed
+  [needs device test].
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with
