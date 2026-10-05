@@ -61,11 +61,6 @@ ContactCard = sheet with photo. S = kid-phone-server, L = kids-launcher-mdm, bra
 - **Airplane mode**: per-device switch `disallow_airplane_mode`, **default off** (the family travels) →
   `UserManager.DISALLOW_AIRPLANE_MODE` while managed; like the other hardening switches not lifted by override/pause.
 
-## Data flow
-
-Photo upload → S re-encodes, stores, sets `photo_hash`, nudges → L accepts policy, `ContactPhotos.sync` downloads by
-hash → Home/phone book. Call log + seen marks → `missedCallSummaries`. Notifications → listener → `BadgeStore` → grid.
-
 ## Files
 
 - S: `migrations/0024_launcher_ui_photos.sql` (`contacts.photo_hash`, `device_policy.launcher_language`,
@@ -100,7 +95,11 @@ offline (androidTest deps not cached), so `TranslationsTest` checks keys/placeho
 build-checked only - the device checklist below is the real test.
 Choices: home-contact tap calls, long-press opens the sheet; drawer kept; old minimalist list removed; every string
 translated (not only handy's); photos pruned by scanning the directory; `InCallActivity` shows no photo (direct boot).
-Open: backups don't include photos; whether `allow_listener` survives reboots/updates on the Jelly Star; icon look.
+Fix round after `qa-step5-code.md` (#1-#7): S `5b83dc3` (40 MP/128 MiB cap, crop+shrink before rotate, one upload at
+a time, one file lock for store/commit/prune, photos in backups + startup recovery or NULL); L `32b1d24` (bounded
+background decode, 404s remembered), `3f36a66` (language only from Home, not in a call; filtering off main, debounced
+badges), `496081a` (TranslationsTest per quantity). Tests: server 80, launcher 194. Open: `allow_listener` after reboots
+on the Jelly Star; icon look; device check that a language change mid-call waits until Home.
 
 ## Device checklist (Jelly Star, release; plus 02/04 checklists)
 
