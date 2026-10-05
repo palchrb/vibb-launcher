@@ -1,9 +1,14 @@
 package com.kidslauncher.mdm.ui
 
+import android.Manifest
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.os.Handler
 import android.os.Looper
 import android.view.View
@@ -13,6 +18,10 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.CallSystem
+import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.server.systemDialerPackage
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.databinding.ActivityLockBinding
@@ -68,6 +77,39 @@ class LockActivity : UIObjectActivity() {
         // rules are unknown. With calls unmanaged only the keyguard's emergency button remains.
         binding.lockPhoneBookButton.setOnClickListener {
             startActivity(PhoneBookActivity.intent(this))
+        }
+        // Every other way to the system dialer is closed during the lock, and a phone without a
+        // secure lock screen has no keyguard Emergency button - so this one is always shown,
+        // whatever the call state (QA step 4 #1).
+        binding.lockEmergencyButton.setOnClickListener { confirmEmergencyCall() }
+    }
+
+    private fun confirmEmergencyCall() {
+        AlertDialog.Builder(this, R.style.AlertDialogCustom)
+            .setTitle(getString(R.string.calls_confirm_title, EMERGENCY_NUMBER))
+            .setPositiveButton(R.string.calls_call) { _, _ -> callEmergency() }
+            .setNegativeButton(R.string.calls_cancel, null)
+            .show()
+    }
+
+    /**
+     * 112 through Telecom (emergency calls are exempt from every call restriction). CALL_PHONE is
+     * self-granted first - it's only held while calls are managed otherwise. If Telecom still
+     * refuses, the system dialer (never suspended; allowed in kiosk by its emergency exemption)
+     * opens with 112 typed in.
+     */
+    private fun callEmergency() {
+        val dpm = getSystemService(DevicePolicyManager::class.java)
+        if (dpm?.isDeviceOwnerApp(packageName) == true) {
+            QuickControls.selfGrantPermission(this, dpm, ComponentName(this, MdmDeviceAdminReceiver::class.java), Manifest.permission.CALL_PHONE)
+        }
+        if (CallSystem.placeCall(this, EMERGENCY_NUMBER)) return
+        try {
+            val dial = Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", EMERGENCY_NUMBER, null))
+            systemDialerPackage(this)?.let { dial.setPackage(it) }
+            startActivity(dial.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            Log.w("LockActivity", "Couldn't open the dialer for an emergency call", e)
         }
     }
 
@@ -141,6 +183,9 @@ class LockActivity : UIObjectActivity() {
     }
 
     companion object {
+        /** An emergency number on every GSM phone, also the ones without a SIM. */
+        private const val EMERGENCY_NUMBER = "112"
+
         fun start(context: Context) {
             val intent = Intent(context, LockActivity::class.java)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
