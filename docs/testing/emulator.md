@@ -65,14 +65,32 @@ Add contacts with matching numbers in the PWA calls page (+47 9123 4567).
 5. Add a school rule for "now" in the PWA → lock screen with the rule name; calls blocked.
 6. Badges: post a notification from an allowed app → count on its icon.
 
-Then the full checklists in `docs/design/01`–`06`.
+Then the full checklists in `docs/design/01`–`07`.
+
+## 6b. Step 7: FCM and Play (optional)
+
+The default debug build has no Firebase config: the phone uses the SSE stream (device page
+"Push and Play": `no_config`) - everything above works as before. For FCM/Play tests:
+
+- Use an AVD with a **Google Play** system image (Play Store + Play services).
+- Build with the debug Firebase app's values (07 doc, "FCM setup"):
+  `./gradlew assembleDebug -Phandy.fcm.projectId=... -Phandy.fcm.debugApplicationId=... -Phandy.fcm.apiKey=... -Phandy.fcm.senderId=...`
+  and start the server with `FCM_SERVICE_ACCOUNT_FILE=<key outside data/, chmod 600>`.
+- Provisioning order changes when a Google account is wanted: wipe -> `dpm set-device-owner`
+  (no account may exist at that moment) -> add the Google account and the Play settings in the
+  normal Settings/Play UI -> only then enroll (the first policy blocks account changes and
+  starts the kiosk).
+- Quick checks: `adb shell dumpsys alarm | grep -i backstop`;
+  `adb shell dumpsys package com.android.vending | grep -i suspended` (true while managed);
+  `adb shell am start -a android.intent.action.VIEW -d market://details?id=org.example`
+  shows "The Play Store is closed"; Settings -> "Install from Play" (PIN) opens Play for 15 min.
 
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
 
 ```sh
-adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime" > log.txt
+adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop" > log.txt
 ```
 
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).

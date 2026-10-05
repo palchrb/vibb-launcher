@@ -203,3 +203,113 @@ QA findings override this doc where they conflict. Binding:
   is unproven. The DNS filter always allows the FCM hosts; server FCM calls have timeouts; the
   service-account key is FCM-only and stored outside the backed-up data directory.
 - Battery is measured per change (tsnet, SSE keepalive, FCM) rather than one before/after.
+
+## FCM setup (for the parent/admin)
+
+Optional: without it everything works over the SSE stream, at a higher battery cost. Nothing
+secret is ever committed - no `google-services.json`, no key.
+
+1. **Firebase project**: in the Firebase console create a project used for nothing else (no
+   Analytics). Add two Android apps: `com.kidslauncher.mdm` (release) and, only if you test FCM
+   with debug builds, `com.kidslauncher.mdm.debug`. Skip the google-services.json download
+   step - we don't use the file, only four values from it (or from Project settings -> General):
+   project id, the app's "App ID" (`1:<number>:android:<hex>`), the Web API key, and the
+   sender id ("Project number").
+2. **Restrict the API key** (Google Cloud console -> APIs & Services -> Credentials): Android
+   apps only, package `com.kidslauncher.mdm` + the release certificate SHA-1 (and the `.debug`
+   package + debug SHA-1 if added); API restrictions: Firebase Cloud Messaging API, Firebase
+   Installations API.
+3. **Launcher build** (values are not secrets - they end up in the APK - but they stay out of
+   the repo): GitHub repository *variables* `HANDY_FCM_PROJECT_ID`, `HANDY_FCM_APPLICATION_ID`,
+   `HANDY_FCM_API_KEY`, `HANDY_FCM_SENDER_ID`. The tag release job builds with
+   `-PrequireFcm=true` and fails if one is missing. Local builds: the same names as Gradle
+   properties in `~/.gradle/gradle.properties` (`handy.fcm.projectId`, `.applicationId`,
+   `.apiKey`, `.senderId`, and `.debugApplicationId` for debug builds) or as env vars.
+   Without them the build has FCM off.
+4. **Server key**: Google Cloud IAM for that project -> new service account with **only** the
+   role "Firebase Cloud Messaging API Admin" (`roles/firebasecloudmessaging.admin`), not the
+   Firebase Admin SDK default account -> create a JSON key. On the Pi, outside the backed-up
+   data directory: `sudo install -d -m 750 -o kidphone -g kidphone /etc/kid-phone-server` and
+   `sudo install -m 600 -o kidphone -g kidphone key.json /etc/kid-phone-server/fcm-service-account.json`,
+   delete every other copy, set `FCM_SERVICE_ACCOUNT_FILE=/etc/kid-phone-server/fcm-service-account.json`
+   in `.env`, restart. The log says "FCM nudges on" or why not (a group/world-readable key or
+   one inside `data/` is refused). Rotation/leak runbook: kid-phone-server `DEPLOY.md`,
+   "FCM (optional)".
+5. **Check**: device page -> "Push and Play": after the phone's next sync and the first test
+   nudge it shows "FCM confirmed working"; until then the phone stays on SSE.
+
+## Implementation status (2026-10-05)
+
+Implemented on branch `handy` in both repos, local tests green; nothing device-tested yet.
+
+- **S** (`kid-phone-server`): `src/fcm.rs` (service account, RS256 JWT via `ring`, OAuth token
+  cache, v1 send with 10 s timeouts, `classify_fcm_error`, Retry-After, redacting Debug; key
+  refused if group/world-readable or inside `data/`), `src/push.rs` (dispatcher on
+  `command_notify` with 1 s per-device coalescing, `Lagged` -> every token, bounded spawned
+  sends, supervisor restart; pure health logic: a send is acked when a status report echoes its
+  nonce, 2 sends unacked after 60 s -> `fcm_ok=false`; test nudge at once for a new token, then
+  every 6 h while ok / 1 h while not), migration `0026_push.sql`, policy `push`, status
+  `push`/`install_mode`/`play_window_active`/`installer`, device page "Push and Play" card,
+  `SSE_KEEPALIVE_SECS` (default 120) and the `Lagged` fix in `commands_stream`, PLAY_CORE
+  hidden from the allowlist UI and never added, catalog one-source check (409), security log
+  (install mode, new installs, dead tokens), FCM hosts never in the delivered blocklist.
+  Tests via TestApp with a fake sender and a local fake FCM/OAuth server.
+- **L** (`kids-launcher-mdm`): pure `push/PushTransport.kt`, `push/SyncSchedule.kt`,
+  `play/PlayPolicy.kt` (+ `computeEnforcementPlan(playState)`), JVM-tested; `FcmSupport`/
+  `KidFcmService` (manual Firebase init, exported=false, SDK provider and DBA fallback service
+  removed), `CommandListenerService` as `specialUse` anchor with SSE only while FCM isn't
+  proven, `SyncRunner` (wake lock, timeouts, coalescing), `BackstopAlarm` (30/15 min,
+  while-idle, elapsed realtime), install mode (Settings, PIN, 15 min, notification "End now"),
+  `PlayLinkBlockedActivity` (never lifted, forwards when Play is open), Play window via the
+  boundary alarm + screen events, `installer` + catalog skip, FCM hosts never blocked on-device,
+  CI `-PrequireFcm=true` with repository variables. `assembleRelease` checked with and without
+  an FCM config.
+- **Deviations from the text above** (the binding decisions win): no `SyncRunService`; the Play
+  Store is suspended (not only kept out of kiosk) outside install mode / the window; the link
+  blocker is never lifted; install mode pins only the Play Store, is refused during a time lock
+  and ends when one begins; FCM health is the ack-based check, not "no nudge for 2 periods".
+  Worst case with a silent FCM failure: ring/lock/lifts wait for the next backstop sync
+  (<= 30 min); the switch to SSE follows after 2 unacked sends plus one sync.
+
+## Device checklist (implementation, Jelly Star release build + emulator with Play image)
+
+Run after the 02/04/06 checklists still pass. `adb logcat -s SyncRunner KidFcmService FcmSupport
+CommandListenerService BackstopAlarm PlayRuntime AppEnforcer` shows what happens.
+
+1. Build **without** FCM config: phone on SSE (`reason: no_config` on the card), ring/lock
+   within seconds; `dumpsys alarm | grep BACKSTOP` shows the backstop; screen off overnight ->
+   syncs every ~30 min (15 while the stream is down).
+2. Build **with** config, no Google account: token obtained, card goes "unproven" -> "confirmed"
+   after the first test nudge; then no SSE connection (`dumpsys connectivity`/server log), a
+   policy change still applies within seconds.
+3. `adb shell dumpsys deviceidle force-idle`, queue `ring`: rings within ~10 s; log shows
+   priority high (or the downgrade); sync completes under the wake lock.
+4. Block `mtalk.google.com` at the router (or disable Play services on a test phone): within
+   2 unacked sends + one backstop the card shows SSE and ring works again.
+5. Invalid token (server log 404 UNREGISTERED): token cleared, phone on SSE, renews within a day.
+6. Android 15+: reboot -> no ForegroundServiceStartNotAllowedException; the anchor runs after
+   unlock; `am get-standby-bucket com.kidslauncher.mdm` = EXEMPTED (5).
+7. Play with a managed allowlist: Play Store not hidden, **suspended**, not on Home/drawer, not in
+   kiosk; Play services/GSF neither. From an allowed app: explicit `setPackage(com.android.vending)`
+   and component intents, with and without NEW_TASK, a tapped Play notification, a
+   `market://details?id=...` link and a `https://play.google.com/store/apps/details?id=...`
+   link: Play UI never usable (suspended dialog or our blocker).
+8. Install mode: Settings -> Install from Play (PIN) opens Play, only Play pinned (`dumpsys
+   activity activities | grep -A5 LockTaskController`); install an app -> it is hidden and
+   suspended at once and shows on the device page; "End now", the 15-min expiry and a reboot each
+   end it with Home in front and Play suspended; HOME pin and link blocker still in place
+   (`dumpsys package preferred-activities`); refused during a school rule; 112 from the lock
+   screen during install mode.
+9. Nightly window: at 02:00 with the screen off Play is unsuspended (`dumpsys package
+   com.android.vending | grep suspended`), turning the screen on suspends it before unlock;
+   an allowed Play app with a pending update gets updated overnight.
+10. Account runbook (decisions after QA review): factory reset -> `dpm set-device-owner` -> add
+    the Google account and set Play options (auto-update over Wi-Fi, authentication for all
+    purchases, no payment method, parental controls PIN) in the normal UI -> enroll; then
+    `dumpsys user` shows `no_modify_accounts`, the account is kept, a purchase asks for the
+    password, FCM works with the account.
+11. Play Protect: no warning about the launcher; catalog app installed from Play is refused on
+    the server (409) and skipped on the phone.
+12. Battery, per change (QA #15): A/B on the new build - FCM vs forced SSE (build without
+    config), with and without tsnet - 8 h screen-off each, same place/SIM/signal; read kernel
+    wakeup reasons and mobile radio time, not only per-UID wakeups.
