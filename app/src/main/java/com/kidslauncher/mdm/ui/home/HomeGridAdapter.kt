@@ -41,6 +41,9 @@ class HomeGridAdapter(private val activity: Activity) : RecyclerView.Adapter<Hom
             view.setOnClickListener { v ->
                 when (val tile = tiles.getOrNull(bindingAdapterPosition)) {
                     GridTile.PhoneBook -> activity.startActivity(PhoneBookActivity.intent(activity))
+                    GridTile.Settings -> activity.startActivity(
+                        android.content.Intent(activity, com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity::class.java)
+                    )
                     is GridTile.App -> {
                         val rect = Rect().also { v.getGlobalVisibleRect(it) }
                         infos[tile.app.key]?.getAction()?.invoke(activity, rect)
@@ -73,6 +76,15 @@ class HomeGridAdapter(private val activity: Activity) : RecyclerView.Adapter<Hom
                 holder.icon.setPadding(pad, pad, pad, pad)
                 holder.label.setText(R.string.calls_phone_book)
                 holder.itemView.contentDescription = context.getString(R.string.calls_phone_book)
+                KidAvatars.bindBadge(holder.badge, 0)
+            }
+            GridTile.Settings -> {
+                holder.icon.backgroundTintList = ColorStateList.valueOf(context.getColor(R.color.kid_settings_tile))
+                holder.icon.setImageResource(R.drawable.ic_kid_settings)
+                val pad = KidAvatars.dp(context, 16f)
+                holder.icon.setPadding(pad, pad, pad, pad)
+                holder.label.setText(R.string.kid_settings_title)
+                holder.itemView.contentDescription = context.getString(R.string.kid_settings_title)
                 KidAvatars.bindBadge(holder.badge, 0)
             }
             is GridTile.App -> {

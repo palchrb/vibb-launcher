@@ -18,4 +18,5 @@
     <color name="kid_message_button">#1864AB</color>
     <color name="kid_emergency">#E03131</color>
     <color name="kid_icon_fallback">#F1F3F5</color>
+    <color name="kid_settings_tile">#868E96</color>
 </resources>

@@ -33,6 +33,7 @@
       -->
     <string name="notification_channel_calls">Calls</string>
     <string name="calls_phone_book">Phone book</string>
+    <string name="kid_settings_title">Settings</string>
     <string name="calls_phone_book_empty">There\'s nobody to call yet. Emergency numbers (112, 110, 113) always work from the lock screen\'s Emergency button.</string>
     <string name="calls_off">Calls are turned off on this phone. Emergency numbers still work.</string>
     <string name="calls_call">Call</string>

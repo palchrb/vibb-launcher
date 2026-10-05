@@ -53,6 +53,7 @@ import com.kidslauncher.mdm.ui.home.HomeGridAdapter
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.gridColumns
 import com.kidslauncher.mdm.ui.home.homeGrid
+import com.kidslauncher.mdm.ui.home.showPhoneBookTile
 import com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -363,9 +364,11 @@ class HomeActivity : UIObjectActivity() {
     /** Contacts row and phone-book tile from the call rules, missed calls and photos (cheap). */
     private fun renderCallParts() {
         if (!::gridAdapter.isInitialized) return
-        val view = phoneBookView(CallPolicyStore.state) { CallSystem.isEmergencyOutgoing(this, it) }
+        val state = CallPolicyStore.state
+        val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
         renderContacts(view.home)
-        showPhoneBook = !view.isEmpty
+        // Managed (even with calls off) or unknown: the tile is there and the phone book explains.
+        showPhoneBook = showPhoneBookTile(state)
         renderGrid()
     }
 

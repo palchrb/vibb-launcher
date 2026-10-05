@@ -23,6 +23,7 @@
     <!-- Calls -->
     <string name="notification_channel_calls">Samtaler</string>
     <string name="calls_phone_book">Telefonbok</string>
+    <string name="kid_settings_title">Innstillinger</string>
     <string name="calls_phone_book_empty">Det er ingen å ringe ennå. Nødnumrene (112, 110, 113) virker alltid fra nødknappen på låseskjermen.</string>
     <string name="calls_off">Samtaler er slått av på denne telefonen. Nødnumrene virker fortsatt.</string>
     <string name="calls_call">Ring</string>
