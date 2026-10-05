@@ -148,3 +148,21 @@ next sync enables ours. 9. Bedtime rule active: PIN first, then the bedtime scre
 ## 10. Questions for the user
 1. Parent-code link on the lock (not in the mock)? 2. Kid PIN fixed at 4 digits? 3. Migration by runbook (recommended) or
 automatic confirm-credential flow? 4. Alarm ring screen hidden behind the lock until the PIN - acceptable?
+
+## Decisions after QA review (qa-10-design.md), 2026-10-05
+
+All QA High/Medium findings are binding (H1–H4: lock screen in lock task pinned to our app
++ emergency helpers while locked; never-give-up re-front with exemptions only for our call
+screen, system dialer and Telecom; a dedicated backoff clock that only extends; lock shown on
+process start and screen receiver registered process-wide; re-lock after calls and on
+power-button screen-off during a call; overlay block while locked; allowBackup=false and no
+kid-PIN material in DE storage, logs or backups).
+Product defaults (proposed to the user, pending confirmation):
+- Small "Foreldrekode" link on the lock, always present; the server refuses a kid PIN unless
+  an override PIN is set.
+- Kid PIN 4–6 digits, parent chooses, default 4.
+- Existing Android PIN removed manually by runbook during setup; device page warns.
+- Alarms (default clock app's alarm screen) show over our lock so they can be snoozed or
+  dismissed without the PIN.
+- Because safe mode skips our lock, DISALLOW_SAFE_BOOT defaults ON whenever the kid lock is
+  enabled (with the crash guard); the parent can switch it off per device.
