@@ -136,6 +136,14 @@ class Application : android.app.Application() {
         // DynamicColors.applyToActivitiesIfAvailable(this)
 
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
+            // Handy's PIN lock crash guard (step 10): only crashes while the lock screen exists.
+            if (com.kidslauncher.mdm.lock.PinLockActivity.instances > 0) {
+                try {
+                    com.kidslauncher.mdm.lock.PinLockStore.recordCrash(this@Application)
+                } catch (t: Throwable) {
+                    // Never let the guard stop the crash report.
+                }
+            }
             sendCrashNotification(this@Application, throwable)
             exitProcess(1)
         }

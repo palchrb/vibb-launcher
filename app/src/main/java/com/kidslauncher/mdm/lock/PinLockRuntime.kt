@@ -107,9 +107,21 @@ object PinLockRuntime {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         OngoingCalls.addListener(callsListener)
+        // Off the main thread: the clock app for the alarm exemption, and the kiosk-off lock
+        // helpers, so a screen-off never waits for PackageManager (qa-10-code #7).
+        CoroutineScope(Dispatchers.IO).launch {
+            systemClockPackage = try {
+                com.kidslauncher.mdm.server.alarmAppPackage(app)?.takeIf { pkg ->
+                    (app.packageManager.getApplicationInfo(pkg, 0).flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+                }
+            } catch (e: Exception) {
+                null
+            }
+            LockTaskChrome.prefetchHelpers(app)
+        }
         // After Application.onCreate returns (an activity start from inside it is too early).
         handler.post {
-            dispatch(app, LockEvent.ProcessStart(active, interactive(app), inCall(app)))
+            dispatch(app, LockEvent.ProcessStart(active, interactive(app), ourCall(), systemCall(app)))
             // The chrome of a lock that was LOCKED when the process died is still set; an inactive
             // lock must not leave it behind either.
             LockTaskChrome.refresh(app)
@@ -122,6 +134,10 @@ object PinLockRuntime {
         val before = mode
         val result = step(before, event)
         mode = result.mode
+        // The lock first: the chrome below may do binder calls (and, the first time with the kiosk
+        // off, PackageManager work) - the lock screen's start must not wait for them (qa-10-code
+        // #7). It only resumes after this returns, by when its lock-task packages are set.
+        if (result.showLock) show(context)
         if (before != result.mode) {
             Log.i(LOG_TAG, "$before -> ${result.mode} on $event")
             if ((before == LockMode.LOCKED) != (result.mode == LockMode.LOCKED)) {
@@ -134,8 +150,23 @@ object PinLockRuntime {
             }
             modeListeners.toList().forEach { it() }
         }
-        if (result.showLock) show(context)
+        if (result.showCall) showCall(context)
+        // LOCKED but not shown (the system dialer's call): the re-front loop waits for it to end.
+        if (result.mode == LockMode.LOCKED && !result.showLock && !lockResumed && before != LockMode.LOCKED) {
+            refrontAttempt = 0
+            handler.removeCallbacks(refrontCheck)
+            handler.postDelayed(refrontCheck, refrontDelayMs(0))
+        }
         if (result.recheckTimeRules) afterUnlock(context)
+    }
+
+    /** Our call screen in front of the lock (inside the lock task - our package is pinned). */
+    private fun showCall(context: Context) {
+        try {
+            context.startActivity(com.kidslauncher.mdm.calls.InCallActivity.intent(context))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't bring the call screen to the front", e)
+        }
     }
 
     private fun onMain(block: () -> Unit) {
@@ -148,7 +179,7 @@ object PinLockRuntime {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 // The lock first: started now, it is drawn before the next screen-on.
                 rememberAlarm(app)
-                dispatch(app, LockEvent.ScreenOff(inCall(app), OngoingCalls.proximityNear))
+                dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app)))
                 ScreenTimeTracker.update(app)
                 // The nightly Play update window opens when the screen goes off inside it.
                 try {
@@ -162,7 +193,7 @@ object PinLockRuntime {
                 if (intent.action == Intent.ACTION_SCREEN_ON) PlayRuntime.suspendStoreAtScreenOn(app)
                 // May start the time-rule screen - the PIN lock then goes above it.
                 TimeRulesRuntime.recheck(app)
-                dispatch(app, LockEvent.ScreenOn(lockResumed, inCall(app)))
+                dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app)))
                 // Backstop for the migration (QA 10 #15): the Android credential is gone but no
                 // onPasswordChanged arrived - check now rather than at the next sync.
                 if (intent.action == Intent.ACTION_USER_PRESENT && inactive == LockInactive.ANDROID_CREDENTIAL && !deviceSecure(app)) {
@@ -175,7 +206,7 @@ object PinLockRuntime {
     private val callsListener: () -> Unit = {
         val ctx = appContext
         val any = OngoingCalls.calls.isNotEmpty()
-        if (ctx != null && callsSeen && !any) dispatch(ctx, LockEvent.CallsEnded)
+        if (ctx != null && callsSeen && !any) dispatch(ctx, LockEvent.CallsEnded(interactive(ctx)))
         callsSeen = any
     }
 
@@ -258,11 +289,15 @@ object PinLockRuntime {
 
     private val refrontCheck = Runnable { runRefrontCheck() }
 
-    fun onLockResumed() {
+    fun onLockResumed(context: Context) {
         lockResumed = true
         refrontAttempt = 0
+        // Back in front after the alarm: its exemption ends now (qa-10-code #4).
+        rememberedAlarmMs = alarmAfterResume(rememberedAlarmMs, yielding)
         yielding = null
         handler.removeCallbacks(refrontCheck)
+        // During our call, the call screen goes back on top (qa-10-code #1).
+        dispatch(context.applicationContext, LockEvent.LockResumed(ourCall()))
     }
 
     fun onLockPaused() {
@@ -321,13 +356,20 @@ object PinLockRuntime {
         emergencyCallSeen = false
     }
 
+    /** The system clock app (resolved off the main thread at init) - only its alarms open the
+     * alarm exemption (qa-10-code #4). */
+    @Volatile
+    private var systemClockPackage: String? = null
+
     private fun rememberAlarm(context: Context) {
         val next = try {
-            context.getSystemService(AlarmManager::class.java)?.nextAlarmClock?.triggerTime
+            context.getSystemService(AlarmManager::class.java)?.nextAlarmClock
         } catch (e: Exception) {
             null
         }
-        rememberedAlarmMs = rememberAlarm(rememberedAlarmMs, next, System.currentTimeMillis())
+        rememberedAlarmMs = rememberAlarm(
+            rememberedAlarmMs, next?.triggerTime, next?.showIntent?.creatorPackage, systemClockPackage, System.currentTimeMillis(),
+        )
     }
 
     // ---- unlocking ------------------------------------------------------------------------
@@ -413,7 +455,7 @@ object PinLockRuntime {
     fun lockNow(context: Context): Boolean {
         if (mode == LockMode.DISABLED) return false
         val app = context.applicationContext
-        onMain { dispatch(app, LockEvent.RemoteLock(inCall(app))) }
+        onMain { dispatch(app, LockEvent.RemoteLock(ourCall(), systemCall(app))) }
         return true
     }
 
@@ -458,7 +500,10 @@ object PinLockRuntime {
         context.getSystemService(AudioManager::class.java)?.mode == AudioManager.MODE_IN_CALL
     }
 
-    private fun inCall(context: Context): Boolean = OngoingCalls.calls.isNotEmpty() || telecomInCall(context)
+    private fun ourCall(): Boolean = OngoingCalls.calls.isNotEmpty()
+
+    /** A call only the system dialer shows (emergency, or our dialer role not held). */
+    private fun systemCall(context: Context): Boolean = !ourCall() && telecomInCall(context)
 
     private fun requestApply(context: Context) {
         val app = context.applicationContext

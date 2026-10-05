@@ -27,7 +27,7 @@ object PinLockStore {
     private const val BO_ELAPSED = "backoff_elapsed_start"
     private const val BO_BOOT = "backoff_boot"
     private const val BO_DURATION = "backoff_duration"
-    private const val GUARD_STARTS = "guard_starts"
+    private const val GUARD_CRASHES_KEY = "guard_crashes"
     private const val GUARD_TRIPPED = "guard_tripped_at"
 
     private fun prefs(context: Context): SharedPreferences =
@@ -80,13 +80,18 @@ object PinLockStore {
 
     fun guard(context: Context): CrashGuard {
         val p = prefs(context)
-        val starts = p.getString(GUARD_STARTS, "").orEmpty().split(',').mapNotNull { it.toLongOrNull() }
+        val starts = p.getString(GUARD_CRASHES_KEY, "").orEmpty().split(',').mapNotNull { it.toLongOrNull() }
         val tripped = p.getLong(GUARD_TRIPPED, 0L).takeIf { it > 0L }
         return CrashGuard(starts, tripped)
     }
 
+    /** From the uncaught-exception handler while the lock screen exists (synchronous). */
+    fun recordCrash(context: Context) {
+        saveGuard(context, guardOnCrash(guard(context), System.currentTimeMillis()))
+    }
+
     fun saveGuard(context: Context, guard: CrashGuard): Boolean = prefs(context).edit()
-        .putString(GUARD_STARTS, guard.pendingStarts.joinToString(","))
+        .putString(GUARD_CRASHES_KEY, guard.crashes.joinToString(","))
         .putLong(GUARD_TRIPPED, guard.trippedAtMs ?: 0L)
         .commit()
 }

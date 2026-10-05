@@ -3,10 +3,6 @@ package com.kidslauncher.mdm.calls
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -14,6 +10,7 @@ import android.os.PowerManager
 import android.telecom.Call
 import android.text.format.DateUtils
 import android.view.View
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
 import com.kidslauncher.mdm.R
@@ -29,8 +26,9 @@ import com.kidslauncher.mdm.databinding.ActivityInCallBinding
  * Nothing on it leads anywhere else (no contact sheet, keypad or message), so it is the same over
  * handy's PIN lock (QA 10 #16). Shown over the lock screen and turns the screen on (manifest);
  * our package is always a lock-task package, so this also works in kiosk mode and over the PIN
- * lock. Holds a proximity wake lock while a call is active and tells the PIN lock whether the
- * proximity sensor reads "near" (a screen-off then is the ear, not the power button, QA 10 #5).
+ * lock. Holds a proximity wake lock while a call is active. Back does nothing while a call exists,
+ * and the PIN lock brings this screen back whenever it comes to the front during our call
+ * (qa-10-code #1).
  * Direct-boot-aware: no contact photos before the first unlock.
  */
 class InCallActivity : AppCompatActivity() {
@@ -50,15 +48,6 @@ class InCallActivity : AppCompatActivity() {
         }
     }
 
-    private val proximityListener = object : SensorEventListener {
-        override fun onSensorChanged(event: SensorEvent) {
-            val range = event.sensor.maximumRange
-            OngoingCalls.proximityNear = event.values.isNotEmpty() && event.values[0] < range && event.values[0] < 5f
-        }
-
-        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityInCallBinding.inflate(layoutInflater)
@@ -70,6 +59,13 @@ class InCallActivity : AppCompatActivity() {
         binding.inCallHangUp.setOnClickListener { OngoingCalls.current?.let(OngoingCalls::hangUp) }
         binding.inCallSpeaker.setOnClickListener { OngoingCalls.toggleSpeaker(this) }
         binding.inCallMute.setOnClickListener { OngoingCalls.toggleMute() }
+        // Back never leaves a ringing or active call behind the PIN lock (qa-10-code #1) - the
+        // lock has no "return to call" and the shade is off while it is locked.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (OngoingCalls.calls.isEmpty()) finish()
+            }
+        })
     }
 
     override fun onStart() {
@@ -172,10 +168,6 @@ class InCallActivity : AppCompatActivity() {
     private fun acquireProximity() {
         if (proximityLock?.isHeld == true) return
         val power = getSystemService(PowerManager::class.java) ?: return
-        val sensors = getSystemService(SensorManager::class.java)
-        sensors?.getDefaultSensor(Sensor.TYPE_PROXIMITY)?.let {
-            sensors.registerListener(proximityListener, it, SensorManager.SENSOR_DELAY_NORMAL)
-        }
         if (!power.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return
         proximityLock = power.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "kidslauncher:in_call")
             .apply { acquire(4 * 60 * 60 * 1000L) }
@@ -184,13 +176,6 @@ class InCallActivity : AppCompatActivity() {
     private fun releaseProximity() {
         proximityLock?.let { if (it.isHeld) it.release() }
         proximityLock = null
-        // The last reading stays in OngoingCalls until the call is gone: a power-button screen-off
-        // stops this activity, and the screen-off broadcast comes after that.
-        try {
-            getSystemService(SensorManager::class.java)?.unregisterListener(proximityListener)
-        } catch (e: Exception) {
-            // Never registered.
-        }
     }
 
     companion object {

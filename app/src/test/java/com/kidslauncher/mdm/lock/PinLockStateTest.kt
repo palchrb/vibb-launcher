@@ -12,18 +12,19 @@ class PinLockStateTest {
     @Test
     fun `process start fails closed and shows the lock at once with the screen on`() {
         for (mode in all) {
-            val on = step(mode, LockEvent.ProcessStart(active = true, interactive = true, inCall = false))
-            assertEquals(LockStep(LockMode.LOCKED, showLock = true), on)
+            assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(mode, LockEvent.ProcessStart(active = true, interactive = true)))
+            assertEquals(LockStep(LockMode.LOCKED), step(mode, LockEvent.ProcessStart(active = true, interactive = false)))
             assertEquals(
-                LockStep(LockMode.LOCKED, showLock = false),
-                step(mode, LockEvent.ProcessStart(active = true, interactive = false, inCall = false)),
+                "our call: the lock, then our call screen over it",
+                LockStep(LockMode.LOCKED, showLock = true),
+                step(mode, LockEvent.ProcessStart(active = true, interactive = true, ourCall = true)),
             )
             assertEquals(
-                "not over a call",
-                LockStep(LockMode.LOCKED, showLock = false),
-                step(mode, LockEvent.ProcessStart(active = true, interactive = true, inCall = true)),
+                "never over the system dialer's call",
+                LockStep(LockMode.LOCKED),
+                step(mode, LockEvent.ProcessStart(active = true, interactive = true, systemCall = true)),
             )
-            assertEquals(LockStep(LockMode.DISABLED), step(mode, LockEvent.ProcessStart(false, true, false)))
+            assertEquals(LockStep(LockMode.DISABLED), step(mode, LockEvent.ProcessStart(false, true)))
         }
     }
 
@@ -37,37 +38,54 @@ class PinLockStateTest {
 
     @Test
     fun `screen off locks and starts the lock right away`() {
-        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.UNLOCKED, LockEvent.ScreenOff(false, null)))
-        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.LOCKED, LockEvent.ScreenOff(false, null)))
-        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.ScreenOff(false, null)))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.UNLOCKED, LockEvent.ScreenOff()))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.LOCKED, LockEvent.ScreenOff()))
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.ScreenOff()))
     }
 
     @Test
-    fun `screen off at the ear during a call doesn't lock, the power button does - shown when the call ends`() {
-        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.ScreenOff(inCall = true, proximityNear = true)))
-        val power = step(LockMode.UNLOCKED, LockEvent.ScreenOff(inCall = true, proximityNear = false))
-        assertEquals(LockStep(LockMode.LOCKED, showLock = false), power)
-        assertEquals("unknown proximity = power button", LockMode.LOCKED, step(LockMode.UNLOCKED, LockEvent.ScreenOff(true, null)).mode)
-        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(power.mode, LockEvent.CallsEnded))
+    fun `screen off during a call locks whatever the proximity sensor says (qa-10-code 2)`() {
+        val ours = step(LockMode.UNLOCKED, LockEvent.ScreenOff(ourCall = true))
+        assertEquals("the lock, its resume brings the call screen back", LockStep(LockMode.LOCKED, showLock = true), ours)
+        assertEquals(LockStep(LockMode.LOCKED, showCall = true), step(ours.mode, LockEvent.LockResumed(ourCall = true)))
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.UNLOCKED, LockEvent.ScreenOff(systemCall = true)))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.LOCKED, LockEvent.CallsEnded(interactive = true)))
+    }
+
+    @Test
+    fun `a call ending with the screen off locks - the screen went off during it (qa-10-code 2)`() {
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.UNLOCKED, LockEvent.CallsEnded(interactive = false)))
+        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.CallsEnded(interactive = true)))
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.CallsEnded(interactive = false)))
     }
 
     @Test
     fun `a call answered from the lock ends on the lock`() {
-        val duringCall = step(LockMode.LOCKED, LockEvent.ScreenOff(inCall = true, proximityNear = true))
-        assertEquals(LockMode.LOCKED, duringCall.mode)
-        val ended = step(duringCall.mode, LockEvent.CallsEnded)
-        assertEquals(LockStep(LockMode.LOCKED, showLock = true), ended)
-        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.CallsEnded))
-        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.CallsEnded))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.LOCKED, LockEvent.CallsEnded()))
     }
 
     @Test
-    fun `screen on is a backstop only when the lock isn't showing and no call is on`() {
-        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, inCall = false)))
-        assertFalse(step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = true, inCall = false)).showLock)
-        assertFalse(step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, inCall = true)).showLock)
-        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.ScreenOn(false, false)))
-        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.ScreenOn(false, false)))
+    fun `the lock resumed during our call brings the call screen to the front (qa-10-code 1)`() {
+        assertEquals(LockStep(LockMode.LOCKED, showCall = true), step(LockMode.LOCKED, LockEvent.LockResumed(ourCall = true)))
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.LockResumed(ourCall = false)))
+        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.LockResumed(ourCall = true)))
+    }
+
+    @Test
+    fun `locked during a call - remote lock or screen-on - our call screen ends up in front (qa-10-code 3)`() {
+        val remote = step(LockMode.UNLOCKED, LockEvent.RemoteLock(ourCall = true))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), remote)
+        assertTrue(step(remote.mode, LockEvent.LockResumed(ourCall = true)).showCall)
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, ourCall = true)))
+    }
+
+    @Test
+    fun `screen on is a backstop only when the lock isn't showing and no system call is on`() {
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false)))
+        assertFalse(step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = true)).showLock)
+        assertFalse(step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, systemCall = true)).showLock)
+        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.ScreenOn(false)))
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.ScreenOn(false)))
     }
 
     @Test
@@ -79,9 +97,9 @@ class PinLockStateTest {
 
     @Test
     fun `remote lock`() {
-        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.UNLOCKED, LockEvent.RemoteLock(inCall = false)))
-        assertEquals(LockStep(LockMode.LOCKED, showLock = false), step(LockMode.UNLOCKED, LockEvent.RemoteLock(inCall = true)))
-        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.RemoteLock(false)))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.UNLOCKED, LockEvent.RemoteLock()))
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.UNLOCKED, LockEvent.RemoteLock(systemCall = true)))
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.RemoteLock()))
     }
 
     @Test

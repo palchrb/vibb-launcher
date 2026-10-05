@@ -65,10 +65,6 @@ class PinLockActivity : AppCompatActivity() {
         if (PinLockRuntime.mode != LockMode.LOCKED && !isFinishing) leave()
     }
 
-    private val guardClear = Runnable {
-        PinLockStore.saveGuard(this, guardCleared(PinLockStore.guard(this)))
-    }
-
     private val waitTicker: Runnable = object : Runnable {
         override fun run() {
             val ticker = this
@@ -82,9 +78,12 @@ class PinLockActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // The crash guard, before any other work (QA 10 #14): a start not cleared later is a crash.
-        val guard = guardOnCreate(PinLockStore.guard(this), System.currentTimeMillis())
-        PinLockStore.saveGuard(this, guard)
+        instances++
+        // The crash guard, before any other work (QA 10 #14, qa-10-code #6): crashes recorded by
+        // the uncaught-exception handler while this screen existed - not recreations or kills.
+        val stored = PinLockStore.guard(this)
+        val guard = guardOnCreate(stored, System.currentTimeMillis())
+        if (guard != stored) PinLockStore.saveGuard(this, guard)
         if (guard.trippedAtMs != null) {
             PinLockRuntime.guardTripped(this)
             finish()
@@ -123,16 +122,13 @@ class PinLockActivity : AppCompatActivity() {
             leave()
             return
         }
-        PinLockRuntime.onLockResumed()
+        PinLockRuntime.onLockResumed(this)
         ensureLockTask()
-        handler.removeCallbacks(guardClear)
-        handler.postDelayed(guardClear, GUARD_CLEAR_AFTER_MS)
         handler.removeCallbacks(waitTicker)
         handler.post(waitTicker)
     }
 
     override fun onPause() {
-        handler.removeCallbacks(guardClear)
         handler.removeCallbacks(waitTicker)
         PinLockRuntime.onLockPaused()
         super.onPause()
@@ -146,8 +142,7 @@ class PinLockActivity : AppCompatActivity() {
     override fun onDestroy() {
         PinLockRuntime.removeModeListener(modeListener)
         handler.removeCallbacksAndMessages(null)
-        // A normal end - not a crash.
-        if (isFinishing && ::binding.isInitialized) guardClear.run()
+        instances--
         super.onDestroy()
     }
 
@@ -386,5 +381,12 @@ class PinLockActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "stopLockTask failed", e)
         }
+    }
+
+    companion object {
+        /** Live instances: the uncaught-exception handler counts a crash for the guard only then. */
+        @Volatile
+        var instances = 0
+            private set
     }
 }

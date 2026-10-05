@@ -26,11 +26,6 @@ object OngoingCalls {
     var availableEndpoints: List<CallEndpoint> = emptyList()
         private set
 
-    /** The proximity sensor during a call ([InCallActivity]): `true` = near (at the ear), `null`
-     * = unknown. A screen-off while near isn't the power button (handy's PIN lock, QA 10 #5). */
-    @Volatile
-    var proximityNear: Boolean? = null
-
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
 
     fun addListener(listener: () -> Unit) { listeners += listener }
@@ -46,7 +41,6 @@ object OngoingCalls {
 
     internal fun remove(call: Call) {
         calls -= call
-        if (calls.isEmpty()) proximityNear = null
         changed()
     }
 

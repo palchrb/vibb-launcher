@@ -47,47 +47,51 @@ class RefrontPolicyTest {
     }
 
     @Test
-    fun `the alarm counts as ringing from its time for 10 minutes, a snooze doesn't hide it`() {
+    fun `only the system clock app's alarm opens the exemption, for a short window (qa-10-code 4)`() {
         val at = 1_000_000L
+        val clock = "com.google.android.deskclock"
         assertFalse(alarmLikelyRinging(null, at))
         assertFalse(alarmLikelyRinging(at, at - 1))
         assertTrue(alarmLikelyRinging(at, at))
         assertTrue(alarmLikelyRinging(at, at + ALARM_RING_MS - 1))
         assertFalse(alarmLikelyRinging(at, at + ALARM_RING_MS))
+        assertTrue(ALARM_RING_MS <= 5 * 60_000L)
+        assertEquals(at, rememberAlarm(null, at, clock, clock, at - 5))
+        assertNull("an allowlisted app's setAlarmClock", rememberAlarm(null, at, "com.example.reminders", clock, at - 5))
+        assertNull("no system clock app known", rememberAlarm(null, at, clock, null, at - 5))
         // Remembered while it rings, even when the next alarm (snooze) is already scheduled.
-        assertEquals(at, rememberAlarm(at, at + 9 * 60_000L, at + 60_000L))
-        assertEquals(at + 15 * 60_000L, rememberAlarm(at, at + 15 * 60_000L, at + ALARM_RING_MS))
-        assertEquals(at, rememberAlarm(null, at, at - 5))
-        assertNull(rememberAlarm(null, null, at))
-        assertNull(rememberAlarm(at, null, at + ALARM_RING_MS))
+        assertEquals(at, rememberAlarm(at, at + 9 * 60_000L, clock, clock, at + 60_000L))
+        assertEquals(at + 15 * 60_000L, rememberAlarm(at, at + 15 * 60_000L, clock, clock, at + ALARM_RING_MS))
+        assertNull(rememberAlarm(null, null, null, clock, at))
+        assertNull(rememberAlarm(at, null, null, clock, at + ALARM_RING_MS))
+        // The lock back in front after yielding to the alarm ends the window.
+        assertNull(alarmAfterResume(at, "alarm"))
+        assertEquals(at, alarmAfterResume(at, null))
+        assertEquals(at, alarmAfterResume(at, "call"))
     }
 
     @Test
-    fun `crash guard - three uncleared starts in two minutes trip it, a sync re-arms after 10 minutes`() {
-        var guard = CrashGuard()
+    fun `crash guard - three crashes in two minutes trip it at the next start, a sync re-arms after 10 minutes`() {
         val t = 5_000_000L
-        guard = guardOnCreate(guard, t)
-        guard = guardOnCreate(guard, t + 10_000L)
-        guard = guardOnCreate(guard, t + 20_000L)
-        assertNull("three crashes so far, this is the fourth start", guard.trippedAtMs)
-        guard = guardOnCreate(guard, t + 30_000L)
-        assertEquals(t + 30_000L, guard.trippedAtMs)
+        var guard = CrashGuard()
+        repeat(5) { guard = guardOnCreate(guard, t + it) }
+        assertNull("starts alone - recreations, kills - never count (qa-10-code 6)", guard.trippedAtMs)
+        guard = guardOnCrash(guardOnCrash(guard, t + 10_000L), t + 20_000L)
+        assertNull(guardOnCreate(guard, t + 25_000L).trippedAtMs)
+        guard = guardOnCrash(guard, t + 30_000L)
+        guard = guardOnCreate(guard, t + 31_000L)
+        assertEquals(t + 31_000L, guard.trippedAtMs)
         assertEquals("stays tripped", guard, guardOnCreate(guard, t + 40_000L))
-        assertEquals(guard, guardRearm(guard, t + 30_000L + GUARD_REARM_MS - 1))
-        assertEquals(CrashGuard(), guardRearm(guard, t + 30_000L + GUARD_REARM_MS))
+        assertEquals(guard, guardRearm(guard, t + 31_000L + GUARD_REARM_MS - 1))
+        assertEquals(CrashGuard(), guardRearm(guard, t + 31_000L + GUARD_REARM_MS))
     }
 
     @Test
-    fun `cleared starts and old ones don't count`() {
-        var guard = CrashGuard()
+    fun `old crashes don't count`() {
         val t = 5_000_000L
-        repeat(10) { i ->
-            guard = guardCleared(guardOnCreate(guard, t + i * 1_000L))
-        }
-        assertNull(guard.trippedAtMs)
-        guard = guardOnCreate(guardOnCreate(guardOnCreate(CrashGuard(), t), t + 1), t + 2)
+        var guard = guardOnCrash(guardOnCrash(guardOnCrash(CrashGuard(), t), t + 1), t + 2)
         guard = guardOnCreate(guard, t + GUARD_WINDOW_MS + 10)
-        assertNull("the three are older than two minutes", guard.trippedAtMs)
-        assertEquals(1, guard.pendingStarts.size)
+        assertNull(guard.trippedAtMs)
+        assertEquals(emptyList<Long>(), guard.crashes)
     }
 }

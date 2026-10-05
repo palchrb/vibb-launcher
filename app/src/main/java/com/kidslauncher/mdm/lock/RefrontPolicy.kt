@@ -67,58 +67,67 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
 fun stopStartsRefront(locked: Boolean, changingConfigurations: Boolean, finishing: Boolean): Boolean =
     locked && !changingConfigurations && !finishing
 
-/** How long an alarm is assumed to ring after its time (alarm apps time out after ~10 min). */
-const val ALARM_RING_MS = 10 * 60_000L
+/** How long an alarm is assumed to ring after its time - short (qa-10-code #4); the window also
+ * ends as soon as the lock is back in front after it ([alarmAfterResume]). */
+const val ALARM_RING_MS = 3 * 60_000L
 
 /**
  * The decision after QA review: the default clock app's alarm screen shows over the lock so it
  * can be snoozed or dismissed without the PIN. We can't see other apps' tasks, so "the alarm is
- * ringing" = the last alarm clock we saw scheduled ([alarmTriggerMs], from
+ * ringing" = the last alarm clock **the system clock app** scheduled ([alarmTriggerMs], from
  * `AlarmManager.getNextAlarmClock`) is due and less than [ALARM_RING_MS] old.
  */
 fun alarmLikelyRinging(alarmTriggerMs: Long?, nowMs: Long): Boolean =
     alarmTriggerMs != null && nowMs >= alarmTriggerMs && nowMs < alarmTriggerMs + ALARM_RING_MS
 
-/** The alarm to remember: a newly scheduled future one replaces an old one only once the old one
- * is past its ring time (so a snooze doesn't hide the ringing one). */
-fun rememberAlarm(remembered: Long?, next: Long?, nowMs: Long): Long? = when {
-    remembered != null && alarmLikelyRinging(remembered, nowMs) -> remembered
-    next != null && next > nowMs -> next
-    remembered != null && remembered > nowMs -> remembered
-    else -> null
+/**
+ * The alarm to remember: only one set by [clockPackage] (the system clock app - an allowlisted
+ * app's `setAlarmClock` never opens the exemption, qa-10-code #4). A newly scheduled future one
+ * replaces an old one only once the old one is past its ring time (a snooze doesn't hide the
+ * ringing one).
+ */
+fun rememberAlarm(remembered: Long?, next: Long?, nextCreator: String?, clockPackage: String?, nowMs: Long): Long? {
+    val usable = next?.takeIf { clockPackage != null && nextCreator == clockPackage }
+    return when {
+        remembered != null && alarmLikelyRinging(remembered, nowMs) -> remembered
+        usable != null && usable > nowMs -> usable
+        remembered != null && remembered > nowMs -> remembered
+        else -> null
+    }
 }
 
+/** The lock came back after stepping aside for the alarm: the alarm was dismissed or snoozed, the
+ * exemption ends now rather than after the window. */
+fun alarmAfterResume(remembered: Long?, yieldedTo: String?): Long? = if (yieldedTo == "alarm") null else remembered
+
 /*
- * Crash guard (design §2(b), QA 10 #14): PinLockActivity persists a start (commit) in onCreate
- * before any work and clears it after 30 s resumed or a normal finish. A start that was never
- * cleared is a crash (or a kill in the first 30 s). 3 of them within 2 minutes switch the lock off
- * (reported as `crash_guard`); a sync re-arms it at most once every 10 minutes.
+ * Crash guard (design §2(b), QA 10 #14, qa-10-code #6): only real crashes of the lock count -
+ * recorded (commit) by the process's uncaught-exception handler while PinLockActivity exists. A
+ * configuration-change recreation or a plain process kill isn't one. 3 crashes within 2 minutes
+ * switch the lock off at the next PinLockActivity start (reported as `crash_guard`); a sync re-arms
+ * it at most once every 10 minutes.
  */
 const val GUARD_WINDOW_MS = 2 * 60_000L
 const val GUARD_CRASHES = 3
 const val GUARD_REARM_MS = 10 * 60_000L
-const val GUARD_CLEAR_AFTER_MS = 30_000L
 
 data class CrashGuard(
-    /** Wall-clock times of starts not cleared yet. */
-    val pendingStarts: List<Long> = emptyList(),
+    /** Wall-clock times of crashes while the lock screen existed. */
+    val crashes: List<Long> = emptyList(),
     /** When the guard tripped (`null` = armed). */
     val trippedAtMs: Long? = null,
 )
 
-/** A PinLockActivity.onCreate: trips when [GUARD_CRASHES] earlier starts within the window were
- * never cleared; otherwise records this start. */
+/** A crash while the lock screen existed. */
+fun guardOnCrash(guard: CrashGuard, nowMs: Long): CrashGuard =
+    guard.copy(crashes = guard.crashes.filter { nowMs - it in 0 until GUARD_WINDOW_MS } + nowMs)
+
+/** A PinLockActivity.onCreate: trips when [GUARD_CRASHES] crashes happened within the window. */
 fun guardOnCreate(guard: CrashGuard, nowMs: Long): CrashGuard {
     if (guard.trippedAtMs != null) return guard
-    val recent = guard.pendingStarts.filter { nowMs - it in 0 until GUARD_WINDOW_MS }
-    return if (recent.size >= GUARD_CRASHES) {
-        CrashGuard(trippedAtMs = nowMs)
-    } else {
-        guard.copy(pendingStarts = recent + nowMs)
-    }
+    val recent = guard.crashes.filter { nowMs - it in 0 until GUARD_WINDOW_MS }
+    return if (recent.size >= GUARD_CRASHES) CrashGuard(trippedAtMs = nowMs) else guard.copy(crashes = recent)
 }
-
-fun guardCleared(guard: CrashGuard): CrashGuard = guard.copy(pendingStarts = emptyList())
 
 /** At a sync: a guard tripped 10+ minutes ago is re-armed (a clock set back re-arms too - the
  * worst case is one more round of crashes). */

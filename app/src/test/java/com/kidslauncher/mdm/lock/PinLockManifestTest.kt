@@ -28,6 +28,11 @@ class PinLockManifestTest {
         assertEquals("true", lock.getAttributeNS(ns, "excludeFromRecents"))
         assertEquals("false", lock.getAttributeNS(ns, "exported"))
         assertEquals("singleTask", lock.getAttributeNS(ns, "launchMode"))
+        val handled = lock.getAttributeNS(ns, "configChanges").split('|').toSet()
+        assertTrue(
+            "no recreation for a SIM swap, language, font or density change (qa-10-code 6)",
+            handled.containsAll(setOf("mcc", "mnc", "locale", "fontScale", "density", "layoutDirection", "orientation", "screenSize", "uiMode")),
+        )
         assertEquals("\${applicationId}.pinlock", lock.getAttributeNS(ns, "taskAffinity"))
         assertTrue("com.kidslauncher.mdm.lock.PinLockActivity" !in com.kidslauncher.mdm.calls.DirectBootComponents.CLASS_NAMES)
         assertTrue(com.kidslauncher.mdm.calls.DirectBootComponents.needsUnlockedSetup("com.kidslauncher.mdm.lock.PinLockActivity"))

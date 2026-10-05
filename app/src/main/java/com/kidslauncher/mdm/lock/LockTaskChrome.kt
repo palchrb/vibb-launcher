@@ -25,6 +25,7 @@ object LockTaskChrome {
 
     /** The last plan from apply() in this process (`null` until the first apply). */
     private var plan: Plan? = null
+    @Volatile
     private var helpers: Set<String>? = null
     private var appliedStatusBar: Boolean? = null
 
@@ -45,6 +46,13 @@ object LockTaskChrome {
         // path never has to query PackageManager.
         if (kioskPackages == null) helpers = runCatching(pinLockHelpers).getOrNull() ?: helpers
         applyNow(context)
+    }
+
+    /** Resolves the kiosk-off lock helpers ahead of the first screen-off (background thread). */
+    fun prefetchHelpers(context: Context) {
+        if (helpers != null) return
+        val resolved = runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolvePinLockHelpers(context) }.getOrNull() ?: return
+        synchronized(this) { if (helpers == null) helpers = resolved }
     }
 
     /** After a LOCKED/not-LOCKED change. Main thread; a few binder calls. */
