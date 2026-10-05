@@ -76,8 +76,8 @@ pub struct Hardening {
     /// `DISALLOW_DEBUGGING_FEATURES`: no adb and no developer options - which also removes adb as
     /// the recovery path for a broken launcher.
     pub disallow_debugging_features: bool,
-    /// `DISALLOW_SAFE_BOOT`: off by default - safe mode is the way past a launcher that crashes
-    /// before it renders.
+    /// `DISALLOW_SAFE_BOOT`: off by default until checked on the phone. Safe mode bypasses the
+    /// launcher but repairs nothing (restrictions persist there).
     pub disallow_safe_boot: bool,
     /// `DISALLOW_CONFIG_LOCATION` with location turned on (Find my device).
     pub lock_location: bool,
