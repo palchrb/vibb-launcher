@@ -22,8 +22,8 @@ enum class HardeningRestriction(val defaultOn: Boolean) {
     USB_FILE_TRANSFER(true),
     /** `DISALLOW_DEBUGGING_FEATURES` - no adb, so no adb recovery for a broken launcher either. */
     DEBUGGING_FEATURES(true),
-    /** `DISALLOW_SAFE_BOOT` - off by default: safe mode is the way past a launcher that crashes
-     * before it renders, so this is only safe with a launcher build proven on the phone. */
+    /** `DISALLOW_SAFE_BOOT` - off by default until checked on the phone. Safe mode bypasses the
+     * launcher but repairs nothing (restrictions and suspension persist there). */
     SAFE_BOOT(false),
     /** `DISALLOW_CONFIG_LOCATION`, with location turned on first (Find my device). */
     CONFIG_LOCATION(true),
