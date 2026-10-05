@@ -178,7 +178,7 @@
     <string name="toast_mdm_sync_failed">Sync failed - couldn\'t reach the server.</string>
 
     <string name="settings_mdm_restrictions_paused">Pause all restrictions</string>
-    <string name="settings_mdm_restrictions_paused_summary">Turns off kiosk mode, the schedule and app restrictions for 2 hours, then they come back on by themselves. Needs the device PIN, and isn\'t available when no PIN is set on the server. The parent sees on the server that it\'s on. Emergency use only, e.g. if an update causes a problem.</string>
+    <string name="settings_mdm_restrictions_paused_summary">Turns off kiosk mode, the time rules and app restrictions for 2 hours (calls stay limited to the allowed contacts), then they come back on by themselves. Needs the device PIN, and isn\'t available when no PIN is set on the server. The parent sees on the server that it\'s on. Emergency use only, e.g. if an update causes a problem.</string>
     <string name="settings_mdm_restrictions_paused_pin_title">Enter the PIN to pause restrictions</string>
     <string name="toast_mdm_pause_needs_pin">Pausing restrictions needs a PIN. Set one for this phone on the server first.</string>
 
