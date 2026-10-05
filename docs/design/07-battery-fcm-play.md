@@ -252,7 +252,7 @@ Implemented on branch `handy` in both repos, local tests green; nothing device-t
   `push`/`install_mode`/`play_window_active`/`installer`, device page "Push and Play" card,
   `SSE_KEEPALIVE_SECS` (default 120) and the `Lagged` fix in `commands_stream`, PLAY_CORE
   hidden from the allowlist UI and never added, catalog one-source check (409), security log
-  (install mode, new installs, dead tokens), FCM hosts never in the delivered blocklist.
+  (install mode, new installs, dead tokens), the exact FCM hosts never in the delivered blocklist.
   Tests via TestApp with a fake sender and a local fake FCM/OAuth server.
 - **L** (`kids-launcher-mdm`): pure `push/PushTransport.kt`, `push/SyncSchedule.kt`,
   `play/PlayPolicy.kt` (+ `computeEnforcementPlan(playState)`), JVM-tested; `FcmSupport`/
@@ -264,6 +264,17 @@ Implemented on branch `handy` in both repos, local tests green; nothing device-t
   boundary alarm + screen events, `installer` + catalog skip, FCM hosts never blocked on-device,
   CI `-PrequireFcm=true` with repository variables. `assembleRelease` checked with and without
   an FCM config.
+- **Fix round after `qa-step7-code.md`** (S `9d0be9f`..`58d9997`, L `1c60ccf`, `6204c75`): S exempts
+  only the exact FCM hosts (parents like `google.com` are delivered as set; L exempts the exact
+  hosts before its suffix walk); a token FCM rejected is remembered by hash (migration `0027`) and
+  its re-reports are ignored - no re-store, test nudge or security event - while L renews a
+  token at once when the server stops naming one it had confirmed; a token belongs to one
+  device (cleared from other rows, unique index), only enrolled devices are nudged;
+  `SSE_KEEPALIVE_SECS` is capped at 240 (L read timeout 300 s); an SSE reopen syncs only after a
+  gap of >= 150 s; DNS changes nudge the affected devices (hourly blocklist refreshes and new
+  catalog releases still wait for the 30-min backstop); L syncs on a nudge even when Firebase
+  can't initialise, gives back its wake lock when the anchor can't start, and suspends the Play
+  Store synchronously at screen-on when the update window was open.
 - **Deviations from the text above** (the binding decisions win): no `SyncRunService`; the Play
   Store is suspended (not only kept out of kiosk) outside install mode / the window; the link
   blocker is never lifted; install mode pins only the Play Store, is refused during a time lock
