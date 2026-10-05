@@ -243,6 +243,9 @@ fun shouldSuspendNewPackage(
 ): Boolean {
     if (overrideActive) return false
     if (packageName == ownPackage || packageName == systemDialer) return false
+    // Play services/GSF are never restricted (FCM); the Play Store is suspended by the next
+    // apply() according to install mode and the update window - an update of it lands here too.
+    if (packageName in com.kidslauncher.mdm.play.PLAY_CORE) return false
     if (scheduleLocked && packageName !in lockUsableApps) return true
     val allowlist = decision.policy?.allowlist ?: return false
     return packageName !in allowlist

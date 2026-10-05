@@ -2,6 +2,11 @@ package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.managed
+import com.kidslauncher.mdm.play.PLAY_CORE
+import com.kidslauncher.mdm.play.PLAY_NEVER_RESTRICT
+import com.kidslauncher.mdm.play.PLAY_STORE
+import com.kidslauncher.mdm.play.PlayState
+import com.kidslauncher.mdm.play.playStoreSuspended
 
 /*
  * The pure part of AppEnforcer.apply(): which packages to suspend+hide and which to pin in
@@ -101,6 +106,11 @@ data class EnforcementPlan(
  *   (lock screen, Settings gate) need one (QA step 4 #3).
  *   The call restrictions don't change: allowed calls and emergency calls keep working
  *   (qa-security P0 #3 - the overlay alone could be escaped through Recents or a notification).
+ * - Play (handy step 7, [com.kidslauncher.mdm.play]): Play services and GSF are in
+ *   [EnforcementPlan.neverRestrict] (FCM); the Play Store is never hidden but suspended while apps
+ *   are managed or a lock is on, except in install mode ([playState], not during a lock) and the
+ *   nightly update window (also during a lock - the screen is off). None of them is pinned in
+ *   kiosk, whatever the allowlist - except the Play Store in install mode.
  */
 fun computeEnforcementPlan(
     allowlist: List<String>?,
@@ -120,8 +130,9 @@ fun computeEnforcementPlan(
     ruleBlocksCalls: Boolean = false,
     timeRulesSet: Boolean = false,
     budgetSet: Boolean = false,
+    playState: PlayState = PlayState(),
 ): EnforcementPlan {
-    val neverRestrict = setOfNotNull(ownPackage, systemDialer) + inputMethods
+    val neverRestrict = setOfNotNull(ownPackage, systemDialer) + inputMethods + PLAY_NEVER_RESTRICT
     val features = serverLockTaskFeatures.toInt() or LOCK_TASK_FEATURE_KEYGUARD
     val appsManaged = allowlist != null && !overrideActive
     val locked = scheduleLocked && !overrideActive
@@ -140,12 +151,18 @@ fun computeEnforcementPlan(
     }
 
     val hide = mutableSetOf<String>()
-    if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict }
+    // The Play Store is never hidden: FCM needs it installed, and hiding broadcasts a removal.
+    if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict && it != PLAY_STORE }
     if (restrictSms) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
     val suspend = hide.toMutableSet()
     // The alarm app is spared by the lock only, so an alarm set inside bedtime still rings; it
     // isn't pinned, so in kiosk it can show its alarm but not be opened from Home.
     if (locked) controllable.filterTo(suspend) { it !in neverRestrict && it != alarmApp && it !in lockUsableApps }
+    // The Play Store follows its own rule, whatever the allowlist or the lock's usable apps say.
+    suspend.remove(PLAY_STORE)
+    val playSuspended = playStoreSuspended(appsManaged, locked, playState) || (locked && !playState.updateWindow)
+    if (playSuspended && PLAY_STORE in controllable) suspend += PLAY_STORE
+    val installModePin = playState.installMode && !locked && PLAY_STORE in controllable
 
     val kiosk = if (appsManaged && kioskDesired) {
         // During the lock: our package and the lock's usable apps, plus an allowlisted system
@@ -157,7 +174,8 @@ fun computeEnforcementPlan(
         } else {
             allowed + ownPackage
         }
-        if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
+        val withoutDialer = if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
+        (withoutDialer - PLAY_CORE) + setOfNotNull(PLAY_STORE.takeIf { installModePin })
     } else {
         null
     }

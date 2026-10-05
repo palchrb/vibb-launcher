@@ -13,4 +13,8 @@ data class InstalledApp(
     val packageName: String,
     val label: String,
     val preinstalled: Boolean,
+    /** `InstallSourceInfo.installingPackageName` (`com.android.vending` = Play) - the server keeps
+     * one source per package (handy step 7): a Play-installed app isn't also pushed from the
+     * catalog. `null` if unknown. */
+    val installer: String? = null,
 )

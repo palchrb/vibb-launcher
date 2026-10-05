@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallRules
+import com.kidslauncher.mdm.play.PLAY_NEVER_RESTRICT
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -184,7 +185,7 @@ class EnforcementPlanTest {
     fun `unknown system dialer exempts nothing extra`() {
         val plan = plan(emptyList(), dialer = null)
         assertTrue(DIALER in plan.suspend)
-        assertEquals(setOf(OWN), plan.neverRestrict)
+        assertEquals(setOf(OWN) + PLAY_NEVER_RESTRICT, plan.neverRestrict)
     }
 
     /** QA step 1 #1: an unsuspended dialer must not be a free keypad. */
@@ -243,7 +244,7 @@ class EnforcementPlanTest {
             for (calls in allCallStates) {
                 val plan = plan(allowlist, calls = calls, locked = true)
                 assertEquals("$allowlist $calls", everythingButOursAndDialer, plan.suspend)
-                assertEquals(setOf(OWN, DIALER), plan.neverRestrict)
+                assertEquals(setOf(OWN, DIALER) + PLAY_NEVER_RESTRICT, plan.neverRestrict)
             }
         }
     }
