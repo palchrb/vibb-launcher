@@ -30,6 +30,12 @@ import com.kidslauncher.mdm.server.dto.LocationPolicy
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.timerules.key
 import com.kidslauncher.mdm.ui.LockActivity
+import com.kidslauncher.mdm.play.PlayRuntime
+import com.kidslauncher.mdm.play.PLAY_POLICY_CAPABILITY
+import com.kidslauncher.mdm.play.catalogUpdateBlockedByPlay
+import com.kidslauncher.mdm.push.FCM_PUSH_CAPABILITY
+import com.kidslauncher.mdm.push.FcmSupport
+import com.kidslauncher.mdm.push.PushState
 import android.os.Handler
 import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
@@ -176,6 +182,15 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
     val location = currentLocationReport(context, dpm, admin, forceFreshLocation, locationPolicy)
 
+    // FCM (handy step 7): get or renew the token so this report carries it, and decide the
+    // transport from the enforced policy's `push` (the anchor service follows it after the sync).
+    try {
+        FcmSupport.maintainToken(context, decision.policy?.push)
+        FcmSupport.decide(context, decision.policy?.push)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Push upkeep failed", e)
+    }
+
     // Best-effort - a failed report must never affect the lock decision above.
     try {
         api.sendStatus(
@@ -189,10 +204,13 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 location = location.report,
                 policyState = policyState(freshOutcome, cached, policyEverApplied),
                 restrictionsPaused = RestrictionsPause.isActive(),
-                capabilities = listOf(CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY),
+                capabilities = listOf(CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY, FCM_PUSH_CAPABILITY, PLAY_POLICY_CAPABILITY),
                 callState = CallStateReport.build(context),
                 notificationListenerEnabled = BadgeStore.accessGranted(context),
                 timeState = TimeRulesRuntime.report(context, decision.policy, reason),
+                push = PushState.report(context, FcmSupport.configured, FcmSupport.gmsAvailable(context)),
+                installMode = PlayRuntime.installModeReport(context),
+                playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -359,6 +377,15 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
     val state = TrackedAppUpdateState.load()
     for (update in otherUpdates + launcherUpdates) {
         val key = update.id.toString()
+        // One source per package (handy step 7): an app Play installed is Play's to update
+        // (other signature; Android 14 update ownership). Switching source = uninstall first.
+        val installedFrom = update.packageName.takeIf { it.isNotBlank() }
+            ?.let { installerOf(context.packageManager, it) }
+        if (!update.isLauncher && catalogUpdateBlockedByPlay(installedFrom)) {
+            Log.w(LOG_TAG, "Skipping ${update.name}: the installed copy comes from Play")
+            reportInstallFailure(api, update.id)
+            continue
+        }
         val known = state[key]
         if (update.releaseTag == known?.lastInstalledTag) {
             continue
@@ -492,12 +519,20 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
                     packageName = packageName,
                     label = pm.getApplicationLabel(info).toString(),
                     preinstalled = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                    installer = installerOf(pm, packageName),
                 )
             } catch (e: PackageManager.NameNotFoundException) {
                 null
             }
         }
         .distinctBy { it.packageName }
+}
+
+/** Who installed [packageName] (`com.android.vending` = Play), or `null` if unknown. */
+private fun installerOf(pm: PackageManager, packageName: String): String? = try {
+    pm.getInstallSourceInfo(packageName).installingPackageName
+} catch (e: Exception) {
+    null
 }
 
 /** A 5xx from the policy endpoint: the server is up but couldn't build this device's policy
@@ -595,13 +630,20 @@ fun reevaluateLockReasonFromCache(context: Context): LockReason? {
     val key = lock.key()
     val changed = mdm.lockReason() != reason
     val keyChanged = mdm.lockKey() != key
-    if (!changed && !keyChanged && AppEnforcer.lastEnforcedLockKey == key) return null
+    // Play (handy step 7): install mode starting/ending, the update window opening at screen-off
+    // or closing at screen-on re-apply the plan the same way.
+    val play = PlayRuntime.state(context)
+    val enforcedPlay = AppEnforcer.lastEnforcedPlayState
+    val playChanged = enforcedPlay?.key() != play.key()
+    if (!changed && !keyChanged && AppEnforcer.lastEnforcedLockKey == key && !playChanged) return null
     if (changed) mdm.lockReason(reason)
     if (keyChanged) mdm.lockKey(key)
+    val installModeEnded = enforcedPlay?.installMode == true && !play.installMode
     val appContext = context.applicationContext
     scheduleScope.launch {
         try {
             AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+            if (installModeEnded) PlayRuntime.onInstallModeEnded(appContext)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Re-applying enforcement after a lock change failed", e)
         }

@@ -13,6 +13,9 @@ import java.security.MessageDigest
  * less reach. A nudge only ever triggers a sync, so a forged or replayed one costs one sync.
  */
 
+/** Status-report capability: this launcher reports `push` and acknowledges FCM nudges. */
+const val FCM_PUSH_CAPABILITY = "fcm_push_v1"
+
 enum class PushTransport(val wire: String) {
     FCM("fcm"),
     SSE("sse"),
@@ -22,7 +25,7 @@ enum class PushTransport(val wire: String) {
 object SseReason {
     const val NO_CONFIG = "no_config"
     const val NO_GMS = "no_gms"
-    const val NO_PLAY_STORE = "no_play_store"
+    const val NO_PLAY_STORE = "play_hidden"
     const val NO_TOKEN = "no_token"
     const val SERVER_OFF = "server_off"
     const val TOKEN_UNKNOWN = "token_unknown"

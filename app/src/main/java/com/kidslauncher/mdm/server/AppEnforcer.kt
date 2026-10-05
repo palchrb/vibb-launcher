@@ -30,6 +30,10 @@ import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.timerules.hasBudget
 import com.kidslauncher.mdm.timerules.key
 import com.kidslauncher.mdm.ui.HomeActivity
+import com.kidslauncher.mdm.play.PLAY_STORE
+import com.kidslauncher.mdm.play.PlayLinkBlockedActivity
+import com.kidslauncher.mdm.play.PlayRuntime
+import com.kidslauncher.mdm.play.PlayState
 
 private const val LOG_TAG = "AppEnforcer"
 
@@ -158,6 +162,12 @@ object AppEnforcer {
     var lastEnforcedLockKey: String? = null
         private set
 
+    /** The [PlayState] the last completed [apply] enforced (install mode, update window) - a
+     * re-check re-applies when it changes, like [lastEnforcedLockKey]. */
+    @Volatile
+    var lastEnforcedPlayState: PlayState? = null
+        private set
+
     /**
      * Synchronized: the sync, the pause switch, the offline override and the schedule re-check
      * ([reevaluateLockReasonFromCache]) can all call this from different threads, and two passes
@@ -179,6 +189,8 @@ object AppEnforcer {
         val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
 
         enforceDefaultHome(dpm, admin, context)
+        // Never lifted (QA #2) - the blocker passes links on to Play whenever Play is open.
+        enforcePlayLinkBlocker(dpm, admin, context)
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
@@ -209,6 +221,12 @@ object AppEnforcer {
         val ownPackage = context.packageName
         val pm = context.packageManager
         val installedPackages = controllablePackages(pm)
+        var playState = PlayRuntime.state(context)
+        if (playState.installMode && scheduleLocked) {
+            // A time rule or the used-up budget began during install mode: it ends (QA #3).
+            PlayRuntime.cancelInstallMode(context)
+            playState = playState.copy(installMode = false)
+        }
         val plan = computeEnforcementPlan(
             allowlist = policy?.allowlist,
             kioskDesired = policy?.kioskDesired == true,
@@ -227,6 +245,7 @@ object AppEnforcer {
             ruleBlocksCalls = lock.callsBlocked,
             timeRulesSet = timePolicy != null && (timePolicy.rules.isNotEmpty() || hasBudget(timePolicy)),
             budgetSet = timePolicy != null && hasBudget(timePolicy),
+            playState = playState,
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -286,6 +305,7 @@ object AppEnforcer {
             }
         }
         lastEnforcedLockKey = lock.key()
+        lastEnforcedPlayState = playState
 
         applyKioskState(dpm, admin, plan.kioskPackages, plan.lockTaskFeatures)
 
@@ -726,9 +746,14 @@ object AppEnforcer {
      * checking, so there's no reason to re-touch every other controllable package's state on every
      * single install event.
      */
-    fun enforceOnNewPackage(context: Context, packageName: String) {
+    fun enforceOnNewPackage(context: Context, packageName: String): Boolean {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        if (!dpm.isDeviceOwnerApp(context.packageName)) return
+        if (!dpm.isDeviceOwnerApp(context.packageName)) return false
+        // The Play Store (re)installed or updated: the full plan decides its suspension.
+        if (packageName == PLAY_STORE) {
+            apply(context, currentPolicyDecision().policy)
+            return false
+        }
 
         // Fails closed: with no usable cached policy on a phone that has had one, the
         // last-enforced plan (or nothing allowed) decides - see shouldSuspendNewPackage.
@@ -760,7 +785,7 @@ object AppEnforcer {
                 Log.w(LOG_TAG, "Couldn't check call permissions of $packageName", e)
             }
         }
-        if (!suspend) return
+        if (!suspend) return false
         // Hidden only if not allowed at all - the schedule lock alone just suspends.
         val hide = shouldSuspendNewPackage(packageName, decision, overrideActive, context.packageName, systemDialerPackage(context))
 
@@ -776,6 +801,7 @@ object AppEnforcer {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to suspend newly-installed $packageName", e)
         }
+        return true
     }
 
     private fun setRestriction(
@@ -801,6 +827,38 @@ object AppEnforcer {
      * button, can fall back to another HOME-capable app (e.g. the OS's own stock launcher) if one
      * is installed. As device owner we can pin this unconditionally instead.
      */
+    /**
+     * `market://` and `https://play.google.com/store/...` links open [PlayLinkBlockedActivity]
+     * (handy step 7, §4): persistent preferred activities, set on every [apply] and never cleared
+     * - clearing ours would drop the HOME pin too (QA #2). The activity declares the same filters
+     * (AOSP ignores a preferred activity that doesn't match its own filters) and passes the link
+     * on to Play whenever Play isn't suspended. Explicit intents bypass this; the Play Store's
+     * suspension covers them.
+     */
+    private fun enforcePlayLinkBlocker(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        val blocker = ComponentName(context, PlayLinkBlockedActivity::class.java)
+        val market = IntentFilter(Intent.ACTION_VIEW).apply {
+            addCategory(Intent.CATEGORY_DEFAULT)
+            addCategory(Intent.CATEGORY_BROWSABLE)
+            addDataScheme("market")
+        }
+        val web = IntentFilter(Intent.ACTION_VIEW).apply {
+            addCategory(Intent.CATEGORY_DEFAULT)
+            addCategory(Intent.CATEGORY_BROWSABLE)
+            addDataScheme("http")
+            addDataScheme("https")
+            addDataAuthority("play.google.com", null)
+            addDataPath("/store", android.os.PatternMatcher.PATTERN_PREFIX)
+        }
+        for (filter in listOf(market, web)) {
+            try {
+                dpm.addPersistentPreferredActivity(admin, filter, blocker)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Failed to set the Play link blocker", e)
+            }
+        }
+    }
+
     private fun enforceDefaultHome(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
         val filter = IntentFilter(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)

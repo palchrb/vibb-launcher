@@ -19,6 +19,9 @@ import com.kidslauncher.mdm.server.timedWindowActive
  *   the parent allowlists it.
  */
 
+/** Status-report capability: Play suspension, install mode, `installer` per app. */
+const val PLAY_POLICY_CAPABILITY = "play_policy_v1"
+
 const val PLAY_STORE = "com.android.vending"
 const val PLAY_SERVICES = "com.google.android.gms"
 const val GOOGLE_SERVICES_FRAMEWORK = "com.google.android.gsf"

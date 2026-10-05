@@ -16,14 +16,15 @@ import com.kidslauncher.mdm.COMMAND_LISTENER_NOTIFICATION_ID
 import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_LISTENER
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.push.BackstopAlarm
+import com.kidslauncher.mdm.push.FcmSupport
+import com.kidslauncher.mdm.push.PushState
+import com.kidslauncher.mdm.push.PushTransport
+import com.kidslauncher.mdm.push.SSE_READ_TIMEOUT_MS
+import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.timerules.ScreenTimeTracker
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -35,68 +36,48 @@ private const val LOG_TAG = "CommandListenerService"
 private const val INITIAL_RECONNECT_DELAY_MS = 5_000L
 private const val MAX_RECONNECT_DELAY_MS = 60_000L
 private const val NOT_ENROLLED_RETRY_DELAY_MS = 30_000L
-private const val PERIODIC_SYNC_INTERVAL_MS = 5 * 60 * 1000L
+private const val EXTRA_SYNC_REASON = "reason"
 
 /**
- * Holds a long-lived SSE connection open to `/api/devices/commands/stream` so Find My Device's
- * ring/lock/stop-ring/wipe arrive in ~1s instead of waiting for the periodic sync below - a
- * supplement to it, not a replacement: every event received here is a content-free nudge, not the
- * command payload itself, and just triggers an immediate [performMdmSync] early, reusing the
- * exact same policy-fetch/dispatch logic as a normal scheduled sync (see
- * `handlers::device_api::commands_stream` on the server for the matching half of this).
+ * The process anchor (handy step 7, design 07 §2 and the decisions after QA review): an always-on
+ * foreground service of type `specialUse` ("parental control enforcement" - no 6 h daily cap, and
+ * allowed to start from BOOT_COMPLETED on Android 15, unlike `dataSync`). It keeps the process
+ * alive for what needs a live process - the screen on/off/unlock signals for step 6's screen time
+ * and lock re-checks, the optional UnifiedPush relay - and every background sync runs inside it
+ * ([SyncRunner], with a wake lock and timeouts).
  *
- * Also drives the periodic backstop sync directly, via its own timer - this used to be a separate
- * WorkManager `OneTimeWorkRequest` chain, but confirmed live that it could go quiet for hours on
- * an idle phone with the screen off, most likely Android's Doze/battery-optimization deferring
- * the underlying JobScheduler dispatch (WorkManager isn't exempt from that on its own). This
- * service already pays the cost of an always-on foreground service - exempt from Doze by design,
- * that's the entire point of a foreground service - to hold the SSE connection open, so there's no
- * reason to run a second, less-reliable scheduling mechanism alongside it for the periodic case.
+ * Sync nudges arrive one of two ways ([com.kidslauncher.mdm.push.decidePushTransport]):
+ * - **FCM** (Play services' one shared connection): [com.kidslauncher.mdm.push.KidFcmService];
+ *   this service then holds no network connection and sets no timers - an idle FGS costs no
+ *   wakeups.
+ * - **SSE** (fallback whenever FCM isn't proven to work): a long-lived connection to
+ *   `/api/devices/commands/stream` through the embedded tailnet's SOCKS proxy. Every event is a
+ *   content-free nudge. The server's keepalive comes every 120 s, so a 300 s read timeout notices
+ *   a silently dead stream. The reconnect loop runs on a Handler, which stalls in deep sleep; the
+ *   backstop alarm (15 min while the stream is down) reconnects too (QA #8).
  *
- * A foreground service, not a plain background connection - Android would otherwise throttle or
- * kill a long-lived socket once the app isn't in the foreground, which would defeat the entire
- * point (a lost/screen-off phone is exactly when this matters most). The tradeoff, and there's no
- * way around it, is Android's own mandatory persistent notification for any foreground service -
- * kept at MIN importance and silent, since it's not meant to draw attention the way the ring
- * notification deliberately does.
+ * The periodic backstop is [BackstopAlarm] (a while-idle alarm on elapsed realtime), not a timer
+ * here: `Handler` time stops in deep sleep. One sync also runs whenever this service starts
+ * (after unlock, boot, an update), catching nudges missed while the process was down.
  *
- * Since this service already pays that foreground-service cost, it also optionally owns
- * [UnifiedPushRelay] (a UnifiedPush distributor for *other* apps on the device, opt-in from
- * Settings, off by default) - one persistent connection/notification doing two jobs instead of
- * a second dedicated distributor app running its own.
- *
- * Also drives [performJournalSync] and [performBrowserHistorySync] off the same two triggers as
- * [performMdmSync] - see [performJournalSync]'s own doc comment for why each is a separate
- * mutex/coroutine rather than folded into [performMdmSync] itself.
- *
- * And the screen signals the time rules need (handy step 6): on screen-on and user-present it
- * re-checks the lock from the cache ([TimeRulesRuntime.recheck] - re-applies the suspension when the
- * lock changed, shows the lock screen when one began, re-arms the boundary alarm); screen on/off
- * and unlock also start and stop screen-time counting ([ScreenTimeTracker]). There is no schedule
- * polling any more: rule boundaries come from one exact alarm ([com.kidslauncher.mdm.timerules.TimeRuleAlarm]).
+ * Never direct-boot-aware: before the first unlock nothing here may run (CE storage, tsnet, the
+ * BFU lockout incidents in CLAUDE.md).
  */
 class CommandListenerService : Service() {
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
     private val handler = Handler(Looper.getMainLooper())
     private var eventSource: EventSource? = null
     private var reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
     private var stopped = false
+    private var sseWanted = false
+    private val connectRunnable = Runnable { connect() }
 
-    /**
-     * Built fresh on every [connect] call, not cached - the server is now only reachable over the
-     * embedded tailnet (see CLAUDE.md's on-device-filtering/embedded-tsnet migration: KidVpnService
-     * is the device's sole always-on VPN as of Phase D, so there's no more OS-level MagicDNS/routing
-     * from a standalone Tailscale app for a plain client to piggyback on), so this needs
-     * [TsnetClient]'s SOCKS5 proxy exactly like [createMdmApi] already uses - and a cached client
-     * built before that connects would stay proxy-less forever, the same staleness bug already once
-     * fixed in [TsnetClient.connect] itself. [connect] already retries via [scheduleReconnect] until
-     * this succeeds, so rebuilding here each time costs nothing extra.
-     */
     private fun buildClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            // SSE connections are meant to stay open indefinitely - a normal read timeout would
-            // tear this down and force a reconnect every time it elapsed.
-            .readTimeout(0, TimeUnit.MILLISECONDS)
+            // The server sends a keepalive comment every SSE_KEEPALIVE_SECS (120 s by default);
+            // five minutes of silence means the stream is dead - reconnect.
+            .readTimeout(SSE_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        // Fresh per connect: the server is only reachable through the embedded tailnet's proxy,
+        // which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
         TsnetClient.proxy()?.let { builder.proxy(it) }
         return builder.build()
     }
@@ -105,13 +86,9 @@ class CommandListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // Must be called promptly after a startForegroundService() launch, before anything else -
-        // shown unconditionally (even before enrollment completes) since Android crashes the app
-        // if this doesn't happen in time; connect() below handles "not enrolled yet" on its own by
-        // retrying rather than needing this to wait for that state first.
+        // First, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise).
         startForeground(COMMAND_LISTENER_NOTIFICATION_ID, buildNotification())
-        connect()
-        schedulePeriodicSync()
+        running = this
         registerReceiver(
             screenReceiver,
             IntentFilter().apply {
@@ -120,30 +97,44 @@ class CommandListenerService : Service() {
                 addAction(Intent.ACTION_USER_PRESENT)
             },
         )
-        // Piggybacks on this same foreground service/notification rather than running as a
-        // second one - see UnifiedPushRelay's own doc comment for why. Off by default (a parent
-        // has to opt in from Settings), so this is a no-op on a device where that's never been
-        // touched.
         if (LauncherPreferences.mdm().unifiedpushDistributorEnabled()) {
             UnifiedPushRelay.start(applicationContext)
         }
+        // Firebase is initialised when the anchor starts (decision after QA review) - never before
+        // the first unlock: this service isn't direct-boot-aware.
+        FcmSupport.ensureInitialized(applicationContext)
+        reevaluateTransport()
+        BackstopAlarm.schedule(applicationContext)
+        // One sync at every process start: catches nudges missed while we were down.
+        SyncRunner.runInService(applicationContext, "start")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_SYNC) {
+            val reason = intent.getStringExtra(EXTRA_SYNC_REASON) ?: "request"
+            SyncRunner.runInService(applicationContext, reason)
+            // The backstop also restarts a stalled SSE reconnect loop (Handler time stops in
+            // deep sleep).
+            if (sseWanted && !PushState.sseConnected) {
+                handler.removeCallbacks(connectRunnable)
+                reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+                connect()
+            }
+        }
         return START_STICKY
     }
 
     override fun onDestroy() {
         stopped = true
+        if (running === this) running = null
         handler.removeCallbacksAndMessages(null)
         try {
             unregisterReceiver(screenReceiver)
         } catch (e: IllegalArgumentException) {
             // Never registered (onCreate failed before it).
         }
-        eventSource?.cancel()
+        stopSse()
         UnifiedPushRelay.stop()
-        scope.cancel()
         super.onDestroy()
     }
 
@@ -158,14 +149,44 @@ class CommandListenerService : Service() {
             .build()
     }
 
-    private fun connect() {
+    /** Main thread. Starts or stops the SSE stream to match the transport decision. */
+    private fun reevaluateTransport() {
         if (stopped) return
+        val decision = try {
+            FcmSupport.decide(applicationContext, currentPolicyDecision().policy?.push)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Transport decision failed - using SSE", e)
+            null
+        }
+        val wantSse = decision == null || decision.transport == PushTransport.SSE
+        if (wantSse == sseWanted) return
+        sseWanted = wantSse
+        if (wantSse) {
+            reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+            connect()
+        } else {
+            Log.i(LOG_TAG, "FCM works for this phone - closing the command stream")
+            stopSse()
+        }
+    }
+
+    private fun stopSse() {
+        handler.removeCallbacks(connectRunnable)
+        eventSource?.cancel()
+        eventSource = null
+        PushState.sseConnected = false
+    }
+
+    private fun connect() {
+        if (stopped || !sseWanted) return
+        eventSource?.cancel()
+        eventSource = null
 
         val mdm = LauncherPreferences.mdm()
         val serverUrl = mdm.serverUrl()
         val deviceToken = mdm.deviceToken()
         if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
-            handler.postDelayed({ connect() }, NOT_ENROLLED_RETRY_DELAY_MS)
+            handler.postDelayed(connectRunnable, NOT_ENROLLED_RETRY_DELAY_MS)
             return
         }
 
@@ -180,43 +201,42 @@ class CommandListenerService : Service() {
             object : EventSourceListener() {
                 override fun onOpen(eventSource: EventSource, response: Response) {
                     Log.i(LOG_TAG, "Command stream connected")
-                    reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+                    handler.post {
+                        reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+                        val wasDown = !PushState.sseConnected
+                        PushState.sseConnected = true
+                        if (wasDown) BackstopAlarm.schedule(applicationContext)
+                    }
                 }
 
                 override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                     Log.i(LOG_TAG, "Command stream nudge received, syncing early")
-                    scope.launch { performMdmSync(applicationContext) }
-                    // Own coroutine, not chained after performMdmSync above - journalSyncMutex
-                    // already keeps this from overlapping itself, and a slow media upload
-                    // shouldn't delay the next policy fetch.
-                    scope.launch { performJournalSync(applicationContext) }
-                    scope.launch { performBrowserHistorySync(applicationContext) }
+                    SyncRunner.request(applicationContext, "sse")
                 }
 
                 override fun onClosed(eventSource: EventSource) {
                     Log.i(LOG_TAG, "Command stream closed, reconnecting")
-                    scheduleReconnect()
+                    handler.post { streamDown(eventSource) }
                 }
 
                 override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                     Log.w(LOG_TAG, "Command stream connection failed, reconnecting", t)
-                    scheduleReconnect()
+                    handler.post { streamDown(eventSource) }
                 }
             },
         )
     }
 
-    private fun schedulePeriodicSync() {
-        if (stopped) return
-        handler.postDelayed(
-            {
-                scope.launch { performMdmSync(applicationContext) }
-                scope.launch { performJournalSync(applicationContext) }
-                scope.launch { performBrowserHistorySync(applicationContext) }
-                schedulePeriodicSync()
-            },
-            PERIODIC_SYNC_INTERVAL_MS,
-        )
+    /** Main thread. Ignores callbacks of a stream we already replaced or stopped. */
+    private fun streamDown(source: EventSource) {
+        if (source !== eventSource) return
+        eventSource = null
+        val wasUp = PushState.sseConnected
+        PushState.sseConnected = false
+        // Only on the up -> down edge: re-arming on every failed reconnect would keep pushing the
+        // backstop out and it would never fire.
+        if (wasUp) BackstopAlarm.schedule(applicationContext)
+        scheduleReconnect()
     }
 
     /** Main thread: reading the cached policy is cheap; a re-apply runs in the background. */
@@ -224,6 +244,12 @@ class CommandListenerService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 ScreenTimeTracker.update(applicationContext)
+                // The nightly Play update window opens when the screen goes off inside it.
+                try {
+                    reevaluateLockReasonFromCache(applicationContext)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Re-check at screen off failed", e)
+                }
             } else {
                 TimeRulesRuntime.recheck(applicationContext)
             }
@@ -231,18 +257,42 @@ class CommandListenerService : Service() {
     }
 
     private fun scheduleReconnect() {
-        if (stopped) return
-        handler.postDelayed({ connect() }, reconnectDelayMs)
-        // Simple exponential backoff so a server that's genuinely down doesn't get hammered with
-        // reconnect attempts every 5 seconds forever.
+        if (stopped || !sseWanted) return
+        handler.removeCallbacks(connectRunnable)
+        handler.postDelayed(connectRunnable, reconnectDelayMs)
+        // Exponential backoff so a server that's genuinely down isn't hammered.
         reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
     }
 
     companion object {
-        /** Call once at app startup - safe to call repeatedly, Android no-ops a redundant start. */
+        const val ACTION_SYNC = "com.kidslauncher.mdm.action.SYNC"
+
+        /** The live instance, for [onSyncFinished]. Same process only. */
+        @Volatile
+        private var running: CommandListenerService? = null
+
+        /** Starts the anchor (a no-op if it runs). Safe to call repeatedly. */
         fun start(context: Context) {
-            val intent = Intent(context, CommandListenerService::class.java)
-            ContextCompat.startForegroundService(context, intent)
+            ContextCompat.startForegroundService(context, Intent(context, CommandListenerService::class.java))
+        }
+
+        /** Starts the anchor if needed and has it run a sync ([SyncRunner]). A device owner may
+         * start a foreground service from the background. */
+        fun requestSync(context: Context, reason: String) {
+            try {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, CommandListenerService::class.java).setAction(ACTION_SYNC).putExtra(EXTRA_SYNC_REASON, reason),
+                )
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't start the anchor service for a sync", e)
+            }
+        }
+
+        /** After every sync: the policy's `push` may have changed the transport. */
+        fun onSyncFinished(context: Context) {
+            val service = running ?: return
+            service.handler.post { service.reevaluateTransport() }
         }
     }
 }

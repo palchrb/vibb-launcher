@@ -44,13 +44,11 @@
          logging around it. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- CommandListenerService holds a long-lived SSE connection open so Find My Device's
-         ring/lock/stop-ring/wipe commands arrive in ~1s instead of waiting for the next 2-minute
-         poll, any time - screen on or off. Android mandates a specific foreground-service type +
-         matching permission as of API 34; "dataSync" (syncing/sending/receiving data) is the
-         correct fit for a long-lived server connection. -->
+    <!-- CommandListenerService is the always-on process anchor (handy step 7): screen signals for
+         screen time, every background sync, and the SSE stream when FCM isn't in use. Type
+         "specialUse" (parental control enforcement): "dataSync" is capped at 6 h a day on
+         Android 15+ and may not start from BOOT_COMPLETED there. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <!-- KidVpnService's on-device DNS filter (see CLAUDE.md) - "specialUse" since none of the
          other API 34 foreground-service types fit "local VPN packet filter"; the required
@@ -318,7 +316,83 @@
         <service
             android:name=".server.CommandListenerService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Parental control enforcement (device owner): screen-time and time-rule signals, policy sync" />
+        </service>
+
+        <!-- Sync nudges over FCM (handy step 7, push/KidFcmService). exported="false" as Firebase
+             declares it: messages come in through the SDK's FirebaseInstanceIdReceiver, which only
+             Play services can call (c2dm.permission.SEND). Enabled only in builds with a Firebase
+             config (fcmEnabled placeholder, app/build.gradle.kts). Not direct-boot-aware. -->
+        <service
+            android:name=".push.KidFcmService"
+            android:enabled="${fcmEnabled}"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <!-- The SDK's own fallback service is direct-boot-aware and would touch Firebase before the
+             first unlock (and before our init) - it must never run. -->
+        <service
+            android:name="com.google.firebase.messaging.FirebaseMessagingService"
+            tools:node="remove" />
+        <!-- Firebase is initialised by hand after the unlock (push/FcmSupport), never by this
+             provider - it would run before the first unlock, and Firebase keeps state in CE. -->
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider"
+            tools:node="remove" />
+        <!-- Only holds registrar metadata; never started. Not direct-boot-aware, like everything
+             outside the call path (DirectBootComponents). -->
+        <service
+            android:name="com.google.firebase.components.ComponentDiscoveryService"
+            android:directBootAware="false"
+            tools:replace="android:directBootAware" />
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_analytics_collection_deactivated"
+            android:value="true" />
+        <meta-data
+            android:name="delivery_metrics_exported_to_big_query_enabled"
+            android:value="false" />
+
+        <!-- The backstop sync alarm (push/BackstopAlarm) - our own explicit PendingIntent only. -->
+        <receiver
+            android:name=".push.BackstopReceiver"
+            android:exported="false" />
+        <!-- "End now" on the Play install-mode notification - our own PendingIntent only. -->
+        <receiver
+            android:name=".play.InstallModeReceiver"
+            android:exported="false" />
+        <!-- Answers market:// and play.google.com/store links (handy step 7): the device owner makes
+             it their persistent preferred activity, which AOSP honours only when the activity
+             declares matching filters. Passes the link on to Play while Play isn't suspended. -->
+        <activity
+            android:name=".play.PlayLinkBlockedActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="market" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="play.google.com" />
+                <data android:pathPrefix="/store" />
+            </intent-filter>
+        </activity>
 
         <!-- Not externally reachable despite the implicit-action intent-filter - MY_PACKAGE_REPLACED
              is a protected system broadcast only the OS can send, always targeted at the just-updated

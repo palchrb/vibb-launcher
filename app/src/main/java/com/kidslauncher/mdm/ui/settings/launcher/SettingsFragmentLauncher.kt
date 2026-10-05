@@ -25,6 +25,8 @@ import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RestrictionsPause
+import com.kidslauncher.mdm.play.InstallModeStart
+import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.server.UnifiedPushRegistrationReceiver
 import com.kidslauncher.mdm.server.UnifiedPushRelay
 import com.kidslauncher.mdm.server.applyProvisioningExtras
@@ -175,6 +177,36 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             }
         }
 
+        // Play install mode (handy step 7): the parent opens the Play Store for 15 minutes with
+        // the PIN (again, on top of the Settings gate). New apps stay hidden until allowlisted.
+        val installMode = findPreference<Preference>("settings_play_install_mode")
+        updateInstallModeSummary(installMode)
+        installMode?.setOnPreferenceClickListener {
+            val context = requireContext()
+            if (PlayRuntime.installModeActive(context)) {
+                PlayRuntime.endInstallMode(context)
+                installMode.summary = getString(R.string.settings_play_install_mode_summary)
+                return@setOnPreferenceClickListener true
+            }
+            val refusal = when (PlayRuntime.canStart(context)) {
+                InstallModeStart.OK -> null
+                InstallModeStart.NOT_NEEDED -> R.string.toast_play_install_mode_not_needed
+                InstallModeStart.NO_PIN -> R.string.toast_play_install_mode_needs_pin
+                InstallModeStart.LOCKED_OUT -> R.string.lock_unlock_code_locked_out
+                InstallModeStart.TIME_LOCKED -> R.string.toast_play_install_mode_time_locked
+                InstallModeStart.NO_PLAY_STORE -> R.string.toast_play_install_mode_no_store
+            }
+            if (refusal != null) {
+                Toast.makeText(context, refusal, Toast.LENGTH_LONG).show()
+            } else {
+                showPausePinDialog(context, R.string.settings_play_install_mode_pin_title) {
+                    PlayRuntime.startInstallMode(context)
+                    updateInstallModeSummary(installMode)
+                }
+            }
+            true
+        }
+
         val unifiedPushEnabled =
             findPreference<Preference>(mdm.keys().unifiedpushDistributorEnabled())
         unifiedPushEnabled?.setOnPreferenceChangeListener { _, newValue ->
@@ -229,13 +261,30 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
 
     /** Asks for the offline-override PIN; [onVerified] runs only on a match. Shares the PIN's
      * attempt counter and 15-minute lockout with the lock screen and the Settings gate. */
-    private fun showPausePinDialog(context: Context, onVerified: () -> Unit) {
+    private fun updateInstallModeSummary(preference: Preference?) {
+        preference ?: return
+        val until = PlayRuntime.installModeUntil(requireContext())
+        preference.summary = if (until != null) {
+            getString(
+                R.string.settings_play_install_mode_active,
+                java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(until)),
+            )
+        } else {
+            getString(R.string.settings_play_install_mode_summary)
+        }
+    }
+
+    private fun showPausePinDialog(
+        context: Context,
+        titleRes: Int = R.string.settings_mdm_restrictions_paused_pin_title,
+        onVerified: () -> Unit,
+    ) {
         if (OfflineOverride.isLockedOut()) {
             Toast.makeText(context, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
             return
         }
         val dialog = AlertDialog.Builder(context, R.style.AlertDialogCustom).apply {
-            setTitle(R.string.settings_mdm_restrictions_paused_pin_title)
+            setTitle(titleRes)
             setView(R.layout.dialog_offline_override_pin)
             setNegativeButton(android.R.string.cancel) { d, _ -> d.cancel() }
             setPositiveButton(android.R.string.ok, null)

@@ -209,4 +209,19 @@
     <!-- Content descriptions -->
     <string name="content_description_close">Lukk</string>
     <string name="toast_cant_launch_app">Feil: kan ikke åpne appen</string>
+    <!-- Play install mode, link blocker (handy step 7) -->
+    <string name="settings_play_install_mode">Installer fra Play</string>
+    <string name="settings_play_install_mode_summary">Åpner Play Butikk i 15 minutter. Nye apper er skjult til du tillater dem på serveren.</string>
+    <string name="settings_play_install_mode_active">Åpen til %1$s – trykk for å avslutte nå</string>
+    <string name="settings_play_install_mode_pin_title">Opplåsingskode for å åpne Play</string>
+    <string name="toast_play_install_mode_not_needed">Play Butikk er ikke begrenset på denne telefonen nå.</string>
+    <string name="toast_play_install_mode_needs_pin">Å åpne Play krever en PIN. Sett en for denne telefonen på serveren først.</string>
+    <string name="toast_play_install_mode_time_locked">Ikke mens en tidsregel eller skjermtidsgrensen låser telefonen.</string>
+    <string name="toast_play_install_mode_no_store">Play Butikk er ikke installert på denne telefonen.</string>
+    <string name="notification_channel_install_mode">Play-installasjonsmodus</string>
+    <string name="notification_install_mode_title">Play er åpen til %1$s</string>
+    <string name="notification_install_mode_text">Nye apper er skjult til en forelder tillater dem.</string>
+    <string name="notification_install_mode_end">Avslutt nå</string>
+    <string name="play_link_blocked_title">Play Butikk er stengt</string>
+    <string name="play_link_blocked_text">Spør en forelder hvis du vil ha en ny app.</string>
 </resources>

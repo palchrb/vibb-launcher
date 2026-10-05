@@ -260,4 +260,19 @@
       -->
     <string name="content_description_close">Close</string>
     <string name="toast_cant_launch_app">Error: Can\'t launch app</string>
+    <!-- Play install mode, link blocker (handy step 7) -->
+    <string name="settings_play_install_mode">Install from Play</string>
+    <string name="settings_play_install_mode_summary">Opens the Play Store for 15 minutes. New apps stay hidden until you allow them on the server.</string>
+    <string name="settings_play_install_mode_active">Open until %1$s - tap to end now</string>
+    <string name="settings_play_install_mode_pin_title">Unlock code to open Play</string>
+    <string name="toast_play_install_mode_not_needed">The Play Store isn\'t restricted on this phone right now.</string>
+    <string name="toast_play_install_mode_needs_pin">Opening Play needs a PIN. Set one for this phone on the server first.</string>
+    <string name="toast_play_install_mode_time_locked">Not while a time rule or the screen-time limit locks the phone.</string>
+    <string name="toast_play_install_mode_no_store">The Play Store isn\'t installed on this phone.</string>
+    <string name="notification_channel_install_mode">Play install mode</string>
+    <string name="notification_install_mode_title">Play is open until %1$s</string>
+    <string name="notification_install_mode_text">New apps stay hidden until a parent allows them.</string>
+    <string name="notification_install_mode_end">End now</string>
+    <string name="play_link_blocked_title">The Play Store is closed</string>
+    <string name="play_link_blocked_text">Ask a parent if you want a new app.</string>
 </resources>

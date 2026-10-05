@@ -29,6 +29,9 @@ val NOTIFICATION_CHANNEL_APP_INSTALL = "launcher:app_install"
 /** Incoming and ongoing calls (calls.CallNotifications) - HIGH, like any phone app's. */
 const val NOTIFICATION_CHANNEL_CALLS = "launcher:calls"
 private const val APP_INSTALL_NOTIFICATION_ID_BASE = 2000
+/** Play install mode (handy step 7, play.PlayRuntime) - LOW, ongoing, with "End now". */
+const val NOTIFICATION_CHANNEL_INSTALL_MODE = "launcher:install_mode"
+const val INSTALL_MODE_NOTIFICATION_ID = 1004
 
 fun createNotificationChannels(context: Context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -88,6 +91,13 @@ fun createNotificationChannels(context: Context) {
         // install/update - including the launcher's own silent self-update, which otherwise "just
         // happens" with zero visible indication - is in progress), just without sound/heads-up
         // interruption for something this routine.
+        notificationManager.createNotificationChannel(
+            NotificationChannel(
+                NOTIFICATION_CHANNEL_INSTALL_MODE,
+                context.getString(R.string.notification_channel_install_mode),
+                NotificationManager.IMPORTANCE_LOW
+            )
+        )
         notificationManager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL_APP_INSTALL,

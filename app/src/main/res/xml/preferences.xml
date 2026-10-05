@@ -39,6 +39,11 @@
         android:key="settings_mdm_sync_now"
         android:title="@string/settings_mdm_sync_now" />
 
+    <Preference
+        android:key="settings_play_install_mode"
+        android:title="@string/settings_play_install_mode"
+        android:summary="@string/settings_play_install_mode_summary" />
+
     <SwitchPreference
         android:key="@string/settings_mdm_restrictions_paused_key"
         android:defaultValue="false"

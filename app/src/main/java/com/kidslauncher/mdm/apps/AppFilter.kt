@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import android.os.UserManager
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.managed
+import com.kidslauncher.mdm.play.PlayRuntime
+import com.kidslauncher.mdm.play.playPackageLaunchable
 import com.kidslauncher.mdm.server.systemDialerPackage
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import java.util.Locale
@@ -23,11 +25,20 @@ class AppFilter(
         val pinned = LauncherPreferences.minimalist().apps() ?: setOf()
 
         val blockedDialer = blockedSystemDialer()
+        // Play services/GSF/the Play Store are never on Home or in the drawer - the store only
+        // during the parent's install mode (handy step 7).
+        val installMode = try {
+            PlayRuntime.installModeActive(context)
+        } catch (e: Exception) {
+            false
+        }
         apps = apps.filter { info ->
+            val packageName = (info.getRawInfo() as? AppInfo)?.packageName
             hiddenVisibility.predicate(hidden, info)
                     && pinnedVisibility.predicate(pinned, info)
                     && !isMdmSuspended(info)
-                    && (info.getRawInfo() as? AppInfo)?.packageName != blockedDialer
+                    && packageName != blockedDialer
+                    && (packageName == null || playPackageLaunchable(packageName, installMode))
         }
 
         return apps

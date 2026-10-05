@@ -15,7 +15,8 @@ private const val ACTION_BOUNDARY = "com.kidslauncher.mdm.action.TIME_RULE_BOUND
  * minute: a rule starting or ending, local midnight while a budget is set, a lift running out.
  * `setExactAndAllowWhileIdle` with `USE_EXACT_ALARM` (granted at install; we are not a Play app);
  * if exact alarms are refused, an inexact while-idle alarm. Re-armed by [TimeRulesRuntime.recheck]
- * after every evaluation, so a missed or late alarm is corrected on the next screen-on.
+ * after every evaluation, so a missed or late alarm is corrected on the next screen-on. Since
+ * step 7 it also wakes for install mode's end and the Play update window's edges.
  */
 object TimeRuleAlarm {
     private fun pendingIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
@@ -29,7 +30,12 @@ object TimeRuleAlarm {
         try {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
             val pi = pendingIntent(context)
-            val next = TimeRulesRuntime.nextBoundary(context)
+            // Also the Play edges (handy step 7): install mode's end and the nightly update
+            // window's start/end, so the plan follows them with the screen off.
+            val next = listOfNotNull(
+                TimeRulesRuntime.nextBoundary(context),
+                com.kidslauncher.mdm.play.PlayRuntime.nextEdge(context),
+            ).minOrNull()
             if (next == null) {
                 alarms.cancel(pi)
                 return

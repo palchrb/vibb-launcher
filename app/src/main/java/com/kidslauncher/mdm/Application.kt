@@ -60,7 +60,10 @@ class Application : android.app.Application() {
             // similar main-thread AppEnforcer call in SettingsFragmentLauncher).
             p0?.let { packageName ->
                 CoroutineScope(Dispatchers.IO).launch {
-                    AppEnforcer.enforceOnNewPackage(this@Application, packageName)
+                    val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName)
+                    // A new app the parent hasn't allowed (e.g. from Play): report it now, so the
+                    // device page lists it for allowlisting (handy step 7).
+                    if (blocked) com.kidslauncher.mdm.push.SyncRunner.request(this@Application, "package_added")
                 }
             }
         }
@@ -242,9 +245,8 @@ class Application : android.app.Application() {
         com.kidslauncher.mdm.timerules.ScreenTimeTracker.init(this)
         com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(this)
 
-        // CommandListenerService both holds the SSE connection and drives the periodic backstop
-        // sync directly off its own timer - see that class's doc comment for why this replaced a
-        // separate WorkManager-based schedule() call here.
+        // The anchor service: screen signals, every background sync, the SSE stream when FCM isn't
+        // in use; it arms the backstop alarm and syncs once at start - see its doc comment.
         CommandListenerService.start(this)
 
         // The on-device DNS filter is the device's baseline network path now, not an
