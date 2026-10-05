@@ -244,6 +244,10 @@ struct DeviceDetailTemplate {
     allowlist_corrupt: bool,
     /// The "Phone hardening" switches (migrations/0023_hardening.sql).
     hardening: Hardening,
+    /// Managed (an allowlist, or calls managed) but no override PIN: the launcher's Settings
+    /// can't be opened on the phone, there is no offline override, and with USB debugging
+    /// blocked a lost server means a reset (QA step 4 #4).
+    managed_without_pin: bool,
 }
 
 pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> impl IntoResponse {
@@ -468,6 +472,8 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
             calls_summary,
             call_warnings,
             allowlist_corrupt,
+            managed_without_pin: (policy.allowlist_json.is_some() || policy.calls_managed)
+                && policy.override_pin_hash.is_none(),
             hardening: policy.hardening.clone(),
             any_app_installing,
             pin_configured: policy.override_pin_hash.is_some(),

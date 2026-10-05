@@ -42,6 +42,12 @@
     </div>
     {% endif %}
 
+    {% if managed_without_pin %}
+    <div class="card">
+        <div class="error">No unlock code (offline override PIN) is set for this phone. Without one, the launcher's Settings can't be opened on the phone and there is no way to lift restrictions there. If this server ever becomes unreachable{% if hardening.disallow_debugging_features %} - with USB debugging blocked -{% endif %} the only way back is a reset from the phone's recovery menu and setting it up again. Set a PIN below.</div>
+    </div>
+    {% endif %}
+
     <div class="card">
         <h2>Schedule</h2>
         <p class="subtitle">This device follows the global default schedule unless you give it a custom one.</p>
@@ -152,7 +158,7 @@
             <input type="checkbox" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} onchange="this.form.submit()">
             Block safe mode
         </label>
-        <p class="subtitle">Off by default. Safe mode starts the phone without the launcher, so the kid can get around it - but it's also the way past a launcher that crashes at start. Only turn this on once this launcher version has been tested on the phone, and preferably with USB debugging still allowed.</p>
+        <p class="subtitle">Off by default. Safe mode starts the phone without the launcher, so the kid can use it unfiltered (the app restrictions above still apply there). It does not repair anything: the restrictions, the blocked USB debugging and the blocked factory reset all stay in safe mode. If a launcher update breaks the phone, the ways back are: this server sending a fixed launcher (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Only turn this on once this launcher version has been tested on the phone.</p>
         <noscript><button type="submit">Save</button></noscript>
     </form>
 
