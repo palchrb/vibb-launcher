@@ -31,7 +31,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="10dp"
             android:accessibilityHeading="true"
-            android:fontFamily="sans-serif-black"
+            android:fontFamily="@font/nunito_extrabold"
             android:text="@string/calls_phone_book"
             android:textColor="@color/kid_ink"
             android:textSize="24sp" />

@@ -23,7 +23,7 @@
             android:id="@+id/lock_clock"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="sans-serif-black"
+            android:fontFamily="@font/nunito_extrabold"
             android:format12Hour="h:mm"
             android:format24Hour="H:mm"
             android:gravity="center"
@@ -36,7 +36,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:fontFamily="sans-serif-black"
+            android:fontFamily="@font/nunito_extrabold"
             android:gravity="center"
             android:textColor="@color/kid_ink"
             android:textSize="28sp" />

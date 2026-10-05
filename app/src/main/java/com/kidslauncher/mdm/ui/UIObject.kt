@@ -39,7 +39,7 @@ interface UIObject {
             Background.SOLID.applyToTheme(theme)
         }
 
-        Font.SYSTEM_DEFAULT.applyToTheme(theme)
+        Font.NUNITO.applyToTheme(theme)
 
         return theme
     }

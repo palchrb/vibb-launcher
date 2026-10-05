@@ -27,6 +27,10 @@
 
         <item name="android:windowDisablePreview">true</item>
         <item name="android:windowAnimationStyle">@style/WindowFadeTransition</item>
+        <!-- Also for activities outside UIObjectActivity (the in-call screen): an APK resource,
+             readable before the first unlock. -->
+        <item name="android:fontFamily">@font/nunito</item>
+        <item name="fontFamily">@font/nunito</item>
     </style>
 
     <style name="launcherHomeTheme" parent="launcherBaseTheme">
@@ -109,6 +113,12 @@
     <style name="fontSystemDefault">
     </style>
 
+    <!-- Nunito everywhere (design 08-ui-polish.md): normal text is the 600 weight, bold 700. -->
+    <style name="fontNunito">
+        <item name="android:fontFamily">@font/nunito</item>
+        <item name="fontFamily">@font/nunito</item>
+    </style>
+
     <style name="PopupMenuCustom" parent="@android:style/Widget.PopupMenu" tools:keep="@style/PopupMenuCustom">
         <item name="android:popupBackground">#252827</item>
     </style>
@@ -138,7 +148,7 @@
         <item name="android:layout_height">24dp</item>
         <item name="android:minWidth">24dp</item>
         <item name="android:background">@drawable/bg_kid_badge</item>
-        <item name="android:fontFamily">sans-serif-black</item>
+        <item name="android:fontFamily">@font/nunito_extrabold</item>
         <item name="android:gravity">center</item>
         <item name="android:includeFontPadding">false</item>
         <item name="android:paddingStart">6dp</item>
@@ -154,7 +164,7 @@
         <item name="android:layout_weight">1</item>
         <item name="android:background">@drawable/bg_kid_button</item>
         <item name="android:drawablePadding">2dp</item>
-        <item name="android:fontFamily">sans-serif-black</item>
+        <item name="android:fontFamily">@font/nunito_extrabold</item>
         <item name="android:gravity">center</item>
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingBottom">6dp</item>
@@ -169,7 +179,7 @@
         <item name="android:layout_marginTop">12dp</item>
         <item name="android:background">@drawable/bg_kid_button</item>
         <item name="android:ellipsize">end</item>
-        <item name="android:fontFamily">sans-serif-black</item>
+        <item name="android:fontFamily">@font/nunito_extrabold</item>
         <item name="android:gravity">center</item>
         <item name="android:maxLines">1</item>
         <item name="android:paddingStart">16dp</item>
