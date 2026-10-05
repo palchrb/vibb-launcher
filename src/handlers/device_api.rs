@@ -14,8 +14,9 @@ use crate::AppState;
 use crate::models::{
     BrowserHistoryUpload, CallPolicy, CommandResultRequest, Device, DeviceContactRow, DevicePolicy,
     DnsBlocklistCategory, DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse,
-    GlobalSchedule, InstallProgressReport, InstalledApp, JournalEntryUpload, PendingCommand,
-    PolicyContact, PolicyResponse, StatusReportRequest, TrackedApp, TrackedAppUpdate,
+    GlobalSchedule, InstallProgressReport, InstalledApp, JournalEntryUpload, LauncherUi,
+    PendingCommand, PolicyContact, PolicyResponse, StatusReportRequest, TrackedApp,
+    TrackedAppUpdate,
 };
 use crate::security::{self, AuthedDevice};
 
@@ -217,6 +218,10 @@ pub(crate) async fn build_policy(
         packages_to_uninstall,
         call_policy,
         hardening: policy.hardening,
+        launcher_ui: LauncherUi {
+            language: policy.launcher_language,
+            home_columns: policy.home_columns,
+        },
     })
 }
 
@@ -256,6 +261,7 @@ async fn build_call_policy(
                 .message_app
                 .unwrap_or_else(|| policy.default_message_app.clone()),
             message_address: c.message_address,
+            photo: c.photo_hash,
         })
         .collect();
 
@@ -275,7 +281,7 @@ pub(crate) async fn device_contacts(
 ) -> Result<Vec<DeviceContactRow>, sqlx::Error> {
     sqlx::query_as::<_, DeviceContactRow>(
         "SELECT c.id AS contact_id, c.name, c.phone_number, dc.allow_inbound, dc.allow_outbound, \
-         dc.show_on_home, dc.message_app, dc.message_address \
+         dc.show_on_home, dc.message_app, dc.message_address, c.photo_hash \
          FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
          WHERE dc.device_id = ? ORDER BY dc.sort_order, c.name",
     )
@@ -477,8 +483,8 @@ pub async fn status(
         "INSERT INTO device_status \
          (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
-          call_state_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          call_state_json, notification_listener_enabled) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -491,6 +497,7 @@ pub async fn status(
     .bind(report.restrictions_paused)
     .bind(&capabilities_json)
     .bind(&call_state_json)
+    .bind(report.notification_listener_enabled)
     .execute(&state.db)
     .await
     .ok();
@@ -803,6 +810,39 @@ pub async fn tracked_app_download(
             bytes,
         )
             .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// A contact photo by its hash (`call_policy.contacts[].photo`). Only for a contact on the
+/// requesting device - another device's contacts, an invalid hash or a missing file are all 404,
+/// so a device token can't probe the address book.
+pub async fn contact_photo(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+) -> impl IntoResponse {
+    let Some(path) = crate::photos::path_for(&state.photo_dir, &hash) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let visible: Result<bool, sqlx::Error> = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
+         WHERE dc.device_id = ? AND c.photo_hash = ?)",
+    )
+    .bind(device.id)
+    .bind(&hash)
+    .fetch_one(&state.db)
+    .await;
+    match visible {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "contact photo lookup failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }

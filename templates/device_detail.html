@@ -122,6 +122,26 @@
     </script>
     {% endif %}
 
+    <form method="post" action="/devices/{{ device.id }}/launcher" class="card">
+        <h2>Launcher</h2>
+        <p class="subtitle">The phone's home screen. Each choice saves itself immediately.</p>
+        {% if badges_without_access %}
+        <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener com.kidslauncher.mdm/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build).</div>
+        {% endif %}
+        <label for="launcher_language">Language</label>
+        <select id="launcher_language" name="language" onchange="this.form.submit()">
+            <option value="system" {% if launcher_language == "system" %}selected{% endif %}>Same as the phone</option>
+            <option value="nb" {% if launcher_language == "nb" %}selected{% endif %}>Norsk bokmål</option>
+            <option value="en" {% if launcher_language == "en" %}selected{% endif %}>English</option>
+        </select>
+        <label for="home_columns">Apps per row on the home screen</label>
+        <select id="home_columns" name="home_columns" onchange="this.form.submit()">
+            <option value="3" {% if home_columns == 3 %}selected{% endif %}>3 (bigger)</option>
+            <option value="4" {% if home_columns == 4 %}selected{% endif %}>4</option>
+        </select>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
     <form method="post" action="/devices/{{ device.id }}/hardening" class="card">
         <h2>Phone hardening</h2>
         <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The offline-override PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
@@ -148,6 +168,10 @@
         <label class="checkbox-row">
             <input type="checkbox" name="lock_location" value="on" {% if hardening.lock_location %}checked{% endif %} onchange="this.form.submit()">
             Keep location on and block location settings (Find my device needs it)
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_airplane_mode" value="on" {% if hardening.disallow_airplane_mode %}checked{% endif %} onchange="this.form.submit()">
+            Block airplane mode (off by default, so it can be used when travelling)
         </label>
         <label class="checkbox-row">
             <input type="checkbox" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} onchange="this.form.submit()">

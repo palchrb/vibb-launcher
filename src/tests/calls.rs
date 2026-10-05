@@ -101,13 +101,15 @@ async fn managed_policy_lists_contacts_with_flags_in_order() {
             {
                 "id": mamma, "name": "Mamma", "number": "+4790000001",
                 "inbound": true, "outbound": true, "show_on_home": true,
-                "message_app": "element", "message_address": "@mamma:example.org"
+                "message_app": "element", "message_address": "@mamma:example.org",
+                "photo": null
             },
             {
                 "id": pappa, "name": "Pappa", "number": "+4790000002",
                 "inbound": true, "outbound": false, "show_on_home": false,
                 // No per-contact choice: the device default.
-                "message_app": "sms", "message_address": null
+                "message_app": "sms", "message_address": null,
+                "photo": null
             }
         ])
     );

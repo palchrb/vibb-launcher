@@ -54,6 +54,20 @@ pub struct DevicePolicy {
     /// The hardening switches (migrations/0023_hardening.sql), sent as `PolicyResponse.hardening`.
     #[sqlx(flatten)]
     pub hardening: Hardening,
+    /// "system", "nb" or "en" - see [LAUNCHER_LANGUAGES] (migrations/0024_launcher_ui_photos.sql).
+    pub launcher_language: String,
+    /// Columns of the launcher's home-screen app grid, 3 or 4.
+    pub home_columns: i64,
+}
+
+/// The launcher languages a parent can choose; "system" follows the phone's language.
+pub const LAUNCHER_LANGUAGES: [&str; 3] = ["system", "nb", "en"];
+
+/// `PolicyResponse.launcher_ui` - always sent with both fields.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct LauncherUi {
+    pub language: String,
+    pub home_columns: i64,
 }
 
 /// Android user restrictions the launcher sets while the phone is managed - one switch each,
@@ -81,6 +95,8 @@ pub struct Hardening {
     pub disallow_safe_boot: bool,
     /// `DISALLOW_CONFIG_LOCATION` with location turned on (Find my device).
     pub lock_location: bool,
+    /// `DISALLOW_AIRPLANE_MODE` (migrations/0024). Off by default: the family travels.
+    pub disallow_airplane_mode: bool,
 }
 
 impl Default for Hardening {
@@ -95,6 +111,7 @@ impl Default for Hardening {
             disallow_debugging_features: true,
             disallow_safe_boot: false,
             lock_location: true,
+            disallow_airplane_mode: false,
         }
     }
 }
@@ -114,6 +131,7 @@ pub struct DeviceContactRow {
     /// `None` = the device's `default_message_app`.
     pub message_app: Option<String>,
     pub message_address: Option<String>,
+    pub photo_hash: Option<String>,
 }
 
 /// Singleton (always `id = 1`) - the schedule every device follows unless it has its own
@@ -144,6 +162,9 @@ pub struct DeviceStatus {
     /// See migrations/0021_device_status_policy_state.sql. `None` from older launchers.
     pub policy_state: Option<String>,
     pub restrictions_paused: bool,
+    /// The launcher's notification listener (app badges) has access - migrations/0024. `None`
+    /// from older launchers.
+    pub notification_listener_enabled: Option<bool>,
     // capabilities_json/call_state_json (migrations/0022_calls.sql) are read directly by
     // handlers::calls::call_warnings.
 }
@@ -358,6 +379,8 @@ pub struct PolicyResponse {
     pub call_policy: CallPolicy,
     /// User restrictions while managed - always present with every switch explicit.
     pub hardening: Hardening,
+    /// Launcher language and home-grid columns - always present.
+    pub launcher_ui: LauncherUi,
 }
 
 /// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and
@@ -385,6 +408,8 @@ pub struct PolicyContact {
     pub show_on_home: bool,
     pub message_app: String,
     pub message_address: Option<String>,
+    /// SHA-256 of the contact's photo (`GET /api/devices/contact-photos/{hash}`), or none.
+    pub photo: Option<String>,
 }
 
 /// The oldest undelivered [DeviceCommand] for this device, if any - `policy()`
@@ -421,6 +446,9 @@ pub struct StatusReportRequest {
     /// JSON text. Kept as an opaque value so a newer launcher's extra fields aren't lost.
     #[serde(default)]
     pub call_state: Option<serde_json::Value>,
+    /// The launcher's notification listener (app badges) has access. Absent from older launchers.
+    #[serde(default)]
+    pub notification_listener_enabled: Option<bool>,
 }
 
 /// Attached to a status report whenever the device has a location reading

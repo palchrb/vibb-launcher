@@ -536,3 +536,30 @@ th {
     display: inline-flex;
     margin-right: 16px;
 }
+
+/* Contact photos on the calls page. */
+.contact-photo-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.contact-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.contact-initial {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #4DABF7;
+    color: #08243A;
+    font-size: 24px;
+    font-weight: 800;
+}

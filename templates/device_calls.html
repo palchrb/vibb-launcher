@@ -11,6 +11,12 @@
         <a href="/devices/{{ device.id }}" class="button-small button-secondary">Back to device</a>
     </div>
 
+    {% if let Some(error) = error %}
+    <div class="card">
+        <div class="error">{{ error }}</div>
+    </div>
+    {% endif %}
+
     {% if !warnings.is_empty() %}
     <div class="card">
         <h2>Check this phone</h2>
@@ -51,9 +57,27 @@
         {% if contacts.is_empty() %}
         <p class="subtitle">No contacts yet. While calls are managed, only emergency numbers work.</p>
         {% else %}
-        <p class="subtitle">In: may call this phone. Out: in the phone book, the kid can call them. Home: also a call button on the home screen. The name is shared by every phone that has this number.</p>
+        <p class="subtitle">In: may call this phone. Out: in the phone book, the kid can call them. Home: also a call button on the home screen. The name and the photo are shared by every phone that has this number. Photos (JPEG, PNG or WebP, up to 10 MB) are cropped square, made smaller and saved again without any hidden information such as where they were taken.</p>
         {% for contact in contacts %}
         <div class="contact-row">
+            <div class="contact-photo-row">
+                {% if let Some(photo) = contact.photo %}
+                <img class="contact-avatar" src="/contact-photos/{{ photo }}" alt="Photo of {{ contact.name }}" width="56" height="56">
+                {% else %}
+                <span class="contact-avatar contact-initial" aria-hidden="true">{{ contact.initial }}</span>
+                {% endif %}
+                <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo" enctype="multipart/form-data">
+                    <label>Photo
+                        <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" onchange="this.form.submit()">
+                    </label>
+                    <noscript><button type="submit" class="button-small">Upload</button></noscript>
+                </form>
+                {% if contact.photo.is_some() %}
+                <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo/remove">
+                    <button type="submit" class="button-small button-secondary">Remove photo</button>
+                </form>
+                {% endif %}
+            </div>
             <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}">
                 <strong>{{ contact.name }}</strong> <span class="subtitle">{{ contact.number }}</span>
                 <label class="checkbox-row">
@@ -83,9 +107,6 @@
 
     <form method="post" action="/devices/{{ device.id }}/contacts" class="card">
         <h2>Add a contact</h2>
-        {% if let Some(error) = error %}
-        <div class="error">{{ error }}</div>
-        {% endif %}
         <label for="contact_name">Name</label>
         <input type="text" id="contact_name" name="name" value="{{ form_name }}" maxlength="60" required>
         <label for="contact_number">Phone number</label>

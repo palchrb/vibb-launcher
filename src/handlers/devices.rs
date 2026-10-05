@@ -248,6 +248,12 @@ struct DeviceDetailTemplate {
     /// can't be opened on the phone, there is no offline override, and with USB debugging
     /// blocked a lost server means a reset (QA step 4 #4).
     managed_without_pin: bool,
+    /// Launcher card (migrations/0024): language and home-grid columns.
+    launcher_language: String,
+    home_columns: i64,
+    /// The last status report says the launcher's notification listener has no access, so the
+    /// home screen shows no unread badges on apps.
+    badges_without_access: bool,
 }
 
 pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> impl IntoResponse {
@@ -278,7 +284,7 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
             });
 
     let latest_status = sqlx::query_as::<_, DeviceStatus>(
-        "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC LIMIT 1",
+        "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -475,6 +481,11 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
             managed_without_pin: (policy.allowlist_json.is_some() || policy.calls_managed)
                 && policy.override_pin_hash.is_none(),
             hardening: policy.hardening.clone(),
+            launcher_language: policy.launcher_language.clone(),
+            home_columns: policy.home_columns,
+            badges_without_access: latest_status
+                .as_ref()
+                .is_some_and(|s| s.notification_listener_enabled == Some(false)),
             any_app_installing,
             pin_configured: policy.override_pin_hash.is_some(),
             offline_override_used,
@@ -875,7 +886,7 @@ pub async fn update_hardening(
         "UPDATE device_policy SET disallow_factory_reset = ?, disallow_add_user = ?, \
          disallow_modify_accounts = ?, disallow_config_vpn = ?, disallow_usb_file_transfer = ?, \
          disallow_debugging_features = ?, disallow_safe_boot = ?, lock_location = ?, \
-         updated_at = datetime('now') WHERE device_id = ?",
+         disallow_airplane_mode = ?, updated_at = datetime('now') WHERE device_id = ?",
     )
     .bind(on("disallow_factory_reset"))
     .bind(on("disallow_add_user"))
@@ -885,6 +896,7 @@ pub async fn update_hardening(
     .bind(on("disallow_debugging_features"))
     .bind(on("disallow_safe_boot"))
     .bind(on("lock_location"))
+    .bind(on("disallow_airplane_mode"))
     .bind(id)
     .execute(&state.db)
     .await;
@@ -898,6 +910,53 @@ pub async fn update_hardening(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save hardening switches");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed. Check the server log.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// The "Launcher" card: language ("system", "nb", "en") and home-grid columns (3 or 4). One
+/// auto-submitting form; an unknown value is a 400 and nothing is written.
+pub async fn update_launcher_ui(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    let language = form.get("language").map(String::as_str).unwrap_or("system");
+    let columns = form
+        .get("home_columns")
+        .and_then(|c| c.parse::<i64>().ok())
+        .unwrap_or(3);
+    if !crate::models::LAUNCHER_LANGUAGES.contains(&language) || !(columns == 3 || columns == 4) {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "Unknown language or column count",
+        )
+            .into_response();
+    }
+    let result = sqlx::query(
+        "UPDATE device_policy SET launcher_language = ?, home_columns = ?, \
+         updated_at = datetime('now') WHERE device_id = ?",
+    )
+    .bind(language)
+    .bind(columns)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(done) if done.rows_affected() == 0 => {
+            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&format!("/devices/{id}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "failed to save launcher settings");
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "Couldn't save - nothing was changed. Check the server log.",
@@ -926,6 +985,7 @@ pub async fn delete_device(
     .execute(&state.db)
     .await
     .ok();
+    crate::photos::prune(&state).await;
 
     Redirect::to("/")
 }

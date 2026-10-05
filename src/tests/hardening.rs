@@ -6,8 +6,9 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-const SWITCHES: [&str; 8] = [
+const SWITCHES: [&str; 9] = [
     "disallow_add_user",
+    "disallow_airplane_mode",
     "disallow_config_vpn",
     "disallow_debugging_features",
     "disallow_factory_reset",
@@ -52,6 +53,8 @@ async fn new_device_gets_explicit_defaults() {
             "disallow_debugging_features": true,
             "disallow_safe_boot": false,
             "lock_location": true,
+            // Airplane mode stays allowed unless the parent blocks it (the family travels).
+            "disallow_airplane_mode": false,
         })
     );
 }
@@ -168,6 +171,11 @@ async fn device_page_shows_the_switches() {
     ));
     assert!(
         html.contains("name=\"disallow_safe_boot\" value=\"on\"  onchange=\"this.form.submit()\"")
+    );
+    assert!(
+        html.contains(
+            "name=\"disallow_airplane_mode\" value=\"on\"  onchange=\"this.form.submit()\""
+        )
     );
     assert!(!html.contains("stored app list for this device can't be read"));
 }

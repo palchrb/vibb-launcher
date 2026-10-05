@@ -8,14 +8,15 @@ use std::collections::HashMap;
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::extract::{Multipart, Path, State};
+use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use crate::AppState;
 use crate::handlers::device_api::device_contacts;
 use crate::models::{Device, DevicePolicy, MESSAGE_APPS};
 use crate::phone;
+use crate::photos;
 
 /// Parent-facing names for `MESSAGE_APPS`, same order.
 const MESSAGE_APP_LABELS: [&str; 4] = ["No message button", "SMS", "Element X", "Signal / Molly"];
@@ -59,6 +60,18 @@ struct ContactView {
     show_on_home: bool,
     message_options: Vec<SelectOption>,
     message_address: String,
+    /// SHA-256 of the contact's photo (shown via `/contact-photos/{hash}`).
+    photo: Option<String>,
+    initial: String,
+}
+
+/// First letter of a name, upper-cased, for the placeholder avatar.
+fn initial_of(name: &str) -> String {
+    name.trim()
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_else(|| "?".to_string())
 }
 
 #[derive(Template)]
@@ -128,6 +141,7 @@ async fn load_page(
         .await?
         .into_iter()
         .map(|c| ContactView {
+            initial: initial_of(&c.name),
             id: c.contact_id,
             name: c.name,
             number: c.phone_number,
@@ -139,6 +153,7 @@ async fn load_page(
                 Some(&policy.default_message_app),
             ),
             message_address: c.message_address.unwrap_or_default(),
+            photo: c.photo_hash,
         })
         .collect();
     let warnings = call_warnings(state, &policy).await?;
@@ -545,8 +560,149 @@ pub async fn remove_contact(
     .await;
     match result {
         Ok(0) => (StatusCode::NOT_FOUND, "This contact isn't on this device").into_response(),
-        Ok(_) => back_to_calls(&state, id),
+        Ok(_) => {
+            // The address-book entry may be gone, and its photo with it.
+            photos::prune(&state).await;
+            back_to_calls(&state, id)
+        }
         Err(err) => db_error(id, err),
+    }
+}
+
+/// Every device that has this contact - all of them see its photo.
+async fn devices_with_contact(state: &AppState, contact_id: i64) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar("SELECT device_id FROM device_contacts WHERE contact_id = ?")
+        .bind(contact_id)
+        .fetch_all(&state.db)
+        .await
+}
+
+async fn contact_on_device(
+    state: &AppState,
+    id: i64,
+    contact_id: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM device_contacts WHERE device_id = ? AND contact_id = ?)",
+    )
+    .bind(id)
+    .bind(contact_id)
+    .fetch_one(&state.db)
+    .await
+}
+
+/// Sets (or, with `None`, clears) a contact's photo, prunes files nobody uses any more and nudges
+/// every device that has the contact.
+async fn set_photo(state: &AppState, id: i64, contact_id: i64, hash: Option<&str>) -> Response {
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        sqlx::query("UPDATE contacts SET photo_hash = ? WHERE id = ?")
+            .bind(hash)
+            .bind(contact_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        devices_with_contact(state, contact_id).await
+    }
+    .await;
+    match result {
+        Ok(devices) => {
+            photos::prune(state).await;
+            for device in devices {
+                let _ = state.command_notify.send(device);
+            }
+            Redirect::to(&format!("/devices/{id}/calls")).into_response()
+        }
+        Err(err) => db_error(id, err),
+    }
+}
+
+/// Uploads a contact's photo (multipart field `photo`). The photo is decoded and re-encoded
+/// (`photos::process`: square JPEG, no metadata) before anything is stored; a file that isn't a
+/// JPEG/PNG/WebP photo, is too big or can't be decoded is a 400 with the page and nothing changes.
+/// The photo belongs to the address-book contact, so every device that has it gets it.
+pub async fn upload_photo(
+    State(state): State<AppState>,
+    Path((id, contact_id)): Path<(i64, i64)>,
+    mut multipart: Multipart,
+) -> Response {
+    match contact_on_device(&state, id, contact_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return (StatusCode::NOT_FOUND, "This contact isn't on this device").into_response();
+        }
+        Err(err) => return db_error(id, err),
+    }
+    let photo_error = |message: &str| {
+        let state = state.clone();
+        let message = message.to_string();
+        async move { render(&state, id, StatusCode::BAD_REQUEST, Some(message), "", "").await }
+    };
+
+    let mut upload = None;
+    loop {
+        match multipart.next_field().await {
+            Ok(Some(field)) if field.name() == Some("photo") => match field.bytes().await {
+                Ok(bytes) => upload = Some(bytes),
+                Err(_) => return photo_error(photos::PhotoError::TooLarge.message()).await,
+            },
+            Ok(Some(_)) => {}
+            Ok(None) => break,
+            Err(_) => return photo_error(photos::PhotoError::TooLarge.message()).await,
+        }
+    }
+    let Some(bytes) = upload else {
+        return photo_error(photos::PhotoError::Empty.message()).await;
+    };
+    let processed = match tokio::task::spawn_blocking(move || photos::process(&bytes)).await {
+        Ok(Ok(processed)) => processed,
+        Ok(Err(err)) => return photo_error(err.message()).await,
+        Err(err) => {
+            tracing::error!(%err, "photo processing task failed");
+            return photo_error(photos::PhotoError::Undecodable.message()).await;
+        }
+    };
+    if let Err(err) = photos::store(&state.photo_dir, &processed).await {
+        tracing::error!(%err, "couldn't store a contact photo");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Couldn't save the photo - nothing was changed. Check the server log.",
+        )
+            .into_response();
+    }
+    set_photo(&state, id, contact_id, Some(&processed.hash)).await
+}
+
+/// Removes a contact's photo (for every device that has the contact).
+pub async fn remove_photo(
+    State(state): State<AppState>,
+    Path((id, contact_id)): Path<(i64, i64)>,
+) -> Response {
+    match contact_on_device(&state, id, contact_id).await {
+        Ok(true) => set_photo(&state, id, contact_id, None).await,
+        Ok(false) => (StatusCode::NOT_FOUND, "This contact isn't on this device").into_response(),
+        Err(err) => db_error(id, err),
+    }
+}
+
+/// A stored photo for the admin pages (behind the admin session like every page).
+pub async fn view_photo(State(state): State<AppState>, Path(hash): Path<String>) -> Response {
+    let Some(path) = photos::path_for(&state.photo_dir, &hash) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

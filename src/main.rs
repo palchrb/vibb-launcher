@@ -3,6 +3,7 @@ mod dns_engine;
 mod handlers;
 mod models;
 mod phone;
+mod photos;
 mod security;
 #[cfg(test)]
 mod tests;
@@ -39,6 +40,9 @@ pub struct AppState {
     /// Fork-specific settings from env vars (release repo, launcher provisioning values) - see
     /// `config::ForkConfig`.
     pub config: std::sync::Arc<config::ForkConfig>,
+    /// Where contact photos are stored (`data/contact_photos`; a temp dir in tests) - see
+    /// `photos`.
+    pub photo_dir: std::sync::Arc<std::path::PathBuf>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -108,6 +112,7 @@ async fn main() {
         dns_compiled: dns_engine::empty_compiled_blocklist(),
         command_notify,
         config: std::sync::Arc::new(fork_config),
+        photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
 
@@ -218,6 +223,20 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/devices/{id}/contacts/{contact_id}/remove",
             post(handlers::calls::remove_contact),
+        )
+        .route(
+            "/devices/{id}/contacts/{contact_id}/photo",
+            post(handlers::calls::upload_photo)
+                .layer(DefaultBodyLimit::max(photos::MAX_UPLOAD_BYTES + 64 * 1024)),
+        )
+        .route(
+            "/devices/{id}/contacts/{contact_id}/photo/remove",
+            post(handlers::calls::remove_photo),
+        )
+        .route("/contact-photos/{hash}", get(handlers::calls::view_photo))
+        .route(
+            "/devices/{id}/launcher",
+            post(handlers::devices::update_launcher_ui),
         )
         .route("/settings/calls", post(handlers::calls::save_call_settings))
         .route("/devices/locate", get(handlers::locate::show_locate))
@@ -416,6 +435,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/api/devices/apps",
             get(handlers::device_api::tracked_app_updates),
+        )
+        .route(
+            "/api/devices/contact-photos/{hash}",
+            get(handlers::device_api::contact_photo),
         )
         .route(
             "/api/devices/apps/{id}/download",

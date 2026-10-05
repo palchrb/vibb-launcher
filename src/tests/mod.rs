@@ -5,6 +5,7 @@
 mod calls;
 mod device_api;
 mod hardening;
+mod launcher_ui;
 mod provisioning;
 
 use axum::Router;
@@ -97,6 +98,7 @@ impl TestApp {
             dns_compiled: dns_engine::empty_compiled_blocklist(),
             command_notify,
             config: std::sync::Arc::new(ForkConfig::for_tests()),
+            photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
         };
 
         TestApp {
