@@ -1,0 +1,114 @@
+name: Server release
+
+# Builds a static 64-bit ARM binary (Pi Zero 2 W / DietPi target) for a tag server-vX.Y.Z on a
+# commit that is on master/main, and attaches it to a GitHub Release. server/deploy/install.sh and
+# update.sh (and the in-app update check) look up the newest server-v* release through the
+# GitHub API - never releases/latest, which in this monorepo belongs to the launcher: a server
+# release is published with makeLatest false.
+#
+# build (read-only token, runs cargo/cross) is kept apart from publish (contents: write, no
+# checkout, no build tools). Third-party actions are pinned by commit SHA. Never add a
+# pull_request_target trigger.
+
+on:
+  push:
+    tags: [ "server-v*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: ${{ startsWith(github.ref, 'refs/tags/server-v') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Refuse tags whose commit is not on master/main
+        run: |
+          git fetch --no-tags origin master main 2>/dev/null || git fetch --no-tags origin master
+          for branch in master main; do
+            if git rev-parse --verify -q "origin/$branch" >/dev/null &&
+               git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
+              echo "$GITHUB_REF_NAME ($GITHUB_SHA) is on $branch"
+              exit 0
+            fi
+          done
+          echo "Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on master or main" >&2
+          exit 1
+
+      - name: Verify Cargo.toml version matches the tag
+        id: version
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if ! [[ "$tag" =~ ^server-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$tag' is not server-vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          cargo_version="$(grep -m1 '^version' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          if [ "server-v$cargo_version" != "$tag" ]; then
+            echo "Cargo.toml version ($cargo_version) doesn't match tag ($tag)" >&2
+            exit 1
+          fi
+          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Install cross
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+        with:
+          tool: cross
+
+      - name: Build (aarch64-unknown-linux-musl)
+        run: cross build --release --locked --target aarch64-unknown-linux-musl
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/aarch64-unknown-linux-musl/release/kid_phone_server dist/
+          cp -r static dist/
+          tar -czf kid-phone-server-aarch64-unknown-linux-musl.tar.gz -C dist .
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: server-release
+          path: server/kid-phone-server-aarch64-unknown-linux-musl.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download tarball
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: server-release
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
+        with:
+          tag: ${{ github.ref_name }}
+          name: server ${{ needs.build.outputs.version }}
+          # releases/latest is the launcher's stable APK URL (provisioning QR) - a server
+          # release must never take it over.
+          makeLatest: "false"
+          generateReleaseNotes: true
+          artifacts: "kid-phone-server-aarch64-unknown-linux-musl.tar.gz"
+          artifactErrorsFailBuild: true
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,17 +1,21 @@
-name: Android CI
+name: Launcher
 
-# Two flows:
-# - Every push to master/main and every PR: build and test (debug, unsigned release, lint, unit
+# The Android launcher in launcher/. Two flows:
+# - Every push to master/main and every PR that touches launcher/ (or this workflow, or the
+#   build-tsnet action): build and test (debug, unsigned release, lint, unit
 #   tests) and upload the debug APK as a workflow artifact. Nothing is published, no secrets.
-# - A tag vX.Y.Z (release) or vX.Y.Z-rc.N (release candidate) on a commit that is on master/main:
+# - A tag launcher-vX.Y.Z (release) or launcher-vX.Y.Z-rc.N (release candidate) on a commit that
+#   is on master/main:
 #   release-build builds the unsigned release APK (no secrets), release-sign signs and verifies it
 #   in the protected "release" environment (no checkout, no Gradle/Go - only apksigner), and
-#   publish creates the GitHub Release. A release becomes "latest", so the stable URL
+#   publish creates the GitHub Release. A launcher release becomes "latest", so the stable URL
 #   releases/latest/download/kids-launcher-mdm.apk (provisioning QR, the server's self-update
-#   catalog row) serves it. A release candidate is a prerelease and never becomes "latest".
+#   catalog row) serves it. A release candidate is a prerelease and never becomes "latest", and
+#   server releases (server-v*, see server-release.yml) never do either - in this monorepo
+#   "latest" always means the newest stable launcher.
 #
 # One-time setup (repo settings, not code): an environment named "release" with a required
-# reviewer and a deployment rule allowing only tags matching v*; the secrets
+# reviewer and a deployment rule allowing only tags matching launcher-v*; the secrets
 # ANDROID_RELEASE_KEYSTORE_B64 / ANDROID_RELEASE_KEYSTORE_PASSWORD / ANDROID_RELEASE_KEY_ALIAS
 # stored in that environment (not as repo secrets); and the repo variable RELEASE_CERT_SHA256
 # (hex SHA-256 of the signing certificate, from `apksigner verify --print-certs`).
@@ -21,16 +25,25 @@ name: Android CI
 on:
   push:
     branches: [ "master", "main" ]
-    tags: [ "v*" ]
+    # Path filters are not evaluated for tag pushes, so a launcher-v* tag always runs.
+    tags: [ "launcher-v*" ]
+    paths:
+      - "launcher/**"
+      - ".github/workflows/launcher.yml"
+      - ".github/actions/build-tsnet/**"
   pull_request:
     branches: [ "master", "main" ]
+    paths:
+      - "launcher/**"
+      - ".github/workflows/launcher.yml"
+      - ".github/actions/build-tsnet/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  # golang.org/x/mobile (gomobile/gobind) - must match the version in mobile/go.mod, which also
+  # golang.org/x/mobile (gomobile/gobind) - must match the version in launcher/mobile/go.mod, which also
   # pins tailscale.com (tsnet) and github.com/wlynxg/anet. Bump them together there.
   GOMOBILE_VERSION: v0.0.0-20260908204917-8b95e45f8d3e
 
@@ -38,6 +51,9 @@ jobs:
   build:
     if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: launcher
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
     - name: set up JDK 17
@@ -59,11 +75,14 @@ jobs:
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: launcher-debug-${{ github.sha }}.apk
-        path: app/build/outputs/apk/debug/app-debug.apk
+        path: launcher/app/build/outputs/apk/debug/app-debug.apk
 
   release-build:
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/launcher-v') }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: launcher
     outputs:
       version-name: ${{ steps.version.outputs.name }}
       prerelease: ${{ steps.version.outputs.prerelease }}
@@ -85,19 +104,21 @@ jobs:
         exit 1
     - name: Derive version from tag
       id: version
-      # vMAJOR.MINOR.PATCH -> versionCode MAJOR*1_000_000 + MINOR*1_000 + PATCH (v0.24.0 ->
-      # 24000): deterministic, monotonic while tags only go up, and above upstream's 116.
-      # vMAJOR.MINOR.PATCH-rc.N -> the same code minus 1 and a prerelease: an RC installs over the
+      # launcher-vMAJOR.MINOR.PATCH -> versionName MAJOR.MINOR.PATCH, versionCode
+      # MAJOR*1_000_000 + MINOR*1_000 + PATCH (launcher-v0.24.0 -> 24000): deterministic,
+      # monotonic while tags only go up, and above upstream's 116. The same formula as the old
+      # standalone repo's vX.Y.Z tags, so codes keep rising across the move.
+      # launcher-vMAJOR.MINOR.PATCH-rc.N -> the same code minus 1 and a prerelease: an RC installs over the
       # previous release (equal or higher code) and the final release installs over the RC. All
       # RCs of one version share a code, which Android allows (same code is not a downgrade).
       run: |
         tag="$GITHUB_REF_NAME"
-        if [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+        if [[ "$tag" =~ ^launcher-v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
           prerelease=false
-        elif [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$ ]]; then
+        elif [[ "$tag" =~ ^launcher-v([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$ ]]; then
           prerelease=true
         else
-          echo "Tag '$tag' is neither vMAJOR.MINOR.PATCH nor vMAJOR.MINOR.PATCH-rc.N" >&2
+          echo "Tag '$tag' is neither launcher-vMAJOR.MINOR.PATCH nor launcher-vMAJOR.MINOR.PATCH-rc.N" >&2
           exit 1
         fi
         major=$((10#${BASH_REMATCH[1]})); minor=$((10#${BASH_REMATCH[2]})); patch=$((10#${BASH_REMATCH[3]}))
@@ -108,10 +129,11 @@ jobs:
         code=$(( major * 1000000 + minor * 1000 + patch ))
         if [ "$prerelease" = true ]; then code=$(( code - 1 )); fi
         if (( code < 1 )); then echo "versionCode would be $code" >&2; exit 1; fi
-        echo "name=${tag#v}" >> "$GITHUB_OUTPUT"
+        name="${tag#launcher-v}"
+        echo "name=$name" >> "$GITHUB_OUTPUT"
         echo "code=$code" >> "$GITHUB_OUTPUT"
         echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-        echo "versionName ${tag#v}, versionCode $code, prerelease $prerelease"
+        echo "versionName $name, versionCode $code, prerelease $prerelease"
     - name: set up JDK 17
       uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
       with:
@@ -141,15 +163,15 @@ jobs:
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: release-unsigned
-        path: app/build/outputs/apk/release/app-release-unsigned.apk
+        path: launcher/app/build/outputs/apk/release/app-release-unsigned.apk
         if-no-files-found: error
         retention-days: 7
 
   release-sign:
     needs: release-build
     runs-on: ubuntu-latest
-    # Holds the signing secrets. Configure it with a required reviewer and a tags-only (v*)
-    # deployment rule, so neither a branch push nor a workflow_dispatch from a branch can use them.
+    # Holds the signing secrets. Configure it with a required reviewer and a tags-only
+    # (launcher-v*) deployment rule, so neither a branch push nor a workflow_dispatch from a branch can use them.
     environment: release
     steps:
     - name: Download unsigned APK
@@ -225,7 +247,7 @@ jobs:
       uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
       with:
         tag: ${{ github.ref_name }}
-        name: ${{ needs.release-build.outputs.version-name }}
+        name: launcher ${{ needs.release-build.outputs.version-name }}
         prerelease: ${{ needs.release-build.outputs.prerelease }}
         # A release candidate must never become releases/latest - the phones' self-update and
         # the provisioning QR both follow that URL.

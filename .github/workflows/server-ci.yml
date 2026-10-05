@@ -1,0 +1,39 @@
+name: Server CI
+
+# The admin server in server/. Runs only when server/ (or this workflow) changes.
+# Third-party actions are pinned by commit SHA. Never add a pull_request_target trigger.
+
+on:
+  push:
+    branches: [ "master", "main" ]
+    paths:
+      - "server/**"
+      - ".github/workflows/server-ci.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - ".github/workflows/server-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - run: cargo build --locked
+      - run: cargo fmt --check
+      # The full checkout matters: phone::tests compares testdata/phone_vectors.json with the
+      # launcher's copy in ../launcher.
+      - run: cargo test --locked
+      # Reports warnings without failing the build; the existing ones predate the test harness.
+      - run: cargo clippy --all-targets --locked

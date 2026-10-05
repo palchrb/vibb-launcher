@@ -1,10 +1,11 @@
 name: Build tsnet.aar
 description: >
-  Builds app/libs/tsnet.aar from mobile/tsembed with gomobile, using only the versions committed
-  in mobile/go.mod and mobile/go.sum (tsnet, anet, x/mobile) - nothing is resolved "@latest".
+  Builds launcher/app/libs/tsnet.aar from launcher/mobile/tsembed with gomobile, using only the
+  versions committed in launcher/mobile/go.mod and go.sum (tsnet, anet, x/mobile) - nothing is
+  resolved "@latest".
 inputs:
   gomobile-version:
-    description: golang.org/x/mobile version for the gomobile command; must match mobile/go.mod
+    description: golang.org/x/mobile version for the gomobile command; must match launcher/mobile/go.mod
     required: true
   go-cache:
     description: >
@@ -18,17 +19,18 @@ runs:
     - name: set up Go
       uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
-        go-version-file: mobile/go.mod
-        cache-dependency-path: mobile/go.sum
+        go-version-file: launcher/mobile/go.mod
+        cache-dependency-path: launcher/mobile/go.sum
         cache: ${{ inputs.go-cache }}
     - name: Install Android NDK
       shell: bash
       run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;28.1.13356709"
     - name: Build tsnet.aar with gomobile
       # tsnet (tailscale.com/tsnet) gives the launcher its own embeddable tailnet connection - see
-      # this repo's CLAUDE.md. Binds against mobile/tsembed, a thin wrapper (gobind can't bind
+      # launcher/CLAUDE.md. Binds against mobile/tsembed, a thin wrapper (gobind can't bind
       # tsnet.Server directly - see mobile/tsembed's package doc). arm64-only, see CLAUDE.md.
       shell: bash
+      working-directory: launcher
       env:
         GOMOBILE_VERSION: ${{ inputs.gomobile-version }}
       run: |
