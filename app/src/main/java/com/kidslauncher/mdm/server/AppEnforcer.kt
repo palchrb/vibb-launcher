@@ -557,8 +557,10 @@ object AppEnforcer {
 
     /**
      * The system helpers to pin with the kiosk app block (B4, QA 09 #2), resolved from intents on
-     * this phone - package names differ per device. Only system apps count ([lockTaskHelpers]);
-     * Settings, the camera, the system dialer and Play are never pinned this way.
+     * this phone - package names differ per device. Only system apps count; for each intent the
+     * first match that isn't forbidden (Settings, the camera) or Play wins ([firstHelper]), so a
+     * forbidden first match doesn't hide the real helper (qa-09-code #6). The system dialer is
+     * pinned by the plan itself. The result is logged for the device checks.
      */
     private fun resolveLockTaskHelpers(context: Context): Set<String> {
         val pm = context.packageManager
@@ -570,11 +572,19 @@ object AppEnforcer {
                 null
             }
         }
-        fun activity(intent: Intent): ResolvedHelper? = try {
-            info(pm.queryIntentActivities(intent, PackageManager.MATCH_SYSTEM_ONLY).firstOrNull()?.activityInfo?.packageName)
+        fun matches(intent: Intent): List<ResolvedHelper> = try {
+            pm.queryIntentActivities(intent, PackageManager.MATCH_SYSTEM_ONLY)
+                .mapNotNull { info(it.activityInfo?.packageName) }
         } catch (e: Exception) {
-            null
+            emptyList()
         }
+        fun firstPackage(intent: Intent): String? = matches(intent).firstOrNull { it.system }?.packageName
+        val forbidden = setOfNotNull(
+            firstPackage(Intent(Settings.ACTION_SETTINGS)),
+            firstPackage(Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)),
+            firstPackage(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)),
+        )
+        fun activity(intent: Intent): ResolvedHelper? = firstHelper(matches(intent), forbidden)
         val roleRequest = try {
             context.getSystemService(android.app.role.RoleManager::class.java)
                 ?.createRequestRoleIntent(android.app.role.RoleManager.ROLE_DIALER)
@@ -585,12 +595,24 @@ object AppEnforcer {
             pm.queryBroadcastReceivers(Intent(android.provider.Telephony.Sms.Intents.SMS_CB_RECEIVED_ACTION), PackageManager.MATCH_SYSTEM_ONLY)
                 .map { it.activityInfo.packageName }
                 .sortedByDescending { it.contains("cellbroadcast") }
-                .firstOrNull()
+                .firstNotNullOfOrNull { firstHelper(listOfNotNull(info(it)), forbidden) }
         } catch (e: Exception) {
             null
         }
+        // The "open with" screen: what an ambiguous implicit intent resolves to (qa-09-code #5).
+        val resolver = listOf(
+            Intent(Intent.ACTION_SEND).setType("text/plain"),
+            Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://example.org/")),
+        ).firstNotNullOfOrNull { intent ->
+            try {
+                pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo
+                    ?.takeIf { it.name.contains("Resolver") }?.packageName
+            } catch (e: Exception) {
+                null
+            }
+        }
         val resolved = mapOf(
-            HelperKind.EMERGENCY_DIALER to info(EmergencyDialer.resolve(context)?.packageName),
+            HelperKind.EMERGENCY_DIALER to EmergencyDialer.ACTIONS.firstNotNullOfOrNull { activity(Intent(it)) },
             HelperKind.TELECOM to activity(Intent(Intent.ACTION_CALL, android.net.Uri.fromParts("tel", "112", null))),
             HelperKind.PERMISSION_CONTROLLER to (
                 activity(Intent("android.content.pm.action.REQUEST_PERMISSIONS"))
@@ -599,15 +621,12 @@ object AppEnforcer {
             HelperKind.CHOOSER to activity(Intent(Intent.ACTION_CHOOSER)),
             HelperKind.DOCUMENTS to activity(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")),
             HelperKind.PHOTO_PICKER to activity(Intent(android.provider.MediaStore.ACTION_PICK_IMAGES)),
-            HelperKind.CELL_BROADCAST to info(cellBroadcast),
+            HelperKind.CELL_BROADCAST to cellBroadcast,
+            HelperKind.RESOLVER to firstHelper(listOfNotNull(info(resolver)), forbidden),
         )
-        val forbidden = setOfNotNull(
-            activity(Intent(Settings.ACTION_SETTINGS))?.packageName,
-            activity(Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE))?.packageName,
-            activity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))?.packageName,
-            systemDialerPackage(context),
-        )
-        return lockTaskHelpers(resolved, forbidden)
+        val helpers = lockTaskHelpers(resolved, forbidden)
+        Log.i(LOG_TAG, "Kiosk app block helpers: $resolved -> $helpers (forbidden $forbidden)")
+        return helpers
     }
 
     /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that

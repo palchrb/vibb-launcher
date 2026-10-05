@@ -13,7 +13,7 @@ class LockTaskHelpersTest {
     private val settings = "com.android.settings"
     private val camera = "com.android.camera2"
     private val dialer = "com.android.dialer"
-    private val forbidden = setOf(settings, camera, dialer)
+    private val forbidden = setOf(settings, camera)
 
     private val resolved = mapOf(
         HelperKind.EMERGENCY_DIALER to ResolvedHelper("com.android.phone", system = true),
@@ -23,6 +23,7 @@ class LockTaskHelpersTest {
         HelperKind.DOCUMENTS to ResolvedHelper("com.google.android.documentsui", system = true),
         HelperKind.PHOTO_PICKER to ResolvedHelper("com.google.android.providers.media.module", system = true),
         HelperKind.CELL_BROADCAST to ResolvedHelper("com.google.android.cellbroadcastreceiver", system = true),
+        HelperKind.RESOLVER to ResolvedHelper("android", system = true),
     )
 
     @Test
@@ -31,16 +32,15 @@ class LockTaskHelpersTest {
             setOf(
                 "com.android.phone", "com.android.server.telecom", "com.google.android.permissioncontroller",
                 "com.android.intentresolver", "com.google.android.documentsui",
-                "com.google.android.providers.media.module", "com.google.android.cellbroadcastreceiver",
+                "com.google.android.providers.media.module", "com.google.android.cellbroadcastreceiver", "android",
             ),
             lockTaskHelpers(resolved, forbidden),
         )
     }
 
     @Test
-    fun `never Settings, Play, GMS, GSF, the system dialer or the camera - and never a non-system app`() {
+    fun `never Settings, Play, GMS, GSF or the camera - and never a non-system app`() {
         val hostile = mapOf(
-            HelperKind.EMERGENCY_DIALER to ResolvedHelper(dialer, system = true),
             HelperKind.TELECOM to ResolvedHelper(settings, system = true),
             HelperKind.CHOOSER to ResolvedHelper(camera, system = true),
             HelperKind.DOCUMENTS to ResolvedHelper("com.android.vending", system = true),
@@ -50,6 +50,16 @@ class LockTaskHelpersTest {
         )
         assertEquals(emptySet<String>(), lockTaskHelpers(hostile, forbidden))
         assertEquals(emptySet<String>(), lockTaskHelpers(mapOf(HelperKind.TELECOM to null), forbidden))
+    }
+
+    @Test
+    fun `a forbidden or non-system first match doesn't hide the real helper (qa-09-code 6)`() {
+        val telecom = ResolvedHelper("com.android.server.telecom", system = true)
+        assertEquals(
+            telecom,
+            firstHelper(listOf(ResolvedHelper(camera, true), ResolvedHelper("com.evil", false), ResolvedHelper("com.android.vending", true), telecom), forbidden),
+        )
+        assertEquals(null, firstHelper(listOf(ResolvedHelper(settings, true)), forbidden))
     }
 
     @Test
@@ -83,20 +93,26 @@ class LockTaskHelpersTest {
     }
 
     @Test
-    fun `helpers never pin the system dialer or Play - the call rules decide the dialer (QA 09 #3)`() {
-        for (block in listOf(true, false)) {
-            val kiosk = plan(block)!!.kioskPackages!!
-            assertFalse(dialer in kiosk)
+    fun `with the block the system dialer is always pinned - in-call UI and emergency (qa-09-code 1)`() {
+        val noCallsLock = computeEnforcementPlan(
+            listOf("org.example.game"), true, 0, false, controllable, "com.kidslauncher.mdm", dialer,
+            scheduleLocked = true, ruleBlocksCalls = true, blockActivityStart = true, lockTaskHelpers = helpers,
+        )
+        for (kiosk in listOf(
+            plan(true)!!.kioskPackages!!, // calls managed
+            plan(true, calls = CallPolicyState.Unmanaged, allow = listOf("org.example.game"))!!.kioskPackages!!,
+            plan(true, locked = true)!!.kioskPackages!!,
+            noCallsLock.kioskPackages!!,
+        )) {
+            assertTrue(dialer in kiosk)
             assertFalse(kiosk.any { it in PLAY_CORE })
         }
-        // Unmanaged calls with an allowlisted dialer: still pinned by the allowlist, as before.
-        assertTrue(dialer in plan(true, calls = CallPolicyState.Unmanaged).kioskPackages!!)
-        // ...but not during a no-calls rule lock (pinning stays under the call rules).
-        assertFalse(
-            dialer in computeEnforcementPlan(
-                listOf(dialer), true, 0, false, controllable, "com.kidslauncher.mdm", dialer,
-                scheduleLocked = true, ruleBlocksCalls = true, blockActivityStart = true, lockTaskHelpers = helpers + dialer,
-            ).kioskPackages!!,
-        )
+        // Pinning changes no call rule: its keypad still goes through our redirection/in-call
+        // services (managed) or DISALLOW_OUTGOING_CALLS.
+        assertTrue(noCallsLock.restrictOutgoingCalls)
+        assertTrue(plan(true, calls = CallPolicyState.Unmanaged, allow = listOf("org.example.game")).restrictOutgoingCalls)
+        assertEquals(plan(false).restrictOutgoingCalls, plan(true).restrictOutgoingCalls)
+        // Without the block, the old rule: never pinned while calls are managed.
+        assertFalse(dialer in plan(false).kioskPackages!!)
     }
 }

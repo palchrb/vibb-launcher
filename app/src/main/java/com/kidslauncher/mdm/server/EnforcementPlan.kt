@@ -179,9 +179,13 @@ fun computeEnforcementPlan(
         val withoutDialer = if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
         // The block bit has no emergency exemption: the resolved system helpers (emergency
         // dialer, Telecom, permission dialogs, pickers, emergency alerts) are pinned with it - also
-        // during a time-rule lock. Never the system dialer (its pinning stays under the call
-        // rules, QA 09 #3), Settings or Play (lockTaskHelpers).
-        val helpers = if (blockActivityStart) lockTaskHelpers - setOfNotNull(systemDialer) - PLAY_CORE else emptySet()
+        // during a time-rule lock. The system dialer too (qa-09-code #1): it is the in-call UI of
+        // emergency calls (and of every call while calls are unmanaged), which the block would
+        // otherwise replace with the "app blocked" screen. Without the bit, AOSP's LockTaskController
+        // let the dialer's package start in kiosk anyway (KEYGUARD is always set), so this adds
+        // no reach; its calls stay screened by our redirection/in-call services or
+        // DISALLOW_OUTGOING_CALLS ([restrictOutgoingCalls], unchanged). Never Settings or Play.
+        val helpers = if (blockActivityStart) lockTaskHelpers + setOfNotNull(systemDialer) - PLAY_CORE else emptySet()
         (withoutDialer - PLAY_CORE) + helpers + setOfNotNull(PLAY_STORE.takeIf { installModePin })
     } else {
         null

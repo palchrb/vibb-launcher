@@ -31,6 +31,9 @@ enum class HelperKind {
     PHOTO_PICKER,
     /** The receiver of `SMS_CB_RECEIVED` - emergency alerts (Nødvarsel). */
     CELL_BROADCAST,
+    /** The "open with" disambiguation screen (ResolverActivity, package `android` on AOSP) for an
+     * implicit intent with several handlers and no default (qa-09-code #5). */
+    RESOLVER,
 }
 
 /** What an intent resolved to: the package and whether it is a system app (FLAG_SYSTEM). */
@@ -38,15 +41,23 @@ data class ResolvedHelper(val packageName: String, val system: Boolean)
 
 /**
  * The helper packages to pin: every resolved helper that is a system app, except packages that
- * must never be reachable this way ([forbidden]: Settings, the launcher-visible camera, the system
- * dialer - whose pinning stays under the call rules, QA 09 #3 - and whatever else the caller
- * names) and Play core (Play Store, Play services, GSF). A forbidden package the parent allowlisted
- * is pinned by the allowlist anyway, not by this.
+ * must never be reachable this way ([forbidden]: Settings, the launcher-visible camera and
+ * whatever else the caller names) and Play core (Play Store, Play services, GSF). A forbidden
+ * package the parent allowlisted is pinned by the allowlist anyway, not by this. The system
+ * dialer is pinned by [computeEnforcementPlan] itself whenever the block is on (qa-09-code #1).
  */
 fun lockTaskHelpers(resolved: Map<HelperKind, ResolvedHelper?>, forbidden: Set<String>): Set<String> =
     resolved.values.filterNotNull()
         .filter { it.system && it.packageName !in forbidden && it.packageName !in PLAY_CORE }
         .mapTo(mutableSetOf()) { it.packageName }
+
+/**
+ * Of the packages an intent resolves to (in the platform's order), the first that is a system app
+ * and not [forbidden] - a forbidden first match (the dialer or the camera for `ACTION_CALL`) must
+ * not hide the real helper behind it (qa-09-code #6).
+ */
+fun firstHelper(matches: List<ResolvedHelper>, forbidden: Set<String>): ResolvedHelper? =
+    matches.firstOrNull { it.system && it.packageName !in forbidden && it.packageName !in PLAY_CORE }
 
 /**
  * The lock-task features to set: the server's (minus the block bit - that travels as its own
