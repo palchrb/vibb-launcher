@@ -233,21 +233,42 @@ const PIN_PBKDF2_ROUNDS: u32 = 210_000;
 const PIN_SALT_LEN: usize = 16;
 const PIN_HASH_LEN: usize = 32;
 
-/// Hashes a device's offline-override PIN with PBKDF2-HMAC-SHA256 and a
-/// fresh random salt, returning `(hash_hex, salt_hex)`. Deliberately not the
-/// Argon2 used for admin passwords: this hash+salt pair gets shipped down to
-/// the device in its policy payload so `LockActivity` can verify a
-/// locally-entered PIN with zero network at all, and PBKDF2 is available on
-/// Android via the built-in `javax.crypto.SecretKeyFactory` with no extra
-/// client dependency, unlike Argon2. Nothing on the server itself ever
-/// verifies a PIN - there's no server-side flow that takes one - so there's
-/// no matching `verify_pin` here, only the client needs that half.
+/// Hashes a device's offline-override PIN (and, since handy step 10, the kid's lock-screen PIN)
+/// with PBKDF2-HMAC-SHA256 and a fresh random salt, returning `(hash_hex, salt_hex)`.
+/// Deliberately not the Argon2 used for admin passwords: this hash+salt pair gets shipped down to
+/// the device in its policy payload so the launcher can verify a locally-entered PIN with zero
+/// network at all, and PBKDF2 is available on Android via the built-in
+/// `javax.crypto.SecretKeyFactory` with no extra client dependency, unlike Argon2. The launcher's
+/// `server/PinHash.kt` must use the same parameters (`pin_hash_shared_vector` pins them).
 pub fn hash_pin(pin: &str) -> (String, String) {
     let mut salt = [0u8; PIN_SALT_LEN];
     OsRng.fill_bytes(&mut salt);
+    (hash_pin_with_salt(pin, &salt), hex::encode(salt))
+}
+
+/// [hash_pin] with a given salt (hex of the hash).
+pub fn hash_pin_with_salt(pin: &str, salt: &[u8]) -> String {
+    let mut hash = [0u8; PIN_HASH_LEN];
+    pbkdf2_hmac::<Sha256>(pin.as_bytes(), salt, PIN_PBKDF2_ROUNDS, &mut hash);
+    hex::encode(hash)
+}
+
+/// Whether `pin` matches a stored [hash_pin] pair. Only used to keep the kid's PIN and the
+/// override PIN apart (handy step 10: one must never verify against the other's hash); an
+/// unparseable pair never matches. Constant-time comparison.
+pub fn verify_pin(pin: &str, hash_hex: &str, salt_hex: &str) -> bool {
+    let (Ok(salt), Ok(expected)) = (hex::decode(salt_hex), hex::decode(hash_hex)) else {
+        return false;
+    };
+    if expected.len() != PIN_HASH_LEN {
+        return false;
+    }
     let mut hash = [0u8; PIN_HASH_LEN];
     pbkdf2_hmac::<Sha256>(pin.as_bytes(), &salt, PIN_PBKDF2_ROUNDS, &mut hash);
-    (hex::encode(hash), hex::encode(salt))
+    hash.iter()
+        .zip(expected.iter())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
 }
 
 pub fn generate_totp_secret_base32() -> String {
@@ -431,5 +452,36 @@ pub async fn require_device_token(
             next.run(request).await
         }
         None => (axum::http::StatusCode::UNAUTHORIZED, "invalid device token").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Shared with the launcher's `PinHashTest` (same PIN, salt and expected hash): both sides
+    /// must derive the same PBKDF2 parameters or no PIN would ever verify on the phone.
+    #[test]
+    fn pin_hash_shared_vector() {
+        let salt: Vec<u8> = (0u8..16).collect();
+        assert_eq!(
+            hash_pin_with_salt("1234", &salt),
+            "942eed8586f04aa8cc4b14537eb02bb601b671749b6f95c07a2d2261f83e75a7"
+        );
+        assert!(verify_pin(
+            "1234",
+            "942eed8586f04aa8cc4b14537eb02bb601b671749b6f95c07a2d2261f83e75a7",
+            "000102030405060708090a0b0c0d0e0f"
+        ));
+    }
+
+    #[test]
+    fn verify_pin_round_trip_and_garbage() {
+        let (hash, salt) = hash_pin("4711");
+        assert!(verify_pin("4711", &hash, &salt));
+        assert!(!verify_pin("4712", &hash, &salt));
+        assert!(!verify_pin("4711", "zz", &salt));
+        assert!(!verify_pin("4711", &hash, "not hex"));
+        assert!(!verify_pin("4711", &hash[..10], &salt));
     }
 }
