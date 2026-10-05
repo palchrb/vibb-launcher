@@ -68,3 +68,90 @@ fun lockTaskFeatures(serverFeatures: Long, blockActivityStart: Boolean): Int {
     val base = (serverFeatures.toInt() and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK.inv()) or LOCK_TASK_FEATURE_KEYGUARD
     return if (blockActivityStart) base or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK else base
 }
+
+/*
+ * Handy's PIN lock (step 10, design 10-lock-and-call-ui.md §3 with qa-10-design.md #1/#10): while
+ * the lock is LOCKED the lock screen always runs in lock task. The same pure functions serve the
+ * fast path (PinLockRuntime via LockTaskChrome) and every apply(), so a sync can't undo them.
+ */
+
+/** `DevicePolicyManager.LOCK_TASK_FEATURE_*` (public constants, duplicated to stay Android-free). */
+const val LOCK_TASK_FEATURE_SYSTEM_INFO = 1
+const val LOCK_TASK_FEATURE_NOTIFICATIONS = 2
+const val LOCK_TASK_FEATURE_HOME = 4
+const val LOCK_TASK_FEATURE_OVERVIEW = 8
+const val LOCK_TASK_FEATURE_GLOBAL_ACTIONS = 16
+
+/** Kiosk off while LOCKED: the status line (time, battery), the power menu and the keyguard bit
+ * (it carries AOSP's emergency-call exemption) - no shade, no Home, no Recents, no app block. */
+const val PIN_LOCK_FEATURES_KIOSK_OFF =
+    LOCK_TASK_FEATURE_KEYGUARD or LOCK_TASK_FEATURE_GLOBAL_ACTIONS or LOCK_TASK_FEATURE_SYSTEM_INFO
+
+/**
+ * Kiosk on: the plan's features minus the shade/heads-up alerts, Home and Recents while LOCKED.
+ * SYSTEM_INFO (the mock shows Android's status line), GLOBAL_ACTIONS as the server set it,
+ * KEYGUARD and the app-block bit stay.
+ */
+fun featuresWhileLocked(base: Int, locked: Boolean): Int =
+    if (!locked) {
+        base
+    } else {
+        (base and (LOCK_TASK_FEATURE_NOTIFICATIONS or LOCK_TASK_FEATURE_HOME or LOCK_TASK_FEATURE_OVERVIEW).inv()) or
+            LOCK_TASK_FEATURE_KEYGUARD
+    }
+
+/**
+ * What to set on the platform: lock-task [packages] (`null` = none, kiosk off and unlocked),
+ * [features], `setStatusBarDisabled` ([statusBarDisabled], a backstop - ineffective while pinned)
+ * and `DISALLOW_CREATE_WINDOWS` ([createWindowsBlocked]: no chat heads or other overlays over the
+ * lock, QA 10 #10).
+ */
+data class LockTaskSetting(
+    val packages: Set<String>?,
+    val features: Int,
+    val statusBarDisabled: Boolean,
+    val createWindowsBlocked: Boolean,
+)
+
+/**
+ * The lock-task setting for the plan's [kioskPackages]/[baseFeatures]/[restrictCreateWindows]
+ * and the PIN lock state:
+ * - unlocked (or no lock): the plan as it is;
+ * - LOCKED, kiosk on: the kiosk list is **never** touched (removing a package would clear its
+ *   locked task - the kid's app would lose its state at every screen-off), only the features;
+ * - LOCKED, kiosk off: our package plus [lockHelpers] (emergency dialer, Telecom, the system
+ *   dialer, the system clock app - no third-party app) with [PIN_LOCK_FEATURES_KIOSK_OFF]; the
+ *   lock screen starts lock task itself and stops it on unlock.
+ */
+fun lockTaskWhileLocked(
+    kioskPackages: Set<String>?,
+    baseFeatures: Int,
+    restrictCreateWindows: Boolean,
+    locked: Boolean,
+    ownPackage: String,
+    lockHelpers: Set<String>,
+): LockTaskSetting = when {
+    !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = false, createWindowsBlocked = restrictCreateWindows)
+    kioskPackages != null -> LockTaskSetting(
+        kioskPackages, featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
+    )
+    else -> LockTaskSetting(
+        setOf(ownPackage) + (lockHelpers - PLAY_CORE), PIN_LOCK_FEATURES_KIOSK_OFF, statusBarDisabled = true, createWindowsBlocked = true,
+    )
+}
+
+/**
+ * The system packages the lock pins with the kiosk off: whatever handles the emergency dialer and
+ * `ACTION_CALL` (Telecom), the system dialer (the in-call UI of emergency calls) and the clock app
+ * (its alarm screen shows over the lock - decision after QA review). Only system apps, never a
+ * forbidden one (Settings, the camera) or Play.
+ */
+fun pinLockHelpers(
+    emergencyDialer: ResolvedHelper?,
+    telecom: ResolvedHelper?,
+    systemDialer: ResolvedHelper?,
+    alarmApp: ResolvedHelper?,
+    forbidden: Set<String>,
+): Set<String> = listOfNotNull(emergencyDialer, telecom, systemDialer, alarmApp)
+    .filter { it.system && it.packageName !in forbidden && it.packageName !in PLAY_CORE }
+    .mapTo(mutableSetOf()) { it.packageName }

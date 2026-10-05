@@ -116,3 +116,67 @@ class LockTaskHelpersTest {
         assertFalse(dialer in plan(false).kioskPackages!!)
     }
 }
+
+/** Handy step 10 (design §3, QA 10 #1/#10): the lock-task setting while the PIN lock is LOCKED. */
+class PinLockTaskTest {
+    private val own = "com.kidslauncher.mdm"
+    private val kiosk = setOf(own, "org.fossify.calendar", "com.android.phone")
+    private val serverFeatures = LOCK_TASK_FEATURE_SYSTEM_INFO or LOCK_TASK_FEATURE_NOTIFICATIONS or
+        LOCK_TASK_FEATURE_HOME or LOCK_TASK_FEATURE_OVERVIEW or LOCK_TASK_FEATURE_GLOBAL_ACTIONS or
+        LOCK_TASK_FEATURE_KEYGUARD or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK
+    private val helpers = setOf("com.android.phone", "com.android.server.telecom", "com.android.dialer", "com.google.android.deskclock")
+
+    @Test
+    fun `featuresWhileLocked drops the shade, Home and Recents and keeps the rest`() {
+        val locked = featuresWhileLocked(serverFeatures, true)
+        assertEquals(0, locked and LOCK_TASK_FEATURE_NOTIFICATIONS)
+        assertEquals(0, locked and LOCK_TASK_FEATURE_HOME)
+        assertEquals(0, locked and LOCK_TASK_FEATURE_OVERVIEW)
+        assertTrue(locked and LOCK_TASK_FEATURE_KEYGUARD != 0)
+        assertTrue(locked and LOCK_TASK_FEATURE_SYSTEM_INFO != 0)
+        assertTrue(locked and LOCK_TASK_FEATURE_GLOBAL_ACTIONS != 0)
+        assertTrue(locked and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0)
+        assertEquals(serverFeatures, featuresWhileLocked(serverFeatures, false))
+        assertTrue("keyguard is forced", featuresWhileLocked(0, true) and LOCK_TASK_FEATURE_KEYGUARD != 0)
+    }
+
+    @Test
+    fun `kiosk on - the kiosk list is never touched, only the features`() {
+        val locked = lockTaskWhileLocked(kiosk, serverFeatures, restrictCreateWindows = false, locked = true, ownPackage = own, lockHelpers = helpers)
+        assertEquals(kiosk, locked.packages)
+        assertEquals(featuresWhileLocked(serverFeatures, true), locked.features)
+        assertTrue(locked.statusBarDisabled)
+        assertTrue("no overlays over the lock", locked.createWindowsBlocked)
+        val open = lockTaskWhileLocked(kiosk, serverFeatures, restrictCreateWindows = false, locked = false, ownPackage = own, lockHelpers = helpers)
+        assertEquals(LockTaskSetting(kiosk, serverFeatures, statusBarDisabled = false, createWindowsBlocked = false), open)
+    }
+
+    @Test
+    fun `kiosk off - ours plus the helpers only, KEYGUARD, GLOBAL_ACTIONS and SYSTEM_INFO`() {
+        val locked = lockTaskWhileLocked(null, serverFeatures, restrictCreateWindows = false, locked = true, ownPackage = own,
+            lockHelpers = helpers + com.kidslauncher.mdm.play.PLAY_STORE)
+        assertEquals(setOf(own) + helpers, locked.packages)
+        assertEquals(LOCK_TASK_FEATURE_KEYGUARD or LOCK_TASK_FEATURE_GLOBAL_ACTIONS or LOCK_TASK_FEATURE_SYSTEM_INFO, locked.features)
+        assertTrue(locked.statusBarDisabled)
+        assertTrue(locked.createWindowsBlocked)
+        val open = lockTaskWhileLocked(null, serverFeatures, restrictCreateWindows = true, locked = false, ownPackage = own, lockHelpers = helpers)
+        assertEquals(null, open.packages)
+        assertFalse(open.statusBarDisabled)
+        assertTrue("the budget's own overlay block stays", open.createWindowsBlocked)
+    }
+
+    @Test
+    fun `the lock's helpers are system packages only, never Settings, the camera or Play`() {
+        val got = pinLockHelpers(
+            emergencyDialer = ResolvedHelper("com.android.phone", system = true),
+            telecom = ResolvedHelper("com.android.server.telecom", system = true),
+            systemDialer = ResolvedHelper("com.android.dialer", system = true),
+            alarmApp = ResolvedHelper("com.example.thirdpartyclock", system = false),
+            forbidden = setOf("com.android.settings"),
+        )
+        assertEquals(setOf("com.android.phone", "com.android.server.telecom", "com.android.dialer"), got)
+        val clock = pinLockHelpers(null, null, null, ResolvedHelper("com.google.android.deskclock", system = true), emptySet())
+        assertEquals(setOf("com.google.android.deskclock"), clock)
+        assertEquals(emptySet<String>(), pinLockHelpers(ResolvedHelper("com.android.settings", true), null, null, null, setOf("com.android.settings")))
+    }
+}
