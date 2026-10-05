@@ -18,6 +18,7 @@ sent as `hardening` with explicit booleans (`build_policy`; the key snapshot tes
 | `disallow_debugging_features` | `DISALLOW_DEBUGGING_FEATURES` - **on = no adb**, i.e. no `adb install -r` fix-forward, no logcat, no `cmd role` | on |
 | `disallow_safe_boot` | `DISALLOW_SAFE_BOOT` | **off** |
 | `lock_location` | `DISALLOW_CONFIG_LOCATION` + `setLocationEnabled(true)` (Find my device) | on |
+| `disallow_airplane_mode` | `DISALLOW_AIRPLANE_MODE` (step 5, migration `0024`, see 05) | **off** |
 
 Already set (unchanged): `CONFIG_DATE_TIME` + auto time, `CONFIG_PRIVATE_DNS`, `INSTALL_UNKNOWN_SOURCES(_GLOBALLY)`,
 `CONFIG_DEFAULT_APPS`, `OUTGOING_CALLS`, `SMS`.
