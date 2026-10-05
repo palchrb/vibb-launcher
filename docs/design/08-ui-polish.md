@@ -225,6 +225,32 @@ recorded here - no emulator/adb in this environment; run the §2 diagnosis (`pol
 page, prefs grep, the `KidSettings` log line, which now names the case) and write the cause down
 before closing it. Everything under "[device]" in qa-08-design.md is untested.
 
+### Fix round after qa-08-code.md (2026-10-05)
+All nine items addressed (8 = S, the rest L; 9 = device checks, still open). L `ce1efcb`, `e3a66d9`,
+`ebe801f`, `CLAUDE.md` commit; S `e38512e` + `CLAUDE.md` commit. L assemble + unit tests green; S 146
+tests, fmt and clippy (25 = baseline) clean.
+1. `hardeningClearSteps`: the wallpaper reset runs right before `DISALLOW_SET_WALLPAPER` is cleared,
+   in the early clear pass and at the end of `apply()`; the restriction stays until the reset worked;
+   each step exception-safe (pure order test).
+2. Lock wallpaper set before home; `ApplyOutcome` + `partial_key` record a half-applied photo;
+   `resetIfOurs` falls back to `WallpaperManager.clear`, empties the record only when it worked, and
+   is retried on every pass.
+3. `revokedImageShows`: a photo of ours no longer allowed/cached → `Apply` on every sync regardless of
+   the daily backoff, and a reset when that apply fails (tests for revoked + failed today).
+4. Thumbnails: tile-size centred squares (~75 KB), 8 MB LRU, one decode in flight per photo, failures
+   not retried until the next sync, a separate thumbnail listener redraws only the picker.
+5. Icons rendered from `constantState.newDrawable().mutate()` - the drawer's drawable is untouched.
+6. `State.systemShowsOurs` computed on the store thread (refresh on each kid screen's resume and after
+   every apply); `WallpaperGround` makes no binder call.
+7. Escape guard extended to `HomeActivity`, `ui/home`, `PhoneBookActivity`/`PhoneBookAdapter` and
+   string actions (`"android.settings.`, `SET_WALLPAPER`, wallpaper service, chooser); the long-press
+   source-line check is kept (accepted as brittle).
+8. S: wallpaper query error → policy with `wallpapers: []` + error log (test drops the table); backup
+   skips a file deleted mid-run (dangling-link test). Note: the phone then treats the empty list as
+   "navy only" and deletes its cached photos - the safe direction.
+9. Still open: everything [device] (findings 1-3 to re-check with `adb shell dumpsys wallpaper` after
+   unmanage and after a forced lock-set failure) and the Quick Controls root cause.
+
 ### Screenshot checklist (emulator ~320×568 dp, nb and en, side by side with the mockups)
 - [ ] 1. Home, 2 Home contacts, 3 cols, navy: no clock, light status icons, sizes/gaps ±2 dp, Nunito.
 - [ ] 2. Same with 4 cols; with 5 contacts (scroll + peek); with 1 contact; 4 contacts at 288 dp scroll.
