@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  server-release-build:
     if: ${{ startsWith(github.ref, 'refs/tags/server-v') }}
     runs-on: ubuntu-latest
     defaults:
@@ -65,6 +65,14 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
+          components: rustfmt
+
+      # The same gate as server-ci.yml, on exactly the tagged commit: nothing is published from a
+      # commit whose tests fail (clippy stays advisory there, so it isn't repeated here).
+      - name: Test
+        run: |
+          cargo fmt --check
+          cargo test --locked
 
       - name: Install cross
         uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
@@ -81,17 +89,22 @@ jobs:
           cp target/aarch64-unknown-linux-musl/release/kid_phone_server dist/
           cp -r static dist/
           tar -czf kid-phone-server-aarch64-unknown-linux-musl.tar.gz -C dist .
+          # install.sh/update.sh download this and refuse a tarball that doesn't match it.
+          sha256sum kid-phone-server-aarch64-unknown-linux-musl.tar.gz \
+            > kid-phone-server-aarch64-unknown-linux-musl.tar.gz.sha256
 
       - name: Upload tarball
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: server-release
-          path: server/kid-phone-server-aarch64-unknown-linux-musl.tar.gz
+          path: |
+            server/kid-phone-server-aarch64-unknown-linux-musl.tar.gz
+            server/kid-phone-server-aarch64-unknown-linux-musl.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
 
-  publish:
-    needs: build
+  server-release-publish:
+    needs: server-release-build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -104,11 +117,11 @@ jobs:
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         with:
           tag: ${{ github.ref_name }}
-          name: server ${{ needs.build.outputs.version }}
+          name: server ${{ needs.server-release-build.outputs.version }}
           # releases/latest is the launcher's stable APK URL (provisioning QR) - a server
           # release must never take it over.
           makeLatest: "false"
           generateReleaseNotes: true
-          artifacts: "kid-phone-server-aarch64-unknown-linux-musl.tar.gz"
+          artifacts: "kid-phone-server-aarch64-unknown-linux-musl.tar.gz,kid-phone-server-aarch64-unknown-linux-musl.tar.gz.sha256"
           artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}

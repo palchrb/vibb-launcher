@@ -6,9 +6,9 @@ name: Launcher
 #   tests) and upload the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag launcher-vX.Y.Z (release) or launcher-vX.Y.Z-rc.N (release candidate) on a commit that
 #   is on master/main:
-#   release-build builds the unsigned release APK (no secrets), release-sign signs and verifies it
-#   in the protected "release" environment (no checkout, no Gradle/Go - only apksigner), and
-#   publish creates the GitHub Release. A launcher release becomes "latest", so the stable URL
+#   launcher-release-build builds the unsigned release APK (no secrets), launcher-release-sign
+#   signs and verifies it in the protected "release" environment (no checkout, no Gradle/Go -
+#   only apksigner), and launcher-release-publish creates the GitHub Release. A launcher release becomes "latest", so the stable URL
 #   releases/latest/download/kids-launcher-mdm.apk (provisioning QR, the server's self-update
 #   catalog row) serves it. A release candidate is a prerelease and never becomes "latest", and
 #   server releases (server-v*, see server-release.yml) never do either - in this monorepo
@@ -22,21 +22,16 @@ name: Launcher
 #
 # Third-party actions are pinned by commit SHA. Never add a pull_request_target trigger.
 
+# No `paths:` filter on the triggers: a skipped workflow leaves a required check pending forever.
+# Instead launcher-changes decides, launcher-build runs only when launcher files changed, and
+# launcher-ci (always runs) is the check to require.
+
 on:
   push:
     branches: [ "master", "main" ]
-    # Path filters are not evaluated for tag pushes, so a launcher-v* tag always runs.
     tags: [ "launcher-v*" ]
-    paths:
-      - "launcher/**"
-      - ".github/workflows/launcher.yml"
-      - ".github/actions/build-tsnet/**"
   pull_request:
     branches: [ "master", "main" ]
-    paths:
-      - "launcher/**"
-      - ".github/workflows/launcher.yml"
-      - ".github/actions/build-tsnet/**"
   workflow_dispatch:
 
 permissions:
@@ -48,8 +43,41 @@ env:
   GOMOBILE_VERSION: v0.0.0-20260908204917-8b95e45f8d3e
 
 jobs:
-  build:
+  launcher-changes:
     if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        fetch-depth: 0
+    - name: Did launcher files change?
+      id: diff
+      env:
+        EVENT: ${{ github.event_name }}
+        BEFORE: ${{ github.event.before }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+      run: |
+        case "$EVENT" in
+          pull_request) base="$PR_BASE" ;;
+          push) base="$BEFORE" ;;
+          *) base="" ;;  # workflow_dispatch: always build
+        esac
+        # No usable base (manual run, new branch, force push): build.
+        if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+          changed=true
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/actions/build-tsnet/)'; then
+          changed=true
+        else
+          changed=false
+        fi
+        echo "changed=$changed" >> "$GITHUB_OUTPUT"
+        echo "launcher changed: $changed (base ${base:-none})"
+
+  launcher-build:
+    needs: launcher-changes
+    if: ${{ !startsWith(github.ref, 'refs/tags/') && needs.launcher-changes.outputs.changed == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -77,7 +105,24 @@ jobs:
         name: launcher-debug-${{ github.sha }}.apk
         path: launcher/app/build/outputs/apk/debug/app-debug.apk
 
-  release-build:
+  # The one check to mark as required in branch protection: it always runs and passes when the
+  # build passed, or was skipped because nothing of launcher's changed.
+  launcher-ci:
+    if: ${{ always() && !startsWith(github.ref, 'refs/tags/') }}
+    needs: [ launcher-changes, launcher-build ]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check launcher-build
+      env:
+        CHANGES: ${{ needs.launcher-changes.result }}
+        CHANGED: ${{ needs.launcher-changes.outputs.changed }}
+        BUILD: ${{ needs.launcher-build.result }}
+      run: |
+        echo "changes: $CHANGES, changed: $CHANGED, build: $BUILD"
+        [ "$CHANGES" = success ] || exit 1
+        if [ "$CHANGED" = true ]; then [ "$BUILD" = success ]; else [ "$BUILD" = skipped ]; fi
+
+  launcher-release-build:
     if: ${{ startsWith(github.ref, 'refs/tags/launcher-v') }}
     runs-on: ubuntu-latest
     defaults:
@@ -145,7 +190,7 @@ jobs:
         go-cache: "false"
     - name: Build unsigned release APK
       # No keystore in this job: it runs Gradle plugins and downloads dependencies, so it never
-      # gets the signing secrets. Signing happens in release-sign.
+      # gets the signing secrets. Signing happens in launcher-release-sign.
       # The Firebase config (FCM sync nudges, handy step 7) comes from repository *variables*:
       # the values end up inside the APK anyway, so they aren't secrets - only per project.
       # -PrequireFcm=true fails the build if one is missing, so a release never silently ships
@@ -167,8 +212,8 @@ jobs:
         if-no-files-found: error
         retention-days: 7
 
-  release-sign:
-    needs: release-build
+  launcher-release-sign:
+    needs: launcher-release-build
     runs-on: ubuntu-latest
     # Holds the signing secrets. Configure it with a required reviewer and a tags-only
     # (launcher-v*) deployment rule, so neither a branch push nor a workflow_dispatch from a branch can use them.
@@ -233,8 +278,8 @@ jobs:
           kids-launcher-mdm.apk.sha256
         if-no-files-found: error
 
-  publish:
-    needs: [ release-build, release-sign ]
+  launcher-release-publish:
+    needs: [ launcher-release-build, launcher-release-sign ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -247,11 +292,11 @@ jobs:
       uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
       with:
         tag: ${{ github.ref_name }}
-        name: launcher ${{ needs.release-build.outputs.version-name }}
-        prerelease: ${{ needs.release-build.outputs.prerelease }}
+        name: launcher ${{ needs.launcher-release-build.outputs.version-name }}
+        prerelease: ${{ needs.launcher-release-build.outputs.prerelease }}
         # A release candidate must never become releases/latest - the phones' self-update and
         # the provisioning QR both follow that URL.
-        makeLatest: ${{ needs.release-build.outputs.prerelease == 'true' && 'false' || 'true' }}
+        makeLatest: ${{ needs.launcher-release-build.outputs.prerelease == 'true' && 'false' || 'true' }}
         generateReleaseNotes: true
         artifacts: "kids-launcher-mdm.apk,kids-launcher-mdm.apk.sha256"
         artifactErrorsFailBuild: true

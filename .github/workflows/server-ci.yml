@@ -1,25 +1,54 @@
 name: Server CI
 
-# The admin server in server/. Runs only when server/ (or this workflow) changes.
+# The admin server in server/. No `paths:` filter on the triggers (a skipped workflow leaves a
+# required check pending forever): server-changes decides, server-build runs only when server/ or
+# this workflow changed, and server-ci (always runs) is the check to require.
 # Third-party actions are pinned by commit SHA. Never add a pull_request_target trigger.
 
 on:
   push:
     branches: [ "master", "main" ]
-    paths:
-      - "server/**"
-      - ".github/workflows/server-ci.yml"
   pull_request:
-    paths:
-      - "server/**"
-      - ".github/workflows/server-ci.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  server-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        fetch-depth: 0
+    - name: Did server files change?
+      id: diff
+      env:
+        EVENT: ${{ github.event_name }}
+        BEFORE: ${{ github.event.before }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+      run: |
+        case "$EVENT" in
+          pull_request) base="$PR_BASE" ;;
+          push) base="$BEFORE" ;;
+          *) base="" ;;  # workflow_dispatch: always build
+        esac
+        # No usable base (manual run, new branch, force push): build.
+        if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+          changed=true
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(server/|\.github/workflows/server-ci\.yml$)'; then
+          changed=true
+        else
+          changed=false
+        fi
+        echo "changed=$changed" >> "$GITHUB_OUTPUT"
+        echo "server changed: $changed (base ${base:-none})"
+
+  server-build:
+    needs: server-changes
+    if: ${{ needs.server-changes.outputs.changed == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -37,3 +66,20 @@ jobs:
       - run: cargo test --locked
       # Reports warnings without failing the build; the existing ones predate the test harness.
       - run: cargo clippy --all-targets --locked
+
+  # The one check to mark as required in branch protection: it always runs and passes when the
+  # build passed, or was skipped because nothing of server's changed.
+  server-ci:
+    if: ${{ always() }}
+    needs: [ server-changes, server-build ]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check server-build
+      env:
+        CHANGES: ${{ needs.server-changes.result }}
+        CHANGED: ${{ needs.server-changes.outputs.changed }}
+        BUILD: ${{ needs.server-build.result }}
+      run: |
+        echo "changes: $CHANGES, changed: $CHANGED, build: $BUILD"
+        [ "$CHANGES" = success ] || exit 1
+        if [ "$CHANGED" = true ]; then [ "$BUILD" = success ]; else [ "$BUILD" = skipped ]; fi
