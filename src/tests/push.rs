@@ -74,6 +74,7 @@ async fn device_page(app: &TestApp, id: i64) -> String {
     let response = crate::handlers::devices::view_device(
         axum::extract::State(app.state.clone()),
         axum::extract::Path(id),
+        axum::extract::Query(Default::default()),
     )
     .await
     .into_response();

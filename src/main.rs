@@ -2,6 +2,7 @@ mod config;
 mod dns_engine;
 mod fcm;
 mod handlers;
+mod kid_lock;
 mod models;
 mod phone;
 mod photos;
@@ -256,6 +257,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/devices/{id}/hardening",
             post(handlers::devices::update_hardening),
+        )
+        .route(
+            "/devices/{id}/kid-lock",
+            post(handlers::devices::update_kid_lock),
         )
         .route(
             "/devices/{id}/regenerate-code",

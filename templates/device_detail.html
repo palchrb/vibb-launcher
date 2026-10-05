@@ -10,6 +10,10 @@
         <h1>{{ device.name }}</h1>
     </div>
 
+    {% if let Some(text) = notice %}
+    <div class="card"><div class="error">{{ text }}</div></div>
+    {% endif %}
+
     {% if let Some(code) = device.enrollment_code %}
     <div class="card enrollment-card">
         <h2>Not enrolled yet</h2>
@@ -240,6 +244,34 @@
         <noscript><button type="submit">Save</button></noscript>
     </form>
 
+    <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card" id="screen-lock">
+        <h2>Screen lock</h2>
+        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the unlock code (offline override PIN) - it opens the lock even while the phone is waiting after wrong PINs, and without network. After 4 wrong PINs the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
+        <p class="subtitle">It keeps people around him out, but the phone no longer has an Android code: its storage is encrypted with a key that doesn't depend on a code, so someone who steals it and has forensic tools may read photos and messages - the kid's PIN is not a secret against that, so don't reuse it anywhere else. Apps that require a screen lock (some bank/ID apps, Google Wallet, passkeys) may refuse to work. Fingerprint unlock isn't available. Safe mode starts the phone without the launcher and so skips the lock - keep "Block safe mode" on (Phone hardening). Lock and wipe on the Locate page still work.</p>
+        {% for line in lock.lines %}
+        <p>{{ line }}</p>
+        {% endfor %}
+        {% for warning in lock.warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
+        {% if lock.pin_set %}
+        <p class="subtitle">A kid PIN is set ({{ lock.pin_length }} digits).</p>
+        {% endif %}
+        {% if !pin_configured %}
+        <p class="subtitle">Set an unlock code (offline override PIN, below) first - it is the parent code on the lock screen.</p>
+        {% endif %}
+        <label for="new_kid_pin">{% if lock.pin_set %}Change the kid's PIN{% else %}Set the kid's PIN{% endif %} (4-6 digits, 4 is easiest for a child)</label>
+        <input type="text" id="new_kid_pin" name="new_kid_pin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off">
+        <button type="submit">Save PIN</button>
+    </form>
+    {% if lock.pin_set %}
+    <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card">
+        <input type="hidden" name="clear_kid_pin" value="on">
+        <p class="subtitle">Removing the kid's PIN switches handy's lock off: the screen then opens without a code.</p>
+        <button type="submit" class="button-secondary">Remove the kid's PIN</button>
+    </form>
+    {% endif %}
+
     <form method="post" action="/devices/{{ device.id }}/hardening" class="card">
         <h2>Phone hardening</h2>
         <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The offline-override PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
@@ -280,7 +312,7 @@
             <input type="checkbox" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} onchange="this.form.submit()">
             Block safe mode
         </label>
-        <p class="subtitle">Off by default. Safe mode starts the phone without the launcher, so the kid can use it unfiltered (the app restrictions above still apply there). It does not repair anything: the restrictions, the blocked USB debugging and the blocked factory reset all stay in safe mode. If a launcher update breaks the phone, the ways back are: this server sending a fixed launcher (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Only turn this on once this launcher version has been tested on the phone.</p>
+        <p class="subtitle">Off by default, and switched on when you set the kid's PIN (safe mode would skip handy's lock). Safe mode starts the phone without the launcher, so the kid can use it unfiltered (the app restrictions above still apply there). It does not repair anything: the restrictions, the blocked USB debugging and the blocked factory reset all stay in safe mode. If a launcher update breaks the phone, the ways back are: this server sending a fixed launcher (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Only turn this on once this launcher version has been tested on the phone.</p>
         <noscript><button type="submit">Save</button></noscript>
     </form>
 
@@ -308,7 +340,7 @@
         </label>
 
         <h2>Offline override PIN</h2>
-        <p class="subtitle">A failsafe for when the phone can't reach the server at all. Entering this PIN directly on the phone lifts the app restrictions and the time rules for up to two hours - including school's call block, but calls never go beyond the call rules (only allowed contacts), and phone hardening stays; they come back the moment the phone can sync again. The same PIN opens the launcher's own Settings on the phone - without a PIN, those Settings can't be opened at all.</p>
+        <p class="subtitle">A failsafe for when the phone can't reach the server at all. Entering this PIN directly on the phone lifts the app restrictions and the time rules for up to two hours - including school's call block, but calls never go beyond the call rules (only allowed contacts), and phone hardening stays; they come back the moment the phone can sync again. The same PIN opens the launcher's own Settings on the phone - without a PIN, those Settings can't be opened at all - and is the "Parent code" on the kid's lock screen (it opens only the lock there, nothing else). It must differ from the kid's PIN.</p>
         {% if pin_configured %}
         <p class="subtitle">A PIN is currently set.</p>
         {% else %}
@@ -322,7 +354,7 @@
         {% if pin_configured %}
         <label class="checkbox-row">
             <input type="checkbox" name="clear_pin" value="on">
-            Remove the PIN instead (no offline override, no pausing restrictions, and no opening the launcher's Settings on the phone)
+            Remove the PIN instead (no offline override, no pausing restrictions, and no opening the launcher's Settings on the phone{% if lock.pin_set %} - not possible while the kid's PIN is set: it is the lock screen's parent code{% endif %})
         </label>
         {% endif %}
 

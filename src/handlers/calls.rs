@@ -297,6 +297,18 @@ pub(crate) async fn call_report(
             until.format("%H:%M")
         ));
     }
+    // Handy's lock (step 10, QA 10 #8): the in-call screen didn't come up over the lock for a
+    // ringing call - the kid may not have been able to answer.
+    if let Some(at) = text("in_call_ui_failed_at").and_then(|t| parse_time(&t))
+        && now - at < chrono::Duration::days(7)
+    {
+        warnings.push(format!(
+            "At {} (UTC) the phone couldn't show the incoming-call screen over its lock, so a call \
+             may have rung without a way to answer it. Please report this with the launcher \
+             version.",
+            at.format("%Y-%m-%d %H:%M")
+        ));
+    }
 
     let reported = parse_sqlite_time(&reported_at);
     let changed = policy

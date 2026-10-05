@@ -1,5 +1,5 @@
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
@@ -261,6 +261,10 @@ struct DeviceDetailTemplate {
     time: TimeCard,
     /// "Push and Play" card (handy step 7).
     push: PushCard,
+    /// "Screen lock" card (handy step 10): the kid's PIN, the phone's lock state, warnings.
+    lock: crate::kid_lock::LockCard,
+    /// One-shot message after a save (`?notice=`), see `kid_lock::flash_text`.
+    notice: Option<&'static str>,
 }
 
 /// The kiosk app block switch on the "Push and Play" card (handy step 9): with it on, kiosk mode
@@ -658,7 +662,11 @@ async fn time_card(
     }
 }
 
-pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> impl IntoResponse {
+pub async fn view_device(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
     let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
@@ -881,6 +889,29 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
     let push = push_card(&state, id, latest_status.as_ref()).await;
+    let lock = {
+        let capable = latest_status
+            .as_ref()
+            .and_then(|s| s.capabilities_json.as_deref())
+            .is_some_and(|caps| {
+                caps.contains(&format!("\"{}\"", crate::kid_lock::PIN_LOCK_CAPABILITY))
+            });
+        let lock_state = crate::kid_lock::parse_lock_state(
+            latest_status
+                .as_ref()
+                .and_then(|s| s.lock_state_json.as_deref()),
+        );
+        crate::kid_lock::lock_card(
+            &policy,
+            lock_state.as_ref(),
+            capable,
+            latest_status.is_some(),
+            chrono::Utc::now().timestamp_millis(),
+        )
+    };
+    let notice = query
+        .get("notice")
+        .and_then(|code| crate::kid_lock::flash_text(code));
     let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
         .await
         .unwrap_or_else(|err| {
@@ -892,6 +923,8 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
         DeviceDetailTemplate {
             time,
             push,
+            lock,
+            notice,
             title: device.name.clone(),
             calls_summary,
             call_warnings,
@@ -1311,10 +1344,25 @@ pub async fn update_policy(
 
     let new_pin = field("new_pin");
     let new_pin = new_pin.trim();
+    // Handy's lock (step 10): the override PIN is the lock screen's parent code, so it can't be
+    // removed while a kid PIN is set, and it must never be the kid's PIN (QA 10 #6).
+    let kid_pin_set = current.as_ref().is_some_and(|p| p.kid_pin_hash.is_some());
+    let mut notice: Option<&str> = None;
     let (override_pin_hash, override_pin_salt, pin_event) = if fields.contains_key("clear_pin") {
-        (None, None, Some("override_pin_cleared"))
+        if kid_pin_set {
+            notice = Some("override_needed_by_lock");
+            (current_pin, current_salt, None)
+        } else {
+            (None, None, Some("override_pin_cleared"))
+        }
     } else if !new_pin.is_empty() {
-        if new_pin.len() >= 6 && new_pin.chars().all(|c| c.is_ascii_digit()) {
+        let conflicts = current
+            .as_ref()
+            .is_some_and(|p| crate::kid_lock::override_conflicts(new_pin, p));
+        if conflicts {
+            notice = Some("override_is_kid_pin");
+            (current_pin, current_salt, None)
+        } else if new_pin.len() >= 6 && new_pin.chars().all(|c| c.is_ascii_digit()) {
             let (hash, salt) = security::hash_pin(new_pin);
             (Some(hash), Some(salt), Some("override_pin_changed"))
         } else {
@@ -1359,7 +1407,121 @@ pub async fn update_policy(
     // the exact same dispatch path as a normal scheduled sync.
     let _ = state.command_notify.send(id);
 
-    Redirect::to(&format!("/devices/{id}"))
+    match notice {
+        Some(code) => Redirect::to(&format!("/devices/{id}?notice={code}#screen-lock")),
+        None => Redirect::to(&format!("/devices/{id}")),
+    }
+}
+
+/// The "Screen lock" card (handy step 10): set or remove the kid's PIN for handy's own lock
+/// screen. A PIN must be 4-6 digits, needs an override PIN (the lock's parent code) and must not
+/// be the override PIN (`kid_lock::decide_kid_pin`); a refused save writes nothing and says why.
+/// The first PIN also blocks safe mode (decision after QA review: safe mode skips our lock) -
+/// the parent can switch that off again in "Phone hardening". 404 for an unknown device, 500 on
+/// a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges the phone.
+pub async fn update_kid_lock(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let current =
+        match sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(Some(policy)) => policy,
+            Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "can't read the policy for the kid lock");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Couldn't save - nothing was changed. Check the server log.",
+                )
+                    .into_response();
+            }
+        };
+    let back = |code: &str| {
+        Redirect::to(&format!("/devices/{id}?notice={code}#screen-lock")).into_response()
+    };
+
+    let (result, event, code) = if form.contains_key("clear_kid_pin") {
+        let result = sqlx::query(
+            "UPDATE device_policy SET kid_pin_hash = NULL, kid_pin_salt = NULL, \
+             kid_pin_length = NULL, updated_at = datetime('now') WHERE device_id = ?",
+        )
+        .bind(id)
+        .execute(&state.db)
+        .await;
+        (result, "kid_pin_cleared", "cleared")
+    } else {
+        let new_pin = form
+            .get("new_kid_pin")
+            .map(|p| p.trim().to_string())
+            .unwrap_or_default();
+        let override_hash = current.override_pin_hash.clone();
+        let override_salt = current.override_pin_salt.clone();
+        // Two PBKDF2 runs: off the async workers.
+        let decided = tokio::task::spawn_blocking(move || {
+            crate::kid_lock::decide_kid_pin(
+                &new_pin,
+                override_hash.as_deref(),
+                override_salt.as_deref(),
+            )
+        })
+        .await;
+        let (hash, salt, length) = match decided {
+            Ok(Ok(new)) => new,
+            Ok(Err(refusal)) => return back(refusal.code()),
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "kid PIN hashing failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Couldn't save - nothing was changed. Check the server log.",
+                )
+                    .into_response();
+            }
+        };
+        // The first kid PIN turns the safe-boot block on; later changes leave the switch alone.
+        let first = current.kid_pin_hash.is_none();
+        let block_safe_boot = first || current.hardening.disallow_safe_boot;
+        let result = sqlx::query(
+            "UPDATE device_policy SET kid_pin_hash = ?, kid_pin_salt = ?, kid_pin_length = ?, \
+             disallow_safe_boot = ?, updated_at = datetime('now') WHERE device_id = ?",
+        )
+        .bind(&hash)
+        .bind(&salt)
+        .bind(length)
+        .bind(block_safe_boot)
+        .bind(id)
+        .execute(&state.db)
+        .await;
+        let code = if first && !current.hardening.disallow_safe_boot {
+            "saved_safe_boot"
+        } else {
+            "saved"
+        };
+        (result, "kid_pin_changed", code)
+    };
+    if let Err(err) = result {
+        tracing::error!(device_id = id, %err, "failed to save the kid PIN");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Couldn't save - nothing was changed. Check the server log.",
+        )
+            .into_response();
+    }
+    security::record_security_event(
+        &state.db,
+        event,
+        Some(&admin.username),
+        None,
+        Some(&format!("device {id}")),
+    )
+    .await;
+    let _ = state.command_notify.send(id);
+    back(code)
 }
 
 /// The "Phone hardening" card: one auto-submitting form with every switch, so a missing checkbox

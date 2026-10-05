@@ -71,6 +71,12 @@ pub struct DevicePolicy {
     pub location_mode: String,
     /// Minutes between active location fixes in "interval" mode.
     pub location_interval_minutes: i64,
+    /// The kid's PIN for handy's own lock screen (migrations/0030, handy step 10), hashed like
+    /// the override PIN. `None` = lock off. Sent as `PolicyResponse.kid_lock`.
+    pub kid_pin_hash: Option<String>,
+    pub kid_pin_salt: Option<String>,
+    /// 4-6; the keypad submits at the last digit.
+    pub kid_pin_length: Option<i64>,
 }
 
 /// The launcher languages a parent can choose; "system" follows the phone's language.
@@ -214,6 +220,8 @@ pub struct DeviceStatus {
     pub play_window_active: bool,
     /// See `StatusReportRequest.play_store_suspendable` (migrations/0029).
     pub play_store_suspendable: Option<bool>,
+    /// The launcher's `lock_state` (handy step 10, migrations/0030), see `kid_lock::LockState`.
+    pub lock_state_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -448,6 +456,18 @@ pub struct PolicyResponse {
     /// older launcher without those helpers never gets it. The per-device off switch is the
     /// remote kill switch.
     pub block_activity_start: bool,
+    /// Handy's own PIN lock (handy step 10): `{pin_hash, pin_salt, pin_length}`, or `null` = lock
+    /// off. Always sent. A launcher without `pin_lock_v1` ignores it. Only ever in this response
+    /// (CE storage on the phone) - never in a status report, a log or a page.
+    pub kid_lock: Option<KidLock>,
+}
+
+/// `PolicyResponse.kid_lock`.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct KidLock {
+    pub pin_hash: String,
+    pub pin_salt: String,
+    pub pin_length: i64,
 }
 
 /// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and
@@ -534,6 +554,10 @@ pub struct StatusReportRequest {
     /// on GMS phones) - Play is then blocked only while kiosk is on (handy step 9).
     #[serde(default)]
     pub play_store_suspendable: Option<bool>,
+    /// Handy's own PIN lock (handy step 10): `{active, inactive, locked, failures,
+    /// backoff_until_ms, ...}` - opaque, stored capped. Never unlock times.
+    #[serde(default)]
+    pub lock_state: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.

@@ -227,6 +227,7 @@ pub(crate) async fn build_policy(
         lock_task_features: policy.lock_task_features.unwrap_or(0)
             & !LOCK_TASK_BLOCK_ACTIVITY_START,
         block_activity_start: policy.block_activity_start,
+        kid_lock: crate::kid_lock::policy_kid_lock(&policy),
         override_pin_hash: policy.override_pin_hash,
         override_pin_salt: policy.override_pin_salt,
         quick_controls_mask: policy.quick_controls_mask,
@@ -565,6 +566,12 @@ pub async fn status(
         .map(|push| push.to_string())
         .filter(|json| json.len() <= 8192);
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
+    // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
+    // no unlock times or PIN material can be stored whatever a launcher sends.
+    let lock_state_json = report
+        .lock_state
+        .as_ref()
+        .and_then(crate::kid_lock::sanitize_lock_state);
 
     // The previous report, for the security log below (install mode started, new apps).
     let previous: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
@@ -584,8 +591,8 @@ pub async fn status(
          (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
           call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
-          install_mode_until_ms, play_window_active, play_store_suspendable) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -604,6 +611,7 @@ pub async fn status(
     .bind(install_mode_until_ms)
     .bind(report.play_window_active)
     .bind(report.play_store_suspendable)
+    .bind(&lock_state_json)
     .execute(&state.db)
     .await
     .ok();
