@@ -45,6 +45,23 @@ fun ownPermissionsToFix(requested: Collection<String>): Set<String> = requested.
 @Suppress("UNUSED_PARAMETER")
 fun shouldFixOwnPermission(dpmGrantState: Int, selfGranted: Boolean): Boolean = dpmGrantState != GRANT_STATE_GRANTED
 
+/**
+ * After the dialer role is handed back (calls unmanaged, role not held), the permissions we fixed
+ * go back to DEFAULT (qa-09-code #4): that clears POLICY_FIXED without revoking (no kill), so the
+ * user can revoke them again. Only when we fixed them ([fixedByUs]) - other self-grants (camera
+ * for the QR scanner) are left alone on phones whose calls were never managed.
+ */
+fun shouldResetOwnPermissions(callsManaged: Boolean, dialerRoleHeld: Boolean, fixedByUs: Boolean): Boolean =
+    fixedByUs && !callsManaged && !dialerRoleHeld
+
+/**
+ * Bring Home to front after a role change in kiosk (B2), only when the role really changed hands
+ * in this pass - never on every apply of a TAKE/RELEASE that keeps failing - and never during a
+ * call (it would cover the in-call screen, an emergency call too) (qa-09-code #3).
+ */
+fun bringHomeAfterRoleChange(heldBefore: Boolean, heldAfter: Boolean, kioskOn: Boolean, inCall: Boolean): Boolean =
+    heldBefore != heldAfter && kioskOn && !inCall
+
 /** `DevicePolicyManager.KEYGUARD_DISABLE_SECURE_CAMERA`. */
 const val KEYGUARD_DISABLE_SECURE_CAMERA = 2
 

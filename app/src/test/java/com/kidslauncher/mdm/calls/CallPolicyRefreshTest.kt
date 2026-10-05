@@ -193,10 +193,11 @@ class CallPolicyRefreshTest {
     }
 
     @Test
-    fun `the call log is only queried with the permission and after unlock (B3)`() {
-        assertTrue(canReadCallLog(granted = true, unlocked = true))
-        assertFalse(canReadCallLog(granted = false, unlocked = true))
-        assertFalse(canReadCallLog(granted = true, unlocked = false))
-        assertFalse(canReadCallLog(granted = false, unlocked = false))
+    fun `the call log is only queried while managed, with the permission and after unlock (B3)`() {
+        assertTrue(canReadCallLog(granted = true, unlocked = true, callsManaged = true))
+        assertFalse(canReadCallLog(granted = false, unlocked = true, callsManaged = true))
+        assertFalse(canReadCallLog(granted = true, unlocked = false, callsManaged = true))
+        // Handed back: the permission may still be granted, the log isn't read (qa-09-code #4).
+        assertFalse(canReadCallLog(granted = true, unlocked = true, callsManaged = false))
     }
 }

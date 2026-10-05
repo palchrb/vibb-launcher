@@ -472,7 +472,10 @@ object AppEnforcer {
         val action = dialerRoleAction(state, held, CallPrefs.dialerRoleTakenByUs(context))
         // Before the role changes hands: our own role-grantable permissions become POLICY_FIXED,
         // so the hand-back's revocation skips them and doesn't kill our process (QA 09 #6).
-        if (action != RoleAction.NONE || state.managed) fixOwnPermissions(context, dpm, admin)
+        if (action != RoleAction.NONE || state.managed) {
+            fixOwnPermissions(context, dpm, admin, DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED)
+            CallPrefs.ownPermissionsFixed(context, true)
+        }
         // Changing the default dialer with DISALLOW_CONFIG_DEFAULT_APPS set may be refused.
         if (action != RoleAction.NONE) setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, false)
         when (action) {
@@ -499,9 +502,25 @@ object AppEnforcer {
         }
         // Re-set in the same pass (QA 09 #11).
         setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS, lockDefaultApps(state, CallSystem.dialerRoleHeld(context)))
+        val heldAfter = CallSystem.dialerRoleHeld(context)
+        // Handed back: our fixed permissions return to DEFAULT (no revoke, no kill) - qa-09-code #4.
+        if (shouldResetOwnPermissions(state.managed, heldAfter, CallPrefs.ownPermissionsFixed(context))) {
+            fixOwnPermissions(context, dpm, admin, DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT)
+            CallPrefs.ownPermissionsFixed(context, false)
+        }
         // A role change can leave another app's screen (the system dialer, a camera) on top of
-        // Home in kiosk: bring Home back (device owner + HOME may start from the background, B2).
-        if (action != RoleAction.NONE && LauncherPreferences.mdm().kioskEnabled()) bringHomeToFront(context)
+        // Home in kiosk: bring Home back once, if the role really changed and no call is on
+        // (device owner + HOME may start from the background, B2, qa-09-code #3).
+        if (bringHomeAfterRoleChange(held, heldAfter, LauncherPreferences.mdm().kioskEnabled(), inCall(context))) {
+            bringHomeToFront(context)
+        }
+    }
+
+    /** Any call at all; unknown counts as "in a call" (then Home stays where it is). */
+    private fun inCall(context: Context): Boolean = try {
+        context.getSystemService(TelecomManager::class.java)?.isInCall != false
+    } catch (e: Exception) {
+        true
     }
 
     private fun bringHomeToFront(context: Context) {
@@ -515,8 +534,9 @@ object AppEnforcer {
         }
     }
 
-    /** See [ownPermissionsToFix]: every role-grantable permission our manifest requests. */
-    private fun fixOwnPermissions(context: Context, dpm: DevicePolicyManager, admin: ComponentName) {
+    /** See [ownPermissionsToFix]: every role-grantable permission our manifest requests, set to
+     * [grantState] (GRANTED = fixed by policy, DEFAULT = released, never DENIED - that would kill us). */
+    private fun fixOwnPermissions(context: Context, dpm: DevicePolicyManager, admin: ComponentName, grantState: Int) {
         val requested = try {
             context.packageManager.getPackageInfo(
                 context.packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()),
@@ -525,7 +545,19 @@ object AppEnforcer {
             Log.w(LOG_TAG, "Couldn't read our own requested permissions", e)
             return
         }
-        for (permission in ownPermissionsToFix(requested)) QuickControls.fixOwnPermission(context, dpm, admin, permission)
+        for (permission in ownPermissionsToFix(requested)) {
+            if (grantState == DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED) {
+                QuickControls.fixOwnPermission(context, dpm, admin, permission)
+            } else {
+                try {
+                    if (dpm.getPermissionGrantState(admin, context.packageName, permission) != grantState) {
+                        dpm.setPermissionGrantState(admin, context.packageName, permission, grantState)
+                    }
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Couldn't release own permission $permission", e)
+                }
+            }
+        }
     }
 
     /**

@@ -43,4 +43,23 @@ class OwnPermissionsTest {
         assertEquals(16 or KEYGUARD_DISABLE_SECURE_CAMERA, keyguardDisabledFeatures(16, managed = true))
         assertEquals(16, keyguardDisabledFeatures(16 or KEYGUARD_DISABLE_SECURE_CAMERA, managed = false))
     }
+
+    @Test
+    fun `fixed permissions are released only after a hand-back we caused (qa-09-code 4)`() {
+        assertTrue(shouldResetOwnPermissions(callsManaged = false, dialerRoleHeld = false, fixedByUs = true))
+        assertFalse(shouldResetOwnPermissions(callsManaged = true, dialerRoleHeld = false, fixedByUs = true))
+        // The release failed: still our role, keep them fixed or the next try kills us.
+        assertFalse(shouldResetOwnPermissions(callsManaged = false, dialerRoleHeld = true, fixedByUs = true))
+        assertFalse(shouldResetOwnPermissions(callsManaged = false, dialerRoleHeld = false, fixedByUs = false))
+    }
+
+    @Test
+    fun `Home comes to front once per real role change, never during a call (qa-09-code 3)`() {
+        assertTrue(bringHomeAfterRoleChange(heldBefore = false, heldAfter = true, kioskOn = true, inCall = false))
+        assertTrue(bringHomeAfterRoleChange(heldBefore = true, heldAfter = false, kioskOn = true, inCall = false))
+        // A TAKE that keeps failing changes nothing: no pull to Home on every apply.
+        assertFalse(bringHomeAfterRoleChange(heldBefore = false, heldAfter = false, kioskOn = true, inCall = false))
+        assertFalse(bringHomeAfterRoleChange(heldBefore = false, heldAfter = true, kioskOn = true, inCall = true))
+        assertFalse(bringHomeAfterRoleChange(heldBefore = false, heldAfter = true, kioskOn = false, inCall = false))
+    }
 }

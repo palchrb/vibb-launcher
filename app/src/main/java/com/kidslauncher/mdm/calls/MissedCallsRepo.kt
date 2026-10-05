@@ -31,7 +31,7 @@ object MissedCallsRepo {
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private fun readLog(context: Context, sinceMs: Long): List<CallLogEntry> =
-        if (!canReadCallLog(CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context))) emptyList() else queryLog(context, sinceMs)
+        if (!canReadCallLog(CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.state.managed)) emptyList() else queryLog(context, sinceMs)
 
     private fun queryLog(context: Context, sinceMs: Long): List<CallLogEntry> = try {
         context.contentResolver.query(

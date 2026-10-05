@@ -96,7 +96,7 @@ object CallSystem {
      * the first unlock it isn't queried at all ([canReadCallLog]); the emergency report then uses
      * only our own device-protected record. */
     private fun readOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall>? =
-        if (!canReadCallLog(callLogGranted(context), CallPolicyStore.userUnlocked(context))) null else queryOutgoingCalls(context, sinceMs)
+        if (!canReadCallLog(callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.state.managed)) null else queryOutgoingCalls(context, sinceMs)
 
     private fun queryOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall>? = try {
         context.contentResolver.query(
@@ -160,6 +160,7 @@ object CallPrefs {
     private const val ROLE_PROMPT_LAST_MS = "mdm.calls.role_prompt_last_ms"
     private const val LAST_ERROR = "mdm.calls.last_error"
     private const val ROLES_SIGNALLED = "mdm.calls.roles_signalled"
+    private const val OWN_PERMISSIONS_FIXED = "mdm.calls.own_permissions_fixed"
 
     private fun prefs(context: Context) = PreferenceManager.getDefaultSharedPreferences(context)
 
@@ -219,6 +220,13 @@ object CallPrefs {
 
     fun rolePromptLastMs(context: Context, value: Long) {
         prefs(context).edit().putLong(ROLE_PROMPT_LAST_MS, value).commit()
+    }
+
+    /** We granted our role-grantable permissions by policy (released again after a hand-back). */
+    fun ownPermissionsFixed(context: Context) = prefs(context).getBoolean(OWN_PERMISSIONS_FIXED, false)
+
+    fun ownPermissionsFixed(context: Context, value: Boolean) {
+        if (ownPermissionsFixed(context) != value) prefs(context).edit().putBoolean(OWN_PERMISSIONS_FIXED, value).commit()
     }
 
     /** The role state last reported to the server or last asked to be reported ([roleReportNeeded]). */
