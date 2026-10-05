@@ -217,10 +217,35 @@ is a device check. Residual: without a screen-lock PIN and with an allowlisted c
 runbook (gesture off) stops the camera gesture (QA #14). Pinned helpers expose their own pages
 (app permissions, "open with", default apps) - checked by QA #15 on the device.
 
+### Fix round (qa-09-code.md), 2026-10-05
+- #1 P0: with the kiosk app block on, the **system dialer is always pinned** (plan, not a helper),
+  so its in-call UI (emergency calls, every call while unmanaged) never becomes the "app blocked"
+  screen. Before step 9 LockTaskController let it start anyway (KEYGUARD), so no new reach. Its
+  calls stay under our rules: managed - Telecom still runs our redirection/in-call services;
+  otherwise `DISALLOW_OUTGOING_CALLS` as before (`LockTaskHelpersTest`).
+  **Residual risk**: the dialer's keypad is reachable in kiosk via a `tel:` link (as before step 9);
+  MMI/USSD codes typed there don't go through Telecom, so our rules don't see them - checklist 12.
+- #2 P0: `EmergencyDialer.open` tries every system handler of both actions, in lock task only
+  `isLockTaskPermitted` packages, each checked to resolve; a refused start falls through
+  (`emergencyTargets`, `EmergencyDialerTest` incl. the Google-Dialer-handles-it case).
+- #3 P1: Home is brought forward only when the dialer role really changed in this pass, kiosk on
+  and no call (`bringHomeAfterRoleChange`).
+- #4: after a hand-back we caused, our fixed permissions go back to DEFAULT (POLICY_FIXED cleared,
+  nothing revoked - revoking our own would kill us); the call log is read only while calls are
+  managed (`canReadCallLog(granted, unlocked, callsManaged)`).
+- #5/#6: the "open with" ResolverActivity package is pinned; each helper intent takes its first
+  system, non-forbidden match (`firstHelper`); the resolved set is logged (`AppEnforcer` tag).
+- #7: a policy without `block_activity_start` (server older than 0029) = **off**. Decision:
+  emergency and a working kill switch win over the extra lockdown - such a server has no off
+  switch, and without the bit kiosk keeps AOSP's system-dialer exemption.
+- #8: Matrix IDs follow the spec grammar on both sides and are percent-encoded in the Element X URIs.
+- #9: the calls page doesn't auto-refresh an error page. #10: no extra sync request for a role
+  change inside a sync; `openMessage` never crashes; stacked KDoc fixed.
+
 ### Device checklist (Part B; Jelly Star release + Android 16 emulator)
 1. Kiosk + block on: an allowed app opening Play (explicit intent, `market://`, play.google.com link, Play notification) and Settings -> "app blocked" screen. [needs device test]
-2. D1: block on, school rule, calls unmanaged, `pm revoke ... CALL_PHONE`: the lock screen's Emergency call reaches the emergency dialer (emergency test mode, never real 112); keyguard emergency button works. [needs device test]
-3. D2: cell-broadcast test alert shows in kiosk; a runtime permission dialog of an allowed app works; share sheet, photo picker and file picker work; an alarm rings; the IME works; Settings opened from a pinned helper is blocked. [needs device test]
+2. D1: block on, school rule, calls unmanaged, `pm revoke ... CALL_PHONE`: the lock screen's Emergency call reaches the emergency dialer (emergency test mode, never real 112); keyguard emergency button works; the in-call screen of that call shows (can hang up), and an incoming call in kiosk can be answered - with calls managed and unmanaged. [needs device test]
+3. D2: cell-broadcast test alert shows in kiosk; a runtime permission dialog of an allowed app works; share sheet, the "open with" dialog, photo picker and file picker work; an alarm rings; the IME works; Settings opened from a pinned helper is blocked. [needs device test]
 4. D3: server switch off -> the block bit is cleared on the next apply (`dumpsys device_policy`). [needs device test]
 5. D4: after taking the dialer role, `dumpsys package <ours>` shows no role-granted runtime permission without POLICY_FIXED; calls managed ON->OFF->ON gives no `am_kill` of our package. [needs device test]
 6. D5: if a kill happens anyway, Home cold-starts back into lock task within 5 s with nothing on top. [needs device test]
@@ -228,5 +253,7 @@ runbook (gesture off) stops the camera gesture (QA #14). Pinned helpers expose t
 8. Calls page after "manage calls": "Waiting for the phone to confirm", then the correct state; with the phone offline, after 5 min the real warnings plus "hasn't confirmed". [needs device test]
 9. Play suspension refused on the Jelly Star -> the device page says Play is blocked only in kiosk. [needs device test]
 10. Element X Message button: opens the DM directly vs the user's profile (`matrix:u/...?action=chat`, then `element://user/...`). [needs device test]
-11. Unmanaged phone: no call-log SecurityException in logcat on sync (B3). [needs device test]
+11. Unmanaged phone: no call-log SecurityException in logcat on sync (B3); after calls ON->OFF, `dumpsys package <ours>` shows our permissions without POLICY_FIXED and no call-log reads. [needs device test]
+12. Kiosk + block, calls managed: `tel:` link opens the system dialer's keypad (as before step 9); a number typed there is still stopped by our redirection; MMI/USSD codes (`*#06#`, `*21*...#`) - residual risk, record what happens. [needs device test]
+13. Logcat `AppEnforcer` "Kiosk app block helpers" line lists the expected helpers on the Jelly Star. [needs device test]
 
