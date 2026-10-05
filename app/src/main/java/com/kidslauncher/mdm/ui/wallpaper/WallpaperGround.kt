@@ -16,11 +16,8 @@ import androidx.core.view.WindowCompat
 object WallpaperGround {
     fun apply(activity: Activity, root: View): WallpaperStore.State {
         val state = WallpaperStore.state
-        val ours = try {
-            WallpaperApplier.systemShows(activity, state.current)
-        } catch (e: Exception) {
-            false
-        }
+        // Worked out on the store's thread - no binder call per render (qa-08-code.md #6).
+        val ours = state.systemShowsOurs
         val scrim = state.ink.scrimArgb
         root.background = if (ours && (scrim ushr 24) == 0) {
             ColorDrawable(Color.TRANSPARENT)

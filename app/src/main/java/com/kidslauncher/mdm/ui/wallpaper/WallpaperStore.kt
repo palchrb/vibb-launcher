@@ -51,6 +51,9 @@ object WallpaperStore {
         val ink: InkChoice,
         /** The decoded photo when [current] is an image, else null. */
         val bitmap: Bitmap?,
+        /** Android's wallpaper is ours and current, so the screens can be transparent over it -
+         * worked out on the store's thread (a binder call), never during a render. */
+        val systemShowsOurs: Boolean = false,
     )
 
     @Volatile
@@ -76,14 +79,30 @@ object WallpaperStore {
     private val main = Handler(Looper.getMainLooper())
     private val imageInks = HashMap<String, InkChoice>()
 
-    /** Small renders of the allowed photos for the picker (64 dp tiles). */
-    private val thumbs = object : LruCache<String, Bitmap>(2 * 1024 * 1024) {
+    /** The allowed photos the phone has - anything of ours outside it is revoked. */
+    @Volatile
+    private var allowedImages: Set<String> = emptySet()
+
+    /**
+     * Square tile-size renders of the allowed photos for the picker (qa-08-code.md #4): ~75 KB
+     * each at xxhdpi, room for far more than a parent uploads, so nothing is evicted and decoded
+     * again while the picker is open. [thumbsPending] keeps one decode per photo in flight,
+     * [thumbsFailed] stops retrying one that can't be read.
+     */
+    private val thumbs = object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
+    private val thumbsPending = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val thumbsFailed = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val thumbListeners = CopyOnWriteArraySet<() -> Unit>()
 
     fun addListener(listener: () -> Unit) = listeners.add(listener)
     fun removeListener(listener: () -> Unit) = listeners.remove(listener)
     private fun notifyListeners() = main.post { listeners.forEach { it() } }
+
+    /** Told (on the main thread) when a new thumbnail is ready - the picker only. */
+    fun addThumbnailListener(listener: () -> Unit) = thumbListeners.add(listener)
+    fun removeThumbnailListener(listener: () -> Unit) = thumbListeners.remove(listener)
 
     fun dir(context: Context) = File(context.applicationContext.filesDir, DIR)
 
@@ -111,8 +130,14 @@ object WallpaperStore {
         onWorker {
             prefs(app).edit(commit = true) { putLong(KEY_PICKED, id) }
             refreshNow(app)
-            WallpaperApplier.applyIfNeeded(app, state.current)
+            applyAndRefresh(app)
         }
+    }
+
+    /** Puts the shown one on Android's wallpaper if needed, then refreshes [State.systemShowsOurs]. */
+    private fun applyAndRefresh(app: Context) {
+        WallpaperApplier.applyIfNeeded(app, state.current, allowedImages)
+        refreshNow(app)
     }
 
     private fun refreshNow(context: Context) {
@@ -139,7 +164,13 @@ object WallpaperStore {
             else -> inkForFill(f)!!
         }
         val choices = allowed.filter { usable(it, cached) }
-        val next = State(choices, current, ink, if (current.fill is WallpaperFill.Image) bitmap else null)
+        allowedImages = wantedWallpaperHashes(allowed) intersect cached
+        val showsOurs = try {
+            WallpaperApplier.systemShows(context, current)
+        } catch (e: Exception) {
+            false
+        }
+        val next = State(choices, current, ink, if (current.fill is WallpaperFill.Image) bitmap else null, showsOurs)
         loaded = true
         if (next != old) {
             state = next
@@ -191,30 +222,51 @@ object WallpaperStore {
         }
     }
 
-    /** A small render of an allowed photo for the picker, or null (then decoded in the
-     * background; the listeners run when it is there). Safe on the main thread. */
+    /** A square render of an allowed photo for the picker, or null - then it is decoded in the
+     * background once, and the thumbnail listeners run when it is there. Safe on the main thread. */
     fun thumbnail(context: Context, hash: String, sizePx: Int): Bitmap? {
         thumbs.get(hash)?.let { return it }
+        if (hash in thumbsFailed || !thumbsPending.add(hash)) return null
         val app = context.applicationContext
         onWorker {
-            if (thumbs.get(hash) != null) return@onWorker
-            val file = File(dir(app), "$hash.jpg")
-            val bitmap = try {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(file.path, bounds)
-                if (!wallpaperBoundsOk(bounds.outWidth, bounds.outHeight)) return@onWorker
-                BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply {
-                    inPreferredConfig = Bitmap.Config.RGB_565
-                    inSampleSize = wallpaperSampleSize(bounds.outWidth, bounds.outHeight, sizePx, sizePx)
-                })
-            } catch (t: Throwable) {
-                Log.w(LOG_TAG, "Couldn't decode the thumbnail of $hash", t)
-                null
-            } ?: return@onWorker
-            thumbs.put(hash, bitmap)
-            notifyListeners()
+            try {
+                val bitmap = decodeThumbnail(app, hash, sizePx)
+                if (bitmap == null) {
+                    thumbsFailed += hash
+                } else if (thumbs.get(hash) == null) {
+                    thumbs.put(hash, bitmap)
+                    main.post { thumbListeners.forEach { it() } }
+                }
+            } finally {
+                thumbsPending.remove(hash)
+            }
         }
         return null
+    }
+
+    private fun decodeThumbnail(context: Context, hash: String, sizePx: Int): Bitmap? = try {
+        val file = File(dir(context), "$hash.jpg")
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path, bounds)
+        if (!wallpaperBoundsOk(bounds.outWidth, bounds.outHeight)) {
+            null
+        } else {
+            BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.RGB_565
+                inSampleSize = wallpaperSampleSize(bounds.outWidth, bounds.outHeight, sizePx, sizePx)
+            })?.let { sampled ->
+                // Down to the tile: a centred square of sizePx.
+                val side = minOf(sampled.width, sampled.height)
+                val square = Bitmap.createBitmap(sampled, (sampled.width - side) / 2, (sampled.height - side) / 2, side, side)
+                val out = if (side > sizePx) square.scale(sizePx, sizePx) else square
+                if (square !== sampled && square !== out) square.recycle()
+                if (sampled !== out) sampled.recycle()
+                out
+            }
+        }
+    } catch (t: Throwable) {
+        Log.w(LOG_TAG, "Couldn't decode the thumbnail of $hash", t)
+        null
     }
 
     /**
@@ -237,6 +289,7 @@ object WallpaperStore {
                 File(dir, name).delete()
                 thumbs.remove(name.removeSuffix(".jpg"))
             }
+            thumbsFailed.clear()
             if (plan.download.isNotEmpty()) dir.mkdirs()
             val newlyNotFound = mutableSetOf<String>()
             for (hash in plan.download) {
@@ -249,7 +302,7 @@ object WallpaperStore {
             executor.execute {
                 try {
                     refreshNow(app)
-                    WallpaperApplier.applyIfNeeded(app, state.current)
+                    applyAndRefresh(app)
                 } catch (t: Throwable) {
                     Log.w(LOG_TAG, "Wallpaper refresh after sync failed", t)
                 } finally {

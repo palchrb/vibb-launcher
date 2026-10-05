@@ -56,6 +56,11 @@ class KidSettingsActivity : UIObjectActivity() {
     private var lastLogged: String? = null
 
     private val wallpaperListener: () -> Unit = { render() }
+    /** A thumbnail arrived: only the picker is drawn again (qa-08-code.md #4). */
+    private val thumbnailListener: () -> Unit = {
+        val wallpaper = WallpaperStore.state
+        renderWallpapers(wallpaperTiles(wallpaper.choices, wallpaper.current))
+    }
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
@@ -109,18 +114,21 @@ class KidSettingsActivity : UIObjectActivity() {
         super.onStart()
         LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefsListener)
         WallpaperStore.addListener(wallpaperListener)
+        WallpaperStore.addThumbnailListener(thumbnailListener)
     }
 
     override fun onResume() {
         super.onResume()
         if (redirectIfLocked()) return
-        WallpaperStore.ensureLoaded(this)
+        // Also refreshes whether the system wallpaper is still ours (in the background).
+        WallpaperStore.refreshAsync(this)
         render()
     }
 
     override fun onStop() {
         LauncherPreferences.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(prefsListener)
         WallpaperStore.removeListener(wallpaperListener)
+        WallpaperStore.removeThumbnailListener(thumbnailListener)
         super.onStop()
     }
 

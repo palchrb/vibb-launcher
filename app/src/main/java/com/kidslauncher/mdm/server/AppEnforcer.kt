@@ -15,6 +15,9 @@ import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import android.telecom.TelecomManager
 import android.util.Log
+import com.kidslauncher.mdm.ui.wallpaper.ClearStep
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperApplier
+import com.kidslauncher.mdm.ui.wallpaper.hardeningClearSteps
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallPrefs
@@ -197,13 +200,7 @@ object AppEnforcer {
         // restrictions that stay on are (re)set at the end, after the always-on VPN.
         CallPolicyStore.ensureLoaded(context)
         val hardening = hardeningPlan(policy?.hardening, hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed))
-        try {
-            for ((restriction, set) in hardening.restrictions) {
-                if (!set) setRestriction(dpm, admin, restriction.userManagerKey(), false)
-            }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Clearing hardening restrictions failed", e)
-        }
+        clearHardening(context, dpm, admin, hardening)
 
         // Calls: never lifted by an override or pause. The dialer role first - whether our dialer
         // is in place decides the outgoing-call restriction below.
@@ -356,12 +353,34 @@ object AppEnforcer {
             if (QuickControls.isLocationEnabled(context) != wanted) QuickControls.setLocationEnabled(dpm, admin, wanted)
         }
         for ((restriction, set) in plan.restrictions) {
-            // Unmanaged: our wallpaper (maybe a private photo) goes before the parent may set
-            // their own (QA 08 #2).
-            if (restriction == HardeningRestriction.SET_WALLPAPER && !set) {
-                com.kidslauncher.mdm.ui.wallpaper.WallpaperApplier.resetIfOurs(context)
+            if (set) setRestriction(dpm, admin, restriction.userManagerKey(), true)
+        }
+        clearHardening(context, dpm, admin, plan)
+    }
+
+    /**
+     * Lifts the restrictions [plan] has off, in [hardeningClearSteps] order, each step on its
+     * own (one failing doesn't stop the rest). `DISALLOW_SET_WALLPAPER` is only lifted once
+     * nothing of ours can show on the system wallpaper any more (navy back, or cleared) - else it
+     * stays until a later pass manages the reset (qa-08-code.md #1, QA 08 #2).
+     */
+    private fun clearHardening(context: Context, dpm: DevicePolicyManager, admin: ComponentName, plan: HardeningPlan) {
+        var wallpaperClean = true
+        for (step in hardeningClearSteps(plan)) {
+            try {
+                when (step) {
+                    ClearStep.ResetWallpaper -> wallpaperClean = WallpaperApplier.resetIfOurs(context)
+                    is ClearStep.Clear -> {
+                        if (step.restriction == HardeningRestriction.SET_WALLPAPER && !wallpaperClean) {
+                            Log.w(LOG_TAG, "Our wallpaper couldn't be reset - DISALLOW_SET_WALLPAPER stays for now")
+                        } else {
+                            setRestriction(dpm, admin, step.restriction.userManagerKey(), false)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Clearing hardening step $step failed", e)
             }
-            setRestriction(dpm, admin, restriction.userManagerKey(), set)
         }
     }
 

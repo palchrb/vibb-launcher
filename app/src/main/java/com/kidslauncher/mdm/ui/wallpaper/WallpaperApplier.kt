@@ -37,6 +37,7 @@ object WallpaperApplier {
     private const val KEY_APPLIED_ID = "applied_id"
     private const val KEY_ATTEMPT = "attempt_key"
     private const val KEY_ATTEMPT_DAY = "attempt_day"
+    private const val KEY_PARTIAL = "partial_key"
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(WallpaperStore.PREFS, Context.MODE_PRIVATE)
@@ -48,6 +49,7 @@ object WallpaperApplier {
             appliedId = p.getInt(KEY_APPLIED_ID, 0),
             attemptKey = p.getString(KEY_ATTEMPT, null),
             attemptDay = p.getLong(KEY_ATTEMPT_DAY, -1),
+            partialKey = p.getString(KEY_PARTIAL, null),
         )
     }
 
@@ -56,6 +58,7 @@ object WallpaperApplier {
         putInt(KEY_APPLIED_ID, r.appliedId)
         putString(KEY_ATTEMPT, r.attemptKey)
         putLong(KEY_ATTEMPT_DAY, r.attemptDay)
+        putString(KEY_PARTIAL, r.partialKey)
     }
 
     private fun screen(context: Context): Pair<Int, Int> {
@@ -74,7 +77,8 @@ object WallpaperApplier {
         0
     }
 
-    /** Whether Home can be transparent over the system wallpaper (it is ours and current). */
+    /** Whether Home can be transparent over the system wallpaper (it is ours and current).
+     * A binder call: only on the store's thread ([WallpaperStore.State.systemShowsOurs]). */
     fun systemShows(context: Context, home: Wallpaper): Boolean =
         systemShowsOurs(record(context), keyFor(context, home), systemId(context))
 
@@ -90,72 +94,103 @@ object WallpaperApplier {
         false
     }
 
-    /** Off the main thread only (renders and PNG-encodes a full-screen bitmap). */
+    /**
+     * Off the main thread only (renders and PNG-encodes a full-screen bitmap). [allowedImages]
+     * are the photos the parent still allows and the phone still has: a photo of ours outside it
+     * is replaced on every call until that worked, and when the replacement fails, reset.
+     */
     @Synchronized
-    fun applyIfNeeded(context: Context, home: Wallpaper) {
+    fun applyIfNeeded(context: Context, home: Wallpaper, allowedImages: Set<String>) {
         val app = context.applicationContext
         val key = keyFor(app, home)
         val record = record(app)
         val today = LocalDate.now().toEpochDay()
-        when (val decision = wallpaperApplyPlan(managed(), canSet(app), key, record, systemId(app), today)) {
+        val revoked = revokedImageShows(record, allowedImages)
+        when (val decision = wallpaperApplyPlan(managed(), canSet(app), key, record, systemId(app), today, revoked)) {
             is ApplyDecision.Skip -> Log.d(LOG_TAG, "Not applied: ${decision.reason}")
             ApplyDecision.Reset -> resetIfOurs(app)
             ApplyDecision.Apply -> {
-                val id = setBoth(app, home)
-                save(app, recordAttempt(record, key, id, today))
-                if (id == 0) {
-                    Log.w(LOG_TAG, "setBitmap refused or failed for $key - not retried today")
+                val outcome = setBoth(app, home)
+                save(app, recordAttempt(record, key, outcome, today))
+                if (outcome.complete) {
+                    Log.i(LOG_TAG, "System wallpaper set ($key, id ${outcome.systemId})")
                 } else {
-                    Log.i(LOG_TAG, "System wallpaper set ($key, id $id)")
+                    Log.w(LOG_TAG, "setBitmap refused or failed for $key ($outcome) - not retried today")
+                    // A photo the parent took away must not stay: navy, or cleared.
+                    if (revoked) resetIfOurs(app)
                 }
             }
         }
     }
 
     /**
-     * Unmanaged (or about to be): navy on both, once, if ours is applied - called by AppEnforcer
-     * before it lifts `DISALLOW_SET_WALLPAPER`, and by [applyIfNeeded].
+     * Navy on both if something of ours may show (unmanaged, or a revoked photo the apply
+     * couldn't replace); `WallpaperManager.clear` when that is refused. The record is only
+     * emptied when it worked - otherwise this runs again on the next pass. Returns whether
+     * nothing of ours can show any more (then AppEnforcer may lift `DISALLOW_SET_WALLPAPER`).
+     * Never throws.
      */
     @Synchronized
-    fun resetIfOurs(context: Context) {
+    fun resetIfOurs(context: Context): Boolean {
         val app = context.applicationContext
-        if (record(app).appliedKey == null) return
+        val record = try {
+            record(app)
+        } catch (t: Throwable) {
+            Log.w(LOG_TAG, "Couldn't read the wallpaper record", t)
+            return false
+        }
+        if (!record.oursMayShow) return true
+        var worked = false
         try {
             val wm = WallpaperManager.getInstance(app)
             val navy = render(app, NAVY.fill, null, 64, 64)
-            wm.setBitmap(navy, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+            worked = wm.setBitmap(navy, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK) != 0
             navy.recycle()
-            Log.i(LOG_TAG, "Phone unmanaged: system wallpaper back to navy")
+            if (!worked) {
+                wm.clear(WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+                worked = true
+            }
         } catch (t: Throwable) {
-            Log.w(LOG_TAG, "Couldn't put navy back", t)
+            Log.w(LOG_TAG, "Couldn't put navy back or clear the wallpaper - retried next pass", t)
         }
-        save(app, ApplyRecord())
+        try {
+            save(app, recordReset(record, worked))
+        } catch (t: Throwable) {
+            Log.w(LOG_TAG, "Couldn't save the wallpaper record", t)
+            return false
+        }
+        if (worked) Log.i(LOG_TAG, "Our wallpaper removed (navy or cleared)")
+        return worked
     }
 
-    /** Sets the home and lock wallpapers; the system one's id, 0 when refused or failed. */
-    private fun setBoth(context: Context, home: Wallpaper): Int {
+    /**
+     * Sets the lock wallpaper first, then the home one (qa-08-code.md #2: whichever half goes
+     * through is recorded, see [recordAttempt]). Never throws.
+     */
+    private fun setBoth(context: Context, home: Wallpaper): ApplyOutcome {
         val wm = WallpaperManager.getInstance(context)
         val lock = lockScreenFill(home)
         val (w, h) = screen(context)
-        return try {
-            val homeBitmap = homeBitmap(context, home.fill, w, h) ?: return 0
-            val id = if (lock == home.fill) {
-                wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+        var lockOk = false
+        var systemId = 0
+        try {
+            val homeBitmap = homeBitmap(context, home.fill, w, h) ?: return ApplyOutcome(0, false)
+            if (lock == home.fill) {
+                systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
+                lockOk = systemId != 0
             } else {
-                val systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM)
                 // Set the lock screen explicitly, or it would mirror the photo.
                 val lockBitmap = render(context, lock, null, w / 2, h / 2)
-                val lockId = wm.setBitmap(lockBitmap, null, true, WallpaperManager.FLAG_LOCK)
+                lockOk = wm.setBitmap(lockBitmap, null, true, WallpaperManager.FLAG_LOCK) != 0
                 lockBitmap.recycle()
-                if (lockId == 0) 0 else systemId
+                if (lockOk) systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM)
             }
             homeBitmap.recycle()
-            id
         } catch (t: Throwable) {
             // SecurityException, IOException, OutOfMemoryError: logged, retried tomorrow.
             Log.w(LOG_TAG, "setBitmap failed", t)
-            0
         }
+        return ApplyOutcome(systemId, lockOk)
     }
 
     private fun homeBitmap(context: Context, fill: WallpaperFill, w: Int, h: Int): Bitmap? = when (fill) {

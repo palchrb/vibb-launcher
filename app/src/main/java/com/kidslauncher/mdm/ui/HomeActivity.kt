@@ -299,7 +299,8 @@ class HomeActivity : UIObjectActivity() {
         if (redirectToLockScreenIfLocked()) return
         // The parent's language choice, now that Home is in front (no call screen or dialog).
         LauncherLocales.applyIfSafe(this)
-        WallpaperStore.ensureLoaded(this)
+        // Also refreshes whether the system wallpaper is still ours (in the background).
+        WallpaperStore.refreshAsync(this)
         renderWallpaper()
         render()
         loadMissedCalls()

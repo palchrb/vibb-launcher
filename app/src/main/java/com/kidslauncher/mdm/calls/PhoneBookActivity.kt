@@ -62,7 +62,8 @@ class PhoneBookActivity : UIObjectActivity() {
 
     override fun onResume() {
         super.onResume()
-        WallpaperStore.ensureLoaded(this)
+        // Also refreshes whether the system wallpaper is still ours (in the background).
+        WallpaperStore.refreshAsync(this)
         render()
         loadMissedCalls()
     }
