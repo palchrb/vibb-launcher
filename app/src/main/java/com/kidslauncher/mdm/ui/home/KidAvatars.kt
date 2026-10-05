@@ -120,7 +120,9 @@ object KidAvatars {
     fun renderAppIcon(context: Context, key: String, icon: () -> Drawable, sizePx: Int): Bitmap {
         val cacheKey = iconKey(context, key, sizePx)
         iconCache.get(cacheKey)?.let { return it }
-        val drawable = icon()
+        // Our own copy: the drawer draws the same cached icon object on the main thread, so the
+        // background pass must not change its bounds or tint (qa-08-code.md #5).
+        val drawable = privateCopy(context, icon())
         val bmp = createBitmap(sizePx, sizePx)
         val canvas = Canvas(bmp)
         val circle = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -129,7 +131,7 @@ object KidAvatars {
             drawable is AdaptiveIconDrawable && monochrome != null -> {
                 circle.color = tileColor(seedColour(drawable))
                 canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, circle)
-                // The layer is shared with every other user of this icon: mutate before tinting.
+                // A layer of our private copy; mutate() anyway so its constant state isn't shared.
                 val glyph = monochrome.mutate()
                 glyph.setTintMode(PorterDuff.Mode.SRC_IN)
                 glyph.setTint(Color.WHITE)
@@ -156,6 +158,11 @@ object KidAvatars {
         iconCache.put(cacheKey, bmp)
         return bmp
     }
+
+    /** A new drawable from the icon's constant state, mutated (falls back to the original only
+     * when it has none - then nothing else shares a state with it either). */
+    private fun privateCopy(context: Context, drawable: Drawable): Drawable =
+        drawable.constantState?.newDrawable(context.resources)?.mutate() ?: drawable
 
     /** The icon's own colour: vibrant swatch, else dominant, else grey (a 48 px render). */
     private fun seedColour(drawable: Drawable): Int = try {
