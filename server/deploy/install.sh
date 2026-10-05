@@ -3,10 +3,11 @@
 # systemd box).
 #
 # Usage (as root, e.g. via sudo):
-#   curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/install.sh | sudo bash
+#   curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
 #
 # To install from a different fork, set KPS_REPO=owner/repo (e.g.
-# `... | sudo KPS_REPO=someone/kid-phone-server bash`). This script never
+# `... | sudo KPS_REPO=someone/vibb-launcher bash`; the fork must keep
+# this monorepo's layout and server-v* release tags). This script never
 # reads the app's .env: that file is writable by the service user, and this
 # runs as root.
 #
@@ -16,7 +17,12 @@
 
 set -euo pipefail
 
-REPO="${KPS_REPO:-palchrb/kid-phone-server}"
+REPO="${KPS_REPO:-palchrb/vibb-launcher}"
+# The pre-monorepo server repo: its installs pass it in (the root-side updater remembers the
+# repo it was installed from). Its releases now live in the monorepo.
+if [ "$REPO" = "palchrb/kid-phone-server" ]; then
+    REPO="palchrb/vibb-launcher"
+fi
 # Substituted into the root-run actions.sh below, so it must be a plain
 # owner/repo and nothing else.
 if ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
@@ -33,7 +39,7 @@ SERVICE_USER="kidphone"
 # against its own required minimum (security::REQUIRED_WATCHER_SCHEMA) to
 # decide whether re-running this installer is actually necessary, rather
 # than just checking whether the release version strings happen to match.
-WATCHER_SCHEMA_VERSION="5"
+WATCHER_SCHEMA_VERSION="6"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Please run this as root (e.g. 'sudo bash install.sh')." >&2
@@ -78,20 +84,34 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 
 mkdir -p "$INSTALL_DIR"
-TARBALL_URL="https://github.com/$REPO/releases/latest/download/kid-phone-server-$TARGET.tar.gz"
-echo "Downloading latest release from $TARBALL_URL ..."
+# The repo is a monorepo that also publishes the launcher, whose stable releases are GitHub's
+# "latest" - so the server's release is looked up by tag (server-vX.Y.Z, newest first in the
+# API's list; drafts aren't listed and prereleases don't match the pattern), never
+# releases/latest.
+resolve_server_tag() {
+    curl -fsSL -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/$REPO/releases?per_page=100" \
+        | grep -oE '"tag_name": *"server-v[0-9]+\.[0-9]+\.[0-9]+"' \
+        | head -1 | grep -oE 'server-v[0-9]+\.[0-9]+\.[0-9]+' || true
+}
+TAG="$(resolve_server_tag)"
+if [ -z "$TAG" ]; then
+    echo "No server-vX.Y.Z release found in $REPO." >&2
+    exit 1
+fi
+TARBALL_URL="https://github.com/$REPO/releases/download/$TAG/kid-phone-server-$TARGET.tar.gz"
+echo "Downloading $TAG from $TARBALL_URL ..."
 curl -fsSL "$TARBALL_URL" -o /tmp/kid-phone-server.tar.gz
 tar -xzf /tmp/kid-phone-server.tar.gz -C "$INSTALL_DIR"
 rm /tmp/kid-phone-server.tar.gz
 chmod +x "$INSTALL_DIR/kid_phone_server"
 
-# "latest/download/..." redirects to "download/vX.Y.Z/...", which is the only
-# place the actual version tag shows up in this whole download flow. Recorded
+# The version just installed (vX.Y.Z, the form of the app's own version). Recorded
 # so the app can tell you when the root-side watcher/scheduler scripts (only
 # ever refreshed by re-running this installer, never by the in-app update
 # button) have fallen behind the app version, instead of silently no-op'ing
 # on features the installed watcher doesn't know about yet.
-INSTALLED_VERSION="$(curl -sI "$TARBALL_URL" | grep -i '^location:' | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+INSTALLED_VERSION="${TAG#server-}"
 
 mkdir -p "$INSTALL_DIR/data"
 
@@ -109,10 +129,10 @@ ADMIN_PASSWORD=$ADMIN_PASSWORD
 
 # Which GitHub repo the in-app update check looks at (owner/repo).
 SERVER_RELEASE_REPO=$REPO
-# Provisioning QR (Devices > Provision). The defaults point at the palchrb
-# launcher fork; only change them if you build your own launcher.
+# Provisioning QR (Devices > Provision). The defaults point at the launcher in
+# the palchrb/vibb-launcher monorepo; only change them if you build your own.
 LAUNCHER_ADMIN_COMPONENT=com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
-LAUNCHER_APK_URL=https://github.com/palchrb/kids-launcher-mdm/releases/latest/download/kids-launcher-mdm.apk
+LAUNCHER_APK_URL=https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk
 # SHA-256 of the launcher's signing certificate, base64url without padding
 # (43 characters). No QR code is shown until this is set. Compute it from a
 # release APK with:
@@ -198,7 +218,7 @@ DATA_DIR="/opt/kid-phone-server/data"
 BACKUP_DIR="$DATA_DIR/backups"
 
 action_app_update() {
-    curl -sSL "https://raw.githubusercontent.com/$REPO/master/deploy/update.sh" | KPS_REPO="$REPO" bash
+    curl -sSL "https://raw.githubusercontent.com/$REPO/master/server/deploy/update.sh" | KPS_REPO="$REPO" bash
 }
 
 action_app_restart() {

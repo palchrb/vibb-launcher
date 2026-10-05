@@ -22,6 +22,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use crate::AppState;
+use crate::config::SERVER_RELEASE_TAG_PREFIX;
 use crate::handlers::updates;
 use crate::security::{self, CurrentAdmin};
 
@@ -30,8 +31,34 @@ const SCHEDULE_FILE: &str = "data/app_update_schedule.conf";
 const LAST_CHECK_FILE: &str = "data/app_update_last_check";
 
 #[derive(Deserialize)]
-struct LatestRelease {
+struct Release {
     tag_name: String,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+}
+
+/// The repo is a monorepo that also publishes the launcher (`launcher-v*`, and those are the
+/// ones GitHub marks "latest"), so this reads the release *list* and takes the newest stable
+/// `server-vX.Y.Z` - never `/releases/latest`. Returns it as `vX.Y.Z`, the form of
+/// `crate::APP_VERSION`.
+fn newest_server_version(releases: &[Release]) -> Option<String> {
+    releases
+        .iter()
+        .filter(|r| !r.draft && !r.prerelease)
+        .find_map(|r| {
+            let version = r.tag_name.strip_prefix(SERVER_RELEASE_TAG_PREFIX)?;
+            let mut parts = version.split('.');
+            let numeric = parts
+                .by_ref()
+                .take(3)
+                .filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+                .count()
+                == 3
+                && parts.next().is_none();
+            numeric.then(|| format!("v{version}"))
+        })
 }
 
 /// `repo` is `config::ForkConfig::server_release_repo` (`owner/repo`).
@@ -41,16 +68,13 @@ async fn latest_release_tag(repo: &str) -> Option<String> {
         .timeout(Duration::from_secs(8))
         .build()
         .ok()?;
-    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
     let response = client.get(url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
-    response
-        .json::<LatestRelease>()
-        .await
-        .ok()
-        .map(|r| r.tag_name)
+    let releases = response.json::<Vec<Release>>().await.ok()?;
+    newest_server_version(&releases)
 }
 
 #[derive(Clone)]
@@ -350,4 +374,35 @@ async fn is_due(schedule: &AppUpdateScheduleConfig) -> bool {
     let now_minutes = now.hour() as i64 * 60 + now.minute() as i64;
     let diff = now_minutes - target_minutes;
     (0..5).contains(&diff)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(tag: &str, prerelease: bool, draft: bool) -> Release {
+        Release {
+            tag_name: tag.to_string(),
+            prerelease,
+            draft,
+        }
+    }
+
+    #[test]
+    fn only_stable_server_releases_count() {
+        let releases = [
+            release("launcher-v0.30.0", false, false),
+            release("server-v0.20.0", false, true),
+            release("server-v0.19.0", true, false),
+            release("server-v0.19.0-rc.1", false, false),
+            release("v0.18.9", false, false),
+            release("server-v0.18.7", false, false),
+            release("server-v0.18.6", false, false),
+        ];
+        assert_eq!(newest_server_version(&releases).as_deref(), Some("v0.18.7"));
+        assert_eq!(
+            newest_server_version(&[release("launcher-v1.0.0", false, false)]),
+            None
+        );
+    }
 }

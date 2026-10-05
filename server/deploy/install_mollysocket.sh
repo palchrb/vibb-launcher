@@ -5,7 +5,7 @@
 # service, alongside kid-phone-server on the same Pi. See DEPLOY.md.
 #
 # Usage (as root, e.g. via sudo):
-#   curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/install_mollysocket.sh | sudo bash
+#   curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install_mollysocket.sh | sudo bash
 #
 # Safe to re-run: re-downloads the latest binary and restarts the service,
 # but never touches an existing conf.toml (so your VAPID key and any Molly

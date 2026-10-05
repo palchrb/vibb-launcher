@@ -8,14 +8,19 @@
 # have touched, so rolling back means restoring both - see DEPLOY.md.
 #
 # Usage (as root, e.g. via sudo):
-#   curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/update.sh | sudo bash
+#   curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/update.sh | sudo bash
 #
 # KPS_REPO=owner/repo picks a different fork (same as install.sh). The
 # root-side updater passes the repo it was installed from.
 
 set -euo pipefail
 
-REPO="${KPS_REPO:-palchrb/kid-phone-server}"
+REPO="${KPS_REPO:-palchrb/vibb-launcher}"
+# The pre-monorepo server repo: its installs pass it in (the root-side updater remembers the
+# repo it was installed from). Its releases now live in the monorepo.
+if [ "$REPO" = "palchrb/kid-phone-server" ]; then
+    REPO="palchrb/vibb-launcher"
+fi
 if ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
     echo "KPS_REPO must look like owner/repo, got: $REPO" >&2
     exit 1
@@ -42,14 +47,29 @@ case "$(uname -m)" in
         ;;
 esac
 
-TARBALL_URL="https://github.com/$REPO/releases/latest/download/kid-phone-server-$TARGET.tar.gz"
+# The repo is a monorepo that also publishes the launcher, whose stable releases are GitHub's
+# "latest" - so the server's release is looked up by tag (server-vX.Y.Z, newest first in the
+# API's list; drafts aren't listed and prereleases don't match the pattern), never
+# releases/latest.
+resolve_server_tag() {
+    curl -fsSL -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/$REPO/releases?per_page=100" \
+        | grep -oE '"tag_name": *"server-v[0-9]+\.[0-9]+\.[0-9]+"' \
+        | head -1 | grep -oE 'server-v[0-9]+\.[0-9]+\.[0-9]+' || true
+}
+TAG="$(resolve_server_tag)"
+if [ -z "$TAG" ]; then
+    echo "No server-vX.Y.Z release found in $REPO - not updating." >&2
+    exit 1
+fi
+TARBALL_URL="https://github.com/$REPO/releases/download/$TAG/kid-phone-server-$TARGET.tar.gz"
 TMP_EXTRACT="$(mktemp -d)"
 trap 'rm -rf "$TMP_EXTRACT"' EXIT
 
 # Download and unpack everything *before* stopping the service: a 404, a GitHub error page or a
 # truncated download must fail here, with the old version still running. -f makes curl fail on
 # an HTTP error instead of saving the error page as the tarball.
-echo "Downloading latest release from $TARBALL_URL ..."
+echo "Downloading $TAG from $TARBALL_URL ..."
 curl -fsSL "$TARBALL_URL" -o "$TMP_EXTRACT/kid-phone-server.tar.gz"
 tar -xzf "$TMP_EXTRACT/kid-phone-server.tar.gz" -C "$TMP_EXTRACT"
 if [ ! -s "$TMP_EXTRACT/kid_phone_server" ] || [ ! -d "$TMP_EXTRACT/static" ]; then

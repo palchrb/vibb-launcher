@@ -118,7 +118,7 @@ fn provision_payload_defaults_and_wifi_handling() {
     );
     assert_eq!(
         open_wifi["android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION"],
-        "https://github.com/palchrb/kids-launcher-mdm/releases/latest/download/kids-launcher-mdm.apk"
+        "https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk"
     );
     assert_eq!(
         open_wifi["android.app.extra.PROVISIONING_WIFI_SSID"],
@@ -149,7 +149,9 @@ fn provision_payload_defaults_and_wifi_handling() {
 
 #[test]
 fn reinstall_hint_uses_configured_repo() {
-    let hint = crate::security::reinstall_hint("someone/kid-phone-server");
-    assert!(hint.contains("raw.githubusercontent.com/someone/kid-phone-server/master/"));
-    assert!(hint.contains("KPS_REPO=someone/kid-phone-server"));
+    let hint = crate::security::reinstall_hint("someone/vibb-launcher");
+    assert!(hint.contains(
+        "raw.githubusercontent.com/someone/vibb-launcher/master/server/deploy/install.sh"
+    ));
+    assert!(hint.contains("KPS_REPO=someone/vibb-launcher"));
 }

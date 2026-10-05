@@ -301,7 +301,8 @@ pub async fn installed_watcher_version() -> Option<String> {
 /// comparing raw version strings directly was the wrong check (it fired on
 /// every single app release regardless of whether the watcher itself had
 /// changed at all).
-pub const REQUIRED_WATCHER_SCHEMA: u32 = 5;
+/// 6: actions.sh fetches update.sh from the monorepo's server/deploy/.
+pub const REQUIRED_WATCHER_SCHEMA: u32 = 6;
 
 async fn installed_watcher_schema() -> Option<u32> {
     let raw = tokio::fs::read_to_string("data/watcher_schema_version")
@@ -327,7 +328,7 @@ pub async fn watcher_needs_update() -> bool {
 /// from the same repo even when it isn't install.sh's built-in default.
 pub fn reinstall_hint(repo: &str) -> String {
     format!(
-        "curl -sSL https://raw.githubusercontent.com/{repo}/master/deploy/install.sh | sudo KPS_REPO={repo} bash"
+        "curl -sSL https://raw.githubusercontent.com/{repo}/master/server/deploy/install.sh | sudo KPS_REPO={repo} bash"
     )
 }
 

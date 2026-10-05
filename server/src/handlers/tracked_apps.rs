@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::AppState;
+use crate::config::SERVER_RELEASE_TAG_PREFIX;
 use crate::models::TrackedApp;
 use crate::security::{CurrentAdmin, generate_device_token};
 
@@ -40,41 +41,61 @@ struct GithubRelease {
 
 /// Hits the Releases *list* endpoint rather than `/releases/latest` - the
 /// latter only ever returns the newest non-prerelease, non-draft release,
-/// which would never find anything for a repo (like this project's own
-/// kids-launcher-mdm) that only ever publishes to a rolling prerelease tag.
-/// The list is already newest-first, so after filtering the first match is
-/// the one we want - same approach Obtainium uses for this exact problem.
+/// which would never find anything for a repo that only ever publishes to a
+/// rolling prerelease tag. The list is already newest-first, so after
+/// filtering the first match is the one we want - same approach Obtainium
+/// uses for this exact problem.
+///
+/// A release only matches if it actually carries a matching asset, and a
+/// `server-v*` release never does: this project's own repo
+/// (`palchrb/vibb-launcher`) is a monorepo that publishes the server's
+/// releases next to the launcher's `launcher-v*` ones, so the launcher's
+/// catalog row must skip past a newer server release to the newest launcher.
 async fn fetch_latest_release(
     github_repo: &str,
     include_prereleases: bool,
-) -> Result<GithubRelease, String> {
+    asset_pattern: Option<&str>,
+) -> Result<(GithubRelease, GithubAsset), String> {
     let client = reqwest::Client::builder()
         .user_agent("kid-phone-server (self-hosted, github.com)")
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| e.to_string())?;
 
-    let url = format!("https://api.github.com/repos/{github_repo}/releases");
+    let url = format!("https://api.github.com/repos/{github_repo}/releases?per_page=100");
     let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("GitHub API returned {}", response.status()));
     }
     let releases: Vec<GithubRelease> = response.json().await.map_err(|e| e.to_string())?;
-
-    releases
-        .into_iter()
-        .find(|r| !r.draft && (include_prereleases || !r.prerelease))
-        .ok_or_else(|| "no matching release found".to_string())
+    newest_matching_release(releases, include_prereleases, asset_pattern)
 }
 
-fn pick_asset<'a>(
-    release: &'a GithubRelease,
+fn newest_matching_release(
+    releases: Vec<GithubRelease>,
+    include_prereleases: bool,
     asset_pattern: Option<&str>,
-) -> Option<&'a GithubAsset> {
-    release.assets.iter().find(|a| match asset_pattern {
-        Some(pattern) if !pattern.is_empty() => a.name.contains(pattern),
-        _ => a.name.ends_with(".apk"),
-    })
+) -> Result<(GithubRelease, GithubAsset), String> {
+    releases
+        .into_iter()
+        .filter(|r| !r.draft && (include_prereleases || !r.prerelease))
+        .filter(|r| !r.tag_name.starts_with(SERVER_RELEASE_TAG_PREFIX))
+        .find_map(|mut r| {
+            let index = r
+                .assets
+                .iter()
+                .position(|a| asset_matches(a, asset_pattern))?;
+            let asset = r.assets.swap_remove(index);
+            Some((r, asset))
+        })
+        .ok_or_else(|| "no release with a matching .apk asset found".to_string())
+}
+
+fn asset_matches(asset: &GithubAsset, asset_pattern: Option<&str>) -> bool {
+    match asset_pattern {
+        Some(pattern) if !pattern.is_empty() => asset.name.contains(pattern),
+        _ => asset.name.ends_with(".apk"),
+    }
 }
 
 /// Checks one GitHub-sourced app's repo for a new release and, if the
@@ -88,16 +109,18 @@ async fn sync_one_app(state: &AppState, app: &TrackedApp) -> Result<(), String> 
         return Ok(());
     }
 
-    let release = fetch_latest_release(&app.github_repo, app.include_prereleases).await?;
+    let (release, asset) = fetch_latest_release(
+        &app.github_repo,
+        app.include_prereleases,
+        app.asset_pattern.as_deref(),
+    )
+    .await?;
 
     sqlx::query("UPDATE tracked_apps SET last_checked_at = datetime('now') WHERE id = ?")
         .bind(app.id)
         .execute(&state.db)
         .await
         .ok();
-
-    let asset = pick_asset(&release, app.asset_pattern.as_deref())
-        .ok_or_else(|| "no matching .apk asset in the latest release".to_string())?;
 
     // Compared as a (tag, asset id) pair, not just the tag - a rolling tag
     // (e.g. this project's own "pre-release") never changes name between
@@ -604,4 +627,55 @@ pub async fn delete_tracked_app(
         .ok();
 
     Redirect::to("/apps")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(tag: &str, prerelease: bool, assets: &[(i64, &str)]) -> GithubRelease {
+        GithubRelease {
+            tag_name: tag.to_string(),
+            prerelease,
+            draft: false,
+            assets: assets
+                .iter()
+                .map(|(id, name)| GithubAsset {
+                    id: *id,
+                    name: name.to_string(),
+                    browser_download_url: format!("https://example.org/{name}"),
+                })
+                .collect(),
+        }
+    }
+
+    /// The monorepo's list: a newer server release (no APK, and a `.apk`-named asset would not
+    /// count either) and a launcher RC sit above the newest stable launcher.
+    fn monorepo() -> Vec<GithubRelease> {
+        vec![
+            release("server-v0.19.0", false, &[(1, "kid-phone-server-x.tar.gz")]),
+            release("server-v0.18.9", false, &[(2, "odd.apk")]),
+            release(
+                "launcher-v0.31.0-rc.1",
+                true,
+                &[(3, "kids-launcher-mdm.apk")],
+            ),
+            release("launcher-v0.30.0", false, &[(4, "kids-launcher-mdm.apk")]),
+        ]
+    }
+
+    #[test]
+    fn launcher_row_skips_server_releases() {
+        let (r, a) =
+            newest_matching_release(monorepo(), false, Some("kids-launcher-mdm.apk")).unwrap();
+        assert_eq!((r.tag_name.as_str(), a.id), ("launcher-v0.30.0", 4));
+
+        let (r, a) = newest_matching_release(monorepo(), true, None).unwrap();
+        assert_eq!((r.tag_name.as_str(), a.id), ("launcher-v0.31.0-rc.1", 3));
+    }
+
+    #[test]
+    fn no_matching_asset_is_an_error() {
+        assert!(newest_matching_release(monorepo(), false, Some("other.apk")).is_err());
+    }
 }

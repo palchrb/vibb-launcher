@@ -7,10 +7,11 @@ These steps get Kids Device MDM running on a Raspberry Pi Zero 2 W. Only 64-bit 
 SSH into the Pi, then run:
 
 ```
-curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
 ```
 
-This downloads the latest release binary, sets it up as a background service that starts on boot, and prints an admin username/password at the end — **save that password**, you'll need it to log in the first time (and you'll be asked to change it immediately after).
+This downloads the newest server release (the newest `server-vX.Y.Z` release of the
+[`palchrb/vibb-launcher`](https://github.com/palchrb/vibb-launcher) monorepo), sets it up as a background service that starts on boot, and prints an admin username/password at the end — **save that password**, you'll need it to log in the first time (and you'll be asked to change it immediately after).
 
 The app only listens on the Pi itself (`127.0.0.1:3100`) by default — that's intentional for security.
 
@@ -29,10 +30,10 @@ This gives you `https://<hostname>.<tailnet>.ts.net`, reachable only from your o
 ## Updating
 
 ```
-curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/update.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/update.sh | sudo bash
 ```
 
-Downloads the latest release and swaps the binary in place. Doesn't touch your `.env`. The download is unpacked and
+Downloads the newest `server-vX.Y.Z` release and swaps the binary in place. Doesn't touch your `.env`. The download is unpacked and
 checked before the service is stopped, so a failed download leaves the old version running; if anything fails after the
 stop, the service is started again. Before the swap it copies the database and the old binary to
 `/var/backups/kid-phone-server/<timestamp>/`, because the new version may migrate the database on its first start. Old
@@ -40,7 +41,14 @@ backups are pruned (newest 3 kept) only after the new version is running, so fai
 pre-update copy.
 
 To install from a different fork, prefix `bash` with `KPS_REPO=owner/repo` (for both `install.sh` and `update.sh`):
-`... | sudo KPS_REPO=someone/kid-phone-server bash`. The root-side updater remembers the repo it was installed from.
+`... | sudo KPS_REPO=someone/vibb-launcher bash`. The fork must keep this repo's layout (`server/deploy/`) and publish
+server releases as `server-vX.Y.Z`. The root-side updater remembers the repo it was installed from.
+
+**Installs from before the monorepo** (installed from `palchrb/kid-phone-server`): the server itself follows the move
+(`SERVER_RELEASE_REPO=palchrb/kid-phone-server` and the old `LAUNCHER_APK_URL` in `.env` are read as the new defaults,
+and a launcher row in the Apps catalog that watches `palchrb/kids-launcher-mdm` is repointed by a migration), but the
+root-side updater still fetches `update.sh` from the old repo. Re-run the installer once from the new URL above (the
+Updates page asks for this too); it keeps `.env` and the database.
 
 ### Rolling back the server
 
@@ -68,9 +76,9 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 | Setting | Default |
 |---|---|
 | `LAUNCHER_ADMIN_COMPONENT` | `com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` |
-| `LAUNCHER_APK_URL` | `https://github.com/palchrb/kids-launcher-mdm/releases/latest/download/kids-launcher-mdm.apk` |
+| `LAUNCHER_APK_URL` | `https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk` (only launcher releases are ever "latest") |
 | `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
-| `SERVER_RELEASE_REPO` | `palchrb/kid-phone-server` (where the Updates page looks for new server versions) |
+| `SERVER_RELEASE_REPO` | `palchrb/vibb-launcher` (where the Updates page looks for new server versions - only `server-vX.Y.Z` releases count) |
 
 `LAUNCHER_SIGNATURE_CHECKSUM` is the SHA-256 of the launcher's **signing certificate** (not of the APK file),
 base64url-encoded without padding: 43 characters. Until it is set, Devices > Provision shows a warning and no QR code.
@@ -90,14 +98,15 @@ An invalid value (wrong length, `+`/`/`/`=` characters) is logged at startup and
 
 The launcher updates itself through the Apps catalog, like any other app. Add it once under **Apps > Add**:
 
-- source: GitHub, repo `palchrb/kids-launcher-mdm`
+- source: GitHub, repo `palchrb/vibb-launcher` (the catalog skips the repo's `server-v*` releases and takes the
+  newest `launcher-v*` release that carries the APK)
 - asset filename filter: `kids-launcher-mdm.apk`
 - "include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
 - package name: `com.kidslauncher.mdm`
 - then, on the app's page, turn on "This is the launcher app"
 
 A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is
-broken, fix it forward by releasing the old (or fixed) code under a higher version tag.
+broken, fix it forward by releasing the old (or fixed) code under a higher `launcher-v*` tag.
 
 ## FCM (optional)
 
@@ -134,7 +143,7 @@ If a kid's phone uses [Molly](https://molly.im/) (a de-Googled Signal fork) and 
 1. Install it the same way as the main server:
 
     ```
-    curl -sSL https://raw.githubusercontent.com/palchrb/kid-phone-server/master/deploy/install_mollysocket.sh | sudo bash
+    curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install_mollysocket.sh | sudo bash
     ```
 
    This sets up its own systemd service (`mollysocket`), listening on `127.0.0.1:8020` only, same "local by default" posture as the main server.

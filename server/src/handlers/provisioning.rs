@@ -173,8 +173,8 @@ pub async fn provision_form(
 /// The admin component, signature checksum and download URL come from `config::ForkConfig`
 /// (env vars, defaulting to our own fork) - they only change if the receiver class is renamed or
 /// the signing key is ever rotated, not per release. The default download URL is the
-/// `kids-launcher-mdm` fork's `releases/latest/download/kids-launcher-mdm.apk`, a stable asset
-/// name on every normal release, so this QR code stays valid across releases with nothing to
+/// `palchrb/vibb-launcher` monorepo's `releases/latest/download/kids-launcher-mdm.apk`, a stable
+/// asset name on every normal launcher release (server releases are never "latest"), so this QR code stays valid across releases with nothing to
 /// regenerate.
 ///
 /// The signature checksum is the SHA-256 digest of the launcher's signing *certificate* (not of
