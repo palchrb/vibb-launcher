@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server.dto
 
+import com.kidslauncher.mdm.timerules.TimePolicy
 import kotlinx.serialization.Serializable
 
 /**
@@ -33,7 +34,12 @@ import kotlinx.serialization.Serializable
  * [callPolicy] is the calls & SMS rules ([CallPolicy]); `null` only from a server that predates
  * them. [hardening] is the phone-hardening switches ([HardeningPolicy]); `null` (older server)
  * means every switch's default. [launcherUi] is the parent's language and home-grid choice
- * ([LauncherUi]); `null` (older server) means the defaults.
+ * ([LauncherUi]); `null` (older server) means the defaults. [timePolicy] is the named time rules,
+ * daily budget and the parent's lifts (handy step 6); `null` from an older server, whose fixed
+ * windows above are then converted ([com.kidslauncher.mdm.server.KidModeEnforcer.timePolicyOf]).
+ * Once a phone has had one, a response without it is rejected ([com.kidslauncher.mdm.server.judgeFresh]).
+ * The fixed windows are still sent (frozen) for older launchers. [locationPolicy]: when location
+ * goes into the status report; `null` (older server) keeps the old every-sync behaviour.
  */
 @Serializable
 data class PolicyResponse(
@@ -57,6 +63,16 @@ data class PolicyResponse(
     val callPolicy: CallPolicy? = null,
     val hardening: HardeningPolicy? = null,
     val launcherUi: LauncherUi? = null,
+    val timePolicy: TimePolicy? = null,
+    val locationPolicy: LocationPolicy? = null,
+)
+
+/** `PolicyResponse.locationPolicy`: [mode] "off", "on_request" or "interval" (every
+ * [intervalMinutes]); see [com.kidslauncher.mdm.server.locationAction]. */
+@Serializable
+data class LocationPolicy(
+    val mode: String = "on_request",
+    val intervalMinutes: Int = 30,
 )
 
 /** `PolicyResponse.launcherUi` - see kid-phone-server's `LauncherUi`. [language] is "system", "nb"

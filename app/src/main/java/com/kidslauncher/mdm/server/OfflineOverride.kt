@@ -133,6 +133,8 @@ object OfflineOverride {
             try {
                 AppEnforcer.apply(appContext, currentPolicyDecision().policy)
                 reevaluateLockReasonFromCache(appContext)
+                // The rules come back when the override ends: that's the next boundary now.
+                com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(appContext)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Applying the offline override failed", e)
             }

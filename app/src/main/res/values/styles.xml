@@ -162,6 +162,22 @@
         <item name="android:textSize">17sp</item>
     </style>
 
+    <!-- Full-width buttons on the lock screen (design 06-time-rules.md). -->
+    <style name="KidLockButton">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">56dp</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:background">@drawable/bg_kid_button</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:fontFamily">sans-serif-black</item>
+        <item name="android:gravity">center</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">18sp</item>
+    </style>
+
     <!-- The contact sheet: a dialog at the bottom, dimmed behind, slides up. -->
     <style name="KidSheetDialog" parent="Theme.AppCompat.Dialog">
         <item name="android:windowBackground">@android:color/transparent</item>

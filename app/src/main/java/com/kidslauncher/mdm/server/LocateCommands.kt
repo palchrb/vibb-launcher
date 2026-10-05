@@ -35,11 +35,9 @@ private const val FRESH_LOCATION_TIMEOUT_MS = 15_000L
 
 // An active fetch (requestFreshFix) shows Android's location-in-use indicator and visibly slows
 // down the sync it runs in - confirmed live, reported as "Sync now takes longer and the green
-// location dot shows up every time." Doing that on every single 2-minute/manual sync is overkill
-// for a trail that's meant to update every so often, not continuously - so it's throttled to once
-// per this interval, except when a `ring`/`locate` command explicitly asks for a fresh fix right
-// now (see MdmSyncWorker.currentLocationReport's forceFresh argument).
-private const val ACTIVE_LOCATION_FETCH_THROTTLE_MS = 10 * 60 * 1000L
+// location dot shows up every time." How often one happens is the parent's location policy now
+// (handy step 6: off / on request / every N >= 10 minutes - see locationAction); a `ring`/`locate`
+// command ("Update location now") always asks for a fresh fix unless location is off.
 private const val CACHED_LOCATION_PROVIDER = "kid_phone_cached"
 
 // Android's location-in-use indicator fires on *any* LocationManager query that returns a fix -
@@ -77,8 +75,13 @@ object LocateCommands {
         context: Context,
         dpm: DevicePolicyManager,
         admin: ComponentName,
-        forceFresh: Boolean = false,
+        action: LocationAction,
     ): Location? {
+        // Off: no permission grants, no Location toggle, no LocationManager - nothing at all.
+        if (action == LocationAction.NONE) return null
+        // Not due: our own cached fix only, no LocationManager call (no indicator, no slow sync).
+        if (action == LocationAction.CACHED) return loadCachedFix()
+
         QuickControls.selfGrantPermission(
             context,
             dpm,
@@ -110,17 +113,6 @@ object LocateCommands {
 
         if (!QuickControls.isLocationEnabled(context)) {
             QuickControls.setLocationEnabled(dpm, admin, true)
-        }
-
-        val mdm = LauncherPreferences.mdm()
-        val throttleElapsed =
-            System.currentTimeMillis() - mdm.lastActiveLocationFetchAtMs() >= ACTIVE_LOCATION_FETCH_THROTTLE_MS
-
-        // A skipped cycle (not forced, throttle window still open) hands back our own last-cached
-        // fix directly - no LocationManager call at all, so no location-in-use indicator and no
-        // sync slowdown. Only a due/forced cycle below touches LocationManager.
-        if (!forceFresh && !throttleElapsed) {
-            loadCachedFix()?.let { return it }
         }
 
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager

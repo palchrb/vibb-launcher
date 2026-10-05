@@ -223,6 +223,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             // apply() releases everything itself while the pause is active.
             AppEnforcer.apply(context, currentPolicyDecision().policy)
             reevaluateLockReasonFromCache(context)
+            com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(context)
         }
     }
 

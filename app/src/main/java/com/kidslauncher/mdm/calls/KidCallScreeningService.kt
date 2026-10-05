@@ -46,7 +46,7 @@ class KidCallScreeningService : CallScreeningService() {
 
 /** [decideIncoming] for a Telecom call; an unexpected error blocks unless calls are unmanaged. */
 fun incomingVerdict(context: Context, details: Call.Details): Verdict {
-    val state = CallPolicyStore.state
+    val state = CallPolicyStore.effectiveState()
     return try {
         decideIncoming(
             raw = PhoneNumbers.numberFromHandle(details.handle?.toString()),

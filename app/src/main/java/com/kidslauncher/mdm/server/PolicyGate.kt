@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.HardeningPolicy
 import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.timerules.TimePolicy
 import kotlinx.serialization.Serializable
 
 /*
@@ -70,6 +71,9 @@ enum class FreshVerdict { ACCEPT, REJECT_SUSPECT }
  *   the cache, or a cached managed `call_policy`): our server always sends it with an explicit
  *   `managed`, so a missing key is a rolled-back, buggy or forged response (QA blocker 3). The
  *   cached policy, with the last managed call rules, stays in force.
+ * - no `time_policy` on a phone that has had one ([timePolicySeen], written with the cache, or a
+ *   cached policy with one): our server always sends it (handy step 6), so the rules, budget and
+ *   lifts the phone has stay in force rather than falling back to the frozen legacy windows.
  * A legitimate `[]`, removing the PIN, or `call_policy.managed = false` is accepted.
  */
 fun judgeFresh(
@@ -77,7 +81,12 @@ fun judgeFresh(
     cached: CachedPolicy,
     policyEverApplied: Boolean,
     callsManagedLast: Boolean = false,
+    timePolicySeen: Boolean = false,
 ): FreshVerdict {
+    if (fresh.timePolicy == null) {
+        val seen = timePolicySeen || (cached is CachedPolicy.Ok && cached.policy.timePolicy != null)
+        if (seen) return FreshVerdict.REJECT_SUSPECT
+    }
     if (fresh.callPolicy == null) {
         val callsWereManaged = callsManagedLast ||
             (cached is CachedPolicy.Ok && cached.policy.callPolicy?.managed == true)
@@ -111,6 +120,8 @@ data class LastEnforcedPlan(
     val bedtimeEndMinutes: Int? = null,
     /** The hardening switches, so a fallback keeps the parent's choices (`null` = defaults). */
     val hardening: HardeningPolicy? = null,
+    /** The time rules and budget, without lifts (`null` = the windows above, converted). */
+    val timePolicy: TimePolicy? = null,
 ) {
     fun toPolicy(): PolicyResponse = PolicyResponse(
         allowlist = allowlist,
@@ -123,6 +134,7 @@ data class LastEnforcedPlan(
         bedtimeStartMinutes = bedtimeStartMinutes,
         bedtimeEndMinutes = bedtimeEndMinutes,
         hardening = hardening,
+        timePolicy = timePolicy,
     )
 
     companion object {
@@ -137,6 +149,7 @@ data class LastEnforcedPlan(
             bedtimeStartMinutes = policy.bedtimeStartMinutes,
             bedtimeEndMinutes = policy.bedtimeEndMinutes,
             hardening = policy.hardening,
+            timePolicy = policy.timePolicy?.copy(lifts = emptyList()),
         )
 
         /** `null` if missing or unreadable. */
@@ -215,9 +228,9 @@ fun policyState(outcome: FreshOutcome, cached: CachedPolicy, policyEverApplied: 
 /**
  * The pure core of [AppEnforcer.enforceOnNewPackage]: should a just-installed [packageName] be
  * suspended and hidden right away? Same rules as [computeEnforcementPlan] (never our own package
- * or the system dialer; everything else while [scheduleLocked]); with no usable policy on a phone
- * that has had one, the [PolicyToApply.Fallback] plan decides (nothing allowed if even that is
- * unreadable).
+ * or the system dialer; everything else while [scheduleLocked] except the lock's [lockUsableApps]);
+ * with no usable policy on a phone that has had one, the [PolicyToApply.Fallback] plan decides
+ * (nothing allowed if even that is unreadable).
  */
 fun shouldSuspendNewPackage(
     packageName: String,
@@ -226,10 +239,11 @@ fun shouldSuspendNewPackage(
     ownPackage: String,
     systemDialer: String?,
     scheduleLocked: Boolean = false,
+    lockUsableApps: Set<String> = emptySet(),
 ): Boolean {
     if (overrideActive) return false
     if (packageName == ownPackage || packageName == systemDialer) return false
-    if (scheduleLocked) return true
+    if (scheduleLocked && packageName !in lockUsableApps) return true
     val allowlist = decision.policy?.allowlist ?: return false
     return packageName !in allowlist
 }

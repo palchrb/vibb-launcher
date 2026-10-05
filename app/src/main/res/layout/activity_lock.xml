@@ -1,41 +1,83 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- The time-rule lock (design 06-time-rules.md): the time and the rule's name, what still works
+     (the rule's exempt apps or, with screen time used up, the messaging apps; the phone book when
+     calls are allowed), and always Emergency call and the unlock code. Same look as Home. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
-    android:orientation="vertical"
-    android:padding="32dp">
+    android:background="@color/kid_ground"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true">
 
-    <TextView
-        android:id="@+id/lock_message"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
-        android:textSize="24sp"
-        android:textStyle="bold" />
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingTop="32dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="24dp">
 
-    <Button
-        android:id="@+id/lock_unlock_code_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:text="@string/lock_enter_unlock_code" />
+        <TextClock
+            android:id="@+id/lock_clock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-black"
+            android:format12Hour="h:mm"
+            android:format24Hour="H:mm"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:textColor="@color/kid_ink"
+            android:textSize="64sp" />
 
-    <!-- Always there, whatever the call state or the lock-screen type (QA step 4 #1). -->
-    <Button
-        android:id="@+id/lock_emergency_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="@string/calls_emergency" />
+        <TextView
+            android:id="@+id/lock_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="sans-serif-black"
+            android:gravity="center"
+            android:textColor="@color/kid_ink"
+            android:textSize="28sp" />
 
-    <!-- Calls keep working during bedtime: shown while calls are managed (LockActivity). -->
-    <Button
-        android:id="@+id/lock_phone_book_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="@string/calls_phone_book"
-        android:visibility="gone" />
+        <TextView
+            android:id="@+id/lock_message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:textColor="@color/kid_ink_dim"
+            android:textSize="17sp" />
 
-</LinearLayout>
+        <!-- One button per app the lock leaves usable (filled in by LockActivity). -->
+        <LinearLayout
+            android:id="@+id/lock_apps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="vertical" />
+
+        <!-- Shown while calls are managed and the rule allows calls (LockActivity). -->
+        <TextView
+            android:id="@+id/lock_phone_book_button"
+            style="@style/KidLockButton"
+            android:backgroundTint="@color/kid_phone_book"
+            android:text="@string/calls_phone_book"
+            android:visibility="gone" />
+
+        <!-- Always there, whatever the rule, the call state or the lock-screen type (QA step 4 #1). -->
+        <TextView
+            android:id="@+id/lock_emergency_button"
+            style="@style/KidLockButton"
+            android:backgroundTint="@color/kid_emergency"
+            android:text="@string/calls_emergency" />
+
+        <TextView
+            android:id="@+id/lock_unlock_code_button"
+            style="@style/KidLockButton"
+            android:backgroundTint="@color/kid_back_button"
+            android:text="@string/lock_enter_unlock_code" />
+    </LinearLayout>
+</ScrollView>

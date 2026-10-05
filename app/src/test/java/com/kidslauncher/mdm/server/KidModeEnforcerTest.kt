@@ -1,133 +1,91 @@
 package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.timerules.KIND_SCHOOL
+import com.kidslauncher.mdm.timerules.TimePolicy
+import com.kidslauncher.mdm.timerules.TimeRule
+import com.kidslauncher.mdm.timerules.TimeWindow
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import java.util.Calendar
+import java.time.LocalDate
+import java.time.LocalDateTime
 
+/** The bridge from a policy to the time-rule lock; an older server's fixed windows are converted
+ * (the minute-by-minute equivalence is in TimeRulesTest). */
 class KidModeEnforcerTest {
 
-    private fun calendarAt(dayOfWeek: Int, hour: Int, minute: Int): Calendar =
-        Calendar.getInstance().apply {
-            set(Calendar.DAY_OF_WEEK, dayOfWeek)
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
-        }
+    /** 2026-10-05 is a Monday. */
+    private fun at(dayOffset: Int, hour: Int, minute: Int = 0): LocalDateTime =
+        LocalDate.of(2026, 10, 5).plusDays(dayOffset.toLong()).atTime(hour, minute)
+
+    private val monday = 0
+    private val tuesday = 1
+    private val saturday = 5
 
     @Test
     fun `an override or pause clears the lock, otherwise the schedule decides`() {
         val policy = PolicyResponse(bedtimeStartMinutes = 21 * 60, bedtimeEndMinutes = 7 * 60)
-        val night = calendarAt(Calendar.MONDAY, 23, 0)
-        assertEquals(LockReason.BEDTIME, KidModeEnforcer.lockReasonNow(policy, overrideActive = false, now = night))
-        assertEquals(LockReason.NONE, KidModeEnforcer.lockReasonNow(policy, overrideActive = true, now = night))
-        assertEquals(LockReason.NONE, KidModeEnforcer.lockReasonNow(null, overrideActive = false, now = night))
+        val night = at(monday, 23)
+        assertEquals(LockReason.BEDTIME, KidModeEnforcer.lockNow(policy, overrideActive = false, at = night).reason)
+        assertEquals(LockReason.NONE, KidModeEnforcer.lockNow(policy, overrideActive = true, at = night).reason)
+        assertEquals(LockReason.NONE, KidModeEnforcer.lockNow(null, overrideActive = false, at = night).reason)
     }
 
     @Test
-    fun `null policy is never locked`() {
-        assertEquals(
-            LockReason.NONE,
-            KidModeEnforcer.evaluate(null, calendarAt(Calendar.MONDAY, 23, 0))
-        )
+    fun `null policy and a policy without schedule fields are never locked`() {
+        assertEquals(LockReason.NONE, KidModeEnforcer.evaluate(null, at(monday, 23)))
+        assertEquals(LockReason.NONE, KidModeEnforcer.evaluate(PolicyResponse(), at(monday, 23)))
     }
 
     @Test
-    fun `policy with no schedule fields set is never locked`() {
-        assertEquals(
-            LockReason.NONE,
-            KidModeEnforcer.evaluate(PolicyResponse(), calendarAt(Calendar.MONDAY, 23, 0))
-        )
+    fun `legacy bedtime window wraps overnight and locks inside it`() {
+        val policy = PolicyResponse(bedtimeStartMinutes = 21 * 60, bedtimeEndMinutes = 7 * 60)
+        assertEquals(LockReason.BEDTIME, KidModeEnforcer.evaluate(policy, at(monday, 23)))
+        assertEquals(LockReason.BEDTIME, KidModeEnforcer.evaluate(policy, at(monday, 3)))
+        assertEquals(LockReason.BEDTIME, KidModeEnforcer.evaluate(policy, at(monday, 21)))
+        assertEquals("bedtime end is exclusive", LockReason.NONE, KidModeEnforcer.evaluate(policy, at(monday, 7)))
     }
 
     @Test
-    fun `bedtime window wraps overnight and locks inside it`() {
-        val policy = PolicyResponse(
-            bedtimeStartMinutes = 21 * 60, // 21:00
-            bedtimeEndMinutes = 7 * 60,    // 07:00
-        )
-
-        assertEquals(
-            LockReason.BEDTIME,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.MONDAY, 23, 0))
-        )
-        assertEquals(
-            LockReason.BEDTIME,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.MONDAY, 3, 0))
-        )
-        assertEquals(
-            LockReason.BEDTIME,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.MONDAY, 21, 0))
-        )
-        assertEquals(
-            "bedtime end is exclusive",
-            LockReason.NONE,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.MONDAY, 7, 0))
-        )
+    fun `legacy bedtime start equal to end means no restriction`() {
+        val policy = PolicyResponse(bedtimeStartMinutes = 0, bedtimeEndMinutes = 0)
+        assertEquals(LockReason.NONE, KidModeEnforcer.evaluate(policy, at(monday, 0)))
+        assertEquals(LockReason.NONE, KidModeEnforcer.evaluate(policy, at(monday, 12)))
     }
 
     @Test
-    fun `bedtime start equal to end means no restriction`() {
-        val policy = PolicyResponse(
-            bedtimeStartMinutes = 0,
-            bedtimeEndMinutes = 0,
-        )
-        assertEquals(
-            LockReason.NONE,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.MONDAY, 0, 0))
-        )
-        assertEquals(
-            LockReason.NONE,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.MONDAY, 12, 0))
-        )
+    fun `legacy weekday window locks outside allowed hours as a custom rule`() {
+        val policy = PolicyResponse(weekdayStartMinutes = 9 * 60, weekdayEndMinutes = 19 * 60)
+        assertEquals(LockReason.RULE, KidModeEnforcer.evaluate(policy, at(tuesday, 8)))
+        assertEquals(LockReason.NONE, KidModeEnforcer.evaluate(policy, at(tuesday, 12)))
+        assertEquals(LockReason.RULE, KidModeEnforcer.evaluate(policy, at(tuesday, 19)))
     }
 
     @Test
-    fun `weekday screen time window locks outside allowed hours`() {
-        val policy = PolicyResponse(
-            weekdayStartMinutes = 9 * 60,  // 09:00
-            weekdayEndMinutes = 19 * 60,   // 19:00
-        )
-
-        assertEquals(
-            LockReason.SCREEN_TIME,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.TUESDAY, 8, 0))
-        )
+    fun `legacy weekday start equal to end means always allowed, weekend uses its own window`() {
         assertEquals(
             LockReason.NONE,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.TUESDAY, 12, 0))
+            KidModeEnforcer.evaluate(PolicyResponse(weekdayStartMinutes = 600, weekdayEndMinutes = 600), at(tuesday, 3)),
         )
-        assertEquals(
-            LockReason.SCREEN_TIME,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.TUESDAY, 19, 0))
-        )
-    }
-
-    @Test
-    fun `weekday start equal to end means always allowed`() {
-        val policy = PolicyResponse(
-            weekdayStartMinutes = 600,
-            weekdayEndMinutes = 600,
-        )
-        assertEquals(
-            LockReason.NONE,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.TUESDAY, 3, 0))
-        )
-    }
-
-    @Test
-    fun `weekend uses weekend window not weekday window`() {
         val policy = PolicyResponse(
             weekdayStartMinutes = 9 * 60,
             weekdayEndMinutes = 19 * 60,
             weekendStartMinutes = 0,
-            weekendEndMinutes = 0, // unrestricted on weekends
+            weekendEndMinutes = 0,
         )
+        assertEquals(LockReason.NONE, KidModeEnforcer.evaluate(policy, at(saturday, 3)))
+    }
 
-        // Would be SCREEN_TIME under the weekday window, but it's a Saturday.
-        assertEquals(
-            LockReason.NONE,
-            KidModeEnforcer.evaluate(policy, calendarAt(Calendar.SATURDAY, 3, 0))
+    @Test
+    fun `time_policy wins over the legacy fields`() {
+        val school = TimeRule(1, "Skole", KIND_SCHOOL, days = List(5) { TimeWindow(8 * 60 + 15, 14 * 60) } + listOf(null, null))
+        val policy = PolicyResponse(
+            bedtimeStartMinutes = 21 * 60,
+            bedtimeEndMinutes = 7 * 60,
+            timePolicy = TimePolicy(rules = listOf(school), dailyBudgetMinutes = List(7) { null }),
         )
+        assertEquals(LockReason.SCHOOL, KidModeEnforcer.evaluate(policy, at(monday, 9)))
+        assertEquals("the legacy bedtime is ignored", LockReason.NONE, KidModeEnforcer.evaluate(policy, at(monday, 23)))
+        assertEquals(LockReason.NONE, KidModeEnforcer.evaluate(policy, at(saturday, 9)))
     }
 }

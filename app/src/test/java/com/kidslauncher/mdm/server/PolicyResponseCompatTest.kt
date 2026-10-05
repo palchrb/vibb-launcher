@@ -206,4 +206,59 @@ class PolicyResponseCompatTest {
         val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
         assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
     }
+
+    /** Step 6 keys: `time_policy`, `location_policy`, status `time_state` - same names as
+     * kid-phone-server's `policy_json_keys_snapshot` and `StatusReportRequest`. */
+    @Test
+    fun `time_policy and location_policy decode, and their absence means an older server`() {
+        val withTime = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            """
+            "time_policy": {
+              "rules": [{"id": 4, "name": "Skole", "kind": "school", "calls_allowed": false,
+                "exempt_apps": ["org.fossify.calendar"],
+                "days": [{"start": 495, "end": 840}, {"start": 495, "end": 840}, {"start": 495, "end": 840},
+                         {"start": 495, "end": 840}, {"start": 495, "end": 840}, null, null]}],
+              "daily_budget_minutes": [60, 60, 60, 60, 60, 120, null],
+              "lifts": [{"id": 9, "target": "rule", "rule_id": 4, "minutes": 30, "expires_at_ms": 1759650000000},
+                        {"id": 10, "target": "budget", "rule_id": null, "minutes": 15, "expires_at_ms": 1759690000000}]
+            },
+            "location_policy": {"mode": "interval", "interval_minutes": 15},
+            "packages_to_uninstall"
+            """.trimIndent()
+        )
+        val policy = (decodeCached(withTime) as CachedPolicy.Ok).policy
+        val time = policy.timePolicy!!
+        assertEquals("school", time.rules[0].kind)
+        assertEquals(false, time.rules[0].callsAllowed)
+        assertEquals(listOf("org.fossify.calendar"), time.rules[0].exemptApps)
+        assertEquals(com.kidslauncher.mdm.timerules.TimeWindow(495, 840), time.rules[0].days[0])
+        assertNull(time.rules[0].days[5])
+        assertEquals(listOf(60, 60, 60, 60, 60, 120, null), time.dailyBudgetMinutes)
+        assertEquals(4L, time.lifts[0].ruleId)
+        assertNull(time.lifts[1].ruleId)
+        assertEquals(1759650000000L, time.lifts[0].expiresAtMs)
+        assertEquals(com.kidslauncher.mdm.server.dto.LocationPolicy("interval", 15), policy.locationPolicy)
+        val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
+
+        val old = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        assertNull(old.timePolicy)
+        assertNull(old.locationPolicy)
+
+        val report = StatusReportRequest(
+            lockReason = "SCHOOL", kioskEngaged = true, capabilities = listOf("call_policy_v1", TIME_RULES_CAPABILITY),
+            timeState = com.kidslauncher.mdm.server.dto.TimeState(
+                day = "2026-10-05", usedMinutes = 42, budgetMinutes = 90, extraMinutes = 30, activeRuleId = 4,
+                activeRuleName = "Skole", callsBlocked = true, lockReason = "SCHOOL", liftsActive = listOf(10),
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(
+            setOf("day", "used_minutes", "budget_minutes", "extra_minutes", "active_rule_id", "active_rule_name",
+                "calls_blocked", "lock_reason", "lifts_active"),
+            json["time_state"]!!.jsonObject.keys,
+        )
+        assertEquals("[\"call_policy_v1\",\"time_rules_v1\"]", json["capabilities"].toString())
+    }
 }

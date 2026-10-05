@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.server.decodeCached
+import com.kidslauncher.mdm.timerules.TimeRulesStore
 
 private const val LOG_TAG = "CallPolicyStore"
 
@@ -61,6 +62,12 @@ object CallPolicyStore {
      * the user is still "unlocking"). */
     @Synchronized
     fun refresh(context: Context, ceReadable: Boolean = userUnlocked(context)) {
+        // The time rules' no-calls windows (school), read from the same storage (handy step 6).
+        try {
+            TimeRulesStore.refresh(context, ceReadable)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Couldn't refresh the time rules", e)
+        }
         val deJson = readBoot(context)
         val ce = if (ceReadable) readCe(context) else null
         if (!committedKnown && deJson != null) {
@@ -89,6 +96,13 @@ object CallPolicyStore {
         }
         if (bootPolicyStatus != "ok") Log.w(LOG_TAG, "Boot call policy: $bootPolicyStatus")
     }
+
+    /**
+     * What the call path enforces right now: [state] with a no-calls time rule on top
+     * ([withTimeRule]) - during school only emergency calls and the callback window pass. The
+     * screening, redirection and in-call services and the phone book decide with this.
+     */
+    fun effectiveState(): CallPolicyState = withTimeRule(state, TimeRulesStore.callsBlockedNow())
 
     /** Loads the rules if nothing has been read yet, or only the boot copy while CE is readable now. */
     fun ensureLoaded(context: Context) {

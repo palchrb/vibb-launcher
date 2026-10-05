@@ -1,70 +1,58 @@
 package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.PolicyResponse
-import java.util.Calendar
+import com.kidslauncher.mdm.timerules.BudgetUse
+import com.kidslauncher.mdm.timerules.RuleLifts
+import com.kidslauncher.mdm.timerules.TimeLock
+import com.kidslauncher.mdm.timerules.TimePolicy
+import com.kidslauncher.mdm.timerules.decideTimeLock
+import com.kidslauncher.mdm.timerules.legacyTimePolicy
+import java.time.LocalDateTime
+
+/**
+ * Why the phone is locked. Stored as the `lock_reason` preference and sent as the status report's
+ * `lockReason`. SCREEN_TIME = the daily budget is used up; BEDTIME/SCHOOL/RULE = a time rule of
+ * that kind (RULE = custom) is active. The names are stored, so existing values must stay.
+ */
+/** Status-report capability: this launcher enforces `time_policy` (handy step 6). */
+const val TIME_RULES_CAPABILITY = "time_rules_v1"
 
 enum class LockReason {
-    NONE, SCREEN_TIME, BEDTIME
+    NONE, SCREEN_TIME, BEDTIME, SCHOOL, RULE
 }
 
 /**
  * Pure decision logic for whether the device should currently be locked - no Android or network
  * dependencies, so it keeps working from the last-cached policy even when the server is
- * unreachable.
+ * unreachable. The rules themselves are [com.kidslauncher.mdm.timerules] (handy step 6); this is
+ * the bridge from a [PolicyResponse].
  */
 object KidModeEnforcer {
 
+    /** The time rules and budget [policy] enforces: its `time_policy`, or an older server's fixed
+     * weekday/weekend/bedtime windows converted to rules. `null` = no policy at all. */
+    fun timePolicyOf(policy: PolicyResponse?): TimePolicy? = policy?.let {
+        it.timePolicy ?: legacyTimePolicy(
+            it.weekdayStartMinutes, it.weekdayEndMinutes,
+            it.weekendStartMinutes, it.weekendEndMinutes,
+            it.bedtimeStartMinutes, it.bedtimeEndMinutes,
+        )
+    }
+
     /**
-     * The lock in force right now: [LockReason.NONE] while the offline override or the pause is
-     * active, otherwise [evaluate]. The one rule shared by the sync, the offline re-checks and
-     * [AppEnforcer.apply] (which suspends every app but ours and the system dialer while this
-     * isn't NONE), so the overlay and the suspension always agree.
+     * The lock in force at local date-time [at]: nothing while the offline override or the pause
+     * is active, otherwise [decideTimeLock]. The one rule shared by the sync, the offline re-checks
+     * and [AppEnforcer.apply] (which suspends every app but ours, the system dialer and the
+     * lock's usable apps while it is locked), so the lock screen and the suspension always agree.
      */
-    fun lockReasonNow(policy: PolicyResponse?, overrideActive: Boolean, now: Calendar): LockReason =
-        if (overrideActive) LockReason.NONE else evaluate(policy, now)
+    fun lockNow(
+        policy: PolicyResponse?,
+        overrideActive: Boolean,
+        at: LocalDateTime,
+        lifts: RuleLifts = RuleLifts(),
+        budget: BudgetUse? = null,
+        messagingApps: Set<String> = emptySet(),
+    ): TimeLock = decideTimeLock(timePolicyOf(policy), at, overrideActive, lifts, budget, messagingApps)
 
-    fun evaluate(policy: PolicyResponse?, now: Calendar): LockReason {
-        if (policy == null) return LockReason.NONE
-
-        val minuteOfDay = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
-
-        if (isRestricted(minuteOfDay, policy.bedtimeStartMinutes, policy.bedtimeEndMinutes)) {
-            return LockReason.BEDTIME
-        }
-
-        val isWeekend = now.get(Calendar.DAY_OF_WEEK).let {
-            it == Calendar.SATURDAY || it == Calendar.SUNDAY
-        }
-        val allowedStart = if (isWeekend) policy.weekendStartMinutes else policy.weekdayStartMinutes
-        val allowedEnd = if (isWeekend) policy.weekendEndMinutes else policy.weekdayEndMinutes
-
-        return if (isOutsideAllowedWindow(minuteOfDay, allowedStart, allowedEnd)) {
-            LockReason.SCREEN_TIME
-        } else {
-            LockReason.NONE
-        }
-    }
-
-    /** True while [minuteOfDay] falls inside a restricted [start]-[end] window (e.g. bedtime).
-     * Handles overnight wraparound (start > end, e.g. 21:00-07:00). Null or start == end means
-     * "no restriction". */
-    private fun isRestricted(minuteOfDay: Int, start: Int?, end: Int?): Boolean {
-        if (start == null || end == null || start == end) return false
-        return inWindow(minuteOfDay, start, end)
-    }
-
-    /** True while [minuteOfDay] falls outside an allowed [start]-[end] window (e.g. weekday screen
-     * time). Handles overnight wraparound. Null or start == end means "always allowed". */
-    private fun isOutsideAllowedWindow(minuteOfDay: Int, start: Int?, end: Int?): Boolean {
-        if (start == null || end == null || start == end) return false
-        return !inWindow(minuteOfDay, start, end)
-    }
-
-    private fun inWindow(minuteOfDay: Int, start: Int, end: Int): Boolean {
-        return if (start < end) {
-            minuteOfDay in start until end
-        } else {
-            minuteOfDay >= start || minuteOfDay < end
-        }
-    }
+    fun evaluate(policy: PolicyResponse?, at: LocalDateTime): LockReason = lockNow(policy, false, at).reason
 }

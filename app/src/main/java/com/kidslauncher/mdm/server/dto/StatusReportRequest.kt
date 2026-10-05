@@ -24,6 +24,27 @@ data class StatusReportRequest(
     val callState: CallState? = null,
     /** Our notification listener (app badges) has access - see `BadgeListenerService`. */
     val notificationListenerEnabled: Boolean? = null,
+    /** Time rules and screen time right now (handy step 6) - see [TimeState]. */
+    val timeState: TimeState? = null,
+)
+
+/**
+ * `StatusReportRequest.timeState`, shown on the server's device page. [day] is the local date
+ * being counted, [budgetMinutes] today's budget including [extraMinutes] from the parent's
+ * "+ screen time" (`null` = unlimited), [activeRuleId]/[activeRuleName] the strongest active rule,
+ * [liftsActive] the lift ids in force, [lockReason] a [com.kidslauncher.mdm.server.LockReason] name.
+ */
+@Serializable
+data class TimeState(
+    val day: String?,
+    val usedMinutes: Int,
+    val budgetMinutes: Int?,
+    val extraMinutes: Int,
+    val activeRuleId: Long?,
+    val activeRuleName: String?,
+    val callsBlocked: Boolean,
+    val lockReason: String,
+    val liftsActive: List<Long>,
 )
 
 /**

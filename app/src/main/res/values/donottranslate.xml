@@ -49,6 +49,8 @@
     <string name="settings_mdm_calls_managed_last_key" translatable="false">mdm.calls_managed_last</string>
     <string name="settings_mdm_last_call_rules_key" translatable="false">mdm.last_call_rules</string>
     <string name="settings_mdm_lock_reason_key" translatable="false">mdm.lock_reason</string>
+    <string name="settings_mdm_lock_key_key" translatable="false">mdm.lock_key</string>
+    <string name="settings_mdm_time_policy_seen_key" translatable="false">mdm.time_policy_seen</string>
     <string name="settings_mdm_kiosk_enabled_key" translatable="false">mdm.kiosk_enabled</string>
     <string name="settings_mdm_override_pin_hash_key" translatable="false">mdm.override_pin_hash</string>
     <string name="settings_mdm_override_pin_salt_key" translatable="false">mdm.override_pin_salt</string>

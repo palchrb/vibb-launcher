@@ -235,6 +235,13 @@ class Application : android.app.Application() {
 
         createNotificationChannels(this)
 
+        // Time rules (handy step 6): the call path's lifts/override-aware answer, screen-time
+        // counting, and the first re-check of this process - it also arms the boundary alarm
+        // (alarms don't survive a reboot or a process kill by an update).
+        com.kidslauncher.mdm.timerules.TimeRulesRuntime.init(this)
+        com.kidslauncher.mdm.timerules.ScreenTimeTracker.init(this)
+        com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(this)
+
         // CommandListenerService both holds the SSE connection and drives the periodic backstop
         // sync directly off its own timer - see that class's doc comment for why this replaced a
         // separate WorkManager-based schedule() call here.

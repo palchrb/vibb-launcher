@@ -23,10 +23,13 @@ class EnforcementPlanTest {
         locked: Boolean = false,
         alarm: String? = null,
         ime: Set<String> = emptySet(),
+        usable: Set<String> = emptySet(),
+        noCalls: Boolean = false,
     ) = computeEnforcementPlan(
         allowlist, kioskDesired, features, overrideActive, controllable, OWN, dialer,
         callState = calls, ourDialerActive = ourDialer, smsPackages = setOf(SMS, "not.installed"),
         scheduleLocked = locked, alarmApp = alarm, inputMethods = ime,
+        lockUsableApps = usable, ruleBlocksCalls = noCalls,
     )
 
     private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = true))
@@ -318,6 +321,31 @@ class EnforcementPlanTest {
         assertNull(plan.kioskPackages)
         // ...but not SMS-off, a call rule.
         assertEquals(setOf(SMS), plan(listOf("org.example.music"), overrideActive = true, calls = smsOff, locked = true).suspend)
+    }
+
+    // Time rules (handy step 6)
+
+    @Test
+    fun `a rule's exempt apps stay usable and pinned, if the allowlist allows them`() {
+        val plan = plan(listOf("org.example.music", "org.example.game"), locked = true, usable = setOf("org.example.music", "com.android.chrome"))
+        assertFalse("org.example.music" in plan.suspend)
+        assertTrue("org.example.game" in plan.suspend)
+        assertTrue("not allowlisted: still suspended and hidden", "com.android.chrome" in plan.hide)
+        assertEquals(setOf(OWN, "org.example.music"), plan.kioskPackages)
+        // Unmanaged allowlist: spared, no kiosk.
+        assertFalse("com.android.chrome" in plan(null, locked = true, usable = setOf("com.android.chrome")).suspend)
+        // No lock: usable apps mean nothing.
+        assertEquals(plan(listOf("org.example.music")), plan(listOf("org.example.music"), usable = setOf("org.example.game")))
+    }
+
+    @Test
+    fun `a rule without calls restricts outgoing calls and unpins the dialer, unless overridden`() {
+        for (calls in allCallStates) {
+            assertTrue("$calls", plan(listOf(DIALER), calls = calls, locked = true, noCalls = true).restrictOutgoingCalls)
+        }
+        assertEquals(setOf(OWN), plan(listOf(DIALER, "org.example.music"), locked = true, noCalls = true).kioskPackages)
+        assertFalse(plan(listOf(DIALER), overrideActive = true, locked = true, noCalls = true).restrictOutgoingCalls)
+        assertFalse("only while locked", plan(listOf(DIALER), noCalls = true).restrictOutgoingCalls)
     }
 
     private companion object {

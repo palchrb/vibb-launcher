@@ -53,3 +53,21 @@ fun resolveMessageButton(
     }
     else -> null
 }
+
+/**
+ * The messaging apps the parent chose for the contacts (handy step 6): they stay usable when the
+ * screen-time budget is used up. SMS only while SMS is on; Signal means every Signal-protocol app
+ * we open for it. Still subject to the allowlist (the caller doesn't need to check).
+ */
+fun messagingAppPackages(rules: CallRules?, defaultSmsPackage: String?): Set<String> {
+    if (rules == null) return emptySet()
+    val packages = mutableSetOf<String>()
+    for (contact in rules.contacts) {
+        when (contact.messageApp) {
+            "sms" -> if (rules.smsEnabled && defaultSmsPackage != null) packages += defaultSmsPackage
+            "element" -> packages += MessagePackages.ELEMENT_X
+            "signal" -> packages += MessagePackages.SIGNAL
+        }
+    }
+    return packages
+}

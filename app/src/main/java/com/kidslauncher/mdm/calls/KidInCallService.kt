@@ -96,7 +96,7 @@ class KidInCallService : InCallService() {
     }
 
     private fun outgoingVerdict(call: Call): Verdict {
-        val state = CallPolicyStore.state
+        val state = CallPolicyStore.effectiveState()
         return try {
             val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
             decideOutgoing(raw, state, CallSystem.isEmergencyOutgoing(this, raw))
@@ -107,7 +107,7 @@ class KidInCallService : InCallService() {
     }
 
     private fun unknownVerdict(call: Call): Verdict {
-        val state = CallPolicyStore.state
+        val state = CallPolicyStore.effectiveState()
         return try {
             val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
             decideUnknownDirection(raw, state, CallSystem.isEmergencyOutgoing(this, raw))

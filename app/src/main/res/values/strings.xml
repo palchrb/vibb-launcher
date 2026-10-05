@@ -12,8 +12,15 @@
       - Kid Mode lock screen
       -
       -->
-    <string name="lock_reason_bedtime">It\'s bedtime. This phone is locked until morning.</string>
-    <string name="lock_reason_screen_time">Screen time is over for now.</string>
+    <string name="lock_kind_school">School</string>
+    <string name="lock_kind_bedtime">Bedtime</string>
+    <string name="lock_kind_rule">Screen-free time</string>
+    <string name="lock_title_screen_time">Screen time is used up</string>
+    <string name="lock_until">Until %1$s</string>
+    <string name="lock_calls_emergency_only">Only emergency calls work now.</string>
+    <string name="lock_calls_allowed">You can still call your contacts.</string>
+    <string name="lock_budget_used">%1$d of %2$d minutes used today.</string>
+    <string name="lock_budget_also_used">Today\'s screen time is used up too.</string>
     <string name="lock_enter_unlock_code">Enter unlock code</string>
     <string name="lock_unlock_code_dialog_title">Unlock code</string>
     <string name="lock_unlock_code_not_configured">No unlock code has been set up for this phone.</string>

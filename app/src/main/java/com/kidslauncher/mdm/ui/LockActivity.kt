@@ -9,10 +9,10 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
-import android.os.Handler
-import android.os.Looper
+import android.view.LayoutInflater
 import android.view.View
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
@@ -28,38 +28,33 @@ import com.kidslauncher.mdm.databinding.ActivityLockBinding
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
+import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-
-private const val LOCK_REASON_REFRESH_INTERVAL_MS = 60_000L
+import com.kidslauncher.mdm.timerules.KIND_BEDTIME
+import com.kidslauncher.mdm.timerules.KIND_SCHOOL
+import com.kidslauncher.mdm.timerules.TimeRule
+import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.timerules.clockText
 
 /**
- * Full-screen block shown while [LockReason] (from [com.kidslauncher.mdm.server.MdmSyncWorker])
- * is anything other than [LockReason.NONE]. No way to dismiss it besides the lock actually
- * clearing on its own, or the visible "Enter unlock code" button - a deliberately undisguised
- * entry point for [OfflineOverride], since the PIN itself is the actual security boundary here,
- * not the button being hard to find.
+ * Full-screen block shown while [LockReason] isn't [LockReason.NONE]: a time rule (school,
+ * bedtime, a custom rule) or the used-up screen-time budget (handy step 6). Shows the time and the
+ * rule's name, what still works - the rule's exempt apps or, for the budget, the contacts'
+ * messaging apps, as buttons; the phone book while calls are managed and allowed - and always
+ * Emergency call and "Enter unlock code" (a deliberately undisguised entry point for
+ * [OfflineOverride]; the PIN is the security boundary, not the button being hard to find). No
+ * timer: the boundary alarm updates `lock_reason`/`lock_key` and this re-renders or finishes.
  */
 class LockActivity : UIObjectActivity() {
     private lateinit var binding: ActivityLockBinding
 
     private val sharedPreferencesListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, prefKey ->
-            if (prefKey == LauncherPreferences.mdm().keys().lockReason()) {
-                finishIfUnlocked()
+            val keys = LauncherPreferences.mdm().keys()
+            if (prefKey == keys.lockReason() || prefKey == keys.lockKey()) {
+                render()
             }
         }
-
-    private val refreshHandler = Handler(Looper.getMainLooper())
-
-    // Re-checks the schedule against the device's own clock every minute while this screen is
-    // showing - otherwise the lock would only ever clear whenever the next ~15-minute background
-    // sync happens to land, which could leave someone stuck well after their allowed time began.
-    private val refreshRunnable = object : Runnable {
-        override fun run() {
-            reevaluateLockReasonFromCache(this@LockActivity)
-            refreshHandler.postDelayed(this, LOCK_REASON_REFRESH_INTERVAL_MS)
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,9 +67,9 @@ class LockActivity : UIObjectActivity() {
         })
 
         binding.lockUnlockCodeButton.setOnClickListener { showUnlockCodeDialog() }
-        // Calls aren't part of the lock: every other app is suspended, but the phone book (our
-        // own package) still calls the allowed contacts, and lists emergency numbers when the
-        // rules are unknown. With calls unmanaged only the keyguard's emergency button remains.
+        // Calls aren't part of the lock unless the rule says so (school): every other app is
+        // suspended, but the phone book (our own package) still calls the allowed contacts.
+        // With calls unmanaged only the Emergency call button and the keyguard's remain.
         binding.lockPhoneBookButton.setOnClickListener {
             startActivity(PhoneBookActivity.intent(this))
         }
@@ -151,34 +146,93 @@ class LockActivity : UIObjectActivity() {
 
     override fun onStart() {
         super.onStart()
-        binding.lockPhoneBookButton.visibility =
-            if (CallPolicyStore.state.managed) View.VISIBLE else View.GONE
         LauncherPreferences.getSharedPreferences()
             .registerOnSharedPreferenceChangeListener(sharedPreferencesListener)
-        refreshHandler.post(refreshRunnable)
-        updateMessageOrFinish()
+        // A fresh look at the clock on top of the boundary alarm; the listener re-renders.
+        reevaluateLockReasonFromCache(this)
+        render()
     }
 
     override fun onStop() {
-        refreshHandler.removeCallbacks(refreshRunnable)
         LauncherPreferences.getSharedPreferences()
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)
         super.onStop()
     }
 
-    private fun finishIfUnlocked() {
+    private fun kindLabel(rule: TimeRule): String = rule.name.takeIf { it.isNotBlank() } ?: getString(
+        when (rule.kind) {
+            KIND_SCHOOL -> R.string.lock_kind_school
+            KIND_BEDTIME -> R.string.lock_kind_bedtime
+            else -> R.string.lock_kind_rule
+        }
+    )
+
+    private fun render() {
         if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) {
             finish()
-        } else {
-            updateMessageOrFinish()
+            return
         }
+        val snap = try {
+            TimeRulesRuntime.snapshot(this, currentPolicyDecision().policy)
+        } catch (e: Exception) {
+            Log.w("LockActivity", "Couldn't evaluate the time rules", e)
+            null
+        }
+        val lock = snap?.lock
+        val rule = lock?.rules?.firstOrNull()
+        binding.lockTitle.text = when {
+            rule != null -> kindLabel(rule)
+            else -> getString(R.string.lock_title_screen_time)
+        }
+        val callsManaged = CallPolicyStore.state.managed
+        val lines = mutableListOf<String>()
+        lock?.until?.let { lines += getString(R.string.lock_until, it.clockText()) }
+        val budget = snap?.budget
+        if (rule == null && budget?.effectiveMinutes != null) {
+            lines += getString(R.string.lock_budget_used, (budget.usedMs / 60_000L).toInt(), budget.effectiveMinutes!!)
+        } else if (lock?.budgetExhausted == true) {
+            lines += getString(R.string.lock_budget_also_used)
+        }
+        if (lock?.callsAllowed == false) {
+            lines += getString(R.string.lock_calls_emergency_only)
+        } else if (callsManaged) {
+            lines += getString(R.string.lock_calls_allowed)
+        }
+        binding.lockMessage.text = lines.joinToString("\n")
+        binding.lockPhoneBookButton.visibility =
+            if (callsManaged && lock?.callsAllowed != false) View.VISIBLE else View.GONE
+        renderApps(lock?.usableApps.orEmpty())
     }
 
-    private fun updateMessageOrFinish() {
-        when (LauncherPreferences.mdm().lockReason()) {
-            LockReason.BEDTIME -> binding.lockMessage.setText(R.string.lock_reason_bedtime)
-            LockReason.SCREEN_TIME -> binding.lockMessage.setText(R.string.lock_reason_screen_time)
-            LockReason.NONE -> finish()
+    /** A button per usable app that can actually be opened (installed, launchable, not suspended -
+     * the allowlist still decides, through AppEnforcer's suspension). */
+    private fun renderApps(packages: Set<String>) {
+        val container = binding.lockApps
+        container.removeAllViews()
+        val pm = packageManager
+        for (pkg in packages.sorted()) {
+            val launch = pm.getLaunchIntentForPackage(pkg) ?: continue
+            val usable = try {
+                !pm.isPackageSuspended(pkg)
+            } catch (e: Exception) {
+                false
+            }
+            if (!usable) continue
+            val label = try {
+                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+            } catch (e: Exception) {
+                pkg
+            }
+            val button = LayoutInflater.from(this).inflate(R.layout.item_lock_app, container, false) as TextView
+            button.text = label
+            button.setOnClickListener {
+                try {
+                    startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (e: Exception) {
+                    Log.w("LockActivity", "Couldn't open $pkg", e)
+                }
+            }
+            container.addView(button)
         }
     }
 

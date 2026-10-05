@@ -69,7 +69,7 @@ class PhoneBookActivity : UIObjectActivity() {
     }
 
     private fun loadMissedCalls() {
-        val state = CallPolicyStore.state
+        val state = CallPolicyStore.effectiveState()
         CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.IO) { MissedCallsRepo.summaries(this@PhoneBookActivity, state) }
             if (!isDestroyed) {
@@ -80,7 +80,7 @@ class PhoneBookActivity : UIObjectActivity() {
     }
 
     private fun render() {
-        val state = CallPolicyStore.state
+        val state = CallPolicyStore.effectiveState()
         val rules = (state as? CallPolicyState.Managed)?.rules
         val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
         val info = when {
@@ -112,7 +112,7 @@ class PhoneBookActivity : UIObjectActivity() {
     private fun handleNumber(intent: Intent?) {
         val data = intent?.data ?: return
         val raw = PhoneNumbers.numberFromHandle(data.toString())
-        val state = CallPolicyStore.state
+        val state = CallPolicyStore.effectiveState()
         if (decideOutgoing(raw, state, CallSystem.isEmergencyOutgoing(this, raw)) == Verdict.BLOCK || raw == null) {
             AlertDialog.Builder(this)
                 .setMessage(R.string.calls_not_allowed)

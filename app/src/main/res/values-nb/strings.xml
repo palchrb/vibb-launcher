@@ -6,8 +6,15 @@
     <string name="alert_cant_open_message">Vil du endre innstillingene for den?</string>
 
     <!-- Lock screen -->
-    <string name="lock_reason_bedtime">Det er leggetid. Telefonen er låst til i morgen tidlig.</string>
-    <string name="lock_reason_screen_time">Skjermtiden er brukt opp for nå.</string>
+    <string name="lock_kind_school">Skole</string>
+    <string name="lock_kind_bedtime">Leggetid</string>
+    <string name="lock_kind_rule">Skjermfri tid</string>
+    <string name="lock_title_screen_time">Skjermtiden er brukt opp</string>
+    <string name="lock_until">Til %1$s</string>
+    <string name="lock_calls_emergency_only">Bare nødanrop fungerer nå.</string>
+    <string name="lock_calls_allowed">Du kan fortsatt ringe kontaktene dine.</string>
+    <string name="lock_budget_used">%1$d av %2$d minutter brukt i dag.</string>
+    <string name="lock_budget_also_used">Skjermtiden for i dag er også brukt opp.</string>
     <string name="lock_enter_unlock_code">Skriv inn opplåsingskode</string>
     <string name="lock_unlock_code_dialog_title">Opplåsingskode</string>
     <string name="lock_unlock_code_not_configured">Det er ikke satt opp noen opplåsingskode for denne telefonen.</string>

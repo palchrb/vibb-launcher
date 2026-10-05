@@ -233,3 +233,17 @@ fun phoneBookView(state: CallPolicyState, isEmergency: (String) -> Boolean): Pho
         PhoneBookView(state.rules.phoneBook.filter { isEmergency(it.number) }, false)
     }
 }
+
+/**
+ * The call rules with a time rule on top (handy step 6): while a rule that allows no calls is
+ * active ([callsBlocked]), managed rules act as "calls off" - only emergency numbers out, only the
+ * emergency callback window in, the phone book shows emergency contacts only. Fail-closed and
+ * unmanaged states are unchanged (unmanaged calls aren't screened by us at all; AppEnforcer still
+ * restricts outgoing calls then).
+ */
+fun withTimeRule(state: CallPolicyState, callsBlocked: Boolean): CallPolicyState =
+    if (callsBlocked && state is CallPolicyState.Managed && state.rules.callsEnabled) {
+        CallPolicyState.Managed(state.rules.copy(callsEnabled = false))
+    } else {
+        state
+    }

@@ -94,12 +94,17 @@ fun resetPreferences(context: Context) {
     val prefs = LauncherPreferences.getSharedPreferences()
     val managedLastKey = context.getString(R.string.settings_mdm_calls_managed_last_key)
     val lastRulesKey = context.getString(R.string.settings_mdm_last_call_rules_key)
+    val timeSeenKey = context.getString(R.string.settings_mdm_time_policy_seen_key)
     val managedLast = prefs.getBoolean(managedLastKey, false)
     val lastRules = prefs.getString(lastRulesKey, null)
+    val timeSeen = prefs.getBoolean(timeSeenKey, false)
     LauncherPreferences.clear()
     if (managedLast || lastRules != null) {
         prefs.edit().putBoolean(managedLastKey, managedLast).putString(lastRulesKey, lastRules).commit()
     }
+    // Likewise "this phone has had time rules" (handy step 6), so a reset phone doesn't accept a
+    // response without them.
+    if (timeSeen) prefs.edit().putBoolean(timeSeenKey, true).commit()
     LauncherPreferences.internal().versionCode(PREFERENCE_VERSION)
 
     val hidden: MutableSet<AbstractAppInfo> = mutableSetOf()

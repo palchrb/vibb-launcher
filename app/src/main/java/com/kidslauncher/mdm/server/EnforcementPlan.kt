@@ -83,6 +83,12 @@ data class EnforcementPlan(
  *   whatever the allowlist (also an unmanaged one - the lock comes from a server policy), and
  *   kiosk pins only our own package (which holds LockActivity, the phone book and the in-call UI)
  *   plus an allowlisted system dialer while calls are unmanaged.
+ * - [lockUsableApps]: while [scheduleLocked], the apps the lock leaves usable - a rule's exempt
+ *   apps, or the contacts' messaging apps once the screen-time budget is used up (handy step 6,
+ *   `decideTimeLock`). They are spared by the lock and pinned, but still only if the allowlist
+ *   allows them. [ruleBlocksCalls]: the active rule allows no calls (school) - outgoing calls are
+ *   then restricted (emergency calls are exempt) and the system dialer isn't pinned, whatever the
+ *   call state; with calls managed the caller also passes the rule-restricted call state.
  * - [inputMethods]: the enabled/default keyboards, never suspended or hidden - the PIN dialogs
  *   (lock screen, Settings gate) need one (QA step 4 #3).
  *   The call restrictions don't change: allowed calls and emergency calls keep working
@@ -102,19 +108,22 @@ fun computeEnforcementPlan(
     scheduleLocked: Boolean = false,
     alarmApp: String? = null,
     inputMethods: Set<String> = emptySet(),
+    lockUsableApps: Set<String> = emptySet(),
+    ruleBlocksCalls: Boolean = false,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer) + inputMethods
     val features = serverLockTaskFeatures.toInt() or LOCK_TASK_FEATURE_KEYGUARD
     val appsManaged = allowlist != null && !overrideActive
     val locked = scheduleLocked && !overrideActive
     val allowed = allowlist.orEmpty().toSet()
+    val callsBlockedByRule = locked && ruleBlocksCalls
 
     val restrictSms = when (callState) {
         CallPolicyState.Unmanaged -> false
         CallPolicyState.UnknownFailClosed -> true
         is CallPolicyState.Managed -> !callState.rules.smsEnabled
     }
-    val restrictOutgoingCalls = when (callState) {
+    val restrictOutgoingCalls = callsBlockedByRule || when (callState) {
         CallPolicyState.Unmanaged -> appsManaged && systemDialer != null && systemDialer !in allowed
         CallPolicyState.UnknownFailClosed -> true
         is CallPolicyState.Managed -> !callState.rules.callsEnabled || !ourDialerActive
@@ -126,12 +135,18 @@ fun computeEnforcementPlan(
     val suspend = hide.toMutableSet()
     // The alarm app is spared by the lock only, so an alarm set inside bedtime still rings; it
     // isn't pinned, so in kiosk it can show its alarm but not be opened from Home.
-    if (locked) controllable.filterTo(suspend) { it !in neverRestrict && it != alarmApp }
+    if (locked) controllable.filterTo(suspend) { it !in neverRestrict && it != alarmApp && it !in lockUsableApps }
 
     val kiosk = if (appsManaged && kioskDesired) {
-        // During the lock: our package, plus an allowlisted system dialer while calls are
-        // unmanaged (then it is the in-call UI the parent allowed).
-        val pinned = if (locked) setOf(ownPackage) + allowed.filter { it == systemDialer } else allowed + ownPackage
+        // During the lock: our package and the lock's usable apps, plus an allowlisted system
+        // dialer while calls are unmanaged (then it is the in-call UI the parent allowed) unless
+        // the rule allows no calls.
+        val pinned = if (locked) {
+            setOf(ownPackage) + allowed.filter { it in lockUsableApps } +
+                allowed.filter { it == systemDialer && !callsBlockedByRule }
+        } else {
+            allowed + ownPackage
+        }
         if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
     } else {
         null

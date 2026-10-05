@@ -2,9 +2,15 @@ package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.kidslauncher.mdm.timerules.Lift
+import com.kidslauncher.mdm.timerules.NO_TIME_RULES
+import com.kidslauncher.mdm.timerules.TimePolicy
+import com.kidslauncher.mdm.timerules.TimeRule
+import com.kidslauncher.mdm.timerules.TimeWindow
 
 class PolicyGateTest {
 
@@ -197,7 +203,43 @@ class PolicyGateTest {
         decision: PolicyToApply,
         overrideActive: Boolean = false,
         locked: Boolean = false,
-    ) = shouldSuspendNewPackage(pkg, decision, overrideActive, OWN, DIALER, scheduleLocked = locked)
+        usable: Set<String> = emptySet(),
+    ) = shouldSuspendNewPackage(pkg, decision, overrideActive, OWN, DIALER, scheduleLocked = locked, lockUsableApps = usable)
+
+    @Test
+    fun `new package during the lock is left usable only if the lock and the allowlist allow it`() {
+        assertFalse(suspendNew("org.example.music", PolicyToApply.Apply(managed), locked = true, usable = setOf("org.example.music")))
+        assertTrue(suspendNew("org.example.game", PolicyToApply.Apply(managed), locked = true, usable = setOf("org.example.game")))
+    }
+
+    // Time rules (handy step 6)
+
+    private val timePolicy = TimePolicy(
+        rules = listOf(TimeRule(1, "Skole", "school", days = List(7) { TimeWindow(480, 840) })),
+        dailyBudgetMinutes = List(7) { 60 },
+        lifts = listOf(Lift(5, "rule", 1, 30, 1L)),
+    )
+
+    @Test
+    fun `a response without time_policy is rejected once the phone has had one`() {
+        val fresh = managed.copy(timePolicy = null)
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(fresh, CachedPolicy.Ok(managed.copy(timePolicy = timePolicy)), true))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(fresh, CachedPolicy.Corrupt("x"), true, timePolicySeen = true))
+        assertEquals(FreshVerdict.ACCEPT, judgeFresh(fresh, CachedPolicy.Ok(managed), true))
+        assertEquals(FreshVerdict.ACCEPT, judgeFresh(managed.copy(timePolicy = NO_TIME_RULES), CachedPolicy.Ok(managed), true, timePolicySeen = true))
+    }
+
+    @Test
+    fun `the last enforced plan keeps the rules and budget but not the lifts`() {
+        val plan = LastEnforcedPlan.of(managed.copy(timePolicy = timePolicy))
+        assertEquals(timePolicy.copy(lifts = emptyList()), plan.timePolicy)
+        val decoded = LastEnforcedPlan.decode(LastEnforcedPlan.encode(plan))!!
+        assertEquals(timePolicy.copy(lifts = emptyList()), decoded.toPolicy().timePolicy)
+        // A plan written by an older build has no time policy: its windows are converted.
+        val old = LastEnforcedPlan.decode("""{"allowlist":[],"bedtime_start_minutes":1260,"bedtime_end_minutes":420}""")!!
+        assertNull(old.timePolicy)
+        assertEquals(1, KidModeEnforcer.timePolicyOf(old.toPolicy())!!.rules.size)
+    }
 
     @Test
     fun `new package during the schedule lock is suspended, even if allowlisted`() {

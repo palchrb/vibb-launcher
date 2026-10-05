@@ -65,7 +65,6 @@ private const val SWIPE_UP_MIN_DISTANCE = 100
 private const val SWIPE_UP_MIN_VELOCITY = 100
 private const val SWIPE_LEFT_MIN_DISTANCE = 100
 private const val SWIPE_LEFT_MIN_VELOCITY = 100
-private const val LOCK_REASON_REFRESH_INTERVAL_MS = 60_000L
 private const val BADGE_DEBOUNCE_MS = 300L
 
 /**
@@ -124,17 +123,9 @@ class HomeActivity : UIObjectActivity() {
             }
         }
 
+    // Badge debounce. No schedule polling any more: rule boundaries come from one exact alarm
+    // (timerules.TimeRuleAlarm), which updates lock_reason - the listener above redirects.
     private val refreshHandler = Handler(Looper.getMainLooper())
-
-    // Re-checks the schedule against the device's own clock every minute while the home screen is
-    // visible, so a window closing while someone's just sitting idle on the home screen locks
-    // promptly instead of waiting for the next ~15-minute background sync.
-    private val refreshRunnable = object : Runnable {
-        override fun run() {
-            reevaluateLockReasonFromCache(this@HomeActivity)
-            refreshHandler.postDelayed(this, LOCK_REASON_REFRESH_INTERVAL_MS)
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -242,7 +233,6 @@ class HomeActivity : UIObjectActivity() {
 
         LauncherPreferences.getSharedPreferences()
             .registerOnSharedPreferenceChangeListener(sharedPreferencesListener)
-        refreshHandler.post(refreshRunnable)
         BadgeStore.addListener(badgeListener)
         ContactPhotos.addListener(photoListener)
         try {
@@ -262,9 +252,8 @@ class HomeActivity : UIObjectActivity() {
         // wasteful; MdmSyncWorker's regular sync cycle is the retry-until-connected backstop
         // either way.
         CoroutineScope(Dispatchers.IO).launch { TsnetClient.connectFromPreferences(this@HomeActivity) }
-        // Fresh check against the clock every time the home screen comes to the foreground, not
-        // just on the 60-second timer - covers e.g. the device having been asleep since the last
-        // tick.
+        // Fresh check against the clock every time the home screen comes to the foreground, on
+        // top of the boundary alarm - cheap, and covers an alarm that was late or refused.
         reevaluateLockReasonFromCache(this@HomeActivity)
         // Must run before the lock-screen check below: while the bedtime/screen-time block is
         // showing is exactly when kiosk pinning should also be engaged, so the kid can't use
@@ -338,7 +327,6 @@ class HomeActivity : UIObjectActivity() {
     }
 
     override fun onStop() {
-        refreshHandler.removeCallbacks(refreshRunnable)
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)
         ContactPhotos.removeListener(photoListener)

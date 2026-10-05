@@ -25,6 +25,13 @@ import com.kidslauncher.mdm.server.dto.PendingCommand
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.calls.OngoingCalls
+import com.kidslauncher.mdm.server.dto.LocationPolicy
+import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.timerules.key
+import com.kidslauncher.mdm.ui.LockActivity
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,7 +41,6 @@ import kotlinx.coroutines.sync.withLock
 import okhttp3.ResponseBody
 import java.io.File
 import java.time.Instant
-import java.util.Calendar
 
 private const val LOG_TAG = "MdmSyncWorker"
 
@@ -94,9 +100,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
             Log.w(LOG_TAG, "Server policy doesn't decode, keeping the current one: ${fetched.error}")
             FreshOutcome.DECODE_FAILED
         }
-        is FreshDecode.Ok -> when (judgeFresh(fetched.policy, cached, policyEverApplied, mdm.callsManagedLast())) {
+        is FreshDecode.Ok -> when (judgeFresh(fetched.policy, cached, policyEverApplied, mdm.callsManagedLast(), mdm.timePolicySeen())) {
             FreshVerdict.REJECT_SUSPECT -> {
-                Log.w(LOG_TAG, "Ignoring a server policy without an allowlist or call_policy on a managed phone")
+                Log.w(LOG_TAG, "Ignoring a server policy without an allowlist, call_policy or time_policy on a managed phone")
                 FreshOutcome.REJECTED_SUSPECT
             }
             FreshVerdict.ACCEPT -> {
@@ -144,17 +150,31 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     if (decision is PolicyToApply.Fallback) {
         Log.w(LOG_TAG, "No usable cached policy - enforcing the last-enforced plan")
     }
-    val reason = KidModeEnforcer.lockReasonNow(decision.policy, overrideActive, Calendar.getInstance())
+    val lock = TimeRulesRuntime.currentLock(context, decision.policy, overrideActive)
+    val reason = lock.reason
+    val previousReason = mdm.lockReason()
     mdm.lockReason(reason)
+    mdm.lockKey(lock.key())
     // Derives the same lock from the same policy and suspends apps while it's on.
     AppEnforcer.apply(context, decision.policy)
+    // A lock that began with this policy (a lift ended early, a new rule): show it now, also over
+    // an app (not over a call), then re-arm the boundary alarm and the screen-time timer.
+    val appContext = context.applicationContext
+    Handler(Looper.getMainLooper()).post {
+        if (previousReason == LockReason.NONE && reason != LockReason.NONE && OngoingCalls.calls.isEmpty()) {
+            LockActivity.start(appContext)
+        }
+        TimeRulesRuntime.recheck(appContext)
+    }
 
     // A `ring`/`locate` command means the admin explicitly wants to know where the device is right
     // now, worth the cost of an active GPS/network fix - every other sync (the background chain,
-    // push-triggered syncs, and manual "Sync now") just reads whatever's cached/throttled instead,
-    // so location isn't forcing an active fetch (visible location indicator, slower sync) on every
-    // single cycle.
+    // push-triggered syncs, and manual "Sync now") follows the parent's location policy instead
+    // (off / on request / every N minutes, see locationAction), so location isn't forcing an
+    // active fetch (visible location indicator, slower sync) on every single cycle.
     val forceFreshLocation = freshPolicy?.pendingCommand?.command in setOf("ring", "locate")
+    val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
+    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, locationPolicy)
 
     // Best-effort - a failed report must never affect the lock decision above.
     try {
@@ -166,12 +186,13 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 appVersion = BuildConfig.VERSION_NAME,
                 appVersionCode = BuildConfig.VERSION_CODE,
                 offlineOverrideUsed = mdm.offlineOverrideUsedPendingReport(),
-                location = currentLocationReport(context, dpm, admin, forceFreshLocation),
+                location = location.report,
                 policyState = policyState(freshOutcome, cached, policyEverApplied),
                 restrictionsPaused = RestrictionsPause.isActive(),
-                capabilities = listOf(CALL_POLICY_CAPABILITY),
+                capabilities = listOf(CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY),
                 callState = CallStateReport.build(context),
                 notificationListenerEnabled = BadgeStore.accessGranted(context),
+                timeState = TimeRulesRuntime.report(context, decision.policy, reason),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -179,6 +200,12 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         mdm.offlineOverrideUsedPendingReport(false)
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Status report failed", e)
+    }
+
+    // `locate` is answered after the report that carries the fix, with the fix's accuracy and age.
+    freshPolicy?.pendingCommand?.takeIf { it.command == "locate" }?.let { command ->
+        val (ok, message) = locateResultMessage(location.action, location.accuracyMeters, location.ageSeconds)
+        reportCommandResult(api, command.id, ok, message)
     }
 
     // After enforcement and the report: photos are cosmetic and may take a moment to download.
@@ -205,11 +232,11 @@ private suspend fun reportBlockedDnsEvents(context: Context, api: MdmApi) {
 }
 
 /**
- * Find My Device's remote-command dispatch - ring/stop_ring/lock/wipe, or `locate` (a no-op here;
- * a location reading is already attached to every status report regardless, via
- * [currentLocationReport] below, so `locate` exists purely as a way for the admin site to nudge an
- * out-of-cycle report sooner, not a distinct on-device action). No result is ever reported for
- * `wipe` - the device is gone by the time it would report back.
+ * Find My Device's remote-command dispatch - ring/stop_ring/lock/wipe, or `locate` (nothing here:
+ * the sync takes a fresh fix for the status report - bypassing the throttle - and answers the
+ * command after the report with the fix's accuracy and age; the PWA's "Update location now"
+ * queues it). No result is ever reported for `wipe` - the device is gone by the time it would
+ * report back.
  */
 private suspend fun dispatchPendingCommand(
     context: Context,
@@ -238,7 +265,8 @@ private suspend fun dispatchPendingCommand(
 
         "wipe" -> LocateCommands.wipe(dpm, admin)
 
-        "locate" -> reportCommandResult(api, pending.id, success = true, message = "attached to next report")
+        // Answered after the status report that carries the fresh fix (performMdmSync).
+        "locate" -> {}
 
         else -> Log.w(LOG_TAG, "Unknown pending command: ${pending.command}")
     }
@@ -252,19 +280,38 @@ private suspend fun reportCommandResult(api: MdmApi, commandId: Long, success: B
     }
 }
 
+/** What the sync did about location: the report (if any), and for `locate` the fix's details. */
+private class LocationOutcome(
+    val action: LocationAction,
+    val report: LocationReport?,
+    val accuracyMeters: Float?,
+    val ageSeconds: Long?,
+)
+
+/** [policy] `null` = no policy (a never-managed phone): the old behaviour. */
 private suspend fun currentLocationReport(
     context: Context,
     dpm: DevicePolicyManager,
     admin: ComponentName,
     forceFresh: Boolean,
-): LocationReport? {
-    if (!dpm.isDeviceOwnerApp(context.packageName)) return null
-    val location = LocateCommands.currentLocation(context, dpm, admin, forceFresh) ?: return null
-    return LocationReport(
-        latitude = location.latitude,
-        longitude = location.longitude,
-        accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
-        capturedAt = Instant.ofEpochMilli(location.time).toString(),
+    policy: LocationPolicy?,
+): LocationOutcome {
+    if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
+    val sinceLastFresh = System.currentTimeMillis() - LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
+    val action = locationAction(policy, forceFresh, sinceLastFresh)
+    val location = LocateCommands.currentLocation(context, dpm, admin, action)
+        ?: return LocationOutcome(action, null, null, null)
+    val accuracy = if (location.hasAccuracy()) location.accuracy else null
+    return LocationOutcome(
+        action,
+        LocationReport(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracyMeters = accuracy,
+            capturedAt = Instant.ofEpochMilli(location.time).toString(),
+        ),
+        accuracy,
+        (System.currentTimeMillis() - location.time) / 1000,
     )
 }
 
@@ -475,7 +522,8 @@ private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
     }
 }
 
-/** Caches an accepted policy, its [LastEnforcedPlan], the "a policy has been applied" flag and the
+/** Caches an accepted policy, its [LastEnforcedPlan], the "a policy has been applied" flag, the
+ * "this phone has had time rules" flag ([judgeFresh]) and the
  * call prefs ([callPrefsUpdate]: `calls_managed_last` only from an explicit `managed`, and the last
  * managed call rules) in one synchronous `commit()` - they must never disagree, and the generated
  * preference setters only `apply()` asynchronously (see CLAUDE.md on writes racing a process death). */
@@ -485,6 +533,7 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
         .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), policy))
         .putBoolean(keys.policyEverApplied(), true)
         .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
+    if (policy.timePolicy != null) editor.putBoolean(keys.timePolicySeen(), true)
     callPrefsUpdate(policy)?.let { update ->
         editor.putBoolean(keys.callsManagedLast(), update.callsManagedLast)
         if (update.lastCallRules != null) {
@@ -524,36 +573,37 @@ fun currentPolicyDecision(): PolicyToApply =
 private val scheduleScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
 /**
- * Re-checks the bedtime/screen-time lock decision against the last-cached policy and the
- * device's own clock - no network call, so it works offline and doesn't wait for the next sync.
- * The home screen and lock screen call this on a local timer while visible, and
- * [CommandListenerService] every minute and on screen-on, so the schedule engages and releases
- * promptly on both edges, not just whenever a sync happens to land. When the decision changes,
- * [AppEnforcer.apply] runs again in the background: the lock suspends every app but ours and the
- * system dialer, and its end releases them (qa-security P0 #3) - also when the reason is
- * unchanged but the last apply didn't enforce it. Returns the new reason if it changed, `null`
- * otherwise.
+ * Re-checks the time-rule lock against the last-cached policy and the device's own clock - no
+ * network call, so it works offline and doesn't wait for the next sync. Called by
+ * [com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck] (the boundary alarm, time/zone change,
+ * boot, screen on, the budget running out) and by Home/the lock screen when they come to the
+ * front. When the lock changed - its reason, rules, usable apps or calls ([key]) - or the last
+ * apply didn't enforce it (failed, process died, none ran yet: QA step 4 #10), [AppEnforcer.apply]
+ * runs again in the background: the lock suspends every app but ours, the system dialer and the
+ * lock's usable apps, and its end releases them (qa-security P0 #3). Returns the new reason if it
+ * changed, `null` otherwise.
  */
 fun reevaluateLockReasonFromCache(context: Context): LockReason? {
     val mdm = LauncherPreferences.mdm()
     val decision = currentPolicyDecision()
-    val reason = KidModeEnforcer.lockReasonNow(
+    val lock = TimeRulesRuntime.currentLock(
+        context,
         decision.policy,
         OfflineOverride.isActive() || RestrictionsPause.isActive(),
-        Calendar.getInstance(),
     )
+    val reason = lock.reason
+    val key = lock.key()
     val changed = mdm.lockReason() != reason
-    // Also when the last apply didn't enforce this lock (it failed, the process died, or none
-    // ran yet in this process) - the pref alone would say "no change" (QA step 4 #10).
-    val enforced = AppEnforcer.lastEnforcedScheduleLock == (reason != LockReason.NONE)
-    if (!changed && enforced) return null
+    val keyChanged = mdm.lockKey() != key
+    if (!changed && !keyChanged && AppEnforcer.lastEnforcedLockKey == key) return null
     if (changed) mdm.lockReason(reason)
+    if (keyChanged) mdm.lockKey(key)
     val appContext = context.applicationContext
     scheduleScope.launch {
         try {
             AppEnforcer.apply(appContext, currentPolicyDecision().policy)
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Re-applying enforcement after a schedule change failed", e)
+            Log.w(LOG_TAG, "Re-applying enforcement after a lock change failed", e)
         }
     }
     return if (changed) reason else null

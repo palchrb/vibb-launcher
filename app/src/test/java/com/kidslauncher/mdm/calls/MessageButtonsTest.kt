@@ -64,4 +64,22 @@ class MessageButtonsTest {
             assertFalse("$bad", isMatrixId(bad))
         }
     }
+
+    @Test
+    fun `the messaging apps chosen for contacts stay usable when the budget is used up`() {
+        val contacts = listOf(
+            RuleContact(1, "A", "+4790000001", messageApp = "sms"),
+            RuleContact(2, "B", "+4790000002", messageApp = "element", messageAddress = "@b:example.org"),
+            RuleContact(3, "C", "+4790000003", messageApp = "signal"),
+            RuleContact(4, "D", "+4790000004", messageApp = "none"),
+        )
+        val rules = CallRules(callsEnabled = true, smsEnabled = true, contacts = contacts)
+        assertEquals(
+            setOf("sms.app", MessagePackages.ELEMENT_X) + MessagePackages.SIGNAL,
+            messagingAppPackages(rules, "sms.app"),
+        )
+        assertFalse("sms.app" in messagingAppPackages(rules.copy(smsEnabled = false), "sms.app"))
+        assertTrue(messagingAppPackages(null, "sms.app").isEmpty())
+        assertEquals(setOf(MessagePackages.ELEMENT_X) + MessagePackages.SIGNAL, messagingAppPackages(rules, null))
+    }
 }

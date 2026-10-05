@@ -282,4 +282,26 @@ class CallRulesTest {
         assertEquals(Verdict.BLOCK, incoming(mamma.number, empty))
         assertEquals(Verdict.ALLOW, out("112", empty))
     }
+
+    // A no-calls time rule (school, handy step 6)
+
+    @Test
+    fun `during school only emergency calls pass, in or out`() {
+        val school = withTimeRule(managed, callsBlocked = true)
+        assertEquals(Verdict.BLOCK, out(mamma.number, school))
+        assertEquals(Verdict.ALLOW, out("112", school))
+        assertEquals(Verdict.BLOCK, incoming(mamma.number, school))
+        assertEquals("the emergency callback window still opens", Verdict.ALLOW, incoming("+4799999999", school, window = true))
+        assertEquals(Verdict.BLOCK, decideUnknownDirection(mamma.number, school, false))
+        assertEquals(emptyList<RuleContact>(), phoneBookView(school) { it == "112" }.contacts)
+        assertEquals("SMS stays as the parent set it", rules.smsEnabled, (school as CallPolicyState.Managed).rules.smsEnabled)
+    }
+
+    @Test
+    fun `a time rule changes nothing when calls are allowed, unmanaged or failing closed`() {
+        assertEquals(managed, withTimeRule(managed, callsBlocked = false))
+        assertEquals(unmanaged, withTimeRule(unmanaged, callsBlocked = true))
+        assertEquals(failClosed, withTimeRule(failClosed, callsBlocked = true))
+        assertEquals(disabled, withTimeRule(disabled, callsBlocked = true))
+    }
 }

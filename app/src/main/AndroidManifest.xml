@@ -80,6 +80,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- LOCKED_BOOT_COMPLETED for calls.BootCallReceiver (direct boot, task 15). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- One exact alarm at the next time-rule boundary (timerules.TimeRuleAlarm, handy step 6).
+         Granted at install, unlike SCHEDULE_EXACT_ALARM; Play limits it to alarm apps, which
+         doesn't apply to this sideloaded device-owner app. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <application
         android:name=".Application"
@@ -319,6 +323,18 @@
         <!-- Not externally reachable despite the implicit-action intent-filter - MY_PACKAGE_REPLACED
              is a protected system broadcast only the OS can send, always targeted at the just-updated
              app itself. See PackageReplacedReceiver's own doc comment for why this exists. -->
+        <!-- Time-rule boundary alarm + clock/zone change + boot (handy step 6). Exported for the
+             system broadcasts (all protected); its own alarm targets it by component. Not
+             direct-boot-aware: before unlock the call path reads the boot copy itself. -->
+        <receiver
+            android:name=".timerules.TimeRuleReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <receiver
             android:name=".server.PackageReplacedReceiver"
             android:exported="false">

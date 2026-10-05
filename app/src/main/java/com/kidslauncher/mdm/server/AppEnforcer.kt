@@ -25,8 +25,10 @@ import com.kidslauncher.mdm.calls.lockDefaultApps
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.calls.withTimeRule
+import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.timerules.key
 import com.kidslauncher.mdm.ui.HomeActivity
-import java.util.Calendar
 
 private const val LOG_TAG = "AppEnforcer"
 
@@ -146,13 +148,13 @@ internal fun inputMethodPackages(context: Context): Set<String> = try {
 object AppEnforcer {
 
     /**
-     * Whether the last completed [apply] enforced the schedule lock (`null` until one ran in this
-     * process). [reevaluateLockReasonFromCache] re-applies whenever this disagrees with the
-     * current lock, so a failed or interrupted apply at a schedule edge is retried on the next
-     * minute check instead of waiting for the sync (QA step 4 #10).
+     * The time-rule lock the last completed [apply] enforced ([com.kidslauncher.mdm.timerules.key];
+     * `null` until one ran in this process). [reevaluateLockReasonFromCache] re-applies whenever
+     * this disagrees with the current lock, so a failed or interrupted apply at a boundary is
+     * retried on the next re-check instead of waiting for the sync (QA step 4 #10).
      */
     @Volatile
-    var lastEnforcedScheduleLock: Boolean? = null
+    var lastEnforcedLockKey: String? = null
         private set
 
     /**
@@ -196,10 +198,11 @@ object AppEnforcer {
         val callState = CallPolicyStore.state
         applyDialerRole(context, dpm, admin, callState)
 
-        // Bedtime / outside screen time: suspend everything but our own package and the system
-        // dialer (see computeEnforcementPlan), from the same rule the lock overlay uses.
-        val scheduleLocked =
-            KidModeEnforcer.lockReasonNow(policy, overrideActive, Calendar.getInstance()) != LockReason.NONE
+        // A time rule or the used-up budget: suspend everything but our own package, the system
+        // dialer and the lock's usable apps (see computeEnforcementPlan), from the same decision
+        // the lock screen uses. A rule without calls (school) also turns managed calls off.
+        val lock = TimeRulesRuntime.currentLock(context, policy, overrideActive)
+        val scheduleLocked = lock.locked
 
         val ownPackage = context.packageName
         val pm = context.packageManager
@@ -212,12 +215,14 @@ object AppEnforcer {
             controllable = installedPackages,
             ownPackage = ownPackage,
             systemDialer = systemDialerPackage(context),
-            callState = callState,
+            callState = withTimeRule(callState, lock.callsBlocked),
             ourDialerActive = CallSystem.dialerRoleHeld(context),
             smsPackages = smsPackages(CallSystem.defaultSmsPackage(context)),
             scheduleLocked = scheduleLocked,
             alarmApp = alarmAppPackage(context),
             inputMethods = inputMethodPackages(context),
+            lockUsableApps = lock.usableApps,
+            ruleBlocksCalls = lock.callsBlocked,
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -276,7 +281,7 @@ object AppEnforcer {
                 )
             }
         }
-        lastEnforcedScheduleLock = scheduleLocked
+        lastEnforcedLockKey = lock.key()
 
         applyKioskState(dpm, admin, plan.kioskPackages, plan.lockTaskFeatures)
 
@@ -710,13 +715,15 @@ object AppEnforcer {
         // last-enforced plan (or nothing allowed) decides - see shouldSuspendNewPackage.
         val decision = currentPolicyDecision()
         val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
+        val lock = TimeRulesRuntime.currentLock(context, decision.policy, overrideActive)
         val suspend = shouldSuspendNewPackage(
             packageName = packageName,
             decision = decision,
             overrideActive = overrideActive,
             ownPackage = context.packageName,
             systemDialer = systemDialerPackage(context),
-            scheduleLocked = KidModeEnforcer.lockReasonNow(decision.policy, overrideActive, Calendar.getInstance()) != LockReason.NONE,
+            scheduleLocked = lock.locked,
+            lockUsableApps = lock.usableApps,
         )
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         // A newly installed app can't sneak in its own calls while calls are managed.
