@@ -22,6 +22,10 @@ import com.kidslauncher.mdm.server.dto.PendingCommand
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.ResponseBody
@@ -135,10 +139,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     if (decision is PolicyToApply.Fallback) {
         Log.w(LOG_TAG, "No usable cached policy - enforcing the last-enforced plan")
     }
-    val reason = if (overrideActive) LockReason.NONE else {
-        KidModeEnforcer.evaluate(decision.policy, Calendar.getInstance())
-    }
+    val reason = KidModeEnforcer.lockReasonNow(decision.policy, overrideActive, Calendar.getInstance())
     mdm.lockReason(reason)
+    // Derives the same lock from the same policy and suspends apps while it's on.
     AppEnforcer.apply(context, decision.policy)
 
     // A `ring`/`locate` command means the admin explicitly wants to know where the device is right
@@ -499,12 +502,6 @@ fun cachedPolicy(): CachedPolicy {
     return cached
 }
 
-/**
- * Re-checks the bedtime/screen-time lock decision against the last-cached policy and the
- * device's own clock - no network call, so it works offline and doesn't wait for the next sync.
- * The home screen and lock screen both call this on a local timer while visible so the schedule
- * engages and releases promptly on both edges, not just whenever a sync happens to land.
- */
 /** The [LastEnforcedPlan] stored with the last accepted policy, or `null` if missing/unreadable. */
 fun lastEnforcedPlan(): LastEnforcedPlan? = LastEnforcedPlan.decode(LauncherPreferences.mdm().lastEnforcedPlan())
 
@@ -513,16 +510,39 @@ fun lastEnforcedPlan(): LastEnforcedPlan? = LastEnforcedPlan.decode(LauncherPref
 fun currentPolicyDecision(): PolicyToApply =
     choosePolicy(null, cachedPolicy(), LauncherPreferences.mdm().policyEverApplied(), lastEnforcedPlan())
 
-fun reevaluateLockReasonFromCache() {
+/** Re-applies enforcement off the main thread after the schedule lock changed - see
+ * [reevaluateLockReasonFromCache]. */
+private val scheduleScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+/**
+ * Re-checks the bedtime/screen-time lock decision against the last-cached policy and the
+ * device's own clock - no network call, so it works offline and doesn't wait for the next sync.
+ * The home screen and lock screen call this on a local timer while visible, and
+ * [CommandListenerService] every minute and on screen-on, so the schedule engages and releases
+ * promptly on both edges, not just whenever a sync happens to land. When the decision changes,
+ * [AppEnforcer.apply] runs again in the background: the lock suspends every app but ours and the
+ * system dialer, and its end releases them (qa-security P0 #3). Returns the new reason if it
+ * changed, `null` otherwise.
+ */
+fun reevaluateLockReasonFromCache(context: Context): LockReason? {
     val mdm = LauncherPreferences.mdm()
-    val reason = if (OfflineOverride.isActive() || RestrictionsPause.isActive()) {
-        LockReason.NONE
-    } else {
-        KidModeEnforcer.evaluate(currentPolicyDecision().policy, Calendar.getInstance())
+    val decision = currentPolicyDecision()
+    val reason = KidModeEnforcer.lockReasonNow(
+        decision.policy,
+        OfflineOverride.isActive() || RestrictionsPause.isActive(),
+        Calendar.getInstance(),
+    )
+    if (mdm.lockReason() == reason) return null
+    mdm.lockReason(reason)
+    val appContext = context.applicationContext
+    scheduleScope.launch {
+        try {
+            AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Re-applying enforcement after a schedule change failed", e)
+        }
     }
-    if (mdm.lockReason() != reason) {
-        mdm.lockReason(reason)
-    }
+    return reason
 }
 
 // The periodic backstop sync used to be driven by a WorkManager OneTimeWorkRequest chain (each

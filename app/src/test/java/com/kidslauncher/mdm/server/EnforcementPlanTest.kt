@@ -20,9 +20,11 @@ class EnforcementPlanTest {
         dialer: String? = DIALER,
         calls: CallPolicyState = CallPolicyState.Unmanaged,
         ourDialer: Boolean = true,
+        locked: Boolean = false,
     ) = computeEnforcementPlan(
         allowlist, kioskDesired, features, overrideActive, controllable, OWN, dialer,
         callState = calls, ourDialerActive = ourDialer, smsPackages = setOf(SMS, "not.installed"),
+        scheduleLocked = locked,
     )
 
     private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = true))
@@ -222,6 +224,58 @@ class EnforcementPlanTest {
         assertEquals(LOCK_TASK_FEATURE_KEYGUARD, plan(emptyList(), features = 0).lockTaskFeatures)
         assertEquals(63, plan(emptyList(), features = 63).lockTaskFeatures)
         assertEquals(1 or LOCK_TASK_FEATURE_KEYGUARD, plan(emptyList(), features = 1).lockTaskFeatures)
+    }
+
+    // Schedule lock (bedtime / outside screen time) - qa-security P0 #3
+
+    private val everythingButOursAndDialer = setOf("org.example.music", "org.example.game", "com.android.chrome", SMS)
+
+    @Test
+    fun `schedule lock suspends every app but ours and the dialer, whatever the allowlist`() {
+        for (allowlist in listOf(null, emptyList(), listOf("org.example.music"), listOf("org.example.music", DIALER, SMS))) {
+            for (calls in allCallStates) {
+                val plan = plan(allowlist, calls = calls, locked = true)
+                assertEquals("$allowlist $calls", everythingButOursAndDialer, plan.suspend)
+                assertEquals(setOf(OWN, DIALER), plan.neverRestrict)
+            }
+        }
+    }
+
+    @Test
+    fun `schedule lock pins only our own package`() {
+        assertEquals(setOf(OWN), plan(listOf("org.example.music"), locked = true).kioskPackages)
+        // An allowlisted system dialer isn't pinned either; its emergency exemption still applies.
+        assertEquals(setOf(OWN), plan(listOf(DIALER, "org.example.music"), locked = true).kioskPackages)
+        assertEquals(setOf(OWN), plan(listOf("org.example.music"), calls = callsOn, locked = true).kioskPackages)
+        // Kiosk itself still follows the server: no kiosk wanted, no pinning.
+        assertNull(plan(listOf("org.example.music"), kioskDesired = false, locked = true).kioskPackages)
+        assertNull(plan(null, locked = true).kioskPackages)
+    }
+
+    @Test
+    fun `schedule lock leaves the call rules as they are`() {
+        for (allowlist in listOf(null, emptyList(), listOf(DIALER))) {
+            for (calls in allCallStates) {
+                for (ourDialer in listOf(true, false)) {
+                    val open = plan(allowlist, calls = calls, ourDialer = ourDialer)
+                    val locked = plan(allowlist, calls = calls, ourDialer = ourDialer, locked = true)
+                    val case = "$allowlist $calls $ourDialer"
+                    assertEquals(case, open.restrictOutgoingCalls, locked.restrictOutgoingCalls)
+                    assertEquals(case, open.restrictSms, locked.restrictSms)
+                    assertEquals(case, open.denyCallPermissions, locked.denyCallPermissions)
+                    assertEquals(case, open.lockDateTime, locked.lockDateTime)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `an override or pause lifts the schedule lock`() {
+        val plan = plan(listOf("org.example.music"), overrideActive = true, locked = true)
+        assertTrue(plan.suspend.isEmpty())
+        assertNull(plan.kioskPackages)
+        // ...but not SMS-off, a call rule.
+        assertEquals(setOf(SMS), plan(listOf("org.example.music"), overrideActive = true, calls = smsOff, locked = true).suspend)
     }
 
     private companion object {

@@ -79,7 +79,7 @@ class HomeActivity : UIObjectActivity() {
     // promptly instead of waiting for the next ~15-minute background sync.
     private val refreshRunnable = object : Runnable {
         override fun run() {
-            reevaluateLockReasonFromCache()
+            reevaluateLockReasonFromCache(this@HomeActivity)
             refreshHandler.postDelayed(this, LOCK_REASON_REFRESH_INTERVAL_MS)
         }
     }
@@ -189,7 +189,7 @@ class HomeActivity : UIObjectActivity() {
         // Fresh check against the clock every time the home screen comes to the foreground, not
         // just on the 60-second timer - covers e.g. the device having been asleep since the last
         // tick.
-        reevaluateLockReasonFromCache()
+        reevaluateLockReasonFromCache(this@HomeActivity)
         // Must run before the lock-screen check below: while the bedtime/screen-time block is
         // showing is exactly when kiosk pinning should also be engaged, so the kid can't use
         // recents/home/notification-shade to route around LockActivity.

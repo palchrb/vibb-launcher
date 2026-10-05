@@ -155,9 +155,9 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         restrictionsPaused?.setOnPreferenceChangeListener { _, newValue ->
             val context = requireContext()
             if (newValue == true) {
-                // Turning it on always takes the PIN, even though Settings itself is PIN-gated:
-                // without a PIN configured on the server, Settings is open to anyone, and a pause
-                // must not be. The switch only flips once the PIN checks out (see below).
+                // Turning it on always takes the PIN again, on top of the Settings gate: Settings
+                // is open without one during setup (no policy yet), and a pause must never be.
+                // The switch only flips once the PIN checks out (see below).
                 if (!OfflineOverride.isConfigured()) {
                     Toast.makeText(context, R.string.toast_mdm_pause_needs_pin, Toast.LENGTH_LONG).show()
                 } else {
@@ -222,7 +222,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         CoroutineScope(Dispatchers.IO).launch {
             // apply() releases everything itself while the pause is active.
             AppEnforcer.apply(context, currentPolicyDecision().policy)
-            reevaluateLockReasonFromCache()
+            reevaluateLockReasonFromCache(context)
         }
     }
 

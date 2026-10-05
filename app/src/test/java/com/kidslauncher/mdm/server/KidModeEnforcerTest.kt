@@ -16,6 +16,15 @@ class KidModeEnforcerTest {
         }
 
     @Test
+    fun `an override or pause clears the lock, otherwise the schedule decides`() {
+        val policy = PolicyResponse(bedtimeStartMinutes = 21 * 60, bedtimeEndMinutes = 7 * 60)
+        val night = calendarAt(Calendar.MONDAY, 23, 0)
+        assertEquals(LockReason.BEDTIME, KidModeEnforcer.lockReasonNow(policy, overrideActive = false, now = night))
+        assertEquals(LockReason.NONE, KidModeEnforcer.lockReasonNow(policy, overrideActive = true, now = night))
+        assertEquals(LockReason.NONE, KidModeEnforcer.lockReasonNow(null, overrideActive = false, now = night))
+    }
+
+    @Test
     fun `null policy is never locked`() {
         assertEquals(
             LockReason.NONE,

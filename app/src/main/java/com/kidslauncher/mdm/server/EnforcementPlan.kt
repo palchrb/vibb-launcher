@@ -70,6 +70,12 @@ data class EnforcementPlan(
  * - [callState]: the call rules in force; [ourDialerActive]: we hold the dialer role, so our
  *   services see every call. [smsPackages]: the default SMS app and the like (Messages, STK);
  *   while SMS is blocked they're suspended whatever the allowlist says, override or not.
+ * - [scheduleLocked]: bedtime or outside screen time ([KidModeEnforcer.lockReasonNow] isn't NONE,
+ *   so never under an override). Every controllable package except [neverRestrict] is suspended
+ *   whatever the allowlist (also an unmanaged one - the lock comes from a server policy), and
+ *   kiosk pins only our own package, which holds LockActivity, the phone book and the in-call UI.
+ *   The call restrictions don't change: allowed calls and emergency calls keep working
+ *   (qa-security P0 #3 - the overlay alone could be escaped through Recents or a notification).
  */
 fun computeEnforcementPlan(
     allowlist: List<String>?,
@@ -82,10 +88,12 @@ fun computeEnforcementPlan(
     callState: CallPolicyState = CallPolicyState.Unmanaged,
     ourDialerActive: Boolean = false,
     smsPackages: Set<String> = emptySet(),
+    scheduleLocked: Boolean = false,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer)
     val features = serverLockTaskFeatures.toInt() or LOCK_TASK_FEATURE_KEYGUARD
     val appsManaged = allowlist != null && !overrideActive
+    val locked = scheduleLocked && !overrideActive
     val allowed = allowlist.orEmpty().toSet()
 
     val restrictSms = when (callState) {
@@ -100,11 +108,12 @@ fun computeEnforcementPlan(
     }
 
     val suspend = mutableSetOf<String>()
+    if (locked) controllable.filterTo(suspend) { it !in neverRestrict }
     if (appsManaged) controllable.filterTo(suspend) { it !in allowed && it !in neverRestrict }
     if (restrictSms) controllable.filterTo(suspend) { it in smsPackages && it !in neverRestrict }
 
     val kiosk = if (appsManaged && kioskDesired) {
-        val pinned = allowed + ownPackage
+        val pinned = if (locked) setOf(ownPackage) else allowed + ownPackage
         if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
     } else {
         null

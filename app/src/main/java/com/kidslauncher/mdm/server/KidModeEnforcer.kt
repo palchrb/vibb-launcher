@@ -14,6 +14,15 @@ enum class LockReason {
  */
 object KidModeEnforcer {
 
+    /**
+     * The lock in force right now: [LockReason.NONE] while the offline override or the pause is
+     * active, otherwise [evaluate]. The one rule shared by the sync, the offline re-checks and
+     * [AppEnforcer.apply] (which suspends every app but ours and the system dialer while this
+     * isn't NONE), so the overlay and the suspension always agree.
+     */
+    fun lockReasonNow(policy: PolicyResponse?, overrideActive: Boolean, now: Calendar): LockReason =
+        if (overrideActive) LockReason.NONE else evaluate(policy, now)
+
     fun evaluate(policy: PolicyResponse?, now: Calendar): LockReason {
         if (policy == null) return LockReason.NONE
 

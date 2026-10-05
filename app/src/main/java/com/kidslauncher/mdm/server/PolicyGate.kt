@@ -210,8 +210,9 @@ fun policyState(outcome: FreshOutcome, cached: CachedPolicy, policyEverApplied: 
 /**
  * The pure core of [AppEnforcer.enforceOnNewPackage]: should a just-installed [packageName] be
  * suspended and hidden right away? Same rules as [computeEnforcementPlan] (never our own package
- * or the system dialer); with no usable policy on a phone that has had one, the
- * [PolicyToApply.Fallback] plan decides (nothing allowed if even that is unreadable).
+ * or the system dialer; everything else while [scheduleLocked]); with no usable policy on a phone
+ * that has had one, the [PolicyToApply.Fallback] plan decides (nothing allowed if even that is
+ * unreadable).
  */
 fun shouldSuspendNewPackage(
     packageName: String,
@@ -219,9 +220,11 @@ fun shouldSuspendNewPackage(
     overrideActive: Boolean,
     ownPackage: String,
     systemDialer: String?,
+    scheduleLocked: Boolean = false,
 ): Boolean {
     if (overrideActive) return false
     if (packageName == ownPackage || packageName == systemDialer) return false
+    if (scheduleLocked) return true
     val allowlist = decision.policy?.allowlist ?: return false
     return packageName !in allowlist
 }

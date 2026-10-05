@@ -2,6 +2,9 @@ package com.kidslauncher.mdm.server
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import java.security.MessageDigest
 import java.security.spec.KeySpec
@@ -122,7 +125,18 @@ object OfflineOverride {
         mdm.offlineOverrideBoot(start.bootCount)
         mdm.offlineOverrideActive(true)
         mdm.offlineOverrideUsedPendingReport(true)
-        AppEnforcer.apply(context, null)
+        // The enforced policy, not `null`: the override releases the app restrictions and the
+        // schedule by itself, while the call rules and the hardening switches stay as the policy
+        // says. Off the main thread - apply() is synchronized and can wait for a running sync.
+        val appContext = context.applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+                reevaluateLockReasonFromCache(appContext)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Applying the offline override failed", e)
+            }
+        }
     }
 
     private fun hexToBytes(hex: String): ByteArray = ByteArray(hex.length / 2) { i ->

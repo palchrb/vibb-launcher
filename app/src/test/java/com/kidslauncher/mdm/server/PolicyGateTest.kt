@@ -196,7 +196,17 @@ class PolicyGateTest {
         pkg: String,
         decision: PolicyToApply,
         overrideActive: Boolean = false,
-    ) = shouldSuspendNewPackage(pkg, decision, overrideActive, OWN, DIALER)
+        locked: Boolean = false,
+    ) = shouldSuspendNewPackage(pkg, decision, overrideActive, OWN, DIALER, scheduleLocked = locked)
+
+    @Test
+    fun `new package during the schedule lock is suspended, even if allowlisted`() {
+        assertTrue(suspendNew("org.example.music", PolicyToApply.Apply(managed), locked = true))
+        assertTrue(suspendNew("org.example.game", PolicyToApply.Apply(unmanaged), locked = true))
+        assertFalse(suspendNew(OWN, PolicyToApply.Apply(managed), locked = true))
+        assertFalse(suspendNew(DIALER, PolicyToApply.Apply(managed), locked = true))
+        assertFalse(suspendNew("org.example.music", PolicyToApply.Apply(managed), overrideActive = true, locked = true))
+    }
 
     @Test
     fun `new package not on the allowlist is suspended`() {

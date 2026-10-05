@@ -6,11 +6,15 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.PhoneBookActivity
+import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.databinding.ActivityLockBinding
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.OfflineOverride
@@ -43,7 +47,7 @@ class LockActivity : UIObjectActivity() {
     // sync happens to land, which could leave someone stuck well after their allowed time began.
     private val refreshRunnable = object : Runnable {
         override fun run() {
-            reevaluateLockReasonFromCache()
+            reevaluateLockReasonFromCache(this@LockActivity)
             refreshHandler.postDelayed(this, LOCK_REASON_REFRESH_INTERVAL_MS)
         }
     }
@@ -59,6 +63,12 @@ class LockActivity : UIObjectActivity() {
         })
 
         binding.lockUnlockCodeButton.setOnClickListener { showUnlockCodeDialog() }
+        // Calls aren't part of the lock: every other app is suspended, but the phone book (our
+        // own package) still calls the allowed contacts, and lists emergency numbers when the
+        // rules are unknown. With calls unmanaged only the keyguard's emergency button remains.
+        binding.lockPhoneBookButton.setOnClickListener {
+            startActivity(PhoneBookActivity.intent(this))
+        }
     }
 
     private fun showUnlockCodeDialog() {
@@ -99,6 +109,8 @@ class LockActivity : UIObjectActivity() {
 
     override fun onStart() {
         super.onStart()
+        binding.lockPhoneBookButton.visibility =
+            if (CallPolicyStore.state.managed) View.VISIBLE else View.GONE
         LauncherPreferences.getSharedPreferences()
             .registerOnSharedPreferenceChangeListener(sharedPreferencesListener)
         refreshHandler.post(refreshRunnable)

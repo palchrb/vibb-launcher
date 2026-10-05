@@ -2,8 +2,10 @@ package com.kidslauncher.mdm.server
 
 import android.app.Notification
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -13,7 +15,9 @@ import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.COMMAND_LISTENER_NOTIFICATION_ID
 import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_LISTENER
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.ui.LockActivity
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +36,7 @@ private const val INITIAL_RECONNECT_DELAY_MS = 5_000L
 private const val MAX_RECONNECT_DELAY_MS = 60_000L
 private const val NOT_ENROLLED_RETRY_DELAY_MS = 30_000L
 private const val PERIODIC_SYNC_INTERVAL_MS = 5 * 60 * 1000L
+private const val SCHEDULE_CHECK_INTERVAL_MS = 60_000L
 
 /**
  * Holds a long-lived SSE connection open to `/api/devices/commands/stream` so Find My Device's
@@ -64,6 +69,12 @@ private const val PERIODIC_SYNC_INTERVAL_MS = 5 * 60 * 1000L
  * Also drives [performJournalSync] and [performBrowserHistorySync] off the same two triggers as
  * [performMdmSync] - see [performJournalSync]'s own doc comment for why each is a separate
  * mutex/coroutine rather than folded into [performMdmSync] itself.
+ *
+ * And the schedule's edges, offline: every minute and on screen-on it re-checks bedtime/screen
+ * time from the cache ([reevaluateLockReasonFromCache], which re-applies the app suspension when
+ * the lock changes) and shows [LockActivity] when a lock starts - also while the kid is inside an
+ * app, without waiting for the 5-minute sync or for HomeActivity to be alive. The timer is a
+ * main-looper Handler, so it doesn't wake a sleeping phone; screen-on covers that.
  */
 class CommandListenerService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
@@ -102,6 +113,8 @@ class CommandListenerService : Service() {
         startForeground(COMMAND_LISTENER_NOTIFICATION_ID, buildNotification())
         connect()
         schedulePeriodicSync()
+        scheduleScheduleCheck()
+        registerReceiver(screenOnReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
         // Piggybacks on this same foreground service/notification rather than running as a
         // second one - see UnifiedPushRelay's own doc comment for why. Off by default (a parent
         // has to opt in from Settings), so this is a no-op on a device where that's never been
@@ -118,6 +131,11 @@ class CommandListenerService : Service() {
     override fun onDestroy() {
         stopped = true
         handler.removeCallbacksAndMessages(null)
+        try {
+            unregisterReceiver(screenOnReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Never registered (onCreate failed before it).
+        }
         eventSource?.cancel()
         UnifiedPushRelay.stop()
         scope.cancel()
@@ -194,6 +212,35 @@ class CommandListenerService : Service() {
             },
             PERIODIC_SYNC_INTERVAL_MS,
         )
+    }
+
+    private val screenOnReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = checkSchedule()
+    }
+
+    private fun scheduleScheduleCheck() {
+        if (stopped) return
+        handler.postDelayed(
+            {
+                checkSchedule()
+                scheduleScheduleCheck()
+            },
+            SCHEDULE_CHECK_INTERVAL_MS,
+        )
+    }
+
+    /** Main thread: reading the cached policy is cheap; the re-apply runs in the background. */
+    private fun checkSchedule() {
+        try {
+            val changedTo = reevaluateLockReasonFromCache(applicationContext) ?: return
+            // A device owner may start activities from the background. Not over a call in
+            // progress (our in-call screen): the lock shows when the kid gets back to Home.
+            if (changedTo != LockReason.NONE && OngoingCalls.calls.isEmpty()) {
+                LockActivity.start(applicationContext)
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Schedule check failed", e)
+        }
     }
 
     private fun scheduleReconnect() {
