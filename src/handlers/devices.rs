@@ -1342,37 +1342,81 @@ pub async fn update_policy(
     let current_pin = current.as_ref().and_then(|p| p.override_pin_hash.clone());
     let current_salt = current.as_ref().and_then(|p| p.override_pin_salt.clone());
 
-    let new_pin = field("new_pin");
-    let new_pin = new_pin.trim();
+    let new_pin = field("new_pin").trim().to_string();
     // Handy's lock (step 10): the override PIN is the lock screen's parent code, so it can't be
-    // removed while a kid PIN is set, and it must never be the kid's PIN (QA 10 #6).
+    // removed while a kid PIN is set, and it must never be the kid's PIN (QA 10 #6). PBKDF2 (the
+    // cross-check and the new hash) runs off the async workers (qa-10-code #9).
     let kid_pin_set = current.as_ref().is_some_and(|p| p.kid_pin_hash.is_some());
-    let mut notice: Option<&str> = None;
-    let (override_pin_hash, override_pin_salt, pin_event) = if fields.contains_key("clear_pin") {
+    let clear = fields.contains_key("clear_pin");
+    let decided = {
+        let current = current.clone();
+        tokio::task::spawn_blocking(
+            move || -> (Option<(String, String)>, Option<&'static str>) {
+                if clear || new_pin.is_empty() {
+                    return (None, None);
+                }
+                if current
+                    .as_ref()
+                    .is_some_and(|p| crate::kid_lock::override_conflicts(&new_pin, p))
+                {
+                    return (None, Some("override_is_kid_pin"));
+                }
+                if new_pin.len() >= 6 && new_pin.chars().all(|c| c.is_ascii_digit()) {
+                    (Some(security::hash_pin(&new_pin)), None)
+                } else {
+                    // Invalid PIN typed - ignore it rather than fail the whole save, keeping whatever
+                    // was already configured.
+                    (None, None)
+                }
+            },
+        )
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "override PIN hashing failed");
+            (None, None)
+        })
+    };
+    let (new_hash, mut notice) = decided;
+    let (override_pin_hash, override_pin_salt, mut pin_event) = if clear {
         if kid_pin_set {
             notice = Some("override_needed_by_lock");
             (current_pin, current_salt, None)
         } else {
             (None, None, Some("override_pin_cleared"))
         }
-    } else if !new_pin.is_empty() {
-        let conflicts = current
-            .as_ref()
-            .is_some_and(|p| crate::kid_lock::override_conflicts(new_pin, p));
-        if conflicts {
-            notice = Some("override_is_kid_pin");
-            (current_pin, current_salt, None)
-        } else if new_pin.len() >= 6 && new_pin.chars().all(|c| c.is_ascii_digit()) {
-            let (hash, salt) = security::hash_pin(new_pin);
-            (Some(hash), Some(salt), Some("override_pin_changed"))
-        } else {
-            // Invalid PIN typed - ignore it rather than fail the whole save,
-            // keeping whatever was already configured.
-            (current_pin, current_salt, None)
-        }
+    } else if let Some((hash, salt)) = new_hash {
+        (Some(hash), Some(salt), Some("override_pin_changed"))
     } else {
         (current_pin, current_salt, None)
     };
+
+    // The SQL itself refuses to remove the override PIN while a kid PIN is set, so a kid PIN
+    // saved in parallel can't end up without its parent code (qa-10-code #9).
+    let stored: Option<Option<String>> = sqlx::query_scalar(
+        "UPDATE device_policy SET kiosk_desired = 1, \
+         lock_task_features = ?, \
+         override_pin_hash = CASE WHEN ? IS NULL AND kid_pin_hash IS NOT NULL THEN override_pin_hash ELSE ? END, \
+         override_pin_salt = CASE WHEN ? IS NULL AND kid_pin_hash IS NOT NULL THEN override_pin_salt ELSE ? END, \
+         quick_controls_mask = ?, vpn_filter_enabled = ?, \
+         updated_at = datetime('now') WHERE device_id = ? RETURNING override_pin_hash",
+    )
+    .bind(lock_task_features)
+    .bind(&override_pin_hash)
+    .bind(&override_pin_hash)
+    .bind(&override_pin_salt)
+    .bind(&override_pin_salt)
+    .bind(quick_controls_mask)
+    .bind(vpn_filter_enabled)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    if override_pin_hash.is_none() && stored.as_ref().is_some_and(|h| h.is_some()) {
+        // Lost the race to a kid PIN: the override stayed.
+        pin_event = None;
+        notice = Some("override_needed_by_lock");
+    }
 
     if let Some(event_type) = pin_event {
         security::record_security_event(
@@ -1384,22 +1428,6 @@ pub async fn update_policy(
         )
         .await;
     }
-
-    sqlx::query(
-        "UPDATE device_policy SET kiosk_desired = 1, \
-         lock_task_features = ?, override_pin_hash = ?, override_pin_salt = ?, \
-         quick_controls_mask = ?, vpn_filter_enabled = ?, \
-         updated_at = datetime('now') WHERE device_id = ?",
-    )
-    .bind(lock_task_features)
-    .bind(&override_pin_hash)
-    .bind(&override_pin_salt)
-    .bind(quick_controls_mask)
-    .bind(vpn_filter_enabled)
-    .bind(id)
-    .execute(&state.db)
-    .await
-    .ok();
 
     // Nudges the device to re-sync immediately over the same SSE connection Find My Device uses
     // for ring/lock, rather than waiting out the rest of the background poll interval - the nudge
@@ -1486,9 +1514,12 @@ pub async fn update_kid_lock(
         // The first kid PIN turns the safe-boot block on; later changes leave the switch alone.
         let first = current.kid_pin_hash.is_none();
         let block_safe_boot = first || current.hardening.disallow_safe_boot;
+        // Only while the override PIN still exists: a parallel "remove unlock code" can't leave a
+        // kid PIN without its parent code (qa-10-code #9); zero rows = refused.
         let result = sqlx::query(
             "UPDATE device_policy SET kid_pin_hash = ?, kid_pin_salt = ?, kid_pin_length = ?, \
-             disallow_safe_boot = ?, updated_at = datetime('now') WHERE device_id = ?",
+             disallow_safe_boot = ?, updated_at = datetime('now') \
+             WHERE device_id = ? AND override_pin_hash IS NOT NULL",
         )
         .bind(&hash)
         .bind(&salt)
@@ -1497,6 +1528,9 @@ pub async fn update_kid_lock(
         .bind(id)
         .execute(&state.db)
         .await;
+        if matches!(&result, Ok(done) if done.rows_affected() == 0) {
+            return back(crate::kid_lock::KidPinRefusal::NeedsOverride.code());
+        }
         let code = if first && !current.hardening.disallow_safe_boot {
             "saved_safe_boot"
         } else {

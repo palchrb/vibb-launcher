@@ -352,6 +352,10 @@ async fn device_page_warns_about_the_lock_state() {
     assert!(html.contains("The lock is on"));
     assert!(!html.contains("Safe mode is allowed"));
     assert!(html.contains("Parent code"));
+    assert!(
+        html.contains("after the 5th the phone waits 30 s"),
+        "qa-10-code #8"
+    );
 }
 
 #[tokio::test]
