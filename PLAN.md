@@ -128,6 +128,17 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
   account is needed for updates. Element X from Play uses FCM; the F-Droid
   build can use UnifiedPush via the launcher's distributor.
 
+## Status (2026-10-05)
+
+Scope frozen to a minimal usable phone before device testing: app allowlist in
+kiosk, calls only to/from approved contacts (incl. before first unlock), no
+opt-out, fail closed. Done in code (branch `handy` in both forks): own build and
+release signing, fail-closed policy, calls/phone book/message buttons, direct
+boot. Next: hardening (step 4), then device testing on the Jelly Star. Parked
+until the phone has been used for a while: full Tailscale (design in
+`docs/design/03-tailscale.md`), Vibb, AdGuard Home, Play account (open: start
+without one; add if Play-only apps are needed).
+
 ## Phases
 
 Reviews of both forks are in `docs/review/` (launcher architecture, server
