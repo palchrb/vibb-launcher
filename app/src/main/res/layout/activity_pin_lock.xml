@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- lock.PinLockActivity, handy's own PIN lock (design 10-lock-and-call-ui.md, mockup Lock.dc.html,
+     320x568 dp): clock, date, prompt, dots, keypad (keys sized to fit, at most 72 dp), Emergency
+     call, and the Parent code link (decision after QA review: always there). Android draws the
+     status line above. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pin_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground"
+    android:fitsSystemWindows="true"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="8dp">
+
+    <TextClock
+        android:id="@+id/pin_clock"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:fontFamily="@font/nunito_extrabold"
+        android:format12Hour="h:mm"
+        android:format24Hour="HH:mm"
+        android:includeFontPadding="false"
+        android:textColor="@color/kid_ink"
+        android:textSize="56sp" />
+
+    <TextClock
+        android:id="@+id/pin_date"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:alpha="0.75"
+        android:fontFamily="@font/nunito_bold"
+        android:textColor="@color/kid_ink"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/pin_prompt"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:accessibilityLiveRegion="polite"
+        android:fontFamily="@font/nunito_bold"
+        android:gravity="center"
+        android:text="@string/pin_lock_prompt"
+        android:textColor="@color/kid_ink"
+        android:textSize="16sp" />
+
+    <LinearLayout
+        android:id="@+id/pin_dots"
+        android:layout_width="wrap_content"
+        android:layout_height="14dp"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal" />
+
+    <LinearLayout
+        android:id="@+id/pin_keypad"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="12dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical" />
+
+    <LinearLayout
+        android:id="@+id/pin_emergency"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_pin_emergency"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:minHeight="44dp"
+        android:orientation="horizontal"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_kid_phone" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:fontFamily="@font/nunito_extrabold"
+            android:text="@string/pin_lock_emergency"
+            android:textColor="@color/kid_ink"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/pin_parent_code"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:alpha="0.75"
+        android:background="?android:attr/selectableItemBackground"
+        android:fontFamily="@font/nunito_bold"
+        android:gravity="center"
+        android:minHeight="40dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:text="@string/pin_lock_parent_code"
+        android:textColor="@color/kid_ink"
+        android:textSize="13sp" />
+
+</LinearLayout>

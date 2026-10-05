@@ -204,7 +204,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 location = location.report,
                 policyState = policyState(freshOutcome, cached, policyEverApplied),
                 restrictionsPaused = RestrictionsPause.isActive(),
-                capabilities = listOf(CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY, FCM_PUSH_CAPABILITY, PLAY_POLICY_CAPABILITY),
+                capabilities = listOf(
+                    CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY, FCM_PUSH_CAPABILITY, PLAY_POLICY_CAPABILITY,
+                    com.kidslauncher.mdm.lock.PIN_LOCK_CAPABILITY,
+                ),
                 callState = CallStateReport.build(context),
                 notificationListenerEnabled = BadgeStore.accessGranted(context),
                 timeState = TimeRulesRuntime.report(context, decision.policy, reason),
@@ -212,6 +215,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 installMode = PlayRuntime.installModeReport(context),
                 playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
                 playStoreSuspendable = PlayRuntime.storeSuspendable(context),
+                lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -289,8 +293,15 @@ private suspend fun dispatchPendingCommand(
         }
 
         "lock" -> {
+            // Handy's PIN lock when it's active (step 10): LOCKED and shown, then the screen off.
+            val ours = com.kidslauncher.mdm.lock.PinLockRuntime.lockNow(context)
             val ok = LocateCommands.lock(dpm, admin)
-            reportCommandResult(api, pending.id, ok, if (ok) "locked" else "failed to lock")
+            val message = when {
+                !ok -> "failed to lock"
+                ours -> "locked (handy lock)"
+                else -> "locked (Android)"
+            }
+            reportCommandResult(api, pending.id, ok, message)
         }
 
         "wipe" -> LocateCommands.wipe(dpm, admin)

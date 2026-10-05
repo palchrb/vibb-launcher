@@ -2,10 +2,8 @@ package com.kidslauncher.mdm.server
 
 import android.app.Notification
 import android.app.Service
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -23,9 +21,6 @@ import com.kidslauncher.mdm.push.PushTransport
 import com.kidslauncher.mdm.push.SSE_READ_TIMEOUT_MS
 import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.push.syncOnSseReopen
-import com.kidslauncher.mdm.play.PlayRuntime
-import com.kidslauncher.mdm.timerules.ScreenTimeTracker
-import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -44,8 +39,9 @@ private const val EXTRA_SYNC_REASON = "reason"
  * The process anchor (handy step 7, design 07 §2 and the decisions after QA review): an always-on
  * foreground service of type `specialUse` ("parental control enforcement" - no 6 h daily cap, and
  * allowed to start from BOOT_COMPLETED on Android 15, unlike `dataSync`). It keeps the process
- * alive for what needs a live process - the screen on/off/unlock signals for step 6's screen time
- * and lock re-checks, the optional UnifiedPush relay - and every background sync runs inside it
+ * alive for what needs a live process - the optional UnifiedPush relay; the screen on/off/unlock
+ * signals moved to the process-wide receiver in `lock/PinLockRuntime` (step 10) - and every
+ * background sync runs inside it
  * ([SyncRunner], with a wake lock and timeouts).
  *
  * Sync nudges arrive one of two ways ([com.kidslauncher.mdm.push.decidePushTransport]):
@@ -94,14 +90,9 @@ class CommandListenerService : Service() {
         // First, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise).
         startForeground(COMMAND_LISTENER_NOTIFICATION_ID, buildNotification())
         running = this
-        registerReceiver(
-            screenReceiver,
-            IntentFilter().apply {
-                addAction(Intent.ACTION_SCREEN_ON)
-                addAction(Intent.ACTION_SCREEN_OFF)
-                addAction(Intent.ACTION_USER_PRESENT)
-            },
-        )
+        // The screen on/off/unlock signals (screen time, time rules, the Play window, handy's PIN
+        // lock) live in PinLockRuntime since step 10 - registered for the whole process from
+        // Application, not for this service's lifetime (QA 10 #4).
         if (LauncherPreferences.mdm().unifiedpushDistributorEnabled()) {
             UnifiedPushRelay.start(applicationContext)
         }
@@ -139,11 +130,6 @@ class CommandListenerService : Service() {
         stopped = true
         if (running === this) running = null
         handler.removeCallbacksAndMessages(null)
-        try {
-            unregisterReceiver(screenReceiver)
-        } catch (e: IllegalArgumentException) {
-            // Never registered (onCreate failed before it).
-        }
         stopSse()
         UnifiedPushRelay.stop()
         super.onDestroy()
@@ -254,26 +240,6 @@ class CommandListenerService : Service() {
         // keep pushing the backstop out until it never fires.
         if (wasUp) BackstopAlarm.schedule(applicationContext, afterSync = false)
         scheduleReconnect()
-    }
-
-    /** Main thread: reading the cached policy is cheap; a re-apply runs in the background. */
-    private val screenReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == Intent.ACTION_SCREEN_OFF) {
-                ScreenTimeTracker.update(applicationContext)
-                // The nightly Play update window opens when the screen goes off inside it.
-                try {
-                    reevaluateLockReasonFromCache(applicationContext)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Re-check at screen off failed", e)
-                }
-            } else {
-                // First, synchronously: end the Play update window before the keyguard can be
-                // passed (QA step 7 #8); the full re-apply follows in the background.
-                if (intent.action == Intent.ACTION_SCREEN_ON) PlayRuntime.suspendStoreAtScreenOn(applicationContext)
-                TimeRulesRuntime.recheck(applicationContext)
-            }
-        }
     }
 
     private fun scheduleReconnect() {

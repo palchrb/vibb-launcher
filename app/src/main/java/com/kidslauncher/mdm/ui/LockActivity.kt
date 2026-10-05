@@ -1,8 +1,5 @@
 package com.kidslauncher.mdm.ui
 
-import android.Manifest
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -16,11 +13,13 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
+import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.calls.CallPolicyStore
-import com.kidslauncher.mdm.calls.CallSystem
-import com.kidslauncher.mdm.calls.EmergencyDialer
-import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
-import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.calls.EmergencyCall
+import com.kidslauncher.mdm.lock.PinLockRuntime
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.databinding.ActivityLockBinding
@@ -75,34 +74,7 @@ class LockActivity : UIObjectActivity() {
         // Every other way to the system dialer is closed during the lock, and a phone without a
         // secure lock screen has no keyguard Emergency button - so this one is always shown,
         // whatever the call state (QA step 4 #1).
-        binding.lockEmergencyButton.setOnClickListener { confirmEmergencyCall() }
-    }
-
-    private fun confirmEmergencyCall() {
-        AlertDialog.Builder(this, R.style.AlertDialogCustom)
-            .setTitle(getString(R.string.calls_confirm_title, EMERGENCY_NUMBER))
-            .setPositiveButton(R.string.calls_call) { _, _ -> callEmergency() }
-            .setNegativeButton(R.string.calls_cancel, null)
-            .show()
-    }
-
-    /**
-     * 112 through Telecom (emergency calls are exempt from every call restriction). CALL_PHONE is
-     * self-granted first - it's only held while calls are managed otherwise. If Telecom still
-     * refuses, the platform's emergency dialer opens with 112 typed in - an explicit intent to the
-     * resolved system component, which kiosk pins as a lock-task helper (QA 09 #1). Never
-     * ACTION_DIAL: the default dialer isn't pinned while calls are managed or a rule blocks calls,
-     * so with the kiosk app block it would be blocked.
-     */
-    private fun callEmergency() {
-        val dpm = getSystemService(DevicePolicyManager::class.java)
-        if (dpm?.isDeviceOwnerApp(packageName) == true) {
-            QuickControls.selfGrantPermission(this, dpm, ComponentName(this, MdmDeviceAdminReceiver::class.java), Manifest.permission.CALL_PHONE)
-        }
-        if (CallSystem.placeCall(this, EMERGENCY_NUMBER)) return
-        if (!EmergencyDialer.open(this, EMERGENCY_NUMBER)) {
-            Log.w("LockActivity", "Neither Telecom nor the emergency dialer took the emergency call")
-        }
+        binding.lockEmergencyButton.setOnClickListener { EmergencyCall.confirm(this) }
     }
 
     private fun showUnlockCodeDialog() {
@@ -127,16 +99,22 @@ class LockActivity : UIObjectActivity() {
         // keeps the dialog open on a wrong code instead of dismissing - the whole point of a
         // failsafe is not making the parent re-open the dialog and re-type everything after one
         // typo.
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { button ->
             val input = dialog.findViewById<EditText>(R.id.dialog_offline_override_pin_input)
             val pin = input?.text?.toString().orEmpty()
-            if (OfflineOverride.verifyPin(pin)) {
-                OfflineOverride.activate(this)
-                dialog.dismiss()
-                finish()
-            } else {
-                Toast.makeText(this, R.string.lock_unlock_code_wrong, Toast.LENGTH_SHORT).show()
-                input?.text?.clear()
+            // PBKDF2 takes about half a second: off the main thread (QA 10 #6).
+            button.isEnabled = false
+            lifecycleScope.launch {
+                val ok = withContext(Dispatchers.Default) { OfflineOverride.verifyPin(pin) }
+                button.isEnabled = true
+                if (ok) {
+                    OfflineOverride.activate(this@LockActivity)
+                    dialog.dismiss()
+                    finish()
+                } else {
+                    Toast.makeText(this@LockActivity, R.string.lock_unlock_code_wrong, Toast.LENGTH_SHORT).show()
+                    input?.text?.clear()
+                }
             }
         }
     }
@@ -234,13 +212,14 @@ class LockActivity : UIObjectActivity() {
     }
 
     companion object {
-        /** An emergency number on every GSM phone, also the ones without a SIM. */
-        private const val EMERGENCY_NUMBER = "112"
-
+        /** Starts the time-rule screen. It is never held back by handy's PIN lock (QA 10 #4): while
+         * that is LOCKED it is brought back on top right away, so the kid sees the PIN first, then
+         * this screen. */
         fun start(context: Context) {
             val intent = Intent(context, LockActivity::class.java)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
+            PinLockRuntime.afterTimeRuleShown(context)
         }
     }
 }

@@ -32,6 +32,28 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
         Log.i(LOG_TAG, "Device admin disabled")
     }
 
+    /**
+     * The Android screen lock changed - typically the migration runbook removing an old Android
+     * PIN (handy step 10): run the lock check at once instead of waiting for the next sync, so the
+     * phone isn't left with no lock at all in between (QA 10 #15). Also when a PIN was set again
+     * (handy's lock then switches off - no double lock).
+     */
+    override fun onPasswordChanged(context: Context, intent: Intent, user: android.os.UserHandle) {
+        super.onPasswordChanged(context, intent, user)
+        Log.i(LOG_TAG, "Screen lock changed - re-checking handy's lock")
+        val pendingResult = goAsync()
+        val app = context.applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                AppEnforcer.apply(app, currentPolicyDecision().policy)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Apply after a screen-lock change failed", e)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
     override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
         super.onProfileProvisioningComplete(context, intent)
         Log.i(LOG_TAG, "Provisioning complete")

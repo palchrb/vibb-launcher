@@ -180,8 +180,17 @@ class ScreenTimeTest {
         assertTrue("a free screen sharing the screen (split, PiP)", screenTimeCounts(true, false, true, true))
         assertFalse("screen off", screenTimeCounts(false, false, false, false))
         assertFalse("keyguard", screenTimeCounts(true, true, false, false))
-        assertEquals(4, FREE_SCREENS.size)
+        assertEquals(5, FREE_SCREENS.size)
         assertFalse(FREE_SCREENS.any { it.endsWith("HomeActivity") })
+    }
+
+    @Test
+    fun `handy's PIN lock is free time like the keyguard (step 10, QA 10 #13)`() {
+        assertFalse("PIN lock LOCKED", screenTimeCounts(true, false, false, false, pinLocked = true))
+        assertFalse("keyguard on an unmigrated phone", screenTimeCounts(true, true, false, false, pinLocked = false))
+        assertFalse("both", screenTimeCounts(true, true, false, false, pinLocked = true))
+        assertTrue("unlocked", screenTimeCounts(true, false, false, false, pinLocked = false))
+        assertTrue("com.kidslauncher.mdm.lock.PinLockActivity" in FREE_SCREENS)
     }
 
     @Test

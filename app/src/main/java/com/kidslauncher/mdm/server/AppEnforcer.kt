@@ -317,12 +317,20 @@ object AppEnforcer {
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
 
-        applyKioskState(dpm, admin, plan.kioskPackages, plan.lockTaskFeatures)
+        // Handy's PIN lock (step 10) first - whether it is LOCKED changes the lock-task setting
+        // below (featuresWhileLocked / lockTaskWhileLocked), so a sync can't undo the lock.
+        val managed = policy?.allowlist != null || callState.managed
+        com.kidslauncher.mdm.lock.PinLockRuntime.configure(context, dpm, admin, policy, managed)
+        // Kiosk pinning, lock-task features, the status bar backstop and DISALLOW_CREATE_WINDOWS
+        // (budget, or the PIN lock) - one place shared with the lock's fast path.
+        com.kidslauncher.mdm.lock.LockTaskChrome.applyPlan(
+            context, plan.kioskPackages, plan.lockTaskFeatures, plan.restrictCreateWindows,
+            pinLockHelpers = { resolvePinLockHelpers(context) },
+        )
 
-        applyKeyguardFeatures(dpm, admin, managed = policy?.allowlist != null || callState.managed)
+        applyKeyguardFeatures(dpm, admin, managed = managed)
 
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
-        setRestriction(dpm, admin, UserManager.DISALLOW_CREATE_WINDOWS, plan.restrictCreateWindows)
 
         clearRadioRestrictions(dpm, admin)
 
@@ -596,15 +604,41 @@ object AppEnforcer {
      * pinned by the plan itself. The result is logged for the device checks.
      */
     private fun resolveLockTaskHelpers(context: Context): Set<String> {
-        val pm = context.packageManager
-        fun info(pkg: String?): ResolvedHelper? = pkg?.let {
-            try {
-                val flags = pm.getApplicationInfo(it, PackageManager.MATCH_UNINSTALLED_PACKAGES).flags
-                ResolvedHelper(it, (flags and ApplicationInfo.FLAG_SYSTEM) != 0)
-            } catch (e: Exception) {
-                null
-            }
+        val (resolved, forbidden) = resolveHelpers(context)
+        val helpers = lockTaskHelpers(resolved, forbidden)
+        Log.i(LOG_TAG, "Kiosk app block helpers: $resolved -> $helpers (forbidden $forbidden)")
+        return helpers
+    }
+
+    /**
+     * The system packages handy's PIN lock pins while LOCKED with the kiosk off (step 10,
+     * [pinLockHelpers]): emergency dialer, Telecom, the system dialer and the clock app.
+     */
+    internal fun resolvePinLockHelpers(context: Context): Set<String> {
+        val (resolved, forbidden) = resolveHelpers(context)
+        val helpers = pinLockHelpers(
+            emergencyDialer = resolved[HelperKind.EMERGENCY_DIALER],
+            telecom = resolved[HelperKind.TELECOM],
+            systemDialer = helperInfo(context, systemDialerPackage(context)),
+            alarmApp = helperInfo(context, alarmAppPackage(context)),
+            forbidden = forbidden,
+        )
+        Log.i(LOG_TAG, "PIN lock helpers (kiosk off): $helpers")
+        return helpers
+    }
+
+    private fun helperInfo(context: Context, pkg: String?): ResolvedHelper? = pkg?.let {
+        try {
+            val flags = context.packageManager.getApplicationInfo(it, PackageManager.MATCH_UNINSTALLED_PACKAGES).flags
+            ResolvedHelper(it, (flags and ApplicationInfo.FLAG_SYSTEM) != 0)
+        } catch (e: Exception) {
+            null
         }
+    }
+
+    private fun resolveHelpers(context: Context): Pair<Map<HelperKind, ResolvedHelper?>, Set<String>> {
+        val pm = context.packageManager
+        fun info(pkg: String?): ResolvedHelper? = helperInfo(context, pkg)
         fun matches(intent: Intent): List<ResolvedHelper> = try {
             pm.queryIntentActivities(intent, PackageManager.MATCH_SYSTEM_ONLY)
                 .mapNotNull { info(it.activityInfo?.packageName) }
@@ -657,9 +691,7 @@ object AppEnforcer {
             HelperKind.CELL_BROADCAST to cellBroadcast,
             HelperKind.RESOLVER to firstHelper(listOfNotNull(info(resolver)), forbidden),
         )
-        val helpers = lockTaskHelpers(resolved, forbidden)
-        Log.i(LOG_TAG, "Kiosk app block helpers: $resolved -> $helpers (forbidden $forbidden)")
-        return helpers
+        return resolved to forbidden
     }
 
     /** See [EnforcementPlan.lockDateTime]. Automatic time is turned on first, so a clock that
@@ -687,81 +719,6 @@ object AppEnforcer {
         } catch (e: Exception) {
             false
         }
-
-    /**
-     * Pins [kioskPackages] (from [computeEnforcementPlan]: the allowlist plus our own package,
-     * only when the server wants kiosk mode), or unpins when it's `null`. An empty allowlist pins
-     * only our own package - safe, since it's HOME and holds LockActivity/Settings. There is no
-     * on-device switch for this; the admin site is the only source of truth.
-     */
-    private fun applyKioskState(
-        dpm: DevicePolicyManager,
-        admin: ComponentName,
-        kioskPackages: Set<String>?,
-        lockTaskFeatures: Int,
-    ) {
-        val mdm = LauncherPreferences.mdm()
-
-        if (kioskPackages == null) {
-            try {
-                dpm.setLockTaskPackages(admin, emptyArray())
-                mdm.kioskEnabled(false)
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Failed to unpin kiosk state", e)
-            }
-            return
-        }
-
-        // Order matters here, and it didn't before: setLockTaskFeatures (which carries the
-        // keyguard-safe bit) must be verified *before* setLockTaskPackages ever pins the device,
-        // and a failure here must skip pinning entirely rather than continue on with whatever
-        // feature set the platform already had. The previous version called both DPM calls back
-        // to back inside one try/catch that just logged and swallowed either failure - if
-        // setLockTaskPackages succeeded but setLockTaskFeatures then threw (silently, for any
-        // device-specific reason), the device would end up pinned with Android's own default
-        // (non-keyguard) feature set. That's the exact condition that caused a real, unrecoverable-
-        // except-via-hardware-recovery-mode boot deadlock before (GrapheneOS's auto-reboot, or any
-        // plain reboot, re-locks storage pre-decrypt with no keyguard reachable and no launcher
-        // resolvable either - see kid-phone-server's CLAUDE.md for the full incident). Failing
-        // closed to "not pinned this cycle" is safe either way, since apply() re-runs every ~2
-        // minutes (or sooner via SSE push) and will retry. [lockTaskFeatures] always includes
-        // LOCK_TASK_FEATURE_KEYGUARD (see computeEnforcementPlan), whatever the server sent.
-        if (!applyLockTaskFeaturesVerified(dpm, admin, lockTaskFeatures)) {
-            Log.w(LOG_TAG, "Refusing to pin kiosk this cycle - lock task features never verified")
-            return
-        }
-
-        try {
-            dpm.setLockTaskPackages(admin, kioskPackages.toTypedArray())
-            mdm.kioskEnabled(true)
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to pin kiosk packages", e)
-        }
-    }
-
-    /**
-     * setLockTaskFeatures is a cheap Binder call - one immediate retry after a failed
-     * write-then-verify is trivial insurance against a transient platform hiccup, not a real
-     * performance concern. Reads back [DevicePolicyManager.getLockTaskFeatures] rather than
-     * trusting the setter not to throw, since a silent mismatch is exactly what would otherwise
-     * let a device get pinned without the keyguard bit actually applied.
-     */
-    private fun applyLockTaskFeaturesVerified(dpm: DevicePolicyManager, admin: ComponentName, features: Int): Boolean {
-        repeat(2) { attempt ->
-            try {
-                dpm.setLockTaskFeatures(admin, features)
-                if (dpm.getLockTaskFeatures(admin) == features) return true
-                Log.w(
-                    LOG_TAG,
-                    "setLockTaskFeatures didn't verify on attempt ${attempt + 1} " +
-                        "(wanted $features, got ${dpm.getLockTaskFeatures(admin)})"
-                )
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "setLockTaskFeatures threw on attempt ${attempt + 1}", e)
-            }
-        }
-        return false
-    }
 
     /**
      * WiFi/Bluetooth restriction *levels* (open/restricted/disabled, independent of the always-on

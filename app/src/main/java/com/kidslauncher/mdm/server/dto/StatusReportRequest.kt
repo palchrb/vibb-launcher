@@ -34,6 +34,25 @@ data class StatusReportRequest(
     val playWindowActive: Boolean = false,
     /** `false` when the platform refused to suspend the Play Store (step 9 B4); `null` = not tried. */
     val playStoreSuspendable: Boolean? = null,
+    /** Handy's own PIN lock (step 10) - see [LockStateReport]. */
+    val lockState: LockStateReport? = null,
+)
+
+/**
+ * `StatusReportRequest.lockState`: whether handy's PIN lock is [active] (else [inactive] says why:
+ * "no_pin", "unmanaged", "android_credential", "keyguard_not_disabled", "crash_guard"; "bad_hash"
+ * keeps it active - only the parent code opens it), [locked] now, wrong PINs in a row, the end of
+ * the wait (wall clock), and how often it stepped aside for a call/the emergency dialer/an alarm
+ * since the last report. Never unlock times or PIN material (privacy).
+ */
+@Serializable
+data class LockStateReport(
+    val active: Boolean,
+    val inactive: String?,
+    val locked: Boolean,
+    val failures: Int,
+    val backoffUntilMs: Long?,
+    val exemptYields: Int,
 )
 
 /**
@@ -106,4 +125,7 @@ data class CallState(
     val callbackWindowUntil: String?,
     val callLogReadable: Boolean,
     val bootPolicy: String,
+    /** The in-call screen couldn't be brought up over the PIN lock for a ringing call (step 10,
+     * QA 10 #8) - the last time, ISO-8601; `null` = never. */
+    val inCallUiFailedAt: String? = null,
 )

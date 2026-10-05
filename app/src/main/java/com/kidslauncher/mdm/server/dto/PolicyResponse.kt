@@ -41,6 +41,7 @@ import kotlinx.serialization.Serializable
  * The fixed windows are still sent (frozen) for older launchers. [locationPolicy]: when location
  * goes into the status report; `null` (older server) keeps the old every-sync behaviour.
  * [push]: FCM on the server and whether it works for this phone (handy step 7).
+ * [kidLock]: the kid's PIN for handy's own lock screen (step 10).
  */
 @Serializable
 data class PolicyResponse(
@@ -75,6 +76,18 @@ data class PolicyResponse(
      * switch, and without the bit kiosk keeps AOSP's system-dialer exemption - emergency and
      * the kill switch win over the extra lockdown. */
     val blockActivityStart: Boolean = false,
+    /** Handy's own PIN lock (step 10): the kid's PIN hash, or `null` = no lock. Never copied to
+     * device-protected storage, logs or the status report. */
+    val kidLock: KidLock? = null,
+)
+
+/** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see
+ * [com.kidslauncher.mdm.server.PinHash]); [pinLength] 4-6, the keypad submits at the last digit. */
+@Serializable
+data class KidLock(
+    val pinHash: String = "",
+    val pinSalt: String = "",
+    val pinLength: Int = 4,
 )
 
 /**

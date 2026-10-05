@@ -26,6 +26,8 @@ import androidx.recyclerview.widget.RecyclerView
 import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.lock.LockMode
+import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.apps.AppFilter
 import com.kidslauncher.mdm.apps.AppInfo
@@ -297,6 +299,11 @@ class HomeActivity : UIObjectActivity() {
         // Checked here (not just via the preference listener) so pressing Home while the lock
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return
+        // Handy's PIN lock (step 10): Home in front while LOCKED means the lock lost the front.
+        if (PinLockRuntime.mode == LockMode.LOCKED) {
+            PinLockRuntime.show(this)
+            return
+        }
         // The parent's language choice, now that Home is in front (no call screen or dialog).
         LauncherLocales.applyIfSafe(this)
         // Also refreshes whether the system wallpaper is still ours (in the background).
@@ -334,6 +341,7 @@ class HomeActivity : UIObjectActivity() {
     /** @return true if currently locked (and [LockActivity] was launched). */
     private fun redirectToLockScreenIfLocked(): Boolean {
         if (LauncherPreferences.mdm().lockReason() != LockReason.NONE) {
+            // Brings the PIN lock back on top too while it is LOCKED.
             LockActivity.start(this)
             return true
         }
@@ -359,7 +367,9 @@ class HomeActivity : UIObjectActivity() {
 
         if (shouldBeLocked && !currentlyLocked) {
             startLockTask()
-        } else if (!shouldBeLocked && currentlyLocked) {
+        } else if (!shouldBeLocked && currentlyLocked && PinLockRuntime.mode != LockMode.LOCKED) {
+            // With the kiosk off, a running lock task while LOCKED is the PIN lock's own (step
+            // 10) - never stopped from here.
             stopLockTask()
         }
     }

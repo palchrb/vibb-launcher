@@ -288,4 +288,23 @@
     <string name="notification_install_mode_end">End now</string>
     <string name="play_link_blocked_title">The Play Store is closed</string>
     <string name="play_link_blocked_text">Ask a parent if you want a new app.</string>
+    <!-- Handy's own PIN lock and the call screens (step 10, design 10-lock-and-call-ui.md). -->
+    <string name="pin_lock_prompt">Enter your code</string>
+    <string name="pin_lock_wrong">Wrong code</string>
+    <string name="pin_lock_wait">Try again in %1$s</string>
+    <string name="pin_lock_checking">Checking…</string>
+    <string name="pin_lock_unusable">Only the parent code works right now</string>
+    <string name="pin_lock_emergency">Emergency call</string>
+    <string name="pin_lock_parent_code">Parent code</string>
+    <string name="pin_lock_parent_wrong">That isn\'t the parent code.</string>
+    <string name="pin_lock_parent_locked_out">Too many wrong codes. Try again in 15 minutes.</string>
+    <string name="pin_lock_parent_not_set">No parent code has been set for this phone.</string>
+    <string name="pin_lock_delete">Delete</string>
+    <string name="pin_lock_dots">%1$d of %2$d digits</string>
+    <string name="calls_calling_you">Calling you…</string>
+    <string name="calls_waiting">On hold</string>
+    <string name="calls_finished">Ended</string>
+    <string name="calls_photo_of">Contact photo of %1$s</string>
+    <string name="call_toggle_on">On</string>
+    <string name="call_toggle_off">Off</string>
 </resources>

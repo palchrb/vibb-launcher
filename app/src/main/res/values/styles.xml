@@ -33,6 +33,26 @@
         <item name="fontFamily">@font/nunito</item>
     </style>
 
+    <!-- Handy's PIN lock (step 10): navy everywhere, and the window preview on, so the first frame
+         after a screen-on is navy rather than whatever was under the lock. -->
+    <style name="PinLockTheme" parent="launcherBaseTheme">
+        <item name="android:windowBackground">@color/kid_ground</item>
+        <item name="android:statusBarColor">@color/kid_ground</item>
+        <item name="android:navigationBarColor">@color/kid_ground</item>
+        <item name="android:windowDisablePreview">false</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <!-- The call screens (step 10 mockups): gradient window, matching system bars. -->
+    <style name="InCallTheme" parent="launcherBaseTheme">
+        <item name="android:windowBackground">@drawable/bg_call_screen</item>
+        <item name="android:statusBarColor">#1C3A6B</item>
+        <item name="android:navigationBarColor">#14213D</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
     <style name="launcherHomeTheme" parent="launcherBaseTheme">
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
@@ -143,6 +163,17 @@
         <item name="android:windowExitAnimation">@android:anim/fade_out</item>
     </style>
     <!-- Kid-facing UI (design 05-ui-photos-i18n.md). -->
+    <!-- Labels under the call screen's round buttons (step 10 mockups): 14sp, 700, 6 dp gap. -->
+    <style name="KidCallLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">6dp</item>
+        <item name="android:fontFamily">@font/nunito_bold</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+
     <style name="KidBadge">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">24dp</item>

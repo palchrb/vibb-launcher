@@ -2,5 +2,8 @@
 <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-policies>
         <force-lock />
+        <!-- onPasswordChanged: an Android screen lock removed (step 10 migration) switches
+             handy's own lock on at once (QA 10 #15). -->
+        <watch-login />
     </uses-policies>
 </device-admin>

@@ -249,6 +249,12 @@ class Application : android.app.Application() {
         com.kidslauncher.mdm.timerules.ScreenTimeTracker.init(this)
         com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(this)
 
+        // Handy's own PIN lock (step 10): starts LOCKED when it was active (a crashed or killed
+        // process fails closed, and with the screen on the lock is shown at once), and holds the
+        // screen on/off/unlock receiver for the whole process (QA 10 #4) - screen time, time
+        // rules and the Play window use it too.
+        com.kidslauncher.mdm.lock.PinLockRuntime.init(this)
+
         // The anchor service: screen signals, every background sync, the SSE stream when FCM isn't
         // in use; it arms the backstop alarm and syncs once at start - see its doc comment.
         CommandListenerService.start(this)

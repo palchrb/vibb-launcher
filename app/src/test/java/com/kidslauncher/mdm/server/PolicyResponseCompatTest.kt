@@ -5,6 +5,7 @@ import com.kidslauncher.mdm.server.dto.CallPolicy
 import com.kidslauncher.mdm.server.dto.CallState
 import com.kidslauncher.mdm.server.dto.LauncherUi
 import com.kidslauncher.mdm.server.dto.PolicyContact
+import com.kidslauncher.mdm.server.dto.KidLock
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import kotlinx.serialization.json.jsonObject
@@ -63,6 +64,16 @@ class PolicyResponseCompatTest {
         assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").blockActivityStart)
         assertEquals(true, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"block_activity_start":true}""").blockActivityStart)
         assertEquals(false, LastEnforcedPlan.decode("{}")!!.blockActivityStart)
+    }
+
+    @Test
+    fun `a cache without kid_lock is a phone without handy's lock (step 10)`() {
+        assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.kidLock)
+        val withLock = serverResponse.replaceFirst("{", """{"kid_lock":{"pin_hash":"ab","pin_salt":"cd","pin_length":6},""")
+        val kidLock = (decodeCached(withLock) as CachedPolicy.Ok).policy.kidLock!!
+        assertEquals(KidLock("ab", "cd", 6), kidLock)
+        val withNull = serverResponse.replaceFirst("{", """{"kid_lock":null,""")
+        assertNull((decodeCached(withNull) as CachedPolicy.Ok).policy.kidLock)
     }
 
     @Test
@@ -224,6 +235,31 @@ class PolicyResponseCompatTest {
         val withNull = serverResponse.replace("\"kiosk_desired\": true", "\"kiosk_desired\": null")
         assertTrue(decodeCached(withNull) is CachedPolicy.Corrupt)
         assertTrue(decodeFresh(withNull) is FreshDecode.Failed)
+    }
+
+    /** Step 10: kid-phone-server's `kid_lock::LockState` keys - and nothing else (no unlock
+     * times, no PIN material); `in_call_ui_failed_at` in the call state only when it happened. */
+    @Test
+    fun `status report lock_state uses the server's keys`() {
+        val report = StatusReportRequest(
+            lockReason = "NONE", kioskEngaged = true,
+            lockState = com.kidslauncher.mdm.server.dto.LockStateReport(
+                active = true, inactive = null, locked = true, failures = 5, backoffUntilMs = 1L, exemptYields = 2,
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(
+            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields"),
+            json["lock_state"]!!.jsonObject.keys,
+        )
+        val failed = CallState(
+            state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, defaultDialer = null, systemDialer = null,
+            smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,
+            lastEmergencyCallAt = null, callbackWindowUntil = null, callLogReadable = true, bootPolicy = "ok",
+            inCallUiFailedAt = "2026-10-05T08:00:00Z",
+        )
+        val callJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(CallState.serializer(), failed)).jsonObject
+        assertEquals("\"2026-10-05T08:00:00Z\"", callJson["in_call_ui_failed_at"].toString())
     }
 
     @Test

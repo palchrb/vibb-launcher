@@ -237,4 +237,23 @@
     <string name="notification_install_mode_end">Avslutt nå</string>
     <string name="play_link_blocked_title">Play Butikk er stengt</string>
     <string name="play_link_blocked_text">Spør en forelder hvis du vil ha en ny app.</string>
+    <!-- Handys egen PIN-lås og samtaleskjermene (steg 10). -->
+    <string name="pin_lock_prompt">Skriv inn koden din</string>
+    <string name="pin_lock_wrong">Feil kode</string>
+    <string name="pin_lock_wait">Prøv igjen om %1$s</string>
+    <string name="pin_lock_checking">Sjekker …</string>
+    <string name="pin_lock_unusable">Bare foreldrekoden virker nå</string>
+    <string name="pin_lock_emergency">Nødsamtale</string>
+    <string name="pin_lock_parent_code">Foreldrekode</string>
+    <string name="pin_lock_parent_wrong">Det er ikke foreldrekoden.</string>
+    <string name="pin_lock_parent_locked_out">For mange feil koder. Prøv igjen om 15 minutter.</string>
+    <string name="pin_lock_parent_not_set">Ingen foreldrekode er satt for denne telefonen.</string>
+    <string name="pin_lock_delete">Slett</string>
+    <string name="pin_lock_dots">%1$d av %2$d siffer</string>
+    <string name="calls_calling_you">Ringer deg …</string>
+    <string name="calls_waiting">Venter</string>
+    <string name="calls_finished">Avsluttet</string>
+    <string name="calls_photo_of">Kontaktbilde av %1$s</string>
+    <string name="call_toggle_on">På</string>
+    <string name="call_toggle_off">Av</string>
 </resources>

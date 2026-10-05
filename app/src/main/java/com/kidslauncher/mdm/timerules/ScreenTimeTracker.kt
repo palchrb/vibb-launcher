@@ -70,6 +70,7 @@ object ScreenTimeTracker {
         keyguardLocked = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false,
         freeScreenInFront = resumedFree.isNotEmpty(),
         freeScreenSharesScreen = resumedFree.any { it.isInMultiWindowMode || it.isInPictureInPictureMode },
+        pinLocked = com.kidslauncher.mdm.lock.PinLockRuntime.chromeLocked,
     )
 
     /** Folds the running stretch into the ledger and decides whether to keep counting. */

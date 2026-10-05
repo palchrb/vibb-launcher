@@ -171,13 +171,16 @@ fun activeLiftIds(records: List<LiftRecord>, lifts: List<Lift>, ledger: ScreenTi
  * overlays), QA step 6 #2. */
 val FREE_SCREENS = setOf(
     "com.kidslauncher.mdm.ui.LockActivity",
+    "com.kidslauncher.mdm.lock.PinLockActivity",
     "com.kidslauncher.mdm.calls.PhoneBookActivity",
     "com.kidslauncher.mdm.calls.InCallActivity",
     "com.kidslauncher.mdm.ui.settings.SettingsActivity",
 )
 
 /**
- * Whether screen time counts right now: the screen is on and unlocked, unless one of [FREE_SCREENS]
+ * Whether screen time counts right now: the screen is on and unlocked - neither Android's keyguard
+ * (unmigrated phones, the boot window) nor handy's PIN lock ([pinLocked], step 10, QA 10 #13) -
+ * unless one of [FREE_SCREENS]
  * is in front and not sharing the screen (split screen / picture-in-picture). A call doesn't stop
  * the count by itself - only our own in-call screen in front does (QA step 6 #1: otherwise a call
  * or any app claiming a VoIP audio mode made every app free).
@@ -187,7 +190,8 @@ fun screenTimeCounts(
     keyguardLocked: Boolean,
     freeScreenInFront: Boolean,
     freeScreenSharesScreen: Boolean,
-): Boolean = interactive && !keyguardLocked && !(freeScreenInFront && !freeScreenSharesScreen)
+    pinLocked: Boolean = false,
+): Boolean = interactive && !keyguardLocked && !pinLocked && !(freeScreenInFront && !freeScreenSharesScreen)
 
 /**
  * The ledger to use when the stored one can't be read (QA step 6 #6): today counts as used up
