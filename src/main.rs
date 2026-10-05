@@ -194,6 +194,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             post(handlers::devices::update_policy),
         )
         .route(
+            "/devices/{id}/hardening",
+            post(handlers::devices::update_hardening),
+        )
+        .route(
             "/devices/{id}/regenerate-code",
             post(handlers::devices::regenerate_code),
         )

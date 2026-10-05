@@ -51,6 +51,52 @@ pub struct DevicePolicy {
     pub sms_enabled: bool,
     /// "none", "sms", "element" or "signal" - see [MESSAGE_APPS].
     pub default_message_app: String,
+    /// The hardening switches (migrations/0023_hardening.sql), sent as `PolicyResponse.hardening`.
+    #[sqlx(flatten)]
+    pub hardening: Hardening,
+}
+
+/// Android user restrictions the launcher sets while the phone is managed - one switch each,
+/// stored as `device_policy` columns of the same name and always sent with explicit values
+/// (`PolicyResponse.hardening`). The phone's offline override and pause don't lift them; only
+/// turning a switch off here (or unmanaging the phone) does. See docs/design/04-hardening.md in
+/// the handy workspace.
+#[derive(sqlx::FromRow, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct Hardening {
+    /// `DISALLOW_FACTORY_RESET` (from Settings; a recovery-mode wipe can't be blocked).
+    pub disallow_factory_reset: bool,
+    /// `DISALLOW_ADD_USER` (no guest or second user).
+    pub disallow_add_user: bool,
+    /// `DISALLOW_MODIFY_ACCOUNTS`.
+    pub disallow_modify_accounts: bool,
+    /// `DISALLOW_CONFIG_VPN`.
+    pub disallow_config_vpn: bool,
+    /// `DISALLOW_USB_FILE_TRANSFER` (MTP/PTP; doesn't affect adb).
+    pub disallow_usb_file_transfer: bool,
+    /// `DISALLOW_DEBUGGING_FEATURES`: no adb and no developer options - which also removes adb as
+    /// the recovery path for a broken launcher.
+    pub disallow_debugging_features: bool,
+    /// `DISALLOW_SAFE_BOOT`: off by default - safe mode is the way past a launcher that crashes
+    /// before it renders.
+    pub disallow_safe_boot: bool,
+    /// `DISALLOW_CONFIG_LOCATION` with location turned on (Find my device).
+    pub lock_location: bool,
+}
+
+impl Default for Hardening {
+    /// The column defaults in migrations/0023_hardening.sql.
+    fn default() -> Self {
+        Hardening {
+            disallow_factory_reset: true,
+            disallow_add_user: true,
+            disallow_modify_accounts: true,
+            disallow_config_vpn: true,
+            disallow_usb_file_transfer: true,
+            disallow_debugging_features: true,
+            disallow_safe_boot: false,
+            lock_location: true,
+        }
+    }
 }
 
 /// The values `device_policy.default_message_app` and `device_contacts.message_app` may take.
@@ -310,6 +356,8 @@ pub struct PolicyResponse {
     /// launcher has had managed calls, it rejects a response without this key, so a rolled-back
     /// or buggy server can't silently unmanage calls. See `handlers::device_api::build_policy`.
     pub call_policy: CallPolicy,
+    /// User restrictions while managed - always present with every switch explicit.
+    pub hardening: Hardening,
 }
 
 /// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and

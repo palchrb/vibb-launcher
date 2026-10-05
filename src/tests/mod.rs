@@ -4,6 +4,7 @@
 
 mod calls;
 mod device_api;
+mod hardening;
 mod provisioning;
 
 use axum::Router;

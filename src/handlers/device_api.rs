@@ -216,6 +216,7 @@ pub(crate) async fn build_policy(
         dns_upstream_provider,
         packages_to_uninstall,
         call_policy,
+        hardening: policy.hardening,
     })
 }
 

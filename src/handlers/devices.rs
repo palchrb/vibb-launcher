@@ -5,7 +5,7 @@ use axum::{Extension, Form};
 use serde::Deserialize;
 
 use crate::AppState;
-use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp};
+use crate::models::{Device, DevicePolicy, DeviceStatus, Hardening, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
 
 /// How long a freshly-generated enrollment code stays valid before it must
@@ -239,6 +239,11 @@ struct DeviceDetailTemplate {
     calls_summary: String,
     /// `calls::call_warnings` - emergency calls, a launcher that can't enforce calls, roles.
     call_warnings: Vec<String>,
+    /// The stored allowlist isn't valid JSON: the phone gets a 500 for its policy (and keeps its
+    /// cached one), and the app checkboxes below show nothing as allowed (QA step 1 #11).
+    allowlist_corrupt: bool,
+    /// The "Phone hardening" switches (migrations/0023_hardening.sql).
+    hardening: Hardening,
 }
 
 pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> impl IntoResponse {
@@ -277,10 +282,17 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
     .ok()
     .flatten();
 
-    let allowed: std::collections::HashSet<String> = policy
+    // A corrupt stored allowlist is shown as a warning, not silently as "nothing allowed" -
+    // `build_policy` answers the phone with a 500 for it.
+    let parsed_allowlist = policy
         .allowlist_json
         .as_deref()
-        .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
+        .map(serde_json::from_str::<Vec<String>>)
+        .transpose();
+    let allowlist_corrupt = parsed_allowlist.is_err();
+    let allowed: std::collections::HashSet<String> = parsed_allowlist
+        .ok()
+        .flatten()
         .unwrap_or_default()
         .into_iter()
         .collect();
@@ -455,6 +467,8 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
             title: device.name.clone(),
             calls_summary,
             call_warnings,
+            allowlist_corrupt,
+            hardening: policy.hardening.clone(),
             any_app_installing,
             pin_configured: policy.override_pin_hash.is_some(),
             offline_override_used,
@@ -840,6 +854,51 @@ pub async fn update_policy(
     let _ = state.command_notify.send(id);
 
     Redirect::to(&format!("/devices/{id}"))
+}
+
+/// The "Phone hardening" card: one auto-submitting form with every switch, so a missing checkbox
+/// really means "off" (same pattern as the calls switches). 404 for an unknown device, 500 (nothing
+/// written) on a DB error; nudges the phone like every other policy change.
+pub async fn update_hardening(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    let on = |key: &str| form.contains_key(key);
+    let result = sqlx::query(
+        "UPDATE device_policy SET disallow_factory_reset = ?, disallow_add_user = ?, \
+         disallow_modify_accounts = ?, disallow_config_vpn = ?, disallow_usb_file_transfer = ?, \
+         disallow_debugging_features = ?, disallow_safe_boot = ?, lock_location = ?, \
+         updated_at = datetime('now') WHERE device_id = ?",
+    )
+    .bind(on("disallow_factory_reset"))
+    .bind(on("disallow_add_user"))
+    .bind(on("disallow_modify_accounts"))
+    .bind(on("disallow_config_vpn"))
+    .bind(on("disallow_usb_file_transfer"))
+    .bind(on("disallow_debugging_features"))
+    .bind(on("disallow_safe_boot"))
+    .bind(on("lock_location"))
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(done) if done.rows_affected() == 0 => {
+            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&format!("/devices/{id}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "failed to save hardening switches");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed. Check the server log.",
+            )
+                .into_response()
+        }
+    }
 }
 
 pub async fn delete_device(

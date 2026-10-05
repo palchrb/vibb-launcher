@@ -71,6 +71,9 @@
 
     <div class="card">
         <h2>Apps</h2>
+        {% if allowlist_corrupt %}
+        <div class="error">The stored app list for this device can't be read, so the phone gets an error instead of its policy and keeps enforcing the last one it had. The checkboxes below don't show what the phone allows, and changing them fails. Check this server's log ("failed to build device policy"), or restore a backup.</div>
+        {% endif %}
         <p class="subtitle">Every app currently on this device, plus anything from the <a href="/apps">Apps</a> catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; checking one that isn't installed installs and allows it. Unchecking disallows it - and uninstalls it too, unless it's preinstalled and can't be removed. Each checkbox saves itself immediately - no separate Save button.</p>
         {% if apps.is_empty() %}
         <p class="subtitle">Nothing to show yet - the phone hasn't reported its installed apps, and nothing's been added to the <a href="/apps">Apps</a> catalog either.</p>
@@ -113,6 +116,46 @@
     </script>
     {% endif %}
 
+    <form method="post" action="/devices/{{ device.id }}/hardening" class="card">
+        <h2>Phone hardening</h2>
+        <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The offline-override PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_factory_reset" value="on" {% if hardening.disallow_factory_reset %}checked{% endif %} onchange="this.form.submit()">
+            Block factory reset from Settings (a reset from the phone's recovery menu can't be blocked; the phone then stops reporting)
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_add_user" value="on" {% if hardening.disallow_add_user %}checked{% endif %} onchange="this.form.submit()">
+            Block adding users and guests
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_modify_accounts" value="on" {% if hardening.disallow_modify_accounts %}checked{% endif %} onchange="this.form.submit()">
+            Block adding or removing accounts
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_config_vpn" value="on" {% if hardening.disallow_config_vpn %}checked{% endif %} onchange="this.form.submit()">
+            Block VPN settings
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_usb_file_transfer" value="on" {% if hardening.disallow_usb_file_transfer %}checked{% endif %} onchange="this.form.submit()">
+            Block copying files over USB
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="lock_location" value="on" {% if hardening.lock_location %}checked{% endif %} onchange="this.form.submit()">
+            Keep location on and block location settings (Find my device needs it)
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} onchange="this.form.submit()">
+            Block USB debugging (adb) and developer options
+        </label>
+        <p class="subtitle">With USB debugging blocked, a computer can't repair the phone: if the launcher ever breaks so badly that it can't reach this server, the only way back is a reset from the recovery menu and setting the phone up again. Turn it off here before you work on the phone with adb.</p>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} onchange="this.form.submit()">
+            Block safe mode
+        </label>
+        <p class="subtitle">Off by default. Safe mode starts the phone without the launcher, so the kid can get around it - but it's also the way past a launcher that crashes at start. Only turn this on once this launcher version has been tested on the phone, and preferably with USB debugging still allowed.</p>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
     <form method="post" action="/devices/{{ device.id }}/policy" class="card">
         <h2>Quick Controls (swipe-left screen)</h2>
         <p class="subtitle">These appear on a screen the kid can reach by swiping left from the home screen. This is the intended way for a kid to reach these controls instead of Android's own Quick Settings shade, which can't be fully locked down - a third-party app can publish its own tile there (Tailscale does) that bypasses restrictions below.</p>
@@ -137,7 +180,7 @@
         </label>
 
         <h2>Offline override PIN</h2>
-        <p class="subtitle">A failsafe for when the phone can't reach the server at all. Entering this PIN directly on the phone temporarily lifts every restriction; it reasserts automatically the moment the phone can sync again.</p>
+        <p class="subtitle">A failsafe for when the phone can't reach the server at all. Entering this PIN directly on the phone lifts the app restrictions and the schedule for up to two hours (not calls or phone hardening); they come back the moment the phone can sync again. The same PIN opens the launcher's own Settings on the phone - without a PIN, those Settings can't be opened at all.</p>
         {% if pin_configured %}
         <p class="subtitle">A PIN is currently set.</p>
         {% else %}
@@ -151,7 +194,7 @@
         {% if pin_configured %}
         <label class="checkbox-row">
             <input type="checkbox" name="clear_pin" value="on">
-            Remove the PIN instead (no offline override, and no pausing restrictions on the phone, will be possible)
+            Remove the PIN instead (no offline override, no pausing restrictions, and no opening the launcher's Settings on the phone)
         </label>
         {% endif %}
 
