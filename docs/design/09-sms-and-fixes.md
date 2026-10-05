@@ -178,3 +178,16 @@ controller, default dialer, device admins and protected packages (SuspendPackage
 2. Blocked-SMS log for the parent: sender + time only (proposed), or also the text?
 3. Alphanumeric senders (Vipps, bank, carrier "ice"): block all (proposed), or a parent-editable list of allowed sender names?
 4. Is the BLOCK_ACTIVITY_START_IN_TASK cost (Google sign-in/Play sheets blocked in kiosk) acceptable, e.g. for Vipps?
+
+## Decisions after QA review (qa-09-design.md), 2026-10-05
+
+QA findings override this doc where they conflict (all P0/P1 items are binding). Product
+defaults (proposed to the user, pending confirmation; easy to change):
+- Separate per-contact SMS in/out flags (not reusing call flags).
+- Blocked-SMS log shows sender and time; message text only if the parent turns it on.
+- Named/alphanumeric senders blocked except a parent-edited sender allowlist, pre-seeded
+  with Vipps and ice.
+- The lock-task activity block stays on in kiosk (blocks Play UI and Google sign-in inside
+  apps); updates/sign-in happen in PIN install mode; server off-switch per device.
+- Emergency: explicit ACTION_EMERGENCY_DIAL to an allowlisted emergency dialer from every
+  lock/bedtime/school screen; never ACTION_DIAL to an unpinned app.
