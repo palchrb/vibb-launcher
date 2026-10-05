@@ -56,6 +56,7 @@ import com.kidslauncher.mdm.ui.home.homeGrid
 import com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -65,6 +66,7 @@ private const val SWIPE_UP_MIN_VELOCITY = 100
 private const val SWIPE_LEFT_MIN_DISTANCE = 100
 private const val SWIPE_LEFT_MIN_VELOCITY = 100
 private const val LOCK_REASON_REFRESH_INTERVAL_MS = 60_000L
+private const val BADGE_DEBOUNCE_MS = 300L
 
 /**
  * [HomeActivity] is the actual application launcher (design 05-ui-photos-i18n.md, mockup
@@ -83,8 +85,20 @@ class HomeActivity : UIObjectActivity() {
 
     private val apps by lazy { (applicationContext as Application).apps }
     private val appsObserver = Observer<List<AbstractDetailedAppInfo>> { render() }
-    private val badgeListener: () -> Unit = { render() }
-    private val photoListener: () -> Unit = { render() }
+    // Chatty apps change their counts often: coalesce, and only rebuild the grid from the
+    // already-filtered apps (QA step 5 #6).
+    private val badgeRender = Runnable { renderGrid() }
+    private val badgeListener: () -> Unit = {
+        refreshHandler.removeCallbacks(badgeRender)
+        refreshHandler.postDelayed(badgeRender, BADGE_DEBOUNCE_MS)
+    }
+    private val photoListener: () -> Unit = { renderCallParts() }
+
+    /** The grid's apps as last filtered off the main thread ([refreshApps]). */
+    private var gridApps: List<GridApp> = emptyList()
+    private var gridInfos: Map<String, AbstractDetailedAppInfo> = emptyMap()
+    private var showPhoneBook = false
+    private var appsJob: Job? = null
     private var missed: Map<String, MissedSummary> = emptyMap()
     private val callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) = loadMissedCalls()
@@ -259,6 +273,8 @@ class HomeActivity : UIObjectActivity() {
         // Checked here (not just via the preference listener) so pressing Home while the lock
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return
+        // The parent's language choice, now that Home is in front (no call screen or dialog).
+        LauncherLocales.applyIfSafe(this)
         render()
         loadMissedCalls()
         promptForCallRoleIfNeeded()
@@ -324,6 +340,7 @@ class HomeActivity : UIObjectActivity() {
     override fun onStop() {
         refreshHandler.removeCallbacks(refreshRunnable)
         BadgeStore.removeListener(badgeListener)
+        refreshHandler.removeCallbacks(badgeRender)
         ContactPhotos.removeListener(photoListener)
         contentResolver.unregisterContentObserver(callLogObserver)
         super.onStop()
@@ -343,27 +360,58 @@ class HomeActivity : UIObjectActivity() {
             val result = withContext(Dispatchers.IO) { MissedCallsRepo.summaries(this@HomeActivity, state) }
             if (result != missed && !isDestroyed) {
                 missed = result
-                render()
+                renderCallParts()
             }
         }
     }
 
-    /** Rebuilds the contacts row and the grid from the call rules, apps, badges and photos. */
+    /** Everything: the call parts now, the apps filtered again in the background. */
     private fun render() {
         if (!::gridAdapter.isInitialized) return
-        val state = CallPolicyStore.state
-        val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
-        renderContacts(view.home)
+        renderCallParts()
+        refreshApps()
+    }
 
-        val columns = gridColumns((cachedPolicy() as? CachedPolicy.Ok)?.policy?.launcherUi?.homeColumns)
-        if (gridLayout.spanCount != columns) gridLayout.spanCount = columns
-        val visible = apps.value?.let { AppFilter(this).invoke(it) }.orEmpty()
-            .filter { (it.getRawInfo() as? AppInfo)?.packageName != packageName }
-        val infos = visible.associateBy { it.getRawInfo().serialize() }
-        val gridApps = infos.map { (key, info) ->
-            GridApp(key, info.getCustomLabel(this), (info.getRawInfo() as? AppInfo)?.packageName)
+    /** Contacts row and phone-book tile from the call rules, missed calls and photos (cheap). */
+    private fun renderCallParts() {
+        if (!::gridAdapter.isInitialized) return
+        val view = phoneBookView(CallPolicyStore.state) { CallSystem.isEmergencyOutgoing(this, it) }
+        renderContacts(view.home)
+        showPhoneBook = !view.isEmpty
+        renderGrid()
+    }
+
+    /**
+     * [AppFilter] (a `isPackageSuspended` call per app) and the cached policy (columns) off the
+     * main thread; the newest run wins.
+     */
+    private fun refreshApps() {
+        val all = apps.value ?: return
+        val context = applicationContext
+        appsJob?.cancel()
+        appsJob = CoroutineScope(Dispatchers.Main).launch {
+            val (filtered, columns) = withContext(Dispatchers.Default) {
+                val visible = AppFilter(context).invoke(all)
+                    .filter { (it.getRawInfo() as? AppInfo)?.packageName != packageName }
+                val infos = visible.associateBy { it.getRawInfo().serialize() }
+                val list = infos.map { (key, info) ->
+                    GridApp(key, info.getCustomLabel(context), (info.getRawInfo() as? AppInfo)?.packageName)
+                }
+                (list to infos) to
+                    gridColumns((cachedPolicy() as? CachedPolicy.Ok)?.policy?.launcherUi?.homeColumns)
+            }
+            if (isDestroyed) return@launch
+            gridApps = filtered.first
+            gridInfos = filtered.second
+            if (gridLayout.spanCount != columns) gridLayout.spanCount = columns
+            renderGrid()
         }
-        gridAdapter.submit(homeGrid(gridApps, showPhoneBook = !view.isEmpty, badges = BadgeStore.counts), infos)
+    }
+
+    /** The grid from the last filtered apps and the current badge counts (cheap). */
+    private fun renderGrid() {
+        if (!::gridAdapter.isInitialized) return
+        gridAdapter.submit(homeGrid(gridApps, showPhoneBook, BadgeStore.counts), gridInfos)
     }
 
     private fun renderContacts(contacts: List<RuleContact>) {

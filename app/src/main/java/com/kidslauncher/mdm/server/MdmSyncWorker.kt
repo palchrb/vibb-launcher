@@ -110,8 +110,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         storeAcceptedPolicy(context, freshPolicy)
         // The call services read the rules from memory, never per call.
         CallPolicyStore.refresh(context)
-        // The parent's language choice; Android persists it (no-op when unchanged).
-        LauncherLocales.apply(context, freshPolicy.launcherUi)
+        // The parent's language choice, switched when Home is next in front (LauncherLocales).
+        LauncherLocales.remember(context, freshPolicy.launcherUi)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.

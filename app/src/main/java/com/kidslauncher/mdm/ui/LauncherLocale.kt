@@ -16,3 +16,11 @@ fun resolveLauncherLocale(setting: String?): String =
 /** [currentTags] = `LocaleList.toLanguageTags()` of the app locales now ("" = system). Only a
  * real change is applied: setting the same list again would still recreate every activity. */
 fun localeChangeNeeded(currentTags: String, desired: String): Boolean = currentTags != desired
+
+/**
+ * Whether to switch now: only a real change, and never during a call - switching recreates every
+ * activity, including the in-call screen (QA step 5 #5). LauncherLocales calls this only when Home
+ * comes to the front, so no PIN dialog or contact sheet is open either; otherwise it waits.
+ */
+fun applyLocaleNow(currentTags: String, desired: String, callActive: Boolean): Boolean =
+    localeChangeNeeded(currentTags, desired) && !callActive

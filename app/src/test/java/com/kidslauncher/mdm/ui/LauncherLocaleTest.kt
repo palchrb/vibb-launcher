@@ -25,4 +25,11 @@ class LauncherLocaleTest {
         assertTrue(localeChangeNeeded("nb", ""))
         assertTrue(localeChangeNeeded("en", "nb"))
     }
+
+    @Test
+    fun `never switched during a call`() {
+        assertTrue(applyLocaleNow("", "nb", callActive = false))
+        assertFalse(applyLocaleNow("", "nb", callActive = true))
+        assertFalse(applyLocaleNow("nb", "nb", callActive = false))
+    }
 }
