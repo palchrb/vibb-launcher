@@ -209,6 +209,105 @@ async fn dead_token_is_cleared_and_logged() {
 }
 
 #[tokio::test]
+async fn a_rejected_token_reported_again_is_ignored() {
+    let (app, fake) = app_with_fake().await;
+    let (_, token) = app.enrolled_device("phone").await;
+    fake.answer(SendOutcome::TokenDead("UNREGISTERED".into()));
+    post_status(
+        &app,
+        &token,
+        json!({ "push": { "fcm_token": "dead-token" } }),
+    )
+    .await;
+    wait_for_sends(&fake, 1).await;
+    for _ in 0..200 {
+        if !security_details(&app, "fcm_token_cleared").await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // The phone keeps reporting it until it renews: not stored, not nudged, not logged again.
+    for _ in 0..3 {
+        post_status(
+            &app,
+            &token,
+            json!({ "push": { "fcm_token": "dead-token" } }),
+        )
+        .await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(fake.sends().len(), 1);
+    assert_eq!(security_details(&app, "fcm_token_cleared").await.len(), 1);
+    assert_eq!(
+        policy_push(&app, &token).await["fcm_token_hash"],
+        json!(null)
+    );
+    // A renewed token is taken (and tested) again.
+    fake.answer(SendOutcome::Sent);
+    post_status(
+        &app,
+        &token,
+        json!({ "push": { "fcm_token": "fresh-token" } }),
+    )
+    .await;
+    wait_for_sends(&fake, 2).await;
+    assert_eq!(
+        policy_push(&app, &token).await["fcm_token_hash"],
+        json!(token_hash("fresh-token"))
+    );
+}
+
+#[tokio::test]
+async fn a_token_belongs_to_one_device() {
+    let (app, fake) = app_with_fake().await;
+    let (_, old) = app.enrolled_device("old row").await;
+    let (_, new) = app.enrolled_device("re-enrolled").await;
+    post_status(&app, &old, json!({ "push": { "fcm_token": "same-phone" } })).await;
+    wait_for_sends(&fake, 1).await;
+    post_status(&app, &new, json!({ "push": { "fcm_token": "same-phone" } })).await;
+    wait_for_sends(&fake, 2).await;
+    assert_eq!(policy_push(&app, &old).await["fcm_token_hash"], json!(null));
+    assert_eq!(
+        policy_push(&app, &new).await["fcm_token_hash"],
+        json!(token_hash("same-phone"))
+    );
+    let holders: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_push WHERE fcm_token = 'same-phone'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(holders, 1);
+}
+
+#[tokio::test]
+async fn dns_changes_nudge_the_devices() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    let mut rx = app.state.command_notify.subscribe();
+    let cookie = app.admin_cookie().await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/dns/domains/new",
+            Some(&cookie),
+            &[("domain", "ads.example"), ("list_type", "block")],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(rx.try_recv().unwrap(), id);
+    let res = app
+        .request_form(
+            Method::POST,
+            "/dns/upstream",
+            Some(&cookie),
+            &[("upstream", "quad9")],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(rx.try_recv().unwrap(), id);
+}
+
+#[tokio::test]
 async fn policy_save_nudge_reaches_fcm_through_the_dispatcher() {
     let (app, fake) = app_with_fake().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -821,6 +920,10 @@ fn sse_keepalive_defaults_and_validates() {
     );
     assert_eq!(ForkConfig::from_vars(&vars("30")).sse_keepalive_secs, 30);
     assert_eq!(ForkConfig::from_vars(&vars("1")).sse_keepalive_secs, 120);
+    // Must stay well under the launcher's 300 s read timeout (QA step 7 #4).
+    assert_eq!(ForkConfig::from_vars(&vars("240")).sse_keepalive_secs, 240);
+    assert_eq!(ForkConfig::from_vars(&vars("300")).sse_keepalive_secs, 120);
+    assert_eq!(ForkConfig::from_vars(&vars("3600")).sse_keepalive_secs, 120);
     assert_eq!(ForkConfig::from_vars(&vars("abc")).sse_keepalive_secs, 120);
 }
 
@@ -846,8 +949,7 @@ async fn dns_blocklist_never_blocks_fcm() {
     assert_eq!(res.status, StatusCode::OK);
     let body = res.text();
     assert!(body.contains("ads.example"), "{body}");
-    assert!(
-        !body.contains("mtalk") && !body.contains("googleapis"),
-        "{body}"
-    );
+    // The exact FCM host is dropped; a parent the parent blocked is still delivered (QA #1).
+    assert!(!body.contains("mtalk"), "{body}");
+    assert!(body.contains("\"googleapis.com\""), "{body}");
 }
