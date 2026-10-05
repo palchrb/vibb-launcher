@@ -235,6 +235,39 @@ object AppEnforcer {
         applySideloadRestriction(dpm, admin, blockSideloading = !overrideActive)
 
         applyBrowserPolicy(dpm, admin, context, locked = !overrideActive)
+
+        // Last, after the always-on VPN is in place (DISALLOW_CONFIG_VPN). Not lifted by the
+        // override or pause - see hardeningPlan.
+        applyHardening(
+            context, dpm, admin,
+            hardeningPlan(policy?.hardening, hardeningManaged(policy?.allowlist, callState.managed)),
+        )
+    }
+
+    /**
+     * Sets or clears each [HardeningRestriction] as [plan] says. Location is turned on before its
+     * setting is locked (Find my device needs it; WifiNetworksActivity then finds it on and leaves
+     * it on). Clearing only ever removes what a device owner set - restrictions the platform or
+     * OEM set themselves are untouched.
+     */
+    private fun applyHardening(context: Context, dpm: DevicePolicyManager, admin: ComponentName, plan: HardeningPlan) {
+        if (plan.forceLocationOn && !QuickControls.isLocationEnabled(context)) {
+            QuickControls.setLocationEnabled(dpm, admin, true)
+        }
+        for ((restriction, set) in plan.restrictions) {
+            setRestriction(dpm, admin, restriction.userManagerKey(), set)
+        }
+    }
+
+    private fun HardeningRestriction.userManagerKey(): String = when (this) {
+        HardeningRestriction.FACTORY_RESET -> UserManager.DISALLOW_FACTORY_RESET
+        HardeningRestriction.ADD_USER -> UserManager.DISALLOW_ADD_USER
+        HardeningRestriction.MODIFY_ACCOUNTS -> UserManager.DISALLOW_MODIFY_ACCOUNTS
+        HardeningRestriction.CONFIG_VPN -> UserManager.DISALLOW_CONFIG_VPN
+        HardeningRestriction.USB_FILE_TRANSFER -> UserManager.DISALLOW_USB_FILE_TRANSFER
+        HardeningRestriction.DEBUGGING_FEATURES -> UserManager.DISALLOW_DEBUGGING_FEATURES
+        HardeningRestriction.SAFE_BOOT -> UserManager.DISALLOW_SAFE_BOOT
+        HardeningRestriction.CONFIG_LOCATION -> UserManager.DISALLOW_CONFIG_LOCATION
     }
 
     /**

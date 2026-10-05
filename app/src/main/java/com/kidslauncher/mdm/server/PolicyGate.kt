@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.server.dto.HardeningPolicy
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import kotlinx.serialization.Serializable
 
@@ -108,6 +109,8 @@ data class LastEnforcedPlan(
     val weekendEndMinutes: Int? = null,
     val bedtimeStartMinutes: Int? = null,
     val bedtimeEndMinutes: Int? = null,
+    /** The hardening switches, so a fallback keeps the parent's choices (`null` = defaults). */
+    val hardening: HardeningPolicy? = null,
 ) {
     fun toPolicy(): PolicyResponse = PolicyResponse(
         allowlist = allowlist,
@@ -119,6 +122,7 @@ data class LastEnforcedPlan(
         weekendEndMinutes = weekendEndMinutes,
         bedtimeStartMinutes = bedtimeStartMinutes,
         bedtimeEndMinutes = bedtimeEndMinutes,
+        hardening = hardening,
     )
 
     companion object {
@@ -132,6 +136,7 @@ data class LastEnforcedPlan(
             weekendEndMinutes = policy.weekendEndMinutes,
             bedtimeStartMinutes = policy.bedtimeStartMinutes,
             bedtimeEndMinutes = policy.bedtimeEndMinutes,
+            hardening = policy.hardening,
         )
 
         /** `null` if missing or unreadable. */

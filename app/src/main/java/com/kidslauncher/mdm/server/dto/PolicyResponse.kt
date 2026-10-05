@@ -31,7 +31,8 @@ import kotlinx.serialization.Serializable
  * confirmation dialog) on every sync where this is non-empty; the server clears an entry once a
  * later status report confirms the package is actually gone, not on any client-side acknowledgement.
  * [callPolicy] is the calls & SMS rules ([CallPolicy]); `null` only from a server that predates
- * them.
+ * them. [hardening] is the phone-hardening switches ([HardeningPolicy]); `null` (older server)
+ * means every switch's default.
  */
 @Serializable
 data class PolicyResponse(
@@ -53,4 +54,5 @@ data class PolicyResponse(
     val dnsUpstreamProvider: String = "cloudflare",
     val packagesToUninstall: List<String> = emptyList(),
     val callPolicy: CallPolicy? = null,
+    val hardening: HardeningPolicy? = null,
 )
