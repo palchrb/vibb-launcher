@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% include "partials/app_header.html" %}
+<main class="container">
+    <div class="page-header">
+        <h1>{{ device.name }}</h1>
+    </div>
+
+    {% if let Some(text) = notice %}
+    <div class="card"><div class="error">{{ text }}</div></div>
+    {% endif %}
+
+    {% if let Some(code) = device.enrollment_code %}
+    <div class="card enrollment-card">
+        <h2>Not enrolled yet</h2>
+        <p>On the phone, open Settings and enter this code:</p>
+        <p class="enrollment-code">{{ code }}</p>
+        <p class="subtitle">This code expires soon. If it stops working before the phone is set up, generate a new one.</p>
+        <form method="post" action="/devices/{{ device.id }}/regenerate-code">
+            <button type="submit" class="button-secondary">Generate new code</button>
+        </form>
+        <a href="/devices/{{ device.id }}/provision" class="button-small">Provision by QR code instead</a>
+    </div>
+    {% else %}
+    <div class="card">
+        <h2>Status</h2>
+        {% if let Some(status) = latest_status %}
+        <p>Lock state: <strong>{{ status.lock_reason }}</strong></p>
+        {% if let Some(v) = status.app_version %}
+        <p>App version: {{ v }}</p>
+        {% endif %}
+        <p class="subtitle">Last reported {{ status.reported_at }}</p>
+        {% if let Some(problem) = policy_problem %}
+        <div class="error">{{ problem }}</div>
+        {% endif %}
+        {% if restrictions_paused %}
+        <div class="error">All restrictions are paused on the phone (someone entered the PIN in its Settings). The pause ends by itself.</div>
+        {% endif %}
+        {% else %}
+        <p class="subtitle">No status reported yet.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if managed_without_pin %}
+    <div class="card">
+        <div class="error">No unlock code (offline override PIN) is set for this phone. Without one, the launcher's Settings can't be opened on the phone and there is no way to lift restrictions there. If this server ever becomes unreachable{% if hardening.disallow_debugging_features %} - with USB debugging blocked -{% endif %} the only way back is a reset from the phone's recovery menu and setting it up again. Set a PIN below.</div>
+    </div>
+    {% endif %}
+
+    {% if device.enrolled_at.is_some() %}
+    <div class="card">
+        <h2>Push and Play</h2>
+        {% for line in push.lines %}
+        <p>{{ line }}</p>
+        {% endfor %}
+        {% for warning in push.warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
+        <form method="post" action="/devices/{{ device.id }}/kiosk-block">
+            <label class="checkbox-row">
+                <input type="checkbox" name="block_activity_start" value="on" {% if push.block_activity_start %}checked{% endif %} onchange="this.form.submit()">
+                Kiosk app block: in kiosk mode, screens of apps that aren't allowed never open - also when an allowed app opens them (Play Store, Google sign-in and payment sheets). Emergency calls, permission questions, the share sheet and photo/file pickers keep working. Install and sign in during install mode instead. Turn it off only if it breaks something on this phone.
+            </label>
+            <noscript><button type="submit" class="button-small">Save</button></noscript>
+        </form>
+        <p class="subtitle">With FCM, changes reach a sleeping phone through Google's push service instead of a connection the phone keeps open, which saves battery. Either way the phone also checks in by itself every 30 minutes. If FCM stops working without an error, a ring, lock or lift can wait until that check-in; after two unanswered nudges the phone is told to use its own connection again. The Play Store stays paused on the phone except during install mode (in the phone's Settings, with the PIN) and a nightly update window while the screen is off.</p>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <h2>Time rules</h2>
+        <p class="subtitle">{% if time.custom %}This phone has its own time rules and screen time.{% else %}This phone follows the global time rules and screen time.{% endif %} Emergency calls always work.</p>
+        {% if time.launcher_without_rules %}
+        <div class="error">This phone's launcher doesn't know time rules yet. Until it updates it keeps the old schedule exactly as it was before time rules were introduced - changes here don't reach it.</div>
+        {% endif %}
+        {% if time.incoming_calls_unblocked %}
+        <div class="error">Incoming calls aren't blocked: calls are unmanaged on this device. A rule without calls (school) only stops outgoing calls here - manage calls on the Calls &amp; SMS page to block incoming ones.</div>
+        {% endif %}
+        {% if time.ledger_unreadable %}
+        <div class="error">The phone's screen-time record was unreadable; today's budget counts as used up.</div>
+        {% endif %}
+        {% if time.rules_error %}
+        <div class="error">Couldn't read the time rules - check the server log.</div>
+        {% endif %}
+        {% if let Some(line) = time.now_line %}<p>Now: <strong>{{ line }}</strong></p>{% endif %}
+        {% if let Some(line) = time.screen_line %}<p>{{ line }}</p>{% endif %}
+        {% if let Some(status) = latest_status %}{% if time.now_line.is_some() %}<p class="subtitle">As of {{ status.reported_at }}</p>{% endif %}{% endif %}
+
+        <form method="post" action="/devices/{{ device.id }}/lifts" style="margin-top:12px;">
+            <input type="hidden" name="target" value="rule">
+            <label for="lift_rule">Lift a rule for a while</label>
+            <select id="lift_rule" name="rule">
+                <option value="all">All rules</option>
+                {% for r in time.rules %}
+                <option value="{{ r.id }}">{{ r.name }}</option>
+                {% endfor %}
+            </select>
+            <select name="minutes" aria-label="For how long">
+                <option value="15">15 min</option>
+                <option value="30" selected>30 min</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+            </select>
+            <button type="submit" class="button-small">Lift</button>
+        </form>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+            {% for m in [15, 30, 60] %}
+            <form method="post" action="/devices/{{ device.id }}/lifts">
+                <input type="hidden" name="target" value="budget">
+                <input type="hidden" name="minutes" value="{{ m }}">
+                <button type="submit" class="button-small button-secondary">+{{ m }} min screen time</button>
+            </form>
+            {% endfor %}
+        </div>
+
+        {% if !time.lifts.is_empty() %}
+        <div class="table-wrap" style="margin-top:12px;">
+        <table>
+            <thead><tr><th>Lift</th><th>When</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for l in time.lifts %}
+            <tr>
+                <td>{{ l.what }}</td>
+                <td>{{ l.created_at }}{% if !l.created_by.is_empty() %} by {{ l.created_by }}{% endif %}</td>
+                <td>{{ l.status }}</td>
+                <td>{% if l.can_end %}<form method="post" action="/devices/{{ device.id }}/lifts/{{ l.id }}/end"><button type="submit" class="button-small button-secondary">End now</button></form>{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% endif %}
+        <a href="/schedules?device={{ device.id }}" class="button-small" style="margin-top:12px;">Edit time rules and screen time</a>
+    </div>
+
+    <div class="card">
+        <h2>Calls &amp; SMS</h2>
+        <p class="subtitle">{{ calls_summary }}</p>
+        {% for warning in call_warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
+        <a href="/devices/{{ device.id }}/calls" class="button-small">Calls, contacts and SMS</a>
+    </div>
+
+    <div class="card">
+        <h2>Conversations</h2>
+        <p class="subtitle">Messages, photos/videos, and calls synced from this device's messenger, if it's running one that supports the journal integration.</p>
+        <a href="/devices/{{ device.id }}/journal" class="button-small">View conversations</a>
+    </div>
+
+    <div class="card">
+        <h2>Browsing history</h2>
+        <p class="subtitle">URLs visited on this device, if it's running the browser fork with the history-journal integration.</p>
+        <a href="/devices/{{ device.id }}/browser-history" class="button-small">View history</a>
+    </div>
+
+    <div class="card">
+        <h2>Apps</h2>
+        {% if allowlist_corrupt %}
+        <div class="error">The stored app list for this device can't be read, so the phone gets an error instead of its policy and keeps enforcing the last one it had. The checkboxes below don't show what the phone allows, and changing them fails. Check this server's log ("failed to build device policy"), or restore a backup.</div>
+        {% endif %}
+        <p class="subtitle">Every app currently on this device, plus anything from the <a href="/apps">Apps</a> catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; checking one that isn't installed installs and allows it. Unchecking disallows it - and uninstalls it too, unless it's preinstalled and can't be removed. Each checkbox saves itself immediately - no separate Save button.</p>
+        {% if apps.is_empty() %}
+        <p class="subtitle">Nothing to show yet - the phone hasn't reported its installed apps, and nothing's been added to the <a href="/apps">Apps</a> catalog either.</p>
+        {% else %}
+        <div class="app-checkbox-list">
+            {% for app in apps %}
+            {% if app.is_launcher %}
+            <label class="checkbox-row">
+                <input type="checkbox" checked disabled>
+                {{ app.label }} (launcher - always installed)
+                <span class="app-status">{{ app.status_label }}</span>
+            </label>
+            {% else %}
+            <form method="post" action="/devices/{{ device.id }}/apps/toggle">
+                <input type="hidden" name="package_name" value="{{ app.package_name }}">
+                {% if let Some(tracked_app_id) = app.tracked_app_id %}
+                <input type="hidden" name="tracked_app_id" value="{{ tracked_app_id }}">
+                {% endif %}
+                <label class="checkbox-row">
+                    <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} onchange="this.form.submit()">
+                    {{ app.label }}
+                    <span class="app-status" data-installing="{{ app.is_installing }}" data-failed="{{ app.install_failed }}">{{ app.status_label }}</span>
+                    {% if app.show_no_release_hint %} <span class="subtitle">(no release yet - won't install until one's added)</span>{% endif %}
+                </label>
+            </form>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    {% if any_app_installing %}
+    <script>
+        // Live progress has no push mechanism to this page - the server only ever gets a fresh
+        // percentage when the device reports one (see /api/devices/apps/progress), so this page
+        // has to poll for it. Only reloads while something here is actually installing - once
+        // nothing is, this block isn't rendered at all on the next load, so the polling stops
+        // itself rather than running forever on an otherwise-idle device page.
+        setTimeout(() => location.reload(), 3000);
+    </script>
+    {% endif %}
+
+    <form method="post" action="/devices/{{ device.id }}/launcher" class="card">
+        <h2>Launcher</h2>
+        <p class="subtitle">The phone's home screen. Each choice saves itself immediately.</p>
+        {% if badges_without_access %}
+        <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener com.kidslauncher.mdm/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build).</div>
+        {% endif %}
+        <label for="launcher_language">Language</label>
+        <select id="launcher_language" name="language" onchange="this.form.submit()">
+            <option value="system" {% if launcher_language == "system" %}selected{% endif %}>Same as the phone</option>
+            <option value="nb" {% if launcher_language == "nb" %}selected{% endif %}>Norsk bokmål</option>
+            <option value="en" {% if launcher_language == "en" %}selected{% endif %}>English</option>
+        </select>
+        <label for="home_columns">Apps per row on the home screen</label>
+        <select id="home_columns" name="home_columns" onchange="this.form.submit()">
+            <option value="3" {% if home_columns == 3 %}selected{% endif %}>3 (bigger)</option>
+            <option value="4" {% if home_columns == 4 %}selected{% endif %}>4</option>
+        </select>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
+    <form method="post" action="/devices/{{ device.id }}/wallpapers" class="card">
+        <h2>Wallpapers</h2>
+        <p class="subtitle">The backgrounds the child may choose from on this phone. Each choice saves itself immediately; unticking the one in use replaces it on the phone at once. Add your own photos on the <a href="/wallpapers">Wallpapers</a> page.</p>
+        <div class="wallpaper-choices" style="display:flex;flex-wrap:wrap;gap:10px;">
+            {% for w in wallpapers %}
+            <label class="checkbox-row" style="flex-direction:column;align-items:center;gap:4px;">
+                {% if let Some(image) = w.image %}
+                <img src="/wallpaper-images/{{ image }}" alt="" width="45" height="80" style="object-fit:cover;border-radius:8px;">
+                {% else %}
+                <span style="display:block;width:45px;height:80px;border-radius:8px;background: {{ w.background }}"></span>
+                {% endif %}
+                <span><input type="checkbox" name="wallpaper" value="{{ w.id }}" {% if w.checked %}checked{% endif %} onchange="this.form.submit()"> {{ w.label }}</span>
+            </label>
+            {% endfor %}
+        </div>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
+    <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card" id="screen-lock">
+        <h2>Screen lock</h2>
+        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the unlock code (offline override PIN) - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
+        <p class="subtitle">It keeps people around him out, but the phone no longer has an Android code: its storage is encrypted with a key that doesn't depend on a code, so someone who steals it and has forensic tools may read photos and messages - the kid's PIN is not a secret against that, so don't reuse it anywhere else. Apps that require a screen lock (some bank/ID apps, Google Wallet, passkeys) may refuse to work. Fingerprint unlock isn't available. Safe mode starts the phone without the launcher and so skips the lock - keep "Block safe mode" on (Phone hardening). Lock and wipe on the Locate page still work.</p>
+        {% for line in lock.lines %}
+        <p>{{ line }}</p>
+        {% endfor %}
+        {% for warning in lock.warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
+        {% if lock.pin_set %}
+        <p class="subtitle">A kid PIN is set ({{ lock.pin_length }} digits).</p>
+        {% endif %}
+        {% if !pin_configured %}
+        <p class="subtitle">Set an unlock code (offline override PIN, below) first - it is the parent code on the lock screen.</p>
+        {% endif %}
+        <label for="new_kid_pin">{% if lock.pin_set %}Change the kid's PIN{% else %}Set the kid's PIN{% endif %} (4-6 digits, 4 is easiest for a child)</label>
+        <input type="text" id="new_kid_pin" name="new_kid_pin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off">
+        <button type="submit">Save PIN</button>
+    </form>
+    {% if lock.pin_set %}
+    <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card">
+        <input type="hidden" name="clear_kid_pin" value="on">
+        <p class="subtitle">Removing the kid's PIN switches handy's lock off: the screen then opens without a code.</p>
+        <button type="submit" class="button-secondary">Remove the kid's PIN</button>
+    </form>
+    {% endif %}
+
+    <form method="post" action="/devices/{{ device.id }}/hardening" class="card">
+        <h2>Phone hardening</h2>
+        <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The offline-override PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_factory_reset" value="on" {% if hardening.disallow_factory_reset %}checked{% endif %} onchange="this.form.submit()">
+            Block factory reset from Settings (a reset from the phone's recovery menu can't be blocked; the phone then stops reporting)
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_add_user" value="on" {% if hardening.disallow_add_user %}checked{% endif %} onchange="this.form.submit()">
+            Block adding users and guests
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_modify_accounts" value="on" {% if hardening.disallow_modify_accounts %}checked{% endif %} onchange="this.form.submit()">
+            Block adding or removing accounts
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_config_vpn" value="on" {% if hardening.disallow_config_vpn %}checked{% endif %} onchange="this.form.submit()">
+            Block VPN settings
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_usb_file_transfer" value="on" {% if hardening.disallow_usb_file_transfer %}checked{% endif %} onchange="this.form.submit()">
+            Block copying files over USB
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="lock_location" value="on" {% if hardening.lock_location %}checked{% endif %} onchange="this.form.submit()">
+            Keep location on and block location settings (Find my device needs it)
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_airplane_mode" value="on" {% if hardening.disallow_airplane_mode %}checked{% endif %} onchange="this.form.submit()">
+            Block airplane mode (off by default, so it can be used when travelling)
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} onchange="this.form.submit()">
+            Block USB debugging (adb) and developer options
+        </label>
+        <p class="subtitle">With USB debugging blocked, a computer can't repair the phone: if the launcher ever breaks so badly that it can't reach this server, the only way back is a reset from the recovery menu and setting the phone up again. Turn it off here before you work on the phone with adb.</p>
+        <label class="checkbox-row">
+            <input type="checkbox" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} onchange="this.form.submit()">
+            Block safe mode
+        </label>
+        <p class="subtitle">Off by default, and switched on when you set the kid's PIN (safe mode would skip handy's lock). Safe mode starts the phone without the launcher, so the kid can use it unfiltered (the app restrictions above still apply there). It does not repair anything: the restrictions, the blocked USB debugging and the blocked factory reset all stay in safe mode. If a launcher update breaks the phone, the ways back are: this server sending a fixed launcher (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Only turn this on once this launcher version has been tested on the phone.</p>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
+    <form method="post" action="/devices/{{ device.id }}/policy" class="card">
+        <h2>Quick Controls (swipe-left screen)</h2>
+        <p class="subtitle">These appear on a screen the kid can reach by swiping left from the home screen. This is the intended way for a kid to reach these controls instead of Android's own Quick Settings shade, which can't be fully locked down - a third-party app can publish its own tile there (Tailscale does) that bypasses restrictions below.</p>
+        <label class="checkbox-row">
+            <input type="checkbox" name="quick_control_wifi" value="on" {% if quick_control_wifi %}checked{% endif %}>
+            WiFi on/off
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="quick_control_bluetooth" value="on" {% if quick_control_bluetooth %}checked{% endif %}>
+            Bluetooth on/off
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="quick_control_brightness" value="on" {% if quick_control_brightness %}checked{% endif %}>
+            Screen brightness
+        </label>
+
+        <h2>Ad/content filtering (VPN)</h2>
+        <p class="subtitle">The launcher runs its own on-device VPN to filter ads/content locally (see the <a href="/dns">DNS/Filters</a> tab for blocklists and what's been blocked). Turning this off disables that filtering on this device entirely - the device still syncs normally, it just stops blocking anything. There's no on-device way for a kid to turn this off themselves.</p>
+        <label class="checkbox-row">
+            <input type="checkbox" name="vpn_filter_enabled" value="on" {% if vpn_filter_enabled %}checked{% endif %}>
+            Enable ad/content filtering on this device
+        </label>
+
+        <h2>Offline override PIN</h2>
+        <p class="subtitle">A failsafe for when the phone can't reach the server at all. Entering this PIN directly on the phone lifts the app restrictions and the time rules for up to two hours - including school's call block, but calls never go beyond the call rules (only allowed contacts), and phone hardening stays; they come back the moment the phone can sync again. The same PIN opens the launcher's own Settings on the phone - without a PIN, those Settings can't be opened at all - and is the "Parent code" on the kid's lock screen (it opens only the lock there, nothing else). It must differ from the kid's PIN.</p>
+        {% if pin_configured %}
+        <p class="subtitle">A PIN is currently set.</p>
+        {% else %}
+        <p class="subtitle">No PIN is set yet.</p>
+        {% endif %}
+        {% if offline_override_used %}
+        <div class="error">The offline override was used since this device's last check-in.</div>
+        {% endif %}
+        <label for="new_pin">{% if pin_configured %}Change PIN{% else %}Set a PIN{% endif %} (6-10 digits, leave blank to keep the current one)</label>
+        <input type="text" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="off">
+        {% if pin_configured %}
+        <label class="checkbox-row">
+            <input type="checkbox" name="clear_pin" value="on">
+            Remove the PIN instead (no offline override, no pausing restrictions, and no opening the launcher's Settings on the phone{% if lock.pin_set %} - not possible while the kid's PIN is set: it is the lock screen's parent code{% endif %})
+        </label>
+        {% endif %}
+
+        <button type="submit">Save changes</button>
+    </form>
+
+    <div class="card">
+        <details>
+            <summary class="button-danger" style="display:inline-block; cursor:pointer; list-style:none;">Remove this device&hellip;</summary>
+            <form method="post" action="/devices/{{ device.id }}/delete" style="margin-top:12px;">
+                <div class="error">This removes {{ device.name }} along with its policy and status history. This cannot be undone.</div>
+                <button type="submit" class="button-danger">Yes, remove {{ device.name }}</button>
+            </form>
+        </details>
+    </div>
+</main>
+</body>
+</html>

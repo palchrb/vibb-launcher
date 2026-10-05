@@ -1,0 +1,58 @@
+[package]
+name = "kid_phone_server"
+version = "0.18.6"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+argon2 = "0.5.3"
+askama = "0.16.0"
+# FCM (src/fcm.rs): base64 for the JWT and the PEM key, ring for RS256 - both were already in
+# Cargo.lock (rustls/ring), now direct dependencies. No Google SDK.
+base64 = "0.22.1"
+axum = { version = "0.8.9", features = ["multipart"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+dotenvy = "0.15.7"
+form_urlencoded = "1"
+hex = "0.4"
+# Contact photos (src/photos.rs): decode, crop/resize and re-encode as JPEG, which also drops all
+# metadata (EXIF/GPS). Pure Rust; already in the tree through totp-rs's QR feature (png only) -
+# jpeg (zune-jpeg) and webp (image-webp) are the formats added here.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+pbkdf2 = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json"] }
+ring = "0.17.14"
+# Not used directly (dns_engine.rs no longer runs a live TLS/DoT listener) - still a direct
+# dependency purely so main.rs can install a process-wide default CryptoProvider before anything
+# opens a connection. reqwest's own rustls backend needs one installed somewhere, and there's no
+# error at the call site if it's missing - see main.rs's comment and this repo's CLAUDE.md gotcha.
+# reqwest's plain "rustls" feature pulls in its own aws-lc-rs crypto backend on top of this one
+# (Cargo unifies features additively, so both got compiled in even though we only ever install/use
+# ring) - "rustls-no-provider" drops that second backend and makes reqwest rely on the provider
+# installed below instead. (A separate attempt to also compile in Mozilla's root CA list via
+# reqwest's tls_backend_preconfigured() - avoiding the OS's ca-certificates store at runtime -
+# crashed every startup in production: v0.18.5, reverted in v0.18.6. That method is explicitly
+# documented as having no semver stability on its accepted argument type; don't retry it without
+# a way to actually run the built binary against a live HTTPS endpoint first, not just compile it.)
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "chrono"] }
+tokio = { version = "1.52.3", features = ["full"] }
+totp-rs = { version = "5.7.2", features = ["gen_secret", "qr"] }
+tower-http = { version = "0.7.0", features = ["fs", "set-header"] }
+tower-sessions = "0.14"
+tower-sessions-sqlx-store = { version = "0.15.0", features = ["sqlite"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+# Paused-time tests for the nudge dispatcher's debounce (src/push.rs).
+tokio = { version = "1.52.3", features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% include "partials/app_header.html" %}
+<main class="container">
+    <div class="page-header">
+        <h1>Apps</h1>
+        <a href="/apps/tracked/new" class="button-small">Add an app</a>
+    </div>
+
+    {% if tracked.is_empty() %}
+    <p class="empty-state">No apps yet. Add one to get started.</p>
+    {% else %}
+    <div class="device-list">
+        {% for app in tracked %}
+        <a class="device-card" href="/apps/tracked/{{ app.id }}">
+            <span class="device-name">{{ app.name }}{% if app.is_launcher %} &middot; Launcher{% endif %}</span>
+            <span class="device-status">
+                {% if let Some(tag) = app.latest_release_tag %}
+                {{ tag }}{% if !app.enabled %} &middot; disabled{% endif %}
+                {% else %}
+                Not synced yet
+                {% endif %}
+            </span>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+</main>
+</body>
+</html>

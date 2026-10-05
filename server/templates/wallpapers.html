@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+<style>
+.wallpaper-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+.wallpaper-swatch { width: 100%; aspect-ratio: 9 / 16; border-radius: 12px; border: 1px solid rgba(0,0,0,0.15); object-fit: cover; display: block; }
+.wallpaper-item form { margin-top: 6px; }
+</style>
+</head>
+<body>
+{% include "partials/app_header.html" %}
+<main class="container">
+    <div class="page-header">
+        <h1>Wallpapers</h1>
+        <a href="/settings" class="button-small button-secondary">Back to settings</a>
+    </div>
+
+    {% if let Some(error) = error %}
+    <div class="card">
+        <div class="error">{{ error }}</div>
+    </div>
+    {% endif %}
+
+    <form method="post" action="/wallpapers" enctype="multipart/form-data" class="card">
+        <h2>Add a photo</h2>
+        <p class="subtitle">A photo (JPEG, PNG or WebP, up to 10 MB) is turned upright, cut to the shape of a phone screen, made smaller and saved again without any hidden information such as where it was taken. It is stored on this server and, once you tick it on a phone's page, on that phone, where the child sees it and can choose it as the home-screen background. A new photo is on no phone until you tick it there.</p>
+        <label for="wallpaper_label">Name (read out to the child)</label>
+        <input id="wallpaper_label" type="text" name="label" maxlength="40" placeholder="Photo">
+        <label class="checkbox-row">
+            <input type="checkbox" name="lock_screen" value="on">
+            Also show it on the lock screen (anyone holding the locked phone sees it; otherwise the lock screen shows a colour)
+        </label>
+        <label for="wallpaper_image">Photo</label>
+        <input id="wallpaper_image" type="file" name="image" accept="image/jpeg,image/png,image/webp" required>
+        <button type="submit">Upload</button>
+    </form>
+
+    <div class="card">
+        <h2>All wallpapers</h2>
+        <p class="subtitle">Choose which ones each phone may use on that phone's page. Deleting a photo takes it off every phone at once.</p>
+        <div class="wallpaper-grid">
+            {% for w in wallpapers %}
+            <div class="wallpaper-item">
+                {% if let Some(image) = w.image %}
+                <img class="wallpaper-swatch" src="/wallpaper-images/{{ image }}" alt="{{ w.label }}">
+                {% else %}
+                <div class="wallpaper-swatch" style="background: {{ w.background }}" role="img" aria-label="{{ w.label }}"></div>
+                {% endif %}
+                <strong>{{ w.label }}</strong>
+                <div class="subtitle">{% if w.builtin %}Built in{% else %}Photo{% endif %} - on {{ w.devices }} phone{% if w.devices != 1 %}s{% endif %}</div>
+                {% if !w.builtin %}
+                <form method="post" action="/wallpapers/{{ w.id }}/lock-screen">
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="lock_screen" value="on" {% if w.lock_screen %}checked{% endif %} onchange="this.form.submit()">
+                        Also on the lock screen
+                    </label>
+                    <noscript><button type="submit" class="button-small">Save</button></noscript>
+                </form>
+                <form method="post" action="/wallpapers/{{ w.id }}/delete" onsubmit="return confirm('Delete this photo from the server and every phone?')">
+                    <button type="submit" class="button-small button-secondary">Delete</button>
+                </form>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</main>
+</body>
+</html>

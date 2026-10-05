@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% include "partials/app_header.html" %}
+<main class="container">
+    <div class="page-header">
+        <h1>DNS/Filters</h1>
+    </div>
+    <p class="subtitle">Blocking now happens on-device (each kid's launcher runs its own local filter) - this page manages the shared blocklists/custom domains it uses. Turn filtering on/off for a specific kid from their device page. <a href="/dns/log">See what's been blocked &rarr;</a></p>
+
+    <div class="card">
+        <h2>Upstream resolver</h2>
+        <p class="subtitle">Where non-blocked queries get forwarded, encrypted (DNS-over-TLS).</p>
+        <form method="post" action="/dns/upstream">
+            <select name="upstream" onchange="this.form.submit()" style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
+                <option value="cloudflare" {% if settings.upstream == "cloudflare" %}selected{% endif %}>Cloudflare (1.1.1.1)</option>
+                <option value="quad9" {% if settings.upstream == "quad9" %}selected{% endif %}>Quad9 (9.9.9.9)</option>
+            </select>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Blocklists</h2>
+        {% for list in blocklists %}
+        <form method="post" action="/dns/blocklists/{{ list.id }}/toggle" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <label class="checkbox-row" style="flex:1;">
+                <input type="checkbox" name="enabled" value="on" {% if list.enabled %}checked{% endif %} onchange="this.form.submit()">
+                {{ list.name }}
+            </label>
+        </form>
+        {% endfor %}
+
+        <details style="margin-top:16px;">
+            <summary style="cursor:pointer;">Add a custom blocklist URL&hellip;</summary>
+            <form method="post" action="/dns/blocklists/new" style="margin-top:12px;">
+                <label for="bl_name">Name</label>
+                <input type="text" id="bl_name" name="name" placeholder="e.g. My custom list" required>
+                <label for="bl_url">URL (hosts-file format)</label>
+                <input type="text" id="bl_url" name="url" placeholder="https://..." required>
+                <button type="submit" class="button-small">Add</button>
+            </form>
+        </details>
+    </div>
+
+    <div class="card">
+        <h2>Custom blocked domains</h2>
+        {% if blocked_domains.is_empty() %}
+        <p class="subtitle">None yet.</p>
+        {% else %}
+        {% for d in blocked_domains %}
+        <div class="checkbox-row" style="display:flex; align-items:center; justify-content:space-between;">
+            <span>{{ d.domain }}</span>
+            <form method="post" action="/dns/domains/{{ d.id }}/delete">
+                <button type="submit" class="button-small button-danger">Remove</button>
+            </form>
+        </div>
+        {% endfor %}
+        {% endif %}
+        <form method="post" action="/dns/domains/new" style="margin-top:12px;">
+            <input type="hidden" name="list_type" value="block">
+            <input type="text" name="domain" placeholder="e.g. example.com" required>
+            <button type="submit" class="button-small">Block domain</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Custom allowed domains</h2>
+        <p class="subtitle">Always let through, even if it's on an enabled blocklist.</p>
+        {% if allowed_domains.is_empty() %}
+        <p class="subtitle">None yet.</p>
+        {% else %}
+        {% for d in allowed_domains %}
+        <div class="checkbox-row" style="display:flex; align-items:center; justify-content:space-between;">
+            <span>{{ d.domain }}</span>
+            <form method="post" action="/dns/domains/{{ d.id }}/delete">
+                <button type="submit" class="button-small button-danger">Remove</button>
+            </form>
+        </div>
+        {% endfor %}
+        {% endif %}
+        <form method="post" action="/dns/domains/new" style="margin-top:12px;">
+            <input type="hidden" name="list_type" value="allow">
+            <input type="text" name="domain" placeholder="e.g. example.com" required>
+            <button type="submit" class="button-small">Allow domain</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Per-device overrides</h2>
+        <p class="subtitle">Turn a feed off for just one kid, or block/allow specific domains only on their device. Everything above is the site-wide default.</p>
+        {% if devices.is_empty() %}
+        <p class="empty-state">No devices yet.</p>
+        {% else %}
+        <label for="device_select">Device</label>
+        <select id="device_select" onchange="if (this.value) location.href='/dns?device=' + this.value; else location.href='/dns';" style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
+            <option value="">Choose a device&hellip;</option>
+            {% for d in devices %}
+            <option value="{{ d.id }}" {% if d.id == selected_id %}selected{% endif %}>{{ d.name }}</option>
+            {% endfor %}
+        </select>
+
+        {% if let Some(device) = selected %}
+        <div style="margin-top:16px;">
+            <h3 style="margin-bottom:8px;">Blocklists for {{ device.name }}</h3>
+            {% for row in device_blocklist_rows %}
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
+                <form method="post" action="/dns/devices/{{ device.id }}/blocklists/{{ row.blocklist.id }}/override" style="flex:1;">
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="enabled" value="on" {% if row.effective_enabled %}checked{% endif %} onchange="this.form.submit()">
+                        {{ row.blocklist.name }}
+                        {% if row.is_override %}<span class="subtitle">(overridden)</span>{% endif %}
+                    </label>
+                </form>
+                {% if row.is_override %}
+                <form method="post" action="/dns/devices/{{ device.id }}/blocklists/{{ row.blocklist.id }}/override">
+                    <input type="hidden" name="clear" value="1">
+                    <button type="submit" class="button-small button-secondary">Use default</button>
+                </form>
+                {% endif %}
+            </div>
+            {% endfor %}
+
+            <h3 style="margin:16px 0 8px;">Blocked just on {{ device.name }}</h3>
+            {% if device_blocked_domains.is_empty() %}
+            <p class="subtitle">None yet.</p>
+            {% else %}
+            {% for d in device_blocked_domains %}
+            <div class="checkbox-row" style="display:flex; align-items:center; justify-content:space-between;">
+                <span>{{ d.domain }}</span>
+                <form method="post" action="/dns/domains/{{ d.id }}/delete">
+                    <button type="submit" class="button-small button-danger">Remove</button>
+                </form>
+            </div>
+            {% endfor %}
+            {% endif %}
+            <form method="post" action="/dns/domains/new" style="margin-top:12px;">
+                <input type="hidden" name="list_type" value="block">
+                <input type="hidden" name="device_id" value="{{ device.id }}">
+                <input type="text" name="domain" placeholder="e.g. example.com" required>
+                <button type="submit" class="button-small">Block domain on this device</button>
+            </form>
+
+            <h3 style="margin:16px 0 8px;">Allowed just on {{ device.name }}</h3>
+            {% if device_allowed_domains.is_empty() %}
+            <p class="subtitle">None yet.</p>
+            {% else %}
+            {% for d in device_allowed_domains %}
+            <div class="checkbox-row" style="display:flex; align-items:center; justify-content:space-between;">
+                <span>{{ d.domain }}</span>
+                <form method="post" action="/dns/domains/{{ d.id }}/delete">
+                    <button type="submit" class="button-small button-danger">Remove</button>
+                </form>
+            </div>
+            {% endfor %}
+            {% endif %}
+            <form method="post" action="/dns/domains/new" style="margin-top:12px;">
+                <input type="hidden" name="list_type" value="allow">
+                <input type="hidden" name="device_id" value="{{ device.id }}">
+                <input type="text" name="domain" placeholder="e.g. example.com" required>
+                <button type="submit" class="button-small">Allow domain on this device</button>
+            </form>
+
+            <p style="margin-top:16px;"><a href="/dns/log?device={{ device.id }}">See what's been blocked on {{ device.name }} &rarr;</a></p>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+
+</main>
+</body>
+</html>

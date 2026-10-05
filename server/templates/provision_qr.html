@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% include "partials/app_header.html" %}
+<main class="container container-narrow">
+    <div class="page-header">
+        <h1>Provision {{ device.name }}</h1>
+    </div>
+    <p class="subtitle">This QR code carries a fresh one-shot enrollment code for this device, plus your server URL and Tailscale key from <a href="/settings/provisioning">Provisioning settings</a> - scanning it does setup and enrollment in one step. It goes stale the moment you leave this page or generate another one, same as a plain enrollment code.</p>
+
+    {% if missing_checksum %}
+    <div class="card" style="border-color:#dc2626;">
+        <p><strong>Launcher signing checksum not configured (see DEPLOY.md).</strong> Without it, Android can't check that the launcher it downloads is your own build, so no QR code is shown. Set <code>LAUNCHER_SIGNATURE_CHECKSUM</code> in <code>/opt/kid-phone-server/.env</code> and restart the server.</p>
+    </div>
+    {% endif %}
+
+    {% if missing_server_url %}
+    <div class="card" style="border-color:#dc2626;">
+        <p><strong>No server URL configured yet.</strong> Set one on the <a href="/settings/provisioning">Provisioning settings</a> page first, or this QR code won't be able to auto-enroll the device - you'd still need to type it in by hand afterward.</p>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <h2>Two ways to scan it</h2>
+        <ol>
+            <li><strong>Stock Android / most custom ROMs (not GrapheneOS):</strong> factory reset (or use a device fresh out of the box), tap the same spot on the Welcome screen 6 times, then scan. Setup downloads and installs the launcher, sets it as device owner, and applies the server URL/Tailscale key/enrollment code automatically - no other steps.</li>
+            <li><strong>GrapheneOS, or anywhere the flow above isn't available:</strong> set up the device and grant Device Owner via <code>adb shell dpm set-device-owner</code> as usual, then open the launcher's Settings and use "Scan setup QR" - same code, same result, just triggered from inside the app instead of Android's own setup wizard.</li>
+        </ol>
+    </div>
+
+    <div class="card">
+        <h2>WiFi (optional, native flow only)</h2>
+        <p class="subtitle">Only used by the stock-Android zero-touch flow, to join a network before the launcher downloads. Ignored by the in-app scanner, since the device is already online by that point.</p>
+        <form method="get" action="/devices/{{ device.id }}/provision">
+            <label for="wifi_ssid">Network name (SSID)</label>
+            <input type="text" id="wifi_ssid" name="wifi_ssid" value="{{ wifi_ssid }}" autocomplete="off">
+
+            <label for="wifi_password">Password</label>
+            <input type="text" id="wifi_password" name="wifi_password" autocomplete="off">
+
+            <button type="submit">Regenerate QR code</button>
+        </form>
+    </div>
+
+    {% if !missing_checksum %}
+    <div class="card">
+        <h2>Scan this</h2>
+        <div class="qr-code">{{ qr_svg|safe }}</div>
+    </div>
+    {% endif %}
+</main>
+</body>
+</html>
