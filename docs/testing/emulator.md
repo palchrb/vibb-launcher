@@ -7,15 +7,15 @@ a debug APK on the real phone.
 ## 1. Build (on the VM)
 
 ```sh
-cd ~/repos/handy/kids-launcher-mdm && git checkout handy
-./gradlew assembleDebug            # -> app/build/outputs/apk/debug/app-debug.apk
-cd ../kid-phone-server && git checkout handy && cargo build
+cd ~/repos/handy && git checkout master   # one repo: launcher/ and server/
+cd launcher && ./gradlew assembleDebug   # -> launcher/app/build/outputs/apk/debug/app-debug.apk
+cd ../server && cargo build
 ```
 
 ## 2. Server (on the VM)
 
 ```sh
-cd ~/repos/handy/kid-phone-server
+cd ~/repos/handy/server
 ADMIN_PASSWORD='change-me' BIND_ADDR=0.0.0.0:3100 INSECURE_COOKIES=true cargo run
 ```
 
@@ -36,7 +36,7 @@ In the PWA, **before** enrolling the phone:
 
 ```sh
 P=com.kidslauncher.mdm.debug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r ~/repos/handy/launcher/app/build/outputs/apk/debug/app-debug.apk
 adb shell dpm set-device-owner $P/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
 adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeListenerService

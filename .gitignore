@@ -1,3 +1,4 @@
-# Forks are separate repos cloned alongside the plan
+# The old standalone clones of the two forks, from before they were imported into launcher/ and
+# server/ (2026-10-05). Kept locally for reference only; never edit or commit them.
 /kids-launcher-mdm/
 /kid-phone-server/

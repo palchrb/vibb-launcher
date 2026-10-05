@@ -1,0 +1,52 @@
+# handy (repo `palchrb/vibb-launcher`)
+
+A kid's phone setup: an Android launcher that is also the Device Owner agent, and the self-hosted
+admin server it talks to. One repo since 2026-10-05; both parts were separate forks before and were
+imported with full history (`git subtree`), so old commit hashes in the docs still resolve.
+
+## Layout
+
+- `launcher/` - Android app (Kotlin, Gradle, package `com.kidslauncher.mdm`). Was the
+  `kids-launcher-mdm` fork. Details: `launcher/CLAUDE.md`.
+- `server/` - admin server + device API (Rust/Axum/SQLite). Was the `kid-phone-server` fork.
+  Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md`.
+- `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
+  `kid-phone-server` = `server/`, `L` = `kids-launcher-mdm` = `launcher/`, "branch `handy`" = what is
+  now `master` here. `docs/testing/emulator.md` - the emulator test loop.
+- `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
+  `push-all.sh` (push the current branch).
+- `PLAN.md` - the plan and status.
+- `.github/` - CI for both parts (see below).
+- `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
+  Don't edit them; work in `launcher/` and `server/`.
+
+## Build and test
+
+Server (from `server/`): `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets`.
+
+Launcher (from `launcher/`, JDK 17, `local.properties` with `sdk.dir=...`):
+`./gradlew assembleDebug assembleRelease testDebugUnitTest`. Without `-PrequireTsnet=true` a missing
+`app/libs/tsnet.aar` falls back to a stub.
+
+Shared between the two and checked by tests on both sides: `server/testdata/phone_vectors.json` and
+`launcher/app/src/test/resources/phone_vectors.json` must be identical (server `phone::tests`,
+launcher `PhoneNumbersTest`). The policy JSON shape is pinned on both sides
+(`policy_json_keys_snapshot` / `PolicyResponseCompatTest`). A change to the API goes into both
+directories in the same commit.
+
+## CI and releases
+
+- `.github/workflows/launcher.yml` and `server-ci.yml` build/test only when their own directory or
+  workflow changes (`launcher.yml` also on `.github/actions/build-tsnet/`).
+- `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a master commit -> signed APK
+  release (`kids-launcher-mdm.apk`), versionCode `X*1_000_000 + Y*1_000 + Z` (RC: minus 1). Only
+  stable launcher releases become GitHub's "latest", so
+  `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL.
+- `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a master commit -> aarch64 tarball
+  release, never "latest". The server's update check and `install.sh`/`update.sh` find it by tag.
+
+## Licensing
+
+Everything is GPL-3.0 (or later) - see `LICENSE` and `NOTICE.md`. All new code is GPL-3.0; any
+third-party code or asset brought in must be GPL-compatible (the launcher's app-list code stays MIT,
+`launcher/LICENSE-MIT-UPSTREAM`; Nunito is OFL 1.1).

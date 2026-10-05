@@ -93,23 +93,36 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 
 ## Repos
 
-- Two GitHub forks, kept close to upstream so changes can go back as PRs:
-  `kids-launcher-mdm` (phone) and `kid-phone-server` (home server).
-- One feature branch per change, upstreamable first (calls, hardening,
-  camera/permissions are generally useful); handy-specific bits (Vibb
-  integration, own branding/config) kept small and separate.
-- Features that span both (e.g. call allowlists: server schema + PWA + phone
-  enforcement) land as paired PRs with the same branch name in both forks.
-- This repo (`handy`) holds the plan, setup notes and anything that is
-  neither launcher nor server.
+- One repo since 2026-10-05: `palchrb/vibb-launcher` (this one, local dir
+  `handy`). `launcher/` is the phone app (was the `kids-launcher-mdm` fork,
+  branch `handy`) and `server/` the home server (was the `kid-phone-server`
+  fork, branch `handy`), both imported with full history (`git subtree`).
+  `docs/`, `scripts/` and this plan sit at the root. Features that span both
+  land in one commit/PR.
+- CI is at the root (`.github/workflows/`): `launcher.yml` and
+  `server-ci.yml` run only when their own directory (or workflow) changes.
+  Releases: tag `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease)
+  for the signed APK, `server-vX.Y.Z` (must match `server/Cargo.toml`) for
+  the Pi tarball. Only stable launcher releases become GitHub's "latest"
+  (the provisioning QR's APK URL); the server's update check and
+  install/update scripts look up `server-v*` releases by tag.
+- Upstream (`siesta5787/kids-launcher-mdm`, `siesta5787/kid-phone-server`)
+  is still worth following. For an occasional cherry-pick, add it as a
+  remote and pick into the matching subdirectory, e.g.
+  `git remote add upstream-launcher https://github.com/siesta5787/kids-launcher-mdm`,
+  `git fetch upstream-launcher`, then
+  `git cherry-pick -Xsubtree=launcher <sha>` (or
+  `git subtree pull --prefix=launcher upstream-launcher <branch>` to merge a
+  whole branch). Changes worth offering back go upstream as PRs from a
+  separate clone of the upstream repo.
 - Talk to upstream early (issue in each repo) about calls/SMS support before
   building it, so the design fits what they would merge.
 
 ## Architecture
 
-- **Home server** (fork of kid-phone-server): defines all rules, serves the
+- **Home server** (`server/`, fork of kid-phone-server): defines all rules, serves the
   parent PWA, reachable over Tailscale. Runs on a Pi or similar.
-- **Phone** (fork of kids-launcher-mdm): subscribes to the server (SSE nudge
+- **Phone** (`launcher/`, fork of kids-launcher-mdm): subscribes to the server (SSE nudge
   today; ntfy/UnifiedPush is an option) and fetches policy on a nudge or on
   the periodic sync. The phone does not serve anything.
 - **Principles**:
@@ -130,7 +143,7 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 
 ## Status (2026-10-05)
 
-Done in code (branch `handy` in both forks, QA-reviewed): own build and release
+Done in code (`launcher/` and `server/`, QA-reviewed): own build and release
 signing, fail-closed policy, calls/phone book/message buttons, direct boot,
 hardening. Not frozen: remaining features continue in parallel with device
 testing on the Jelly Star. Not built yet: full Tailscale (design in

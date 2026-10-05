@@ -46,7 +46,7 @@ its original [MIT terms][license-mit] as required. Everything else - the parenta
 system, the home screen, and the overall app - is original to this project.
 
 ---
-  [server-repo]: https://github.com/siesta5787/kid-phone-server
+  [server-repo]: ../server
   [original-repo]: https://github.com/finnmglas/Launcher
   [ulauncher-repo]: https://github.com/jrpie/launcher
 

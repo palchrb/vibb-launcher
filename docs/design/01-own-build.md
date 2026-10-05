@@ -3,6 +3,10 @@
 Status: design, 2026-10-04. Scope: PLAN phase 0 (fork plumbing) and phase 1 (fail closed, the minimum part).
 Forks: `L` = `kids-launcher-mdm` @ `build-without-tsnet` (4bec459), `S` = `kid-phone-server` @ `test-harness` (a14b40f).
 Launcher Kotlin paths are relative to `app/src/main/java/com/kidslauncher/mdm/`.
+
+Since 2026-10-05 both forks live in one repo, `palchrb/vibb-launcher` (`L` = `launcher/`, `S` = `server/`),
+and releases are tagged `launcher-vX.Y.Z` / `server-vX.Y.Z`. The URLs and tags below are the pre-monorepo ones;
+the current values are in `server/DEPLOY.md` and the root `CLAUDE.md`.
 Tags: **[verified]** = checked in code, AOSP source or docs during this design. **[device]** = needs a test on the Jelly Star.
 
 Package/applicationId stays `com.kidslauncher.mdm` (user decision). Release builds use exactly that id. Debug builds keep the
