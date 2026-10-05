@@ -351,12 +351,17 @@ QR provisioning is not the path. It failed on a GMS Moto (S `CLAUDE.md:67`), and
    - Stop the server (or `sqlite3 kidphone.db "DELETE FROM device_policy WHERE device_id=N"` on a test server), then
      "Sync now". The toast says failure, and the apps stay suspended and kiosk stays on.
    - Restore the row.
-10. Leave USB debugging on during the test phase. Turning it off and setting `DISALLOW_DEBUGGING_FEATURES` is PLAN
-    phase 2, after a tested recovery path.
+10. Leave USB debugging on during the test phase. Since step 4 the server blocks it by default
+    (`DISALLOW_DEBUGGING_FEATURES`): before step 7 (enrolling), turn **"Block USB debugging" off** on the device page
+    and grant `adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION com.kidslauncher.mdm`; turn the
+    switch back on at handover. Deploy order for an update: server first (migration 0023), set the switches and a PIN,
+    then the launcher - a launcher on an older server applies the defaults (adb blocked). See 04-hardening.md
+    "Runbook".
 
 Recovery if the launcher boot-loops: `adb shell dpm remove-active-admin` does not work for a DO.
 `adb uninstall` is blocked for a DO. The path is to install a fixed APK over it with `adb install -r` (same key), or a
-factory reset from recovery.
+factory reset from recovery. With "Block USB debugging" on (the step-4 default) adb is gone, so a launcher that can't
+sync means the recovery reset; safe mode repairs nothing (restrictions persist there). See 04-hardening.md "Runbook".
 
 ## 5. Ordered tasks
 

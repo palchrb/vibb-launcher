@@ -31,10 +31,10 @@ Already set (unchanged): `CONFIG_DATE_TIME` + auto time, `CONFIG_PRIVATE_DNS`, `
 - **Debugging on by default** as asked; adb was upstream's recovery path for the boot-loop/BFU incidents. With it on,
   a crash-looping launcher can't sync the switch off, so recovery is a recovery-mode wipe + re-provisioning. Turn it
   off on the device page before any device test that needs adb (all of the 02/qa checklists do).
-- **Safe boot off by default (decision).** Safe mode disables the launcher (bypass vector #1), but it is also the
-  only way past a launcher that crashes before rendering when adb is off. Only safe with a launcher build proven on
-  the Jelly Star; until then vector #1 stays open (suspension and restrictions persist in safe mode).
-- `DISALLOW_CONFIG_VPN` is set after `setAlwaysOnVpnPackage`; `KidVpnService` restarting with it set is a device check.
+- **Safe boot off by default (decision, corrected after QA #6).** Safe mode disables the launcher (bypass vector #1).
+  It is **not** a repair path: restrictions, suspension, blocked adb/factory reset and unknown sources all persist
+  there - it only gives a usable phone without the launcher. Kept off only until device check 6 passes on the Jelly
+  Star (untested OEM behaviour); then it can default on. Parent recovery paths: see the runbook below.
 
 **2. Launcher Settings never open without the PIN (L, QA #12, qa-security #5).** Pure `settingsAccess(policyEverApplied,
 pinConfigured, lockedOut)`: OPEN only before any policy was applied (setup: server URL, enroll, scan QR); otherwise
@@ -62,8 +62,24 @@ the calls switches: a missing checkbox is off) with the adb/safe-boot risks spel
 its cache; app checkboxes can't be trusted) - QA #11 server half. Tests via `TestApp` (defaults, explicit values in
 the policy, form round trip, corrupt-allowlist warning).
 
-Not in this step: `DISALLOW_USER_SWITCH`, a warning when Android Settings is allowlisted (QA #12 bootstrap part),
-accessibility/IME allowlists, CI notes #9/#10 (GitHub settings, left for the user).
+Not in this step: `DISALLOW_USER_SWITCH`, a warning for allowlisted Android Settings, CI notes #9/#10 (GitHub).
+
+## Runbook: deploy order and recovery (after QA step 4 #4/#5/#6)
+
+1. **Server first.** Update the server (migration `0023` runs; existing devices get the defaults, i.e. USB debugging
+   blocked). Before the new launcher reaches any phone, set the switches: on test phones turn **"Block USB debugging"
+   off** for as long as adb work is planned (all device checklists use adb). A launcher on a pre-0023 server gets no
+   `hardening` and applies the defaults, which only the server (or unmanaging) can lift - never update the launcher
+   first. Set an unlock code (PIN) on every managed phone: without one the device page warns, the launcher's Settings
+   don't open and there is no offline override.
+2. **New phone:** create the device on the server, turn "Block USB debugging" off if adb work follows, grant
+   `ROLE_CALL_REDIRECTION` with adb (01 §4 runbook) **before enrolling**, then enrol. Turn the switch back on at
+   handover.
+3. **Recovery** when the phone misbehaves: (a) phone still syncs → fix on the server: push a fixed launcher (catalog
+   row, self-update), or switch "Block USB debugging" off and repair with `adb install -r` (higher versionCode);
+   (b) server unreachable → the offline PIN lifts app restrictions and the schedule for 2 h (not calls/hardening) and
+   opens the launcher's Settings to re-point the server URL; (c) launcher crash-loops before it can sync and adb is
+   blocked → recovery-mode factory reset and re-provisioning (01 §4). Safe mode repairs nothing.
 
 ## Implementation status (2026-10-05)
 
@@ -93,10 +109,28 @@ Choices made where the brief left room:
 - Settings counts as "managed" once `policy_ever_applied` is set or a policy is cached; an enrolled phone that never
   got a policy keeps Settings open (it is unrestricted then anyway).
 
+Fix round after `qa-step4-code.md` (S `f035f8e`, `068af82`; L `597dd06`, `c3267fc`, `b0750d3`, `2a28f9f`):
+- #1 LockActivity always shows "Emergency call" (confirm → self-grant CALL_PHONE → Telecom 112, fallback: system
+  dialer with 112 typed in), whatever the call state.
+- #2 the lock suspends allowed apps without hiding them (`EnforcementPlan.hide` = only apps not allowed at all); the
+  default alarm app (next alarm's creator, else the `SHOW_ALARMS` resolver) isn't suspended by the lock, isn't pinned,
+  and still follows the allowlist.
+- #3 enabled/default input methods are in `neverRestrict` (never suspended or hidden).
+- #4 device-page warning for a managed phone without a PIN; #5/#6 runbook above, safe-mode text corrected (spec, card,
+  CLAUDE.md, code comments; the comment in migration `0023` is left as is - editing it would change its checksum).
+- #7 an allowlisted system dialer stays pinned during the lock while calls are unmanaged.
+- #8 switched-off hardening is cleared at the start of `apply()`; #10 `AppEnforcer.lastEnforcedScheduleLock` makes
+  the minute check re-apply until the lock is really enforced.
+- Test that pre-0023 rows get the defaults (runs the old migrations, inserts, runs the rest).
+- Still open: #9 (corrupt cache + unreadable `LastEnforcedPlan` → hardening defaults, i.e. adb blocked again; rare,
+  and the server warning covers a corrupt server allowlist). Device checks added below (11-13).
+
+Tests after the fix round: server 67, launcher 168.
+
 Open: whether `DISALLOW_CONFIG_VPN` lets the always-on `KidVpnService` restart; whether `setLocationEnabled` works
 with `DISALLOW_CONFIG_LOCATION` set; the schedule edge while the screen is off waits for screen-on (by design, battery).
 
-Device checklist (Jelly Star, release build; in addition to 01/02 checklists and qa-security §4):
+Device checklist (Jelly Star, release build; follow the runbook above first; in addition to 01/02 checklists and qa-security §4):
 1. Before enrolling: grant `ROLE_CALL_REDIRECTION` with adb, or switch "Block USB debugging" off on the device page.
    After the first sync with it on: `adb devices` shows nothing/unauthorized, Developer options is blocked; switching
    it off on the server brings adb back after a sync.
@@ -111,10 +145,16 @@ Device checklist (Jelly Star, release build; in addition to 01/02 checklists and
    key combo boots normally. Off again afterwards unless the build is trusted.
 7. Bedtime starts while inside an allowed app: within a minute (screen on) the app is closed as "paused" and
    LockActivity shows; Recents and a notification tap don't open any app; a new install during bedtime stays suspended.
-8. During bedtime: Phone book button calls an allowed contact; an allowed contact's incoming call rings and the in-call
+8. During bedtime: "Emergency call" on LockActivity reaches 112 (test mode) with calls unmanaged, managed, and with a
+   swipe/None screen lock; Phone book button calls an allowed contact; an allowed contact's incoming call rings and the in-call
    screen works (also with LockActivity up); 112 from the lock screen's Emergency button connects (test mode, not 112).
 9. Bedtime ends with the screen off: on screen-on apps are back within a minute; with the override PIN apps come back
    at once and re-lock after 2 h / on sync.
 10. Launcher Settings: managed phone without a server PIN → toast, no Settings; with a PIN: drawer, App info →
     "Additional settings" (`APPLICATION_PREFERENCES`) and `am start -n …/.ui.settings.SettingsActivity` all ask; open
     Settings, press Home, return via Recents → asks again, and the Recents thumbnail shows nothing.
+11. An alarm set for inside bedtime rings and can be dismissed; the clock app's widgets/alarms survive a night (it is
+    suspended at most, never hidden, by the lock).
+12. With the keyboard app having a launcher icon (check `pm list packages` + drawer), the unlock-code dialog and the
+    Settings PIN gate take input during bedtime.
+13. Calls unmanaged with the system dialer allowlisted, kiosk on, bedtime: an incoming call shows the system in-call UI.
