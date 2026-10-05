@@ -63,7 +63,7 @@ import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.gridColumns
 import com.kidslauncher.mdm.ui.home.homeGrid
 import com.kidslauncher.mdm.ui.home.showPhoneBookTile
-import com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity
+import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -199,7 +199,7 @@ class HomeActivity : UIObjectActivity() {
                     abs(velocityX) > SWIPE_LEFT_MIN_VELOCITY &&
                     !(startedInContactsRow(e1) && binding.homeContactsScroll.canScrollHorizontally(1))
                 ) {
-                    startActivity(Intent(this@HomeActivity, QuickControlsActivity::class.java))
+                    startActivity(Intent(this@HomeActivity, KidSettingsActivity::class.java))
                     return true
                 }
                 return false

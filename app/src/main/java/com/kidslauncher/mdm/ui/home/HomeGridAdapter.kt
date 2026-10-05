@@ -17,7 +17,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.calls.PhoneBookActivity
-import com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity
+import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import com.kidslauncher.mdm.ui.list.apps.showAppContextMenu
 
 /**
@@ -61,7 +61,7 @@ class HomeGridAdapter(private val activity: Activity) : RecyclerView.Adapter<Hom
             view.setOnClickListener { v ->
                 when (val tile = tiles.getOrNull(bindingAdapterPosition)) {
                     GridTile.PhoneBook -> activity.startActivity(PhoneBookActivity.intent(activity))
-                    GridTile.Settings -> activity.startActivity(Intent(activity, QuickControlsActivity::class.java))
+                    GridTile.Settings -> activity.startActivity(Intent(activity, KidSettingsActivity::class.java))
                     is GridTile.App -> {
                         val rect = Rect().also { v.getGlobalVisibleRect(it) }
                         infos[tile.app.key]?.getAction()?.invoke(activity, rect)

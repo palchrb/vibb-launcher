@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
 /*
  * Fail-closed decisions about which policy to enforce - pure functions with no Android imports,
  * so they're unit-tested on the JVM (PolicyGateTest). MdmSyncWorker, AppEnforcer,
- * SettingsFragmentLauncher and QuickControlsActivity feed them the cached policy blob, the fresh
+ * SettingsFragmentLauncher and KidSettingsActivity feed them the cached policy blob, the fresh
  * server response and the `policy_ever_applied` flag, and act on the answer.
  *
  * Upstream treated every "no usable policy" case as `null`, and `AppEnforcer.apply(null)` means

@@ -139,8 +139,9 @@
             android:excludeFromRecents="true"
             android:exported="false" />
         <activity
-            android:name=".ui.quickcontrols.QuickControlsActivity"
+            android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize"
+            android:excludeFromRecents="true"
             android:exported="false" />
         <activity
             android:name=".ui.quickcontrols.WifiNetworksActivity"

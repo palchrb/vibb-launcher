@@ -16,7 +16,7 @@ import kotlinx.serialization.Serializable
  * - both null means no PIN is configured for this device.
  * [quickControlsMask] is the raw bitmask for which switches show up on the launcher's
  * swipe-left-from-home "Quick Controls" screen (1 = WiFi, 2 = Bluetooth, 4 = brightness) - see
- * [com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity].
+ * [com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity].
  * [pendingCommand] is Find My Device's remote-command queue (ring/lock/wipe) - see
  * [com.kidslauncher.mdm.server.LocateCommands] and [MdmSyncWorker]'s dispatch of it.
  * [dnsFilterVersion]/[dnsUpstreamProvider] are the on-device DNS filtering fields - see

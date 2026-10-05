@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid's Settings (design 08-ui-polish.md §2, mockup KidSettings.dc.html): the wallpaper as
+     ground, back button + title, the parent's wallpapers to pick from, then "Connection and
+     screen" with the switches the parent turned on. Nothing here changes a rule. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/kid_settings_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true"
+    tools:context=".ui.kidsettings.KidSettingsActivity">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/kid_settings_back"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="-2dp"
+                android:background="@drawable/bg_kid_back_button"
+                android:contentDescription="@string/kid_back_home"
+                android:padding="13dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_kid_back" />
+
+            <TextView
+                android:id="@+id/kid_settings_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:accessibilityHeading="true"
+                android:fontFamily="@font/nunito_extrabold"
+                android:text="@string/kid_settings_title"
+                android:textColor="@color/kid_ink"
+                android:textSize="24sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/kid_settings_wallpaper_section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/kid_settings_wallpaper_heading"
+                style="@style/KidSettingsHeading"
+                android:text="@string/kid_settings_background" />
+
+            <LinearLayout
+                android:id="@+id/kid_settings_wallpapers"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical" />
+
+            <TextView
+                android:id="@+id/kid_settings_wallpaper_caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:alpha="0.7"
+                android:fontFamily="@font/nunito_bold"
+                android:text="@string/kid_settings_background_caption"
+                android:textColor="@color/kid_ink"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/kid_settings_controls_heading"
+            style="@style/KidSettingsHeading"
+            android:layout_marginTop="14dp"
+            android:text="@string/kid_settings_connection" />
+
+        <TextView
+            android:id="@+id/kid_settings_controls_message"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fontFamily="@font/nunito_bold"
+            android:textColor="@color/kid_ink"
+            android:alpha="0.85"
+            android:textSize="15sp"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/kid_settings_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_kid_card"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/kid_settings_wifi_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/kid_settings_wifi_switch"
+                    style="@style/KidSwitchRow"
+                    android:text="@string/quick_controls_wifi" />
+
+                <TextView
+                    android:id="@+id/kid_settings_wifi_manage"
+                    style="@style/KidManageLink"
+                    android:text="@string/quick_controls_manage_networks" />
+
+                <View style="@style/KidDivider" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/kid_settings_bluetooth_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/kid_settings_bluetooth_switch"
+                    style="@style/KidSwitchRow"
+                    android:text="@string/quick_controls_bluetooth" />
+
+                <TextView
+                    android:id="@+id/kid_settings_bluetooth_manage"
+                    style="@style/KidManageLink"
+                    android:text="@string/quick_controls_manage_devices" />
+
+                <View style="@style/KidDivider" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/kid_settings_brightness_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:minHeight="60dp"
+                android:orientation="vertical"
+                android:paddingStart="14dp"
+                android:paddingTop="8dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="8dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/kid_settings_brightness_label"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/nunito_bold"
+                    android:labelFor="@id/kid_settings_brightness_seekbar"
+                    android:text="@string/quick_controls_brightness"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="16sp" />
+
+                <SeekBar
+                    android:id="@+id/kid_settings_brightness_seekbar"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:contentDescription="@string/quick_controls_brightness"
+                    android:max="255"
+                    android:minHeight="48dp"
+                    android:paddingStart="0dp"
+                    android:paddingEnd="0dp"
+                    android:progressBackgroundTint="#66FFFFFF"
+                    android:progressTint="@color/kid_slider"
+                    android:thumbTint="@color/kid_slider" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

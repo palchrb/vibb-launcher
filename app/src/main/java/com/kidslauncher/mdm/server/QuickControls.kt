@@ -18,7 +18,7 @@ private const val LOG_TAG = "QuickControls"
 
 /**
  * Bits for [com.kidslauncher.mdm.server.dto.PolicyResponse.quickControlsMask] - which switches
- * show up on [com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity], the launcher's
+ * show up on [com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity], the launcher's
  * swipe-left-from-home replacement for Android's native Quick Settings shade. Must match the
  * server's `QUICK_CONTROL_*` constants in `handlers/devices.rs`.
  */

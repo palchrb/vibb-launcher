@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Round back button: a 44 dp circle (white 12 %) inside a 48 dp touch target (QA 08 #13). -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="2dp">
+    <ripple android:color="#33FFFFFF">
+        <item>
+            <shape android:shape="oval">
+                <solid android:color="@color/kid_back_button" />
+            </shape>
+        </item>
+    </ripple>
+</inset>

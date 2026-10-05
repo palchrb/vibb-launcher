@@ -188,6 +188,56 @@
         <item name="android:textSize">18sp</item>
     </style>
 
+    <!-- The kid's Settings (design 08-ui-polish.md, mockup KidSettings.dc.html). -->
+    <style name="KidSettingsHeading">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:accessibilityHeading">true</item>
+        <item name="android:alpha">0.85</item>
+        <item name="android:fontFamily">@font/nunito_extrabold</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <!-- A whole row is the switch: its text is the label TalkBack reads with the state. -->
+    <style name="KidSwitchRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">52dp</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:fontFamily">@font/nunito_bold</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:thumb">@drawable/kid_switch_thumb</item>
+        <item name="track">@drawable/kid_switch_track</item>
+        <item name="thumbTint">@null</item>
+        <item name="trackTint">@null</item>
+        <item name="switchMinWidth">46dp</item>
+        <item name="showText">false</item>
+    </style>
+
+    <style name="KidManageLink">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginStart">4dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:fontFamily">@font/nunito_bold</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
+        <item name="android:textColor">@color/kid_slider</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <style name="KidDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/kid_divider</item>
+    </style>
+
     <!-- The contact sheet: a dialog at the bottom, dimmed behind, slides up. -->
     <style name="KidSheetDialog" parent="Theme.AppCompat.Dialog">
         <item name="android:windowBackground">@android:color/transparent</item>

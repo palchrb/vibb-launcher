@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The "Connection and screen" card (mockup KidSettings): white 8 %, radius 16. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#14FFFFFF" />
+    <corners android:radius="16dp" />
+</shape>

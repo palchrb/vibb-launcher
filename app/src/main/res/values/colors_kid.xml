@@ -19,4 +19,7 @@
     <color name="kid_emergency">#E03131</color>
     <color name="kid_icon_fallback">#F1F3F5</color>
     <color name="kid_settings_tile">#868E96</color>
+    <color name="kid_switch_on">#2B8A3E</color>
+    <color name="kid_slider">#4DABF7</color>
+    <color name="kid_divider">#1AFFFFFF</color>
 </resources>
