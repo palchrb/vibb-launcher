@@ -59,6 +59,12 @@ interface MdmApi {
     @GET("api/devices/dns-blocklist")
     suspend fun getDnsBlocklist(): Response<List<DnsBlocklistCategory>>
 
+    /** A contact photo by its hash (`call_policy` contact `photo`) - only for this device's own
+     * contacts; see [com.kidslauncher.mdm.calls.ContactPhotos]. */
+    @Streaming
+    @GET("api/devices/contact-photos/{hash}")
+    suspend fun getContactPhoto(@Path("hash") hash: String): Response<ResponseBody>
+
     @POST("api/devices/dns-events")
     suspend fun sendDnsEvents(@Body events: List<DnsEventReport>): Response<Unit>
 

@@ -3,22 +3,44 @@ package com.kidslauncher.mdm.ui
 import android.app.ActivityManager
 import android.content.Intent
 import android.content.SharedPreferences
+import android.database.ContentObserver
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.CallLog
+import android.text.format.DateFormat
 import android.view.GestureDetector
+import android.view.LayoutInflater
 import android.view.MotionEvent
+import android.view.View
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
-import androidx.recyclerview.widget.ConcatAdapter
-import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.lifecycle.Observer
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import android.app.role.RoleManager
+import com.kidslauncher.mdm.Application
+import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
+import com.kidslauncher.mdm.apps.AppFilter
+import com.kidslauncher.mdm.apps.AppInfo
+import com.kidslauncher.mdm.badges.BadgeStore
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallPrefs
 import com.kidslauncher.mdm.calls.CallSystem
+import com.kidslauncher.mdm.calls.ContactPhotos
+import com.kidslauncher.mdm.calls.ContactSheet
+import com.kidslauncher.mdm.calls.MissedCallsRepo
+import com.kidslauncher.mdm.calls.MissedSummary
+import com.kidslauncher.mdm.calls.RuleContact
+import com.kidslauncher.mdm.calls.phoneBookView
 import com.kidslauncher.mdm.calls.shouldPromptForRole
 import com.kidslauncher.mdm.databinding.ActivityHomeBinding
+import com.kidslauncher.mdm.server.CachedPolicy
+import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.TsnetClient
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
@@ -26,12 +48,16 @@ import com.kidslauncher.mdm.openAppsList
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.requestNotificationPermission
 import com.kidslauncher.mdm.setDefaultHomeScreen
-import com.kidslauncher.mdm.ui.minimalist.ContactsHomeAdapter
-import com.kidslauncher.mdm.ui.minimalist.MinimalistHomeAdapter
+import com.kidslauncher.mdm.ui.home.GridApp
+import com.kidslauncher.mdm.ui.home.HomeGridAdapter
+import com.kidslauncher.mdm.ui.home.KidAvatars
+import com.kidslauncher.mdm.ui.home.gridColumns
+import com.kidslauncher.mdm.ui.home.homeGrid
 import com.kidslauncher.mdm.ui.quickcontrols.QuickControlsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 private const val SWIPE_UP_MIN_DISTANCE = 100
@@ -41,15 +67,28 @@ private const val SWIPE_LEFT_MIN_VELOCITY = 100
 private const val LOCK_REASON_REFRESH_INTERVAL_MS = 60_000L
 
 /**
- * [HomeActivity] is the actual application launcher.
- * It shows a fixed list of chosen apps; swiping up opens the full app drawer.
+ * [HomeActivity] is the actual application launcher (design 05-ui-photos-i18n.md, mockup
+ * Main.dc.html): clock and date, the parent's Home contacts as big round call buttons with
+ * missed-call badges, then a grid with the phone book and every app the kid may use (the same
+ * [AppFilter] as the drawer) with unread badges. Swiping up still opens the drawer (nothing more
+ * than the grid, plus the PIN-gated Settings); swiping left opens Quick Controls. The lock screen,
+ * kiosk and role checks in [onResume] run exactly as before the redesign.
  */
 class HomeActivity : UIObjectActivity() {
 
     private lateinit var binding: ActivityHomeBinding
-    private lateinit var minimalistAdapter: MinimalistHomeAdapter
-    private lateinit var contactsAdapter: ContactsHomeAdapter
+    private lateinit var gridAdapter: HomeGridAdapter
+    private lateinit var gridLayout: GridLayoutManager
     private lateinit var gestureDetector: GestureDetector
+
+    private val apps by lazy { (applicationContext as Application).apps }
+    private val appsObserver = Observer<List<AbstractDetailedAppInfo>> { render() }
+    private val badgeListener: () -> Unit = { render() }
+    private val photoListener: () -> Unit = { render() }
+    private var missed: Map<String, MissedSummary> = emptyMap()
+    private val callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = loadMissedCalls()
+    }
 
     private var sharedPreferencesListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, prefKey ->
@@ -60,15 +99,14 @@ class HomeActivity : UIObjectActivity() {
             } else if (prefKey == LauncherPreferences.mdm().keys().kioskEnabled()) {
                 reconcileKioskMode()
             } else if (prefKey == LauncherPreferences.mdm().keys().kidModePolicy()) {
-                // A new policy may change the contacts; the sync refreshes the store too, but
-                // this listener can run before it does.
+                // A new policy may change the contacts or the columns; the sync refreshes the
+                // store too, but this listener can run before it does.
                 CallPolicyStore.refresh(this)
-                contactsAdapter.update()
+                render()
+                loadMissedCalls()
             } else {
-                // covers minimalist. (added/removed), apps.hidden (hidden while shown here)
-                // and apps.custom_names (renamed) - all of which can change via the
-                // home screen's own long-press menu.
-                minimalistAdapter.updateAppsList()
+                // apps.hidden (hidden from the long-press menu) and apps.custom_names (renamed).
+                render()
             }
         }
 
@@ -91,10 +129,19 @@ class HomeActivity : UIObjectActivity() {
         binding = ActivityHomeBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        minimalistAdapter = MinimalistHomeAdapter(this)
-        contactsAdapter = ContactsHomeAdapter(this)
-        binding.homeMinimalistList.layoutManager = LinearLayoutManager(this)
-        binding.homeMinimalistList.adapter = ConcatAdapter(contactsAdapter, minimalistAdapter)
+        val locale = resources.configuration.locales[0]
+        binding.homeClock.format12Hour = "h:mm"
+        binding.homeClock.format24Hour = "H:mm"
+        DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM").let {
+            binding.homeDate.format12Hour = it
+            binding.homeDate.format24Hour = it
+        }
+
+        gridAdapter = HomeGridAdapter(this)
+        gridLayout = GridLayoutManager(this, gridColumns(null))
+        binding.homeGrid.layoutManager = gridLayout
+        binding.homeGrid.adapter = gridAdapter
+        apps.observeForever(appsObserver)
 
         // Back does nothing on the home screen, same as stock Android launchers.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -111,11 +158,15 @@ class HomeActivity : UIObjectActivity() {
                 if (e1 == null) return false
                 val diffY = e2.y - e1.y
                 val diffX = e2.x - e1.x
+                // Only once the grid can't scroll further down, so scrolling a long grid
+                // doesn't open the drawer. The drawer shows the same apps as the grid (same
+                // AppFilter), plus the PIN-gated Settings button.
                 if (abs(diffY) > abs(diffX) &&
                     -diffY > SWIPE_UP_MIN_DISTANCE &&
-                    abs(velocityY) > SWIPE_UP_MIN_VELOCITY
+                    abs(velocityY) > SWIPE_UP_MIN_VELOCITY &&
+                    !binding.homeGrid.canScrollVertically(1)
                 ) {
-                    openAppsList(this@HomeActivity, excludePinned = true)
+                    openAppsList(this@HomeActivity)
                     return true
                 }
                 // The kid-facing replacement for Android's Quick Settings shade - see
@@ -134,16 +185,15 @@ class HomeActivity : UIObjectActivity() {
 
         // The Activity-level onTouchEvent() below only ever sees touches nobody else claimed -
         // it's a last resort, called only if the whole view hierarchy declines an event. The
-        // minimalist list's row items are match_parent-width and clickable, so a swipe starting
-        // on top of one (as opposed to the blank space above/below the short, wrap_content-height
-        // list - see activity_home.xml) gets consumed entirely by that row's own click handling
+        // grid's tiles are clickable, so a swipe starting on top of one (as opposed to the blank
+        // space around them) gets consumed entirely by that tile's own click handling
         // and never reaches onTouchEvent() at all. RecyclerView.OnItemTouchListener is the
         // official hook for exactly this: it's invoked for every event that flows through the
         // RecyclerView, before it's dispatched to a child row. Always returning false here means
         // it's purely observing (not stealing the gesture from clicks/scrolling) - a real drag
         // already exceeds the framework's own touch-slop threshold, which independently cancels a
         // pending click on the row without any help from this listener.
-        binding.homeMinimalistList.addOnItemTouchListener(object : RecyclerView.OnItemTouchListener {
+        binding.homeGrid.addOnItemTouchListener(object : RecyclerView.OnItemTouchListener {
             override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
                 gestureDetector.onTouchEvent(e)
                 return false
@@ -153,6 +203,11 @@ class HomeActivity : UIObjectActivity() {
 
             override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {}
         })
+        // Same for the Home contacts row: observe only, the buttons keep their clicks.
+        binding.homeContactsScroll.setOnTouchListener { _, event ->
+            gestureDetector.onTouchEvent(event)
+            false
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -174,6 +229,13 @@ class HomeActivity : UIObjectActivity() {
         LauncherPreferences.getSharedPreferences()
             .registerOnSharedPreferenceChangeListener(sharedPreferencesListener)
         refreshHandler.post(refreshRunnable)
+        BadgeStore.addListener(badgeListener)
+        ContactPhotos.addListener(photoListener)
+        try {
+            contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callLogObserver)
+        } catch (e: SecurityException) {
+            // No READ_CALL_LOG (calls not managed): no missed-call badges.
+        }
     }
 
     override fun onResume() {
@@ -197,8 +259,8 @@ class HomeActivity : UIObjectActivity() {
         // Checked here (not just via the preference listener) so pressing Home while the lock
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return
-        minimalistAdapter.updateAppsList()
-        contactsAdapter.update()
+        render()
+        loadMissedCalls()
         promptForCallRoleIfNeeded()
     }
 
@@ -261,14 +323,89 @@ class HomeActivity : UIObjectActivity() {
 
     override fun onStop() {
         refreshHandler.removeCallbacks(refreshRunnable)
+        BadgeStore.removeListener(badgeListener)
+        ContactPhotos.removeListener(photoListener)
+        contentResolver.unregisterContentObserver(callLogObserver)
         super.onStop()
     }
 
     override fun onDestroy() {
         LauncherPreferences.getSharedPreferences()
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)
-        minimalistAdapter.destroy()
+        apps.removeObserver(appsObserver)
         super.onDestroy()
+    }
+
+    /** Missed calls per contact, from the call log on a background thread. */
+    private fun loadMissedCalls() {
+        val state = CallPolicyStore.state
+        CoroutineScope(Dispatchers.Main).launch {
+            val result = withContext(Dispatchers.IO) { MissedCallsRepo.summaries(this@HomeActivity, state) }
+            if (result != missed && !isDestroyed) {
+                missed = result
+                render()
+            }
+        }
+    }
+
+    /** Rebuilds the contacts row and the grid from the call rules, apps, badges and photos. */
+    private fun render() {
+        if (!::gridAdapter.isInitialized) return
+        val state = CallPolicyStore.state
+        val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
+        renderContacts(view.home)
+
+        val columns = gridColumns((cachedPolicy() as? CachedPolicy.Ok)?.policy?.launcherUi?.homeColumns)
+        if (gridLayout.spanCount != columns) gridLayout.spanCount = columns
+        val visible = apps.value?.let { AppFilter(this).invoke(it) }.orEmpty()
+            .filter { (it.getRawInfo() as? AppInfo)?.packageName != packageName }
+        val infos = visible.associateBy { it.getRawInfo().serialize() }
+        val gridApps = infos.map { (key, info) ->
+            GridApp(key, info.getCustomLabel(this), (info.getRawInfo() as? AppInfo)?.packageName)
+        }
+        gridAdapter.submit(homeGrid(gridApps, showPhoneBook = !view.isEmpty, badges = BadgeStore.counts), infos)
+    }
+
+    private fun renderContacts(contacts: List<RuleContact>) {
+        val row = binding.homeContacts
+        row.removeAllViews()
+        binding.homeContactsScroll.visibility = if (contacts.isEmpty()) View.GONE else View.VISIBLE
+        val inflater = LayoutInflater.from(this)
+        for (contact in contacts) {
+            val item = inflater.inflate(R.layout.item_kid_contact, row, false)
+            val emergency = CallSystem.isEmergencyOutgoing(this, contact.number)
+            KidAvatars.bindContact(
+                item.findViewById<ImageView>(R.id.contact_photo),
+                item.findViewById<TextView>(R.id.contact_initial),
+                contact, emergency, initialSp = 30f,
+            )
+            item.findViewById<View>(R.id.contact_call_badge).visibility = View.VISIBLE
+            val missedCount = missed[contact.number]?.count ?: 0
+            KidAvatars.bindBadge(item.findViewById(R.id.contact_badge), missedCount)
+            item.findViewById<TextView>(R.id.contact_name).text = contact.name
+            item.contentDescription = if (missedCount > 0) {
+                resources.getQuantityString(R.plurals.call_contact_missed, missedCount, contact.name, missedCount)
+            } else {
+                getString(R.string.call_contact, contact.name)
+            }
+            item.setOnClickListener {
+                // Tapping calls straight away (02 decision); calling back deals with missed calls.
+                MissedCallsRepo.markSeen(this, contact.number)
+                CallSystem.placeCall(this, contact.number)
+                loadMissedCalls()
+            }
+            item.setOnLongClickListener {
+                ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
+                true
+            }
+            item.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                marginStart = KidAvatars.dp(this@HomeActivity, 6f)
+                marginEnd = KidAvatars.dp(this@HomeActivity, 6f)
+            }
+            row.addView(item)
+        }
     }
 
     override fun isHomeScreen(): Boolean {

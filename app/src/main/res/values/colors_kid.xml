@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid-facing home screen, phone book and contact sheet (design 05-ui-photos-i18n.md,
+     mockup "handy launcher skisse"). -->
+<resources>
+    <color name="kid_ground">#14213D</color>
+    <color name="kid_ink">#FFFFFF</color>
+    <color name="kid_ink_dim">#BFFFFFFF</color>
+    <color name="kid_badge">#D9480F</color>
+    <color name="kid_call_badge">#2F9E44</color>
+    <color name="kid_phone_book">#37B24D</color>
+    <color name="kid_back_button">#1FFFFFFF</color>
+    <color name="kid_sheet">#FFFFFF</color>
+    <color name="kid_sheet_ink">#1B1B1F</color>
+    <color name="kid_sheet_muted">#495057</color>
+    <color name="kid_sheet_handle">#CED4DA</color>
+    <color name="kid_missed_text">#C92A2A</color>
+    <color name="kid_call_button">#2B8A3E</color>
+    <color name="kid_message_button">#1864AB</color>
+    <color name="kid_emergency">#E03131</color>
+    <color name="kid_icon_fallback">#F1F3F5</color>
+</resources>

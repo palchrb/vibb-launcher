@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One round tile of the home grid (an app, or the phone book): 60 dp icon, unread badge,
+     13 sp label. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingTop="7dp"
+    android:paddingBottom="7dp">
+
+    <FrameLayout
+        android:layout_width="72dp"
+        android:layout_height="64dp">
+
+        <ImageView
+            android:id="@+id/tile_icon"
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:background="@drawable/bg_kid_circle"
+            android:importantForAccessibility="no"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/tile_badge"
+            style="@style/KidBadge"
+            android:layout_gravity="top|end" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/tile_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:ellipsize="end"
+        android:fontFamily="sans-serif"
+        android:gravity="center"
+        android:maxLines="1"
+        android:paddingStart="2dp"
+        android:paddingEnd="2dp"
+        android:textColor="@color/kid_ink"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+</LinearLayout>

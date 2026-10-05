@@ -104,6 +104,8 @@ fun AbstractDetailedAppInfo.showRenameDialog(context: Context) {
 fun showAppContextMenu(activity: Activity, anchor: View, appInfo: AbstractDetailedAppInfo) {
     val popup = PopupMenu(activity, anchor)
     popup.inflate(R.menu.menu_app)
+    // Home's grid shows every app (design 05), so "add to/remove from home screen" means nothing.
+    popup.menu.findItem(R.id.app_menu_minimalist).isVisible = false
 
     if (LauncherPreferences.apps().hidden()?.contains(appInfo.getRawInfo()) == true) {
         popup.menu.findItem(R.id.app_menu_hidden).setTitle(R.string.list_app_hidden_remove)

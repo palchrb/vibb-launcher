@@ -1,5 +1,8 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.badges.BadgeStore
+import com.kidslauncher.mdm.calls.ContactPhotos
+import com.kidslauncher.mdm.ui.LauncherLocales
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -107,6 +110,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         storeAcceptedPolicy(context, freshPolicy)
         // The call services read the rules from memory, never per call.
         CallPolicyStore.refresh(context)
+        // The parent's language choice; Android persists it (no-op when unchanged).
+        LauncherLocales.apply(context, freshPolicy.launcherUi)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.
@@ -166,6 +171,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 restrictionsPaused = RestrictionsPause.isActive(),
                 capabilities = listOf(CALL_POLICY_CAPABILITY),
                 callState = CallStateReport.build(context),
+                notificationListenerEnabled = BadgeStore.accessGranted(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -174,6 +180,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Status report failed", e)
     }
+
+    // After enforcement and the report: photos are cosmetic and may take a moment to download.
+    if (freshPolicy != null) ContactPhotos.sync(context, api)
 
     checkForTrackedAppUpdates(context, api)
     reportBlockedDnsEvents(context, api)
