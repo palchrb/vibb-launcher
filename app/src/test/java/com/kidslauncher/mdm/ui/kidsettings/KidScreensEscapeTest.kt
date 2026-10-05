@@ -21,13 +21,23 @@ class KidScreensEscapeTest {
         "Intent.createChooser",
         "ACTION_CHANGE_LIVE_WALLPAPER",
         "ACTION_LIVE_WALLPAPER_CHOOSER",
+        // The same as plain strings (qa-08-code.md #7).
+        "\"android.settings.",
+        "\"android.intent.action.SET_WALLPAPER",
+        "\"android.service.wallpaper.",
+        "\"android.intent.action.CHOOSER",
     )
 
     private fun src(path: String) =
         listOf(File("src/main/java/com/kidslauncher/mdm/$path"), File("app/src/main/java/com/kidslauncher/mdm/$path"))
             .first { it.exists() }
 
-    private val guarded = listOf("ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt")
+    /** The kid screens: Home (its Settings tile and swipes), the phone book, kid Settings and
+     * its Wi-Fi/Bluetooth subscreens, and the wallpaper code. */
+    private val guarded = listOf(
+        "ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt",
+        "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt",
+    )
 
     @Test
     fun `kid screens reference no system settings, picker or chooser`() {
@@ -35,7 +45,10 @@ class KidScreensEscapeTest {
             listOf(File("src/main/java/com/kidslauncher/mdm/$path"), File("app/src/main/java/com/kidslauncher/mdm/$path"))
                 .firstOrNull { it.exists() }
         }.flatMap { f -> if (f.isDirectory) f.walk().filter { it.isFile && it.name.endsWith(".kt") }.toList() else listOf(f) }
-        assertTrue("guarded sources found", files.size >= 3)
+        assertTrue("guarded sources found", files.size >= 10)
+        for (name in listOf("HomeActivity.kt", "PhoneBookActivity.kt", "KidSettingsActivity.kt", "HomeGridAdapter.kt")) {
+            assertTrue(name, files.any { it.name == name })
+        }
         for (file in files) {
             // Code only: the doc comments may name what the code must never do.
             val text = file.readText()
