@@ -53,8 +53,8 @@ private const val LOG_TAG = "SettingsFragmentLauncher"
  * real last 4 characters) to recognize the value without displaying the secret itself on a screen
  * anyone glancing at the phone could read.
  */
-private fun maskedSecretSummary(value: String?): String {
-    if (value.isNullOrBlank()) return "Not set"
+private fun maskedSecretSummary(value: String?, notSet: String): String {
+    if (value.isNullOrBlank()) return notSet
     val tail = value.takeLast(4)
     return "••••••••$tail"
 }
@@ -112,7 +112,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         }
 
         val tailscaleAuthKey = findPreference<Preference>(mdm.keys().tailscaleAuthKey())
-        tailscaleAuthKey?.summary = maskedSecretSummary(mdm.tailscaleAuthKey())
+        tailscaleAuthKey?.summary = maskedSecretSummary(mdm.tailscaleAuthKey(), getString(R.string.settings_mdm_not_set))
         tailscaleAuthKey?.setOnPreferenceClickListener {
             showEditTextDialog(
                 requireContext(),
@@ -120,7 +120,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 currentValue = null,
             ) { value ->
                 mdm.tailscaleAuthKey(value)
-                tailscaleAuthKey.summary = maskedSecretSummary(value)
+                tailscaleAuthKey.summary = maskedSecretSummary(value, getString(R.string.settings_mdm_not_set))
             }
             true
         }
@@ -402,7 +402,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     val mdm = LauncherPreferences.mdm()
                     findPreference<Preference>(mdm.keys().serverUrl())?.summary = mdm.serverUrl()
                     findPreference<Preference>(mdm.keys().tailscaleAuthKey())?.summary =
-                        maskedSecretSummary(mdm.tailscaleAuthKey())
+                        maskedSecretSummary(mdm.tailscaleAuthKey(), getString(R.string.settings_mdm_not_set))
                 }.onFailure { e ->
                     Toast.makeText(
                         context,

@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Norsk bokmål. Same keys as values/strings.xml (English default); keep both in step. -->
+<resources>
+    <!-- Home -->
+    <string name="alert_cant_open_title">Kan ikke åpne appen</string>
+    <string name="alert_cant_open_message">Vil du endre innstillingene for den?</string>
+
+    <!-- Lock screen -->
+    <string name="lock_reason_bedtime">Det er leggetid. Telefonen er låst til i morgen tidlig.</string>
+    <string name="lock_reason_screen_time">Skjermtiden er brukt opp for nå.</string>
+    <string name="lock_enter_unlock_code">Skriv inn opplåsingskode</string>
+    <string name="lock_unlock_code_dialog_title">Opplåsingskode</string>
+    <string name="lock_unlock_code_not_configured">Det er ikke satt opp noen opplåsingskode for denne telefonen.</string>
+    <string name="lock_unlock_code_wrong">Feil kode. Prøv igjen.</string>
+
+    <!-- Calls -->
+    <string name="notification_channel_calls">Samtaler</string>
+    <string name="calls_phone_book">Telefonbok</string>
+    <string name="calls_phone_book_empty">Det er ingen å ringe ennå. Nødnumrene (112, 110, 113) virker alltid fra nødknappen på låseskjermen.</string>
+    <string name="calls_off">Samtaler er slått av på denne telefonen. Nødnumrene virker fortsatt.</string>
+    <string name="calls_call">Ring</string>
+    <string name="calls_emergency">Nødsamtale</string>
+    <string name="calls_message">Melding</string>
+    <string name="calls_confirm_title">Ringe %1$s?</string>
+    <string name="calls_cancel">Avbryt</string>
+    <string name="calls_not_allowed">Dette nummeret er ikke tillatt.</string>
+    <string name="calls_could_not_call">Klarte ikke å starte samtalen.</string>
+    <string name="calls_could_not_message">Klarte ikke å åpne meldingsappen.</string>
+    <string name="calls_incoming">Innkommende samtale</string>
+    <string name="calls_dialing">Ringer …</string>
+    <string name="calls_on_hold">Satt på vent</string>
+    <string name="calls_ended">Samtalen er avsluttet</string>
+    <string name="calls_unknown_caller">Ukjent nummer</string>
+    <string name="calls_answer">Svar</string>
+    <string name="calls_decline">Avvis</string>
+    <string name="calls_hang_up">Legg på</string>
+    <string name="calls_speaker">Høyttaler</string>
+    <string name="calls_speaker_on">Høyttaler på</string>
+    <string name="calls_mute">Demp</string>
+    <string name="calls_muted">Dempet</string>
+    <string name="calls_message_opens_in">Melding åpnes i %1$s</string>
+    <string name="call_contact">Ring %1$s</string>
+    <string name="missed_when_today">i dag %1$s</string>
+    <string name="missed_when_yesterday">i går %1$s</string>
+    <string name="missed_when_date">%1$s %2$s</string>
+    <plurals name="missed_calls_at">
+        <item quantity="one">%1$d tapt anrop %2$s</item>
+        <item quantity="other">%1$d tapte anrop %2$s</item>
+    </plurals>
+    <plurals name="contact_missed">
+        <item quantity="one">%1$s, %2$d tapt anrop</item>
+        <item quantity="other">%1$s, %2$d tapte anrop</item>
+    </plurals>
+    <plurals name="call_contact_missed">
+        <item quantity="one">Ring %1$s, %2$d tapt anrop</item>
+        <item quantity="other">Ring %1$s, %2$d tapte anrop</item>
+    </plurals>
+
+    <!-- Home screen -->
+    <plurals name="app_unread">
+        <item quantity="one">%1$s, %2$d ulest</item>
+        <item quantity="other">%1$s, %2$d uleste</item>
+    </plurals>
+    <string name="kid_back_home">Tilbake til hjemskjermen</string>
+    <string name="kid_close">Lukk</string>
+    <string name="badges_listener_label">Varseltall på apper</string>
+
+    <!-- Quick Controls -->
+    <string name="quick_controls_title">Hurtigvalg</string>
+    <string name="quick_controls_wifi">Wi-Fi</string>
+    <string name="quick_controls_bluetooth">Bluetooth</string>
+    <string name="quick_controls_brightness">Lysstyrke</string>
+    <string name="quick_controls_empty">Ingenting er slått på for denne skjermen ennå.</string>
+    <string name="quick_controls_manage_networks">Velg nettverk</string>
+    <string name="quick_controls_manage_devices">Velg enheter</string>
+    <string name="lock_unlock_code_locked_out">For mange feil koder. Prøv igjen om 15 minutter.</string>
+
+    <!-- Wi-Fi networks -->
+    <string name="wifi_networks_title">Wi-Fi-nettverk</string>
+    <string name="wifi_networks_scanning">Søker …</string>
+    <string name="wifi_networks_empty">Fant ingen nettverk. Trykk på Søk for å prøve igjen.</string>
+    <string name="wifi_networks_scan">Søk</string>
+    <string name="wifi_networks_connected">Tilkoblet</string>
+    <string name="wifi_networks_saved">Lagret</string>
+    <string name="wifi_networks_connecting">Kobler til …</string>
+    <string name="wifi_networks_connect_failed">Klarte ikke å koble til. Sjekk passordet og prøv igjen.</string>
+    <string name="wifi_networks_password_title">Skriv inn passord</string>
+    <string name="wifi_networks_password_hint">Passord</string>
+    <string name="wifi_networks_connect">Koble til</string>
+    <string name="wifi_networks_forget">Glem</string>
+    <string name="wifi_networks_cancel">Avbryt</string>
+
+    <!-- Bluetooth devices -->
+    <string name="bluetooth_devices_title">Bluetooth-enheter</string>
+    <string name="bluetooth_devices_scanning">Søker …</string>
+    <string name="bluetooth_devices_empty">Fant ingen enheter i nærheten. Trykk på Søk for å prøve igjen.</string>
+    <string name="bluetooth_devices_scan">Søk</string>
+    <string name="bluetooth_devices_paired">Paret</string>
+    <string name="bluetooth_devices_connected">Tilkoblet</string>
+    <string name="bluetooth_devices_pairing">Parer …</string>
+    <string name="bluetooth_devices_pair_failed">Klarte ikke å pare med denne enheten.</string>
+    <string name="bluetooth_devices_forget">Glem</string>
+    <string name="bluetooth_devices_connect">Koble til</string>
+    <string name="bluetooth_devices_disconnect">Koble fra</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Innstillinger</string>
+    <string name="settings_theme_color_theme_item_default">Standard</string>
+    <string name="settings_theme_color_theme_item_dark">Mørk</string>
+    <string name="settings_theme_color_theme_item_light">Lys</string>
+    <string name="settings_theme_color_theme_item_green">Grønn</string>
+    <string name="settings_theme_color_theme_item_amber">Rav</string>
+    <string name="settings_theme_color_theme_item_dynamic">Dynamisk</string>
+    <string name="settings_display_rotate_screen">Roter skjermen</string>
+    <string name="settings_apps_hidden">Skjulte apper</string>
+    <string name="settings_meta_version">Versjon</string>
+    <string name="settings_mdm_server_url">Serveradresse</string>
+    <string name="settings_mdm_tailscale_auth_key">Tailscale-nøkkel</string>
+    <string name="settings_mdm_not_set">Ikke satt</string>
+    <string name="settings_mdm_scan_setup_qr">Skann oppsettskode</string>
+    <string name="settings_mdm_scan_setup_qr_summary">Henter serveradresse, Tailscale-nøkkel og registreringskode fra telefonens QR-kode på adminsiden i én skanning</string>
+    <string name="settings_mdm_scan_setup_qr_prompt">Rett kameraet mot oppsettskoden på adminsiden</string>
+    <string name="settings_mdm_enroll_now">Registrer med kode</string>
+    <string name="dialog_enrollment_code_title">Skriv inn registreringskode</string>
+    <string name="toast_mdm_enroll_missing_fields">Sett serveradressen først.</string>
+    <string name="toast_mdm_enroll_missing_code">Skriv inn registreringskoden fra adminsiden.</string>
+    <string name="toast_mdm_enroll_success">Registreringen er fullført.</string>
+    <string name="toast_mdm_enroll_failure">Registreringen mislyktes: %1$s</string>
+    <string name="toast_mdm_scan_qr_invalid">Denne QR-koden er ikke en gyldig oppsettskode fra adminsiden.</string>
+    <string name="toast_mdm_scan_qr_cancelled">Skanningen ble avbrutt.</string>
+    <string name="settings_mdm_sync_now">Synkroniser nå</string>
+    <string name="toast_mdm_sync_done">Synkronisert.</string>
+    <string name="toast_mdm_sync_failed">Synkroniseringen mislyktes – fikk ikke kontakt med serveren.</string>
+    <string name="settings_mdm_restrictions_paused">Sett alle begrensninger på pause</string>
+    <string name="settings_mdm_restrictions_paused_summary">Slår av kioskmodus, tidsplanen og app-begrensningene i 2 timer, så slås de på igjen av seg selv. Krever telefonens PIN-kode, og er ikke tilgjengelig når det ikke er satt noen PIN-kode på serveren. Forelderen ser på serveren at pausen er på. Bare til nødbruk, for eksempel hvis en oppdatering skaper problemer.</string>
+    <string name="settings_mdm_restrictions_paused_pin_title">Skriv inn PIN-koden for å sette begrensningene på pause</string>
+    <string name="toast_mdm_pause_needs_pin">Pause krever en PIN-kode. Sett en for denne telefonen på serveren først.</string>
+    <string name="settings_mdm_unifiedpush_distributor_enabled">Push-varsler for andre apper</string>
+    <string name="settings_mdm_unifiedpush_distributor_enabled_summary">Lar andre apper på telefonen få push-varsler gjennom denne appen (UnifiedPush), uten å installere en egen app for det. Av med mindre du slår det på.</string>
+    <string name="settings_gate_dialog_title">Skriv inn koden for å åpne innstillingene</string>
+    <string name="settings_gate_no_pin">Innstillingene er låst. Sett en opplåsingskode for denne telefonen på serveren for å åpne dem.</string>
+    <string name="alert_cant_choose_home_screen">Klarte ikke å åpne valget av hjemskjerm. Velg hjemskjerm i Androids innstillinger.</string>
+    <string name="toast_system_settings_unavailable">Systeminnstillingene er ikke tilgjengelige akkurat nå.</string>
+
+    <!-- App list -->
+    <string name="list_title_view">Alle apper</string>
+    <string name="list_title_hidden">Skjulte apper</string>
+    <string name="list_app_hidden_add">Skjul</string>
+    <string name="list_app_hidden_remove">Vis</string>
+    <string name="list_app_minimalist_add">Legg til på hjemskjermen</string>
+    <string name="list_app_minimalist_remove">Fjern fra hjemskjermen</string>
+    <string name="list_app_rename">Gi nytt navn</string>
+    <string name="settings">Innstillinger</string>
+    <string name="snackbar_app_hidden">Appen er skjult. Du kan vise den igjen i innstillingene.</string>
+    <string name="toast_minimalist_limit_reached">Du kan legge til opptil 10 apper på hjemskjermen.</string>
+    <string name="undo">Angre</string>
+    <string name="dialog_rename_title">Gi nytt navn til %1$s</string>
+    <string name="dialog_select_color_red">Rød</string>
+    <string name="dialog_select_color_alpha">Gjennomsiktighet</string>
+    <string name="dialog_select_color_blue">Blå</string>
+    <string name="dialog_select_color_green">Grønn</string>
+    <string name="dialog_select_color_color_hex">Farge</string>
+    <string name="dialog_choose_color_title">Velg farge</string>
+    <string name="dialog_cancel">Avbryt</string>
+    <string name="settings_meta_licenses">Lisenser for åpen kildekode</string>
+    <string name="legal_info_title">Lisenser for åpen kildekode</string>
+    <string name="toast_activity_not_found_browser">Kan ikke åpne lenken: fant ingen nettleser.</string>
+
+    <string name="dialog_ok">OK</string>
+    <string name="notification_crash_title">Appen krasjet</string>
+    <string name="notification_crash_explanation">Beklager! Trykk for mer informasjon.</string>
+    <string name="notification_channel_ring">Finn enheten – ringing</string>
+    <string name="notification_ring_title">Telefonen ringer</string>
+    <string name="notification_ring_text">En forelder startet dette fra Finn enheten.</string>
+    <string name="notification_ring_stop_action">Stopp ringingen</string>
+    <string name="notification_channel_listener">Finn enheten – bakgrunnstilkobling</string>
+    <string name="notification_listener_title">Kids Device MDM</string>
+    <string name="notification_listener_text">Klar for kommandoer fra forelderen (ringe, låse, finne).</string>
+    <string name="notification_channel_vpn_filter">Innholdsfilter</string>
+    <string name="notification_vpn_filter_title">Innholdsfilteret er på</string>
+    <string name="notification_vpn_filter_text">Blokkerer reklame og upassende innhold.</string>
+    <string name="notification_channel_app_install">Installering og oppdatering av apper</string>
+    <string name="notification_app_installing_title">Installerer %1$s …</string>
+    <string name="notification_app_install_failed_title">Klarte ikke å installere %1$s</string>
+    <string name="crash_info"><![CDATA[
+        Noe gikk galt, beklager!<br><br>
+        Av personvernhensyn samles ikke krasjlogger inn automatisk.<br>
+        Du kan kopiere krasjrapporten nedenfor for feilsøking.<br><br>
+        Merk at krasjlogger kan inneholde <strong>sensitiv informasjon</strong>, for eksempel navnet på en app du prøvde å åpne.
+        <h2>Hva kan jeg gjøre nå?</h2>
+        Hvis feilen kommer igjen og igjen, kan du prøve å:
+        <ul>
+        <li>tvangsstoppe appen</li>
+        <li>tømme appens lagring (<strong>innstillingene dine går tapt!</strong>)</li>
+        </ul>
+        ]]>
+    </string>
+    <string name="report_crash_button_copy">Kopier krasjrapporten til utklippstavlen</string>
+    <string name="report_crash_title">Appen krasjet</string>
+    <string name="notification_channel_crash">Krasj og feilsøkingsinformasjon</string>
+
+    <!-- Content descriptions -->
+    <string name="content_description_close">Lukk</string>
+    <string name="toast_cant_launch_app">Feil: kan ikke åpne appen</string>
+</resources>
