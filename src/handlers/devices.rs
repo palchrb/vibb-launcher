@@ -254,6 +254,166 @@ struct DeviceDetailTemplate {
     /// The last status report says the launcher's notification listener has no access, so the
     /// home screen shows no unread badges on apps.
     badges_without_access: bool,
+    /// "Time rules" card (handy step 6).
+    time: TimeCard,
+}
+
+struct RuleOption {
+    id: i64,
+    name: String,
+}
+
+struct LiftView {
+    id: i64,
+    what: String,
+    created_at: String,
+    created_by: String,
+    status: String,
+    can_end: bool,
+}
+
+/// The device page's "Time rules" card: what the phone last reported, the lift forms and history.
+struct TimeCard {
+    /// Following its own rules (the override switch) rather than the global ones.
+    custom: bool,
+    /// "Skole is active - calls blocked", "No rule active", or none before the first report.
+    now_line: Option<String>,
+    /// "Screen time 2026-10-05: 42 of 90 min (incl. 30 extra)".
+    screen_line: Option<String>,
+    rules: Vec<RuleOption>,
+    lifts: Vec<LiftView>,
+    /// The launcher reported capabilities without `time_rules_v1`: it still runs the old schedule.
+    launcher_without_rules: bool,
+    rules_error: bool,
+}
+
+/// The two summary lines from the launcher's `time_state` JSON (design 06 "Wire").
+fn time_state_lines(json: &str) -> (Option<String>, Option<String>) {
+    let Ok(state) = serde_json::from_str::<serde_json::Value>(json) else {
+        return (None, None);
+    };
+    let reason = state["lock_reason"].as_str().unwrap_or("NONE");
+    let calls = if state["calls_blocked"].as_bool() == Some(true) {
+        " - calls blocked (emergency calls work)"
+    } else {
+        ""
+    };
+    let now_line = match state["active_rule_name"].as_str() {
+        Some(name) if !name.is_empty() => format!("{name} is active{calls}"),
+        _ if reason == "SCREEN_TIME" => {
+            "Screen time is used up - calls and messages only".to_string()
+        }
+        _ if reason != "NONE" => format!("Locked ({reason}){calls}"),
+        _ => "No rule active".to_string(),
+    };
+    let day = state["day"].as_str().unwrap_or("today");
+    let used = state["used_minutes"].as_i64();
+    let screen_line = used.map(|used| match state["budget_minutes"].as_i64() {
+        Some(budget) => {
+            let extra = state["extra_minutes"].as_i64().unwrap_or(0);
+            let extra = if extra > 0 {
+                format!(" (incl. {extra} extra)")
+            } else {
+                String::new()
+            };
+            format!("Screen time {day}: {used} of {budget} min{extra}")
+        }
+        None => format!("Screen time {day}: {used} min, no limit"),
+    });
+    (Some(now_line), screen_line)
+}
+
+async fn time_card(
+    state: &AppState,
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+) -> TimeCard {
+    let (now_line, screen_line) = latest
+        .and_then(|s| s.time_state_json.as_deref())
+        .map(time_state_lines)
+        .unwrap_or((None, None));
+    let launcher_without_rules = latest.is_some_and(|s| {
+        !s.capabilities_json
+            .as_deref()
+            .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
+            .unwrap_or_default()
+            .iter()
+            .any(|c| c == "time_rules_v1")
+    });
+    let rules = crate::time_rules::effective_rule_rows(
+        &state.db,
+        policy.device_id,
+        policy.custom_schedule_enabled,
+    )
+    .await;
+    let rules_error = rules.is_err();
+    let rules = rules
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| RuleOption {
+            id: r.id,
+            name: r.name,
+        })
+        .collect();
+    #[derive(sqlx::FromRow)]
+    struct LiftWithState {
+        #[sqlx(flatten)]
+        lift: crate::time_rules::TimeLiftRow,
+        active: bool,
+    }
+    let lifts = sqlx::query_as::<_, LiftWithState>(
+        "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
+         FROM time_lifts WHERE device_id = ? ORDER BY id DESC LIMIT 10",
+    )
+    .bind(policy.device_id)
+    .fetch_all(&state.db)
+    .await;
+    let lifts = lifts
+        .unwrap_or_default()
+        .into_iter()
+        .map(|LiftWithState { lift, active }| {
+            let (what, status, can_end) = if lift.target == "rule" {
+                let rule = lift
+                    .rule_name
+                    .clone()
+                    .unwrap_or_else(|| "All rules".to_string());
+                let status = match (&lift.ended_early_at, active) {
+                    (Some(at), _) => format!("Ended early {at}"),
+                    (None, true) => format!("Active until {} (UTC)", lift.expires_at),
+                    (None, false) => "Over".to_string(),
+                };
+                (
+                    format!("{rule} lifted for {} min", lift.minutes),
+                    status,
+                    active,
+                )
+            } else {
+                let status = if active {
+                    "Sent - counts for the day the phone receives it".to_string()
+                } else {
+                    "Done".to_string()
+                };
+                (format!("+{} min screen time", lift.minutes), status, false)
+            };
+            LiftView {
+                id: lift.id,
+                what,
+                created_at: lift.created_at,
+                created_by: lift.created_by.unwrap_or_default(),
+                status,
+                can_end,
+            }
+        })
+        .collect();
+    TimeCard {
+        custom: policy.custom_schedule_enabled,
+        now_line,
+        screen_line,
+        rules,
+        lifts,
+        launcher_without_rules,
+        rules_error,
+    }
 }
 
 pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> impl IntoResponse {
@@ -472,8 +632,11 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
             vec!["Couldn't read this phone's call state - check the server log.".to_string()]
         });
 
+    let time = time_card(&state, &policy, latest_status.as_ref()).await;
+
     Html(
         DeviceDetailTemplate {
+            time,
             title: device.name.clone(),
             calls_summary,
             call_warnings,

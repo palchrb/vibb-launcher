@@ -5,57 +5,112 @@
 </head>
 <body>
 {% include "partials/app_header.html" %}
+
+{% macro rule_form(rule, scope) %}
+<form method="post" action="{% if rule.id == 0 %}/schedules/rules{% else %}/schedules/rules/{{ rule.id }}{% endif %}">
+    <input type="hidden" name="scope" value="{{ scope }}">
+    <label>Name</label>
+    <input type="text" name="name" value="{{ rule.name }}" maxlength="60" required placeholder="Skole">
+    <label>Kind</label>
+    <select name="kind" onchange="var c=this.form.querySelector('[name=calls_allowed]'); c.checked = this.value != 'school';">
+        <option value="school" {% if rule.kind == "school" %}selected{% endif %}>School (nothing but emergency calls)</option>
+        <option value="bedtime" {% if rule.kind == "bedtime" %}selected{% endif %}>Bedtime</option>
+        <option value="custom" {% if rule.kind == "custom" %}selected{% endif %}>Other</option>
+    </select>
+    <label class="checkbox-row">
+        <input type="checkbox" name="calls_allowed" value="on" {% if rule.calls_allowed %}checked{% endif %}>
+        Calls with allowed contacts work while this rule is on (emergency calls always do)
+    </label>
+    <p class="subtitle">Times on the phone's clock. Leave both empty for a day the rule is off. An end before the start ends the next morning; the same start and end lasts 24 hours.</p>
+    {% for d in rule.days %}
+    <div class="schedule-grid">
+        <div>
+            <label>{{ d.name }} from</label>
+            <input type="time" name="d{{ d.index }}_start" value="{{ d.start }}">
+        </div>
+        <div>
+            <label>until</label>
+            <input type="time" name="d{{ d.index }}_end" value="{{ d.end }}">
+        </div>
+    </div>
+    {% endfor %}
+    <details style="margin-top:8px;">
+        <summary>Apps that stay usable while this rule is on</summary>
+        {% if rule.apps.is_empty() %}
+        <p class="subtitle">No apps reported by the phones yet.</p>
+        {% endif %}
+        {% for a in rule.apps %}
+        <label class="checkbox-row">
+            <input type="checkbox" name="exempt_apps" value="{{ a.package }}" {% if a.checked %}checked{% endif %}>
+            {{ a.label }} <span class="subtitle">{{ a.package }}</span>
+        </label>
+        {% endfor %}
+        <p class="subtitle">They must also be allowed on the phone's Apps list.</p>
+    </details>
+    <button type="submit" style="margin-top:12px;">{% if rule.id == 0 %}Add rule{% else %}Save {{ rule.name }}{% endif %}</button>
+</form>
+{% if rule.id != 0 %}
+<form method="post" action="/schedules/rules/{{ rule.id }}/delete" onsubmit="return confirm('Delete {{ rule.name }}?');">
+    <input type="hidden" name="scope" value="{{ scope }}">
+    <button type="submit" class="button-small button-danger" style="margin-top:8px;">Delete</button>
+</form>
+{% endif %}
+{% endmacro %}
+
+{% macro scope_section(view) %}
+{% for name in view.corrupt_rules %}
+<div class="error">The stored rule "{{ name }}" can't be read - the phones get an error instead of their rules until it's deleted.</div>
+{% endfor %}
+{% if view.rules.is_empty() %}
+<p class="subtitle">No rules yet.</p>
+{% endif %}
+{% for r in view.rules %}
+<details class="rule">
+    <summary><strong>{{ r.name }}</strong> - {% if r.kind == "school" %}school{% else if r.kind == "bedtime" %}bedtime{% else %}other{% endif %}, {% if r.calls_allowed %}calls on{% else %}calls off{% endif %}<br><span class="subtitle">{{ r.summary }}</span></summary>
+    {% call rule_form(r, view.scope) %}{% endcall %}
+</details>
+{% endfor %}
+<details class="rule">
+    <summary><strong>Add a rule</strong></summary>
+    {% call rule_form(view.new_rule, view.scope) %}{% endcall %}
+</details>
+{% endmacro %}
+
+{% macro budget_fields(view) %}
+{% if view.budget_corrupt %}
+<div class="error">The stored screen time can't be read - the phones get an error instead of their rules. Save it again below.</div>
+{% endif %}
+<p class="subtitle">Minutes per day with the screen on and an app open (calls don't count). Empty = no limit. When it's used up, only calls and the message apps chosen for contacts still work.</p>
+<div class="schedule-grid">
+{% for b in view.budget %}
+    <div>
+        <label>{{ b.name }}</label>
+        <input type="number" name="b{{ b.index }}" value="{{ b.value }}" min="0" max="1440" step="5">
+    </div>
+{% endfor %}
+</div>
+{% endmacro %}
+
 <main class="container">
     <div class="page-header">
-        <h1>Schedules</h1>
+        <h1>Time rules</h1>
     </div>
-    <p class="subtitle">Every device follows the global default below unless it has its own custom schedule turned on.</p>
+    <p class="subtitle">Named rules (school, bedtime, ...) lock the phone to a full-screen clock with the rule's name, and a daily screen-time limit. Every device follows the global rules below unless it has its own. Emergency calls always work.</p>
+
+    <div class="card">
+        <h2>Global rules</h2>
+        {% call scope_section(global) %}{% endcall %}
+    </div>
 
     <form method="post" action="/schedules/global" class="card">
-        <h2>Global default</h2>
-        <p class="subtitle">Leave a field blank for no restriction at that time.</p>
-        <div class="schedule-grid">
-            <div>
-                <label for="global_weekday_start">Weekday allowed from</label>
-                <input type="time" id="global_weekday_start" name="weekday_start" value="{{ global_weekday_start }}">
-            </div>
-            <div>
-                <label for="global_weekday_end">until</label>
-                <input type="time" id="global_weekday_end" name="weekday_end" value="{{ global_weekday_end }}">
-            </div>
-        </div>
-        <button type="button" class="button-small button-secondary" onclick="document.getElementById('global_weekday_start').value='';document.getElementById('global_weekday_end').value='';">Clear weekday schedule</button>
-
-        <div class="schedule-grid" style="margin-top:16px;">
-            <div>
-                <label for="global_weekend_start">Weekend allowed from</label>
-                <input type="time" id="global_weekend_start" name="weekend_start" value="{{ global_weekend_start }}">
-            </div>
-            <div>
-                <label for="global_weekend_end">until</label>
-                <input type="time" id="global_weekend_end" name="weekend_end" value="{{ global_weekend_end }}">
-            </div>
-        </div>
-        <button type="button" class="button-small button-secondary" onclick="document.getElementById('global_weekend_start').value='';document.getElementById('global_weekend_end').value='';">Clear weekend schedule</button>
-
-        <div class="schedule-grid" style="margin-top:16px;">
-            <div>
-                <label for="global_bedtime_start">Bedtime lock from</label>
-                <input type="time" id="global_bedtime_start" name="bedtime_start" value="{{ global_bedtime_start }}">
-            </div>
-            <div>
-                <label for="global_bedtime_end">until</label>
-                <input type="time" id="global_bedtime_end" name="bedtime_end" value="{{ global_bedtime_end }}">
-            </div>
-        </div>
-        <button type="button" class="button-small button-secondary" onclick="document.getElementById('global_bedtime_start').value='';document.getElementById('global_bedtime_end').value='';">Clear bedtime schedule</button>
-
-        <button type="submit" style="margin-top:16px;">Save global default</button>
+        <h2>Global screen time</h2>
+        {% call budget_fields(global) %}{% endcall %}
+        <button type="submit" style="margin-top:16px;">Save screen time</button>
     </form>
 
     <div class="card">
-        <h2>Per-device override</h2>
-        <p class="subtitle">Pick a device to give it its own schedule instead of the global default above.</p>
+        <h2>Per-device rules</h2>
+        <p class="subtitle">Pick a device to give it its own rules and screen time instead of the global ones.</p>
         <form method="get" action="/schedules">
             <select name="device" onchange="this.form.submit()" style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
                 <option value="">Select a device&hellip;</option>
@@ -71,48 +126,18 @@
         <h2>{{ sel.name }}</h2>
         <label class="checkbox-row">
             <input type="checkbox" name="custom_schedule_enabled" value="on" {% if sel.custom_enabled %}checked{% endif %}>
-            Use a custom schedule for this device instead of the global default
+            Use this device's own rules and screen time instead of the global ones
         </label>
-
-        <p class="subtitle" style="margin-top:12px;">Leave a field blank for no restriction at that time. These only take effect while the box above is checked.</p>
-        <div class="schedule-grid">
-            <div>
-                <label for="device_weekday_start">Weekday allowed from</label>
-                <input type="time" id="device_weekday_start" name="weekday_start" value="{{ sel.weekday_start }}">
-            </div>
-            <div>
-                <label for="device_weekday_end">until</label>
-                <input type="time" id="device_weekday_end" name="weekday_end" value="{{ sel.weekday_end }}">
-            </div>
-        </div>
-        <button type="button" class="button-small button-secondary" onclick="document.getElementById('device_weekday_start').value='';document.getElementById('device_weekday_end').value='';">Clear weekday schedule</button>
-
-        <div class="schedule-grid" style="margin-top:16px;">
-            <div>
-                <label for="device_weekend_start">Weekend allowed from</label>
-                <input type="time" id="device_weekend_start" name="weekend_start" value="{{ sel.weekend_start }}">
-            </div>
-            <div>
-                <label for="device_weekend_end">until</label>
-                <input type="time" id="device_weekend_end" name="weekend_end" value="{{ sel.weekend_end }}">
-            </div>
-        </div>
-        <button type="button" class="button-small button-secondary" onclick="document.getElementById('device_weekend_start').value='';document.getElementById('device_weekend_end').value='';">Clear weekend schedule</button>
-
-        <div class="schedule-grid" style="margin-top:16px;">
-            <div>
-                <label for="device_bedtime_start">Bedtime lock from</label>
-                <input type="time" id="device_bedtime_start" name="bedtime_start" value="{{ sel.bedtime_start }}">
-            </div>
-            <div>
-                <label for="device_bedtime_end">until</label>
-                <input type="time" id="device_bedtime_end" name="bedtime_end" value="{{ sel.bedtime_end }}">
-            </div>
-        </div>
-        <button type="button" class="button-small button-secondary" onclick="document.getElementById('device_bedtime_start').value='';document.getElementById('device_bedtime_end').value='';">Clear bedtime schedule</button>
-
-        <button type="submit" style="margin-top:16px;">Save {{ sel.name }}'s schedule</button>
+        <h3>Screen time</h3>
+        {% call budget_fields(sel.view) %}{% endcall %}
+        <button type="submit" style="margin-top:16px;">Save {{ sel.name }}</button>
     </form>
+
+    <div class="card">
+        <h2>{{ sel.name }}'s own rules</h2>
+        <p class="subtitle">{% if sel.custom_enabled %}In force for this device.{% else %}Only used once the box above is checked.{% endif %}</p>
+        {% call scope_section(sel.view) %}{% endcall %}
+    </div>
     {% endif %}
 </main>
 </body>

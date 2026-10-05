@@ -39,10 +39,11 @@ pub struct DevicePolicy {
     pub override_pin_salt: Option<String>,
     pub quick_controls_mask: i64,
     pub vpn_filter_enabled: bool,
-    /// Whether this device's own weekday/weekend/bedtime *_minutes columns above are actually
-    /// used - if false (the default), it follows [GlobalSchedule] instead and its own columns are
-    /// just whatever was last configured, ignored until this is turned on. See
-    /// `handlers::schedules`.
+    /// The per-device override switch: when set, this device uses its own time rules
+    /// (`time_rules.device_id` = this device) and its own `daily_budget_json` instead of the
+    /// global ones. The weekday/weekend/bedtime *_minutes columns above are the pre-step-6
+    /// schedule, converted into rules once (`time_rules::migrate_legacy`) and still sent to older
+    /// launchers. See `handlers::schedules`.
     pub custom_schedule_enabled: bool,
     /// Calls & SMS (migrations/0022_calls.sql). `calls_managed = false` sends
     /// `call_policy.managed = false`; the other three only matter when it's true.
@@ -58,6 +59,13 @@ pub struct DevicePolicy {
     pub launcher_language: String,
     /// Columns of the launcher's home-screen app grid, 3 or 4.
     pub home_columns: i64,
+    /// This device's own daily screen-time budget (migrations/0025_time_rules.sql), used while
+    /// `custom_schedule_enabled` is set: 7 entries Monday first, minutes or null (unlimited).
+    pub daily_budget_json: String,
+    /// "off", "on_request" or "interval" - see `time_rules::LOCATION_MODES`.
+    pub location_mode: String,
+    /// Minutes between active location fixes in "interval" mode.
+    pub location_interval_minutes: i64,
 }
 
 /// The launcher languages a parent can choose; "system" follows the phone's language.
@@ -146,6 +154,8 @@ pub struct GlobalSchedule {
     pub bedtime_start_minutes: Option<i64>,
     pub bedtime_end_minutes: Option<i64>,
     pub updated_at: String,
+    /// The global daily screen-time budget (migrations/0025), see `DevicePolicy.daily_budget_json`.
+    pub daily_budget_json: String,
 }
 
 #[derive(sqlx::FromRow, Clone)]
@@ -165,7 +175,11 @@ pub struct DeviceStatus {
     /// The launcher's notification listener (app badges) has access - migrations/0024. `None`
     /// from older launchers.
     pub notification_listener_enabled: Option<bool>,
-    // capabilities_json/call_state_json (migrations/0022_calls.sql) are read directly by
+    /// What the launcher can enforce, JSON list (migrations/0022). `None` from older launchers.
+    pub capabilities_json: Option<String>,
+    /// The launcher's `time_state` (active rule, screen time used/budget) - migrations/0025.
+    pub time_state_json: Option<String>,
+    // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
 
@@ -381,6 +395,11 @@ pub struct PolicyResponse {
     pub hardening: Hardening,
     /// Launcher language and home-grid columns - always present.
     pub launcher_ui: LauncherUi,
+    /// Named time rules, the daily screen-time budget and active lifts - always present; the
+    /// launcher rejects a response without it once it has had one (handy step 6).
+    pub time_policy: crate::time_rules::TimePolicy,
+    /// When the phone takes a location fix - always present.
+    pub location_policy: crate::time_rules::LocationPolicy,
 }
 
 /// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and
@@ -449,6 +468,10 @@ pub struct StatusReportRequest {
     /// The launcher's notification listener (app badges) has access. Absent from older launchers.
     #[serde(default)]
     pub notification_listener_enabled: Option<bool>,
+    /// Active rule, screen time used/budget, lifts in force (handy step 6) - stored as JSON text,
+    /// opaque like `call_state`.
+    #[serde(default)]
+    pub time_state: Option<serde_json::Value>,
 }
 
 /// Attached to a status report whenever the device has a location reading

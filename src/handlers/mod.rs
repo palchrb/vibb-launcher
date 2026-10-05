@@ -7,6 +7,7 @@ pub mod device_api;
 pub mod devices;
 pub mod dns_filter;
 pub mod journal;
+pub mod lifts;
 pub mod locate;
 pub mod provisioning;
 pub mod schedules;

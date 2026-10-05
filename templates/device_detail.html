@@ -49,9 +49,63 @@
     {% endif %}
 
     <div class="card">
-        <h2>Schedule</h2>
-        <p class="subtitle">This device follows the global default schedule unless you give it a custom one.</p>
-        <a href="/schedules?device={{ device.id }}" class="button-small">Configure schedule</a>
+        <h2>Time rules</h2>
+        <p class="subtitle">{% if time.custom %}This phone has its own time rules and screen time.{% else %}This phone follows the global time rules and screen time.{% endif %} Emergency calls always work.</p>
+        {% if time.launcher_without_rules %}
+        <div class="error">This phone's launcher doesn't know time rules yet. Until it updates it keeps the old schedule exactly as it was before time rules were introduced - changes here don't reach it.</div>
+        {% endif %}
+        {% if time.rules_error %}
+        <div class="error">Couldn't read the time rules - check the server log.</div>
+        {% endif %}
+        {% if let Some(line) = time.now_line %}<p>Now: <strong>{{ line }}</strong></p>{% endif %}
+        {% if let Some(line) = time.screen_line %}<p>{{ line }}</p>{% endif %}
+        {% if let Some(status) = latest_status %}{% if time.now_line.is_some() %}<p class="subtitle">As of {{ status.reported_at }}</p>{% endif %}{% endif %}
+
+        <form method="post" action="/devices/{{ device.id }}/lifts" style="margin-top:12px;">
+            <input type="hidden" name="target" value="rule">
+            <label for="lift_rule">Lift a rule for a while</label>
+            <select id="lift_rule" name="rule">
+                <option value="all">All rules</option>
+                {% for r in time.rules %}
+                <option value="{{ r.id }}">{{ r.name }}</option>
+                {% endfor %}
+            </select>
+            <select name="minutes" aria-label="For how long">
+                <option value="15">15 min</option>
+                <option value="30" selected>30 min</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+            </select>
+            <button type="submit" class="button-small">Lift</button>
+        </form>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+            {% for m in [15, 30, 60] %}
+            <form method="post" action="/devices/{{ device.id }}/lifts">
+                <input type="hidden" name="target" value="budget">
+                <input type="hidden" name="minutes" value="{{ m }}">
+                <button type="submit" class="button-small button-secondary">+{{ m }} min screen time</button>
+            </form>
+            {% endfor %}
+        </div>
+
+        {% if !time.lifts.is_empty() %}
+        <div class="table-wrap" style="margin-top:12px;">
+        <table>
+            <thead><tr><th>Lift</th><th>When</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for l in time.lifts %}
+            <tr>
+                <td>{{ l.what }}</td>
+                <td>{{ l.created_at }}{% if !l.created_by.is_empty() %} by {{ l.created_by }}{% endif %}</td>
+                <td>{{ l.status }}</td>
+                <td>{% if l.can_end %}<form method="post" action="/devices/{{ device.id }}/lifts/{{ l.id }}/end"><button type="submit" class="button-small button-secondary">End now</button></form>{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% endif %}
+        <a href="/schedules?device={{ device.id }}" class="button-small" style="margin-top:12px;">Edit time rules and screen time</a>
     </div>
 
     <div class="card">

@@ -7,6 +7,7 @@ mod photos;
 mod security;
 #[cfg(test)]
 mod tests;
+mod time_rules;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -187,6 +188,28 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/schedules/device/{id}",
             post(handlers::schedules::save_device_schedule),
+        )
+        .route("/schedules/rules", post(handlers::schedules::create_rule))
+        .route(
+            "/schedules/rules/{rule_id}",
+            post(handlers::schedules::update_rule),
+        )
+        .route(
+            "/schedules/rules/{rule_id}/delete",
+            post(handlers::schedules::delete_rule),
+        )
+        .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
+        .route(
+            "/devices/{id}/lifts/{lift_id}/end",
+            post(handlers::lifts::end_lift),
+        )
+        .route(
+            "/devices/{id}/location-policy",
+            post(handlers::locate::update_location_policy),
+        )
+        .route(
+            "/devices/{id}/command/locate",
+            post(handlers::locate::locate),
         )
         .route(
             "/devices/new",
@@ -507,6 +530,10 @@ pub async fn connect_db(database_url: &str) -> SqlitePool {
         .run(&db)
         .await
         .expect("failed to run migrations");
+    // The old weekday/weekend/bedtime schedule becomes time rules, once per row (handy step 6).
+    time_rules::migrate_legacy(&db)
+        .await
+        .expect("failed to convert the old schedules into time rules");
 
     db
 }

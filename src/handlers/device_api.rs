@@ -19,6 +19,7 @@ use crate::models::{
     TrackedAppUpdate,
 };
 use crate::security::{self, AuthedDevice};
+use crate::time_rules::{LocationPolicy, TimePolicy};
 
 pub async fn enroll(
     State(state): State<AppState>,
@@ -71,6 +72,9 @@ pub(crate) enum PolicyError {
     /// the device, so this only happens after manual DB edits or a restore gone wrong.
     MissingRow,
     CorruptAllowlist(serde_json::Error),
+    /// A stored rule, exempt-app list or budget that isn't valid - sending the phone fewer
+    /// rules (or no budget) than the parent set would open it up.
+    CorruptTimePolicy(String),
 }
 
 impl std::fmt::Display for PolicyError {
@@ -79,6 +83,7 @@ impl std::fmt::Display for PolicyError {
             PolicyError::Db(err) => write!(f, "database error: {err}"),
             PolicyError::MissingRow => write!(f, "no device_policy row"),
             PolicyError::CorruptAllowlist(err) => write!(f, "allowlist_json is not valid: {err}"),
+            PolicyError::CorruptTimePolicy(err) => write!(f, "time policy is not valid: {err}"),
         }
     }
 }
@@ -127,16 +132,15 @@ pub(crate) async fn build_policy(
         .transpose()
         .map_err(PolicyError::CorruptAllowlist)?;
 
-    // Follows the global default schedule unless this device has its own override turned on -
-    // see migrations/0017_schedules_page.sql and handlers::schedules.
-    let (
-        weekday_start_minutes,
-        weekday_end_minutes,
-        weekend_start_minutes,
-        weekend_end_minutes,
-        bedtime_start_minutes,
-        bedtime_end_minutes,
-    ) = if policy.custom_schedule_enabled {
+    // The legacy schedule fields: the global default unless this device has its own override
+    // turned on - see migrations/0017_schedules_page.sql. Since step 6 they're frozen (converted
+    // into time rules once, `time_rules::migrate_legacy`) and only read by launchers without
+    // `time_rules_v1`. A missing singleton row means "no schedule" (its migration seeds it); a
+    // query error is a 500.
+    let global = sqlx::query_as::<_, GlobalSchedule>("SELECT * FROM global_schedule WHERE id = 1")
+        .fetch_optional(&state.db)
+        .await?;
+    let legacy = if policy.custom_schedule_enabled {
         (
             policy.weekday_start_minutes,
             policy.weekday_end_minutes,
@@ -146,21 +150,29 @@ pub(crate) async fn build_policy(
             policy.bedtime_end_minutes,
         )
     } else {
-        // A missing singleton row means "no schedule" (its migration seeds it); a query error
-        // is a 500.
-        let global =
-            sqlx::query_as::<_, GlobalSchedule>("SELECT * FROM global_schedule WHERE id = 1")
-                .fetch_optional(&state.db)
-                .await?
-                .unwrap_or_default();
+        let g = global.clone().unwrap_or_default();
         (
-            global.weekday_start_minutes,
-            global.weekday_end_minutes,
-            global.weekend_start_minutes,
-            global.weekend_end_minutes,
-            global.bedtime_start_minutes,
-            global.bedtime_end_minutes,
+            g.weekday_start_minutes,
+            g.weekday_end_minutes,
+            g.weekend_start_minutes,
+            g.weekend_end_minutes,
+            g.bedtime_start_minutes,
+            g.bedtime_end_minutes,
         )
+    };
+    let (
+        weekday_start_minutes,
+        weekday_end_minutes,
+        weekend_start_minutes,
+        weekend_end_minutes,
+        bedtime_start_minutes,
+        bedtime_end_minutes,
+    ) = legacy;
+
+    let time_policy = build_time_policy(state, &policy, global.as_ref()).await?;
+    let location_policy = LocationPolicy {
+        mode: policy.location_mode.clone(),
+        interval_minutes: policy.location_interval_minutes,
     };
 
     let dns_upstream_provider =
@@ -222,6 +234,43 @@ pub(crate) async fn build_policy(
             language: policy.launcher_language,
             home_columns: policy.home_columns,
         },
+        time_policy,
+        location_policy,
+    })
+}
+
+/// The device's effective rules and budget (its own while `custom_schedule_enabled`, else the
+/// global ones) and the lifts still to deliver. Anything stored that doesn't validate is an error
+/// (500): the phone keeps its cached rules instead of getting fewer.
+async fn build_time_policy(
+    state: &AppState,
+    policy: &DevicePolicy,
+    global: Option<&GlobalSchedule>,
+) -> Result<TimePolicy, PolicyError> {
+    let rules = crate::time_rules::effective_rule_rows(
+        &state.db,
+        policy.device_id,
+        policy.custom_schedule_enabled,
+    )
+    .await?
+    .iter()
+    .map(|row| row.to_policy())
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(PolicyError::CorruptTimePolicy)?;
+    let budget_json = if policy.custom_schedule_enabled {
+        policy.daily_budget_json.as_str()
+    } else {
+        global
+            .map(|g| g.daily_budget_json.as_str())
+            .unwrap_or(crate::time_rules::UNLIMITED_BUDGET_JSON)
+    };
+    let daily_budget_minutes =
+        crate::time_rules::parse_budget(budget_json).map_err(PolicyError::CorruptTimePolicy)?;
+    let lifts = crate::time_rules::deliverable_lifts(&state.db, policy.device_id).await?;
+    Ok(TimePolicy {
+        rules,
+        daily_budget_minutes,
+        lifts,
     })
 }
 
@@ -472,6 +521,12 @@ pub async fn status(
         .filter(|caps| !caps.is_empty())
         .and_then(|caps| serde_json::to_string(caps).ok())
         .filter(|json| json.len() <= 4096);
+    let time_state_json = report
+        .time_state
+        .as_ref()
+        .filter(|state| state.is_object())
+        .map(|state| state.to_string())
+        .filter(|json| json.len() <= 4096);
     let call_state_json = report
         .call_state
         .as_ref()
@@ -483,8 +538,8 @@ pub async fn status(
         "INSERT INTO device_status \
          (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
-          call_state_json, notification_listener_enabled) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          call_state_json, notification_listener_enabled, time_state_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -498,6 +553,7 @@ pub async fn status(
     .bind(&capabilities_json)
     .bind(&call_state_json)
     .bind(report.notification_listener_enabled)
+    .bind(&time_state_json)
     .execute(&state.db)
     .await
     .ok();

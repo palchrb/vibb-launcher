@@ -312,12 +312,14 @@ async fn policy_json_keys_snapshot() {
             "hardening",
             "kiosk_desired",
             "launcher_ui",
+            "location_policy",
             "lock_task_features",
             "override_pin_hash",
             "override_pin_salt",
             "packages_to_uninstall",
             "pending_command",
             "quick_controls_mask",
+            "time_policy",
             "vpn_filter_enabled",
             "weekday_end_minutes",
             "weekday_start_minutes",
@@ -333,9 +335,11 @@ async fn policy_json_keys_snapshot() {
         "hardening",
         "kiosk_desired",
         "launcher_ui",
+        "location_policy",
         "lock_task_features",
         "packages_to_uninstall",
         "quick_controls_mask",
+        "time_policy",
         "vpn_filter_enabled",
     ] {
         assert!(!object[non_null].is_null(), "{non_null} is null");
@@ -356,6 +360,16 @@ async fn policy_json_keys_snapshot() {
         ]
     );
     assert!(call_policy.values().all(|v| !v.is_null()));
+
+    // The launcher's TimePolicy / LocationPolicy DTOs (handy step 6).
+    let time_policy = object["time_policy"].as_object().unwrap();
+    let mut time_keys: Vec<&str> = time_policy.keys().map(String::as_str).collect();
+    time_keys.sort_unstable();
+    assert_eq!(time_keys, ["daily_budget_minutes", "lifts", "rules"]);
+    assert_eq!(
+        object["location_policy"],
+        serde_json::json!({"mode": "on_request", "interval_minutes": 30})
+    );
 }
 
 #[tokio::test]

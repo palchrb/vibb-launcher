@@ -7,6 +7,7 @@ mod device_api;
 mod hardening;
 mod launcher_ui;
 mod provisioning;
+mod time_rules;
 
 use axum::Router;
 use axum::body::Body;
