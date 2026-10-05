@@ -16,8 +16,9 @@ object MessagePackages {
     val SIGNAL = listOf("com.kidsmdm.im", "im.molly.app", "org.thoughtcrime.securesms")
 }
 
-/** An explicit intent: [action] on [uri], for [packageName] only. */
-data class MessageIntent(val action: String, val uri: String, val packageName: String)
+/** An explicit intent: [action] on [uri], for [packageName] only; [fallbackUri] (same action
+ * and package) is tried when [uri] doesn't resolve. */
+data class MessageIntent(val action: String, val uri: String, val packageName: String, val fallbackUri: String? = null)
 
 const val ACTION_VIEW = "android.intent.action.VIEW"
 const val ACTION_SENDTO = "android.intent.action.SENDTO"
@@ -28,6 +29,14 @@ fun isMatrixId(value: String?): Boolean {
     val colon = value.indexOf(':')
     return colon > 1 && colon < value.length - 1 && value.none { it.isWhitespace() }
 }
+
+/**
+ * Element X has no matrix.to filter; it handles MSC2312 `matrix:` URIs: `matrix:u/<user id
+ * without the @>?action=chat` (opens or starts the DM - whether it lands on the DM or the user's
+ * profile is a device check). Its own `element://user/<mxid>` is the fallback. [mxid] is a
+ * valid [isMatrixId]. Element X exposes no call intent, so there is no direct-call button.
+ */
+fun elementChatUri(mxid: String): String = "matrix:u/${mxid.removePrefix("@")}?action=chat"
 
 /**
  * [usable]: the package is installed, not suspended and allowed on this phone (AppEnforcer's
@@ -44,7 +53,7 @@ fun resolveMessageButton(
         ?.let { MessageIntent(ACTION_SENDTO, "smsto:${contact.number}", it) }
     "element" -> contact.messageAddress
         ?.takeIf { isMatrixId(it) && usable(MessagePackages.ELEMENT_X) }
-        ?.let { MessageIntent(ACTION_VIEW, "https://matrix.to/#/$it", MessagePackages.ELEMENT_X) }
+        ?.let { MessageIntent(ACTION_VIEW, elementChatUri(it), MessagePackages.ELEMENT_X, fallbackUri = "element://user/$it") }
     "signal" -> if (contact.number.startsWith("+")) {
         MessagePackages.SIGNAL.firstOrNull(usable)
             ?.let { MessageIntent(ACTION_VIEW, "https://signal.me/#p/${contact.number}", it) }

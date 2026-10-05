@@ -29,7 +29,10 @@ class MessageButtonsTest {
     @Test
     fun `element needs a Matrix ID and an allowed Element X`() {
         assertEquals(
-            MessageIntent(ACTION_VIEW, "https://matrix.to/#/@mamma:matrix.org", MessagePackages.ELEMENT_X),
+            MessageIntent(
+                ACTION_VIEW, "matrix:u/mamma:matrix.org?action=chat", MessagePackages.ELEMENT_X,
+                fallbackUri = "element://user/@mamma:matrix.org",
+            ),
             resolveMessageButton(contact("element", "@mamma:matrix.org"), true, messages, everything),
         )
         assertNull(resolveMessageButton(contact("element", null), true, messages, everything))
@@ -37,6 +40,15 @@ class MessageButtonsTest {
         assertNull(resolveMessageButton(contact("element", "@mamma:matrix.org"), true, messages) { it != MessagePackages.ELEMENT_X })
         // Not tied to the SMS switch.
         assertTrue(resolveMessageButton(contact("element", "@mamma:matrix.org"), false, null, everything) != null)
+    }
+
+    @Test
+    fun `element chat uri is the MSC2312 form without the at sign`() {
+        assertEquals("matrix:u/a.b-c:example.org:8448?action=chat", elementChatUri("@a.b-c:example.org:8448"))
+        // Never a matrix.to link: Element X doesn't handle those.
+        val intent = resolveMessageButton(contact("element", "@mamma:matrix.org"), true, messages, everything)!!
+        assertFalse(intent.uri.contains("matrix.to"))
+        assertFalse(intent.fallbackUri!!.contains("matrix.to"))
     }
 
     @Test

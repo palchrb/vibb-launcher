@@ -91,11 +91,15 @@ object ContactSheet {
     }
 
     fun openMessage(activity: Activity, message: MessageIntent) {
-        try {
-            activity.startActivity(Intent(message.action, Uri.parse(message.uri)).setPackage(message.packageName))
-        } catch (e: ActivityNotFoundException) {
-            Toast.makeText(activity, R.string.calls_could_not_message, Toast.LENGTH_LONG).show()
+        for (uri in listOfNotNull(message.uri, message.fallbackUri)) {
+            try {
+                activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))
+                return
+            } catch (e: ActivityNotFoundException) {
+                // Try the fallback form (Element X: element://user/...).
+            }
         }
+        Toast.makeText(activity, R.string.calls_could_not_message, Toast.LENGTH_LONG).show()
     }
 
     /** Installed, not suspended, and allowed by the app allowlist (or the override/pause). */
