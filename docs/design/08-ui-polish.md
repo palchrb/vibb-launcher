@@ -148,3 +148,19 @@ resource). Time rules/screen time: Home counting unchanged. Emergency: LockActiv
 7. After picking: press Home → recents/swipe-up animation and lock screen show the same image.
 8. Settings → Wallpaper (or Photos "set as") on a managed phone is blocked; our own pick still applies.
 9. PhoneBook and ContactCard screens unchanged except font; LockActivity at bedtime still comes up over Home.
+
+## Decisions after QA review (qa-08-design.md), 2026-10-05
+
+QA findings override this doc where they conflict. Binding:
+- Photo wallpapers go on the HOME screen only; the lock screen gets the chosen colour/gradient
+  unless the parent opts in per wallpaper. When a wallpaper is unassigned/deleted or the phone is
+  unmanaged, the system wallpaper is replaced at once.
+- Server wallpaper processing rotates first, then cover-fits/crops to the phone's aspect; same
+  file lock, backup and recovery as contact photos.
+- Icon rendering off the main thread (in refreshApps); draw only one full-screen bitmap (use the
+  system wallpaper behind a transparent Home when it's ours); apply the wallpaper only when the
+  choice changes, never on every resume; don't fight a refused setBitmap.
+- Scrim/text colour chosen per wallpaper to reach 4.5:1 for labels (dark or light text).
+- Quick Controls bug: also cover failed decode keeping the old cache and non-device-owner
+  installs; add a test banning Settings/wallpaper intents from the kid screens.
+- Pin the Nunito source URL + SHA-256; 48 dp touch targets.
