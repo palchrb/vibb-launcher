@@ -178,3 +178,28 @@ path still reads its DE copy; a push before the first unlock waits in gms and th
    suspended+hidden until allowlisted; Play auto-updates an allowed Play app while not launchable.
 7. Account runbook steps 1-5; purchase in an allowed app asks for the password; 112 test mode from the lock screen
    during install mode and with FCM on.
+
+## Decisions after QA review (qa-07-design.md), 2026-10-05
+
+QA findings override this doc where they conflict. Binding:
+
+- **Play reachable inside an allowed app's task (QA #1):** the Play Store package
+  (`com.android.vending`) is SUSPENDED (not hidden) at all times except (a) parent install mode
+  and (b) a nightly update window (default 02:00–04:00, only while the screen is off, ended at
+  once on screen-on). Play services and Google Services Framework are never suspended or hidden
+  (FCM). Any newly installed app stays hidden/unlaunchable until the parent allowlists it, and
+  new installs are reported to the server. [needs device test: Play updates apps during the
+  window; FCM still delivered while Play Store is suspended.]
+- **Never lift the link blocker** and never clear preferred activities (keeps the HOME pin).
+  Install mode pins only the Play Store app.
+- **Runbook order:** factory reset → `dpm set-device-owner` → add the Google account and set
+  Play options (auto-update, purchase authentication, no payment method) in the normal UI →
+  enroll on the server (first policy blocks account changes and starts the kiosk).
+- **Syncs run inside the existing foreground service** with a wakelock and timeouts; no separate
+  dataSync service; Firebase initialised when the service starts; the FCM service stays
+  `exported="false"` as declared by the SDK.
+- **FCM health:** defined by a periodic server→device test nudge acknowledged by the next sync;
+  fallback to SSE when acks stop; ring/lock/lift nudges are also sent over SSE while FCM health
+  is unproven. The DNS filter always allows the FCM hosts; server FCM calls have timeouts; the
+  service-account key is FCM-only and stored outside the backed-up data directory.
+- Battery is measured per change (tsnet, SSE keepalive, FCM) rather than one before/after.
