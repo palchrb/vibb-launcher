@@ -149,6 +149,7 @@
     <string name="settings_mdm_unifiedpush_distributor_enabled_summary">Lets other apps on this phone receive push notifications through this app (UnifiedPush) instead of needing a separate app installed for it. Off unless you turn it on.</string>
 
     <string name="settings_gate_dialog_title">Enter code to open settings</string>
+    <string name="settings_gate_no_pin">Settings are locked. Set an unlock code for this phone on the server to open them.</string>
 
     <string name="alert_cant_choose_home_screen">Failed to open the home screen chooser. You need to choose a homescreen manually in Android Settings.</string>
     <string name="toast_system_settings_unavailable">System settings aren\'t available right now.</string>
