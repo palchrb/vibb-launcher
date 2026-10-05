@@ -206,5 +206,12 @@ fun refreshPlan(ceReadable: Boolean, ce: CeRead?, deJson: String?, lastCommitted
 
 /** The call log the callback window may use: none before the first unlock (it's CE, and its
  * provider may block past the screening budget) - [read] isn't even called then. */
+/**
+ * Whether the call log may be queried at all (handy step 9, B3): only with READ_CALL_LOG granted
+ * (unmanaged calls never self-grant it - querying anyway logged a SecurityException every sync)
+ * and after the first unlock (the call log is credential-encrypted).
+ */
+fun canReadCallLog(granted: Boolean, unlocked: Boolean): Boolean = granted && unlocked
+
 fun callLogForWindow(unlocked: Boolean, read: () -> List<LoggedCall>): List<LoggedCall> =
     if (unlocked) read() else emptyList()

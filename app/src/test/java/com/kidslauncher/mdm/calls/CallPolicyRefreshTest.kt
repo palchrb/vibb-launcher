@@ -191,4 +191,12 @@ class CallPolicyRefreshTest {
         assertNotNull(callbackWindowUntil(now, callLogForWindow(false) { log }, now + CALLBACK_WINDOW_MS, platform))
         assertNotNull(callbackWindowUntil(now, callLogForWindow(true) { log }, null, platform))
     }
+
+    @Test
+    fun `the call log is only queried with the permission and after unlock (B3)`() {
+        assertTrue(canReadCallLog(granted = true, unlocked = true))
+        assertFalse(canReadCallLog(granted = false, unlocked = true))
+        assertFalse(canReadCallLog(granted = true, unlocked = false))
+        assertFalse(canReadCallLog(granted = false, unlocked = false))
+    }
 }

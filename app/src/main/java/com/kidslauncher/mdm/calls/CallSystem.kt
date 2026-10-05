@@ -87,11 +87,18 @@ object CallSystem {
      * record, which we rarely have (the preloaded dialer shows emergency calls) - reported to the
      * server as a warning (QA step 2 #7). */
     fun callLogReadable(context: Context): Boolean =
-        context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED &&
-            readOutgoingCalls(context, System.currentTimeMillis()) != null
+        readOutgoingCalls(context, System.currentTimeMillis()) != null
 
-    /** `null` when the call log can't be read. */
-    private fun readOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall>? = try {
+    fun callLogGranted(context: Context): Boolean =
+        context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED
+
+    /** `null` when the call log can't be read - without the permission (calls unmanaged) or before
+     * the first unlock it isn't queried at all ([canReadCallLog]); the emergency report then uses
+     * only our own device-protected record. */
+    private fun readOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall>? =
+        if (!canReadCallLog(callLogGranted(context), CallPolicyStore.userUnlocked(context))) null else queryOutgoingCalls(context, sinceMs)
+
+    private fun queryOutgoingCalls(context: Context, sinceMs: Long): List<LoggedCall>? = try {
         context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
             arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.DATE, CallLog.Calls.DURATION),
