@@ -363,6 +363,17 @@ async fn policy_json_keys_snapshot() {
     );
     assert!(call_policy.values().all(|v| !v.is_null()));
 
+    // The launcher's LauncherUi DTO (steps 5 and 8): every key, wallpapers always a list.
+    let launcher_ui = object["launcher_ui"].as_object().unwrap();
+    let mut ui_keys: Vec<&str> = launcher_ui.keys().map(String::as_str).collect();
+    ui_keys.sort_unstable();
+    assert_eq!(ui_keys, ["home_columns", "language", "wallpapers"]);
+    assert!(
+        launcher_ui["wallpapers"]
+            .as_array()
+            .is_some_and(|w| !w.is_empty())
+    );
+
     // The launcher's TimePolicy / LocationPolicy DTOs (handy step 6).
     let time_policy = object["time_policy"].as_object().unwrap();
     let mut time_keys: Vec<&str> = time_policy.keys().map(String::as_str).collect();

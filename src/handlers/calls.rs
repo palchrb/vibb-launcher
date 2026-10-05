@@ -659,7 +659,7 @@ pub async fn upload_photo(
     let Some(bytes) = upload else {
         return photo_error(photos::PhotoError::Empty.message()).await;
     };
-    let processed = match photos::process_limited(bytes).await {
+    let processed = match photos::process_limited(bytes, photos::Shape::Square).await {
         Ok(processed) => processed,
         Err(err) => return photo_error(err.message()).await,
     };

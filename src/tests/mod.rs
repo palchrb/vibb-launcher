@@ -9,6 +9,7 @@ mod launcher_ui;
 mod provisioning;
 mod push;
 mod time_rules;
+mod wallpapers;
 
 use axum::Router;
 use axum::body::Body;
@@ -106,6 +107,7 @@ impl TestApp {
             command_notify,
             config: std::sync::Arc::new(ForkConfig::for_tests()),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
+            wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
             fcm,
         };
 

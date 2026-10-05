@@ -234,6 +234,7 @@ pub(crate) async fn build_policy(
         launcher_ui: LauncherUi {
             language: policy.launcher_language,
             home_columns: policy.home_columns,
+            wallpapers: crate::wallpapers::policy_wallpapers(&state.db, device_id).await?,
         },
         time_policy,
         location_policy,
@@ -1010,6 +1011,39 @@ pub async fn contact_photo(
         Ok(false) => return StatusCode::NOT_FOUND.into_response(),
         Err(err) => {
             tracing::error!(device_id = device.id, %err, "contact photo lookup failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// A wallpaper image by its hash (`launcher_ui.wallpapers[].image`). Only for a wallpaper this
+/// device may use - another device's upload, an invalid hash or a missing file are all 404, so a
+/// device token can't fetch the parent's other photos (design 08, QA 08 #8).
+pub async fn wallpaper_image(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+) -> impl IntoResponse {
+    let Some(path) = crate::photos::path_for(&state.wallpaper_dir, &hash) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let visible: Result<bool, sqlx::Error> = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM device_wallpapers dw JOIN wallpapers w ON w.id = dw.wallpaper_id \
+         WHERE dw.device_id = ? AND w.image_hash = ?)",
+    )
+    .bind(device.id)
+    .bind(&hash)
+    .fetch_one(&state.db)
+    .await;
+    match visible {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "wallpaper lookup failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }

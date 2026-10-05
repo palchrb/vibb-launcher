@@ -215,6 +215,24 @@
         <noscript><button type="submit">Save</button></noscript>
     </form>
 
+    <form method="post" action="/devices/{{ device.id }}/wallpapers" class="card">
+        <h2>Wallpapers</h2>
+        <p class="subtitle">The backgrounds the child may choose from on this phone. Each choice saves itself immediately; unticking the one in use replaces it on the phone at once. Add your own photos on the <a href="/wallpapers">Wallpapers</a> page.</p>
+        <div class="wallpaper-choices" style="display:flex;flex-wrap:wrap;gap:10px;">
+            {% for w in wallpapers %}
+            <label class="checkbox-row" style="flex-direction:column;align-items:center;gap:4px;">
+                {% if let Some(image) = w.image %}
+                <img src="/wallpaper-images/{{ image }}" alt="" width="45" height="80" style="object-fit:cover;border-radius:8px;">
+                {% else %}
+                <span style="display:block;width:45px;height:80px;border-radius:8px;background: {{ w.background }}"></span>
+                {% endif %}
+                <span><input type="checkbox" name="wallpaper" value="{{ w.id }}" {% if w.checked %}checked{% endif %} onchange="this.form.submit()"> {{ w.label }}</span>
+            </label>
+            {% endfor %}
+        </div>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
     <form method="post" action="/devices/{{ device.id }}/hardening" class="card">
         <h2>Phone hardening</h2>
         <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The offline-override PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>

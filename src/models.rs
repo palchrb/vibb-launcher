@@ -71,11 +71,34 @@ pub struct DevicePolicy {
 /// The launcher languages a parent can choose; "system" follows the phone's language.
 pub const LAUNCHER_LANGUAGES: [&str; 3] = ["system", "nb", "en"];
 
-/// `PolicyResponse.launcher_ui` - always sent with both fields.
+/// `PolicyResponse.launcher_ui` - always sent with every field.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct LauncherUi {
     pub language: String,
     pub home_columns: i64,
+    /// The wallpapers this phone may use, in the parent's order (design 08-ui-polish.md); the kid
+    /// picks one on the phone. Always sent, possibly empty (the launcher then uses navy).
+    pub wallpapers: Vec<PolicyWallpaper>,
+}
+
+/// One allowed wallpaper in `launcher_ui.wallpapers` - every key always present.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct PolicyWallpaper {
+    pub id: i64,
+    /// "color", "gradient" (two colours at 160°) or "image".
+    pub kind: String,
+    /// "#RRGGBB" - one for a colour, two for a gradient, none for an image.
+    pub colors: Vec<String>,
+    /// SHA-256 of the image (`GET /api/devices/wallpapers/{hash}`), null unless "image".
+    pub image: Option<String>,
+    /// The parent's label for an upload; the built-ins' English name.
+    pub label: String,
+    /// "navy", "forest", ... for the built-ins (the launcher labels them in the kid's language),
+    /// null for uploads.
+    pub builtin_key: Option<String>,
+    /// An image also goes on the lock screen (the parent ticked it); otherwise the lock screen
+    /// gets a colour.
+    pub lock_screen: bool,
 }
 
 /// Android user restrictions the launcher sets while the phone is managed - one switch each,

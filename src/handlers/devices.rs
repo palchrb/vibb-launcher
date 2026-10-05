@@ -251,6 +251,8 @@ struct DeviceDetailTemplate {
     /// Launcher card (migrations/0024): language and home-grid columns.
     launcher_language: String,
     home_columns: i64,
+    /// The wallpaper card: every wallpaper, ticked when this phone may use it.
+    wallpapers: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
     /// The last status report says the launcher's notification listener has no access, so the
     /// home screen shows no unread badges on apps.
     badges_without_access: bool,
@@ -819,6 +821,12 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
     let push = push_card(&state, id, latest_status.as_ref()).await;
+    let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "couldn't load the wallpaper card");
+            Vec::new()
+        });
 
     Html(
         DeviceDetailTemplate {
@@ -833,6 +841,7 @@ pub async fn view_device(State(state): State<AppState>, Path(id): Path<i64>) -> 
             hardening: policy.hardening.clone(),
             launcher_language: policy.launcher_language.clone(),
             home_columns: policy.home_columns,
+            wallpapers,
             badges_without_access: latest_status
                 .as_ref()
                 .is_some_and(|s| s.notification_listener_enabled == Some(false)),

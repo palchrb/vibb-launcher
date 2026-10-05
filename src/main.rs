@@ -11,6 +11,7 @@ mod security;
 #[cfg(test)]
 mod tests;
 mod time_rules;
+mod wallpapers;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -47,6 +48,9 @@ pub struct AppState {
     /// Where contact photos are stored (`data/contact_photos`; a temp dir in tests) - see
     /// `photos`.
     pub photo_dir: std::sync::Arc<std::path::PathBuf>,
+    /// Where wallpaper images are stored (`data/wallpapers`; a temp dir in tests) - its own
+    /// directory, because `photos::prune` deletes every file there no contact references.
+    pub wallpaper_dir: std::sync::Arc<std::path::PathBuf>,
     /// The FCM sender (handy step 7), `None` when `FCM_SERVICE_ACCOUNT_FILE` isn't set or the key
     /// isn't usable - then every phone uses the SSE stream. See `fcm` and `push`.
     pub fcm: Option<fcm::SharedSender>,
@@ -136,11 +140,12 @@ async fn main() {
         command_notify,
         config: std::sync::Arc::new(fork_config),
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
+        wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
         fcm,
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
-    // After a restore the database may name photos that aren't on disk: take them from the
-    // backups, or drop the reference (design 05).
+    // After a restore the database may name photos or wallpapers that aren't on disk: take them
+    // from the backups, or drop the reference (design 05, 08).
     photos::recover_missing(&state, std::path::Path::new(handlers::backups::BACKUP_DIR)).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
@@ -287,6 +292,28 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/devices/{id}/launcher",
             post(handlers::devices::update_launcher_ui),
+        )
+        .route(
+            "/devices/{id}/wallpapers",
+            post(handlers::wallpapers::save_device_wallpapers),
+        )
+        .route(
+            "/wallpapers",
+            get(handlers::wallpapers::show)
+                .post(handlers::wallpapers::upload)
+                .layer(DefaultBodyLimit::max(photos::MAX_UPLOAD_BYTES + 64 * 1024)),
+        )
+        .route(
+            "/wallpapers/{wallpaper_id}/lock-screen",
+            post(handlers::wallpapers::set_lock_screen),
+        )
+        .route(
+            "/wallpapers/{wallpaper_id}/delete",
+            post(handlers::wallpapers::delete),
+        )
+        .route(
+            "/wallpaper-images/{hash}",
+            get(handlers::wallpapers::view_image),
         )
         .route("/settings/calls", post(handlers::calls::save_call_settings))
         .route("/devices/locate", get(handlers::locate::show_locate))
@@ -489,6 +516,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/api/devices/apps",
             get(handlers::device_api::tracked_app_updates),
+        )
+        .route(
+            "/api/devices/wallpapers/{hash}",
+            get(handlers::device_api::wallpaper_image),
         )
         .route(
             "/api/devices/contact-photos/{hash}",

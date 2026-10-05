@@ -20,6 +20,14 @@ async fn policy(app: &TestApp, token: &str) -> serde_json::Value {
     res.json()
 }
 
+/// `launcher_ui` without the wallpapers (tests/wallpapers.rs covers those).
+async fn launcher_settings(app: &TestApp, token: &str) -> serde_json::Value {
+    let mut ui = policy(app, token).await["launcher_ui"].clone();
+    assert!(ui["wallpapers"].is_array(), "wallpapers always sent");
+    ui.as_object_mut().unwrap().remove("wallpapers");
+    ui
+}
+
 /// Manages calls on `device` and attaches a contact; returns its id.
 async fn contact(app: &TestApp, device: i64, name: &str, number: &str) -> i64 {
     sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
@@ -138,7 +146,7 @@ async fn launcher_ui_defaults_and_form() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     assert_eq!(
-        policy(&app, &token).await["launcher_ui"],
+        launcher_settings(&app, &token).await,
         json!({ "language": "system", "home_columns": 3 })
     );
 
@@ -154,7 +162,7 @@ async fn launcher_ui_defaults_and_form() {
     assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
-        policy(&app, &token).await["launcher_ui"],
+        launcher_settings(&app, &token).await,
         json!({ "language": "nb", "home_columns": 4 })
     );
 
@@ -173,7 +181,7 @@ async fn launcher_ui_defaults_and_form() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST);
     }
     assert_eq!(
-        policy(&app, &token).await["launcher_ui"],
+        launcher_settings(&app, &token).await,
         json!({ "language": "nb", "home_columns": 4 })
     );
 
@@ -514,6 +522,7 @@ async fn backups_carry_photos_and_a_restore_gets_them_back() {
         db.to_str().unwrap(),
         zip_path.to_str().unwrap(),
         &app.state.photo_dir,
+        &app.state.wallpaper_dir,
     )
     .unwrap();
     let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
