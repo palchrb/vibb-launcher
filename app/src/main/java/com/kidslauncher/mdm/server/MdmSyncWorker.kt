@@ -162,7 +162,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     mdm.lockReason(reason)
     mdm.lockKey(lock.key())
     // Derives the same lock from the same policy and suspends apps while it's on.
-    AppEnforcer.apply(context, decision.policy)
+    AppEnforcer.apply(context, decision.policy, fromSync = true)
     // A lock that began with this policy (a lift ended early, a new rule): show it now, also over
     // an app (not over a call), then re-arm the boundary alarm and the screen-time timer.
     val appContext = context.applicationContext

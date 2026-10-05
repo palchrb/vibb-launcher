@@ -182,7 +182,7 @@ object AppEnforcer {
      * main thread (it can wait for a running pass, and starting the VPN reads files).
      */
     @Synchronized
-    fun apply(context: Context, policy: PolicyResponse?) {
+    fun apply(context: Context, policy: PolicyResponse?, fromSync: Boolean = false) {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         if (!dpm.isDeviceOwnerApp(context.packageName)) {
             return
@@ -211,7 +211,8 @@ object AppEnforcer {
         CallPolicyStore.ensureLoaded(context)
         val callState = CallPolicyStore.state
         applyDialerRole(context, dpm, admin, callState)
-        signalRoleChange(context)
+        // Inside a sync the status report right after this tells the server anyway (qa-09-code #10).
+        if (!fromSync) signalRoleChange(context)
 
         // A time rule or the used-up budget: suspend everything but our own package, the system
         // dialer and the lock's usable apps (see computeEnforcementPlan), from the same decision
