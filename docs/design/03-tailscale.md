@@ -190,3 +190,20 @@ nodes listed. 12. Calls/SMS/RCS normal; overnight battery vs tsnet mode.
 
 Q1 One tagged reusable key for tsnet and the app, or a separate key? Q2 Fallback to KidVpnService (recommended) or
 accept the gap? Q3 Parents' devices: AdGuard light client or "Use Tailscale DNS" off? Q4 Tailscale from GitHub or Play?
+
+## User input 2026-10-05: temporary VPN pause
+
+Turning Tailscale off for a while must be possible (plane/hotel Wi-Fi captive portals, networks
+that need the VPN off while connecting). Design change:
+
+- Per-device server setting "kid may pause VPN" (on/off) and a max duration (default 30 min).
+- The pause is started from the launcher's own Quick Controls (not by fighting the watchdog):
+  the launcher stops pushing always-on, lets the user disconnect, and the watchdog resumes
+  enforcement when the window ends or the device reconnects to a known network, whichever
+  comes first. Reported in the status report; shown on the device page.
+- With the setting off, the parent can still grant a pause remotely from the PWA or via the
+  override PIN.
+- Nothing else unlocks during a pause (app/call rules unchanged); DNS filtering is off for the
+  window.
+- Whether Android's captive-portal login already works with always-on (no lockdown) Tailscale
+  on the Jelly Star, which would make the pause rarely needed: [needs device test].
