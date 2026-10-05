@@ -622,6 +622,7 @@ object AppEnforcer {
             systemDialer = helperInfo(context, systemDialerPackage(context)),
             alarmApp = helperInfo(context, alarmAppPackage(context)),
             forbidden = forbidden,
+            ourDialerHeld = CallSystem.dialerRoleHeld(context),
         )
         Log.i(LOG_TAG, "PIN lock helpers (kiosk off): $helpers")
         return helpers

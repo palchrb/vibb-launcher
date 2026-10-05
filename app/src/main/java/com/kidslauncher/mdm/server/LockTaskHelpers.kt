@@ -142,8 +142,10 @@ fun lockTaskWhileLocked(
 
 /**
  * The system packages the lock pins with the kiosk off: whatever handles the emergency dialer and
- * `ACTION_CALL` (Telecom), the system dialer (the in-call UI of emergency calls) and the clock app
- * (its alarm screen shows over the lock - decision after QA review). Only system apps, never a
+ * `ACTION_CALL` (Telecom), the system dialer - only while our dialer role isn't held, when it is
+ * the in-call UI of every call (qa-10-code #5; with the role held its emergency in-call UI runs
+ * under AOSP's KEYGUARD exemption, and pinning it would let its full UI - call log, contacts,
+ * keypad - stay over the lock) - and the clock app (its alarm screen shows over the lock). Only system apps, never a
  * forbidden one (Settings, the camera) or Play.
  */
 fun pinLockHelpers(
@@ -152,6 +154,7 @@ fun pinLockHelpers(
     systemDialer: ResolvedHelper?,
     alarmApp: ResolvedHelper?,
     forbidden: Set<String>,
-): Set<String> = listOfNotNull(emergencyDialer, telecom, systemDialer, alarmApp)
+    ourDialerHeld: Boolean = false,
+): Set<String> = listOfNotNull(emergencyDialer, telecom, systemDialer.takeIf { !ourDialerHeld }, alarmApp)
     .filter { it.system && it.packageName !in forbidden && it.packageName !in PLAY_CORE }
     .mapTo(mutableSetOf()) { it.packageName }

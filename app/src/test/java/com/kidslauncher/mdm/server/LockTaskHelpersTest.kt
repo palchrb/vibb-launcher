@@ -175,6 +175,10 @@ class PinLockTaskTest {
             forbidden = setOf("com.android.settings"),
         )
         assertEquals(setOf("com.android.phone", "com.android.server.telecom", "com.android.dialer"), got)
+        val withRole = pinLockHelpers(
+            null, null, ResolvedHelper("com.android.dialer", system = true), null, emptySet(), ourDialerHeld = true,
+        )
+        assertEquals("our dialer role held: the system dialer's full UI isn't pinned (qa-10-code 5)", emptySet<String>(), withRole)
         val clock = pinLockHelpers(null, null, null, ResolvedHelper("com.google.android.deskclock", system = true), emptySet())
         assertEquals(setOf("com.google.android.deskclock"), clock)
         assertEquals(emptySet<String>(), pinLockHelpers(ResolvedHelper("com.android.settings", true), null, null, null, setOf("com.android.settings")))
