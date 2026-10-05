@@ -30,4 +30,4 @@ fi
 script="$(mktemp)"
 trap 'rm -f "$script"' EXIT
 curl -fsSL "https://raw.githubusercontent.com/$REPO/$TAG/server/deploy/update.sh" -o "$script"
-KPS_REPO="$REPO" bash "$script"
+KPS_REPO="$REPO" KPS_TAG="$TAG" bash "$script"

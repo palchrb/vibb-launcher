@@ -3,7 +3,7 @@
 # systemd box).
 #
 # Usage (as root, e.g. via sudo):
-#   curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
 #
 # To install from a different fork, set KPS_REPO=owner/repo (e.g.
 # `... | sudo KPS_REPO=someone/vibb-launcher bash`; the fork must keep
@@ -85,26 +85,117 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 # The repo is a monorepo that also publishes the launcher, whose stable releases are GitHub's
-# "latest" - so the server's release is looked up by tag (server-vX.Y.Z, newest first in the
-# API's list; drafts aren't listed and prereleases don't match the pattern), never
-# releases/latest.
+# "latest" - so the server's release is looked up in the releases list (newest first): the first
+# server-vX.Y.Z that is neither a draft nor a prerelease. Never releases/latest. Plain grep/awk on
+# the API's JSON (each release lists tag_name, then draft, then prerelease; asset objects have
+# none of these keys). Same text in install.sh, update.sh and install.sh's actions.sh.
 resolve_server_tag() {
     curl -fsSL -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/$REPO/releases?per_page=100" \
-        | grep -oE '"tag_name": *"server-v[0-9]+\.[0-9]+\.[0-9]+"' \
-        | head -1 | grep -oE 'server-v[0-9]+\.[0-9]+\.[0-9]+' || true
+        | grep -oE '"(tag_name|draft|prerelease)": *("[^"]*"|true|false)' \
+        | awk -F': *' '
+            /"tag_name"/ { tag = $2; gsub(/"/, "", tag); draft = ""; next }
+            /"draft"/ { draft = $2; next }
+            /"prerelease"/ {
+                if (draft == "false" && $2 == "false" && tag ~ /^server-v[0-9]+\.[0-9]+\.[0-9]+$/) { print tag; exit }
+            }' || true
 }
-TAG="$(resolve_server_tag)"
+
+# vX.Y.Z > vX.Y.Z. Both are checked against the pattern first: bash arithmetic on an unchecked
+# string (one comes from a file) would evaluate it.
+version_gt() {
+    local re='^v([0-9]+)\.([0-9]+)\.([0-9]+)$' a b i
+    [[ "$1" =~ $re ]] || return 1
+    a=("${BASH_REMATCH[@]:1}")
+    [[ "$2" =~ $re ]] || return 1
+    b=("${BASH_REMATCH[@]:1}")
+    for i in 0 1 2; do
+        if ((10#${a[i]} > 10#${b[i]})); then return 0; fi
+        if ((10#${a[i]} < 10#${b[i]})); then return 1; fi
+    done
+    return 1
+}
+
+# The installed server version (vX.Y.Z), or nothing if unknown: install.sh/update.sh record it in
+# the root-owned updater directory; installs from before that only have data/watcher_version
+# (written by install.sh, at install time).
+installed_version() {
+    local f v
+    for f in /opt/kid-phone-server-updater/installed_version "$INSTALL_DIR/data/watcher_version"; do
+        [ -f "$f" ] || continue
+        v="$(head -c 32 "$f" | tr -d '\n')"
+        if [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$v"
+            return
+        fi
+    done
+}
+
+# Refuses to install an older release than the installed one (it would refuse to start on a
+# database the newer version migrated) unless KPS_ALLOW_DOWNGRADE=1.
+refuse_downgrade() {
+    local new="$1" current
+    current="$(installed_version)"
+    if [ -n "$current" ] && version_gt "$current" "$new"; then
+        if [ "${KPS_ALLOW_DOWNGRADE:-}" = "1" ]; then
+            echo "Installing $new over the newer $current (KPS_ALLOW_DOWNGRADE=1)."
+        else
+            echo "The newest release ($new) is older than the installed $current - not installing." >&2
+            echo "To go back on purpose, see DEPLOY.md (Rolling back) and set KPS_ALLOW_DOWNGRADE=1." >&2
+            exit 1
+        fi
+    fi
+}
+
+# KPS_TAG (set by the root-side updater, which fetched this script at that tag) or the newest
+# stable server release.
+pick_tag() {
+    if [ -n "${KPS_TAG:-}" ]; then
+        if ! [[ "$KPS_TAG" =~ ^server-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "KPS_TAG must look like server-vX.Y.Z, got: $KPS_TAG" >&2
+            exit 1
+        fi
+        echo "$KPS_TAG"
+    else
+        resolve_server_tag
+    fi
+}
+
+# Downloads the release tarball and its .sha256 into $1 and checks the hash; exits on any failure.
+download_release() {
+    local dir="$1" asset="kid-phone-server-$TARGET.tar.gz" expected actual
+    local url="https://github.com/$REPO/releases/download/$TAG/$asset"
+    echo "Downloading $TAG from $url ..."
+    curl -fsSL "$url" -o "$dir/$asset"
+    curl -fsSL "$url.sha256" -o "$dir/$asset.sha256"
+    expected="$(head -c 64 "$dir/$asset.sha256")"
+    actual="$(sha256sum "$dir/$asset" | cut -c1-64)"
+    if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || [ "$expected" != "$actual" ]; then
+        echo "SHA-256 of $asset doesn't match $asset.sha256 - not installing." >&2
+        exit 1
+    fi
+    tar -xzf "$dir/$asset" -C "$dir"
+    rm -f "$dir/$asset" "$dir/$asset.sha256"
+    if [ ! -s "$dir/kid_phone_server" ] || [ ! -d "$dir/static" ]; then
+        echo "The download doesn't contain kid_phone_server and static/ - not installing." >&2
+        exit 1
+    fi
+}
+
+TAG="$(pick_tag)"
 if [ -z "$TAG" ]; then
     echo "No server-vX.Y.Z release found in $REPO." >&2
     exit 1
 fi
-TARBALL_URL="https://github.com/$REPO/releases/download/$TAG/kid-phone-server-$TARGET.tar.gz"
-echo "Downloading $TAG from $TARBALL_URL ..."
-curl -fsSL "$TARBALL_URL" -o /tmp/kid-phone-server.tar.gz
-tar -xzf /tmp/kid-phone-server.tar.gz -C "$INSTALL_DIR"
-rm /tmp/kid-phone-server.tar.gz
-chmod +x "$INSTALL_DIR/kid_phone_server"
+refuse_downgrade "${TAG#server-}"
+TMP_EXTRACT="$(mktemp -d)"
+trap 'rm -rf "$TMP_EXTRACT"' EXIT
+download_release "$TMP_EXTRACT"
+# install(1) replaces the file instead of writing into it, so this works while a re-run's
+# service is still running the old binary (restarted below).
+install -m 755 "$TMP_EXTRACT/kid_phone_server" "$INSTALL_DIR/kid_phone_server"
+rm -rf "$INSTALL_DIR/static"
+cp -r "$TMP_EXTRACT/static" "$INSTALL_DIR/static"
 
 # The version just installed (vX.Y.Z, the form of the app's own version). Recorded
 # so the app can tell you when the root-side watcher/scheduler scripts (only
@@ -199,6 +290,8 @@ echo "Installing the update watcher and scheduler..."
 # nothing here is kidphone-writable.
 UPDATER_DIR="/opt/kid-phone-server-updater"
 mkdir -p "$UPDATER_DIR"
+# The server version just installed, for update.sh's downgrade check (root-owned, unlike data/).
+echo -n "$INSTALLED_VERSION" >"$UPDATER_DIR/installed_version"
 
 # Placeholder mount point for an optional external backup drive. Doesn't do
 # anything by itself - mount a drive here (e.g. via /etc/fstab) and enable
@@ -217,8 +310,41 @@ REPO="@REPO@"
 DATA_DIR="/opt/kid-phone-server/data"
 BACKUP_DIR="$DATA_DIR/backups"
 
+# The repo is a monorepo that also publishes the launcher, whose stable releases are GitHub's
+# "latest" - so the server's release is looked up in the releases list (newest first): the first
+# server-vX.Y.Z that is neither a draft nor a prerelease. Never releases/latest. Plain grep/awk on
+# the API's JSON (each release lists tag_name, then draft, then prerelease; asset objects have
+# none of these keys). Same text in install.sh and update.sh.
+resolve_server_tag() {
+    curl -fsSL -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/$REPO/releases?per_page=100" \
+        | grep -oE '"(tag_name|draft|prerelease)": *("[^"]*"|true|false)' \
+        | awk -F': *' '
+            /"tag_name"/ { tag = $2; gsub(/"/, "", tag); draft = ""; next }
+            /"draft"/ { draft = $2; next }
+            /"prerelease"/ {
+                if (draft == "false" && $2 == "false" && tag ~ /^server-v[0-9]+\.[0-9]+\.[0-9]+$/) { print tag; exit }
+            }' || true
+}
+
+# Runs update.sh as it is in the release it installs (not master HEAD), from a file: a failed or
+# truncated download is never executed.
 action_app_update() {
-    curl -sSL "https://raw.githubusercontent.com/$REPO/master/server/deploy/update.sh" | KPS_REPO="$REPO" bash
+    local tag script rc=0
+    tag="$(resolve_server_tag)"
+    if [ -z "$tag" ]; then
+        echo "app_update: no server-vX.Y.Z release found in $REPO" >&2
+        return 1
+    fi
+    script="$(mktemp)"
+    if ! curl -fsSL "https://raw.githubusercontent.com/$REPO/$tag/server/deploy/update.sh" -o "$script"; then
+        rm -f "$script"
+        echo "app_update: couldn't download update.sh for $tag" >&2
+        return 1
+    fi
+    KPS_REPO="$REPO" KPS_TAG="$tag" bash "$script" || rc=$?
+    rm -f "$script"
+    return "$rc"
 }
 
 action_app_restart() {

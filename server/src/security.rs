@@ -328,7 +328,7 @@ pub async fn watcher_needs_update() -> bool {
 /// from the same repo even when it isn't install.sh's built-in default.
 pub fn reinstall_hint(repo: &str) -> String {
     format!(
-        "curl -sSL https://raw.githubusercontent.com/{repo}/master/server/deploy/install.sh | sudo KPS_REPO={repo} bash"
+        "curl -fsSL https://raw.githubusercontent.com/{repo}/master/server/deploy/install.sh | sudo KPS_REPO={repo} bash"
     )
 }
 

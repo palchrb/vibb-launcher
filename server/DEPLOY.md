@@ -7,7 +7,7 @@ These steps get Kids Device MDM running on a Raspberry Pi Zero 2 W. Only 64-bit 
 SSH into the Pi, then run:
 
 ```
-curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
 ```
 
 This downloads the newest server release (the newest `server-vX.Y.Z` release of the
@@ -30,10 +30,12 @@ This gives you `https://<hostname>.<tailnet>.ts.net`, reachable only from your o
 ## Updating
 
 ```
-curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/update.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/update.sh | sudo bash
 ```
 
-Downloads the newest `server-vX.Y.Z` release and swaps the binary in place. Doesn't touch your `.env`. The download is unpacked and
+Downloads the newest stable `server-vX.Y.Z` release (prereleases and drafts are skipped), checks it against the
+release's published `.sha256`, and swaps the binary in place. The in-app "Update now" runs `update.sh` as it is in that
+release (not `master`), from a file, never piped. Doesn't touch your `.env`. The download is unpacked and
 checked before the service is stopped, so a failed download leaves the old version running; if anything fails after the
 stop, the service is started again. Before the swap it copies the database and the old binary to
 `/var/backups/kid-phone-server/<timestamp>/`, because the new version may migrate the database on its first start. Old
@@ -148,7 +150,7 @@ If a kid's phone uses [Molly](https://molly.im/) (a de-Googled Signal fork) and 
 1. Install it the same way as the main server:
 
     ```
-    curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install_mollysocket.sh | sudo bash
+    curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install_mollysocket.sh | sudo bash
     ```
 
    This sets up its own systemd service (`mollysocket`), listening on `127.0.0.1:8020` only, same "local by default" posture as the main server.

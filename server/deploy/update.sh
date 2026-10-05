@@ -8,10 +8,12 @@
 # have touched, so rolling back means restoring both - see DEPLOY.md.
 #
 # Usage (as root, e.g. via sudo):
-#   curl -sSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/update.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/update.sh | sudo bash
 #
 # KPS_REPO=owner/repo picks a different fork (same as install.sh). The
-# root-side updater passes the repo it was installed from.
+# root-side updater passes the repo it was installed from, and KPS_TAG=server-vX.Y.Z
+# (the release this script was fetched from). KPS_ALLOW_DOWNGRADE=1 allows
+# installing a release older than the installed one.
 
 set -euo pipefail
 
@@ -48,34 +50,116 @@ case "$(uname -m)" in
 esac
 
 # The repo is a monorepo that also publishes the launcher, whose stable releases are GitHub's
-# "latest" - so the server's release is looked up by tag (server-vX.Y.Z, newest first in the
-# API's list; drafts aren't listed and prereleases don't match the pattern), never
-# releases/latest.
+# "latest" - so the server's release is looked up in the releases list (newest first): the first
+# server-vX.Y.Z that is neither a draft nor a prerelease. Never releases/latest. Plain grep/awk on
+# the API's JSON (each release lists tag_name, then draft, then prerelease; asset objects have
+# none of these keys). Same text in install.sh, update.sh and install.sh's actions.sh.
 resolve_server_tag() {
     curl -fsSL -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/$REPO/releases?per_page=100" \
-        | grep -oE '"tag_name": *"server-v[0-9]+\.[0-9]+\.[0-9]+"' \
-        | head -1 | grep -oE 'server-v[0-9]+\.[0-9]+\.[0-9]+' || true
+        | grep -oE '"(tag_name|draft|prerelease)": *("[^"]*"|true|false)' \
+        | awk -F': *' '
+            /"tag_name"/ { tag = $2; gsub(/"/, "", tag); draft = ""; next }
+            /"draft"/ { draft = $2; next }
+            /"prerelease"/ {
+                if (draft == "false" && $2 == "false" && tag ~ /^server-v[0-9]+\.[0-9]+\.[0-9]+$/) { print tag; exit }
+            }' || true
 }
-TAG="$(resolve_server_tag)"
+
+# vX.Y.Z > vX.Y.Z. Both are checked against the pattern first: bash arithmetic on an unchecked
+# string (one comes from a file) would evaluate it.
+version_gt() {
+    local re='^v([0-9]+)\.([0-9]+)\.([0-9]+)$' a b i
+    [[ "$1" =~ $re ]] || return 1
+    a=("${BASH_REMATCH[@]:1}")
+    [[ "$2" =~ $re ]] || return 1
+    b=("${BASH_REMATCH[@]:1}")
+    for i in 0 1 2; do
+        if ((10#${a[i]} > 10#${b[i]})); then return 0; fi
+        if ((10#${a[i]} < 10#${b[i]})); then return 1; fi
+    done
+    return 1
+}
+
+# The installed server version (vX.Y.Z), or nothing if unknown: install.sh/update.sh record it in
+# the root-owned updater directory; installs from before that only have data/watcher_version
+# (written by install.sh, at install time).
+installed_version() {
+    local f v
+    for f in /opt/kid-phone-server-updater/installed_version "$INSTALL_DIR/data/watcher_version"; do
+        [ -f "$f" ] || continue
+        v="$(head -c 32 "$f" | tr -d '\n')"
+        if [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$v"
+            return
+        fi
+    done
+}
+
+# Refuses to install an older release than the installed one (it would refuse to start on a
+# database the newer version migrated) unless KPS_ALLOW_DOWNGRADE=1.
+refuse_downgrade() {
+    local new="$1" current
+    current="$(installed_version)"
+    if [ -n "$current" ] && version_gt "$current" "$new"; then
+        if [ "${KPS_ALLOW_DOWNGRADE:-}" = "1" ]; then
+            echo "Installing $new over the newer $current (KPS_ALLOW_DOWNGRADE=1)."
+        else
+            echo "The newest release ($new) is older than the installed $current - not installing." >&2
+            echo "To go back on purpose, see DEPLOY.md (Rolling back) and set KPS_ALLOW_DOWNGRADE=1." >&2
+            exit 1
+        fi
+    fi
+}
+
+# KPS_TAG (set by the root-side updater, which fetched this script at that tag) or the newest
+# stable server release.
+pick_tag() {
+    if [ -n "${KPS_TAG:-}" ]; then
+        if ! [[ "$KPS_TAG" =~ ^server-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "KPS_TAG must look like server-vX.Y.Z, got: $KPS_TAG" >&2
+            exit 1
+        fi
+        echo "$KPS_TAG"
+    else
+        resolve_server_tag
+    fi
+}
+
+# Downloads the release tarball and its .sha256 into $1 and checks the hash; exits on any failure.
+download_release() {
+    local dir="$1" asset="kid-phone-server-$TARGET.tar.gz" expected actual
+    local url="https://github.com/$REPO/releases/download/$TAG/$asset"
+    echo "Downloading $TAG from $url ..."
+    curl -fsSL "$url" -o "$dir/$asset"
+    curl -fsSL "$url.sha256" -o "$dir/$asset.sha256"
+    expected="$(head -c 64 "$dir/$asset.sha256")"
+    actual="$(sha256sum "$dir/$asset" | cut -c1-64)"
+    if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || [ "$expected" != "$actual" ]; then
+        echo "SHA-256 of $asset doesn't match $asset.sha256 - not installing." >&2
+        exit 1
+    fi
+    tar -xzf "$dir/$asset" -C "$dir"
+    rm -f "$dir/$asset" "$dir/$asset.sha256"
+    if [ ! -s "$dir/kid_phone_server" ] || [ ! -d "$dir/static" ]; then
+        echo "The download doesn't contain kid_phone_server and static/ - not installing." >&2
+        exit 1
+    fi
+}
+
+TAG="$(pick_tag)"
 if [ -z "$TAG" ]; then
     echo "No server-vX.Y.Z release found in $REPO - not updating." >&2
     exit 1
 fi
-TARBALL_URL="https://github.com/$REPO/releases/download/$TAG/kid-phone-server-$TARGET.tar.gz"
+NEW_VERSION="${TAG#server-}"
+refuse_downgrade "$NEW_VERSION"
+
 TMP_EXTRACT="$(mktemp -d)"
 trap 'rm -rf "$TMP_EXTRACT"' EXIT
-
-# Download and unpack everything *before* stopping the service: a 404, a GitHub error page or a
-# truncated download must fail here, with the old version still running. -f makes curl fail on
-# an HTTP error instead of saving the error page as the tarball.
-echo "Downloading $TAG from $TARBALL_URL ..."
-curl -fsSL "$TARBALL_URL" -o "$TMP_EXTRACT/kid-phone-server.tar.gz"
-tar -xzf "$TMP_EXTRACT/kid-phone-server.tar.gz" -C "$TMP_EXTRACT"
-if [ ! -s "$TMP_EXTRACT/kid_phone_server" ] || [ ! -d "$TMP_EXTRACT/static" ]; then
-    echo "The download doesn't contain kid_phone_server and static/ - not updating." >&2
-    exit 1
-fi
+# Download, verify and unpack everything *before* stopping the service: a 404, a GitHub error
+# page, a truncated or altered download must fail here, with the old version still running.
+download_release "$TMP_EXTRACT"
 
 echo "Stopping service..."
 systemctl stop kid-phone-server
@@ -120,6 +204,8 @@ if systemctl is-active --quiet kid-phone-server; then
     # each back up the already-migrated DB and push out the pre-migration copy that a rollback
     # needs. Keep the newest 3 (directory names sort by time).
     ls -1d "$BACKUP_ROOT"/*/ 2>/dev/null | sort | head -n -3 | xargs -r rm -rf
+    mkdir -p /opt/kid-phone-server-updater
+    echo -n "$NEW_VERSION" >/opt/kid-phone-server-updater/installed_version
     echo ""
     echo "Update complete and running."
 else
