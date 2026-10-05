@@ -183,6 +183,17 @@ server catalog); add later only if Play-only apps are needed.
   fix only on request or after significant movement; "update location now"
   button in the PWA. Measure first on the Jelly Star (`dumpsys batterystats`,
   idle drain per day) before and after.
+  **Decided 2026-10-05: FCM for the "something to sync" nudges** (works without a
+  Google account; Play services stay installed and are never suspended).
+  Content-free high-priority data message, so a forged or replayed push can only
+  trigger a sync; the phone still fetches everything over the authenticated
+  device API. Replaces the always-on SSE connection and its foreground service
+  where FCM is available; SSE stays as the fallback transport on devices without
+  Play services; periodic sync every 15-30 min as the backstop. Server sends via
+  the FCM HTTP v1 API with a service-account key in `.env` (secret); the
+  launcher's Firebase config is injected at build time (CI variable / gradle
+  property), not committed, so the fork stays generic. The UnifiedPush
+  distributor (ntfy.sh relay) stays off unless F-Droid-flavoured apps need it.
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with
