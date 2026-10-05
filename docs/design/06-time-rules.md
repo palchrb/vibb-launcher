@@ -96,6 +96,15 @@ location intervals 10/15/30/60/120/240 min; a launcher on an old server converts
 localized kind label). Open: incoming calls during school with calls unmanaged; usage between checkpoints is lost
 on a process death (<= 60 s); lift records and the ledger are CE-only (a reboot ends rule lifts).
 
+Fix round after `qa-step6-code.md`: L `57d3630` (#1/#2 screen time counts during calls and over Home - only our lock
+screen, phone book, in-call screen and Settings are free, not while split/PiP; #6 unreadable ledger = used up),
+`38c101f` (#3 date/time + auto time zone locked whenever any rule/budget exists, override or not; #2
+`DISALLOW_CREATE_WINDOWS` with a budget; #7 location "off" switches system location off), `2dbe911` (#10
+`callsBlockedFor` tests), `fa15149` (#4 kept per user decision: override/pause lift school's call block within the call
+rules - 02-calls.md, pause text, CLAUDE.md). S `6b56a2b` (#5 unmanaged-calls warning, #7 locate result shown, #8 lift
+state from the phone, ledger warning, #9 security log, #10 unauthenticated-route tests, PIN text), `f29001b` CLAUDE.md.
+Tests: server 107, launcher 243; fmt/clippy unchanged (25).
+
 ## Device checklist (Jelly Star, release; plus 02/04/05 checklists)
 
 1. Upgrade with an existing bedtime/weekday schedule: the server shows the migrated rules; the phone locks at the same
@@ -106,7 +115,7 @@ on a process death (<= 60 s); lift records and the ledger are CE-only (a reboot 
 3. Reboot during school, don't unlock: B rejected (DE `boot_call_blocks`); after unlock still school.
 4. Bedtime with Vibb exempt: audio keeps playing with the screen off; phone book calls B.
 5. Budget 5 min: use an app -> locks at ~5 min, lock screen says used up, phone book + Element X still open; time on
-   Home, lock screen, in calls (also Element Call) doesn't count; reboot keeps the count; with debugging allowed,
+   the lock screen, phone book and our in-call screen doesn't count, a call with another app in front does, PiP over Home does; reboot keeps the count; with debugging allowed,
    `adb shell date` back a day doesn't refill (set auto-time on again after).
 6. PWA "End school for 30 min" arrives within seconds (push), ends by itself at 30 min (screen off at the time ->
    locked on screen-on), "End now" re-locks at once; "+15 min" adds 15 to today only.

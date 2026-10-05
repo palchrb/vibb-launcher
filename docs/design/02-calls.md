@@ -475,7 +475,8 @@ QA findings override this doc where they conflict. Binding for implementation:
 - **Outgoing calls are blocked before placement** with a `CallRedirectionService`; the
   in-call `disconnect()` stays as a backstop.
 - **Override PIN and pause never open calls.** Call rules stay in force; they only lift app
-  restrictions. SMS rules too (user confirmed 2026-10-04).
+  restrictions. SMS rules too (user confirmed 2026-10-04). They do lift time-rule call blocks such as school mode
+  (step 6, user decision 2026-10-05), but only back to the call rules: allowed contacts, never anyone else.
 - **Voicemail, RCS, MMI/USSD codes:** handled as in qa-01-02.md (should-fix list).
 - **Number matching:** ASCII digits only on both sides, `sip:`/`tel:` URIs parsed, one shared
   test-vector file used by both the Rust and Kotlin tests.
