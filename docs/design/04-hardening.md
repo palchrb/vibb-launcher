@@ -81,6 +81,11 @@ Not in this step: `DISALLOW_USER_SWITCH`, a warning for allowlisted Android Sett
    (b) server unreachable → the offline PIN lifts app restrictions and the schedule for 2 h (not calls/hardening) and
    opens the launcher's Settings to re-point the server URL; (c) launcher crash-loops before it can sync and adb is
    blocked → recovery-mode factory reset and re-provisioning (01 §4). Safe mode repairs nothing.
+4. **Handy's own PIN lock (step 10, `10-lock-and-call-ui.md`)**: phones need **no Android screen lock**. On a phone
+   enrolled with an Android PIN: set the unlock code and the kid's PIN on the device page, enter the unlock code on the
+   phone (kiosk and Settings released), Settings → Security → Screen lock → None - or with USB debugging allowed
+   `adb shell locksettings clear --old <PIN>`; the launcher switches its lock on at once (`onPasswordChanged`), check
+   that it appears (screen off/on). The first kid PIN also turns "Block safe mode" on (safe mode skips our lock).
 
 ## Implementation status (2026-10-05)
 

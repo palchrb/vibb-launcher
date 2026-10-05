@@ -166,3 +166,59 @@ Product defaults (proposed to the user, pending confirmation):
   dismissed without the PIN.
 - Because safe mode skips our lock, DISALLOW_SAFE_BOOT defaults ON whenever the kid lock is
   enabled (with the crash guard); the parent can switch it off per device.
+
+## Implementation status (2026-10-05)
+
+Done on branch `handy` in both repos (not pushed); every launcher commit builds and passes its tests (checked in a
+separate worktree); S: `cargo test` (168), fmt, clippy (no new warnings). Product defaults above implemented as proposed (pending the user's
+confirmation): Parent code link always on the lock; kid PIN 4-6 digits (server form, default suggestion 4); Android PIN
+removed by runbook (04 runbook step 4, `docs/testing/emulator.md` §6c); the clock app's alarm screen is exempt from
+re-front; the first kid PIN turns "Block safe mode" on.
+
+| Repo | Commit | What |
+|---|---|---|
+| S | `c101836` | `security::verify_pin`, `hash_pin_with_salt`, shared PBKDF2 vector (`pin_hash_shared_vector`) |
+| S | `6d7a36b` | Migration `0030_kid_lock.sql`; `src/kid_lock.rs` (pure: 4-6 digit rule, override cross-checks, `lock_state` sanitizing, card + warnings); policy `kid_lock` (always sent, null = off); `POST /devices/{id}/kid-lock` "Screen lock" card (privacy text incl. safe mode, forensics, no reuse, ~100 tries/day); refused without an override PIN or equal to it; override can't become the kid PIN or be removed while the lock needs it (`?notice=` flash); first PIN sets `disallow_safe_boot`; `lock_state` stored with known fields only (no unlock times); warnings: old launcher, `android_credential`, `crash_guard`, `bad_hash`, `keyguard_not_disabled`, `unmanaged`, safe boot allowed; `call_state.in_call_ui_failed_at` warning; locate page lock text; `tests/step10.rs` |
+| L | `df2c651` | `server/PinHash.kt` (extracted from `OfflineOverride`), `PinHashTest` = the server's vector |
+| L | `a0c689b` | Pure `lock/PinLockState.kt` (`step`, `lockActivation`, PIN entry), `lock/PinBackoff.kt` (only-extending wait, failure counted before the check, reboot restarts), `lock/RefrontPolicy.kt` (0.5/2/5 s forever, exempt set, alarm window, crash guard), `featuresWhileLocked`/`lockTaskWhileLocked`/`pinLockHelpers` in `LockTaskHelpers.kt`; tests |
+| L | `88294b2` | `PinLockActivity` (mock Lock.dc.html + Parent code link), `PinLockRuntime` (process-wide screen receiver moved from `CommandListenerService`, process start LOCKED + shown, re-front, calls end on the lock, time-rule screens under it, remote lock, `lock_state`, `pin_lock_v1`), `PinLockStore` (CE prefs, `commit()`), `LockTaskChrome` (one place for lock-task packages/features, status bar backstop, `DISALLOW_CREATE_WINDOWS`; used by `apply()` and the fast path), `setKeyguardDisabled` in `apply()`, `onPasswordChanged` (+ `watch-login`), `allowBackup=false` + extraction rules, `calls/EmergencyCall.kt`, screen time `keyguardLocked || pinLocked`, `LockActivity` override PIN off the main thread, `PinLockManifestTest` |
+| S/L | `e2ce962` / `e078ee1` | CLAUDE.md updates |
+| L | `e7c6ccf` | Call screens (mocks IncomingCall/InCall): `renderIncoming`/`renderActive`, photo or placeholder, toggles on = white/navy; proximity reading for the lock; in-call UI retry after 300 ms while LOCKED, failure reported |
+
+How the QA findings were met: H1 lock always in lock task (`lockTaskWhileLocked`, `PinLockActivity.ensureLockTask`;
+kiosk list never touched; kiosk off = ours + emergency dialer, Telecom, system dialer, system clock app, features
+KEYGUARD|GLOBAL_ACTIONS|SYSTEM_INFO; `stopLockTask` on unlock); H2 `refrontAction` (exempt: our call, Telecom/system
+dialer, emergency flow 2 min, alarm; never stops; config change/finish ignored; portrait; digits in saved state, wait
+persisted; exempt episodes reported as `lock_state.exempt_yields`); H3 `PinBackoff` (`timedWindowActive` polarity pinned
+in `PinBackoffTest`); H4 time-rule screens always started, PIN lock on top (`LockActivity.start` →
+`TimeRuleShown`), receiver in `Application`; M5 `CallsEnded`, proximity near/far; M6 mandatory link, S refuses without
+an override PIN, link works during the wait, `LockActivity` verify off main; M7 card warning + privacy text + safe-boot
+default; M8 retry + `in_call_ui_failed_at`; M9 via H1, device checks below; M10 `DISALLOW_CREATE_WINDOWS` while LOCKED;
+M11 alarm exempt; L12 CE only, backup off, page text; L13 `keyguardLocked || pinLocked`; L14 guard as specified; L15
+`onPasswordChanged` + USER_PRESENT backstop + apply at boot; L16 nothing on the call screen leads elsewhere.
+
+Known limits / not done: toasts can't show over the lock (`DISALLOW_CREATE_WINDOWS`), so the lock uses its own texts;
+the Assistant isn't suspended - lock task should block it (device check 3); server texts are English only (as before);
+`SettingsActivity`/Settings pause still verify the override PIN on the main thread (unchanged, outside this step);
+alarm detection is "the last scheduled alarm clock is due and < 10 min old" (we can't see other apps' tasks).
+
+### Screenshot checklist (emulator, 320x568 dp and 411 dp, nb + en)
+- [ ] Lock: empty, 2 digits, "Wrong code", backoff "Try again in 0:28" (keypad dimmed), "Only the parent code works" (bad hash)
+- [ ] Lock with the Parent code link and its dialog (wrong code, locked out)
+- [ ] Lock over an allowlisted app (kiosk on) and over Home (kiosk off), shade pulled
+- [ ] Incoming: named + photo, unknown number (PSAP-style), long name (ellipsized), over the PIN lock
+- [ ] In call: timer, speaker on, muted, dialing, holding, ended; while locked only speaker/mute/hang up
+- [ ] Alarm ringing over the lock (exempt), lock back after dismiss
+
+### Device checklist (Jelly Star, release) [needs device test]
+§9 items 1-11 above, plus the QA acceptance items: kiosk off and on, 20x each - Home, Recents, split screen, Assistant
+(long-press power/Home), double-press power camera, power-menu entries (wallet, device controls, Settings gear),
+emergency dialer → Emergency information, an allowlisted chat-head overlay: all end on the lock or go into the privacy
+text; allowlisted alarm and a full-screen-intent app while locked: lock wins or the alarm exemption shows, no fight after
+1 minute (logcat `PinLock` re-front count); incoming allowed call while locked 20/20 within 1 s, record whether the
+full-screen intent fires with the shade disabled; answer → Recents (kiosk off) → hang up → lock; power button mid-call →
+lock at call end; `am crash` in an app with a bedtime rule → lock then bedtime screen without a screen-off; 5 wrong PINs
+→ reboot and `date` don't shorten the wait, parent code works in airplane mode; safe-mode boot with/without
+`DISALLOW_SAFE_BOOT` (record what's reachable); runbook PIN removal → lock active within 5 s without a sync; first frame
+after screen-on is the lock (no content flash); PBKDF2 time on the phone (~0.5 s?); `setKeyguardDisabled` true on a
+fresh phone and no `FallbackHome` hang at boot.

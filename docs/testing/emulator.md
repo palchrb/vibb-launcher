@@ -45,9 +45,12 @@ adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeLi
 adb shell settings put secure camera_double_tap_power_gesture_disabled 1
 ```
 
-Also before enrolling: give the emulator a **screen lock PIN** (Settings -> Security) if you
-want to test the keyguard parts - without one `KEYGUARD_DISABLE_SECURE_CAMERA` does nothing and
-the lock-screen camera opens the normal camera (09 doc, B2).
+Screen lock: since step 10 the phone has **no Android screen lock** - handy's own PIN lock
+replaces it (set the kid's PIN on the device page, "Screen lock" card; the unlock code must be set
+first). An Android PIN keeps handy's lock off (no double lock) and the device page says "Remove
+the Android screen lock". Remove one with `adb shell locksettings clear --old <PIN>` (or Settings ->
+Security -> Screen lock -> None). Only for the old keyguard tests (09 doc, B2:
+`KEYGUARD_DISABLE_SECURE_CAMERA`) set an Android PIN on purpose, and remove it afterwards.
 
 Press Home, choose the launcher. In its Settings (open until the first policy arrives):
 server URL `http://10.0.2.2:3100`, enrollment code from step 2. Take a snapshot ("enrolled").
@@ -95,7 +98,57 @@ calls page nothing arrives (`DISALLOW_SMS`); with SMS on Messages shows every me
     camera appears, collect `adb shell dumpsys activity activities | grep -B2 -A8 camera`
     (launchedFromPackage) and `adb shell dumpsys device_policy | grep -A3 lockTask`.
 
-Then the full checklists in `docs/design/01`–`07` and `09`.
+Then the full checklists in `docs/design/01`–`07`, `09` and `10`.
+
+## 6c. Step 10: handy's own PIN lock and the call screens
+
+Setup: device page -> set an unlock code (offline override PIN, 6+ digits), then "Screen lock" ->
+kid's PIN (4-6 digits; the first one also turns "Block safe mode" on). Sync (or wait for the
+nudge). The emulator must have no Android screen lock:
+
+```sh
+adb shell locksettings clear --old 1234          # only if an Android PIN/pattern was set
+adb shell locksettings get-disabled              # true once our lock switched the keyguard off
+adb shell dumpsys device_policy | grep -iE "keyguard|lockTask"
+```
+
+Screen off/on: `adb shell input keyevent 26` (power). Each screen-off locks; the next
+screen-on must show the PIN lock straight away, never a frame of the app underneath.
+
+1. **Lock appears**: in an allowed app, `input keyevent 26` twice -> PIN lock; the right PIN ->
+   back in the same app with its state. Repeat 20x (kiosk on, then kiosk off: device page
+   allowlist cleared or kiosk unpinned on a test server).
+2. **Nothing reachable while locked** (kiosk on and off): pull the shade, Home, Recents
+   (`adb shell input keyevent KEYCODE_HOME`, `KEYCODE_APP_SWITCH`), `adb shell input keyevent
+   KEYCODE_ASSIST`, the power-button camera gesture, `adb shell am start -a
+   android.settings.SETTINGS` - everything must end on the lock (logcat tag `PinLock`:
+   "Re-fronting the lock" and how often). `adb shell dumpsys activity lock-task` shows our
+   package (plus the emergency helpers with the kiosk off) while locked, nothing extra after the
+   unlock with the kiosk off.
+3. **Wrong PINs**: 4 wrong are free, the 5th starts "Try again in 0:30", then 1, 2, 5, 15 min.
+   During the wait: `adb shell su 0 date ...` / Settings clock forward or back doesn't shorten it
+   (date/time are locked while managed - test on a debug build with the restriction lifted),
+   `adb reboot` restarts the full wait. The Parent code link (the unlock code) opens the lock
+   during the wait, also in airplane mode.
+4. **Incoming call over the lock**: lock the screen, then `adb emu gsm call 4791234567`
+   (allowed contact) -> the new incoming-call screen over the lock within a second; answer,
+   speaker, mute, `adb emu gsm cancel 4791234567` -> back on the PIN lock, still locked. An
+   unknown number is rejected without UI. Power button during the call (`input keyevent 26`
+   with the "phone" away from the ear) -> lock when the call ends.
+5. **Emergency call**: "Emergency call" -> "Call 112?" -> the emulator's emergency dialer/in-call
+   UI stays in front (no re-front fight; logcat "Lock yields to an exempt screen: emergency").
+   Never test 112 on a real phone outside its emergency test mode.
+6. **Process death**: in an app with the screen on, `adb shell am crash $P` (or `am kill`) -> the
+   lock comes back at once; with a bedtime rule active the lock and then the bedtime screen.
+7. **Remote lock**: Locate page -> Lock -> lock shown, screen off, command result "locked (handy
+   lock)".
+8. **Migration**: set an Android PIN -> next sync: device page "Remove the Android screen lock",
+   our lock off. `adb shell locksettings clear --old <PIN>` -> our lock active within seconds
+   (onPasswordChanged), without a sync.
+9. **Crash guard** (debug only): three crashes of the lock screen within 2 minutes (`adb shell am
+   crash $P` right after each screen-on) -> lock off, device page "crashed several times".
+10. Screenshots (320x568 dp and 411 dp, nb + en): `adb exec-out screencap -p > lock.png`;
+    `adb shell wm size 640x1136; adb shell wm density 320` for 320x568 dp, `wm size reset` after.
 
 ## 6b. Step 7: FCM and Play (optional)
 
@@ -120,7 +173,7 @@ The default debug build has no Firebase config: the phone uses the SSE stream (d
 For anything odd, paste into the chat:
 
 ```sh
-adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask" > log.txt
+adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock" > log.txt
 ```
 
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).
