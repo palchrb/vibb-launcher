@@ -219,6 +219,11 @@ launchable.
   per-user storage encryption credential (FBE device key only); remote "lock"
   uses our lock; the before-first-unlock state disappears (simpler calls).
   Design together with the in-call screens in the next UI round.
+- **Location: on request + last position at shutdown** (user, 2026-10-05): default
+  location policy "on request", plus a report on ACTION_SHUTDOWN (any reason incl.
+  low-battery shutdown) with the last known fix (no time for a fresh GPS fix), and
+  an active fix + report when the battery drops to ~5% so a dying phone leaves a
+  fresh position. Sudden power loss sends nothing; airplane mode means no network.
 - **Rest mode during bedtime/school** (idea, 2026-10-05; after battery is measured):
   no or rarer location fixes, backstop sync every ~2 h (FCM still delivers),
   optional Wi-Fi/Bluetooth off at night (mobile stays for calls/FCM), skip
