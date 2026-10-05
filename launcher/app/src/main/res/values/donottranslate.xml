@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Kids Launcher</string>
+    <!--
+      -
+      - Settings
+      -
+    -->
+    <string name="settings_internal_started_key" translatable="false">internal.started_before</string>
+    <string name="settings_internal_started_time_key" translatable="false">internal.first_startup</string>
+    <string name="settings_internal_version_code_key" translatable="false">internal.version_code</string>
+    <string name="settings_apps_hidden_key" translatable="false">apps.hidden</string>
+    <string name="settings_apps_custom_names_key" translatable="false">apps.custom_names</string>
+    <string name="settings_minimalist_apps_key" translatable="false">minimalist.apps</string>
+
+    <!--
+      -
+      - Settings : Theme
+      -
+      -->
+    <string name="settings_theme_color_theme_key" translatable="false">theme.color_theme</string>
+
+    <!--
+      -
+      - Settings : Display
+      -
+      -->
+    <string name="settings_display_rotate_screen_key" translatable="false">display.rotate_screen</string>
+
+    <!--
+      -
+      - Settings : MDM
+      -
+      -->
+    <string name="settings_mdm_server_url_key" translatable="false">mdm.server_url</string>
+    <string name="settings_mdm_tailscale_auth_key_key" translatable="false">mdm.tailscale_auth_key</string>
+    <string name="settings_mdm_dns_upstream_provider_key" translatable="false">mdm.dns_upstream_provider</string>
+    <string name="settings_mdm_blocked_dns_event_queue_json_key" translatable="false">mdm.blocked_dns_event_queue_json</string>
+    <string name="settings_mdm_vpn_filter_enabled_key" translatable="false">mdm.vpn_filter_enabled</string>
+    <string name="settings_mdm_unifiedpush_distributor_enabled_key" translatable="false">mdm.unifiedpush_distributor_enabled</string>
+    <string name="settings_mdm_unifiedpush_registrations_key" translatable="false">mdm.unifiedpush_registrations</string>
+    <string name="settings_mdm_journal_sync_since_id_key" translatable="false">mdm.journal_sync_since_id</string>
+    <string name="settings_mdm_browser_history_sync_since_id_key" translatable="false">mdm.browser_history_sync_since_id</string>
+    <string name="settings_mdm_device_token_key" translatable="false">mdm.device_token</string>
+    <string name="settings_mdm_enrolled_key" translatable="false">mdm.enrolled</string>
+    <string name="settings_mdm_kid_mode_policy_key" translatable="false">mdm.kid_mode_policy</string>
+    <string name="settings_mdm_policy_ever_applied_key" translatable="false">mdm.policy_ever_applied</string>
+    <string name="settings_mdm_last_enforced_plan_key" translatable="false">mdm.last_enforced_plan</string>
+    <string name="settings_mdm_calls_managed_last_key" translatable="false">mdm.calls_managed_last</string>
+    <string name="settings_mdm_last_call_rules_key" translatable="false">mdm.last_call_rules</string>
+    <string name="settings_mdm_lock_reason_key" translatable="false">mdm.lock_reason</string>
+    <string name="settings_mdm_lock_key_key" translatable="false">mdm.lock_key</string>
+    <string name="settings_mdm_time_policy_seen_key" translatable="false">mdm.time_policy_seen</string>
+    <string name="settings_mdm_kiosk_enabled_key" translatable="false">mdm.kiosk_enabled</string>
+    <string name="settings_mdm_override_pin_hash_key" translatable="false">mdm.override_pin_hash</string>
+    <string name="settings_mdm_override_pin_salt_key" translatable="false">mdm.override_pin_salt</string>
+    <string name="settings_mdm_offline_override_active_key" translatable="false">mdm.offline_override_active</string>
+    <string name="settings_mdm_offline_override_expires_at_key" translatable="false">mdm.offline_override_expires_at</string>
+    <string name="settings_mdm_offline_override_elapsed_start_key" translatable="false">mdm.offline_override_elapsed_start</string>
+    <string name="settings_mdm_offline_override_boot_key" translatable="false">mdm.offline_override_boot</string>
+    <string name="settings_mdm_offline_override_failed_attempts_key" translatable="false">mdm.offline_override_failed_attempts</string>
+    <string name="settings_mdm_offline_override_locked_until_key" translatable="false">mdm.offline_override_locked_until</string>
+    <string name="settings_mdm_offline_override_used_pending_report_key" translatable="false">mdm.offline_override_used_pending_report</string>
+    <string name="settings_mdm_last_failed_update_version_code_key" translatable="false">mdm.last_failed_update_version_code</string>
+    <string name="settings_mdm_restrictions_paused_key" translatable="false">mdm.restrictions_paused</string>
+    <string name="settings_mdm_restrictions_paused_until_key" translatable="false">mdm.restrictions_paused_until</string>
+    <string name="settings_mdm_restrictions_paused_elapsed_start_key" translatable="false">mdm.restrictions_paused_elapsed_start</string>
+    <string name="settings_mdm_restrictions_paused_boot_key" translatable="false">mdm.restrictions_paused_boot</string>
+    <string name="settings_mdm_tracked_app_update_state_key" translatable="false">mdm.tracked_app_update_state</string>
+    <string name="settings_mdm_last_active_location_fetch_at_ms_key" translatable="false">mdm.last_active_location_fetch_at_ms</string>
+    <string name="settings_mdm_cached_location_json_key" translatable="false">mdm.cached_location_json</string>
+
+    <!-- Legal -->
+    <string name="legal_info_text"><![CDATA[
+        <h2>μLauncher</h2>
+        Modifications to Launcher.
+        <p><a href=\"https://github.com/jrpie/launcher\">github.com/jrpie/launcher</a></p>
+
+        <p>MIT License</p>
+
+        Copyright © 2025 Josia Pietsch<br/><br/>
+        Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:<br/><br/>The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.<br/><br/>THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+        <br/><br/>
+
+        <h2>Launcher</h2>
+        The original project by Finn Glas.
+        <p><a href=\"https://github.com/finnmglas/launcher\">github.com/finnmglas/launcher</a></p>
+
+        <p>MIT License</p>
+
+        Copyright © 2020 Finn Glas<br/><br/>
+        Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:<br/><br/>The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.<br/><br/>THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+    ]]></string>
+    <!-- Followed by assets/licenses/OFL.txt (LegalInfoActivity). -->
+    <string name="legal_info_nunito"><![CDATA[
+        <h2>Nunito</h2>
+        The font of the kid screens (weights 600, 700 and 800 made from the variable font, version 3.602).
+        <p><a href=\"https://github.com/googlefonts/nunito\">github.com/googlefonts/nunito</a></p>
+        <p>SIL Open Font License, Version 1.1</p>
+    ]]></string>
+</resources>

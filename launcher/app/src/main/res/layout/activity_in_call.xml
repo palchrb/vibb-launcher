@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- calls.InCallActivity (design 10-lock-and-call-ui.md §6, mockups IncomingCall.dc.html and
+     InCall.dc.html, 320x568 dp): status ("Calling you…" / timer / "Calling…" / "On hold" /
+     "Ended"), a 140 dp avatar with a ring, the name, then Decline + Answer (ringing) or Speaker +
+     Mute and Hang up (active). Nothing here leads anywhere else - also not over the PIN lock. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_call_screen"
+    android:fitsSystemWindows="true"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="28dp">
+
+    <TextView
+        android:id="@+id/in_call_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:accessibilityLiveRegion="polite"
+        android:alpha="0.8"
+        android:fontFamily="@font/nunito_bold"
+        android:textColor="@color/kid_ink"
+        android:textSize="15sp" />
+
+    <FrameLayout
+        android:id="@+id/in_call_avatar"
+        android:layout_width="140dp"
+        android:layout_height="140dp"
+        android:layout_marginTop="18dp">
+
+        <ImageView
+            android:id="@+id/in_call_photo"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_call_avatar_placeholder" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_call_avatar_ring"
+            android:importantForAccessibility="no" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/in_call_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:ellipsize="end"
+        android:fontFamily="@font/nunito_extrabold"
+        android:gravity="center"
+        android:maxLines="1"
+        android:textColor="@color/kid_ink"
+        android:textSize="30sp" />
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- Ringing: Decline and Answer, spaced around. -->
+    <LinearLayout
+        android:id="@+id/in_call_incoming_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:id="@+id/in_call_decline"
+                android:layout_width="76dp"
+                android:layout_height="76dp"
+                android:background="@drawable/bg_call_red"
+                android:clickable="true"
+                android:contentDescription="@string/calls_decline"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="34dp"
+                    android:layout_height="34dp"
+                    android:layout_gravity="center"
+                    android:importantForAccessibility="no"
+                    android:rotation="135"
+                    android:src="@drawable/ic_kid_phone" />
+            </FrameLayout>
+
+            <TextView
+                style="@style/KidCallLabel"
+                android:text="@string/calls_decline" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <FrameLayout
+                android:id="@+id/in_call_answer"
+                android:layout_width="76dp"
+                android:layout_height="76dp"
+                android:background="@drawable/bg_call_green"
+                android:clickable="true"
+                android:contentDescription="@string/calls_answer"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="34dp"
+                    android:layout_height="34dp"
+                    android:layout_gravity="center"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_kid_phone" />
+            </FrameLayout>
+
+            <TextView
+                style="@style/KidCallLabel"
+                android:text="@string/calls_answer" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Active, dialing, holding: Speaker + Mute, Hang up below. -->
+    <LinearLayout
+        android:id="@+id/in_call_active_rows"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:minWidth="76dp"
+                android:orientation="vertical">
+
+                <FrameLayout
+                    android:id="@+id/in_call_speaker"
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:background="@drawable/bg_call_toggle"
+                    android:clickable="true"
+                    android:contentDescription="@string/calls_speaker"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:id="@+id/in_call_speaker_icon"
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_call_speaker" />
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/in_call_speaker_label"
+                    style="@style/KidCallLabel"
+                    android:text="@string/calls_speaker" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="24dp"
+                android:gravity="center_horizontal"
+                android:minWidth="76dp"
+                android:orientation="vertical">
+
+                <FrameLayout
+                    android:id="@+id/in_call_mute"
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:background="@drawable/bg_call_toggle"
+                    android:clickable="true"
+                    android:contentDescription="@string/calls_mute"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:id="@+id/in_call_mute_icon"
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_call_mute" />
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/in_call_mute_label"
+                    style="@style/KidCallLabel"
+                    android:text="@string/calls_mute" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/in_call_hang_up"
+            android:layout_width="76dp"
+            android:layout_height="76dp"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_call_red"
+            android:clickable="true"
+            android:contentDescription="@string/calls_hang_up"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:layout_gravity="center"
+                android:importantForAccessibility="no"
+                android:rotation="135"
+                android:src="@drawable/ic_kid_phone" />
+        </FrameLayout>
+
+        <TextView
+            style="@style/KidCallLabel"
+            android:text="@string/calls_hang_up" />
+    </LinearLayout>
+
+</LinearLayout>

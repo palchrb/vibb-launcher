@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Incoming/in-call screens (IncomingCall.dc.html, InCall.dc.html): #1C3A6B to #14213D at 70 %. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:centerColor="#14213D"
+        android:centerY="0.7"
+        android:endColor="#14213D"
+        android:startColor="#1C3A6B"
+        android:type="linear" />
+</shape>

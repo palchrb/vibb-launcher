@@ -1,0 +1,326 @@
+package com.kidslauncher.mdm.server
+
+import com.kidslauncher.mdm.calls.toRules
+import com.kidslauncher.mdm.server.dto.CallPolicy
+import com.kidslauncher.mdm.server.dto.CallState
+import com.kidslauncher.mdm.server.dto.LauncherUi
+import com.kidslauncher.mdm.server.dto.PolicyContact
+import com.kidslauncher.mdm.server.dto.KidLock
+import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.server.dto.StatusReportRequest
+import kotlinx.serialization.json.jsonObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * The cached policy blob and the server response must keep decoding across launcher and server
+ * versions. The fixture has exactly the 17 keys kid-phone-server's `policy_json_keys_snapshot`
+ * test pins, in the server's field order, with realistic values.
+ */
+class PolicyResponseCompatTest {
+
+    private val serverResponse = """
+        {
+          "allowlist": ["org.example.music", "org.example.chat"],
+          "weekday_start_minutes": 420,
+          "weekday_end_minutes": 1200,
+          "weekend_start_minutes": 480,
+          "weekend_end_minutes": 1260,
+          "bedtime_start_minutes": 1260,
+          "bedtime_end_minutes": 420,
+          "kiosk_desired": true,
+          "lock_task_features": 63,
+          "override_pin_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "override_pin_salt": "a3c1f0e2d4b6a8c0e2f4a6b8c0d2e4f6",
+          "quick_controls_mask": 3,
+          "pending_command": {"id": 12, "command": "ring"},
+          "vpn_filter_enabled": true,
+          "dns_filter_version": "5d41402abc4b2a76b9719d911017c592",
+          "dns_upstream_provider": "quad9",
+          "packages_to_uninstall": ["org.example.old"]
+        }
+    """.trimIndent()
+
+    @Test
+    fun `todays server response decodes`() {
+        val cached = decodeCached(serverResponse)
+        assertTrue(cached is CachedPolicy.Ok)
+        val policy = (cached as CachedPolicy.Ok).policy
+        assertEquals(listOf("org.example.music", "org.example.chat"), policy.allowlist)
+        assertEquals(1260, policy.bedtimeStartMinutes)
+        assertEquals(true, policy.kioskDesired)
+        assertEquals(63L, policy.lockTaskFeatures)
+        assertEquals(3L, policy.quickControlsMask)
+        assertEquals("ring", policy.pendingCommand?.command)
+        assertEquals("quad9", policy.dnsUpstreamProvider)
+        assertEquals(listOf("org.example.old"), policy.packagesToUninstall)
+        assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
+    }
+
+    @Test
+    fun `a server without block_activity_start leaves the kiosk app block off (qa-09-code 7)`() {
+        assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").blockActivityStart)
+        assertEquals(true, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"block_activity_start":true}""").blockActivityStart)
+        assertEquals(false, LastEnforcedPlan.decode("{}")!!.blockActivityStart)
+    }
+
+    @Test
+    fun `a cache without kid_lock is a phone without handy's lock (step 10)`() {
+        assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.kidLock)
+        val withLock = serverResponse.replaceFirst("{", """{"kid_lock":{"pin_hash":"ab","pin_salt":"cd","pin_length":6},""")
+        val kidLock = (decodeCached(withLock) as CachedPolicy.Ok).policy.kidLock!!
+        assertEquals(KidLock("ab", "cd", 6), kidLock)
+        val withNull = serverResponse.replaceFirst("{", """{"kid_lock":null,""")
+        assertNull((decodeCached(withNull) as CachedPolicy.Ok).policy.kidLock)
+    }
+
+    @Test
+    fun `unknown keys are ignored`() {
+        val withExtra = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            "\"some_future_field\": {\"nested\": [1, 2]}, \"packages_to_uninstall\""
+        )
+        assertTrue(decodeCached(withExtra) is CachedPolicy.Ok)
+    }
+
+    @Test
+    fun `a call_policy object from a newer server decodes`() {
+        val withCalls = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            "\"call_policy\": {\"managed\": true, \"calls_enabled\": true, \"contacts\": []}, \"packages_to_uninstall\""
+        )
+        assertTrue(decodeCached(withCalls) is CachedPolicy.Ok)
+    }
+
+    @Test
+    fun `a blob without call_policy gives null`() {
+        assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.callPolicy)
+    }
+
+    @Test
+    fun `an empty call_policy object is a deny-default managed policy`() {
+        val withEmpty = serverResponse.replace(
+            "\"packages_to_uninstall\"", "\"call_policy\": {}, \"packages_to_uninstall\""
+        )
+        val callPolicy = (decodeCached(withEmpty) as CachedPolicy.Ok).policy.callPolicy!!
+        assertEquals(CallPolicy(managed = true, callsEnabled = false, smsEnabled = false), callPolicy)
+        assertTrue(callPolicy.contacts.isEmpty())
+    }
+
+    /** The shape kid-phone-server's `managed_policy_lists_contacts_with_flags_in_order` pins. */
+    @Test
+    fun `the server's call_policy decodes`() {
+        val withCalls = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            """
+            "call_policy": {
+              "managed": true, "calls_enabled": true, "sms_enabled": false, "default_country_code": "47",
+              "contacts": [
+                {"id": 3, "name": "Mamma", "number": "+4790000001", "inbound": true, "outbound": true,
+                 "show_on_home": true, "message_app": "element", "message_address": "@mamma:example.org"},
+                {"id": 4, "name": "Pappa", "number": "+4790000002", "inbound": true, "outbound": false,
+                 "show_on_home": false, "message_app": "sms", "message_address": null}
+              ]
+            },
+            "packages_to_uninstall"
+            """.trimIndent()
+        )
+        val policy = (decodeCached(withCalls) as CachedPolicy.Ok).policy
+        val callPolicy = policy.callPolicy!!
+        assertTrue(callPolicy.managed)
+        assertEquals(false, callPolicy.smsEnabled)
+        assertEquals(
+            PolicyContact(3, "Mamma", "+4790000001", true, true, true, "element", "@mamma:example.org"),
+            callPolicy.contacts[0],
+        )
+        assertEquals(null, callPolicy.contacts[1].messageAddress)
+        // And survives the cache round trip (defaults are not encoded).
+        val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
+    }
+
+    @Test
+    fun `explicit managed false decodes and round trips`() {
+        val withCalls = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            "\"call_policy\": {\"managed\": false, \"calls_enabled\": true, \"sms_enabled\": true, \"default_country_code\": \"47\", \"contacts\": []}, \"packages_to_uninstall\""
+        )
+        val policy = (decodeCached(withCalls) as CachedPolicy.Ok).policy
+        assertEquals(false, policy.callPolicy!!.managed)
+        val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertEquals(false, (decodeCached(reencoded) as CachedPolicy.Ok).policy.callPolicy!!.managed)
+    }
+
+    /** kid-phone-server stores `capabilities` and `call_state` from these keys. */
+    @Test
+    fun `status report call fields use the server's keys`() {
+        val report = StatusReportRequest(
+            lockReason = "NONE", kioskEngaged = true, capabilities = listOf("call_policy_v1"),
+            callState = CallState(
+                state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false,
+                defaultDialer = "x", systemDialer = "y", smsRestricted = true, outgoingRestricted = false,
+                defaultSmsPackage = null, lastError = null, lastEmergencyCallAt = null, callbackWindowUntil = null,
+                callLogReadable = false, bootPolicy = "ok",
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals("[\"call_policy_v1\"]", json["capabilities"].toString())
+        val callState = json["call_state"]!!.jsonObject
+        assertEquals(
+            setOf(
+                "state", "dialer_role_held", "redirection_role_held", "default_dialer", "system_dialer",
+                "sms_restricted", "outgoing_restricted", "default_sms_package", "last_error",
+                "last_emergency_call_at", "callback_window_until", "call_log_readable", "boot_policy",
+            ),
+            callState.keys,
+        )
+    }
+
+    /** Step 5 keys: `launcher_ui`, a contact's `photo`, `notification_listener_enabled`. */
+    @Test
+    fun `launcher_ui and contact photos decode, and their absence means defaults`() {
+        val photo = "ab".repeat(32)
+        val withUi = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            """
+            "call_policy": {"managed": true, "calls_enabled": true, "sms_enabled": true, "default_country_code": "47",
+              "contacts": [{"id": 3, "name": "Mamma", "number": "+4790000001", "inbound": true, "outbound": true,
+                "show_on_home": true, "message_app": "sms", "message_address": null, "photo": "$photo"}]},
+            "launcher_ui": {"language": "nb", "home_columns": 4},
+            "packages_to_uninstall"
+            """.trimIndent()
+        )
+        val policy = (decodeCached(withUi) as CachedPolicy.Ok).policy
+        assertEquals(LauncherUi("nb", 4), policy.launcherUi)
+        assertEquals(photo, policy.callPolicy!!.contacts[0].photo)
+        assertEquals(photo, policy.callPolicy!!.toRules().contacts[0].photo)
+        val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
+
+        // An older server: no launcher_ui, no photo.
+        val old = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        assertNull(old.launcherUi)
+        assertEquals(LauncherUi("system", 3), LauncherUi())
+
+        // Step 8: launcher_ui.wallpapers as the server sends it (every key, nulls included); a
+        // step-5 launcher_ui without it decodes to no wallpapers (then navy).
+        val withWallpapers = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            """
+            "launcher_ui": {"language": "en", "home_columns": 3, "wallpapers": [
+              {"id": 1, "kind": "color", "colors": ["#14213D"], "image": null, "label": "Navy", "builtin_key": "navy", "lock_screen": false},
+              {"id": 7, "kind": "image", "colors": [], "image": "$photo", "label": "Hytta", "builtin_key": null, "lock_screen": true}
+            ]},
+            "packages_to_uninstall"
+            """.trimIndent()
+        )
+        val walls = (decodeCached(withWallpapers) as CachedPolicy.Ok).policy.launcherUi!!.wallpapers
+        assertEquals(2, walls.size)
+        assertEquals("navy", walls[0].builtinKey)
+        assertEquals(photo, walls[1].image)
+        assertTrue(walls[1].lockScreen)
+        assertEquals(emptyList<Any>(), policy.launcherUi!!.wallpapers)
+
+        val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, notificationListenerEnabled = false)
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals("false", json["notification_listener_enabled"].toString())
+    }
+
+    /** Documents the missing `coerceInputValues`: one null in a non-nullable field fails the whole
+     * decode, which is why the server's snapshot test forbids it. */
+    @Test
+    fun `null in a non-nullable field is Corrupt`() {
+        val withNull = serverResponse.replace("\"kiosk_desired\": true", "\"kiosk_desired\": null")
+        assertTrue(decodeCached(withNull) is CachedPolicy.Corrupt)
+        assertTrue(decodeFresh(withNull) is FreshDecode.Failed)
+    }
+
+    /** Step 10: kid-phone-server's `kid_lock::LockState` keys - and nothing else (no unlock
+     * times, no PIN material); `in_call_ui_failed_at` in the call state only when it happened. */
+    @Test
+    fun `status report lock_state uses the server's keys`() {
+        val report = StatusReportRequest(
+            lockReason = "NONE", kioskEngaged = true,
+            lockState = com.kidslauncher.mdm.server.dto.LockStateReport(
+                active = true, inactive = null, locked = true, failures = 5, backoffUntilMs = 1L, exemptYields = 2,
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(
+            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields"),
+            json["lock_state"]!!.jsonObject.keys,
+        )
+        val failed = CallState(
+            state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, defaultDialer = null, systemDialer = null,
+            smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,
+            lastEmergencyCallAt = null, callbackWindowUntil = null, callLogReadable = true, bootPolicy = "ok",
+            inCallUiFailedAt = "2026-10-05T08:00:00Z",
+        )
+        val callJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(CallState.serializer(), failed)).jsonObject
+        assertEquals("\"2026-10-05T08:00:00Z\"", callJson["in_call_ui_failed_at"].toString())
+    }
+
+    @Test
+    fun `cache round trip keeps the policy`() {
+        val policy = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
+    }
+
+    /** Step 6 keys: `time_policy`, `location_policy`, status `time_state` - same names as
+     * kid-phone-server's `policy_json_keys_snapshot` and `StatusReportRequest`. */
+    @Test
+    fun `time_policy and location_policy decode, and their absence means an older server`() {
+        val withTime = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            """
+            "time_policy": {
+              "rules": [{"id": 4, "name": "Skole", "kind": "school", "calls_allowed": false,
+                "exempt_apps": ["org.fossify.calendar"],
+                "days": [{"start": 495, "end": 840}, {"start": 495, "end": 840}, {"start": 495, "end": 840},
+                         {"start": 495, "end": 840}, {"start": 495, "end": 840}, null, null]}],
+              "daily_budget_minutes": [60, 60, 60, 60, 60, 120, null],
+              "lifts": [{"id": 9, "target": "rule", "rule_id": 4, "minutes": 30, "expires_at_ms": 1759650000000},
+                        {"id": 10, "target": "budget", "rule_id": null, "minutes": 15, "expires_at_ms": 1759690000000}]
+            },
+            "location_policy": {"mode": "interval", "interval_minutes": 15},
+            "packages_to_uninstall"
+            """.trimIndent()
+        )
+        val policy = (decodeCached(withTime) as CachedPolicy.Ok).policy
+        val time = policy.timePolicy!!
+        assertEquals("school", time.rules[0].kind)
+        assertEquals(false, time.rules[0].callsAllowed)
+        assertEquals(listOf("org.fossify.calendar"), time.rules[0].exemptApps)
+        assertEquals(com.kidslauncher.mdm.timerules.TimeWindow(495, 840), time.rules[0].days[0])
+        assertNull(time.rules[0].days[5])
+        assertEquals(listOf(60, 60, 60, 60, 60, 120, null), time.dailyBudgetMinutes)
+        assertEquals(4L, time.lifts[0].ruleId)
+        assertNull(time.lifts[1].ruleId)
+        assertEquals(1759650000000L, time.lifts[0].expiresAtMs)
+        assertEquals(com.kidslauncher.mdm.server.dto.LocationPolicy("interval", 15), policy.locationPolicy)
+        val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
+
+        val old = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        assertNull(old.timePolicy)
+        assertNull(old.locationPolicy)
+
+        val report = StatusReportRequest(
+            lockReason = "SCHOOL", kioskEngaged = true, capabilities = listOf("call_policy_v1", TIME_RULES_CAPABILITY),
+            timeState = com.kidslauncher.mdm.server.dto.TimeState(
+                day = "2026-10-05", usedMinutes = 42, budgetMinutes = 90, extraMinutes = 30, activeRuleId = 4,
+                activeRuleName = "Skole", callsBlocked = true, lockReason = "SCHOOL", liftsActive = listOf(10),
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(
+            setOf("day", "used_minutes", "budget_minutes", "extra_minutes", "active_rule_id", "active_rule_name",
+                "calls_blocked", "lock_reason", "lifts_active"),
+            json["time_state"]!!.jsonObject.keys,
+        )
+        assertEquals("[\"call_policy_v1\",\"time_rules_v1\"]", json["capabilities"].toString())
+    }
+}

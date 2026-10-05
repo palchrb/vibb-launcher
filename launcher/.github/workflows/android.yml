@@ -1,0 +1,236 @@
+name: Android CI
+
+# Two flows:
+# - Every push to master/main and every PR: build and test (debug, unsigned release, lint, unit
+#   tests) and upload the debug APK as a workflow artifact. Nothing is published, no secrets.
+# - A tag vX.Y.Z (release) or vX.Y.Z-rc.N (release candidate) on a commit that is on master/main:
+#   release-build builds the unsigned release APK (no secrets), release-sign signs and verifies it
+#   in the protected "release" environment (no checkout, no Gradle/Go - only apksigner), and
+#   publish creates the GitHub Release. A release becomes "latest", so the stable URL
+#   releases/latest/download/kids-launcher-mdm.apk (provisioning QR, the server's self-update
+#   catalog row) serves it. A release candidate is a prerelease and never becomes "latest".
+#
+# One-time setup (repo settings, not code): an environment named "release" with a required
+# reviewer and a deployment rule allowing only tags matching v*; the secrets
+# ANDROID_RELEASE_KEYSTORE_B64 / ANDROID_RELEASE_KEYSTORE_PASSWORD / ANDROID_RELEASE_KEY_ALIAS
+# stored in that environment (not as repo secrets); and the repo variable RELEASE_CERT_SHA256
+# (hex SHA-256 of the signing certificate, from `apksigner verify --print-certs`).
+#
+# Third-party actions are pinned by commit SHA. Never add a pull_request_target trigger.
+
+on:
+  push:
+    branches: [ "master", "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # golang.org/x/mobile (gomobile/gobind) - must match the version in mobile/go.mod, which also
+  # pins tailscale.com (tsnet) and github.com/wlynxg/anet. Bump them together there.
+  GOMOBILE_VERSION: v0.0.0-20260908204917-8b95e45f8d3e
+
+jobs:
+  build:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+    - name: set up JDK 17
+      uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+    - uses: ./.github/actions/build-tsnet
+      with:
+        gomobile-version: ${{ env.GOMOBILE_VERSION }}
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+    - name: Build with Gradle
+      # Debug, unsigned release, lint and unit tests. No release keystore here: the release
+      # build comes out unsigned.
+      run: ./gradlew build -PrequireTsnet=true
+    - name: Upload APK
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: launcher-debug-${{ github.sha }}.apk
+        path: app/build/outputs/apk/debug/app-debug.apk
+
+  release-build:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    outputs:
+      version-name: ${{ steps.version.outputs.name }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        fetch-depth: 0
+    - name: Refuse tags whose commit is not on master/main
+      run: |
+        git fetch --no-tags origin master main 2>/dev/null || git fetch --no-tags origin master
+        for branch in master main; do
+          if git rev-parse --verify -q "origin/$branch" >/dev/null &&
+             git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
+            echo "$GITHUB_REF_NAME ($GITHUB_SHA) is on $branch"
+            exit 0
+          fi
+        done
+        echo "Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on master or main" >&2
+        exit 1
+    - name: Derive version from tag
+      id: version
+      # vMAJOR.MINOR.PATCH -> versionCode MAJOR*1_000_000 + MINOR*1_000 + PATCH (v0.24.0 ->
+      # 24000): deterministic, monotonic while tags only go up, and above upstream's 116.
+      # vMAJOR.MINOR.PATCH-rc.N -> the same code minus 1 and a prerelease: an RC installs over the
+      # previous release (equal or higher code) and the final release installs over the RC. All
+      # RCs of one version share a code, which Android allows (same code is not a downgrade).
+      run: |
+        tag="$GITHUB_REF_NAME"
+        if [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          prerelease=false
+        elif [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$ ]]; then
+          prerelease=true
+        else
+          echo "Tag '$tag' is neither vMAJOR.MINOR.PATCH nor vMAJOR.MINOR.PATCH-rc.N" >&2
+          exit 1
+        fi
+        major=$((10#${BASH_REMATCH[1]})); minor=$((10#${BASH_REMATCH[2]})); patch=$((10#${BASH_REMATCH[3]}))
+        if (( minor > 999 || patch > 999 || major > 2000 )); then
+          echo "Tag '$tag' is out of range (MINOR and PATCH <= 999, MAJOR <= 2000)" >&2
+          exit 1
+        fi
+        code=$(( major * 1000000 + minor * 1000 + patch ))
+        if [ "$prerelease" = true ]; then code=$(( code - 1 )); fi
+        if (( code < 1 )); then echo "versionCode would be $code" >&2; exit 1; fi
+        echo "name=${tag#v}" >> "$GITHUB_OUTPUT"
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+        echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+        echo "versionName ${tag#v}, versionCode $code, prerelease $prerelease"
+    - name: set up JDK 17
+      uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - uses: ./.github/actions/build-tsnet
+      with:
+        gomobile-version: ${{ env.GOMOBILE_VERSION }}
+        go-cache: "false"
+    - name: Build unsigned release APK
+      # No keystore in this job: it runs Gradle plugins and downloads dependencies, so it never
+      # gets the signing secrets. Signing happens in release-sign.
+      # The Firebase config (FCM sync nudges, handy step 7) comes from repository *variables*:
+      # the values end up inside the APK anyway, so they aren't secrets - only per project.
+      # -PrequireFcm=true fails the build if one is missing, so a release never silently ships
+      # without FCM (it would still work, over the SSE stream, at a higher battery cost).
+      env:
+        HANDY_FCM_PROJECT_ID: ${{ vars.HANDY_FCM_PROJECT_ID }}
+        HANDY_FCM_APPLICATION_ID: ${{ vars.HANDY_FCM_APPLICATION_ID }}
+        HANDY_FCM_API_KEY: ${{ vars.HANDY_FCM_API_KEY }}
+        HANDY_FCM_SENDER_ID: ${{ vars.HANDY_FCM_SENDER_ID }}
+      run: |
+        chmod +x gradlew
+        ./gradlew assembleRelease testReleaseUnitTest -PrequireTsnet=true -PrequireFcm=true \
+          -PversionName="${{ steps.version.outputs.name }}" -PversionCode="${{ steps.version.outputs.code }}"
+    - name: Upload unsigned APK
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: release-unsigned
+        path: app/build/outputs/apk/release/app-release-unsigned.apk
+        if-no-files-found: error
+        retention-days: 7
+
+  release-sign:
+    needs: release-build
+    runs-on: ubuntu-latest
+    # Holds the signing secrets. Configure it with a required reviewer and a tags-only (v*)
+    # deployment rule, so neither a branch push nor a workflow_dispatch from a branch can use them.
+    environment: release
+    steps:
+    - name: Download unsigned APK
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: release-unsigned
+    - name: Sign
+      env:
+        KEYSTORE_B64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_B64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+      run: |
+        set -euo pipefail
+        if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+          echo "Release signing secrets are missing from the 'release' environment" >&2
+          exit 1
+        fi
+        BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+        umask 077
+        echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+        "$BT/zipalign" -f -P 16 4 app-release-unsigned.apk aligned.apk
+        "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.p12" --ks-type PKCS12 \
+          --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD \
+          --out kids-launcher-mdm.apk aligned.apk
+    - name: Remove keystore
+      if: always()
+      run: rm -f "$RUNNER_TEMP/release.p12"
+    - name: Verify
+      env:
+        EXPECTED_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
+      run: |
+        set -euo pipefail
+        BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+        "$BT/apksigner" verify --print-certs kids-launcher-mdm.apk | tee certs.txt
+        actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' certs.txt | tr 'A-F' 'a-f')"
+        expected="$(echo "$EXPECTED_SHA256" | tr -d ' :' | tr 'A-F' 'a-f')"
+        if [ -z "$expected" ]; then
+          echo "Repo variable RELEASE_CERT_SHA256 is not set" >&2
+          exit 1
+        fi
+        if [ "$actual" != "$expected" ]; then
+          echo "Signing certificate SHA-256 is $actual, expected $expected" >&2
+          exit 1
+        fi
+        if "$BT/aapt2" dump badging kids-launcher-mdm.apk | grep -q 'application-debuggable'; then
+          echo "The release APK is debuggable" >&2
+          exit 1
+        fi
+        "$BT/aapt2" dump badging kids-launcher-mdm.apk | grep "^package:" > badging.txt
+        grep -q "name='com.kidslauncher.mdm' " badging.txt \
+          || { echo "Unexpected package: $(cat badging.txt)" >&2; exit 1; }
+        sha256sum kids-launcher-mdm.apk > kids-launcher-mdm.apk.sha256
+    - name: Upload signed APK
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: release-signed
+        path: |
+          kids-launcher-mdm.apk
+          kids-launcher-mdm.apk.sha256
+        if-no-files-found: error
+
+  publish:
+    needs: [ release-build, release-sign ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download signed APK
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: release-signed
+    - name: Create GitHub Release
+      uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
+      with:
+        tag: ${{ github.ref_name }}
+        name: ${{ needs.release-build.outputs.version-name }}
+        prerelease: ${{ needs.release-build.outputs.prerelease }}
+        # A release candidate must never become releases/latest - the phones' self-update and
+        # the provisioning QR both follow that URL.
+        makeLatest: ${{ needs.release-build.outputs.prerelease == 'true' && 'false' || 'true' }}
+        generateReleaseNotes: true
+        artifacts: "kids-launcher-mdm.apk,kids-launcher-mdm.apk.sha256"
+        artifactErrorsFailBuild: true
+        token: ${{ secrets.GITHUB_TOKEN }}

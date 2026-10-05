@@ -1,0 +1,310 @@
+<resources>
+    <!--
+      -
+      - Home
+      -
+      -->
+    <string name="alert_cant_open_title">Can\'t open app</string>
+    <string name="alert_cant_open_message">Want to change its settings?</string>
+
+    <!--
+      -
+      - Kid Mode lock screen
+      -
+      -->
+    <string name="lock_kind_school">School</string>
+    <string name="lock_kind_bedtime">Bedtime</string>
+    <string name="lock_kind_rule">Screen-free time</string>
+    <string name="lock_title_screen_time">Screen time is used up</string>
+    <string name="lock_until">Until %1$s</string>
+    <string name="lock_calls_emergency_only">Only emergency calls work now.</string>
+    <string name="lock_calls_allowed">You can still call your contacts.</string>
+    <string name="lock_budget_used">%1$d of %2$d minutes used today.</string>
+    <string name="lock_budget_also_used">Today\'s screen time is used up too.</string>
+    <string name="lock_enter_unlock_code">Enter unlock code</string>
+    <string name="lock_unlock_code_dialog_title">Unlock code</string>
+    <string name="lock_unlock_code_not_configured">No unlock code has been set up for this phone.</string>
+    <string name="lock_unlock_code_wrong">That code didn\'t match. Try again.</string>
+
+    <!--
+      -
+      - Calls (phone book, home buttons, in-call screen)
+      -
+      -->
+    <string name="notification_channel_calls">Calls</string>
+    <string name="calls_phone_book">Phone book</string>
+    <string name="kid_settings_title">Settings</string>
+    <string name="calls_phone_book_empty">There\'s nobody to call yet. Emergency numbers (112, 110, 113) always work from the lock screen\'s Emergency button.</string>
+    <string name="calls_off">Calls are turned off on this phone. Emergency numbers still work.</string>
+    <string name="calls_call">Call</string>
+    <string name="calls_emergency">Emergency call</string>
+    <string name="calls_message">Message</string>
+    <string name="calls_confirm_title">Call %1$s?</string>
+    <string name="calls_cancel">Cancel</string>
+    <string name="calls_not_allowed">This number is not allowed.</string>
+    <string name="calls_could_not_call">Couldn\'t start the call.</string>
+    <string name="calls_could_not_message">Couldn\'t open the messaging app.</string>
+    <string name="calls_incoming">Incoming call</string>
+    <string name="calls_dialing">Calling…</string>
+    <string name="calls_on_hold">On hold</string>
+    <string name="calls_ended">Call ended</string>
+    <string name="calls_unknown_caller">Unknown number</string>
+    <string name="calls_answer">Answer</string>
+    <string name="calls_decline">Decline</string>
+    <string name="calls_hang_up">Hang up</string>
+    <string name="calls_speaker">Speaker</string>
+    <string name="calls_speaker_on">Speaker on</string>
+    <string name="calls_mute">Mute</string>
+    <string name="calls_muted">Muted</string>
+    <string name="calls_message_opens_in">Message opens in %1$s</string>
+    <string name="call_contact">Call %1$s</string>
+    <string name="missed_when_today">today %1$s</string>
+    <string name="missed_when_yesterday">yesterday %1$s</string>
+    <!-- %1$s = day and month, %2$s = time -->
+    <string name="missed_when_date">%1$s %2$s</string>
+    <!-- %1$d = count, %2$s = when, e.g. "today 13:05" -->
+    <plurals name="missed_calls_at">
+        <item quantity="one">%1$d missed call %2$s</item>
+        <item quantity="other">%1$d missed calls %2$s</item>
+    </plurals>
+    <plurals name="contact_missed">
+        <item quantity="one">%1$s, %2$d missed call</item>
+        <item quantity="other">%1$s, %2$d missed calls</item>
+    </plurals>
+    <plurals name="call_contact_missed">
+        <item quantity="one">Call %1$s, %2$d missed call</item>
+        <item quantity="other">Call %1$s, %2$d missed calls</item>
+    </plurals>
+
+    <!--
+      -
+      - Home screen (grid, badges)
+      -
+      -->
+    <plurals name="app_unread">
+        <item quantity="one">%1$s, %2$d unread</item>
+        <item quantity="other">%1$s, %2$d unread</item>
+    </plurals>
+    <string name="kid_back_home">Back to the home screen</string>
+    <string name="kid_close">Close</string>
+    <string name="badges_listener_label">App badges</string>
+
+    <!--
+      -
+      - Kid settings (Home's last tile and swipe-left screen)
+      -
+      -->
+    <string name="kid_settings_background">Background</string>
+    <string name="kid_settings_background_caption">Picked by mum and dad</string>
+    <string name="kid_settings_connection">Connection and screen</string>
+    <string name="kid_settings_not_owner">These switches work once mum and dad have set up the phone.</string>
+    <string name="kid_settings_no_policy">These switches come with the next update from mum and dad.</string>
+    <string name="kid_settings_unreadable">The switches can\'t be read right now. Ask mum or dad.</string>
+    <string name="kid_settings_wallpaper_selected">%1$s, chosen</string>
+    <string name="wallpaper_navy">Dark blue</string>
+    <string name="wallpaper_forest">Forest</string>
+    <string name="wallpaper_plum">Plum</string>
+    <string name="wallpaper_green">Green</string>
+    <string name="wallpaper_sky">Sky</string>
+    <string name="wallpaper_sunset">Sunset</string>
+    <string name="wallpaper_photo">Photo from mum and dad</string>
+    <string name="quick_controls_wifi">Wi-Fi</string>
+    <string name="quick_controls_bluetooth">Bluetooth</string>
+    <string name="quick_controls_brightness">Screen brightness</string>
+    <string name="quick_controls_manage_networks">Manage networks</string>
+    <string name="quick_controls_manage_devices">Manage devices</string>
+    <string name="lock_unlock_code_locked_out">Too many wrong codes entered. Try again in 15 minutes.</string>
+
+    <!--
+      -
+      - WiFi networks picker (Quick Controls "Manage networks")
+      -
+      -->
+    <string name="wifi_networks_title">WiFi networks</string>
+    <string name="wifi_networks_scanning">Scanning…</string>
+    <string name="wifi_networks_empty">No networks found. Tap Scan to try again.</string>
+    <string name="wifi_networks_scan">Scan</string>
+    <string name="wifi_networks_connected">Connected</string>
+    <string name="wifi_networks_saved">Saved</string>
+    <string name="wifi_networks_connecting">Connecting…</string>
+    <string name="wifi_networks_connect_failed">Couldn\'t connect. Check the password and try again.</string>
+    <string name="wifi_networks_password_title">Enter password</string>
+    <string name="wifi_networks_password_hint">Password</string>
+    <string name="wifi_networks_connect">Connect</string>
+    <string name="wifi_networks_forget">Forget</string>
+    <string name="wifi_networks_cancel">Cancel</string>
+
+    <!--
+      -
+      - Bluetooth devices picker (Quick Controls "Manage devices")
+      -
+      -->
+    <string name="bluetooth_devices_title">Bluetooth devices</string>
+    <string name="bluetooth_devices_scanning">Scanning…</string>
+    <string name="bluetooth_devices_empty">No devices found nearby. Tap Scan to try again.</string>
+    <string name="bluetooth_devices_scan">Scan</string>
+    <string name="bluetooth_devices_paired">Paired</string>
+    <string name="bluetooth_devices_connected">Connected</string>
+    <string name="bluetooth_devices_pairing">Pairing…</string>
+    <string name="bluetooth_devices_pair_failed">Couldn\'t pair with this device.</string>
+    <string name="bluetooth_devices_forget">Forget</string>
+    <string name="bluetooth_devices_connect">Connect</string>
+    <string name="bluetooth_devices_disconnect">Disconnect</string>
+
+    <!--
+      -
+      - Settings
+      -
+      -->
+    <string name="settings_title">Settings</string>
+
+    <string name="settings_theme_color_theme_item_default">Default</string>
+    <string name="settings_theme_color_theme_item_dark">Dark</string>
+    <string name="settings_theme_color_theme_item_light">Light</string>
+    <string name="settings_theme_color_theme_item_green">Green</string>
+    <string name="settings_theme_color_theme_item_amber">Amber</string>
+    <string name="settings_theme_color_theme_item_dynamic">Dynamic</string>
+
+    <string name="settings_display_rotate_screen">Rotate screen</string>
+
+    <string name="settings_apps_hidden">Hidden apps</string>
+
+    <string name="settings_meta_version">Version</string>
+
+    <string name="settings_mdm_server_url">Server URL</string>
+    <string name="settings_mdm_tailscale_auth_key">Tailscale auth key</string>
+    <string name="settings_mdm_not_set">Not set</string>
+    <string name="settings_mdm_scan_setup_qr">Scan setup QR</string>
+    <string name="settings_mdm_scan_setup_qr_summary">Applies server URL, Tailscale key, and enrollment code from the admin site\'s per-device QR code in one scan</string>
+    <string name="settings_mdm_scan_setup_qr_prompt">Point the camera at the setup QR code on the admin site</string>
+    <string name="settings_mdm_enroll_now">Enroll with code</string>
+    <string name="dialog_enrollment_code_title">Enter enrollment code</string>
+    <string name="toast_mdm_enroll_missing_fields">Set the server URL first.</string>
+    <string name="toast_mdm_enroll_missing_code">Enter the enrollment code shown on the admin site.</string>
+    <string name="toast_mdm_enroll_success">Enrolled successfully.</string>
+    <string name="toast_mdm_enroll_failure">Enrollment failed: %1$s</string>
+    <string name="toast_mdm_scan_qr_invalid">That QR code isn\'t a valid setup code from the admin site.</string>
+    <string name="toast_mdm_scan_qr_cancelled">Scan cancelled.</string>
+
+    <string name="settings_mdm_sync_now">Sync now</string>
+    <string name="toast_mdm_sync_done">Sync complete.</string>
+    <string name="toast_mdm_sync_failed">Sync failed - couldn\'t reach the server.</string>
+
+    <string name="settings_mdm_restrictions_paused">Pause all restrictions</string>
+    <string name="settings_mdm_restrictions_paused_summary">Turns off kiosk mode, the time rules and app restrictions for 2 hours (calls stay limited to the allowed contacts), then they come back on by themselves. Needs the device PIN, and isn\'t available when no PIN is set on the server. The parent sees on the server that it\'s on. Emergency use only, e.g. if an update causes a problem.</string>
+    <string name="settings_mdm_restrictions_paused_pin_title">Enter the PIN to pause restrictions</string>
+    <string name="toast_mdm_pause_needs_pin">Pausing restrictions needs a PIN. Set one for this phone on the server first.</string>
+
+    <string name="settings_mdm_unifiedpush_distributor_enabled">Push notifications for other apps</string>
+    <string name="settings_mdm_unifiedpush_distributor_enabled_summary">Lets other apps on this phone receive push notifications through this app (UnifiedPush) instead of needing a separate app installed for it. Off unless you turn it on.</string>
+
+    <string name="settings_gate_dialog_title">Enter code to open settings</string>
+    <string name="settings_gate_no_pin">Settings are locked. Set an unlock code for this phone on the server to open them.</string>
+
+    <string name="alert_cant_choose_home_screen">Failed to open the home screen chooser. You need to choose a homescreen manually in Android Settings.</string>
+    <string name="toast_system_settings_unavailable">System settings aren\'t available right now.</string>
+
+    <!--
+      -
+      - List (Launchers app drawer)
+      -
+      -->
+    <string name="list_title_view">All Apps</string>
+    <string name="list_title_hidden">Hidden Apps</string>
+
+    <string name="list_app_hidden_add">Hide</string>
+    <string name="list_app_hidden_remove">Show</string>
+    <string name="list_app_minimalist_add">Add to home screen</string>
+    <string name="list_app_minimalist_remove">Remove from home screen</string>
+    <string name="list_app_rename">Rename</string>
+
+    <string name="settings">Settings</string>
+    <string name="snackbar_app_hidden">App hidden. You can make it visible again in settings.</string>
+    <string name="toast_minimalist_limit_reached">You can only add up to 10 apps to the home screen.</string>
+    <string name="undo">Undo</string>
+    <string name="dialog_rename_title">Rename %1$s</string>
+    <string name="dialog_select_color_red">Red</string>
+    <string name="dialog_select_color_alpha">Alpha</string>
+    <string name="dialog_select_color_blue">Blue</string>
+    <string name="dialog_select_color_green">Green</string>
+    <string name="dialog_select_color_color_hex">Color</string>
+    <string name="dialog_choose_color_title">Choose color</string>
+    <string name="dialog_cancel">Cancel</string>
+    <string name="settings_meta_licenses">Open Source Licenses</string>
+    <string name="legal_info_title">Open Source Licenses</string>
+    <string name="toast_activity_not_found_browser">Can\'t open URL: no browser found.</string>
+
+    <string name="dialog_ok">Ok</string>
+    <string name="notification_crash_title">App crashed</string>
+    <string name="notification_crash_explanation">Sorry! Click for more information.</string>
+    <string name="notification_channel_ring">Find My Device ring</string>
+    <string name="notification_ring_title">Phone is ringing</string>
+    <string name="notification_ring_text">A parent triggered this from Find My Device.</string>
+    <string name="notification_ring_stop_action">Stop Ringing</string>
+    <string name="notification_channel_listener">Find My Device background connection</string>
+    <string name="notification_listener_title">Kids Device MDM</string>
+    <string name="notification_listener_text">Ready for parent commands (ring, lock, locate).</string>
+    <string name="notification_channel_vpn_filter">Content filter</string>
+    <string name="notification_vpn_filter_title">Content filter active</string>
+    <string name="notification_vpn_filter_text">Blocking ads and inappropriate content.</string>
+    <string name="notification_channel_app_install">App installs and updates</string>
+    <string name="notification_app_installing_title">Installing %1$s…</string>
+    <string name="notification_app_install_failed_title">Couldn\'t install %1$s</string>
+    <string name="crash_info"><![CDATA[
+        Looks like something went wrong, sorry about that!<br><br>
+        For privacy reasons, crash logs are not collected automatically.<br>
+        You can copy the crash report below for debugging.<br><br>
+        Note that crash logs might contain <strong>sensitive information</strong>, e.g. the name of an app you tried to launch.
+        <h2>What can I do now?</h2>
+        If this bug appears again and again, you can try:
+        <ul>
+        <li>Force stop the app</li>
+        <li>Clear the app\'s storage (<strong>Your settings will be lost!</strong>)</li>
+        </ul>
+        ]]>
+    </string>
+    <string name="report_crash_button_copy">Copy crash report to clipboard</string>
+    <string name="report_crash_title">App crashed</string>
+    <string name="notification_channel_crash">Crashes and Debug Information</string>
+    <!--
+      -
+      - Content Descriptions
+      -
+      -->
+    <string name="content_description_close">Close</string>
+    <string name="toast_cant_launch_app">Error: Can\'t launch app</string>
+    <!-- Play install mode, link blocker (handy step 7) -->
+    <string name="settings_play_install_mode">Install from Play</string>
+    <string name="settings_play_install_mode_summary">Opens the Play Store for 15 minutes. New apps stay hidden until you allow them on the server.</string>
+    <string name="settings_play_install_mode_active">Open until %1$s - tap to end now</string>
+    <string name="settings_play_install_mode_pin_title">Unlock code to open Play</string>
+    <string name="toast_play_install_mode_not_needed">The Play Store isn\'t restricted on this phone right now.</string>
+    <string name="toast_play_install_mode_needs_pin">Opening Play needs a PIN. Set one for this phone on the server first.</string>
+    <string name="toast_play_install_mode_time_locked">Not while a time rule or the screen-time limit locks the phone.</string>
+    <string name="toast_play_install_mode_no_store">The Play Store isn\'t installed on this phone.</string>
+    <string name="notification_channel_install_mode">Play install mode</string>
+    <string name="notification_install_mode_title">Play is open until %1$s</string>
+    <string name="notification_install_mode_text">New apps stay hidden until a parent allows them.</string>
+    <string name="notification_install_mode_end">End now</string>
+    <string name="play_link_blocked_title">The Play Store is closed</string>
+    <string name="play_link_blocked_text">Ask a parent if you want a new app.</string>
+    <!-- Handy's own PIN lock and the call screens (step 10, design 10-lock-and-call-ui.md). -->
+    <string name="pin_lock_prompt">Enter your code</string>
+    <string name="pin_lock_wrong">Wrong code</string>
+    <string name="pin_lock_wait">Try again in %1$s</string>
+    <string name="pin_lock_checking">Checking…</string>
+    <string name="pin_lock_unusable">Only the parent code works right now</string>
+    <string name="pin_lock_emergency">Emergency call</string>
+    <string name="pin_lock_parent_code">Parent code</string>
+    <string name="pin_lock_parent_wrong">That isn\'t the parent code.</string>
+    <string name="pin_lock_parent_locked_out">Too many wrong codes. Try again in 15 minutes.</string>
+    <string name="pin_lock_parent_not_set">No parent code has been set for this phone.</string>
+    <string name="pin_lock_delete">Delete</string>
+    <string name="pin_lock_dots">%1$d of %2$d digits</string>
+    <string name="calls_calling_you">Calling you…</string>
+    <string name="calls_waiting">On hold</string>
+    <string name="calls_finished">Ended</string>
+    <string name="calls_photo_of">Contact photo of %1$s</string>
+    <string name="call_toggle_on">On</string>
+    <string name="call_toggle_off">Off</string>
+</resources>

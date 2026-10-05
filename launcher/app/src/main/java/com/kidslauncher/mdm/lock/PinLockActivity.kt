@@ -1,0 +1,392 @@
+package com.kidslauncher.mdm.lock
+
+import android.animation.ObjectAnimator
+import android.app.ActivityManager
+import android.app.admin.DevicePolicyManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.format.DateFormat
+import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.res.ResourcesCompat
+import androidx.lifecycle.lifecycleScope
+import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.calls.EmergencyCall
+import com.kidslauncher.mdm.databinding.ActivityPinLockBinding
+import com.kidslauncher.mdm.server.OfflineOverride
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
+
+private const val LOG_TAG = "PinLockActivity"
+private const val STATE_ENTERED = "entered"
+private const val KEY_MAX_DP = 72f
+private const val KEY_ROW_GAP_DP = 10f
+
+/**
+ * Handy's own lock screen (step 10, design 10-lock-and-call-ui.md, mockup Lock.dc.html). Shown by
+ * [PinLockRuntime] while LOCKED - over every activity, kiosk or not: its own task
+ * (`taskAffinity .pinlock`, single task, excluded from recents, portrait), always in lock task
+ * while locked (QA 10 #1): with the kiosk on it joins the kiosk's lock task, with the kiosk off it
+ * starts lock task itself (our package plus the emergency helpers are pinned for it) and stops it
+ * on unlock. Back does nothing; leaving the front any other way brings it back (re-front, never
+ * giving up, except for our call screen, the system dialer/Telecom and the alarm).
+ *
+ * Only the keypad, Emergency call and the Parent code link are reachable. The PIN is checked off
+ * the main thread (PBKDF2), the failure counted first ([PinLockRuntime.checkPin]). Not
+ * direct-boot-aware (it can't be: the kid PIN lives in CE storage).
+ */
+class PinLockActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityPinLockBinding
+    private val handler = Handler(Looper.getMainLooper())
+    private var entered = ""
+    private var checking = false
+    private var waitMs = 0L
+    private var wrongShown = false
+    private var finishingAfterUnlock = false
+    private var startedLockTask = false
+    private val keys = mutableListOf<View>()
+
+    private val modeListener: () -> Unit = {
+        if (PinLockRuntime.mode != LockMode.LOCKED && !isFinishing) leave()
+    }
+
+    private val waitTicker: Runnable = object : Runnable {
+        override fun run() {
+            val ticker = this
+            lifecycleScope.launch {
+                waitMs = withContext(Dispatchers.IO) { PinLockRuntime.waitRemaining(this@PinLockActivity) }
+                render()
+                if (waitMs > 0L) handler.postDelayed(ticker, 1_000L)
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        instances++
+        // The crash guard, before any other work (QA 10 #14, qa-10-code #6): crashes recorded by
+        // the uncaught-exception handler while this screen existed - not recreations or kills.
+        val stored = PinLockStore.guard(this)
+        val guard = guardOnCreate(stored, System.currentTimeMillis())
+        if (guard != stored) PinLockStore.saveGuard(this, guard)
+        if (guard.trippedAtMs != null) {
+            PinLockRuntime.guardTripped(this)
+            finish()
+            return
+        }
+        binding = ActivityPinLockBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        entered = savedInstanceState?.getString(STATE_ENTERED).orEmpty()
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {}
+        })
+        val locale = resources.configuration.locales[0] ?: Locale.getDefault()
+        val datePattern = DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM")
+        binding.pinDate.format12Hour = datePattern
+        binding.pinDate.format24Hour = datePattern
+
+        buildKeypad()
+        binding.pinKeypad.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ -> sizeKeys(bottom - top) }
+        binding.pinEmergency.setOnClickListener {
+            EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() }
+        }
+        binding.pinParentCode.setOnClickListener { showParentCodeDialog() }
+        PinLockRuntime.addModeListener(modeListener)
+        render()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_ENTERED, entered)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (PinLockRuntime.mode != LockMode.LOCKED) {
+            leave()
+            return
+        }
+        PinLockRuntime.onLockResumed(this)
+        ensureLockTask()
+        handler.removeCallbacks(waitTicker)
+        handler.post(waitTicker)
+    }
+
+    override fun onPause() {
+        handler.removeCallbacks(waitTicker)
+        PinLockRuntime.onLockPaused()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        PinLockRuntime.onLockStopped(isChangingConfigurations, isFinishing || finishingAfterUnlock)
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        PinLockRuntime.removeModeListener(modeListener)
+        handler.removeCallbacksAndMessages(null)
+        instances--
+        super.onDestroy()
+    }
+
+    /**
+     * Always in lock task while LOCKED: our package is permitted (kiosk list, or ours + helpers
+     * with the kiosk off, set by [LockTaskChrome] before the lock is shown). Never called for a
+     * package that isn't permitted - that would ask for screen pinning instead.
+     */
+    private fun ensureLockTask() {
+        val am = getSystemService(ActivityManager::class.java) ?: return
+        if (am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE) return
+        val dpm = getSystemService(DevicePolicyManager::class.java) ?: return
+        if (!dpm.isLockTaskPermitted(packageName)) {
+            Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
+            return
+        }
+        try {
+            startLockTask()
+            startedLockTask = true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "startLockTask failed", e)
+        }
+    }
+
+    // ---- keypad -----------------------------------------------------------------------------
+
+    private fun dp(value: Float): Int =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, resources.displayMetrics).toInt()
+
+    private fun buildKeypad() {
+        val labels = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del")
+        val bold = ResourcesCompat.getFont(this, R.font.nunito_bold)
+        labels.chunked(3).forEachIndexed { rowIndex, row ->
+            val rowView = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { if (rowIndex > 0) topMargin = dp(KEY_ROW_GAP_DP) }
+            }
+            for (label in row) {
+                val cell = FrameLayout(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                }
+                val key: View = when (label) {
+                    "" -> View(this)
+                    "del" -> ImageView(this).apply {
+                        setImageResource(R.drawable.ic_pin_backspace)
+                        scaleType = ImageView.ScaleType.CENTER
+                        contentDescription = getString(R.string.pin_lock_delete)
+                        setOnClickListener { onDelete() }
+                    }
+                    else -> TextView(this).apply {
+                        text = label
+                        typeface = bold
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        setTextColor(getColor(R.color.kid_ink))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
+                        setBackgroundResource(R.drawable.bg_pin_key)
+                        contentDescription = label
+                        setOnClickListener { onDigit(label[0]) }
+                    }
+                }
+                cell.addView(key, FrameLayout.LayoutParams(dp(KEY_MAX_DP), dp(KEY_MAX_DP), Gravity.CENTER))
+                if (label.isNotEmpty()) keys += key
+                rowView.addView(cell)
+            }
+            binding.pinKeypad.addView(rowView)
+        }
+    }
+
+    /** Keys at most 72 dp, smaller when the keypad's share of the screen is less (320x568). */
+    private fun sizeKeys(keypadHeight: Int) {
+        if (keypadHeight <= 0) return
+        val byHeight = (keypadHeight - 3 * dp(KEY_ROW_GAP_DP)) / 4
+        val byWidth = (binding.pinKeypad.width / 3) - dp(8f)
+        val size = minOf(dp(KEY_MAX_DP), byHeight, byWidth).coerceAtLeast(dp(40f))
+        var changed = false
+        for (key in keys) {
+            val params = key.layoutParams
+            if (params.width != size) {
+                params.width = size
+                params.height = size
+                changed = true
+            }
+        }
+        if (changed) binding.pinKeypad.post { binding.pinKeypad.requestLayout() }
+    }
+
+    private fun onDigit(digit: Char) {
+        if (!keypadEnabled()) return
+        wrongShown = false
+        entered = appendDigit(entered, digit, PinLockRuntime.pinLength)
+        render()
+        if (entered.length == PinLockRuntime.pinLength) check(entered)
+    }
+
+    private fun onDelete() {
+        if (!keypadEnabled()) return
+        entered = deleteDigit(entered)
+        render()
+    }
+
+    private fun keypadEnabled() = !checking && waitMs <= 0L && PinLockRuntime.pinUsable
+
+    private fun check(pin: String) {
+        checking = true
+        render()
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.Default) { PinLockRuntime.checkPin(this@PinLockActivity, pin) }
+            checking = false
+            entered = ""
+            when (result) {
+                PinLockRuntime.PinResult.Ok -> {
+                    unlock()
+                    return@launch
+                }
+                is PinLockRuntime.PinResult.Wrong -> {
+                    wrongShown = true
+                    waitMs = result.waitMs
+                    shake()
+                }
+                is PinLockRuntime.PinResult.Waiting -> waitMs = result.waitMs
+                PinLockRuntime.PinResult.Unusable -> Unit
+            }
+            render()
+            if (waitMs > 0L) {
+                handler.removeCallbacks(waitTicker)
+                handler.postDelayed(waitTicker, 1_000L)
+            }
+        }
+    }
+
+    private fun shake() {
+        ObjectAnimator.ofFloat(binding.pinDots, View.TRANSLATION_X, 0f, 18f, -18f, 12f, -12f, 6f, -6f, 0f)
+            .setDuration(400L)
+            .start()
+    }
+
+    private fun render() {
+        if (!::binding.isInitialized) return
+        val length = PinLockRuntime.pinLength
+        binding.pinPrompt.text = when {
+            !PinLockRuntime.pinUsable -> getString(R.string.pin_lock_unusable)
+            waitMs > 0L -> getString(R.string.pin_lock_wait, backoffText(waitMs))
+            checking -> getString(R.string.pin_lock_checking)
+            wrongShown -> getString(R.string.pin_lock_wrong)
+            else -> getString(R.string.pin_lock_prompt)
+        }
+        val dots = binding.pinDots
+        if (dots.childCount != length) {
+            dots.removeAllViews()
+            repeat(length) { index ->
+                dots.addView(View(this), LinearLayout.LayoutParams(dp(14f), dp(14f)).apply {
+                    if (index > 0) marginStart = dp(14f)
+                })
+            }
+        }
+        for (i in 0 until dots.childCount) {
+            dots.getChildAt(i).setBackgroundResource(if (i < entered.length) R.drawable.bg_pin_dot_filled else R.drawable.bg_pin_dot_empty)
+        }
+        dots.contentDescription = getString(R.string.pin_lock_dots, entered.length, length)
+        val enabled = keypadEnabled()
+        binding.pinKeypad.alpha = if (enabled) 1f else 0.4f
+        keys.forEach { it.isEnabled = enabled }
+    }
+
+    // ---- parent code ------------------------------------------------------------------------
+
+    private fun showParentCodeDialog() {
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_pin_parent_code, null)
+        val input = view.findViewById<EditText>(R.id.parent_code_input)
+        val error = view.findViewById<TextView>(R.id.parent_code_error)
+        fun showError(text: Int) {
+            error.setText(text)
+            error.visibility = View.VISIBLE
+        }
+        val dialog = AlertDialog.Builder(this, R.style.AlertDialogCustom)
+            .setTitle(R.string.pin_lock_parent_code)
+            .setView(view)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok, null)
+            .create()
+        dialog.show()
+        if (!OfflineOverride.isConfigured()) showError(R.string.pin_lock_parent_not_set)
+        // Overridden after show() so a wrong code keeps the dialog open.
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { button ->
+            when {
+                !OfflineOverride.isConfigured() -> showError(R.string.pin_lock_parent_not_set)
+                OfflineOverride.isLockedOut() -> showError(R.string.pin_lock_parent_locked_out)
+                else -> {
+                    val code = input.text.toString()
+                    button.isEnabled = false
+                    lifecycleScope.launch {
+                        val ok = withContext(Dispatchers.Default) { PinLockRuntime.checkParentCode(this@PinLockActivity, code) }
+                        button.isEnabled = true
+                        if (ok) {
+                            dialog.dismiss()
+                            unlock()
+                        } else {
+                            input.text.clear()
+                            showError(if (OfflineOverride.isLockedOut()) R.string.pin_lock_parent_locked_out else R.string.pin_lock_parent_wrong)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- leaving ----------------------------------------------------------------------------
+
+    private fun unlock() {
+        finishingAfterUnlock = true
+        // The lock task first: with the kiosk off the chrome change that follows unpins our
+        // package, which would otherwise tear this task down under us.
+        stopOwnLockTask()
+        PinLockRuntime.unlocked(this)
+        leave()
+    }
+
+    /** Unlocked or the lock was switched off: stop the lock task we started, then go. */
+    private fun leave() {
+        finishingAfterUnlock = true
+        stopOwnLockTask()
+        if (!isFinishing) finishAndRemoveTask()
+    }
+
+    /** Ours: we started it, or the kiosk is off (then any lock task is the lock's - also one an
+     * earlier instance of this activity started before the process was restarted). */
+    private fun stopOwnLockTask() {
+        val running = getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+        val ours = startedLockTask || (running && !LockTaskChrome.kioskOn)
+        startedLockTask = false
+        if (!ours) return
+        try {
+            stopLockTask()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "stopLockTask failed", e)
+        }
+    }
+
+    companion object {
+        /** Live instances: the uncaught-exception handler counts a crash for the guard only then. */
+        @Volatile
+        var instances = 0
+            private set
+    }
+}

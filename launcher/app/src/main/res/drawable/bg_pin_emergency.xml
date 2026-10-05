@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Nødsamtale" pill on the PIN lock (#C92A2A, 22 dp radius). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#C92A2A" />
+    <corners android:radius="22dp" />
+</shape>

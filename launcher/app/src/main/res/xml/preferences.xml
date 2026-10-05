@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <Preference
+        android:key="@string/settings_apps_hidden_key"
+        android:title="@string/settings_apps_hidden" />
+
+    <SwitchPreference
+        android:key="@string/settings_display_rotate_screen_key"
+        android:defaultValue="true"
+        android:title="@string/settings_display_rotate_screen" />
+
+    <Preference
+        android:key="settings_meta_licenses"
+        android:title="@string/settings_meta_licenses" />
+
+    <Preference
+        android:key="settings_meta_version"
+        android:title="@string/settings_meta_version" />
+
+    <Preference
+        android:key="@string/settings_mdm_server_url_key"
+        android:title="@string/settings_mdm_server_url" />
+
+    <Preference
+        android:key="@string/settings_mdm_tailscale_auth_key_key"
+        android:title="@string/settings_mdm_tailscale_auth_key" />
+
+    <Preference
+        android:key="settings_mdm_scan_setup_qr"
+        android:title="@string/settings_mdm_scan_setup_qr"
+        android:summary="@string/settings_mdm_scan_setup_qr_summary" />
+
+    <Preference
+        android:key="settings_mdm_enroll_now"
+        android:title="@string/settings_mdm_enroll_now" />
+
+    <Preference
+        android:key="settings_mdm_sync_now"
+        android:title="@string/settings_mdm_sync_now" />
+
+    <Preference
+        android:key="settings_play_install_mode"
+        android:title="@string/settings_play_install_mode"
+        android:summary="@string/settings_play_install_mode_summary" />
+
+    <SwitchPreference
+        android:key="@string/settings_mdm_restrictions_paused_key"
+        android:defaultValue="false"
+        android:title="@string/settings_mdm_restrictions_paused"
+        android:summary="@string/settings_mdm_restrictions_paused_summary" />
+
+    <SwitchPreference
+        android:key="@string/settings_mdm_unifiedpush_distributor_enabled_key"
+        android:defaultValue="false"
+        android:title="@string/settings_mdm_unifiedpush_distributor_enabled"
+        android:summary="@string/settings_mdm_unifiedpush_distributor_enabled_summary" />
+
+</PreferenceScreen>

@@ -1,0 +1,51 @@
+@file:Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+
+package com.kidslauncher.mdm.preferences.serialization
+
+import com.kidslauncher.mdm.apps.AbstractAppInfo
+import eu.jonahbauer.android.preference.annotations.serializer.PreferenceSerializationException
+import eu.jonahbauer.android.preference.annotations.serializer.PreferenceSerializer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+
+@Suppress("UNCHECKED_CAST")
+class SetAbstractAppInfoPreferenceSerializer :
+    PreferenceSerializer<java.util.Set<AbstractAppInfo>?, java.util.Set<java.lang.String>?> {
+    @Throws(PreferenceSerializationException::class)
+    override fun serialize(value: java.util.Set<AbstractAppInfo>?): java.util.Set<java.lang.String> {
+        return value?.map(AbstractAppInfo::serialize)
+            ?.toHashSet() as java.util.Set<java.lang.String>
+    }
+
+    @Throws(PreferenceSerializationException::class)
+    override fun deserialize(value: java.util.Set<java.lang.String>?): java.util.Set<AbstractAppInfo>? {
+        return value?.map(java.lang.String::toString)?.map(AbstractAppInfo::deserialize)
+            ?.toHashSet() as? java.util.Set<AbstractAppInfo>
+    }
+}
+
+
+@Suppress("UNCHECKED_CAST")
+class MapAbstractAppInfoStringPreferenceSerializer :
+    PreferenceSerializer<java.util.HashMap<AbstractAppInfo, String>?, java.util.Set<java.lang.String>?> {
+
+    @Serializable
+    private class MapEntry(val key: AbstractAppInfo, val value: String)
+
+    @Throws(PreferenceSerializationException::class)
+    override fun serialize(value: java.util.HashMap<AbstractAppInfo, String>?): java.util.Set<java.lang.String>? {
+        return value?.map { (key, value) ->
+            Json.encodeToString(MapEntry(key, value))
+        }?.toHashSet() as? java.util.Set<java.lang.String>
+    }
+
+    @Throws(PreferenceSerializationException::class)
+    override fun deserialize(value: java.util.Set<java.lang.String>?): java.util.HashMap<AbstractAppInfo, String>? {
+        return value?.associateTo(HashMap()) {
+            val entry = Json.decodeFromString<MapEntry>(it.toString())
+            Pair(entry.key, entry.value)
+        }
+    }
+}
+

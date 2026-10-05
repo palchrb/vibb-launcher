@@ -1,0 +1,695 @@
+package com.kidslauncher.mdm.server
+
+import com.kidslauncher.mdm.badges.BadgeStore
+import com.kidslauncher.mdm.calls.ContactPhotos
+import com.kidslauncher.mdm.ui.LauncherLocales
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.util.Log
+import androidx.preference.PreferenceManager
+import com.kidslauncher.mdm.BuildConfig
+import com.kidslauncher.mdm.calls.CALL_POLICY_CAPABILITY
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.CallStateReport
+import com.kidslauncher.mdm.calls.callPrefsUpdate
+import com.kidslauncher.mdm.notifyAppInstallResult
+import com.kidslauncher.mdm.notifyAppInstalling
+import com.kidslauncher.mdm.server.dto.CommandResultRequest
+import com.kidslauncher.mdm.server.dto.InstallProgressReport
+import com.kidslauncher.mdm.server.dto.InstalledApp
+import com.kidslauncher.mdm.server.dto.LocationReport
+import com.kidslauncher.mdm.server.dto.PendingCommand
+import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.server.dto.StatusReportRequest
+import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.calls.OngoingCalls
+import com.kidslauncher.mdm.server.dto.LocationPolicy
+import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.timerules.key
+import com.kidslauncher.mdm.ui.LockActivity
+import com.kidslauncher.mdm.play.PlayRuntime
+import com.kidslauncher.mdm.play.PLAY_POLICY_CAPABILITY
+import com.kidslauncher.mdm.play.catalogUpdateBlockedByPlay
+import com.kidslauncher.mdm.push.FCM_PUSH_CAPABILITY
+import com.kidslauncher.mdm.push.FcmSupport
+import com.kidslauncher.mdm.push.PushState
+import android.os.Handler
+import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okhttp3.ResponseBody
+import java.io.File
+import java.time.Instant
+
+private const val LOG_TAG = "MdmSyncWorker"
+
+// CommandListenerService's periodic timer, its SSE push-nudge handler, and the Settings screen's
+// "Sync now" button each independently call performMdmSync with no coordination between them -
+// confirmed live that two overlapping calls processing the same pending tracked-app update (most
+// often the launcher's own self-update, which is in every device's batch whenever a new build's
+// published) race on the shared per-app cache file: one call's AppInstallReceiver cleanup (delete
+// on failure) can delete the file a second, still-in-flight call just wrote, or corrupt it
+// mid-write - producing exactly the INSTALL_PARSE_FAILED_NO_CERTIFICATES / FileNotFoundException
+// failures seen in logcat. withLock (not tryLock-and-skip) so a sync that lands while another's
+// already running queues and still completes, rather than silently no-oping - the trade-off is an
+// occasional redundant back-to-back sync when two triggers land close together, which is cheap
+// compared to a corrupted install.
+private val syncMutex = Mutex()
+
+/**
+ * Combined heartbeat + policy sync: policy fetch/cache/evaluate, app allowlist + kiosk
+ * enforcement, best-effort status report. Shared by [CommandListenerService]'s periodic timer
+ * and push-nudge handling, and the Settings screen's "Sync now" dev action, so all three go
+ * through the exact same logic.
+ *
+ * Returns true only if the server was actually reached this cycle (a fresh policy fetch
+ * succeeded) - every sub-step below (status report, update check) already fails silently and
+ * falls back to cached state on its own, so this is the one signal that reflects whether real
+ * network contact happened, for callers like the "Sync now" button that want to tell the user
+ * the truth about whether it worked.
+ */
+suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
+    val mdm = LauncherPreferences.mdm()
+    val serverUrl = mdm.serverUrl()
+    val deviceToken = mdm.deviceToken()
+    if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
+        return false
+    }
+
+    // The embedded tailnet connection (see CLAUDE.md) is kicked off eagerly from
+    // Application.onCreate() - this is a retry-until-connected backstop for whenever that hasn't
+    // succeeded yet (no auth key configured at startup, transient failure, ...), so createMdmApi
+    // below can pick up TsnetClient's SOCKS5 proxy. No-ops if already connected or no key is set.
+    TsnetClient.connectFromPreferences(context)
+
+    val api = createMdmApi(serverUrl, deviceToken)
+    val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+    val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
+
+    val cached = cachedPolicy()
+    val policyEverApplied = mdm.policyEverApplied()
+
+    // Only a fresh policy that decodes and passes judgeFresh is acted on - see PolicyGate.kt.
+    // Everything in the `freshPolicy != null` block (cache, PIN hash, commands, uninstalls) is
+    // skipped for a rejected or undecodable one, exactly as if the server were unreachable.
+    var freshPolicy: PolicyResponse? = null
+    val freshOutcome = when (val fetched = fetchPolicy(api)) {
+        null -> FreshOutcome.UNREACHABLE
+        is FreshDecode.Failed -> if (fetched === POLICY_SERVER_ERROR) FreshOutcome.SERVER_ERROR else {
+            Log.w(LOG_TAG, "Server policy doesn't decode, keeping the current one: ${fetched.error}")
+            FreshOutcome.DECODE_FAILED
+        }
+        is FreshDecode.Ok -> when (judgeFresh(fetched.policy, cached, policyEverApplied, mdm.callsManagedLast(), mdm.timePolicySeen())) {
+            FreshVerdict.REJECT_SUSPECT -> {
+                Log.w(LOG_TAG, "Ignoring a server policy without an allowlist, call_policy or time_policy on a managed phone")
+                FreshOutcome.REJECTED_SUSPECT
+            }
+            FreshVerdict.ACCEPT -> {
+                freshPolicy = fetched.policy
+                FreshOutcome.ACCEPTED
+            }
+        }
+    }
+
+    if (freshPolicy != null) {
+        storeAcceptedPolicy(context, freshPolicy)
+        // The call services read the rules from memory, never per call.
+        CallPolicyStore.refresh(context)
+        // The parent's language choice, switched when Home is next in front (LauncherLocales).
+        LauncherLocales.remember(context, freshPolicy.launcherUi)
+        // Real server contact just succeeded - the offline override's whole job (bridging the gap
+        // until the device can hear from the server again) is done, so let real policy reassert
+        // immediately rather than waiting out the rest of its time window.
+        OfflineOverride.clear()
+        // Cache the hash+salt into their own preference slots (not just inside the serialized
+        // kid_mode_policy blob) - this is what lets OfflineOverride verify a locally-entered PIN
+        // with zero network at all, which is the entire point of the offline failsafe.
+        mdm.overridePinHash(freshPolicy.overridePinHash)
+        mdm.overridePinSalt(freshPolicy.overridePinSalt)
+        // KidVpnService reads this cached value directly (it never talks to the network itself for
+        // policy) - see DnsFilterEngine.resolveUpstream.
+        mdm.dnsUpstreamProvider(freshPolicy.dnsUpstreamProvider)
+        // Only actually re-fetches the (potentially 100k+ domain) full list if the version token
+        // changed - see DnsFilterEngine's doc comment.
+        DnsFilterEngine.refreshIfNeeded(context, api, freshPolicy.dnsFilterVersion)
+        // Only ever dispatched off a genuinely fresh fetch, never the cached fallback below - the
+        // cached policy blob can still hold a `pendingCommand` from a past cycle that's already
+        // been delivered and consumed server-side, and replaying it from cache while offline would
+        // re-run an old command (harmless for ring, not for lock/wipe).
+        dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand)
+        // Same "only off a genuinely fresh fetch" reasoning as the pending-command dispatch above -
+        // the server clears an entry once a status report confirms the package is gone, so acting
+        // on a stale cached list while offline would just be redundant, not actively harmful, but
+        // there's no reason to.
+        freshPolicy.packagesToUninstall.forEach { AppInstaller.uninstallSilently(context, it) }
+    }
+
+    val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
+    val decision = choosePolicy(freshPolicy, cached, policyEverApplied, lastEnforcedPlan())
+    if (decision is PolicyToApply.Fallback) {
+        Log.w(LOG_TAG, "No usable cached policy - enforcing the last-enforced plan")
+    }
+    val lock = TimeRulesRuntime.currentLock(context, decision.policy, overrideActive)
+    val reason = lock.reason
+    val previousReason = mdm.lockReason()
+    mdm.lockReason(reason)
+    mdm.lockKey(lock.key())
+    // Derives the same lock from the same policy and suspends apps while it's on.
+    AppEnforcer.apply(context, decision.policy, fromSync = true)
+    // A lock that began with this policy (a lift ended early, a new rule): show it now, also over
+    // an app (not over a call), then re-arm the boundary alarm and the screen-time timer.
+    val appContext = context.applicationContext
+    Handler(Looper.getMainLooper()).post {
+        if (previousReason == LockReason.NONE && reason != LockReason.NONE && OngoingCalls.calls.isEmpty()) {
+            LockActivity.start(appContext)
+        }
+        TimeRulesRuntime.recheck(appContext)
+    }
+
+    // A `ring`/`locate` command means the admin explicitly wants to know where the device is right
+    // now, worth the cost of an active GPS/network fix - every other sync (the background chain,
+    // push-triggered syncs, and manual "Sync now") follows the parent's location policy instead
+    // (off / on request / every N minutes, see locationAction), so location isn't forcing an
+    // active fetch (visible location indicator, slower sync) on every single cycle.
+    val forceFreshLocation = freshPolicy?.pendingCommand?.command in setOf("ring", "locate")
+    val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
+    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, locationPolicy)
+
+    // FCM (handy step 7): get or renew the token so this report carries it, and decide the
+    // transport from the enforced policy's `push` (the anchor service follows it after the sync).
+    try {
+        FcmSupport.maintainToken(context, decision.policy?.push)
+        FcmSupport.decide(context, decision.policy?.push)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Push upkeep failed", e)
+    }
+
+    // Best-effort - a failed report must never affect the lock decision above.
+    try {
+        api.sendStatus(
+            StatusReportRequest(
+                lockReason = reason.name,
+                kioskEngaged = mdm.kioskEnabled(),
+                installedApps = collectInstalledApps(context),
+                appVersion = BuildConfig.VERSION_NAME,
+                appVersionCode = BuildConfig.VERSION_CODE,
+                offlineOverrideUsed = mdm.offlineOverrideUsedPendingReport(),
+                location = location.report,
+                policyState = policyState(freshOutcome, cached, policyEverApplied),
+                restrictionsPaused = RestrictionsPause.isActive(),
+                capabilities = listOf(
+                    CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY, FCM_PUSH_CAPABILITY, PLAY_POLICY_CAPABILITY,
+                    com.kidslauncher.mdm.lock.PIN_LOCK_CAPABILITY,
+                ),
+                callState = CallStateReport.build(context),
+                notificationListenerEnabled = BadgeStore.accessGranted(context),
+                timeState = TimeRulesRuntime.report(context, decision.policy, reason),
+                push = PushState.report(context, FcmSupport.configured, FcmSupport.gmsAvailable(context)),
+                installMode = PlayRuntime.installModeReport(context),
+                playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
+                playStoreSuspendable = PlayRuntime.storeSuspendable(context),
+                lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
+            )
+        )
+        // The report just landed, so this doesn't need to stay pending - if it was never used,
+        // this is a harmless false->false write.
+        mdm.offlineOverrideUsedPendingReport(false)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Status report failed", e)
+    }
+
+    // `locate` is answered after the report that carries the fix, with the fix's accuracy and age.
+    freshPolicy?.pendingCommand?.takeIf { it.command == "locate" }?.let { command ->
+        val (ok, message) = locateResultMessage(location.action, location.accuracyMeters, location.ageSeconds)
+        reportCommandResult(api, command.id, ok, message)
+    }
+
+    // After enforcement and the report: photos are cosmetic and may take a moment to download.
+    if (freshPolicy != null) ContactPhotos.sync(context, api)
+    // Wallpapers likewise (design 08): download the allowed photos, delete the rest, and put the
+    // shown one on the system wallpaper right away if it changed. Cosmetic - never fails a sync.
+    if (freshPolicy != null) {
+        try {
+            com.kidslauncher.mdm.ui.wallpaper.WallpaperStore.sync(context, api)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("MdmSyncWorker", "Wallpaper sync failed", e)
+        }
+    }
+
+    checkForTrackedAppUpdates(context, api)
+    reportBlockedDnsEvents(context, api)
+
+    return freshPolicy != null
+}
+
+/** Drains whatever [KidVpnService] has queued via [BlockedEventLog] since the last successful
+ * report - best-effort, same as the status report above; only clears the queue once the server
+ * call actually succeeds, so a failed report doesn't silently lose events. */
+private suspend fun reportBlockedDnsEvents(context: Context, api: MdmApi) {
+    val events = BlockedEventLog.drain(context)
+    if (events.isEmpty()) return
+    try {
+        api.sendDnsEvents(events)
+        BlockedEventLog.clearReported(context, events.size)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Blocked-DNS-event report failed", e)
+    }
+}
+
+/**
+ * Find My Device's remote-command dispatch - ring/stop_ring/lock/wipe, or `locate` (nothing here:
+ * the sync takes a fresh fix for the status report - bypassing the throttle - and answers the
+ * command after the report with the fix's accuracy and age; the PWA's "Update location now"
+ * queues it). No result is ever reported for `wipe` - the device is gone by the time it would
+ * report back.
+ */
+private suspend fun dispatchPendingCommand(
+    context: Context,
+    api: MdmApi,
+    dpm: DevicePolicyManager,
+    admin: ComponentName,
+    pending: PendingCommand?,
+) {
+    if (pending == null || !dpm.isDeviceOwnerApp(context.packageName)) return
+
+    when (pending.command) {
+        "ring" -> {
+            LocateCommands.ring(context)
+            reportCommandResult(api, pending.id, success = true, message = "ringing")
+        }
+
+        "stop_ring" -> {
+            LocateCommands.stopRingAndRestore(context)
+            reportCommandResult(api, pending.id, success = true, message = "stopped")
+        }
+
+        "lock" -> {
+            // Handy's PIN lock when it's active (step 10): LOCKED and shown, then the screen off.
+            val ours = com.kidslauncher.mdm.lock.PinLockRuntime.lockNow(context)
+            val ok = LocateCommands.lock(dpm, admin)
+            val message = when {
+                !ok -> "failed to lock"
+                ours -> "locked (handy lock)"
+                else -> "locked (Android)"
+            }
+            reportCommandResult(api, pending.id, ok, message)
+        }
+
+        "wipe" -> LocateCommands.wipe(dpm, admin)
+
+        // Answered after the status report that carries the fresh fix (performMdmSync).
+        "locate" -> {}
+
+        else -> Log.w(LOG_TAG, "Unknown pending command: ${pending.command}")
+    }
+}
+
+private suspend fun reportCommandResult(api: MdmApi, commandId: Long, success: Boolean, message: String?) {
+    try {
+        api.sendCommandResult(CommandResultRequest(commandId, success, message))
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Failed to report command result for id=$commandId", e)
+    }
+}
+
+/** What the sync did about location: the report (if any), and for `locate` the fix's details. */
+private class LocationOutcome(
+    val action: LocationAction,
+    val report: LocationReport?,
+    val accuracyMeters: Float?,
+    val ageSeconds: Long?,
+)
+
+/** [policy] `null` = no policy (a never-managed phone): the old behaviour. */
+private suspend fun currentLocationReport(
+    context: Context,
+    dpm: DevicePolicyManager,
+    admin: ComponentName,
+    forceFresh: Boolean,
+    policy: LocationPolicy?,
+): LocationOutcome {
+    if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
+    val sinceLastFresh = System.currentTimeMillis() - LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
+    val action = locationAction(policy, forceFresh, sinceLastFresh)
+    val location = LocateCommands.currentLocation(context, dpm, admin, action)
+        ?: return LocationOutcome(action, null, null, null)
+    val accuracy = if (location.hasAccuracy()) location.accuracy else null
+    return LocationOutcome(
+        action,
+        LocationReport(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracyMeters = accuracy,
+            capturedAt = Instant.ofEpochMilli(location.time).toString(),
+        ),
+        accuracy,
+        (System.currentTimeMillis() - location.time) / 1000,
+    )
+}
+
+/**
+ * Downloads and silently installs a newer release for every app tracked server-side (see
+ * kid-phone-server's `handlers::tracked_apps`) that's actually scoped to this device (or is the
+ * launcher itself, see [TrackedAppUpdate.isLauncher] - always included regardless of scoping) -
+ * either from a GitHub repo's Releases (e.g. Tailscale) or manually uploaded by an admin. The
+ * launcher's own self-update goes through this exact same path now too, since it's just another
+ * tracked app server-side - so there's no special-cased launcher-update code here at all. The one
+ * real place self-update still differs is [AppInstallReceiver] skipping its cache-file cleanup on
+ * success, since installing over yourself risks the process dying before that line runs. One
+ * app's failure never affects another's, or the rest of the sync - *except* the launcher's own
+ * self-update, which is why it's always processed last (see the reordering below): installing an
+ * update over the running app can get this process SIGKILLed the moment [AppInstaller] commits
+ * that session, and everything after that point in this function (any other app still queued in
+ * this loop, [reportBlockedDnsEvents] back in [performMdmSync]) would simply never run this cycle.
+ * A committed [android.content.pm.PackageInstaller] session is handled by the OS from that point
+ * on regardless of whether this process survives, so every other app's install is safe to have
+ * already been kicked off first - it isn't reverted just because we don't stick around to see the
+ * result.
+ */
+// Generous for a slow download+install over a poor connection, short enough that a genuinely
+// abandoned attempt (process died mid-download, AppInstallReceiver's callback somehow never
+// fired) doesn't block retries for long - see TrackedAppUpdateState.recordAttemptStarted's own
+// doc comment for the actual bug this guards against.
+private const val INSTALL_ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000L
+
+// A release that failed to install once is retried automatically after this window rather than
+// being skipped forever - see TrackedAppUpdateState's own doc comment for the incident that
+// motivated this (a release stuck failed from the since-fixed overlapping-install race showed zero
+// notification and zero server-side visibility indefinitely, since nothing ever cleared
+// lastFailedTag short of the upstream release itself changing).
+private const val FAILED_RETRY_BACKOFF_MS = 60 * 60 * 1000L
+
+private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
+    val updates = try {
+        api.getTrackedAppUpdates().body() ?: return
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Tracked app update check failed", e)
+        return
+    }
+
+    val (launcherUpdates, otherUpdates) = updates.partition { it.isLauncher }
+    val state = TrackedAppUpdateState.load()
+    for (update in otherUpdates + launcherUpdates) {
+        val key = update.id.toString()
+        // One source per package (handy step 7): an app Play installed is Play's to update
+        // (other signature; Android 14 update ownership). Switching source = uninstall first.
+        val installedFrom = update.packageName.takeIf { it.isNotBlank() }
+            ?.let { installerOf(context.packageManager, it) }
+        if (!update.isLauncher && catalogUpdateBlockedByPlay(installedFrom)) {
+            Log.w(LOG_TAG, "Skipping ${update.name}: the installed copy comes from Play")
+            reportInstallFailure(api, update.id)
+            continue
+        }
+        val known = state[key]
+        if (update.releaseTag == known?.lastInstalledTag) {
+            continue
+        }
+        val failedAt = known?.lastFailedAtMs
+        if (update.releaseTag == known?.lastFailedTag &&
+            failedAt != null &&
+            System.currentTimeMillis() - failedAt < FAILED_RETRY_BACKOFF_MS
+        ) {
+            continue
+        }
+        val attemptStartedAt = known?.attemptStartedAtMs
+        if (attemptStartedAt != null &&
+            System.currentTimeMillis() - attemptStartedAt < INSTALL_ATTEMPT_TIMEOUT_MS
+        ) {
+            // A previous cycle already started this app's download+install and it hasn't resolved
+            // yet (installSilently's commit() returns long before the real result arrives) - don't
+            // fire a second, overlapping attempt for the same target. Confirmed live: checking a
+            // second app while the first was still installing caused the first to restart from
+            // this exact redundant re-attempt, and the second app's own attempt never completed.
+            Log.i(LOG_TAG, "Skipping ${update.name} - an install attempt is already in flight")
+            continue
+        }
+
+        TrackedAppUpdateState.recordAttemptStarted(context, key)
+        // Shown for the whole download+install span, not just the install step - cancelled by
+        // AppInstallReceiver once the real PackageInstaller result comes back, or explicitly here
+        // on a download failure (AppInstallReceiver never runs in that case, since installSilently
+        // is never reached).
+        notifyAppInstalling(context, update.id, update.name)
+        try {
+            val response = api.downloadTrackedApp(update.downloadUrl)
+            val body = response.body()
+            if (body == null) {
+                notifyAppInstallResult(context, update.id, update.name, success = false)
+                TrackedAppUpdateState.clearAttempt(context, key)
+                reportInstallFailure(api, update.id)
+                continue
+            }
+            // Unique per attempt (not just per app id) - defense in depth alongside the syncMutex
+            // above: even a future caller that bypasses the mutex can't have two downloads corrupt
+            // or delete each other's file if they never share a path. context.cacheDir is
+            // OS-reclaimable under storage pressure, so a launcher self-update's file (deliberately
+            // left behind on success - see AppInstallReceiver) doesn't need explicit cleanup here.
+            val apkFile = File(context.cacheDir, "tracked_app_${key}_${System.nanoTime()}.apk")
+            copyWithProgressReports(body, apkFile, api, update.id)
+            Log.i(LOG_TAG, "Downloaded ${update.packageName} ${update.releaseTag}, installing")
+            AppInstaller.installSilently(
+                context, apkFile, key, update.name, update.isLauncher, update.releaseTag
+            )
+            // Deliberately does NOT clear the in-flight marker here - installSilently's commit()
+            // is async, so this attempt is still unresolved until AppInstallReceiver's
+            // recordInstalled/recordFailed lands (or the timeout above reclaims it if that
+            // callback never fires).
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // The sync's timeout: stop here; the next sync retries (the attempt marker times out).
+            TrackedAppUpdateState.clearAttempt(context, key)
+            throw e
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Update check failed for ${update.packageName}", e)
+            notifyAppInstallResult(context, update.id, update.name, success = false)
+            TrackedAppUpdateState.clearAttempt(context, key)
+            reportInstallFailure(api, update.id)
+        }
+    }
+}
+
+/** Best-effort visibility for the admin site - a download-level failure here doesn't mark
+ * [TrackedAppUpdateState.recordFailed] (a transient network hiccup should still retry next cycle,
+ * see [TrackedAppUpdateState.clearAttempt]'s own doc comment), so this alone is what lets the
+ * server show "Install failed" instead of the row just quietly staying "Not installed". */
+private suspend fun reportInstallFailure(api: MdmApi, trackedAppId: Long) {
+    try {
+        api.reportInstallProgress(InstallProgressReport(trackedAppId, percent = 0, failed = true))
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Failed to report install failure", e)
+    }
+}
+
+/** Copies [body]'s bytes to [apkFile] while reporting download progress to the server on every
+ * 5% crossing (not every chunk - a large APK over a slow connection could otherwise fire dozens
+ * of requests a second). Best-effort: a failed progress report is logged and ignored, never
+ * allowed to interrupt the actual download it's reporting on. */
+private suspend fun copyWithProgressReports(
+    body: ResponseBody,
+    apkFile: File,
+    api: MdmApi,
+    trackedAppId: Long,
+) {
+    val contentLength = body.contentLength()
+    var lastReportedPercent = -1
+    body.byteStream().use { input ->
+        apkFile.outputStream().use { output ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var bytesRead = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) break
+                output.write(buffer, 0, read)
+                bytesRead += read
+                if (contentLength <= 0) continue
+                val percent = ((bytesRead * 100) / contentLength).toInt().coerceIn(0, 100)
+                if (percent >= lastReportedPercent + 5) {
+                    lastReportedPercent = percent
+                    try {
+                        api.reportInstallProgress(InstallProgressReport(trackedAppId, percent))
+                    } catch (e: Exception) {
+                        Log.w(LOG_TAG, "Failed to report install progress", e)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Reports {packageName, label} for every app [AppEnforcer] is actually willing to suspend/hide,
+ * so the admin site's allowlist checkboxes exactly match what checking one of them can affect -
+ * see [controllablePackages] for why this is neither the launcher's own `Application.apps` list
+ * (excludes already-hidden apps, a permanent lockout) nor a raw unfiltered PackageManager query
+ * (would include core OS packages unsafe to ever suspend).
+ */
+private fun collectInstalledApps(context: Context): List<InstalledApp> {
+    val pm = context.packageManager
+    return controllablePackages(pm)
+        .filter { it != context.packageName }
+        .mapNotNull { packageName ->
+            try {
+                // Same MATCH_UNINSTALLED_PACKAGES requirement as controllablePackages() - flags=0
+                // throws NameNotFoundException for a hidden package just like it gets silently
+                // excluded from getInstalledApplications(0), which would otherwise drop any
+                // currently-unchecked app right back out of this report.
+                val info = pm.getApplicationInfo(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES)
+                InstalledApp(
+                    packageName = packageName,
+                    label = pm.getApplicationLabel(info).toString(),
+                    preinstalled = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                    installer = installerOf(pm, packageName),
+                )
+            } catch (e: PackageManager.NameNotFoundException) {
+                null
+            }
+        }
+        .distinctBy { it.packageName }
+}
+
+/** Who installed [packageName] (`com.android.vending` = Play), or `null` if unknown. */
+private fun installerOf(pm: PackageManager, packageName: String): String? = try {
+    pm.getInstallSourceInfo(packageName).installingPackageName
+} catch (e: Exception) {
+    null
+}
+
+/** A 5xx from the policy endpoint: the server is up but couldn't build this device's policy
+ * (kid-phone-server answers 500 rather than a default) - reported as `server_error`. */
+private val POLICY_SERVER_ERROR = FreshDecode.Failed("server error")
+
+/** `null` when the server couldn't be reached (or answered a non-5xx error), [POLICY_SERVER_ERROR]
+ * (compared by identity) on a 5xx, otherwise the decoded body or why it didn't decode. Doesn't
+ * cache anything - only an accepted policy is cached, see [storeAcceptedPolicy]. */
+private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
+    return try {
+        val response = api.getPolicy()
+        if (!response.isSuccessful) {
+            Log.w(LOG_TAG, "Policy fetch returned HTTP ${response.code()}, keeping the current policy")
+            response.errorBody()?.close()
+            return if (response.code() >= 500) POLICY_SERVER_ERROR else null
+        }
+        decodeFresh(response.body()?.use { it.string() })
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Policy fetch failed, falling back to cache", e)
+        null
+    }
+}
+
+/** Caches an accepted policy, its [LastEnforcedPlan], the "a policy has been applied" flag, the
+ * "this phone has had time rules" flag ([judgeFresh]) and the
+ * call prefs ([callPrefsUpdate]: `calls_managed_last` only from an explicit `managed`, and the last
+ * managed call rules) in one synchronous `commit()` - they must never disagree, and the generated
+ * preference setters only `apply()` asynchronously (see CLAUDE.md on writes racing a process death). */
+private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
+    val keys = LauncherPreferences.mdm().keys()
+    val editor = PreferenceManager.getDefaultSharedPreferences(context).edit()
+        .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), policy))
+        .putBoolean(keys.policyEverApplied(), true)
+        .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
+    if (policy.timePolicy != null) editor.putBoolean(keys.timePolicySeen(), true)
+    callPrefsUpdate(policy)?.let { update ->
+        editor.putBoolean(keys.callsManagedLast(), update.callsManagedLast)
+        if (update.lastCallRules != null) {
+            editor.putString(keys.lastCallRules(), update.lastCallRules)
+        } else {
+            editor.remove(keys.lastCallRules())
+        }
+    }
+    val ok = editor.commit()
+    if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
+}
+
+/**
+ * The last accepted policy, straight from the local cache - no network call. Feed it to
+ * [choosePolicy] (or use [currentPolicyDecision]): a [CachedPolicy.Corrupt] (or
+ * [CachedPolicy.Absent] on a phone that has had a policy) means "enforce the last-enforced plan",
+ * never "no restrictions".
+ */
+fun cachedPolicy(): CachedPolicy {
+    val cached = decodeCached(LauncherPreferences.mdm().kidModePolicy())
+    if (cached is CachedPolicy.Corrupt) {
+        Log.w(LOG_TAG, "Cached policy doesn't decode: ${cached.error}")
+    }
+    return cached
+}
+
+/** The [LastEnforcedPlan] stored with the last accepted policy, or `null` if missing/unreadable. */
+fun lastEnforcedPlan(): LastEnforcedPlan? = LastEnforcedPlan.decode(LauncherPreferences.mdm().lastEnforcedPlan())
+
+/** What to enforce right now without a network call: the cache, the last-enforced plan, or
+ * (never-managed phone) nothing. */
+fun currentPolicyDecision(): PolicyToApply =
+    choosePolicy(null, cachedPolicy(), LauncherPreferences.mdm().policyEverApplied(), lastEnforcedPlan())
+
+/** Re-applies enforcement off the main thread after the schedule lock changed - see
+ * [reevaluateLockReasonFromCache]. */
+private val scheduleScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+/**
+ * Re-checks the time-rule lock against the last-cached policy and the device's own clock - no
+ * network call, so it works offline and doesn't wait for the next sync. Called by
+ * [com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck] (the boundary alarm, time/zone change,
+ * boot, screen on, the budget running out) and by Home/the lock screen when they come to the
+ * front. When the lock changed - its reason, rules, usable apps or calls ([key]) - or the last
+ * apply didn't enforce it (failed, process died, none ran yet: QA step 4 #10), [AppEnforcer.apply]
+ * runs again in the background: the lock suspends every app but ours, the system dialer and the
+ * lock's usable apps, and its end releases them (qa-security P0 #3). Returns the new reason if it
+ * changed, `null` otherwise.
+ */
+fun reevaluateLockReasonFromCache(context: Context): LockReason? {
+    val mdm = LauncherPreferences.mdm()
+    val decision = currentPolicyDecision()
+    val lock = TimeRulesRuntime.currentLock(
+        context,
+        decision.policy,
+        OfflineOverride.isActive() || RestrictionsPause.isActive(),
+    )
+    val reason = lock.reason
+    val key = lock.key()
+    val changed = mdm.lockReason() != reason
+    val keyChanged = mdm.lockKey() != key
+    // Play (handy step 7): install mode starting/ending, the update window opening at screen-off
+    // or closing at screen-on re-apply the plan the same way.
+    val play = PlayRuntime.state(context)
+    val enforcedPlay = AppEnforcer.lastEnforcedPlayState
+    val playChanged = enforcedPlay?.key() != play.key()
+    if (!changed && !keyChanged && AppEnforcer.lastEnforcedLockKey == key && !playChanged) return null
+    if (changed) mdm.lockReason(reason)
+    if (keyChanged) mdm.lockKey(key)
+    val installModeEnded = enforcedPlay?.installMode == true && !play.installMode
+    val appContext = context.applicationContext
+    scheduleScope.launch {
+        try {
+            AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+            // The Play state may have moved while that apply ran (screen on right after screen
+            // off in the update window): apply again until what's enforced is what's current,
+            // so the window really ends at once on screen-on.
+            var tries = 0
+            while (tries++ < 3 && AppEnforcer.lastEnforcedPlayState?.key() != PlayRuntime.state(appContext).key()) {
+                AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+            }
+            if (installModeEnded) PlayRuntime.onInstallModeEnded(appContext)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Re-applying enforcement after a lock change failed", e)
+        }
+    }
+    return if (changed) reason else null
+}
+
+// The periodic backstop sync used to be driven by a WorkManager OneTimeWorkRequest chain (each
+// run rescheduling the next with a 5-minute delay) - confirmed live that this could go
+// unexpectedly quiet for hours on an idle phone with the screen off, most likely Android's Doze/
+// battery-optimization deferring the underlying JobScheduler dispatch, which WorkManager itself
+// isn't exempt from. CommandListenerService already pays the cost of an always-on foreground
+// service (exempt from Doze by design, that's the entire point of a foreground service) to hold
+// its SSE connection open - it now also drives this periodic sync directly off its own timer
+// instead, so there's no second, Doze-vulnerable scheduling mechanism to keep reliable.

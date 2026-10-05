@@ -1,0 +1,457 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- In-app "Scan setup QR" flow (SettingsFragmentLauncher, zxing-android-embedded) - Device
+         Owner self-grants this the same way as other prompt-free permissions elsewhere in this
+         file, so scanning never shows the runtime permission dialog. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Self-granted silently via DevicePolicyManager.setPermissionGrantState, required to call
+         BluetoothAdapter.enable()/disable() from the Quick Controls screen on Android 12+. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Same self-grant pattern, required for BluetoothAdapter.startDiscovery() on Android 12+,
+         used by the Quick Controls "manage devices" screen. neverForLocation for the same reason
+         as NEARBY_WIFI_DEVICES below - we only need device identity, never physical position -
+         and without it Android additionally requires the phone's system-wide Location toggle to
+         be on before discovery returns any results at all, independent of this permission grant. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <!-- Normal-level, auto-granted at install - required to read/toggle WiFi state from the
+         Quick Controls screen. Device Owner exempts us from the API 29+ restriction on WHO can
+         toggle WiFi, but these are still required regardless of Device Owner status. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- The kid's wallpaper on the system wallpaper (ui/wallpaper/WallpaperApplier, design 08). -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- Self-granted, required for WifiManager.startScan()/getScanResults() on Android 13+ -
+         replaces the old ACCESS_FINE_LOCATION scanning requirement. neverForLocation since the
+         Quick Controls "manage networks" screen only needs SSIDs, never physical position. -->
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Self-granted, for Find My Device's location trail (LocateCommands.kt). Plain
+         android.location.LocationManager, never FusedLocationProviderClient - this project has no
+         Google Play Services anywhere (GrapheneOS has none). ACCESS_BACKGROUND_LOCATION is needed
+         since the read happens from MdmSyncWorker, a background job, not direct foreground user
+         action - unconfirmed whether Device Owner can self-grant this one specifically, unlike
+         every other permission in this app; see QuickControls/MdmSyncWorker for the diagnostic
+         logging around it. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- CommandListenerService is the always-on process anchor (handy step 7): screen signals for
+         screen time, every background sync, and the SSE stream when FCM isn't in use. Type
+         "specialUse" (parental control enforcement): "dataSync" is capped at 6 h a day on
+         Android 15+ and may not start from BOOT_COMPLETED there. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- KidVpnService's on-device DNS filter (see CLAUDE.md) - "specialUse" since none of the
+         other API 34 foreground-service types fit "local VPN packet filter"; the required
+         PROPERTY_SPECIAL_USE_FGS_SUBTYPE declaration is on the <service> element below.
+         BIND_VPN_SERVICE itself is a system-enforced permission that goes on the <service>
+         element's android:permission attribute (restricting who may bind to it, i.e. only the
+         OS) - not something this app requests for its own use, so no <uses-permission> for it. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Gates com.kidsmdm.im.journal's ContentProvider (protectionLevel="signature") - granted
+         only if this app is signed with the exact same certificate as com.kidsmdm.im. See
+         server.JournalSync.kt and this repo's CLAUDE.md for the signing-key requirement. -->
+    <uses-permission android:name="com.kidsmdm.im.ACCESS_JOURNAL" />
+    <!-- Same signature-permission gate as above, but for com.kidsmdm.browser.journal's
+         ContentProvider (the kids-mdm-browser fork's history journal). See
+         server.BrowserHistorySync.kt - same signing-key requirement applies. -->
+    <uses-permission android:name="com.kidsmdm.browser.ACCESS_JOURNAL" />
+    <!-- Calls (calls/ package, design 02-calls.md): placing calls from the phone book, reading the
+         caller's number, contact-independent screening (CallScreeningService only sees numbers
+         outside the user's contacts unless READ_CONTACTS is granted), the call log for the
+         callback window after an emergency call, and the in-call screen. Device owner self-grants
+         the runtime ones (AppEnforcer.applyCallPermissions); the dialer role grants most too. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- LOCKED_BOOT_COMPLETED for calls.BootCallReceiver (direct boot, task 15). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- One exact alarm at the next time-rule boundary (timerules.TimeRuleAlarm, handy step 6).
+         Granted at install, unlike SCHEDULE_EXACT_ALARM; Play limits it to alarm apps, which
+         doesn't apply to this sideloaded device-owner app. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <application
+        android:name=".Application"
+        android:appComponentFactory="com.kidslauncher.mdm.KidAppComponentFactory"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/launcherBaseTheme"
+        android:usesCleartextTraffic="true"
+        tools:ignore="UnusedAttribute"
+        tools:replace="android:appComponentFactory">
+
+        <activity
+            android:name=".ui.HomeActivity"
+            android:clearTaskOnLaunch="true"
+            android:configChanges="orientation|screenSize"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/launcherHomeTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ui.list.AppListActivity"
+            android:configChanges="orientation|screenSize"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.settings.SettingsActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="true"
+            android:windowSoftInputMode="adjustNothing">
+            <intent-filter>
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ui.LegalInfoActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.ReportCrashActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.LockActivity"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+        <!-- Handy's own PIN lock (step 10): its own task over everything, shown over the keyguard
+             (unmigrated phones), portrait (a rotation must not cost a re-front), never in recents.
+             Not direct-boot-aware: the kid PIN lives in CE storage, and nothing that starts lock
+             task may run before the first unlock (the BFU lockout incidents in CLAUDE.md). -->
+        <activity
+            android:name=".lock.PinLockActivity"
+            android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:taskAffinity="${applicationId}.pinlock"
+            android:theme="@style/PinLockTheme" />
+        <activity
+            android:name=".ui.kidsettings.KidSettingsActivity"
+            android:configChanges="orientation|screenSize"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+        <activity
+            android:name=".ui.quickcontrols.WifiNetworksActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.quickcontrols.BluetoothDevicesActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false" />
+
+        <!-- Calls. The dialer role needs a DIAL activity (plain and tel:) and an exported
+             InCallService with IN_CALL_SERVICE_UI; without them setDefaultDialerApplication
+             throws. VIEW tel:/voicemail: and CALL_BUTTON are here too so links and the call
+             button land in the phone book rather than the system keypad (QA #6; which handler
+             wins is a device check). exported="true" on the services is safe: their
+             android:permission means only Telecom can bind.
+             Direct boot (task 15, 02-calls.md): the call services, the in-call screen, its
+             notification receiver and BootCallReceiver are directBootAware, so calls are screened
+             before the first unlock after a reboot, from a device-protected copy of the rules.
+             Nothing else is - in particular not HomeActivity/LockActivity (the BFU lockout
+             incidents in CLAUDE.md) and not the phone book. -->
+        <activity
+            android:name=".calls.PhoneBookActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tel" />
+                <data android:scheme="voicemail" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.CALL_BUTTON" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- Unread counts for the home grid (design 05-ui-photos-i18n.md). Android binds it only
+             once notification access is granted - no device-owner API exists for that, so it's
+             `adb shell cmd notification allow_listener <package>/com.kidslauncher.mdm.badges.BadgeListenerService`
+             at provisioning. Not directBootAware. -->
+        <service
+            android:name=".badges.BadgeListenerService"
+            android:exported="true"
+            android:label="@string/badges_listener_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <activity
+            android:name=".calls.InCallActivity"
+            android:directBootAware="true"
+            android:configChanges="orientation|screenSize"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:taskAffinity="${applicationId}.call"
+            android:theme="@style/InCallTheme"
+            android:turnScreenOn="true" />
+        <service
+            android:name=".calls.KidInCallService"
+            android:directBootAware="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_INCALL_SERVICE">
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="true" />
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+        <!-- Screens incoming calls; Telecom binds the default dialer's screening service. -->
+        <service
+            android:name=".calls.KidCallScreeningService"
+            android:directBootAware="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_SCREENING_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
+        <!-- Stops not-allowed outgoing calls before they're placed. Needs ROLE_CALL_REDIRECTION
+             (adb at provisioning, or the system prompt from Home). -->
+        <service
+            android:name=".calls.KidCallRedirectionService"
+            android:directBootAware="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_CALL_REDIRECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.CallRedirectionService" />
+            </intent-filter>
+        </service>
+        <!-- Only our own notification PendingIntents (Answer / Hang up). -->
+        <receiver
+            android:name=".calls.CallActionReceiver"
+            android:directBootAware="true"
+            android:exported="false" />
+
+        <!-- Only gets the process up with the device-protected call policy loaded after a reboot;
+             LOCKED_BOOT_COMPLETED is a protected broadcast, so exported="false" is fine. -->
+        <receiver
+            android:name=".calls.BootCallReceiver"
+            android:directBootAware="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".server.MdmDeviceAdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                <action android:name="android.app.action.ACTION_PASSWORD_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Not externally reachable - only ever triggered via the PendingIntent passed to
+             PackageInstaller.Session.commit() in AppInstaller.kt, for every tracked app's
+             install/update, including the launcher's own self-update. -->
+        <receiver
+            android:name=".server.AppInstallReceiver"
+            android:exported="false" />
+
+        <!-- Not externally reachable - only ever triggered via the PendingIntent passed to
+             PackageInstaller.uninstall() in AppInstaller.kt. -->
+        <receiver
+            android:name=".server.AppUninstallReceiver"
+            android:exported="false" />
+
+        <!-- Not externally reachable - only ever triggered via the "Stop Ringing" action's own
+             PendingIntent on the notification LocateCommands.ring() shows. -->
+        <receiver
+            android:name=".server.StopRingReceiver"
+            android:exported="false" />
+
+        <!-- Deliberately exported, unlike every other receiver in this app - see
+             UnifiedPushRegistrationReceiver's own doc comment for why. Other apps' UnifiedPush
+             connector libraries send these two actions as implicit broadcasts to discover an
+             installed distributor; there's no component name they could target instead.
+             android:enabled="false" here matches the spec's own recommendation to keep a
+             distributor's registration receiver disabled until its setup precondition is met -
+             here, that's a parent opting in from Settings, which flips this at runtime via
+             PackageManager.setComponentEnabledSetting (see SettingsFragmentLauncher). Until then
+             this app isn't even discoverable as a distributor, not just non-functional. -->
+        <receiver
+            android:name=".server.UnifiedPushRegistrationReceiver"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+                <action android:name="org.unifiedpush.android.distributor.UNREGISTER" />
+                <action android:name="org.unifiedpush.android.distributor.MESSAGE_ACK" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".server.CommandListenerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Parental control enforcement (device owner): screen-time and time-rule signals, policy sync" />
+        </service>
+
+        <!-- Sync nudges over FCM (handy step 7, push/KidFcmService). exported="false" as Firebase
+             declares it: messages come in through the SDK's FirebaseInstanceIdReceiver, which only
+             Play services can call (c2dm.permission.SEND). Enabled only in builds with a Firebase
+             config (fcmEnabled placeholder, app/build.gradle.kts). Not direct-boot-aware. -->
+        <service
+            android:name=".push.KidFcmService"
+            android:enabled="${fcmEnabled}"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <!-- The SDK's own fallback service is direct-boot-aware and would touch Firebase before the
+             first unlock (and before our init) - it must never run. -->
+        <service
+            android:name="com.google.firebase.messaging.FirebaseMessagingService"
+            tools:node="remove" />
+        <!-- Firebase is initialised by hand after the unlock (push/FcmSupport), never by this
+             provider - it would run before the first unlock, and Firebase keeps state in CE. -->
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider"
+            tools:node="remove" />
+        <!-- Only holds registrar metadata; never started. Not direct-boot-aware, like everything
+             outside the call path (DirectBootComponents). -->
+        <service
+            android:name="com.google.firebase.components.ComponentDiscoveryService"
+            android:directBootAware="false"
+            tools:replace="android:directBootAware" />
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_analytics_collection_deactivated"
+            android:value="true" />
+        <meta-data
+            android:name="delivery_metrics_exported_to_big_query_enabled"
+            android:value="false" />
+
+        <!-- The backstop sync alarm (push/BackstopAlarm) - our own explicit PendingIntent only. -->
+        <receiver
+            android:name=".push.BackstopReceiver"
+            android:exported="false" />
+        <!-- "End now" on the Play install-mode notification - our own PendingIntent only. -->
+        <receiver
+            android:name=".play.InstallModeReceiver"
+            android:exported="false" />
+        <!-- Answers market:// and play.google.com/store links (handy step 7): the device owner makes
+             it their persistent preferred activity, which AOSP honours only when the activity
+             declares matching filters. Passes the link on to Play while Play isn't suspended. -->
+        <activity
+            android:name=".play.PlayLinkBlockedActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="market" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="play.google.com" />
+                <data android:pathPrefix="/store" />
+            </intent-filter>
+        </activity>
+
+        <!-- Not externally reachable despite the implicit-action intent-filter - MY_PACKAGE_REPLACED
+             is a protected system broadcast only the OS can send, always targeted at the just-updated
+             app itself. See PackageReplacedReceiver's own doc comment for why this exists. -->
+        <!-- Time-rule boundary alarm + clock/zone change + boot (handy step 6). Exported for the
+             system broadcasts (all protected); its own alarm targets it by component. Not
+             direct-boot-aware: before unlock the call path reads the boot copy itself. -->
+        <receiver
+            android:name=".timerules.TimeRuleReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".server.PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- On-device DNS filter - see KidVpnService.kt and this repo's CLAUDE.md. Only the OS may
+             bind to a VpnService, enforced via BIND_VPN_SERVICE here (not a <uses-permission> -
+             see the manifest permission block above). -->
+        <service
+            android:name=".server.KidVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local ad/content DNS filtering VPN" />
+        </service>
+    </application>
+</manifest>

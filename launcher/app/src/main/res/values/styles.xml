@@ -1,0 +1,286 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+
+    <!-- to force black textcolor for buttons -->
+    <style name="buttonBlackText" parent="@style/Widget.AppCompat.Button.Colored">
+        <item name="android:textColor">#000000</item>
+        <!--<item name="colorButtonNormal">?colorAccent</item>-->
+    </style>
+
+    <!-- Base theme for Launcher -->
+    <style name="launcherBaseTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/finnmglasTheme_background_color</item>
+        <item name="colorPrimaryDark">@color/finnmglasTheme_background_color</item>
+        <item name="colorAccent">@color/finnmglasTheme_accent_color</item>
+        <item name="android:colorBackground">@color/finnmglasTheme_background_color</item>
+
+        <item name="android:textColor">@color/finnmglasTheme_text_color</item>
+        <item name="android:textColorSecondary">?android:textColor</item>
+        <item name="android:textColorPrimary">?android:textColor</item>
+        <item name="android:textColorHint">?android:textColor</item>
+
+        <item name="android:buttonStyle">@style/Widget.AppCompat.Button.Colored</item>
+        <item name="colorButtonNormal">?colorAccent</item>
+        <item name="cardBackgroundColor">@color/cardview_dark_background</item>
+
+        <!--<item name="android:popupMenuStyle">@style/PopupMenuCustom</item>-->
+
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowAnimationStyle">@style/WindowFadeTransition</item>
+        <!-- Also for activities outside UIObjectActivity (the in-call screen): an APK resource,
+             readable before the first unlock. -->
+        <item name="android:fontFamily">@font/nunito</item>
+        <item name="fontFamily">@font/nunito</item>
+    </style>
+
+    <!-- Handy's PIN lock (step 10): navy everywhere, and the window preview on, so the first frame
+         after a screen-on is navy rather than whatever was under the lock. -->
+    <style name="PinLockTheme" parent="launcherBaseTheme">
+        <item name="android:windowBackground">@color/kid_ground</item>
+        <item name="android:statusBarColor">@color/kid_ground</item>
+        <item name="android:navigationBarColor">@color/kid_ground</item>
+        <item name="android:windowDisablePreview">false</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <!-- The call screens (step 10 mockups): gradient window, matching system bars. -->
+    <style name="InCallTheme" parent="launcherBaseTheme">
+        <item name="android:windowBackground">@drawable/bg_call_screen</item>
+        <item name="android:statusBarColor">#1C3A6B</item>
+        <item name="android:navigationBarColor">#14213D</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="launcherHomeTheme" parent="launcherBaseTheme">
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <!--<item name="android:windowDrawsSystemBarBackgrounds">true</item>-->
+    </style>
+
+    <style name="colorThemeDark">
+        <item name="colorPrimary">@color/darkTheme_background_color</item>
+        <item name="colorPrimaryDark">@color/darkTheme_background_color</item>
+        <item name="colorAccent">@color/darkTheme_accent_color</item>
+        <item name="android:colorBackground">@color/darkTheme_background_color</item>
+        <item name="cardBackgroundColor">@color/cardview_dark_background</item>
+        <item name="android:textColor">@color/darkTheme_text_color</item>
+    </style>
+
+    <style name="colorThemeGreen">
+        <item name="colorPrimary">@color/darkTheme_background_color</item>
+        <item name="colorPrimaryDark">@color/darkTheme_background_color</item>
+        <item name="colorAccent">#0f0</item>
+        <item name="android:buttonStyle">@style/buttonBlackText</item>
+        <item name="android:colorBackground">@color/darkTheme_background_color</item>
+        <item name="cardBackgroundColor">@color/cardview_dark_background</item>
+        <item name="android:textColor">#0f0</item>
+    </style>
+
+    <style name="colorThemeAmber">
+        <item name="colorPrimary">@color/darkTheme_background_color</item>
+        <item name="colorPrimaryDark">@color/darkTheme_background_color</item>
+        <item name="colorAccent">#FFB000</item>
+        <item name="android:buttonStyle">@style/buttonBlackText</item>
+        <item name="android:colorBackground">@color/darkTheme_background_color</item>
+        <item name="cardBackgroundColor">@color/cardview_dark_background</item>
+        <item name="android:textColor">#ffb000</item>
+    </style>
+
+
+    <style name="colorThemeDefault">
+        <item name="colorPrimary">@color/finnmglasTheme_background_color</item>
+        <item name="colorPrimaryDark">@color/finnmglasTheme_background_color</item>
+        <item name="colorAccent">@color/finnmglasTheme_accent_color</item>
+        <item name="android:colorBackground">@color/finnmglasTheme_background_color</item>
+        <item name="cardBackgroundColor">@color/cardview_dark_background</item>
+        <item name="android:textColor">@color/finnmglasTheme_text_color</item>
+    </style>
+
+    <style name="colorThemeLight" tools:keep="@style/colorThemeLight">
+        <item name="colorPrimary">@color/lightTheme_background_color</item>
+        <item name="colorPrimaryDark">@color/lightTheme_background_color</item>
+        <item name="colorAccent">@color/lightTheme_accent_color</item>
+        <item name="android:colorBackground">@color/lightTheme_background_color</item>
+        <item name="cardBackgroundColor">@color/cardview_light_background</item>
+        <item name="android:textColor">@color/lightTheme_text_color</item>
+    </style>
+
+    <style name="colorThemeDynamic">
+        <!--parent="Theme.Material3.Dark.NoActionBar"-->
+        <item name="colorPrimary">@color/material_dynamic_primary70</item>
+        <item name="colorPrimaryDark">@color/material_dynamic_primary50</item>
+        <item name="colorAccent">@color/material_dynamic_tertiary50</item>
+        <item name="android:colorBackground">@color/material_dynamic_neutral10</item>
+        <item name="cardBackgroundColor">@color/cardview_dark_background</item>
+        <item name="android:textColor">@color/material_dynamic_neutral_variant90</item>
+    </style>
+
+    <style name="backgroundWallpaper">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:colorBackgroundCacheHint">@null</item>
+    </style>
+
+    <style name="backgroundSolid">
+        <!-- solid background (no wallpaper) -->
+    </style>
+
+    <style name="fontSystemDefault">
+    </style>
+
+    <!-- Nunito everywhere (design 08-ui-polish.md): normal text is the 600 weight, bold 700. -->
+    <style name="fontNunito">
+        <item name="android:fontFamily">@font/nunito</item>
+        <item name="fontFamily">@font/nunito</item>
+    </style>
+
+    <style name="PopupMenuCustom" parent="@android:style/Widget.PopupMenu" tools:keep="@style/PopupMenuCustom">
+        <item name="android:popupBackground">#252827</item>
+    </style>
+
+    <style name="AlertDialogCustom" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="android:color">#000000</item>
+        <item name="android:textColor">@color/text_color_toggle</item>
+        <item name="android:textColorPrimary">#000000</item>
+        <item name="colorAccent">#000000</item>
+        <item name="android:shadowRadius">0</item>
+        <item name="android:shadowDx">0</item>
+        <item name="android:shadowDy">0</item>
+    </style>
+
+    <style name="AlertDialogDanger" parent="AlertDialogCustom">
+        <item name="buttonTint">#ff0000</item>
+    </style>
+
+    <!-- Set the fade in animation on all activities by default -->
+    <style name="WindowFadeTransition">
+        <item name="android:windowEnterAnimation">@android:anim/fade_in</item>
+        <item name="android:windowExitAnimation">@android:anim/fade_out</item>
+    </style>
+    <!-- Kid-facing UI (design 05-ui-photos-i18n.md). -->
+    <!-- Labels under the call screen's round buttons (step 10 mockups): 14sp, 700, 6 dp gap. -->
+    <style name="KidCallLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">6dp</item>
+        <item name="android:fontFamily">@font/nunito_bold</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+
+    <style name="KidBadge">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">24dp</item>
+        <item name="android:minWidth">24dp</item>
+        <item name="android:background">@drawable/bg_kid_badge</item>
+        <item name="android:fontFamily">@font/nunito_extrabold</item>
+        <item name="android:gravity">center</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:paddingStart">6dp</item>
+        <item name="android:paddingEnd">6dp</item>
+        <item name="android:textColor">@android:color/white</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:visibility">gone</item>
+    </style>
+
+    <style name="KidSheetButton">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">64dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:background">@drawable/bg_kid_button</item>
+        <item name="android:drawablePadding">2dp</item>
+        <item name="android:fontFamily">@font/nunito_extrabold</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">6dp</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">17sp</item>
+    </style>
+
+    <!-- Full-width buttons on the lock screen (design 06-time-rules.md). -->
+    <style name="KidLockButton">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">56dp</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:background">@drawable/bg_kid_button</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:fontFamily">@font/nunito_extrabold</item>
+        <item name="android:gravity">center</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">18sp</item>
+    </style>
+
+    <!-- The kid's Settings (design 08-ui-polish.md, mockup KidSettings.dc.html). -->
+    <style name="KidSettingsHeading">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:accessibilityHeading">true</item>
+        <item name="android:alpha">0.85</item>
+        <item name="android:fontFamily">@font/nunito_extrabold</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <!-- A whole row is the switch: its text is the label TalkBack reads with the state. -->
+    <style name="KidSwitchRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">52dp</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:fontFamily">@font/nunito_bold</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:thumb">@drawable/kid_switch_thumb</item>
+        <item name="track">@drawable/kid_switch_track</item>
+        <item name="thumbTint">@null</item>
+        <item name="trackTint">@null</item>
+        <item name="switchMinWidth">46dp</item>
+        <item name="showText">false</item>
+    </style>
+
+    <style name="KidManageLink">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginStart">4dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:fontFamily">@font/nunito_bold</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
+        <item name="android:textColor">@color/kid_slider</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <style name="KidDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/kid_divider</item>
+    </style>
+
+    <!-- The contact sheet: a dialog at the bottom, dimmed behind, slides up. -->
+    <style name="KidSheetDialog" parent="Theme.AppCompat.Dialog">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.5</item>
+        <item name="android:windowAnimationStyle">@style/KidSheetAnimation</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+
+    <style name="KidSheetAnimation">
+        <item name="android:windowEnterAnimation">@anim/kid_sheet_in</item>
+        <item name="android:windowExitAnimation">@anim/kid_sheet_out</item>
+    </style>
+</resources>

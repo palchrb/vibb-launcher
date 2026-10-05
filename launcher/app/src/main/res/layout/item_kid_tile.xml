@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One round tile of the home grid (an app, the phone book or Settings). Sizes come from
+     gridMetrics (design 08: 60 dp icon and 13 sp label at the mockup's 288 dp content width);
+     the frame is 4 dp taller than the icon so the unread badge can sit above it. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:gravity="center_horizontal"
+    android:minHeight="48dp"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:id="@+id/tile_frame"
+        android:layout_width="84dp"
+        android:layout_height="64dp">
+
+        <ImageView
+            android:id="@+id/tile_icon"
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:background="@drawable/bg_kid_circle"
+            android:importantForAccessibility="no"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/tile_badge"
+            style="@style/KidBadge"
+            android:layout_gravity="top|end" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/tile_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:ellipsize="end"
+        android:fontFamily="@font/nunito_bold"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:maxLines="1"
+        android:paddingStart="2dp"
+        android:paddingEnd="2dp"
+        android:textColor="@color/kid_ink"
+        android:textSize="13sp" />
+</LinearLayout>
