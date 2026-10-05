@@ -1,5 +1,5 @@
 {
-  "about": "Shared phone-number test vectors (design 02-calls.md 3.4 + QA #16). Read by server/src/phone.rs tests and by launcher PhoneNumbersTest (same monorepo). The launcher keeps a byte-identical copy at app/src/test/resources/phone_vectors.json; each suite compares the two when the sibling checkout exists. Change both together. output null = rejected.",
+  "about": "Shared phone-number test vectors (design 02-calls.md 3.4 + QA #16). Read by server/src/phone.rs tests and by launcher PhoneNumbersTest (same monorepo). Two byte-identical copies: server/testdata/phone_vectors.json and launcher/app/src/test/resources/phone_vectors.json; each suite fails if the other copy is missing or differs. Change both together. output null = rejected.",
   "normalize": [
     { "input": "+47 912 34 567", "cc": "47", "output": "+4791234567" },
     { "input": "0047 91234567", "cc": "47", "output": "+4791234567" },

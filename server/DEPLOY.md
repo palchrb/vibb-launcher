@@ -109,6 +109,8 @@ The launcher updates itself through the Apps catalog, like any other app. Add it
   newest `launcher-v*` release that carries the APK)
 - asset filename filter: `kids-launcher-mdm.apk`
 - "include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
+  - an existing row that watched `palchrb/kids-launcher-mdm` is moved to the monorepo by migration 0031, which also
+    turns this off (with it on, every `launcher-vX.Y.Z-rc.N` would roll out to every phone)
 - package name: `com.kidslauncher.mdm`
 - then, on the app's page, turn on "This is the launcher app"
 
