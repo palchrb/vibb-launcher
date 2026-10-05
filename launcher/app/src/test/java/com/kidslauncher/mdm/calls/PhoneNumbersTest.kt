@@ -14,9 +14,9 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The shared vectors (QA 02 criterion T1/T6): the same file kid-phone-server's src/phone.rs tests
- * read. This copy lives in app/src/test/resources; when the server repo is checked out next to
- * this one (the handy workspace), the two must be identical.
+ * The shared vectors (QA 02 criterion T1/T6): the same file the server's src/phone.rs tests read
+ * (server/testdata/ in this monorepo). This copy lives in app/src/test/resources; the two must be
+ * identical.
  */
 class PhoneNumbersTest {
 
@@ -47,14 +47,10 @@ class PhoneNumbersTest {
 
     @Test
     fun `vectors are identical to the server's copy`() {
-        // Gradle runs unit tests with the module directory (app/) as the working directory.
-        val sibling = listOf("../../kid-phone-server/testdata/phone_vectors.json", "../kid-phone-server/testdata/phone_vectors.json")
-            .map(::File).firstOrNull { it.isFile }
-        if (sibling == null) {
-            println("kid-phone-server checkout not found next to this repo, skipping the comparison")
-            return
-        }
-        assertEquals("${sibling.path} differs from this repo's copy", sibling.readText(), text)
+        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
+        val serverCopy = File("../../server/testdata/phone_vectors.json")
+        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
+        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), text)
     }
 
     @Test

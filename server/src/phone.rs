@@ -4,7 +4,7 @@
 //! suffix ("last 8 digits") match, which would let foreign numbers through.
 //!
 //! Both sides run the same vectors: `testdata/phone_vectors.json` here, a byte-identical copy in
-//! kids-launcher-mdm's `app/src/test/resources/`. Change the rules on both sides together.
+//! `../launcher/app/src/test/resources/` (same monorepo). Change the rules on both sides together.
 //!
 //! Rules, in order:
 //! 1. Strip ` -.()/` and NBSP. Nothing else is stripped: `,`/`;` (dial pauses, extensions) are
@@ -116,16 +116,15 @@ mod tests {
         }
     }
 
-    /// The launcher carries a copy of the vectors; when both repos are checked out side by side
-    /// (as in the handy workspace), they must not drift apart.
+    /// The launcher (`../launcher` in this monorepo) carries a copy of the vectors; they must
+    /// not drift apart.
     #[test]
     fn vectors_match_the_launchers_copy() {
-        let sibling = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../kids-launcher-mdm/app/src/test/resources/phone_vectors.json");
-        match std::fs::read_to_string(&sibling) {
-            Ok(copy) => assert_eq!(copy, VECTORS, "{} differs", sibling.display()),
-            Err(_) => eprintln!("{} not found, skipping the comparison", sibling.display()),
-        }
+        let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../launcher/app/src/test/resources/phone_vectors.json");
+        let copy = std::fs::read_to_string(&copy_path)
+            .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
+        assert_eq!(copy, VECTORS, "{} differs", copy_path.display());
     }
 
     #[test]
