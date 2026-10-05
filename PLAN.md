@@ -157,6 +157,15 @@ server catalog); add later only if Play-only apps are needed.
   Quick Settings exposes there (airplane mode, Wi-Fi, Bluetooth, the Tailscale
   tile) and add DISALLOW_AIRPLANE_MODE / tile restrictions where needed
   [needs device test].
+- **School mode and time rules** (user, 2026-10-05): replace upstream's fixed
+  weekday/weekend/bedtime windows with a list of named rules per weekday
+  (e.g. "Skole" Mon-Fri 08:15-14:00, "Leggetid", custom blocks), each showing a
+  full-screen "time + rule name" screen with nothing else usable; plus a daily
+  screen-time budget (minutes of use per day, per weekday) after which the phone
+  locks the same way. Emergency calls always work. Open: which calls (if any) get
+  through during school mode and when the budget is used up, and whether some
+  apps (calendar, Vibb at bedtime) can be exempt per rule. Implement after the
+  UI/photos/i18n step (same launcher files).
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with
