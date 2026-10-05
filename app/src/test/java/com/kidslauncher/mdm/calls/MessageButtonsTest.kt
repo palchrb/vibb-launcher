@@ -45,6 +45,9 @@ class MessageButtonsTest {
     @Test
     fun `element chat uri is the MSC2312 form without the at sign`() {
         assertEquals("matrix:u/a.b-c:example.org:8448?action=chat", elementChatUri("@a.b-c:example.org:8448"))
+        // Legal localpart characters that mean something in a URI are encoded (qa-09-code #8).
+        assertEquals("matrix:u/a%2Fb%2Bc%3Dd:x.org?action=chat", elementChatUri("@a/b+c=d:x.org"))
+        assertEquals("element://user/@a%2Fb:x.org", elementUserUri("@a/b:x.org"))
         // Never a matrix.to link: Element X doesn't handle those.
         val intent = resolveMessageButton(contact("element", "@mamma:matrix.org"), true, messages, everything)!!
         assertFalse(intent.uri.contains("matrix.to"))
@@ -72,7 +75,11 @@ class MessageButtonsTest {
     fun `matrix ids match the server's check`() {
         assertTrue(isMatrixId("@mamma:matrix.org"))
         assertTrue(isMatrixId("@a.b-c:example.org:8448"))
-        for (bad in listOf("mamma:matrix.org", "@:matrix.org", "@mamma", "@mamma:", "@ma mma:x.org", null)) {
+        assertTrue(isMatrixId("@a/b+c=d:[::1]:8448"))
+        for (bad in listOf(
+            "mamma:matrix.org", "@:matrix.org", "@mamma", "@mamma:", "@ma mma:x.org", null,
+            "@a:b?action=join&via=x", "@a#b:x.org", "@a?b:x.org", "@Mamma:x.org", "@a:x.org/path",
+        )) {
             assertFalse("$bad", isMatrixId(bad))
         }
     }

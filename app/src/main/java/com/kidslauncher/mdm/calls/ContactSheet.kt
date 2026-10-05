@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.calls
 
 import android.app.Activity
 import android.app.Dialog
-import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -95,8 +94,9 @@ object ContactSheet {
             try {
                 activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))
                 return
-            } catch (e: ActivityNotFoundException) {
-                // Try the fallback form (Element X: element://user/...).
+            } catch (e: Exception) {
+                // Not found, or refused (SecurityException): try the fallback form (Element X:
+                // element://user/...), then the toast - never a crash (qa-09-code #10).
             }
         }
         Toast.makeText(activity, R.string.calls_could_not_message, Toast.LENGTH_LONG).show()

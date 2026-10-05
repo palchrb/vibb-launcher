@@ -23,11 +23,20 @@ data class MessageIntent(val action: String, val uri: String, val packageName: S
 const val ACTION_VIEW = "android.intent.action.VIEW"
 const val ACTION_SENDTO = "android.intent.action.SENDTO"
 
-/** `@localpart:server`, no whitespace - the same check as the server's `valid_matrix_id`. */
-fun isMatrixId(value: String?): Boolean {
-    if (value == null || value.length > 255 || !value.startsWith("@")) return false
-    val colon = value.indexOf(':')
-    return colon > 1 && colon < value.length - 1 && value.none { it.isWhitespace() }
+/** Matrix user-ID grammar (spec "User Identifiers"): `@localpart:server`, localpart from
+ * `a-z 0-9 . _ = - / +`, server a hostname, IPv4 or `[IPv6]` with an optional `:port`, at most
+ * 255 characters - the same check as the server's `valid_matrix_id` (qa-09-code #8: `?`, `#`, `&`
+ * and spaces never reach a URI). */
+private val MATRIX_ID = Regex("""@[a-z0-9._=\-/+]+:(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?""")
+
+fun isMatrixId(value: String?): Boolean = value != null && value.length <= 255 && MATRIX_ID.matches(value)
+
+/** Percent-encodes everything but RFC 3986 unreserved characters and [keep]. */
+fun uriEncode(value: String, keep: String = ""): String = buildString {
+    for (byte in value.toByteArray(Charsets.UTF_8)) {
+        val c = (byte.toInt() and 0xFF).toChar()
+        if (c.isLetterOrDigit() && c.code < 128 || c in "-._~" || c in keep) append(c) else append("%%%02X".format(byte.toInt() and 0xFF))
+    }
 }
 
 /**
@@ -36,7 +45,10 @@ fun isMatrixId(value: String?): Boolean {
  * profile is a device check). Its own `element://user/<mxid>` is the fallback. [mxid] is a
  * valid [isMatrixId]. Element X exposes no call intent, so there is no direct-call button.
  */
-fun elementChatUri(mxid: String): String = "matrix:u/${mxid.removePrefix("@")}?action=chat"
+fun elementChatUri(mxid: String): String = "matrix:u/${uriEncode(mxid.removePrefix("@"), keep = ":")}?action=chat"
+
+/** Element X's own user link, the fallback of [elementChatUri]. */
+fun elementUserUri(mxid: String): String = "element://user/${uriEncode(mxid, keep = "@:")}"
 
 /**
  * [usable]: the package is installed, not suspended and allowed on this phone (AppEnforcer's
@@ -53,7 +65,7 @@ fun resolveMessageButton(
         ?.let { MessageIntent(ACTION_SENDTO, "smsto:${contact.number}", it) }
     "element" -> contact.messageAddress
         ?.takeIf { isMatrixId(it) && usable(MessagePackages.ELEMENT_X) }
-        ?.let { MessageIntent(ACTION_VIEW, elementChatUri(it), MessagePackages.ELEMENT_X, fallbackUri = "element://user/$it") }
+        ?.let { MessageIntent(ACTION_VIEW, elementChatUri(it), MessagePackages.ELEMENT_X, fallbackUri = elementUserUri(it)) }
     "signal" -> if (contact.number.startsWith("+")) {
         MessagePackages.SIGNAL.firstOrNull(usable)
             ?.let { MessageIntent(ACTION_VIEW, "https://signal.me/#p/${contact.number}", it) }
