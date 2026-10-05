@@ -137,9 +137,12 @@ testing on the Jelly Star. Not built yet: full Tailscale (design in
 `docs/design/03-tailscale.md`), Vibb integration, AdGuard Home, launcher UI
 redesign. Play account: decided 2026-10-05 to start WITHOUT one (apps via the
 server catalog); add later only if Play-only apps are needed. First likely
-case: Vipps (Vipps for children 7-15 exists; may require a Play-installed copy
-via Play Integrity licensing, and forces frequent updates). Test sideloaded
-first on the Jelly Star; add a dedicated Google account if it refuses.
+case: Vipps (Vipps for children 7-15 exists). Vipps' own support page states it
+requires Play Integrity and Play services and must be installed via the Play
+Store, and refuses phones with "unsafe" apps installed. So Vipps = a dedicated
+Google account on the phone, Play kept hidden from the kid but able to update.
+Device test: whether Vipps accepts a phone managed by our device-owner launcher
+(VPN, notification listener) or flags it as unsafe.
 
 ## Next features (agreed 2026-10-05)
 
