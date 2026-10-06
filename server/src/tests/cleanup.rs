@@ -566,3 +566,48 @@ async fn crash_reports_reach_the_device_page_without_free_text() {
         .text();
     assert!(page.contains("No crashes reported in the last 30 days."));
 }
+
+#[tokio::test]
+async fn pruning_keeps_the_last_report_that_enforced_calls() {
+    let app = super::TestApp::new().await;
+    let db = &app.db;
+    let (id, _) = app.create_device("kid").await;
+    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(db)
+        .await
+        .unwrap();
+    for (caps, age) in [
+        (Some(r#"["call_policy_v1"]"#), "-50 days"),
+        (Some(r#"["call_policy_v1"]"#), "-40 days"),
+        (None, "-35 days"),
+        (None, "-1 days"),
+    ] {
+        sqlx::query(
+            "INSERT INTO device_status (device_id, capabilities_json, reported_at) \
+             VALUES (?, ?, datetime('now', ?))",
+        )
+        .bind(id)
+        .bind(caps)
+        .bind(age)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    assert_eq!(crate::retention::prune(db).await.unwrap().status_reports, 2);
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM device_status WHERE capabilities_json LIKE '%call_policy_v1%'"
+        )
+        .await,
+        1
+    );
+    // A launcher that stopped enforcing calls still reads as a downgrade, not "not yet".
+    let cookie = app.admin_cookie().await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("stopped reporting that it enforces calls"));
+}

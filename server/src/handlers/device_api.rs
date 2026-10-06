@@ -803,8 +803,8 @@ pub async fn status(
 
     // Attached on every regular heartbeat when the device has a location
     // reading available, not just after a `locate` command - see
-    // LocationReport's doc comment. Pruned on a schedule (30 days) by
-    // handlers::locate::run_location_pruning.
+    // LocationReport's doc comment. Pruned by retention::prune (the phone's
+    // location_retention_days, default 7; the newest fix is kept).
     if let Some(loc) = report.location {
         sqlx::query(
             "INSERT INTO device_locations \

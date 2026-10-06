@@ -29,6 +29,28 @@ abstract class GitCommitValueSource : ValueSource<String, ValueSourceParameters.
 val gitCommitProvider = providers.of(GitCommitValueSource::class) {}
 val gitCommit = gitCommitProvider.get()
 
+/** The commit's time (ms) - a floor for the phone's clock: a wall clock earlier than the build is
+ * unset (calls.BlockedCallLog doesn't prune then). Deterministic, unlike a build timestamp. */
+abstract class GitCommitTimeValueSource : ValueSource<String, ValueSourceParameters.None> {
+
+    @Inject
+    abstract fun getExecOperations(): ExecOperations
+
+    override fun obtain(): String {
+        val output = ByteArrayOutputStream()
+        val action = object : Action<ExecSpec> {
+            override fun execute(t: ExecSpec) {
+                t.commandLine("git", "log", "-1", "--format=%ct", "HEAD")
+                t.standardOutput = output
+            }
+        }
+        getExecOperations().exec(action)
+        return String(output.toByteArray(), Charset.defaultCharset()).trim()
+    }
+}
+
+val gitCommitTimeMs = (providers.of(GitCommitTimeValueSource::class) {}.get().toLongOrNull() ?: 0L) * 1000L
+
 val hasTsnet = file("libs/tsnet.aar").exists()
 if (!hasTsnet) {
     if (providers.gradleProperty("requireTsnet").orNull == "true") {
@@ -148,6 +170,7 @@ android {
 
     defaultConfig {
         buildConfigField("String", "GIT_COMMIT", "\"${gitCommit}\"")
+        buildConfigField("long", "GIT_COMMIT_TIME_MS", "${gitCommitTimeMs}L")
         buildConfigField("String", "FCM_PROJECT_ID", buildConfigString(fcmProjectId))
         buildConfigField("String", "FCM_API_KEY", buildConfigString(fcmApiKey))
         buildConfigField("String", "FCM_SENDER_ID", buildConfigString(fcmSenderId))

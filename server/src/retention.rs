@@ -37,7 +37,8 @@ pub struct Pruned {
 ///   is off (an older launcher may still send them; the server drops those at the door too);
 /// - locations older than the phone's `location_retention_days` (by the server's receive time),
 ///   except the newest fix per phone, which Find My Device shows as "last seen";
-/// - status reports older than [STATUS_HISTORY_DAYS], except the newest per phone;
+/// - status reports older than [STATUS_HISTORY_DAYS], except the newest per phone and the newest
+///   one that reported call enforcement (`call_policy_v1`);
 /// - crash reports not reported again for [CRASH_REPORT_DAYS].
 pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     let dns_events = sqlx::query(
@@ -62,12 +63,20 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
+    // Also kept: the newest report per phone that said it enforces calls - the calls warning
+    // "stopped reporting that it enforces calls" (a downgraded launcher) rests on it (qa-cleanup #7).
     let status_reports = sqlx::query(
         "DELETE FROM device_status \
          WHERE reported_at < datetime('now', '-' || ? || ' days') \
-           AND id NOT IN (SELECT MAX(id) FROM device_status GROUP BY device_id)",
+           AND id NOT IN (SELECT MAX(id) FROM device_status GROUP BY device_id) \
+           AND id NOT IN (SELECT MAX(id) FROM device_status WHERE capabilities_json LIKE ? \
+                          GROUP BY device_id)",
     )
     .bind(STATUS_HISTORY_DAYS)
+    .bind(format!(
+        "%\"{}\"%",
+        crate::handlers::calls::CALL_POLICY_CAPABILITY
+    ))
     .execute(db)
     .await?
     .rows_affected();

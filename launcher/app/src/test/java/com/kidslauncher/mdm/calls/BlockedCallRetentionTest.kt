@@ -40,4 +40,31 @@ class BlockedCallRetentionTest {
         // CallLog.Calls.BLOCKED_TYPE; MISSED (3), REJECTED (5) and OUTGOING (2) are never touched.
         assertEquals(6, android.provider.CallLog.Calls.BLOCKED_TYPE)
     }
+
+    @Test
+    fun `a clock set far ahead never empties the log`() {
+        // The newest call-log row is older than now (clock jumped ahead): count from that row.
+        assertEquals(now - 40 * day - 30 * day, blockedCallCutoffMs(now, newestLoggedMs = now - 40 * day))
+        // A newer row than now (clock went back) doesn't move the cutoff past now.
+        assertEquals(now - 30 * day, blockedCallCutoffMs(now, newestLoggedMs = now + day))
+        assertEquals(now - 30 * day, blockedCallCutoffMs(now, newestLoggedMs = null))
+    }
+
+    @Test
+    fun `an unset clock is no clock to prune by`() {
+        assertFalse(wallClockPlausible(nowMs = 0L, buildTimeMs = now))
+        assertFalse(wallClockPlausible(nowMs = now - 1, buildTimeMs = now))
+        assertTrue(wallClockPlausible(nowMs = now, buildTimeMs = now))
+    }
+
+    @Test
+    fun `only rows our own screening blocked`() {
+        assertEquals(1, BLOCK_REASON_CALL_SCREENING_SERVICE)
+        assertEquals(android.provider.CallLog.Calls.BLOCK_REASON_CALL_SCREENING_SERVICE, BLOCK_REASON_CALL_SCREENING_SERVICE)
+        assertEquals(
+            listOf("me.vibb.launcher/com.kidslauncher.mdm.calls.KidCallScreeningService"),
+            ourScreeningComponentNames("me.vibb.launcher"),
+        )
+        assertTrue(ourScreeningComponentNames("p").single().endsWith("/" + KidCallScreeningService::class.java.name))
+    }
 }

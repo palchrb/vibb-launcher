@@ -95,36 +95,50 @@ calls page nothing arrives (`DISALLOW_SMS`); with SMS on Messages shows every me
 ## 5b. Smoke-test script
 
 `scripts/smoke-test.sh` runs the call and lock basics below in about two minutes - after every change and
-before allowing an Android update. It needs adb and the emulator console (for `gsm call`/`gsm cancel`), and
-works against a remote adb server:
+before allowing an Android update. **Emulator only**: it places calls, so it first proves the target is an
+emulator (`ro.kernel.qemu`/`ro.boot.qemu` = 1) with a console that answers `avd name` with OK (and the same AVD
+the device reports) and aborts otherwise, before any call. Every call it starts is hung up again on exit, also
+after a failure or Ctrl+C (`gsm cancel`, then `KEYCODE_ENDCALL` if anything is left).
 
 ```sh
-# On the VM itself (adb and the console are local; the console token is read from ~/.emulator_console_auth_token):
+# On the VM itself (adb and the console are local; the token is read from ~/.emulator_console_auth_token):
 KID_PIN=1234 ./scripts/smoke-test.sh
-# From another machine, with the adb server and the emulator on host "vm" (adb server listening: `adb -a nodaemon server`
-# on the VM, or an SSH tunnel for ports 5037 and 5554):
-ADB="adb -H vm -P 5037" CONSOLE_HOST=vm CONSOLE_PORT=5554 \
-  CONSOLE_TOKEN="$(ssh vm cat .emulator_console_auth_token)" KID_PIN=1234 ./scripts/smoke-test.sh
+# From another machine: tunnel the VM's adb server and emulator console over ssh, then use loopback only.
+ssh -N -L 5038:127.0.0.1:5037 -L 5554:127.0.0.1:5554 vm &
+ADB="adb -H 127.0.0.1 -P 5038" CONSOLE_TOKEN="$(ssh vm cat .emulator_console_auth_token)" \
+  KID_PIN=1234 ./scripts/smoke-test.sh
 ```
 
+Never start the adb server with `-a` (anyone on the network gets an unauthenticated shell on the emulator), and
+keep the console on loopback: the script refuses a non-loopback `CONSOLE_HOST` (the token would go in cleartext),
+and with a remote adb server (`-H`/`-P` in `ADB`) it talks to the console over TCP with `CONSOLE_TOKEN` - `adb emu`
+would reach this machine's loopback, not the VM.
+
 Setup in the PWA first: phone enrolled, calls managed and on, `ALLOWED_NUMBER` (default `+4791234567`) a contact
-allowed in and out, `UNKNOWN_NUMBER` (default `+4799999999`) no contact, a kid PIN (`KID_PIN`). Other variables:
-`PKG` (default `me.vibb.launcher.debug`), `ALLOWED_DIAL` (the contact in national form, default the number without
-`+47`), `OUT_DIR` (screenshots, default `./smoke-<date>`), `EXPECT_KIOSK=0` for a phone with the kiosk off,
+allowed in and out, `UNKNOWN_NUMBER` (default `+4799999999`) no contact, a kid PIN (`KID_PIN`). Both numbers must
+be full E.164 numbers (8-15 digits; short or emergency numbers are refused). Other variables: `PKG` (default
+`me.vibb.launcher.debug`), `ALLOWED_DIAL` (the contact in national form, default the number without `+47`),
+`OUT_DIR` (screenshots, default `./smoke-<date>`, gitignored), `EXPECT_KIOSK=0` for a phone with the kiosk off,
 `STRICT=1` to fail on skipped checks.
 
-What it checks, each a PASS/FAIL line (SKIP without a PIN or console), summary at the end, exit 1 on a FAIL:
-- adb reaches the phone, the package is installed and device owner, lock task is engaged (kiosk);
-- screen off/on (`KEYCODE_SLEEP`/`KEYCODE_WAKEUP`) shows the PIN lock;
-- an incoming call from the allowed contact rings over the lock (Telecom's `FILTERING_COMPLETED` not a reject, our
-  call screen in front), is answered (`KEYCODE_CALL`, else the Answer button), and after `gsm cancel` the call
-  notification (id 1005) is gone and the PIN lock is back;
-- an unknown number is screened out (`FILTERING_COMPLETED ... Reject` or our "Rejecting an incoming call"), no call
-  screen;
+What it checks, each a PASS/FAIL line (SKIP without a PIN), summary at the end, exit 1 on a FAIL. Only evidence
+logged after the step started counts (logcat is cleared per step); silence is a FAIL:
+- adb reaches an emulator with a working console, the package is installed and device owner, lock task is
+  engaged (kiosk);
+- screen off/on (`KEYCODE_SLEEP`/`KEYCODE_WAKEUP`) shows `$PKG/com.kidslauncher.mdm.lock.PinLockActivity`;
+- an incoming call from the allowed contact rings on our call screen
+  (`$PKG/com.kidslauncher.mdm.calls.InCallActivity`, not the system dialer's) over the lock, Telecom's
+  `FILTERING_COMPLETED` not a reject; it is answered (`KEYCODE_CALL`, else the Answer button), and after `gsm
+  cancel` the call notification (id 1005) is gone and the PIN lock is back;
+- an unknown number is screened out by **our screening service** (`FILTERING_COMPLETED ... [Reject` or
+  `KidCallScreening` "Rejecting an incoming call"; a reject only by the in-call service means screening failed
+  open and is a FAIL), no call screen;
 - the PIN unlocks (keypad keys tapped through `uiautomator dump`);
-- an outgoing call to the unknown number is stopped (never reaches the modem, `gsm list`); one to the contact typed
-  in national form is placed as the stored E.164 number (redirection); a second call meanwhile is cancelled (one
-  call at a time); after hang-up the notification and the call screen are gone.
+- an outgoing call to the unknown number is stopped - Telecom's "Canceled from Call Redirection Service" or our
+  "Cancelling a not-allowed outgoing call" / "Disconnecting a not-allowed outgoing call", and nothing on the modem
+  (`gsm list`); one to the contact typed in national form is placed as the stored E.164 number (redirection); a
+  second call meanwhile logs our "second call" line and stays off the modem (one call at a time); after hang-up
+  the notification and the call screen are gone.
 
 Screenshots of every step go into `OUT_DIR` (the lock screen may be black if it is secure). **It never places an
 emergency call** - it prints that manual step at the end.

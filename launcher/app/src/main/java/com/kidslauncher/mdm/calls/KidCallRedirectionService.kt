@@ -52,6 +52,8 @@ class KidCallRedirectionService : CallRedirectionService() {
         } else if (verdict == Verdict.ALLOW) {
             placeCallUnmodified()
         } else {
+            // Evidence for the smoke test (scripts/smoke-test.sh) - no number in the log.
+            if (!busy) Log.i(LOG_TAG, "Cancelling a not-allowed outgoing call")
             cancelCall()
             Toast.makeText(applicationContext, if (busy) R.string.calls_busy else R.string.calls_not_allowed, Toast.LENGTH_LONG).show()
         }

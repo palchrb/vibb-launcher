@@ -112,8 +112,22 @@ The launcher updates itself through the Apps catalog, like any other app. Add it
   - an existing row that watched `palchrb/kids-launcher-mdm` is moved to the monorepo by migration 0031, which also
     turns this off (with it on, every `launcher-vX.Y.Z-rc.N` would roll out to every phone)
 - package name: `me.vibb.launcher` (a row that still says `com.kidslauncher.mdm` or `.debug` is renamed by migration
-  0037; a phone still running the old `com.kidslauncher.mdm` build can't update into the renamed app - Android treats a
-  new package name as a different app - so re-provision it)
+  0037)
+
+#### Rollout of the package rename (`com.kidslauncher.mdm` -> `me.vibb.launcher`, 2026-10-06)
+
+A renamed launcher is a different app to Android. Launcher builds from before the rename install whatever APK the
+launcher row serves, without checking its package - so a renamed release reaching such a phone is installed **next to**
+the old launcher as a second app. And once this server is updated, the provisioning QR names
+`me.vibb.launcher/...` (an `.env` holding the old default is read as the new one). Do it in this order:
+
+1. **Phones still on the old package**: provision them again with the renamed launcher (wipe, then the QR or
+   `adb shell dpm set-device-owner me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver`) - or, until you
+   can, untick "Enabled" on the launcher's page under Apps, so no phone is offered the renamed APK.
+2. **Tag the renamed launcher** as a stable `launcher-vX.Y.Z` release, so it is GitHub's "latest" and
+   `releases/latest/download/kids-launcher-mdm.apk` is the renamed build.
+3. **Only then update this server.** Until step 2 is done, the provisioning QR doesn't work (it names the new package
+   while "latest" still serves the old one) - provision with adb meanwhile.
 - then, on the app's page, turn on "This is the launcher app"
 
 A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is

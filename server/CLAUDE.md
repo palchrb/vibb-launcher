@@ -267,7 +267,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   prunes at once). By `received_at` (server time); the newest fix per phone is always kept (Find My Device's "last
   seen").
 - **Status history** (`device_status`: screen time in `time_state_json`, call state, app lists): 30 days, the newest
-  report per phone kept. There is no server-side blocked-call log; the phone deletes blocked calls from its call log
+  report per phone kept, and the newest one with `call_policy_v1` (the calls warning "stopped reporting that it
+  enforces calls" rests on it, qa-cleanup #7). There is no server-side blocked-call log; the phone deletes blocked calls from its call log
   after 30 days (launcher `calls/BlockedCallLog`).
 - `retention::run_pruning` (spawned from `main` only) runs `prune` at startup and hourly - it replaced the old
   `run_dns_event_pruning` (60 days) and `run_location_pruning` (30 days). Connections use `secure_delete`.

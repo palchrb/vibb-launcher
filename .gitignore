@@ -2,3 +2,6 @@
 # server/ (2026-10-05). Kept locally for reference only; never edit or commit them.
 /kids-launcher-mdm/
 /kid-phone-server/
+
+# scripts/smoke-test.sh screenshots (default OUT_DIR).
+smoke-*/
