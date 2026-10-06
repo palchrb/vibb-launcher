@@ -102,9 +102,9 @@ fun featuresWhileLocked(base: Int, locked: Boolean): Int =
 
 /**
  * What to set on the platform: lock-task [packages] (`null` = none, kiosk off and unlocked),
- * [features], `setStatusBarDisabled` ([statusBarDisabled], a backstop - ineffective while pinned)
- * and `DISALLOW_CREATE_WINDOWS` ([createWindowsBlocked]: no chat heads or other overlays over the
- * lock, QA 10 #10).
+ * [features], `setStatusBarDisabled` ([statusBarDisabled]: a backstop while LOCKED - ineffective
+ * while pinned - and the shade block of the update fence, step 11) and `DISALLOW_CREATE_WINDOWS`
+ * ([createWindowsBlocked]: no chat heads or other overlays over the lock, QA 10 #10).
  */
 data class LockTaskSetting(
     val packages: Set<String>?,
@@ -122,6 +122,9 @@ data class LockTaskSetting(
  * - LOCKED, kiosk off: our package plus [lockHelpers] (emergency dialer, Telecom, the system
  *   dialer, the system clock app - no third-party app) with [PIN_LOCK_FEATURES_KIOSK_OFF]; the
  *   lock screen starts lock task itself and stops it on unlock.
+ * The status bar is disabled while LOCKED **or** while the update fence is up ([fenced], step 11,
+ * qa-11-design.md #4): the fence is an input here, so LockTaskChrome stays the only owner of the
+ * status bar and a release always re-enables it when nothing else wants it off.
  */
 fun lockTaskWhileLocked(
     kioskPackages: Set<String>?,
@@ -130,14 +133,40 @@ fun lockTaskWhileLocked(
     locked: Boolean,
     ownPackage: String,
     lockHelpers: Set<String>,
+    fenced: Boolean = false,
 ): LockTaskSetting = when {
-    !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = false, createWindowsBlocked = restrictCreateWindows)
+    !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
     kioskPackages != null -> LockTaskSetting(
         kioskPackages, featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
     )
     else -> LockTaskSetting(
         setOf(ownPackage) + (lockHelpers - PLAY_CORE), PIN_LOCK_FEATURES_KIOSK_OFF, statusBarDisabled = true, createWindowsBlocked = true,
     )
+}
+
+/**
+ * LockTaskChrome's memory of the status-bar state it set, so it doesn't call
+ * `setStatusBarDisabled` on every pass. [invalidate] (process start, every fence and release)
+ * makes the next pass write whatever it wants - a release must re-enable the bar even if the
+ * memory says it already is (qa-11-design.md #4).
+ */
+class StatusBarLatch {
+    private var applied: Boolean? = null
+
+    /** The value to write, or `null` when [wanted] is already set. */
+    @Synchronized
+    fun toWrite(wanted: Boolean): Boolean? = if (applied == wanted) null else wanted
+
+    /** The platform accepted [value]. */
+    @Synchronized
+    fun written(value: Boolean) {
+        applied = value
+    }
+
+    @Synchronized
+    fun invalidate() {
+        applied = null
+    }
 }
 
 /**

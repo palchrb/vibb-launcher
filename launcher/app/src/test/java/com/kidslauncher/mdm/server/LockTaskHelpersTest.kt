@@ -166,6 +166,45 @@ class PinLockTaskTest {
     }
 
     @Test
+    fun `the update fence disables the status bar - status bar = locked or fenced (qa-11 4)`() {
+        for (kioskList in listOf(kiosk, null)) {
+            for (locked in listOf(false, true)) {
+                for (fenced in listOf(false, true)) {
+                    val setting = lockTaskWhileLocked(kioskList, serverFeatures, restrictCreateWindows = false, locked = locked,
+                        ownPackage = own, lockHelpers = helpers, fenced = fenced)
+                    assertEquals("kiosk=${kioskList != null} locked=$locked fenced=$fenced", locked || fenced, setting.statusBarDisabled)
+                }
+            }
+        }
+        // Nothing else changes: the fence never touches lock-task packages or features.
+        val fencedOpen = lockTaskWhileLocked(kiosk, serverFeatures, restrictCreateWindows = false, locked = false, ownPackage = own, lockHelpers = helpers, fenced = true)
+        assertEquals(LockTaskSetting(kiosk, serverFeatures, statusBarDisabled = true, createWindowsBlocked = false), fencedOpen)
+    }
+
+    @Test
+    fun `a release after a pre-kill failure re-enables the status bar despite the latch (qa-11 4)`() {
+        val latch = StatusBarLatch()
+        fun pass(locked: Boolean, fenced: Boolean): Boolean? {
+            val wanted = lockTaskWhileLocked(null, serverFeatures, false, locked, own, helpers, fenced).statusBarDisabled
+            return latch.toWrite(wanted)?.also { latch.written(it) }
+        }
+        assertEquals(false, pass(locked = false, fenced = false))
+        assertEquals(null, pass(locked = false, fenced = false))
+        // Fence (PIN lock off): the bar goes off ...
+        latch.invalidate()
+        assertEquals(true, pass(locked = false, fenced = true))
+        // ... the install fails before the kill, the old process releases: the bar comes back.
+        latch.invalidate()
+        assertEquals(false, pass(locked = false, fenced = false))
+        // Even if something else wrote the platform behind the latch's back, an invalidate re-writes.
+        latch.invalidate()
+        assertEquals(false, pass(locked = false, fenced = false))
+        // LOCKED keeps it off after the release.
+        latch.invalidate()
+        assertEquals(true, pass(locked = true, fenced = false))
+    }
+
+    @Test
     fun `the lock's helpers are system packages only, never Settings, the camera or Play`() {
         val got = pinLockHelpers(
             emergencyDialer = ResolvedHelper("com.android.phone", system = true),
