@@ -105,14 +105,14 @@ class MissedCallNoticeTest {
 
     private fun step(
         notice: MissedCallNotice?,
-        rulesKnown: Boolean = true,
+        mayMarkRead: Boolean = true,
         mayPost: Boolean = true,
         shown: Boolean = false,
         lastPosted: MissedCallNotice? = null,
         unreadUpTo: Long = 9,
         alertedUpTo: Long = 0,
         newestLogged: Long = 9,
-    ) = noticeStep(notice, rulesKnown, mayPost, shown, lastPosted, unreadUpTo, alertedUpTo, newestLogged)
+    ) = noticeStep(notice, mayMarkRead, mayPost, shown, lastPosted, unreadUpTo, alertedUpTo, newestLogged)
 
     @Test
     fun `nothing to show clears ours and marks the log read (QA 1, 2)`() {
@@ -120,8 +120,47 @@ class MissedCallNoticeTest {
         assertEquals(NoticeStep.Clear(9), step(null, mayPost = false, shown = true, lastPosted = one))
         // No unread missed call: nothing to mark, Telecom isn't told.
         assertEquals(NoticeStep.Clear(null), step(null, unreadUpTo = 0))
-        // Rules unknown or unmanaged: only ours goes - a failure never marks missed calls read.
-        assertEquals(NoticeStep.Clear(null), step(null, rulesKnown = false))
+        // Rules unknown or unmanaged, calls off or a no-calls time rule (the view only has
+        // emergency contacts - qa-12-code #3): only ours goes, nothing is marked read.
+        assertEquals(NoticeStep.Clear(null), step(null, mayMarkRead = false))
+    }
+
+    @Test
+    fun `without readable managed rules - a plain count, opening the call log (qa-12-code 1)`() {
+        assertNull(plainMissedCallNotice(UnreadMissed.NONE))
+        assertNull(plainMissedCallNotice(UnreadMissed(2, 0, 100)))
+        val plain = plainMissedCallNotice(UnreadMissed(3, 12, 500))!!
+        assertEquals(MissedCallNotice(3, emptyList(), null, 500, 12), plain)
+        assertEquals(NoticeText(NoticeTitle.CALLS, 3, null, null), noticeText(plain))
+        assertEquals(NoticeText(NoticeTitle.CALLS, 1, null, null), noticeText(plainMissedCallNotice(UnreadMissed(1, 12, 500))!!))
+        // Posted like any other (alerting once per newer id), never marked read automatically.
+        assertEquals(NoticeStep.Post(plain, alert = true), step(plain, mayMarkRead = false, unreadUpTo = 12))
+        assertEquals(NoticeStep.Keep, step(plain, mayMarkRead = false, shown = true, lastPosted = plain, alertedUpTo = 12))
+    }
+
+    @Test
+    fun `the log's missed calls are ours to keep while managed or while we are the dialer`() {
+        assertTrue(canKeepMissedCalls(granted = true, unlocked = true, callsManaged = true, dialerRoleHeld = false))
+        assertTrue(canKeepMissedCalls(granted = true, unlocked = true, callsManaged = false, dialerRoleHeld = true))
+        assertFalse(canKeepMissedCalls(granted = true, unlocked = true, callsManaged = false, dialerRoleHeld = false))
+        assertFalse(canKeepMissedCalls(granted = false, unlocked = true, callsManaged = true, dialerRoleHeld = true))
+        assertFalse(canKeepMissedCalls(granted = true, unlocked = false, callsManaged = true, dialerRoleHeld = true))
+    }
+
+    @Test
+    fun `Telecom's count 0 cancels ours unless ours is newer than our last reset (qa-12-code 2)`() {
+        assertTrue(zeroCountCancels(shownUpToId = 0, resetUpToId = 0))
+        assertTrue(zeroCountCancels(shownUpToId = 9, resetUpToId = 9))
+        assertTrue(zeroCountCancels(shownUpToId = 7, resetUpToId = 9))
+        // We reset up to 9, then posted a call with id 12: the late echo must not remove it.
+        assertFalse(zeroCountCancels(shownUpToId = 12, resetUpToId = 9))
+    }
+
+    @Test
+    fun `a swipe clears the state only when nothing newer was posted (qa-12-code 7)`() {
+        assertTrue(swipeClearsShown(swipedUpToId = 9, shownUpToId = 9))
+        assertTrue(swipeClearsShown(swipedUpToId = 9, shownUpToId = 0))
+        assertFalse(swipeClearsShown(swipedUpToId = 9, shownUpToId = 12))
     }
 
     @Test

@@ -14,6 +14,7 @@ package com.kidslauncher.mdm.calls
  * What our notification says: [count] missed calls from the contacts [names] (newest first).
  * [contactNumber] only when they all came from one contact - the tap then opens that contact's
  * sheet. [lastAtMs] is the newest call's time, [newestId] its call-log `_id` (a newer one alerts).
+ * No [names]: the plain count of [plainMissedCallNotice].
  */
 data class MissedCallNotice(
     val count: Int,
@@ -55,6 +56,37 @@ fun missedCallNotice(
     )
 }
 
+/** The log's unread missed calls (`type = 3 AND new = 1`, any age): how many, and the newest's
+ * `_id` (0 = none) and time - the bound of a pass, and the plain notice's content. */
+data class UnreadMissed(val count: Int, val newestId: Long, val newestAtMs: Long) {
+    companion object {
+        val NONE = UnreadMissed(0, 0L, 0L)
+    }
+}
+
+/**
+ * Without readable managed rules - fail-closed, or calls unmanaged while we still hold the dialer
+ * role (a parent chose our dialer by hand, so it isn't handed back) - Telecom still sends us its
+ * broadcast instead of posting its own notification (qa-12-code #1). Then a plain "N tapte anrop"
+ * with no names (nothing to check them against); its tap is the call-log intent, so the phone book
+ * shows it or, unmanaged, passes it on to the system dialer.
+ */
+fun plainMissedCallNotice(unread: UnreadMissed): MissedCallNotice? =
+    if (unread.count > 0 && unread.newestId > 0) {
+        MissedCallNotice(unread.count, emptyList(), null, unread.newestAtMs, unread.newestId)
+    } else {
+        null
+    }
+
+/**
+ * Whether we may look at (ids, flags) and mark the log's missed calls at all: READ_CALL_LOG,
+ * unlocked, and either calls managed ([canReadCallLog]) or our dialer role held - Telecom hands the
+ * missed-call duty to the default dialer, marking the log read included. Unmanaged with our role
+ * held only ids, dates and the `new` flag are read, never numbers.
+ */
+fun canKeepMissedCalls(granted: Boolean, unlocked: Boolean, callsManaged: Boolean, dialerRoleHeld: Boolean): Boolean =
+    granted && unlocked && (callsManaged || dialerRoleHeld)
+
 /** Which title the notification gets (nb + en strings, MissedCallNotifier). */
 enum class NoticeTitle {
     /** "Tapt anrop fra Pappa" */
@@ -74,7 +106,7 @@ fun noticeText(notice: MissedCallNotice): NoticeText {
     return when {
         one != null && notice.count == 1 -> NoticeText(NoticeTitle.ONE_CALL_FROM, 1, one, null)
         one != null -> NoticeText(NoticeTitle.CALLS_FROM, notice.count, one, null)
-        else -> NoticeText(NoticeTitle.CALLS, notice.count, null, notice.names.joinToString(", "))
+        else -> NoticeText(NoticeTitle.CALLS, notice.count, null, notice.names.joinToString(", ").ifEmpty { null })
     }
 }
 
@@ -96,15 +128,17 @@ sealed interface NoticeStep {
 /**
  * One recompute (QA #3/#4): after a broadcast ([mayPost]) or after our call ended (not
  * [mayPost]: only update or clear a notification that is [shown], never post a new one).
- * [rulesKnown]: the call rules are managed and readable - without them nothing is marked read
- * (a failure must not swallow missed calls), ours is only cancelled. [unreadUpToId]: the newest
+ * [mayMarkRead]: the call rules are managed, readable and calls are on now - without them nothing
+ * is marked read, ours is only cancelled: a failure must not swallow missed calls, and calls off
+ * or a no-calls time rule (school) leave only emergency contacts in the view, so a contact's call
+ * from just before must stay unread for after it (qa-12-code #3). [unreadUpToId]: the newest
  * unread missed call in the log (0 = none). [alertedUpToId]: the newest `_id` a post alerted for;
  * [newestLoggedId]: the newest `_id` read at all (0 = none) - lower than [alertedUpToId] means the
  * call log was cleared and its ids started again. [lastPosted]: what ours shows now, if [shown].
  */
 fun noticeStep(
     notice: MissedCallNotice?,
-    rulesKnown: Boolean,
+    mayMarkRead: Boolean,
     mayPost: Boolean,
     shown: Boolean,
     lastPosted: MissedCallNotice?,
@@ -112,12 +146,27 @@ fun noticeStep(
     alertedUpToId: Long,
     newestLoggedId: Long,
 ): NoticeStep {
-    if (notice == null) return NoticeStep.Clear(unreadUpToId.takeIf { rulesKnown && it > 0 })
+    if (notice == null) return NoticeStep.Clear(unreadUpToId.takeIf { mayMarkRead && it > 0 })
     if (!shown && !mayPost) return NoticeStep.Keep
     if (shown && notice == lastPosted) return NoticeStep.Keep
     val alerted = if (newestLoggedId in 1 until alertedUpToId) 0L else alertedUpToId
     return NoticeStep.Post(notice, alert = notice.newestId > alerted)
 }
+
+/**
+ * Telecom's count 0 (qa-12-code #2): it answers each of our own `cancelMissedCallsNotification()`
+ * calls, and its broadcasts reach us in send order - so an echo can trail the broadcast of a newer
+ * call that we already posted. Ours is only cancelled when it shows nothing newer than the last
+ * range we marked read and reset ([shownUpToId] <= [resetUpToId]); ids, not the clock.
+ */
+fun zeroCountCancels(shownUpToId: Long, resetUpToId: Long): Boolean = shownUpToId <= resetUpToId
+
+/**
+ * A swipe (the notification's delete intent, never a tap or our own cancel - qa-12-code #7) marks
+ * the range it showed ([swipedUpToId]) read. The notification state is reset only when nothing
+ * newer has been posted since ([shownUpToId] still within it).
+ */
+fun swipeClearsShown(swipedUpToId: Long, shownUpToId: Long): Boolean = shownUpToId <= swipedUpToId
 
 /** The contact whose sheet the notification's tap opens - only one in the phone book now (QA #8). */
 fun missedCallContact(number: String?, view: PhoneBookView): RuleContact? =

@@ -567,6 +567,8 @@ object AppEnforcer {
      * dialer and no rules.
      */
     private fun applyDialerRole(context: Context, dpm: DevicePolicyManager, admin: ComponentName, state: CallPolicyState) {
+        // For the phone book's call-log pass-on, which runs on the main thread (qa-12-code #4).
+        systemDialerPackage(context)?.let { CallPrefs.systemDialer(context, it) }
         val held = CallSystem.dialerRoleHeld(context)
         val action = dialerRoleAction(state, held, CallPrefs.dialerRoleTakenByUs(context))
         // Before the role changes hands: our own role-grantable permissions become POLICY_FIXED,

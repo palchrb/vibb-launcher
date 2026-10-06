@@ -220,6 +220,10 @@
                 <action android:name="android.telecom.action.SHOW_MISSED_CALLS_NOTIFICATION" />
             </intent-filter>
         </receiver>
+        <!-- Only our own missed-call notification's delete intent (a swipe marks its calls read). -->
+        <receiver
+            android:name=".calls.MissedCallDismissReceiver"
+            android:exported="false" />
         <!-- Unread counts for the home grid (design 05-ui-photos-i18n.md). Android binds it only
              once notification access is granted - no device-owner API exists for that, so it's
              `adb shell cmd notification allow_listener <package>/com.kidslauncher.mdm.badges.BadgeListenerService`

@@ -168,6 +168,7 @@ object CallPrefs {
     private const val ROLES_SIGNALLED = "mdm.calls.roles_signalled"
     private const val OWN_PERMISSIONS_FIXED = "mdm.calls.own_permissions_fixed"
     private const val IN_CALL_UI_FAILED_MS = "mdm.calls.in_call_ui_failed_ms"
+    private const val SYSTEM_DIALER = "mdm.calls.system_dialer"
 
     private fun prefs(context: Context) = PreferenceManager.getDefaultSharedPreferences(context)
 
@@ -176,6 +177,14 @@ object CallPrefs {
         context.createDeviceProtectedStorageContext().getSharedPreferences("call_boot_state", Context.MODE_PRIVATE)
 
     fun dialerRoleTakenByUs(context: Context) = prefs(context).getBoolean(DIALER_ROLE_TAKEN_BY_US, false)
+
+    /** The system dialer's package as `apply()` last looked it up (background thread), so the phone
+     * book can pass the call log on without a Telecom call on the main thread (qa-12-code #4). */
+    fun systemDialer(context: Context): String? = prefs(context).getString(SYSTEM_DIALER, null)
+
+    fun systemDialer(context: Context, packageName: String) {
+        if (systemDialer(context) != packageName) prefs(context).edit().putString(SYSTEM_DIALER, packageName).apply()
+    }
 
     fun dialerRoleTakenByUs(context: Context, value: Boolean) {
         prefs(context).edit().putBoolean(DIALER_ROLE_TAKEN_BY_US, value).commit()

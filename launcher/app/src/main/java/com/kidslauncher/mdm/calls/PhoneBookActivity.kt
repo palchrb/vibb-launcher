@@ -112,11 +112,15 @@ class PhoneBookActivity : UIObjectActivity() {
      * The call log asked for while calls are unmanaged: the system dialer's, explicitly - our pin
      * is permanent, so it stays ours to pass on (as the Play link blocker does). Managed (or
      * rules unknown): the phone book is the call log. A fresh intent: never the caller's extras.
+     * The package comes from what `apply()` cached - no Telecom call on the main thread
+     * (qa-12-code #4). Viewing the call log deals with our missed-call notification too.
      */
     private fun passOnCallLog(intent: Intent?): Boolean {
         if (intent == null || !isCallLogView(intent.action, intent.type, intent.dataString)) return false
         if (CallPolicyStore.effectiveState() != CallPolicyState.Unmanaged) return false
-        val dialer = com.kidslauncher.mdm.server.systemDialerPackage(this)
+        MissedCallNotifier.dismiss(this)
+        val dialer = CallPrefs.systemDialer(this)
+        if (dialer == null) Log.w("PhoneBookActivity", "No system dialer known yet - the call log isn't passed on")
         if (dialer != null && dialer != packageName) {
             try {
                 startActivity(
@@ -216,10 +220,13 @@ class PhoneBookActivity : UIObjectActivity() {
 
         fun intent(context: Context) = Intent(context, PhoneBookActivity::class.java)
 
-        /** The missed-call notification's tap: the phone book, with [contactNumber]'s sheet. */
+        /** The missed-call notification's tap: the call log, i.e. the phone book (with
+         * [contactNumber]'s sheet) - or, while calls are unmanaged and our dialer role is still
+         * held, passed on to the system dialer (qa-12-code #1). */
         fun missedCallsIntent(context: Context, contactNumber: String?): Intent =
-            intent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
-                if (contactNumber != null) putExtra(EXTRA_MISSED_CONTACT, contactNumber)
-            }
+            intent(context).setAction(Intent.ACTION_VIEW).setType(CALL_LOG_TYPE)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
+                    if (contactNumber != null) putExtra(EXTRA_MISSED_CONTACT, contactNumber)
+                }
     }
 }

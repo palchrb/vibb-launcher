@@ -46,6 +46,15 @@ class MissedCallManifestTest {
     }
 
     @Test
+    fun `the swipe receiver only takes our own delete intent`() {
+        val receiver = component("receiver", ".calls.MissedCallDismissReceiver")
+        assertEquals("false", receiver.getAttributeNS(ns, "exported"))
+        assertEquals("", receiver.getAttributeNS(ns, "directBootAware"))
+        assertTrue(elements(receiver, "intent-filter").isEmpty())
+        assertTrue("com.kidslauncher.mdm.calls.MissedCallDismissReceiver" !in DirectBootComponents.CLASS_NAMES)
+    }
+
+    @Test
     fun `the phone book has its own call-log filter, matching the pin`() {
         val phoneBook = component("activity", ".calls.PhoneBookActivity")
         assertEquals("true", phoneBook.getAttributeNS(ns, "exported"))

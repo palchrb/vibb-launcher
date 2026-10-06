@@ -174,9 +174,9 @@ How the QA findings were met:
   `phoneBookView` (the sheet opens once the missed calls are loaded); ours is cancelled on the dialer-role hand-back.
   The notification rule never touches our package.
 
-Known limits: swiping ours away isn't a dismissal (no delete intent) - those calls stay unread and come back,
-silently, at the next boot. A Telecom notification posted before the first unlock stays until tapped (the tap lands
-in the phone book via the pin).
+Known limits: a Telecom notification posted before the first unlock stays until tapped (the tap lands in the phone
+book via the pin). A dialer role the parent granted by hand isn't handed back when calls become unmanaged (step 2
+rule), so we keep the missed-call duty then - with the plain count below.
 
 Device checks [needs device test]:
 1. Emulator, script: `smoke-test.sh` "Missed call" (ours, no `TelecomMissedCalls`).
@@ -185,5 +185,28 @@ Device checks [needs device test]:
 3. Reboot with ours not dismissed -> it comes back without a sound; after a dismissal -> nothing at boot.
 4. Call back from the sheet or Home -> ours is gone within a few seconds.
 5. Calls unmanaged (role handed back) -> ours gone; Telecom/the system dialer shows missed calls again.
-6. Jelly Star: `cmd package resolve-activity -a android.intent.action.VIEW -t vnd.android.cursor.dir/calls` names us,
+   Unmanaged with the role kept, or rules unreadable -> a plain "N tapte anrop"; its tap opens the phone book
+   (fail-closed) or the system dialer's call log (unmanaged).
+6. Swipe ours away -> the row is `new=0`, nothing at the next boot; a tap or opening the phone book doesn't depend
+   on it.
+7. Jelly Star: `cmd package resolve-activity -a android.intent.action.VIEW -t vnd.android.cursor.dir/calls` names us,
    and a missed call shows ours, not Telecom's.
+
+### Fix round after qa-12-code.md (2026-10-06)
+
+L: `testDebugUnitTest assembleDebug -PwarningsAsErrors=true` green, 550 unit tests (5 new). Not pushed. Each finding is
+marked in `qa-12-code.md`.
+- **#1 (M)** Without managed rules (fail-closed, or unmanaged while our dialer role is held), a plain "N tapte anrop"
+  (`plainMissedCallNotice`) from the log's unread missed rows (`MissedCallsRepo.unreadMissed`: ids and dates only).
+  Reading and marking them needs managed calls **or** our dialer role (`canKeepMissedCalls`). Every tap is now the
+  call-log `VIEW` sent explicitly to the phone book, which passes it on to the system dialer while unmanaged (and
+  dismisses ours). Releasing a prompt-granted role is skipped: that is the step-2 rule, and changing it is the user's
+  call.
+- **#2** Count 0 is decided by ids (`zeroCountCancels(shown_up_to_id, reset_up_to_id)`), not a 5 s window.
+- **#3** Clear marks read only with calls on (`mayMarkRead = effective rules.callsEnabled`).
+- **#4** The phone book reads the system dialer from `CallPrefs.systemDialer`, which `apply()` caches - no binder
+  call on the main thread.
+- **#5** `cancelOurs` forgets the shown range.
+- **#6** After-call passes run at 3 s and 10 s.
+- **#7** A swipe (delete intent -> `MissedCallDismissReceiver`, not exported) marks the swiped post's own range read
+  and resets Telecom (`swipeClearsShown`); never on the tap or our own cancel.

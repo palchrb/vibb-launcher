@@ -35,33 +35,37 @@ object MissedCallsRepo {
         prefs(context).all.mapNotNull { (key, value) -> (value as? Long)?.let { key to it } }.toMap()
 
     /**
-     * The `_id` of the newest missed call the log still has as unread (`new = 1`, any age), 0 for
-     * none or when the log can't be read. Queried before [recentLog]: everything up to it has been
+     * The missed calls the log still has as unread (`new = 1`, any age): count, newest `_id` and
+     * date - ids and dates only, never numbers. [UnreadMissed.NONE] when they can't be read
+     * ([canKeepMissedCalls]). Queried before [recentLog]: everything up to the newest id has been
      * looked at by the time it is marked read (design 12, QA #1).
      */
-    fun newestUnreadMissedId(context: Context): Long {
-        if (!readable(context)) return 0
+    fun unreadMissed(context: Context): UnreadMissed {
+        if (!missedCallDuty(context)) return UnreadMissed.NONE
         return try {
             context.contentResolver.query(
-                CallLog.Calls.CONTENT_URI.buildUpon().appendQueryParameter(CallLog.Calls.LIMIT_PARAM_KEY, "1").build(),
-                arrayOf(CallLog.Calls._ID),
+                CallLog.Calls.CONTENT_URI,
+                arrayOf(CallLog.Calls._ID, CallLog.Calls.DATE),
                 "${CallLog.Calls.TYPE} = ? AND ${CallLog.Calls.NEW} = 1",
                 arrayOf(CallLog.Calls.MISSED_TYPE.toString()),
                 "${CallLog.Calls._ID} DESC",
-            )?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L } ?: 0L
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) UnreadMissed(cursor.count, cursor.getLong(0), cursor.getLong(1)) else UnreadMissed.NONE
+            } ?: UnreadMissed.NONE
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't read the newest unread missed call", e)
-            0L
+            Log.w(LOG_TAG, "Couldn't read the unread missed calls", e)
+            UnreadMissed.NONE
         }
     }
 
     /**
      * Marks the unread missed calls up to [upToId] read (`new = 0`, `is_read = 1`), as Telecom
      * would for a dialer without the receiver - otherwise it sends them to us again at every boot
-     * (design 12, QA #1). WRITE_CALL_LOG, held by policy while calls are managed. Never throws.
+     * (design 12, QA #1). WRITE_CALL_LOG, held by policy while calls are managed (and by the dialer
+     * role). Never throws.
      */
     fun markMissedRead(context: Context, upToId: Long): Boolean {
-        if (upToId <= 0 || !readable(context)) return false
+        if (upToId <= 0 || !missedCallDuty(context)) return false
         if (context.checkSelfPermission(android.Manifest.permission.WRITE_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
             Log.w(LOG_TAG, "No WRITE_CALL_LOG - missed calls stay unread")
             return false
@@ -91,6 +95,13 @@ object MissedCallsRepo {
     }
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /** [canKeepMissedCalls]: managed, or our dialer role held (Telecom gives us the duty). */
+    private fun missedCallDuty(context: Context): Boolean =
+        canKeepMissedCalls(
+            CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context),
+            CallPolicyStore.state.managed, CallSystem.dialerRoleHeld(context),
+        )
 
     private fun readable(context: Context): Boolean =
         canReadCallLog(CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.state.managed)
