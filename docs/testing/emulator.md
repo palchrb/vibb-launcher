@@ -359,8 +359,11 @@ The default debug build has no Firebase config: the phone uses the SSE stream (d
 - Provisioning order changes when a Google account is wanted: wipe -> `dpm set-device-owner`
   (no account may exist at that moment) -> add the Google account and the Play settings in the
   normal Settings/Play UI -> only then enroll (the first policy blocks account changes and
-  starts the kiosk).
-- Quick checks: `adb shell dumpsys alarm | grep -i backstop`;
+  starts the kiosk). The full runbook (account settings, Play settings, FRP, an enrolled phone,
+  the open Play-services check) is `docs/setup/google-account.md`.
+- Quick checks: `adb shell bmgr enabled` -> "Backup Manager is not activated for user 0" (the
+  device page's "Phone hardening" card says "Backup to Google: off");
+  `adb shell dumpsys alarm | grep -i backstop`;
   `adb shell dumpsys package com.android.vending | grep -i suspended` (true while managed);
   `adb shell am start -a android.intent.action.VIEW -d market://details?id=org.example`
   shows "The Play Store is closed"; Settings -> "Install from Play" (PIN) opens Play for 15 min.

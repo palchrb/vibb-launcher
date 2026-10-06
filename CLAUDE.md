@@ -13,7 +13,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md`.
 - `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
   `kid-phone-server` = `server/`, `L` = `kids-launcher-mdm` = `launcher/`, "branch `handy`" = what is
-  now `master` here. `docs/testing/emulator.md` - the emulator test loop.
+  now `master` here. `docs/testing/emulator.md` - the emulator test loop. `docs/setup/` - setup
+  runbooks (`google-account.md`: the phone's Google account for Play, backup to Google off).
 - `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
   `push-all.sh` (push the current branch), `smoke-test.sh` (adb/emulator-console smoke test of lock and
   calls, remote-capable; `docs/testing/emulator.md` §5b).
