@@ -35,7 +35,7 @@
             {% endif %}
             <input type="text" id="asset_pattern" name="asset_pattern" value="{{ asset_pattern }}" placeholder="Leave blank to use the first .apk found"{% if error.is_some() %} autofocus{% endif %}>
             <p class="hint">Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$)</p>
-            <p class="hint">Only needed if a release has more than one APK (e.g. per architecture) - the first asset that matches is used.</p>
+            <p class="hint">Only needed if a release has more than one APK (e.g. per architecture) - the first .apk that matches is used (only .apk files are picked).</p>
 
             <label class="checkbox-row">
                 <input type="checkbox" name="include_prereleases" value="on"{% if include_prereleases %} checked{% endif %}>

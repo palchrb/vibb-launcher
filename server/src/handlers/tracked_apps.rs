@@ -13,7 +13,7 @@ use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -24,7 +24,8 @@ use crate::config::SERVER_RELEASE_TAG_PREFIX;
 use crate::models::TrackedApp;
 use crate::security::{CurrentAdmin, generate_device_token};
 
-const TRACKED_APPS_DIR: &str = "data/tracked_apps";
+/// Where cached APKs live, one directory per app (`AppState.tracked_apps_dir`; a temp dir in tests).
+pub const TRACKED_APPS_DIR: &str = "data/tracked_apps";
 
 /// The largest asset a sync downloads: one GitHub lists as bigger is refused before downloading,
 /// one without a listed size is stopped once it gets there.
@@ -33,9 +34,6 @@ const MAX_ASSET_BYTES: u64 = 1_000_000_000;
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// ...and so does one still running after this, however steadily it trickles.
 const DOWNLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-/// A `.part` file this old is left over from a crash (a live download writes at least every
-/// [DOWNLOAD_STALL_TIMEOUT] and ends after [DOWNLOAD_TOTAL_TIMEOUT]) - removed after the next sync.
-const STALE_PART_AGE: Duration = Duration::from_secs(2 * 60 * 60);
 
 #[derive(Deserialize)]
 struct GithubAsset {
@@ -65,48 +63,72 @@ fn check_apk_download(head: &[u8], len: u64, expected_size: u64) -> Result<(), S
 /// Which asset of a release is the app (`tracked_apps.asset_pattern`): no pattern = the first
 /// `.apk`; a pattern starting with `^` is a regular expression on the asset name (e.g.
 /// `^\d+\.apk$` for Element X's universal APK, named after its versionCode); anything else is
-/// text the name must contain.
+/// text the name must contain. Only an `.apk` is ever picked, whatever the filter: an `.aab` or
+/// another ZIP passes the download's header check but can't be installed (qa-catalog #6).
 enum AssetFilter {
     FirstApk,
     Contains(String),
     Regex(Regex),
 }
 
+/// The longest filter the forms accept, in characters (qa-catalog #5).
+const MAX_PATTERN_CHARS: usize = 256;
+/// The compiled size limit of a `^` filter (the regex crate's default is 10 MiB).
+const MAX_REGEX_BYTES: usize = 1 << 20;
+
 impl AssetFilter {
-    /// `Err` (a short reason) for a `^` pattern that isn't a valid regular expression.
+    /// `Err(reason)` completes "the asset filename filter is ...": over [MAX_PATTERN_CHARS], or a
+    /// `^` pattern that doesn't compile within [MAX_REGEX_BYTES].
     fn parse(pattern: Option<&str>) -> Result<Self, String> {
-        match pattern {
-            None | Some("") => Ok(Self::FirstApk),
-            Some(p) if p.starts_with('^') => Regex::new(p).map(Self::Regex).map_err(|e| {
-                // The regex crate's message spans several lines (the pattern, a caret under the
-                // spot, "error: ..."); the last one is the reason.
-                let text = e.to_string();
-                let reason = text.lines().last().unwrap_or_default().trim();
-                let reason = reason.strip_prefix("error: ").unwrap_or(reason);
-                format!("not a valid regular expression ({reason})")
-            }),
-            Some(p) => Ok(Self::Contains(p.to_string())),
+        let pattern = match pattern {
+            None | Some("") => return Ok(Self::FirstApk),
+            Some(p) => p,
+        };
+        if pattern.chars().count() > MAX_PATTERN_CHARS {
+            return Err(format!("longer than {MAX_PATTERN_CHARS} characters"));
         }
+        if !pattern.starts_with('^') {
+            return Ok(Self::Contains(pattern.to_string()));
+        }
+        RegexBuilder::new(pattern)
+            .size_limit(MAX_REGEX_BYTES)
+            .build()
+            .map(Self::Regex)
+            .map_err(|e| {
+                let detail = match e {
+                    regex::Error::CompiledTooBig(_) => "too complex".to_string(),
+                    // The message spans several lines (the pattern, a caret under the spot,
+                    // "error: ..."); the last one is the reason.
+                    e => {
+                        let text = e.to_string();
+                        let reason = text.lines().last().unwrap_or_default().trim();
+                        reason.strip_prefix("error: ").unwrap_or(reason).to_string()
+                    }
+                };
+                format!(
+                    "not a valid regular expression ({detail}) - a filter starting with ^ is read \
+                     as one"
+                )
+            })
     }
 
     fn matches(&self, asset_name: &str) -> bool {
-        match self {
-            Self::FirstApk => asset_name.ends_with(".apk"),
-            Self::Contains(text) => asset_name.contains(text.as_str()),
-            Self::Regex(regex) => regex.is_match(asset_name),
-        }
+        let is_apk = asset_name.to_ascii_lowercase().ends_with(".apk");
+        is_apk
+            && match self {
+                Self::FirstApk => true,
+                Self::Contains(text) => asset_name.contains(text.as_str()),
+                Self::Regex(regex) => regex.is_match(asset_name),
+            }
     }
 }
 
-/// The add and edit forms' check: a pattern starting with `^` must compile. The message says
-/// nothing was saved, since both forms refuse the whole save.
+/// The add and edit forms' check (see [AssetFilter::parse]). The message says nothing was saved,
+/// since both forms refuse the whole save.
 fn validate_asset_pattern(pattern: Option<&str>) -> Result<(), String> {
-    AssetFilter::parse(pattern).map(|_| ()).map_err(|reason| {
-        format!(
-            "The asset filename filter starts with ^, so it is read as a regular expression, and \
-             it is {reason}. Nothing was saved."
-        )
-    })
+    AssetFilter::parse(pattern)
+        .map(|_| ())
+        .map_err(|reason| format!("The asset filename filter is {reason}. Nothing was saved."))
 }
 
 #[derive(Deserialize)]
@@ -318,27 +340,119 @@ async fn download_asset(asset: &GithubAsset, final_path: &str) -> Result<u64, St
     .await
 }
 
-/// Removes `.part` files in `dir` not written for [STALE_PART_AGE]: left over from a crash or a
-/// power cut mid-download, which [TempDownload] can't clean up. Best-effort.
-async fn remove_stale_parts(dir: &str) {
-    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+/// Deletes every `<root>/<app id>/*.part`: left by a crash or a power cut mid-download, which
+/// [TempDownload] can't clean up. Run once at startup, before the scheduled sync starts, when
+/// nothing can be downloading (qa-catalog #2). Best-effort.
+pub async fn remove_partial_downloads(root: &std::path::Path) {
+    let Ok(mut apps) = tokio::fs::read_dir(root).await else {
         return;
     };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        if !entry.file_name().to_string_lossy().ends_with(".part") {
+    while let Ok(Some(app_dir)) = apps.next_entry().await {
+        let Ok(mut files) = tokio::fs::read_dir(app_dir.path()).await else {
             continue;
-        }
-        let stale = entry
-            .metadata()
-            .await
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.elapsed().ok())
-            .is_some_and(|age| age > STALE_PART_AGE);
-        if stale {
-            tokio::fs::remove_file(entry.path()).await.ok();
+        };
+        while let Ok(Some(file)) = files.next_entry().await {
+            if file.file_name().to_string_lossy().ends_with(".part") {
+                match tokio::fs::remove_file(file.path()).await {
+                    Ok(()) => {
+                        tracing::info!("removed a partial download: {}", file.path().display())
+                    }
+                    Err(err) => tracing::warn!("can't remove {}: {err}", file.path().display()),
+                }
+            }
         }
     }
+}
+
+/// Which apps are syncing right now, and how each one's last sync ended (shown on its page). One
+/// sync per app at a time (qa-catalog #1): "Check now" and the hourly loop never download the same
+/// app twice in parallel, and a slower sync that saw an older release can't finish last and roll
+/// the cached one back. In memory, so a restart forgets it (`AppState.app_syncs`).
+#[derive(Default)]
+pub struct AppSyncs(std::sync::Mutex<HashMap<i64, SyncStatus>>);
+
+#[derive(Default, Clone)]
+struct SyncStatus {
+    /// When the running sync started (UTC), `None` when none runs.
+    running_since: Option<String>,
+    /// The last finished sync's failure, `None` after a success.
+    last_error: Option<SyncFailure>,
+}
+
+#[derive(Clone)]
+pub struct SyncFailure {
+    /// UTC, like `tracked_apps.last_checked_at`.
+    pub at: String,
+    pub message: String,
+}
+
+fn utc_now() -> String {
+    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+impl AppSyncs {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<i64, SyncStatus>> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Marks `id` as syncing, or `None` when a sync of it already runs.
+    pub(crate) fn start(self: &std::sync::Arc<Self>, id: i64) -> Option<SyncGuard> {
+        let mut map = self.lock();
+        let status = map.entry(id).or_default();
+        if status.running_since.is_some() {
+            return None;
+        }
+        status.running_since = Some(utc_now());
+        Some(SyncGuard {
+            syncs: self.clone(),
+            id,
+        })
+    }
+
+    fn status(&self, id: i64) -> SyncStatus {
+        self.lock().get(&id).cloned().unwrap_or_default()
+    }
+}
+
+/// Held for one app's sync; dropping it (also when the sync's future is dropped) ends the sync.
+pub(crate) struct SyncGuard {
+    syncs: std::sync::Arc<AppSyncs>,
+    id: i64,
+}
+
+impl SyncGuard {
+    pub(crate) fn finish(self, result: &Result<(), String>) {
+        self.syncs.lock().entry(self.id).or_default().last_error =
+            result.as_ref().err().map(|message| SyncFailure {
+                at: utc_now(),
+                message: message.clone(),
+            });
+    }
+}
+
+impl Drop for SyncGuard {
+    fn drop(&mut self) {
+        if let Some(status) = self.syncs.lock().get_mut(&self.id) {
+            status.running_since = None;
+        }
+    }
+}
+
+enum SyncError {
+    AlreadyRunning,
+    Failed(String),
+}
+
+/// Syncs app `id` unless a sync of it already runs, and records how it ended. See [sync_one_app].
+async fn sync_app(state: &AppState, id: i64) -> Result<(), SyncError> {
+    let Some(guard) = state.app_syncs.start(id) else {
+        return Err(SyncError::AlreadyRunning);
+    };
+    let result = sync_one_app(state, id).await;
+    guard.finish(&result);
+    result.map_err(SyncError::Failed)
 }
 
 /// Checks one GitHub-sourced app's repo for a new release and, if the
@@ -346,8 +460,15 @@ async fn remove_stale_parts(dir: &str) {
 /// matching asset and replaces the previously-cached file. A no-op for
 /// manual-source apps - those only ever change via `upload_tracked_app_release`.
 /// Used by both the scheduled loop and the admin's manual "Check now"
-/// button, so they can never drift apart.
-async fn sync_one_app(state: &AppState, app: &TrackedApp) -> Result<(), String> {
+/// button, so they can never drift apart. Only through [sync_app], which holds the app's guard:
+/// the row is read here, under it, so the comparison is with what the last sync stored.
+async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
+    let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "the app was removed".to_string())?;
     if app.source_type != "github" {
         return Ok(());
     }
@@ -375,11 +496,14 @@ async fn sync_one_app(state: &AppState, app: &TrackedApp) -> Result<(), String> 
         return Ok(());
     }
 
-    let app_dir = format!("{TRACKED_APPS_DIR}/{}", app.id);
+    let app_dir = state.tracked_apps_dir.join(app.id.to_string());
     tokio::fs::create_dir_all(&app_dir)
         .await
         .map_err(|e| e.to_string())?;
-    let file_path = format!("{app_dir}/{}-{}.apk", release.tag_name, asset.id);
+    let file_path = app_dir
+        .join(format!("{}-{}.apk", release.tag_name, asset.id))
+        .to_string_lossy()
+        .into_owned();
     // Streamed to disk, never held in memory: Element X's universal APK is 326 MB.
     let size = tokio::time::timeout(DOWNLOAD_TOTAL_TIMEOUT, download_asset(&asset, &file_path))
         .await
@@ -390,15 +514,8 @@ async fn sync_one_app(state: &AppState, app: &TrackedApp) -> Result<(), String> 
                 DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
             )
         })??;
-    remove_stale_parts(&app_dir).await;
 
-    if let Some(old_path) = &app.latest_release_file_path {
-        if old_path != &file_path {
-            tokio::fs::remove_file(old_path).await.ok();
-        }
-    }
-
-    sqlx::query(
+    let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = ?, \
          latest_release_file_path = ?, latest_release_asset_name = ?, \
          latest_release_asset_size = ? WHERE id = ?",
@@ -410,16 +527,37 @@ async fn sync_one_app(state: &AppState, app: &TrackedApp) -> Result<(), String> 
     .bind(i64::try_from(size).unwrap_or(i64::MAX))
     .bind(app.id)
     .execute(&state.db)
-    .await
-    .map_err(|e| e.to_string())?;
-
+    .await;
+    let stored = match stored {
+        Ok(result) => result.rows_affected() > 0,
+        Err(err) => {
+            tokio::fs::remove_file(&file_path).await.ok();
+            return Err(err.to_string());
+        }
+    };
+    replace_cached_file(stored, &file_path, app.latest_release_file_path.as_deref()).await;
+    if !stored {
+        return Err("the app was removed during the download".to_string());
+    }
     Ok(())
+}
+
+/// After the row's UPDATE (never before, so a phone never gets a 404 in between and a failed
+/// UPDATE keeps the old file, qa-catalog #7): removes the old file once the row names the new one,
+/// or the new one when the UPDATE matched no row - the app was deleted meanwhile (#4).
+async fn replace_cached_file(stored: bool, new_path: &str, old_path: Option<&str>) {
+    if !stored {
+        tokio::fs::remove_file(new_path).await.ok();
+    } else if let Some(old_path) = old_path.filter(|old| *old != new_path) {
+        tokio::fs::remove_file(old_path).await.ok();
+    }
 }
 
 /// Background task: checks every enabled tracked app on a fixed interval.
 /// One app's failure (bad repo, rate-limited, network blip) never blocks the
 /// others or crashes the loop - logged and retried next cycle. A no-op per
-/// iteration for manual-source apps (`sync_one_app` returns early for them).
+/// iteration for manual-source apps (`sync_one_app` returns early for them),
+/// and for an app whose "Check now" is still running.
 pub async fn run_scheduled_tracked_app_sync(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {
@@ -431,8 +569,14 @@ pub async fn run_scheduled_tracked_app_sync(state: AppState) {
             .unwrap_or_default();
 
         for app in apps {
-            if let Err(e) = sync_one_app(&state, &app).await {
-                tracing::warn!("tracked app '{}' sync failed: {e}", app.name);
+            match sync_app(&state, app.id).await {
+                Ok(()) => {}
+                Err(SyncError::AlreadyRunning) => {
+                    tracing::info!("tracked app '{}' is already syncing, skipped", app.name);
+                }
+                Err(SyncError::Failed(e)) => {
+                    tracing::warn!("tracked app '{}' sync failed: {e}", app.name);
+                }
             }
         }
     }
@@ -596,6 +740,10 @@ struct TrackedAppDetailTemplate {
     app: TrackedApp,
     error: Option<String>,
     details: DetailsForm,
+    /// A sync of this app is running since then (UTC) - "Check now" says so.
+    sync_running_since: Option<String>,
+    /// How the last sync (hourly or "Check now") failed, if it did.
+    sync_failure: Option<SyncFailure>,
 }
 
 /// What the Details form shows: the saved values, or - when a save was refused - what was
@@ -641,12 +789,15 @@ async fn render_detail_page(
         asset_pattern: app.asset_pattern.clone().unwrap_or_default(),
         error: None,
     });
+    let sync = state.app_syncs.status(id);
     Html(
         TrackedAppDetailTemplate {
             title: app.name.clone(),
             app,
             error,
             details,
+            sync_running_since: sync.running_since,
+            sync_failure: sync.last_error,
         }
         .render()
         .unwrap(),
@@ -654,26 +805,34 @@ async fn render_detail_page(
     .into_response()
 }
 
-pub async fn check_now(State(state): State<AppState>, Path(id): Path<i64>) -> impl IntoResponse {
-    let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
+/// How long "Check now" waits for its sync before answering: a quick check shows its result at
+/// once, a long download goes on in the background and the page says it is running (qa-catalog
+/// #1: the request used to wait up to the 30 min download cap). Under scroll-restore's 20 s, so
+/// the page comes back where it was.
+const CHECK_NOW_WAIT: Duration = Duration::from_secs(10);
+
+/// Starts a sync of the app (unless one runs - then the page says so) and redirects back to the
+/// app's page, which shows a failure or that it is still running.
+pub async fn check_now(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM tracked_apps WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
         .ok()
         .flatten();
-
-    let Some(app) = app else {
+    if exists.is_none() {
         return (StatusCode::NOT_FOUND, "App not found").into_response();
-    };
+    }
 
-    // In its own task: a large download (minutes) still finishes, and is cached, when the
-    // browser gives up waiting and the request goes away.
+    // In its own task: a large download still finishes, and is cached, after this answers.
     let task_state = state.clone();
-    let error = tokio::spawn(async move { sync_one_app(&task_state, &app).await })
-        .await
-        .unwrap_or_else(|e| Err(e.to_string()))
-        .err();
-    render_detail(&state, id, error).await
+    let sync = tokio::spawn(async move {
+        if let Err(SyncError::Failed(e)) = sync_app(&task_state, id).await {
+            tracing::warn!("tracked app {id} check failed: {e}");
+        }
+    });
+    let _ = tokio::time::timeout(CHECK_NOW_WAIT, sync).await;
+    Redirect::to(&format!("/apps/tracked/{id}")).into_response()
 }
 
 /// Manual-source apps' only path to a new release: the admin types a label
@@ -734,7 +893,7 @@ pub async fn upload_tracked_app_release(
         .await;
     }
 
-    let app_dir = format!("{TRACKED_APPS_DIR}/{id}");
+    let app_dir = state.tracked_apps_dir.join(id.to_string());
     if tokio::fs::create_dir_all(&app_dir).await.is_err() {
         return render_detail(
             &state,
@@ -743,7 +902,10 @@ pub async fn upload_tracked_app_release(
         )
         .await;
     }
-    let file_path = format!("{app_dir}/{}.apk", random_label());
+    let file_path = app_dir
+        .join(format!("{}.apk", random_label()))
+        .to_string_lossy()
+        .into_owned();
     if tokio::fs::write(&file_path, &apk_bytes).await.is_err() {
         return render_detail(
             &state,
@@ -753,13 +915,7 @@ pub async fn upload_tracked_app_release(
         .await;
     }
 
-    if let Some(old_path) = &app.latest_release_file_path {
-        if old_path != &file_path {
-            tokio::fs::remove_file(old_path).await.ok();
-        }
-    }
-
-    sqlx::query(
+    let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = NULL, \
          latest_release_file_path = ?, latest_release_asset_name = ?, \
          latest_release_asset_size = ?, last_checked_at = datetime('now') WHERE id = ?",
@@ -771,9 +927,20 @@ pub async fn upload_tracked_app_release(
     .bind(id)
     .execute(&state.db)
     .await
-    .ok();
+    .is_ok_and(|result| result.rows_affected() > 0);
+    replace_cached_file(stored, &file_path, app.latest_release_file_path.as_deref()).await;
+    if !stored {
+        return render_detail(
+            &state,
+            id,
+            Some("Failed to save the uploaded file.".to_string()),
+        )
+        .await;
+    }
 
-    render_detail(&state, id, None).await
+    // Back to the app's page (its own path, so the scroll position is kept and a reload doesn't
+    // post the file again).
+    Redirect::to(&format!("/apps/tracked/{id}")).into_response()
 }
 
 /// Lets an admin fix any of a tracked app's identifying details after creation - there was
@@ -938,13 +1105,21 @@ pub async fn delete_tracked_app(
         return Redirect::to(&format!("/apps/tracked/{id}"));
     }
 
+    let deleted = sqlx::query("DELETE FROM tracked_apps WHERE id = ?")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .is_ok();
+    if !deleted {
+        return Redirect::to(&format!("/apps/tracked/{id}"));
+    }
+
+    // The whole app directory (qa-catalog #4): a download still running for it can then no
+    // longer be renamed into place, and its UPDATE matches no row (`sync_one_app`).
     if let Some(path) = &app.latest_release_file_path {
         tokio::fs::remove_file(path).await.ok();
     }
-
-    sqlx::query("DELETE FROM tracked_apps WHERE id = ?")
-        .bind(id)
-        .execute(&state.db)
+    tokio::fs::remove_dir_all(state.tracked_apps_dir.join(id.to_string()))
         .await
         .ok();
 
@@ -1048,7 +1223,19 @@ mod tests {
             "app-fdroid-x86_64-release-signed.apk"
         );
         assert!(picked(Some(r"\d+\.apk$")).is_err());
+        // Only an .apk is ever picked: the Play AAB matches neither a regex nor a substring.
         assert!(picked(Some(r"^\d+\.aab$")).is_err());
+        assert!(picked(Some("^app-gplay")).is_err());
+        assert!(picked(Some("gplay")).is_err());
+        let mixed = vec![release(
+            "v1",
+            false,
+            &[(1, "app-release.aab"), (2, "app-release.APK")],
+        )];
+        assert_eq!(
+            pick(mixed, false, Some("^app-release")).unwrap().1,
+            "app-release.APK"
+        );
     }
 
     #[test]
@@ -1075,13 +1262,27 @@ mod tests {
     #[test]
     fn an_invalid_regular_expression_is_refused() {
         let reason = AssetFilter::parse(Some(r"^(\d+\.apk")).err().unwrap();
-        assert!(
-            reason.starts_with("not a valid regular expression ("),
-            "{reason}"
+        assert_eq!(
+            reason,
+            "not a valid regular expression (unclosed group) - a filter starting with ^ is read \
+             as one"
         );
-        assert!(!reason.contains('\n'), "{reason}");
         let message = validate_asset_pattern(Some("^[")).unwrap_err();
-        assert!(message.contains("regular expression") && message.contains("Nothing was saved"));
+        assert!(message.starts_with("The asset filename filter is not a valid regular expression"));
+        assert!(message.ends_with("Nothing was saved."), "{message}");
+        // Over the compiled size limit (qa-catalog #5): refused, not compiled with 10 MiB.
+        let huge = AssetFilter::parse(Some(r"^(\w{1,100}){1,100}"))
+            .err()
+            .unwrap();
+        assert!(huge.contains("(too complex)"), "{huge}");
+        // Over 256 characters: refused whatever kind of filter it is.
+        let long = "a".repeat(MAX_PATTERN_CHARS + 1);
+        assert_eq!(
+            validate_asset_pattern(Some(&long)).unwrap_err(),
+            "The asset filename filter is longer than 256 characters. Nothing was saved."
+        );
+        assert!(validate_asset_pattern(Some(&format!("^{}", &long[1..]))).is_err());
+        assert!(validate_asset_pattern(Some(&long[1..])).is_ok());
         for ok in [
             None,
             Some(""),
@@ -1258,15 +1459,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_part_files_are_removed() {
-        let dir = tempfile::tempdir().unwrap();
-        let old = std::time::SystemTime::now() - Duration::from_secs(3 * 60 * 60);
-        for name in ["old.apk.x.part", "old.apk"] {
-            let file = std::fs::File::create(dir.path().join(name)).unwrap();
-            file.set_modified(old).unwrap();
+    async fn partial_downloads_are_removed_at_startup() {
+        let root = tempfile::tempdir().unwrap();
+        for app in ["1", "2"] {
+            std::fs::create_dir(root.path().join(app)).unwrap();
         }
-        std::fs::File::create(dir.path().join("live.apk.y.part")).unwrap();
-        remove_stale_parts(dir.path().to_str().unwrap()).await;
-        assert_eq!(files_in(dir.path()), ["live.apk.y.part", "old.apk"]);
+        for name in ["1/v1-14.apk", "1/v2-15.apk.abc.part", "2/v1-3.apk.def.part"] {
+            std::fs::File::create(root.path().join(name)).unwrap();
+        }
+        remove_partial_downloads(root.path()).await;
+        assert_eq!(files_in(&root.path().join("1")), ["v1-14.apk"]);
+        assert!(files_in(&root.path().join("2")).is_empty());
+        // No directory yet (a fresh install): nothing to do.
+        remove_partial_downloads(&root.path().join("missing")).await;
+    }
+
+    /// One sync per app (qa-catalog #1): a second start of the same app is refused until the
+    /// first one ends - also when its future is dropped - and the last failure is kept.
+    #[test]
+    fn one_sync_per_app_at_a_time() {
+        let syncs = std::sync::Arc::new(AppSyncs::default());
+        let first = syncs.start(1).expect("first sync starts");
+        assert!(syncs.start(1).is_none());
+        let other = syncs.start(2).expect("another app syncs in parallel");
+        assert!(syncs.status(1).running_since.is_some());
+        first.finish(&Err("GitHub API returned 403".to_string()));
+        let status = syncs.status(1);
+        assert!(status.running_since.is_none());
+        assert_eq!(
+            status.last_error.unwrap().message,
+            "GitHub API returned 403"
+        );
+
+        let again = syncs.start(1).expect("free again");
+        drop(again);
+        assert!(syncs.start(1).is_some_and(|g| {
+            g.finish(&Ok(()));
+            true
+        }));
+        assert!(syncs.status(1).last_error.is_none());
+        drop(other);
+        assert!(syncs.status(2).running_since.is_none());
+    }
+
+    /// The old file goes only after the row names the new one; a row deleted meanwhile takes the
+    /// new file with it (qa-catalog #4, #7).
+    #[tokio::test]
+    async fn the_cached_file_is_replaced_after_the_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = |name: &str| dir.path().join(name).to_str().unwrap().to_string();
+        for name in ["old.apk", "new.apk"] {
+            std::fs::File::create(dir.path().join(name)).unwrap();
+        }
+        replace_cached_file(true, &path("new.apk"), Some(&path("old.apk"))).await;
+        assert_eq!(files_in(dir.path()), ["new.apk"]);
+        replace_cached_file(true, &path("new.apk"), Some(&path("new.apk"))).await;
+        assert_eq!(files_in(dir.path()), ["new.apk"]);
+        std::fs::File::create(dir.path().join("newer.apk")).unwrap();
+        replace_cached_file(false, &path("newer.apk"), Some(&path("new.apk"))).await;
+        assert_eq!(files_in(dir.path()), ["new.apk"]);
     }
 }

@@ -58,6 +58,12 @@ pub struct AppState {
     /// The FCM sender (handy step 7), `None` when `FCM_SERVICE_ACCOUNT_FILE` isn't set or the key
     /// isn't usable - then every phone uses the SSE stream. See `fcm` and `push`.
     pub fcm: Option<fcm::SharedSender>,
+    /// Which catalog apps are syncing and how each one's last sync ended - one sync per app at a
+    /// time (`handlers::tracked_apps::AppSyncs`).
+    pub app_syncs: std::sync::Arc<handlers::tracked_apps::AppSyncs>,
+    /// Where catalog apps' cached APKs are stored (`data/tracked_apps/<app id>/`; a temp dir in
+    /// tests) - see `handlers::tracked_apps`.
+    pub tracked_apps_dir: std::sync::Arc<std::path::PathBuf>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -146,6 +152,10 @@ async fn main() {
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
         wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
         fcm,
+        app_syncs: Default::default(),
+        tracked_apps_dir: std::sync::Arc::new(std::path::PathBuf::from(
+            handlers::tracked_apps::TRACKED_APPS_DIR,
+        )),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
@@ -159,6 +169,8 @@ async fn main() {
     tokio::task::spawn(handlers::system_update::run_scheduled_app_update_check(
         state.clone(),
     ));
+    // Partial downloads a crash left behind - before the scheduled sync can start a new one.
+    handlers::tracked_apps::remove_partial_downloads(&state.tracked_apps_dir).await;
     tokio::task::spawn(handlers::tracked_apps::run_scheduled_tracked_app_sync(
         state.clone(),
     ));
@@ -366,11 +378,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         )
         .route(
             "/apps/tracked/{id}",
-            get(handlers::tracked_apps::view_tracked_app),
-        )
-        .route(
-            "/apps/tracked/{id}/edit",
-            post(handlers::tracked_apps::update_tracked_app),
+            // The Details form posts to the page's own path, so a refused save (400, the page
+            // again) keeps the scroll position and the next form leaves from the right path.
+            get(handlers::tracked_apps::view_tracked_app)
+                .post(handlers::tracked_apps::update_tracked_app),
         )
         .route(
             "/apps/tracked/{id}/upload",

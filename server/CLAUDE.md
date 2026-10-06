@@ -241,7 +241,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - `GET /api/devices/wallpapers/{hash}` (bearer) - a wallpaper image, only when ticked for this device
 - `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204
 - `POST /api/devices/dns-events` (bearer) - blocked domains, stored only while the phone's log is on (default off) -> 204
-- `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download, scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above
+- `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download; the check is scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above. The download itself isn't scoped yet (any enrolled phone, any catalog id; `docs/design/13-app-downloads.md`)
 
 ## Architecture change in progress (2026-08-07): on-device DNS filtering + embedded tsnet
 
@@ -295,28 +295,38 @@ overwritten. So is the MollySocket installer (`deploy/install_mollysocket.sh`) a
 distributor it relied on (DEPLOY.md has the removal steps for an existing MollySocket). Principle: collect only what's
 needed to manage the phone, delete on a schedule, never store notification or message content.
 
-## Catalog downloads (2026-10-06, `handlers/tracked_apps.rs`, migration `0042_tracked_app_asset.sql`)
+## Catalog downloads (2026-10-06, `handlers/tracked_apps.rs`, migration `0042_tracked_app_asset.sql`, QA `docs/design/qa-catalog.md`)
 
 - **Asset filter**: blank = first `.apk`; a pattern starting with `^` is a regular expression on the asset name
-  (`regex` crate, `AssetFilter`), e.g. `^\d+\.apk$` for Element X's universal APK (named after its versionCode); any
-  other pattern is a substring, as before. The add and edit forms refuse an invalid regex (400, nothing written, the
-  entered values kept, the error by the field and that field `autofocus`ed; the add form posts to its own path).
+  (`regex` crate, `AssetFilter`, compiled size <= 1 MiB), e.g. `^\d+\.apk$` for Element X's universal APK (named after
+  its versionCode); any other pattern is a substring, as before. Whatever the filter, only an `.apk` (any case) is
+  picked - an `.aab` passes the ZIP check but can't install. The add and edit forms refuse an invalid or too complex
+  regex and any filter over 256 chars (400, nothing written, the entered values kept, the error by the field and that
+  field `autofocus`ed). Both forms post to their page's own path (`/apps/tracked/new`, `/apps/tracked/{id}` - there
+  is no `/edit` any more), so the 400 page keeps the scroll position.
 - **Status card** shows the cached file, "202609040.apk (326.1 MB)" (`tracked_apps.latest_release_asset_name`/`_size`,
   set by a sync or an upload; rows synced earlier show nothing until the next sync).
-- **Sync download** is streamed to `<file>.<random>.part` in the app's dir and renamed when complete (ZIP header and
-  GitHub's size checked as it streams); the temp file goes on any failure, also when the future is dropped
-  (`TempDownload`'s `Drop`), and `.part` files untouched for 2 h (a crash) after the next successful sync. Limits: an
-  asset GitHub lists over 1 GB is refused before downloading (also a larger Content-Length, or once the stream passes
-  1 GB), 60 s without data fails, 30 min overall. "Check now" runs the sync in its own task, so a download finishes
-  even when the browser gives up.
+- **One sync per app** (`AppSyncs`, in memory, `AppState.app_syncs`): `sync_app` takes the app's guard or answers
+  "already running"; the row is read under it, so a slower sync can't roll a newer cached release back. "Check now"
+  starts the sync in its own task, waits up to 10 s, then redirects back to the app's page, which says a check is
+  running or shows how the last one (hourly or manual) failed. The hourly loop skips an app that is syncing.
+- **Sync download** is streamed to `<file>.<random>.part` in the app's dir (`AppState.tracked_apps_dir`,
+  `data/tracked_apps/<id>/`, a temp dir in tests) and renamed when complete (ZIP header and GitHub's size checked as
+  it streams); the temp file goes on any failure, also when the future is dropped (`TempDownload`'s `Drop`); `.part`
+  files a crash left are deleted at startup, before the scheduler (`remove_partial_downloads`). Limits: an asset
+  GitHub lists over 1 GB is refused before downloading (also a larger Content-Length, or once the stream passes 1 GB),
+  60 s without data fails, 30 min overall. The row's UPDATE comes first, then the old file is removed
+  (`replace_cached_file`; an UPDATE that matched no row - the app deleted meanwhile - removes the new file). Deleting an
+  app removes its whole directory. A manual upload follows the same order and redirects back to the page.
 - **Device API** `GET /api/devices/apps/{id}/download` streams the file from disk (64 KiB chunks) with
-  `Content-Type` and `Content-Length` as before (the launcher's progress needs the length); no Range support.
+  `Content-Type` and `Content-Length` as before (the launcher's progress needs the length); no Range support. It checks
+  only the bearer token, not the device's selection - scoping and Range are designed in `docs/design/13-app-downloads.md`.
 - New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth and brightness on
   (`devices::DEFAULT_QUICK_CONTROLS`, mask 7, set in `insert_device_with_policy`); existing devices keep theirs.
 - **Package-name backfill** (`device_api::status`): after allowlisting the backfilled app it nudges the phone
   (`command_notify`, so SSE and FCM), which otherwise kept the app hidden and suspended until its next backstop sync
-  (found on the emulator). Its "previous report" query orders by `reported_at DESC, id DESC`, so two reports in
-  the same second no longer compare a report with itself.
+  (found on the emulator). It compares with the previous report read before this one is stored (the same `previous`
+  the security log uses).
 - Tests: `tracked_apps::tests`, `src/tests/tracked_apps.rs`, `a_new_device_starts_with_all_kid_settings_on`.
 
 ## Current status (2026-08-08, `v0.13.0`)

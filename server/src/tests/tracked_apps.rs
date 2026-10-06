@@ -92,11 +92,16 @@ async fn an_invalid_asset_regex_is_refused_on_edit_with_the_values_kept() {
         r"Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$)"
     ));
     assert!(!html.contains("autofocus"));
+    // The Details form posts to the page's own path (qa-catalog #3): a refused save comes back
+    // at the same path, so scroll-restore keeps the position and later forms redirect right.
+    assert!(html.contains(&format!(
+        r#"<form method="post" action="/apps/tracked/{id}">"#
+    )));
 
     let refused = app
         .request_form(
             Method::POST,
-            &format!("/apps/tracked/{id}/edit"),
+            &format!("/apps/tracked/{id}"),
             Some(&cookie),
             &[
                 ("name", "Element"),
@@ -111,6 +116,7 @@ async fn an_invalid_asset_regex_is_refused_on_edit_with_the_values_kept() {
     assert!(html.contains(r#"value="Element""#));
     assert!(html.contains(r#"value="^[0-9""#));
     assert!(html.contains("autofocus"));
+    assert!(html.contains("/static/scroll-restore.js"));
     let (name, pattern): (String, Option<String>) =
         sqlx::query_as("SELECT name, asset_pattern FROM tracked_apps WHERE id = ?")
             .bind(id)
@@ -126,7 +132,7 @@ async fn an_invalid_asset_regex_is_refused_on_edit_with_the_values_kept() {
     let saved = app
         .request_form(
             Method::POST,
-            &format!("/apps/tracked/{id}/edit"),
+            &format!("/apps/tracked/{id}"),
             Some(&cookie),
             &[
                 ("name", "Element X"),
@@ -309,4 +315,142 @@ async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
     ]))
     .await;
     assert!(nudges.try_recv().is_err());
+}
+
+/// One sync per app (qa-catalog #1): "Check now" while a sync of the app runs starts no second
+/// one and comes back to the app's page (its own path), which says it is already running; a
+/// failed sync is shown there afterwards.
+#[tokio::test]
+async fn check_now_while_a_sync_runs_says_so() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id = insert_app(&app, "Element X", Some(r"^\d+\.apk$")).await;
+
+    let running = app.state.app_syncs.start(id).expect("no sync runs yet");
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/apps/tracked/{id}/check"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.location(), Some(format!("/apps/tracked/{id}").as_str()));
+    let html = app
+        .get_page(&format!("/apps/tracked/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        html.contains("A check of this app is already running"),
+        "{html}"
+    );
+
+    running.finish(&Err("GitHub API returned 403 Forbidden".to_string()));
+    let html = app
+        .get_page(&format!("/apps/tracked/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("A check of this app is already running"));
+    assert!(
+        html.contains("failed: GitHub API returned 403 Forbidden"),
+        "{html}"
+    );
+
+    let unknown = app
+        .request_form(Method::POST, "/apps/tracked/9999/check", Some(&cookie), &[])
+        .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+}
+
+/// A manual upload is stored under the app's directory, the row then names it (and its file
+/// name and size), and only then is the old file removed (qa-catalog #7); the answer redirects
+/// back to the page. Deleting the app removes its whole directory (#4).
+#[tokio::test]
+async fn upload_replaces_the_file_after_the_update_and_delete_removes_the_dir() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, source_type) \
+         VALUES ('Notes', '', '', 'manual') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let app_dir = app.state.tracked_apps_dir.join(id.to_string());
+
+    let upload = |label: &'static str, bytes: &'static [u8]| {
+        let boundary = "XBOUNDARYX";
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"release_label\"\r\n\r\n\
+                 {label}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"apk\"; \
+                 filename=\"notes-{label}.apk\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        Request::builder()
+            .method(Method::POST)
+            .uri(format!("/apps/tracked/{id}/upload"))
+            .header(header::COOKIE, cookie.clone())
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap()
+    };
+
+    let first = app.send(upload("1.0", b"PK\x03\x04first")).await;
+    assert_eq!(
+        first.location(),
+        Some(format!("/apps/tracked/{id}").as_str()),
+        "{}",
+        first.text()
+    );
+    let first_path: String =
+        sqlx::query_scalar("SELECT latest_release_file_path FROM tracked_apps WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(std::path::Path::new(&first_path).starts_with(&app_dir));
+    assert_eq!(std::fs::read(&first_path).unwrap(), b"PK\x03\x04first");
+
+    let second = app.send(upload("1.1", b"PK\x03\x04second!")).await;
+    assert!(second.status.is_redirection(), "{}", second.text());
+    let (path, name, size): (String, Option<String>, Option<i64>) = sqlx::query_as(
+        "SELECT latest_release_file_path, latest_release_asset_name, latest_release_asset_size \
+         FROM tracked_apps WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!((name.as_deref(), size), (Some("notes-1.1.apk"), Some(11)));
+    assert!(!std::path::Path::new(&first_path).exists());
+    assert_eq!(std::fs::read(&path).unwrap(), b"PK\x03\x04second!");
+    let page = app
+        .get_page(&format!("/apps/tracked/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains("File: <strong>notes-1.1.apk (0.0 MB)</strong>"),
+        "{page}"
+    );
+
+    // A stray file (e.g. a download finishing after the delete) goes with the directory.
+    std::fs::write(app_dir.join("late.apk"), b"PK").unwrap();
+    let deleted = app
+        .request_form(
+            Method::POST,
+            &format!("/apps/tracked/{id}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(deleted.location(), Some("/apps"));
+    assert!(!app_dir.exists());
 }

@@ -114,6 +114,8 @@ impl TestApp {
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
             fcm,
+            app_syncs: Default::default(),
+            tracked_apps_dir: std::sync::Arc::new(dir.path().join("tracked_apps")),
         };
 
         TestApp {

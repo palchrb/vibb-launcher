@@ -653,6 +653,9 @@ pub async fn status(
     .await
     .ok();
 
+    // The package-name backfill below compares against the same previous report (read before
+    // this one was stored, so a failed INSERT or two reports in one second can't confuse it).
+    let previous_apps_json: Option<String> = previous.as_ref().and_then(|(apps, _)| apps.clone());
     log_play_events(&state, device.id, &report, previous).await;
 
     if let Some(push) = report
@@ -765,16 +768,7 @@ pub async fn status(
         .unwrap_or_default();
 
         if let [tracked_app_id] = awaiting_package_name.as_slice() {
-            let previous_json: Option<String> = sqlx::query_scalar(
-                "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
-                 ORDER BY reported_at DESC, id DESC LIMIT 1 OFFSET 1",
-            )
-            .bind(device.id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-            let previously_installed: std::collections::HashSet<String> = previous_json
+            let previously_installed: std::collections::HashSet<String> = previous_apps_json
                 .as_deref()
                 .and_then(|j| serde_json::from_str::<Vec<InstalledApp>>(j).ok())
                 .unwrap_or_default()

@@ -20,7 +20,7 @@
 
     <div class="card">
         <h2>Details</h2>
-        <form method="post" action="/apps/tracked/{{ app.id }}/edit">
+        <form method="post" action="/apps/tracked/{{ app.id }}">
             <label for="name">Name</label>
             <input type="text" id="name" name="name" value="{{ details.name }}" required>
 
@@ -35,6 +35,7 @@
             {% endif %}
             <input type="text" id="asset_pattern" name="asset_pattern" value="{{ details.asset_pattern }}" placeholder="Leave blank to use the first .apk found"{% if details.error.is_some() %} autofocus{% endif %}>
             <p class="hint">Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$)</p>
+            <p class="hint">Only .apk files are picked.</p>
             {% endif %}
 
             <button type="submit">Save</button>
@@ -71,6 +72,11 @@
 
     {% if app.source_type == "github" %}
     <div class="card">
+        {% if let Some(since) = sync_running_since %}
+        <p>A check of this app is already running (started {{ since }} UTC) - a large download can take several minutes. Reload the page to see the result.</p>
+        {% else if let Some(failure) = sync_failure %}
+        <div class="error">The last check ({{ failure.at }} UTC) failed: {{ failure.message }}</div>
+        {% endif %}
         <form method="post" action="/apps/tracked/{{ app.id }}/check">
             <button type="submit">Check now</button>
         </form>
