@@ -90,6 +90,13 @@ class KidVpnService : VpnService() {
                 .addRoute(FAKE_DNS_SERVER, 32)
                 .setMtu(MTU)
                 .setBlocking(true)
+                // Design 13 §1: a VPN is metered by default (Q+ target), which made the whole
+                // phone metered on home Wi-Fi - our Wi-Fi-only downloads and Play's/other apps'
+                // unmetered jobs never ran. Not metered here = the underlying network decides
+                // (null underlying = the system default network, metered |= underlying), so
+                // cellular stays metered. Never set the underlying networks
+                // (VpnMeteredInvariantTest).
+                .setMetered(false)
             val established = builder.establish()
             if (established == null) {
                 // Happens if the user has since revoked VPN permission, or another VPN grabbed it

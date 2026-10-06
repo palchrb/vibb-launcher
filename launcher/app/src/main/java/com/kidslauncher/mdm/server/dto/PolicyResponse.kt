@@ -95,6 +95,11 @@ data class PolicyResponse(
     /** The blocked-domain log (cleanup 2026-10-06): only while this is on does the launcher record
      * and report blocked domains. Missing (an older server) = **off**. */
     val dnsLogEnabled: Boolean = false,
+    /** "App updates only on Wi-Fi" (design 13): catalog apps download on an unmetered network
+     * only, our own update after 3 days on any non-roaming one. Missing or `null` (an older
+     * server) = **off**, as before; nullable so nothing the server sends here can fail the policy.
+     * The offline override and the pause don't lift it - it guards data, not the kid. */
+    val appUpdatesWifiOnly: Boolean? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

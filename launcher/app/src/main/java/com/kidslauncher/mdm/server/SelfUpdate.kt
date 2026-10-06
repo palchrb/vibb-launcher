@@ -45,8 +45,10 @@ private const val RECENT_EMERGENCY_CALL_MS = 10 * 60_000L
  * The launcher's own update between download and commit (handy step 11; the rules are the pure
  * SelfUpdatePlan.kt): the pending APK lives in `noBackupFilesDir/self_update` (not the
  * OS-reclaimable cache), the screen state feeds the window gate, and a while-idle alarm wakes a
- * sync when the gate could pass with the screen still off. The download and the commit themselves
- * run inside `performMdmSync` (MdmSyncWorker.kt), under its mutex.
+ * sync when the gate could pass with the screen still off. The download runs in `AppDownloads`
+ * (design 13: Wi-Fi only for 3 days when the parent's switch is on, resumable), which moves the
+ * finished file in here; the commit runs inside `performMdmSync` (MdmSyncWorker.kt), under its
+ * mutex and `AppDownloads.installMutex`.
  */
 object SelfUpdate {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -169,7 +171,9 @@ object SelfUpdate {
     }
 
     /** Deletes every file in the directory that isn't the pending update's (a finished install's,
-     * a dropped one's). Never the file of an install in flight - it is still the pending one. */
+     * a dropped one's). Never the file of an install in flight - it is still the pending one.
+     * Synchronized with the download runner moving a finished download in (design 13). */
+    @Synchronized
     fun cleanup(context: Context) {
         val keep = TrackedAppUpdateState.pendingEntry()?.second?.fileName
         dir(context).listFiles().orEmpty().filter { it.name != keep }.forEach {

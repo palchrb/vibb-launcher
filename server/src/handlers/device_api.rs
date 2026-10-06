@@ -232,6 +232,7 @@ pub(crate) async fn build_policy(
         update_fence: policy.update_fence,
         notification_auto_cancel: policy.notification_auto_cancel,
         dns_log_enabled: policy.dns_log_enabled,
+        app_updates_wifi_only: policy.app_updates_wifi_only,
         override_pin_hash: policy.override_pin_hash,
         override_pin_salt: policy.override_pin_salt,
         quick_controls_mask: policy.quick_controls_mask,
@@ -598,6 +599,11 @@ pub async fn status(
         .notification_cancels
         .as_ref()
         .and_then(crate::kiosk_escapes::sanitize_notification_cancels);
+    // Catalog downloads (design 13): known fields only, capped.
+    let app_downloads_json = report
+        .app_downloads
+        .as_ref()
+        .and_then(crate::app_downloads::sanitize);
 
     // The previous report, for the security log below (install mode started, new apps).
     let previous: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
@@ -619,8 +625,8 @@ pub async fn status(
           call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
           install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json, \
           screen_timeout_seconds, update_fence_json, notification_cancels_json, \
-          backup_service_enabled) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          backup_service_enabled, app_downloads_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -649,6 +655,7 @@ pub async fn status(
     .bind(&update_fence_json)
     .bind(&notification_cancels_json)
     .bind(report.backup_service_enabled)
+    .bind(&app_downloads_json)
     .execute(&state.db)
     .await
     .ok();
@@ -981,37 +988,75 @@ pub async fn commands_stream(
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(state.config.sse_keepalive_secs)))
 }
 
-/// Every enabled tracked app that has a synced release AND is actually scoped to this device -
-/// either explicitly selected (`device_tracked_apps`) or the launcher itself (`is_launcher`,
-/// always included for every device regardless of selection - see migrations/0013's doc comment).
-/// `download_url` is computed per-row rather than a fixed string, since there's one download
-/// endpoint per app id. `release_tag` is composited with the asset id when one's cached
-/// (GitHub-sourced apps) - see `handlers::tracked_apps::sync_one_app`'s doc comment for why a
-/// rolling tag alone can't be trusted to signal "this is a new build" client-side.
-pub async fn tracked_app_updates(
-    State(state): State<AppState>,
-    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
-) -> impl IntoResponse {
-    let apps = sqlx::query_as::<_, TrackedApp>(
+/// The tracked apps this device may get: enabled, with a cached release, and either the launcher
+/// itself (`is_launcher`, always included - see migrations/0013's doc comment) or selected for this
+/// device (`device_tracked_apps`). One query for the list and the download (design 13 QA #4), so a
+/// device token can only fetch what its own list advertises; `only` narrows it to one app.
+async fn scoped_apps(
+    state: &AppState,
+    device_id: i64,
+    only: Option<i64>,
+) -> Result<Vec<TrackedApp>, sqlx::Error> {
+    sqlx::query_as::<_, TrackedApp>(
         "SELECT ta.* FROM tracked_apps ta \
          WHERE ta.enabled = 1 AND ta.latest_release_tag IS NOT NULL \
          AND (ta.is_launcher = 1 OR EXISTS ( \
              SELECT 1 FROM device_tracked_apps dta \
-             WHERE dta.device_id = ? AND dta.tracked_app_id = ta.id))",
+             WHERE dta.device_id = ? AND dta.tracked_app_id = ta.id)) \
+         AND (? IS NULL OR ta.id = ?)",
     )
-    .bind(device.id)
+    .bind(device_id)
+    .bind(only)
+    .bind(only)
     .fetch_all(&state.db)
     .await
-    .unwrap_or_default();
+}
+
+/// `release_tag` as the device sees it: composited with the asset id when one's cached
+/// (GitHub-sourced apps) - see `handlers::tracked_apps::sync_one_app`'s doc comment for why a
+/// rolling tag alone can't be trusted to signal "this is a new build" client-side.
+fn device_release_tag(app: &TrackedApp) -> Option<String> {
+    let tag = app.latest_release_tag.as_ref()?;
+    Some(match app.latest_release_asset_id {
+        Some(asset_id) => format!("{tag}@{asset_id}"),
+        None => tag.clone(),
+    })
+}
+
+/// [device_release_tag] as the `X-Release-Tag` header of a download: every byte outside visible
+/// ASCII, and `%` itself, percent-encoded (a manual upload's label may hold spaces or letters like
+/// "ø"). The launcher encodes the tag it expects the same way and compares the strings.
+pub(crate) fn release_tag_header(tag: &str) -> String {
+    let mut out = String::with_capacity(tag.len());
+    for byte in tag.bytes() {
+        if (0x21..=0x7e).contains(&byte) && byte != b'%' {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// The header naming the release a download response carries (design 13 QA #2): the phone checks
+/// it against the release it asked for, since a sync may have replaced the file in between.
+pub const RELEASE_TAG_HEADER: &str = "x-release-tag";
+
+/// Every tracked app this device may get ([scoped_apps]). `download_url` is computed per-row, since
+/// there's one download endpoint per app id; `sha256` is the cached file's hash (`null` until the
+/// server has computed it) - the phone checks the whole download against it.
+pub async fn tracked_app_updates(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+) -> impl IntoResponse {
+    let apps = scoped_apps(&state, device.id, None)
+        .await
+        .unwrap_or_default();
 
     let updates: Vec<TrackedAppUpdate> = apps
         .into_iter()
         .filter_map(|app| {
-            let tag = app.latest_release_tag?;
-            let release_tag = match app.latest_release_asset_id {
-                Some(asset_id) => format!("{tag}@{asset_id}"),
-                None => tag,
-            };
+            let release_tag = device_release_tag(&app)?;
             Some(TrackedAppUpdate {
                 id: app.id,
                 name: app.name,
@@ -1019,6 +1064,7 @@ pub async fn tracked_app_updates(
                 release_tag,
                 download_url: format!("/api/devices/apps/{}/download", app.id),
                 is_launcher: app.is_launcher,
+                sha256: app.latest_release_sha256,
             })
         })
         .collect();
@@ -1026,46 +1072,62 @@ pub async fn tracked_app_updates(
     Json(updates).into_response()
 }
 
+/// The cached APK of a tracked app this device may get ([scoped_apps] - anything else is a 404),
+/// served by tower-http's `ServeFile` (design 13 §5): streamed from disk in 64 KiB chunks, with
+/// `Content-Length`, a strong `ETag` (mtime + size), a single `Range` answered with 206 and
+/// `Content-Range`, `If-Match` (412 when the file changed) and 416 past the end. `X-Release-Tag`
+/// names the release the file belongs to - read from the same row as its path, so the two always
+/// match. A sync replacing the file meanwhile is harmless: the old one is either served whole or
+/// gone (404, the phone asks for the list again).
 pub async fn tracked_app_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Extension(AuthedDevice(_device)): Extension<AuthedDevice>,
-) -> impl IntoResponse {
-    let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.db)
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    request: axum::extract::Request,
+) -> axum::response::Response {
+    let app = match scoped_apps(&state, device.id, Some(id)).await {
+        Ok(apps) => apps.into_iter().next(),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "couldn't read the tracked app");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let Some(app) = app else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (Some(file_path), Some(tag)) = (
+        app.latest_release_file_path.clone(),
+        device_release_tag(&app),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let response = match tower_http::services::ServeFile::new(&file_path)
+        .try_call(request)
         .await
-        .ok()
-        .flatten();
-
-    let Some(file_path) = app.and_then(|a| a.latest_release_file_path) else {
-        return StatusCode::NOT_FOUND.into_response();
+    {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::error!(device_id = device.id, app_id = id, %err, "couldn't serve the APK");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     };
-
-    // Streamed from disk in 64 KiB chunks, never read into memory whole (a catalog APK can be
-    // hundreds of MB). The open handle keeps serving this file even if a sync replaces it
-    // meanwhile. Content-Length is set from the file, as before: the launcher's progress reports
-    // need it. No Range support (the launcher never sends one), so always the whole file.
-    let Ok(file) = tokio::fs::File::open(&file_path).await else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(metadata) = file.metadata().await else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    (
-        [
-            (
-                header::CONTENT_TYPE,
-                header::HeaderValue::from_static("application/vnd.android.package-archive"),
-            ),
-            (
-                header::CONTENT_LENGTH,
-                header::HeaderValue::from(metadata.len()),
-            ),
-        ],
-        axum::body::Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file, 64 * 1024)),
-    )
-        .into_response()
+    let mut response = response.map(axum::body::Body::new);
+    if response.status() == StatusCode::NOT_FOUND {
+        return response;
+    }
+    let headers = response.headers_mut();
+    // ServeFile guesses the type from the extension on the file's own responses (200, 206, 416).
+    if headers.contains_key(header::CONTENT_TYPE) {
+        headers.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/vnd.android.package-archive"),
+        );
+    }
+    if let Ok(value) = header::HeaderValue::from_str(&release_tag_header(&tag)) {
+        headers.insert(RELEASE_TAG_HEADER, value);
+    }
+    response
 }
 
 /// A contact photo by its hash (`call_policy.contacts[].photo`). Only for a contact on the

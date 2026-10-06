@@ -85,6 +85,16 @@ class AppInstallReceiver : BroadcastReceiver() {
             }
         }
 
+        // The download record of this release is done either way (design 13 QA #4; the runner
+        // removes it at the commit already - this covers a record written again meanwhile).
+        if (appId != null && releaseTag != null) {
+            try {
+                AppDownloadStore.remove(context, appId, releaseTag)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't clear the download record of $installKey", e)
+            }
+        }
+
         // Any other app's file is always safe to clean up immediately. isLauncher comes from the
         // server (TrackedAppUpdate.isLauncher), not a packageName == context.packageName
         // comparison - a tracked app's package name is optional now (see kid-phone-server's

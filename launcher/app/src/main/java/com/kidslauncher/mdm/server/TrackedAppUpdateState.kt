@@ -46,6 +46,8 @@ data class TrackedAppState(
  * present or unique across tracked apps.
  */
 object TrackedAppUpdateState {
+    // The mutators are @Synchronized (design 13 §4): the sync and the download runner both write,
+    // each one a read-modify-write of the whole blob.
 
     fun load(): Map<String, TrackedAppState> {
         val raw = LauncherPreferences.mdm().trackedAppUpdateState() ?: return emptyMap()
@@ -72,6 +74,7 @@ object TrackedAppUpdateState {
             .commit()
     }
 
+    @Synchronized
     fun recordInstalled(context: Context, appKey: String, releaseTag: String) {
         val state = load().toMutableMap()
         state[appKey] = TrackedAppState(lastInstalledTag = releaseTag)
@@ -80,6 +83,7 @@ object TrackedAppUpdateState {
 
     /** [keepPending]: the launcher's verified APK stays for a retry after the backoff (a
      * transient failure, qa-11-code #4) instead of being downloaded again. */
+    @Synchronized
     fun recordFailed(context: Context, appKey: String, releaseTag: String, keepPending: Boolean = false) {
         val state = load().toMutableMap()
         val current = state[appKey]
@@ -95,6 +99,7 @@ object TrackedAppUpdateState {
 
     /** The launcher's [releaseTag] is refused for good (until the server advertises another): the
      * pending APK is dropped (the caller deletes the file). */
+    @Synchronized
     fun recordRefused(context: Context, appKey: String, releaseTag: String) {
         val state = load().toMutableMap()
         val current = state[appKey]
@@ -130,6 +135,7 @@ object TrackedAppUpdateState {
      * somehow lost - the timeout in `checkForTrackedAppUpdates` reclaims it instead of blocking
      * retries forever.
      */
+    @Synchronized
     fun recordAttemptStarted(context: Context, appKey: String) {
         val state = load().toMutableMap()
         val current = state[appKey] ?: TrackedAppState()
@@ -142,6 +148,7 @@ object TrackedAppUpdateState {
         load().entries.firstNotNullOfOrNull { (key, state) -> state.pending?.let { key to it } }
 
     /** Keeps [pending] on [appKey]'s row (and ends its attempt); any other row's pending is dropped. */
+    @Synchronized
     fun recordPending(context: Context, appKey: String, pending: PendingSelfUpdate) {
         val state = load().mapValues { (_, value) -> value.copy(pending = null) }.toMutableMap()
         val current = state[appKey] ?: TrackedAppState()
@@ -150,6 +157,7 @@ object TrackedAppUpdateState {
     }
 
     /** Drops the pending update on every row (the caller deletes the file). */
+    @Synchronized
     fun dropPending(context: Context) {
         val state = load()
         if (state.values.none { it.pending != null }) return
@@ -161,6 +169,7 @@ object TrackedAppUpdateState {
      * where nothing else will ever resolve this attempt otherwise. Deliberately doesn't set
      * `lastFailedTag` itself - a transient download failure should still be retried next cycle,
      * not treated as a sticky "don't retry this release" the way a real install failure is. */
+    @Synchronized
     fun clearAttempt(context: Context, appKey: String) {
         val state = load().toMutableMap()
         val current = state[appKey] ?: return

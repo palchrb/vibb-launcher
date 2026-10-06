@@ -283,6 +283,8 @@ class Application : android.app.Application() {
         try {
             com.kidslauncher.mdm.server.UpdateFence.init(this)
             com.kidslauncher.mdm.server.SelfUpdate.init(this)
+            // Catalog downloads (design 13): sweep what no record needs, resume what waits.
+            com.kidslauncher.mdm.server.AppDownloads.init(this)
             com.kidslauncher.mdm.lock.CameraLock.init(this)
         } catch (e: Exception) {
             android.util.Log.e("Application", "Update fence/self-update init failed, continuing", e)

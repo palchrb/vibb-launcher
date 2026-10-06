@@ -285,6 +285,10 @@ struct DeviceDetailTemplate {
     backup_service_enabled: Option<bool>,
     /// "Launcher crashes" card (cleanup 2026-10-06): the newest crash reports.
     crashes: Vec<crate::crashes::DeviceCrash>,
+    /// Apps card (design 13): `device_policy.app_updates_wifi_only`, and the last report's line
+    /// about the phone's network.
+    app_updates_wifi_only: bool,
+    app_downloads_line: Option<String>,
 }
 
 /// The kiosk app block switch on the "Push and Play" card (handy step 9): with it on, kiosk mode
@@ -313,6 +317,42 @@ pub async fn update_kiosk_block(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// "App updates only on Wi-Fi" on the Apps card (design 13): catalog apps download on an
+/// unmetered network only, the launcher's own update after 3 days on any non-roaming one. An
+/// auto-saving form, so a missing checkbox is off; back to the page (scroll-restore keeps the
+/// place); 404 for an unknown device; nudges the phone.
+pub async fn update_app_updates(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let result = sqlx::query(
+        "UPDATE device_policy SET app_updates_wifi_only = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
+    )
+    .bind(form.contains_key("app_updates_wifi_only"))
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(r) if r.rows_affected() == 0 => {
+            (StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&format!("/devices/{id}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't save the app update switch");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Couldn't save - nothing was changed.",
@@ -810,6 +850,20 @@ pub async fn view_device(
         .map(|(tracked_app_id, percent, failed)| (tracked_app_id, (percent, failed)))
         .collect();
 
+    // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
+    // A fresh progress row above still wins for the live percentage.
+    let downloads = crate::app_downloads::parse(
+        latest_status
+            .as_ref()
+            .and_then(|s| s.app_downloads_json.as_deref()),
+    );
+    let download_of = |tracked_app_id: i64| {
+        downloads
+            .as_ref()
+            .and_then(|d| d.entry(tracked_app_id))
+            .filter(|_| !install_progress.contains_key(&tracked_app_id))
+    };
+
     let mut apps: Vec<UnifiedAppRow> = Vec::new();
     let mut seen_packages: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -823,11 +877,14 @@ pub async fn view_device(
         let tracked_match = all_tracked
             .iter()
             .find(|t| !t.package_name.is_empty() && t.package_name == app.package_name);
+        let update = tracked_match.and_then(|t| download_of(t.id));
         apps.push(UnifiedAppRow {
             status_label: if app.preinstalled {
                 "Preinstalled".to_string()
             } else if app.installer.as_deref() == Some(crate::play::PLAY_STORE) {
                 "Installed from Play".to_string()
+            } else if let Some(update) = update {
+                crate::app_downloads::update_label(update)
             } else {
                 "Installed".to_string()
             },
@@ -858,7 +915,10 @@ pub async fn view_device(
         let (status_label, is_installing, install_failed) = match progress {
             Some((_, true)) => ("Install failed".to_string(), false, true),
             Some((percent, false)) => (format!("Installing {percent}%"), true, false),
-            None => ("Not installed".to_string(), false, false),
+            None => match download_of(t.id) {
+                Some(download) => (crate::app_downloads::new_app_label(download), false, false),
+                None => ("Not installed".to_string(), false, false),
+            },
         };
         apps.push(UnifiedAppRow {
             status_label,
@@ -883,7 +943,12 @@ pub async fn view_device(
         apps.insert(
             0,
             UnifiedAppRow {
-                status_label: "Installed".to_string(),
+                // The launcher row never shows a percentage: its download line always.
+                status_label: downloads
+                    .as_ref()
+                    .and_then(|d| d.entry(launcher.id))
+                    .map(crate::app_downloads::launcher_label)
+                    .unwrap_or_else(|| "Installed".to_string()),
                 is_installing: false,
                 install_failed: false,
                 checked: true,
@@ -901,6 +966,9 @@ pub async fn view_device(
         .map(|s| s.offline_override_used)
         .unwrap_or(false);
     let any_app_installing = apps.iter().any(|a| a.is_installing);
+    let app_downloads_line = downloads
+        .as_ref()
+        .and_then(crate::app_downloads::network_line);
     let policy_problem = latest_status
         .as_ref()
         .and_then(|s| s.policy_state.clone())
@@ -1013,6 +1081,8 @@ pub async fn view_device(
     Html(
         DeviceDetailTemplate {
             crashes,
+            app_updates_wifi_only: policy.app_updates_wifi_only,
+            app_downloads_line,
             time,
             push,
             lock,

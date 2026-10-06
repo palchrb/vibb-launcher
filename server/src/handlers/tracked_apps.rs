@@ -15,6 +15,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 use regex::{Regex, RegexBuilder};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -226,16 +227,29 @@ impl Drop for TempDownload {
     }
 }
 
+/// A finished download: its size and SHA-256 (lower-case hex).
+#[derive(Debug, PartialEq, Eq)]
+struct Downloaded {
+    size: u64,
+    sha256: String,
+}
+
+/// Lower-case hex of a SHA-256 digest.
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    hex::encode(digest.as_ref())
+}
+
 /// Streams an asset to `final_path` through a temp file next to it (`<final_path>.<random>.part`),
 /// renamed into place only once it is a complete APK: ZIP header, exactly `expected_size` bytes
 /// when GitHub lists one, never over [MAX_ASSET_BYTES]. A chunk that takes longer than `stall`
-/// fails the download. Nothing is held in memory beyond one chunk. Returns the bytes written.
+/// fails the download. Nothing is held in memory beyond one chunk. Returns the bytes written and
+/// their SHA-256, which the phones check the whole file against (design 13 QA #2).
 async fn stream_to_file(
     source: &mut impl ChunkSource,
     final_path: &str,
     expected_size: u64,
     stall: Duration,
-) -> Result<u64, String> {
+) -> Result<Downloaded, String> {
     let temp = TempDownload {
         path: format!("{final_path}.{}.part", random_label()),
         keep: false,
@@ -245,6 +259,7 @@ async fn stream_to_file(
         .map_err(|e| format!("can't create {}: {e}", temp.path))?;
     let mut head: Vec<u8> = Vec::with_capacity(4);
     let mut written: u64 = 0;
+    let mut digest = Sha256::new();
     loop {
         let chunk = tokio::time::timeout(stall, source.next_chunk())
             .await
@@ -273,6 +288,7 @@ async fn stream_to_file(
         file.write_all(&chunk)
             .await
             .map_err(|e| format!("can't write {}: {e}", temp.path))?;
+        digest.update(&chunk);
     }
     check_apk_download(&head, written, expected_size)?;
     file.flush().await.map_err(|e| e.to_string())?;
@@ -282,7 +298,10 @@ async fn stream_to_file(
         .await
         .map_err(|e| format!("can't move the download into place: {e}"))?;
     temp.keep();
-    Ok(written)
+    Ok(Downloaded {
+        size: written,
+        sha256: hex_digest(digest.finalize()),
+    })
 }
 
 /// "1 GB", for the messages about [MAX_ASSET_BYTES].
@@ -293,7 +312,7 @@ fn size_limit_text() -> String {
 /// Downloads `asset` to `final_path` (see [stream_to_file]): refused up front when GitHub lists it
 /// over [MAX_ASSET_BYTES]; fails when the server sends no data for [DOWNLOAD_STALL_TIMEOUT]. The
 /// overall cap ([DOWNLOAD_TOTAL_TIMEOUT]) is the caller's.
-async fn download_asset(asset: &GithubAsset, final_path: &str) -> Result<u64, String> {
+async fn download_asset(asset: &GithubAsset, final_path: &str) -> Result<Downloaded, String> {
     if asset.size > MAX_ASSET_BYTES {
         return Err(format!(
             "{} is {} MB, over the {} limit - not downloaded",
@@ -362,6 +381,70 @@ pub async fn remove_partial_downloads(root: &std::path::Path) {
             }
         }
     }
+}
+
+/// Fills in `latest_release_sha256` for cached files that predate it (migration 0043), one app at a
+/// time, hashed off the async threads. The row is only updated while it still names the hashed
+/// file, so a sync or upload meanwhile wins. Run once at startup in its own task; best-effort.
+pub async fn backfill_release_hashes(state: AppState) {
+    let rows: Vec<(i64, String)> = match sqlx::query_as(
+        "SELECT id, latest_release_file_path FROM tracked_apps \
+         WHERE latest_release_file_path IS NOT NULL AND latest_release_sha256 IS NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::warn!(%err, "can't list the cached files to hash");
+            return;
+        }
+    };
+    for (id, path) in rows {
+        let hashed = {
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || sha256_of_file(std::path::Path::new(&path))).await
+        };
+        let sha256 = match hashed {
+            Ok(Ok(sha256)) => sha256,
+            Ok(Err(err)) => {
+                tracing::warn!(app_id = id, %err, "can't hash the cached file");
+                continue;
+            }
+            Err(err) => {
+                tracing::warn!(app_id = id, %err, "hashing the cached file failed");
+                continue;
+            }
+        };
+        if let Err(err) = sqlx::query(
+            "UPDATE tracked_apps SET latest_release_sha256 = ? \
+             WHERE id = ? AND latest_release_file_path = ? AND latest_release_sha256 IS NULL",
+        )
+        .bind(&sha256)
+        .bind(id)
+        .bind(&path)
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!(app_id = id, %err, "can't store the cached file's hash");
+        }
+    }
+}
+
+/// SHA-256 (lower-case hex) of a file, read in 64 KiB pieces. Blocking.
+fn sha256_of_file(path: &std::path::Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(hex_digest(digest.finalize()))
 }
 
 /// Which apps are syncing right now, and how each one's last sync ended (shown on its page). One
@@ -505,26 +588,28 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
         .to_string_lossy()
         .into_owned();
     // Streamed to disk, never held in memory: Element X's universal APK is 326 MB.
-    let size = tokio::time::timeout(DOWNLOAD_TOTAL_TIMEOUT, download_asset(&asset, &file_path))
-        .await
-        .map_err(|_| {
-            format!(
-                "download of {} stopped after {} minutes",
-                asset.name,
-                DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
-            )
-        })??;
+    let downloaded =
+        tokio::time::timeout(DOWNLOAD_TOTAL_TIMEOUT, download_asset(&asset, &file_path))
+            .await
+            .map_err(|_| {
+                format!(
+                    "download of {} stopped after {} minutes",
+                    asset.name,
+                    DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
+                )
+            })??;
 
     let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = ?, \
          latest_release_file_path = ?, latest_release_asset_name = ?, \
-         latest_release_asset_size = ? WHERE id = ?",
+         latest_release_asset_size = ?, latest_release_sha256 = ? WHERE id = ?",
     )
     .bind(&release.tag_name)
     .bind(asset.id)
     .bind(&file_path)
     .bind(&asset.name)
-    .bind(i64::try_from(size).unwrap_or(i64::MAX))
+    .bind(i64::try_from(downloaded.size).unwrap_or(i64::MAX))
+    .bind(&downloaded.sha256)
     .bind(app.id)
     .execute(&state.db)
     .await;
@@ -915,15 +1000,18 @@ pub async fn upload_tracked_app_release(
         .await;
     }
 
+    let sha256 = hex_digest(Sha256::digest(&apk_bytes));
     let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = NULL, \
          latest_release_file_path = ?, latest_release_asset_name = ?, \
-         latest_release_asset_size = ?, last_checked_at = datetime('now') WHERE id = ?",
+         latest_release_asset_size = ?, latest_release_sha256 = ?, \
+         last_checked_at = datetime('now') WHERE id = ?",
     )
     .bind(&release_label)
     .bind(&file_path)
     .bind(&apk_name)
     .bind(apk_bytes.len() as i64)
+    .bind(&sha256)
     .bind(id)
     .execute(&state.db)
     .await
@@ -1363,9 +1451,18 @@ mod tests {
         let written = stream_to_file(&mut source, target, 19, STALL)
             .await
             .unwrap();
-        assert_eq!(written, 19);
+        assert_eq!(written.size, 19);
         assert_eq!(std::fs::read(target).unwrap(), b"PK\x03\x04rest-of-the-zip");
         assert_eq!(files_in(dir.path()), ["v1-14.apk"]);
+        // The hash of the whole file, as the phones check it (design 13 QA #2).
+        assert_eq!(
+            written.sha256,
+            hex_digest(Sha256::digest(b"PK\x03\x04rest-of-the-zip"))
+        );
+        assert_eq!(
+            sha256_of_file(std::path::Path::new(target)).unwrap(),
+            written.sha256
+        );
     }
 
     #[tokio::test]

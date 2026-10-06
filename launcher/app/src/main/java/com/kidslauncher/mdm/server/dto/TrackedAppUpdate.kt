@@ -21,4 +21,8 @@ data class TrackedAppUpdate(
     val releaseTag: String,
     val downloadUrl: String,
     val isLauncher: Boolean,
+    /** SHA-256 (hex) of the file [downloadUrl] serves (design 13 QA #2) - the whole download is
+     * checked against it before installing. `null` = not known (an older server, or not hashed
+     * yet): then only the install's own checks. */
+    val sha256: String? = null,
 )

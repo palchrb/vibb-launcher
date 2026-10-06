@@ -48,6 +48,37 @@ data class StatusReportRequest(
     /** What the notification rule removed since the last report (handy step 11) - see
      * [NotificationCancelsReport]. */
     val notificationCancels: NotificationCancelsReport? = null,
+    /** Catalog downloads (design 13) - see [AppDownloadsReport]. */
+    val appDownloads: AppDownloadsReport? = null,
+)
+
+/**
+ * `StatusReportRequest.appDownloads` (no defaults: every field is always sent): a full snapshot of
+ * the downloads the phone wants (at most 20, so no stale rows on the server), whether "App updates
+ * only on Wi-Fi" is on as the phone applies it, and its network now ("unmetered", "metered",
+ * "roaming", "none").
+ */
+@Serializable
+data class AppDownloadsReport(
+    val wifiOnly: Boolean,
+    val network: String,
+    val entries: List<AppDownloadEntry>,
+)
+
+/**
+ * One download: [state] "waiting_wifi", "waiting_network", "waiting_roaming", "waiting_space",
+ * "downloading" or "installing"; [bytes] on the phone, [total] once known; [sinceMs] when the phone
+ * first saw the release; [anyNetworkAtMs] our own update's grace end (`null` for catalog apps).
+ */
+@Serializable
+data class AppDownloadEntry(
+    val trackedAppId: Long,
+    val releaseTag: String,
+    val state: String,
+    val bytes: Long,
+    val total: Long?,
+    val sinceMs: Long?,
+    val anyNetworkAtMs: Long?,
 )
 
 /**

@@ -108,6 +108,10 @@ class CommandListenerService : Service() {
             // One sync at every process start: catches nudges missed while we were down.
             SyncRunner.runInService(applicationContext, "start")
         }
+        if (intent?.action == ACTION_DOWNLOADS) {
+            // Catalog downloads (design 13) run while this foreground service holds the process.
+            AppDownloads.runInService(applicationContext, intent.getStringExtra(EXTRA_SYNC_REASON) ?: "request")
+        }
         if (intent?.action == ACTION_SYNC) {
             val reason = intent.getStringExtra(EXTRA_SYNC_REASON) ?: "request"
             SyncRunner.runInService(applicationContext, reason, fromRequest = true)
@@ -247,6 +251,7 @@ class CommandListenerService : Service() {
 
     companion object {
         const val ACTION_SYNC = "com.kidslauncher.mdm.action.SYNC"
+        const val ACTION_DOWNLOADS = "com.kidslauncher.mdm.action.DOWNLOADS"
 
         /** The live instance, for [onSyncFinished]. Same process only. */
         @Volatile
@@ -267,6 +272,19 @@ class CommandListenerService : Service() {
             true
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't start the anchor service for a sync", e)
+            false
+        }
+
+        /** Starts the anchor if needed and has it run the download runner ([AppDownloads]): the
+         * foreground service keeps the process's network in Doze (design 13 QA #5). */
+        fun requestDownloads(context: Context, reason: String): Boolean = try {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, CommandListenerService::class.java).setAction(ACTION_DOWNLOADS).putExtra(EXTRA_SYNC_REASON, reason),
+            )
+            true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't start the anchor service for the downloads", e)
             false
         }
 

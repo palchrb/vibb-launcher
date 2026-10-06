@@ -88,6 +88,10 @@ pub struct DevicePolicy {
     /// The blocked-domain log (migrations/0039): off by default, a per-phone opt-in; while on,
     /// entries are kept `retention::DNS_LOG_RETENTION_DAYS`.
     pub dns_log_enabled: bool,
+    /// "App updates only on Wi-Fi" (migrations/0043, design 13, default on): catalog apps
+    /// download on an unmetered network only; the launcher's own update after 3 days on any
+    /// non-roaming one.
+    pub app_updates_wifi_only: bool,
 }
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.
@@ -279,6 +283,9 @@ pub struct DeviceStatus {
     /// The phone's `notification_cancels` (handy step 11), see
     /// `kiosk_escapes::NotificationCancels`.
     pub notification_cancels_json: Option<String>,
+    /// The phone's `app_downloads` (design 13, migrations/0043), see
+    /// `app_downloads::AppDownloads`.
+    pub app_downloads_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -327,6 +334,9 @@ pub struct TrackedApp {
     /// a row last synced before that migration.
     pub latest_release_asset_name: Option<String>,
     pub latest_release_asset_size: Option<i64>,
+    /// SHA-256 (hex) of the cached file (migrations/0043, design 13 QA #2), sent to the phones in
+    /// `TrackedAppUpdate.sha256`. `None` until computed (`tracked_apps::backfill_release_hashes`).
+    pub latest_release_sha256: Option<String>,
 }
 
 impl TrackedApp {
@@ -554,6 +564,10 @@ pub struct PolicyResponse {
     /// The blocked-domain log (cleanup 2026-10-06), always sent: only while it is on does the
     /// launcher record and report blocked domains. Missing = off on the launcher.
     pub dns_log_enabled: bool,
+    /// "App updates only on Wi-Fi" (design 13), always sent: catalog apps download only on an
+    /// unmetered network, the launcher's own update after 3 days on any non-roaming one. Missing
+    /// (an older server) = off on the launcher, as before.
+    pub app_updates_wifi_only: bool,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -668,6 +682,10 @@ pub struct StatusReportRequest {
     /// channel ids with counts, stored capped (`kiosk_escapes::sanitize_notification_cancels`).
     #[serde(default)]
     pub notification_cancels: Option<serde_json::Value>,
+    /// The phone's catalog downloads (design 13): a full snapshot - opaque, stored re-serialized
+    /// and capped (`app_downloads::sanitize`).
+    #[serde(default)]
+    pub app_downloads: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.
@@ -749,4 +767,7 @@ pub struct TrackedAppUpdate {
     pub release_tag: String,
     pub download_url: String,
     pub is_launcher: bool,
+    /// SHA-256 (hex) of the file `download_url` serves (design 13 QA #2), `null` until the server
+    /// has computed it: the phone checks the whole download against it before installing.
+    pub sha256: Option<String>,
 }

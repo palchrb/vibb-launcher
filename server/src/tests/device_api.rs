@@ -304,6 +304,7 @@ async fn policy_json_keys_snapshot() {
         keys,
         [
             "allowlist",
+            "app_updates_wifi_only",
             "bedtime_end_minutes",
             "bedtime_start_minutes",
             "block_activity_start",
@@ -336,6 +337,7 @@ async fn policy_json_keys_snapshot() {
     );
 
     for non_null in [
+        "app_updates_wifi_only",
         "block_activity_start",
         "call_policy",
         "dns_filter_version",

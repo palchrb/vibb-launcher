@@ -126,6 +126,8 @@ data class LastEnforcedPlan(
     val blockActivityStart: Boolean = false,
     /** The parent's screen timeout (seconds), so a fallback keeps auto-lock; `null` = none known. */
     val screenTimeoutSeconds: Int? = null,
+    /** "App updates only on Wi-Fi" (design 13), so an unusable cache doesn't spend mobile data. */
+    val appUpdatesWifiOnly: Boolean? = null,
 ) {
     fun toPolicy(): PolicyResponse = PolicyResponse(
         allowlist = allowlist,
@@ -141,6 +143,7 @@ data class LastEnforcedPlan(
         timePolicy = timePolicy,
         blockActivityStart = blockActivityStart,
         screenTimeoutSeconds = screenTimeoutSeconds,
+        appUpdatesWifiOnly = appUpdatesWifiOnly,
     )
 
     companion object {
@@ -158,6 +161,7 @@ data class LastEnforcedPlan(
             timePolicy = policy.timePolicy?.copy(lifts = emptyList()),
             blockActivityStart = policy.blockActivityStart,
             screenTimeoutSeconds = policy.screenTimeoutSeconds,
+            appUpdatesWifiOnly = policy.appUpdatesWifiOnly,
         )
 
         /** `null` if missing or unreadable. */

@@ -147,6 +147,57 @@ class PolicyResponseCompatTest {
         assertEquals(setOf("package_name", "channel", "cancelled", "snoozed"), entry.keys)
     }
 
+    /** Design 13: "App updates only on Wi-Fi". Missing (an older server) or `null` = off, as
+     * before - nothing in this key can fail the policy; the fallback keeps the parent's choice. */
+    @Test
+    fun `app_updates_wifi_only - missing or null is off, and the fallback keeps it`() {
+        assertNull(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").appUpdatesWifiOnly)
+        assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.appUpdatesWifiOnly)
+        val withNull = serverResponse.replaceFirst("{", "{\"app_updates_wifi_only\": null,")
+        assertNull((decodeCached(withNull) as CachedPolicy.Ok).policy.appUpdatesWifiOnly)
+        val on = (decodeCached(serverResponse.replaceFirst("{", "{\"app_updates_wifi_only\": true,")) as CachedPolicy.Ok).policy
+        assertEquals(true, on.appUpdatesWifiOnly)
+        val off = (decodeCached(serverResponse.replaceFirst("{", "{\"app_updates_wifi_only\": false,")) as CachedPolicy.Ok).policy
+        assertEquals(false, off.appUpdatesWifiOnly)
+        assertEquals(true, LastEnforcedPlan.of(on).toPolicy().appUpdatesWifiOnly)
+        assertNull(LastEnforcedPlan.decode("{}")!!.appUpdatesWifiOnly)
+        assertEquals(CachedPolicy.Ok(on), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), on)))
+    }
+
+    /** Design 13: the list's `sha256` (nullable, missing from an older server) and the status
+     * report's `app_downloads` keys - kid-phone-server's `app_downloads::AppDownloads`. */
+    @Test
+    fun `apps list sha256 and status app_downloads use the server's keys`() {
+        val listed = ServerJson.decodeFromString(
+            com.kidslauncher.mdm.server.dto.TrackedAppUpdate.serializer(),
+            """{"id":4,"name":"Element X","package_name":"","release_tag":"v1@14","download_url":"/api/devices/apps/4/download","is_launcher":false,"sha256":null}""",
+        )
+        assertNull(listed.sha256)
+        val old = ServerJson.decodeFromString(
+            com.kidslauncher.mdm.server.dto.TrackedAppUpdate.serializer(),
+            """{"id":4,"name":"Element X","package_name":"","release_tag":"v1@14","download_url":"/x","is_launcher":false}""",
+        )
+        assertNull(old.sha256)
+        val report = StatusReportRequest(
+            lockReason = "NONE",
+            kioskEngaged = true,
+            appDownloads = com.kidslauncher.mdm.server.dto.AppDownloadsReport(
+                wifiOnly = true,
+                network = "metered",
+                entries = listOf(
+                    com.kidslauncher.mdm.server.dto.AppDownloadEntry(4, "v1@14", "waiting_wifi", 120L, 326L, 5L, null),
+                ),
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        val downloads = json["app_downloads"]!!.jsonObject
+        assertEquals(setOf("wifi_only", "network", "entries"), downloads.keys)
+        assertEquals(
+            setOf("tracked_app_id", "release_tag", "state", "bytes", "total", "since_ms", "any_network_at_ms"),
+            downloads["entries"]!!.jsonArray.single().jsonObject.keys,
+        )
+    }
+
     @Test
     fun `a cache without kid_lock is a phone without handy's lock (step 10)`() {
         assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.kidLock)

@@ -13,10 +13,12 @@ import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
+import retrofit2.Call
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Streaming
@@ -75,10 +77,19 @@ interface MdmApi {
     /** [url] is [TrackedAppUpdate.downloadUrl] as sent by the server (e.g.
      * "/api/devices/apps/5/download") - a per-app path, since there can be many tracked apps
      * (including the launcher itself - it's just another tracked app server-side now). [Url]
-     * resolves it against the same base URL/auth interceptor as every other call here. */
+     * resolves it against the same base URL/auth interceptor as every other call here.
+     *
+     * A blocking [Call] (design 13 §4), not a suspend function: [AppDownloads] cancels it with
+     * `Call.cancel()` when the network stops qualifying - a blocking read ignores coroutine
+     * cancellation. [range] (`bytes=<have>-`) and [ifMatch] (the first response's `ETag`) resume
+     * a partial file; `null` leaves the header out. */
     @Streaming
     @GET
-    suspend fun downloadTrackedApp(@Url url: String): Response<ResponseBody>
+    fun downloadTrackedApp(
+        @Url url: String,
+        @Header("Range") range: String?,
+        @Header("If-Match") ifMatch: String?,
+    ): Call<ResponseBody>
 
     /** Launcher crashes (hash + short trace, no personal data) - see [com.kidslauncher.mdm.crash.CrashReports]. */
     @POST("api/devices/crashes")

@@ -1,3 +1,4 @@
+mod app_downloads;
 mod config;
 mod crashes;
 mod dns_engine;
@@ -171,6 +172,10 @@ async fn main() {
     ));
     // Partial downloads a crash left behind - before the scheduled sync can start a new one.
     handlers::tracked_apps::remove_partial_downloads(&state.tracked_apps_dir).await;
+    // Hashes for cached files from before migration 0043 (design 13): the phones check them.
+    tokio::task::spawn(handlers::tracked_apps::backfill_release_hashes(
+        state.clone(),
+    ));
     tokio::task::spawn(handlers::tracked_apps::run_scheduled_tracked_app_sync(
         state.clone(),
     ));
@@ -415,6 +420,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/devices/{id}/apps/toggle",
             post(handlers::devices::toggle_app),
+        )
+        .route(
+            "/devices/{id}/app-updates",
+            post(handlers::devices::update_app_updates),
         )
         .route("/dns", get(handlers::dns_filter::show_dns_filter))
         .route("/dns/upstream", post(handlers::dns_filter::set_upstream))
