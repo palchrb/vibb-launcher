@@ -32,6 +32,7 @@
       -
       -->
     <string name="notification_channel_calls">Calls</string>
+    <string name="notification_channel_calls_silent">Calls (call screen open)</string>
     <string name="calls_phone_book">Phone book</string>
     <string name="kid_settings_title">Settings</string>
     <string name="calls_phone_book_empty">There\'s nobody to call yet. Emergency numbers (112, 110, 113) always work from the lock screen\'s Emergency button.</string>

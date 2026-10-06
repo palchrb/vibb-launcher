@@ -70,6 +70,8 @@ class InCallActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        // No heads-up over this screen (emulator run 2026-10-06): the notification goes silent.
+        CallNotifications.screenVisibilityChanged(this, visible = true)
         OngoingCalls.addListener(listener)
         ContactPhotos.addListener(photoListener)
         handler.post(ticker)
@@ -90,6 +92,7 @@ class InCallActivity : AppCompatActivity() {
         ContactPhotos.removeListener(photoListener)
         handler.removeCallbacks(ticker)
         releaseProximity()
+        CallNotifications.screenVisibilityChanged(this, visible = false)
         super.onStop()
     }
 

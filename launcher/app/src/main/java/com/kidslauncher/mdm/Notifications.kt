@@ -28,10 +28,40 @@ const val VPN_FILTER_NOTIFICATION_ID = 1003
 val NOTIFICATION_CHANNEL_APP_INSTALL = "launcher:app_install"
 /** Incoming and ongoing calls (calls.CallNotifications) - HIGH, like any phone app's. */
 const val NOTIFICATION_CHANNEL_CALLS = "launcher:calls"
+/** The same call notification while our call screen is in front - LOW: no heads-up over it
+ * (emulator run 2026-10-06), no sound; the full-screen intent is inert below HIGH. */
+const val NOTIFICATION_CHANNEL_CALLS_SILENT = "launcher:calls_silent"
+/** Was 1004 too, the same id as [INSTALL_MODE_NOTIFICATION_ID] - a call's cancel removed the
+ * install-mode notification. */
+const val CALL_NOTIFICATION_ID = 1005
 private const val APP_INSTALL_NOTIFICATION_ID_BASE = 2000
 /** Play install mode (handy step 7, play.PlayRuntime) - LOW, ongoing, with "End now". */
 const val NOTIFICATION_CHANNEL_INSTALL_MODE = "launcher:install_mode"
 const val INSTALL_MODE_NOTIFICATION_ID = 1004
+
+/**
+ * The two call channels. Silent: Telecom plays the ringtone itself (we don't declare
+ * IN_CALL_SERVICE_RINGING), these only carry the call UI and its full-screen intent. Also called
+ * before each call notification (idempotent) - the call path runs before the first unlock, when
+ * [createNotificationChannels] may not have run yet.
+ */
+fun createCallChannels(context: Context) {
+    val notificationManager = context.getSystemService(NotificationManager::class.java) ?: return
+    notificationManager.createNotificationChannel(
+        NotificationChannel(
+            NOTIFICATION_CHANNEL_CALLS,
+            context.getString(R.string.notification_channel_calls),
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply { setSound(null, null) }
+    )
+    notificationManager.createNotificationChannel(
+        NotificationChannel(
+            NOTIFICATION_CHANNEL_CALLS_SILENT,
+            context.getString(R.string.notification_channel_calls_silent),
+            NotificationManager.IMPORTANCE_LOW
+        ).apply { setSound(null, null) }
+    )
+}
 
 fun createNotificationChannels(context: Context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -45,19 +75,11 @@ fun createNotificationChannels(context: Context) {
                 NotificationManager.IMPORTANCE_HIGH
             )
         )
+        createCallChannels(context)
         // HIGH importance + own channel so this reliably heads-up/appears even over the lock
         // screen while Find My Device's ring is playing - the whole point is to give the kid an
         // obvious, immediate way to silence it once they unlock the device, not something that
         // silently sits in the shade.
-        // Silent: Telecom plays the ringtone itself (we don't declare IN_CALL_SERVICE_RINGING),
-        // this only carries the call UI and its full-screen intent.
-        notificationManager.createNotificationChannel(
-            NotificationChannel(
-                NOTIFICATION_CHANNEL_CALLS,
-                context.getString(R.string.notification_channel_calls),
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply { setSound(null, null) }
-        )
         notificationManager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL_RING,
