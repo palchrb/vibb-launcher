@@ -44,8 +44,46 @@ struct ProvisioningPayload {
         skip_serializing_if = "Option::is_none"
     )]
     wifi_security_type: Option<&'static str>,
+    /// "xx_YY" - `DevicePolicyManager.EXTRA_PROVISIONING_LOCALE` ("Format: xx_yy, where xx is
+    /// the language code, and yy the country code"; device owner provisioning, "can also be used
+    /// for QR code provisioning"). Omitted when not configured.
+    #[serde(
+        rename = "android.app.extra.PROVISIONING_LOCALE",
+        skip_serializing_if = "Option::is_none"
+    )]
+    locale: Option<String>,
+    /// An IANA zone id - `DevicePolicyManager.EXTRA_PROVISIONING_TIME_ZONE` (same scope).
+    #[serde(
+        rename = "android.app.extra.PROVISIONING_TIME_ZONE",
+        skip_serializing_if = "Option::is_none"
+    )]
+    time_zone: Option<String>,
     #[serde(rename = "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE")]
     admin_extras: AdminExtras,
+}
+
+/// A locale for `PROVISIONING_LOCALE`: "xx_YY" (2-3 lowercase letters, `_`, 2 uppercase).
+pub(crate) fn valid_locale(locale: &str) -> bool {
+    match locale.split_once('_') {
+        Some((lang, country)) => {
+            (2..=3).contains(&lang.len())
+                && lang.chars().all(|c| c.is_ascii_lowercase())
+                && country.len() == 2
+                && country.chars().all(|c| c.is_ascii_uppercase())
+        }
+        None => false,
+    }
+}
+
+/// An IANA time zone id for `PROVISIONING_TIME_ZONE` ("Europe/Oslo", "UTC"): letters, digits,
+/// `/ _ + -`, at most 64 characters, starting with a letter.
+pub(crate) fn valid_time_zone(zone: &str) -> bool {
+    !zone.is_empty()
+        && zone.len() <= 64
+        && zone.starts_with(|c: char| c.is_ascii_alphabetic())
+        && zone
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c))
 }
 
 #[derive(Template)]
@@ -118,6 +156,8 @@ pub async fn provision_form(
             enrollment_code: code,
         },
         wifi,
+        &settings.locale,
+        &settings.time_zone,
     );
 
     let qr_svg = match &payload {
@@ -184,11 +224,15 @@ pub async fn provision_form(
 ///
 /// The JSON the provisioning QR encodes, or `None` when no launcher signing checksum is
 /// configured - there is deliberately no fallback value (see `config::ForkConfig`). `wifi` is
-/// `(ssid, password)`; an empty password means an open network.
+/// `(ssid, password)`; an empty password means an open network. `locale`/`time_zone` (the
+/// provisioning settings, migrations/0034) set the phone's language and zone during QR setup;
+/// an empty or invalid one is left out.
 pub(crate) fn provisioning_payload(
     config: &ForkConfig,
     admin_extras: AdminExtras,
     wifi: Option<(String, String)>,
+    locale: &str,
+    time_zone: &str,
 ) -> Option<serde_json::Value> {
     let signature_checksum = config.launcher_signature_checksum.clone()?;
     let (wifi_ssid, wifi_password) = match wifi {
@@ -203,6 +247,8 @@ pub(crate) fn provisioning_payload(
         wifi_security_type: wifi_password.as_ref().map(|_| "WPA"),
         wifi_ssid,
         wifi_password,
+        locale: valid_locale(locale).then(|| locale.to_string()),
+        time_zone: valid_time_zone(time_zone).then(|| time_zone.to_string()),
         admin_extras,
     };
     Some(serde_json::to_value(&payload).expect("provisioning payload always serializes"))

@@ -35,6 +35,10 @@ enum class HardeningRestriction(val defaultOn: Boolean) {
      * unmanaged (after WallpaperApplier.resetIfOurs put navy back); like every hardening
      * restriction the override and the pause don't lift it. */
     SET_WALLPAPER(true),
+    /** `DISALLOW_CONFIG_LOCALE` (fix round 2026-10-06): the system language stays as set up.
+     * Our own language (`launcher_ui.language`, `LocaleManager.setApplicationLocales` for our
+     * package) is per app. [needs device test: our per-app locale switch with this set] */
+    CONFIG_LOCALE(true),
 }
 
 data class HardeningPlan(
@@ -58,6 +62,7 @@ private fun HardeningPolicy?.value(restriction: HardeningRestriction): Boolean? 
     HardeningRestriction.CONFIG_LOCATION -> this?.lockLocation
     HardeningRestriction.AIRPLANE_MODE -> this?.disallowAirplaneMode
     HardeningRestriction.SET_WALLPAPER -> null
+    HardeningRestriction.CONFIG_LOCALE -> this?.disallowConfigLocale
 }
 
 /**

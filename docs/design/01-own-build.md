@@ -318,6 +318,13 @@ JVM unit tests (`app/src/test/java/com/kidslauncher/mdm/server/`):
 QR provisioning is not the path. It failed on a GMS Moto (S `CLAUDE.md:67`), and L lacks
 `GET_PROVISIONING_MODE`/`ADMIN_POLICY_COMPLIANCE` activities (launcher review §2.8). Use adb:
 
+*Update 2026-10-06:* L now has both activities (`server/ProvisioningActivities.kt`, fully managed
+only) and the QR carries `PROVISIONING_LOCALE`/`PROVISIONING_TIME_ZONE` (provisioning page,
+defaults `nb_NO`/`Europe/Oslo`). QR provisioning on the Jelly Star is still **[needs device test]**;
+adb below stays the fallback. adb doesn't set the language: pick Android's language and time zone in
+Settings during setup, before step 4 - once managed the system language is locked
+(`DISALLOW_CONFIG_LOCALE`, hardening switch, default on).
+
 1. Server side:
    - set `LAUNCHER_SIGNATURE_CHECKSUM` and restart;
    - add the launcher catalog row (§2.1);

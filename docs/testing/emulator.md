@@ -45,6 +45,15 @@ adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeLi
 adb shell settings put secure camera_double_tap_power_gesture_disabled 1
 ```
 
+Language and time zone (fix round 2026-10-06): adb provisioning doesn't set them - choose
+Android's language (e.g. Norsk bokmål) and time zone in Settings **before** `set-device-owner`/
+enrolling; once managed, the system language is locked (`DISALLOW_CONFIG_LOCALE`, hardening switch
+"Lock the phone's language", on by default - only the server lifts it). The QR setup sets both
+from the provisioning page (`PROVISIONING_LOCALE` default `nb_NO`, `PROVISIONING_TIME_ZONE`
+default `Europe/Oslo`). QR provisioning itself (the launcher now has the Android 12+
+`GET_PROVISIONING_MODE`/`ADMIN_POLICY_COMPLIANCE` activities) is **[needs device test]** on the
+Jelly Star and stock GMS phones; adb above stays the fallback.
+
 Screen lock: since step 10 the phone has **no Android screen lock** - handy's own PIN lock
 replaces it (set the kid's PIN on the device page, "Screen lock" card; the unlock code must be set
 first). An Android PIN keeps handy's lock off (no double lock) and the device page says "Remove

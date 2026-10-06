@@ -424,6 +424,7 @@ object AppEnforcer {
         HardeningRestriction.CONFIG_LOCATION -> UserManager.DISALLOW_CONFIG_LOCATION
         HardeningRestriction.AIRPLANE_MODE -> UserManager.DISALLOW_AIRPLANE_MODE
         HardeningRestriction.SET_WALLPAPER -> UserManager.DISALLOW_SET_WALLPAPER
+        HardeningRestriction.CONFIG_LOCALE -> UserManager.DISALLOW_CONFIG_LOCALE
     }
 
     /**

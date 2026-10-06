@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
+use axum::http::{Method, StatusCode};
 use axum::response::IntoResponse;
 
 use super::{TestApp, read_response};
@@ -70,8 +71,15 @@ fn provision_payload_uses_configured_values() {
         &config,
         extras(),
         Some(("homewifi".to_string(), "secret".to_string())),
+        "nb_NO",
+        "Europe/Oslo",
     )
     .expect("payload with a checksum configured");
+    assert_eq!(payload["android.app.extra.PROVISIONING_LOCALE"], "nb_NO");
+    assert_eq!(
+        payload["android.app.extra.PROVISIONING_TIME_ZONE"],
+        "Europe/Oslo"
+    );
 
     assert_eq!(
         payload["android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME"],
@@ -110,8 +118,21 @@ fn provision_payload_defaults_and_wifi_handling() {
         &config,
         extras(),
         Some(("cafe".to_string(), String::new())),
+        "",
+        "",
     )
     .unwrap();
+    // Not configured: no locale or zone in the QR (the phone keeps its own).
+    assert!(
+        open_wifi
+            .get("android.app.extra.PROVISIONING_LOCALE")
+            .is_none()
+    );
+    assert!(
+        open_wifi
+            .get("android.app.extra.PROVISIONING_TIME_ZONE")
+            .is_none()
+    );
     assert_eq!(
         open_wifi["android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME"],
         "com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver"
@@ -135,7 +156,19 @@ fn provision_payload_defaults_and_wifi_handling() {
             .is_none()
     );
 
-    let no_wifi = provisioning::provisioning_payload(&config, extras(), None).unwrap();
+    let no_wifi =
+        provisioning::provisioning_payload(&config, extras(), None, "en", "Europe/../x").unwrap();
+    // Malformed values never reach the QR.
+    assert!(
+        no_wifi
+            .get("android.app.extra.PROVISIONING_LOCALE")
+            .is_none()
+    );
+    assert!(
+        no_wifi
+            .get("android.app.extra.PROVISIONING_TIME_ZONE")
+            .is_none()
+    );
     assert!(
         no_wifi
             .get("android.app.extra.PROVISIONING_WIFI_SSID")
@@ -144,7 +177,7 @@ fn provision_payload_defaults_and_wifi_handling() {
 
     let mut unconfigured = config.clone();
     unconfigured.launcher_signature_checksum = None;
-    assert!(provisioning::provisioning_payload(&unconfigured, extras(), None).is_none());
+    assert!(provisioning::provisioning_payload(&unconfigured, extras(), None, "", "").is_none());
 }
 
 #[test]
@@ -154,4 +187,74 @@ fn reinstall_hint_uses_configured_repo() {
         "raw.githubusercontent.com/someone/vibb-launcher/master/server/deploy/install.sh"
     ));
     assert!(hint.contains("KPS_REPO=someone/vibb-launcher"));
+}
+
+#[test]
+fn locale_and_time_zone_validation() {
+    for good in ["nb_NO", "en_US", "nn_NO", "fil_PH"] {
+        assert!(provisioning::valid_locale(good), "{good}");
+    }
+    for bad in [
+        "", "nb", "NB_no", "nb-NO", "nb_NOR", "n_NO", "nb_NO\"", "nb_NO,x",
+    ] {
+        assert!(!provisioning::valid_locale(bad), "{bad}");
+    }
+    for good in [
+        "Europe/Oslo",
+        "UTC",
+        "America/Argentina/Buenos_Aires",
+        "Etc/GMT+1",
+    ] {
+        assert!(provisioning::valid_time_zone(good), "{good}");
+    }
+    for bad in [
+        "",
+        "/Europe",
+        "Europe/Oslo\"",
+        "Europe Oslo",
+        &"A".repeat(65),
+    ] {
+        assert!(!provisioning::valid_time_zone(bad), "{bad}");
+    }
+}
+
+/// Defaults nb_NO / Europe/Oslo (migrations/0034), editable on the provisioning page, invalid
+/// values refused without writing anything, and the device's QR page carries them.
+#[tokio::test]
+async fn provisioning_locale_settings() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let page = app.get_page("/settings/provisioning", &cookie).await.text();
+    assert!(page.contains("value=\"nb_NO\""));
+    assert!(page.contains("value=\"Europe/Oslo\""));
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/settings/provisioning",
+            Some(&cookie),
+            &[
+                ("server_url", "https://x"),
+                ("locale", "nb-NO"),
+                ("time_zone", "Europe/Oslo"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let res = app
+        .request_form(
+            Method::POST,
+            "/settings/provisioning",
+            Some(&cookie),
+            &[
+                ("server_url", "https://x"),
+                ("locale", "en_GB"),
+                ("time_zone", "Europe/London"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let page = app.get_page("/settings/provisioning", &cookie).await.text();
+    assert!(page.contains("value=\"en_GB\""));
+    assert!(page.contains("value=\"Europe/London\""));
 }

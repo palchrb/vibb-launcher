@@ -169,6 +169,13 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - **Vibb night wallpaper** (migration `0033`): built-in `vibb_night` (`#0C0C14`, sort 5, so first
   and the default on phones added from now on; no fixed id). Existing phones don't get it
   automatically - their list and shown wallpaper stay as they were.
+- **Provisioning language** (migration `0034`): `provisioning_settings.locale` ("xx_YY", default
+  `nb_NO`) and `.time_zone` (IANA, default `Europe/Oslo`) go into the setup QR as
+  `android.app.extra.PROVISIONING_LOCALE`/`PROVISIONING_TIME_ZONE` (AOSP `DevicePolicyManager`:
+  device-owner provisioning, "can also be used for QR code provisioning"); empty or malformed
+  ones are left out (`provisioning::valid_locale`/`valid_time_zone`), the settings form refuses
+  malformed values (400, nothing written). Hardening switch `disallow_config_locale`
+  (`device_policy`, default 1) -> `DISALLOW_CONFIG_LOCALE` on the phone.
 - **FCM**: the launcher now registers by Firebase installation ID (firebase-messaging 25.1+) and
   reports the FID as its `fcm_token`; HTTP v1's `token` field accepts a FID during Firebase's
   transition, so `fcm.rs` is unchanged (move to the `fid` field when it is retired).

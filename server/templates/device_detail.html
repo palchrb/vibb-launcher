@@ -319,6 +319,10 @@
             Block airplane mode (off by default, so it can be used when travelling)
         </label>
         <label class="checkbox-row">
+            <input type="checkbox" name="disallow_config_locale" value="on" {% if hardening.disallow_config_locale %}checked{% endif %} onchange="this.form.submit()">
+            Lock the phone's language (the launcher's own language is set on this page, under Launcher)
+        </label>
+        <label class="checkbox-row">
             <input type="checkbox" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} onchange="this.form.submit()">
             Block USB debugging (adb) and developer options
         </label>

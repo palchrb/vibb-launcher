@@ -1584,7 +1584,8 @@ pub async fn update_hardening(
         "UPDATE device_policy SET disallow_factory_reset = ?, disallow_add_user = ?, \
          disallow_modify_accounts = ?, disallow_config_vpn = ?, disallow_usb_file_transfer = ?, \
          disallow_debugging_features = ?, disallow_safe_boot = ?, lock_location = ?, \
-         disallow_airplane_mode = ?, updated_at = datetime('now') WHERE device_id = ?",
+         disallow_airplane_mode = ?, disallow_config_locale = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
     )
     .bind(on("disallow_factory_reset"))
     .bind(on("disallow_add_user"))
@@ -1595,6 +1596,7 @@ pub async fn update_hardening(
     .bind(on("disallow_safe_boot"))
     .bind(on("lock_location"))
     .bind(on("disallow_airplane_mode"))
+    .bind(on("disallow_config_locale"))
     .bind(id)
     .execute(&state.db)
     .await;

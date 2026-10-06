@@ -172,6 +172,9 @@ pub struct Hardening {
     pub lock_location: bool,
     /// `DISALLOW_AIRPLANE_MODE` (migrations/0024). Off by default: the family travels.
     pub disallow_airplane_mode: bool,
+    /// `DISALLOW_CONFIG_LOCALE` (migrations/0034): the system language stays as set up. On by
+    /// default; the launcher's own language (`launcher_ui.language`) is per app and unaffected.
+    pub disallow_config_locale: bool,
 }
 
 impl Default for Hardening {
@@ -187,6 +190,7 @@ impl Default for Hardening {
             disallow_safe_boot: false,
             lock_location: true,
             disallow_airplane_mode: false,
+            disallow_config_locale: true,
         }
     }
 }
@@ -321,6 +325,12 @@ pub struct ProvisioningSettings {
     pub server_url: String,
     pub tailscale_auth_key: String,
     pub updated_at: String,
+    /// `android.app.extra.PROVISIONING_LOCALE` in the setup QR, "xx_YY" (migrations/0034,
+    /// default "nb_NO"); empty = not sent.
+    pub locale: String,
+    /// `android.app.extra.PROVISIONING_TIME_ZONE`, an IANA zone id (default "Europe/Oslo");
+    /// empty = not sent.
+    pub time_zone: String,
 }
 
 #[derive(sqlx::FromRow, Clone)]

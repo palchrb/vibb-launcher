@@ -6,9 +6,10 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-const SWITCHES: [&str; 9] = [
+const SWITCHES: [&str; 10] = [
     "disallow_add_user",
     "disallow_airplane_mode",
+    "disallow_config_locale",
     "disallow_config_vpn",
     "disallow_debugging_features",
     "disallow_factory_reset",
@@ -55,6 +56,8 @@ async fn new_device_gets_explicit_defaults() {
             "lock_location": true,
             // Airplane mode stays allowed unless the parent blocks it (the family travels).
             "disallow_airplane_mode": false,
+            // The system language stays as set up (fix round 2026-10-06).
+            "disallow_config_locale": true,
         })
     );
 }

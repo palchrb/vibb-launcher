@@ -68,16 +68,31 @@ pub async fn update_provisioning_settings(
         .get("tailscale_auth_key")
         .map(|s| s.trim())
         .unwrap_or("");
+    // Empty = not in the QR. Anything else must have the form Android expects, or nothing is
+    // written (fix round 2026-10-06).
+    let locale = form.get("locale").map(|s| s.trim()).unwrap_or("");
+    let time_zone = form.get("time_zone").map(|s| s.trim()).unwrap_or("");
+    if (!locale.is_empty() && !crate::handlers::provisioning::valid_locale(locale))
+        || (!time_zone.is_empty() && !crate::handlers::provisioning::valid_time_zone(time_zone))
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "Language must look like nb_NO and the time zone like Europe/Oslo - nothing was saved.",
+        )
+            .into_response();
+    }
 
     sqlx::query(
-        "UPDATE provisioning_settings SET server_url = ?, tailscale_auth_key = ?, \
-         updated_at = datetime('now') WHERE id = 1",
+        "UPDATE provisioning_settings SET server_url = ?, tailscale_auth_key = ?, locale = ?, \
+         time_zone = ?, updated_at = datetime('now') WHERE id = 1",
     )
     .bind(server_url)
     .bind(tailscale_auth_key)
+    .bind(locale)
+    .bind(time_zone)
     .execute(&state.db)
     .await
     .ok();
 
-    Redirect::to("/settings/provisioning")
+    Redirect::to("/settings/provisioning").into_response()
 }

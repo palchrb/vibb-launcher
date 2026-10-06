@@ -21,6 +21,14 @@
             <input type="text" id="tailscale_auth_key" name="tailscale_auth_key" value="{{ settings.tailscale_auth_key }}" placeholder="tskey-auth-..." autocomplete="off">
             <p class="subtitle">A <em>reusable</em> pre-auth key generated from your Tailscale admin console - one key enrolls every device via the embedded tsnet client. Leave blank to keep entering it by hand per device instead.</p>
 
+            <label for="locale">Phone language</label>
+            <input type="text" id="locale" name="locale" value="{{ settings.locale }}" placeholder="nb_NO" autocomplete="off">
+            <p class="subtitle">Set on the phone during QR setup (Android's PROVISIONING_LOCALE, form <code>nb_NO</code>). Leave blank to keep the phone's own. adb setup doesn't set it - choose the language in Android's Settings before enrolling. While the phone is managed its language is locked ("Lock the phone's language" under Phone hardening).</p>
+
+            <label for="time_zone">Time zone</label>
+            <input type="text" id="time_zone" name="time_zone" value="{{ settings.time_zone }}" placeholder="Europe/Oslo" autocomplete="off">
+            <p class="subtitle">Set during QR setup (PROVISIONING_TIME_ZONE, an IANA name like <code>Europe/Oslo</code>). Leave blank to keep the phone's own; automatic time zone is on while the phone is managed.</p>
+
             <button type="submit">Save</button>
         </form>
     </div>
