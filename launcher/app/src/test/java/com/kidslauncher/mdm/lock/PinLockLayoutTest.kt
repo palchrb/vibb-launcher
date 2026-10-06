@@ -51,10 +51,25 @@ class PinLockLayoutTest {
     }
 
     @Test
-    fun `the keypad fits 320x569 dp with keys of at least 48 dp`() {
-        val size = keySizeDp(569f, 320f, statusBarDp = 48f, navBarDp = 24f)
-        assertTrue("key size $size dp", PinKeypadLayout.fits(size.toInt(), 1f))
-        assertTrue(size <= PinKeypadLayout.MAX_DP)
+    fun `the keypad fits 320x569 dp with keys of at least 48 dp and a margin`() {
+        // Gesture navigation (24 dp) and 3-button navigation (48 dp) - qa-fixround-2026-10-06 #4.
+        for (navBar in listOf(24f, 48f)) {
+            val size = keySizeDp(569f, 320f, statusBarDp = 48f, navBarDp = navBar)
+            assertTrue("nav $navBar: key size $size dp", size >= 52f)
+            assertTrue(PinKeypadLayout.fits(size.toInt(), 1f))
+            assertTrue(size <= PinKeypadLayout.MAX_DP)
+        }
+    }
+
+    @Test
+    fun `with every compact step used, keys shrink rather than clip`() {
+        // Compact steps left: never below 48 dp (the next step frees room).
+        assertEquals(48, PinKeypadLayout.finalKeySizePx(40, 1f, compactExhausted = false))
+        // None left: the computed size, so all four rows fit - down to the 32 dp floor.
+        assertEquals(40, PinKeypadLayout.finalKeySizePx(40, 1f, compactExhausted = true))
+        assertEquals(32, PinKeypadLayout.finalKeySizePx(20, 1f, compactExhausted = true))
+        assertEquals(60, PinKeypadLayout.finalKeySizePx(60, 1f, compactExhausted = true))
+        assertEquals(72, PinKeypadLayout.finalKeySizePx(48, 1.5f, compactExhausted = false))
     }
 
     @Test
@@ -80,9 +95,9 @@ class PinLockLayoutTest {
 
     @Test
     fun `key sizing clamps and reports when the minimum doesn't fit`() {
-        // 4 rows of 48 dp and 3 gaps of 8 dp.
-        assertEquals(216, PinKeypadLayout.minHeightPx(1f))
-        assertTrue(PinKeypadLayout.fits(PinKeypadLayout.keySizePx(216, 300, 1f), 1f))
+        // 4 rows of 48 dp and 3 gaps of 6 dp.
+        assertEquals(210, PinKeypadLayout.minHeightPx(1f))
+        assertTrue(PinKeypadLayout.fits(PinKeypadLayout.keySizePx(210, 300, 1f), 1f))
         assertFalse(PinKeypadLayout.fits(PinKeypadLayout.keySizePx(200, 300, 1f), 1f))
         // Width limits too: 3 columns with 8 dp slack.
         assertEquals(42, PinKeypadLayout.keySizePx(400, 150, 1f))

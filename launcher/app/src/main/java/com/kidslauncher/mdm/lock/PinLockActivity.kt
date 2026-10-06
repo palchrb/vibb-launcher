@@ -217,7 +217,8 @@ class PinLockActivity : AppCompatActivity() {
 
     /**
      * Keys sized to the keypad's measured height ([PinKeypadLayout]): 48-72 dp. Below 48 dp the
-     * date, then the clock's size, then the clock give way (one step per layout pass). The new
+     * date, then the clock's size, then the clock give way (one step per layout pass); after
+     * that the keys shrink rather than clip ([PinKeypadLayout.finalKeySizePx]). The new
      * params are set with [View.setLayoutParams] - mutating them in place left the measure cache
      * of the rows untouched, so the first 2026-10-06 build kept 72 dp keys and clipped 7-8-9 and 0.
      */
@@ -230,7 +231,7 @@ class PinLockActivity : AppCompatActivity() {
             applyCompactStep()
             return
         }
-        size = size.coerceAtLeast(dp(PinKeypadLayout.MIN_DP))
+        size = PinKeypadLayout.finalKeySizePx(size, density, compactStep >= PinKeypadLayout.COMPACT_STEPS)
         val changed = keys.filter { it.layoutParams.width != size }
         if (changed.isEmpty()) return
         binding.pinKeypad.post {

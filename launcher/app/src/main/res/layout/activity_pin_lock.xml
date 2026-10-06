@@ -2,8 +2,9 @@
 <!-- lock.PinLockActivity, handy's own PIN lock (design 10-lock-and-call-ui.md, mockup Lock.dc.html,
      320x568 dp): clock, date, prompt, dots, keypad (keys sized to fit, 48-72 dp, lock.PinKeypadLayout),
      Emergency call, and the Parent code link (decision after QA review: always there). Android
-     draws the status line above. Fits 320x569 dp with the status and gesture bars (emulator run
-     2026-10-06; PinLockLayoutTest checks the budget from this file - keep it in step). -->
+     draws the status line above. Fits 320x569 dp with the status bar and a gesture bar or 3-button
+     navigation, keys >= 52 dp (emulator run 2026-10-06, qa-fixround-2026-10-06 #4;
+     PinLockLayoutTest checks the budget from this file - keep it in step). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pin_root"
     android:layout_width="match_parent"
@@ -14,7 +15,7 @@
     android:paddingStart="16dp"
     android:paddingTop="0dp"
     android:paddingEnd="16dp"
-    android:paddingBottom="8dp">
+    android:paddingBottom="4dp">
 
     <TextClock
         android:id="@+id/pin_clock"
@@ -42,7 +43,7 @@
         android:id="@+id/pin_prompt"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="4dp"
         android:accessibilityLiveRegion="polite"
         android:fontFamily="@font/nunito_bold"
         android:gravity="center"
@@ -54,14 +55,14 @@
         android:id="@+id/pin_dots"
         android:layout_width="wrap_content"
         android:layout_height="14dp"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="8dp"
         android:orientation="horizontal" />
 
     <LinearLayout
         android:id="@+id/pin_keypad"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="6dp"
         android:layout_weight="1"
         android:gravity="center"
         android:orientation="vertical" />
@@ -70,7 +71,7 @@
         android:id="@+id/pin_emergency"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="8dp"
         android:background="@drawable/bg_pin_emergency"
         android:clickable="true"
         android:focusable="true"

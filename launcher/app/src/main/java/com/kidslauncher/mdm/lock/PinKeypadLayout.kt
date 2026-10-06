@@ -13,7 +13,9 @@ object PinKeypadLayout {
     const val COLUMNS = 3
     const val MAX_DP = 72f
     const val MIN_DP = 48f
-    const val GAP_DP = 8f
+    const val GAP_DP = 6f
+    /** The last resort once the clock is gone: smaller keys rather than a clipped keypad. */
+    const val FLOOR_DP = 32f
     /** Horizontal room a key leaves in its column. */
     const val SIDE_SLACK_DP = 8f
     /** 0 = everything shown, 1 = no date, 2 = smaller clock, 3 = no clock. */
@@ -29,6 +31,16 @@ object PinKeypadLayout {
     }
 
     fun fits(keySizePx: Int, density: Float): Boolean = keySizePx >= (MIN_DP * density).toInt()
+
+    /**
+     * The size to use: at least [MIN_DP] while compact steps remain (the next step frees room),
+     * but once they are used up ([compactExhausted]) the computed size itself, down to
+     * [FLOOR_DP] - forcing 48 dp then made the centred keypad overflow and clip its top and bottom
+     * rows (qa-fixround-2026-10-06 #4).
+     */
+    fun finalKeySizePx(computedPx: Int, density: Float, compactExhausted: Boolean): Int =
+        if (compactExhausted) computedPx.coerceAtLeast((FLOOR_DP * density).toInt())
+        else computedPx.coerceAtLeast((MIN_DP * density).toInt())
 
     /** The height (px) four rows of [MIN_DP] keys need. */
     fun minHeightPx(density: Float): Int = ((ROWS * MIN_DP + (ROWS - 1) * GAP_DP) * density).toInt()
