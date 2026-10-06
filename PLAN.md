@@ -259,6 +259,18 @@ launchable.
   while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
 - **Pending user decision**: drop the top-left back buttons on full pages
   (`KidHeader.SHOW_BACK_BUTTON`).
+- **Cleanup: remove monitoring and unused upstream features** (user, 2026-10-06):
+  remove the conversation journal (Molly fork) and browser history (launcher sync,
+  DTOs, server routes/tables/templates; drop data via migration), the UnifiedPush
+  relay via ntfy.sh and the MollySocket installer. DNS log off by default (opt-in,
+  7-day retention or counts only); location history retention 7 days default;
+  blocked-call log and screen-time 30 days; check upstream ReportCrashActivity for
+  kiosk escapes (share/email) and replace with a server-side crash report.
+  Principle: collect only what's needed to manage the phone, delete on a schedule,
+  never store notification or message content.
+- **Smoke-test script** `scripts/smoke-test.sh` (adb, remote-capable): lock/unlock,
+  calls in/out, one-call rule, emergency from lock, call notification cleared,
+  screenshots — run after every change and before allowing Android updates.
 - **Vibb music on Android: Spotify via App Remote (option A) is the main plan**
   (user, 2026-10-06; docs/design/vibb-spotify-options.md). Requires a Play account
   on the phone and an "engine app" state in handy for Spotify. Start with the
