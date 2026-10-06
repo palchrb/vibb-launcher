@@ -6,7 +6,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
 
 ## Layout
 
-- `launcher/` - Android app (Kotlin, Gradle, package `com.kidslauncher.mdm`). Was the
+- `launcher/` - Android app (Kotlin, Gradle; applicationId `me.vibb.launcher`, debug `me.vibb.launcher.debug`,
+  since 2026-10-06 - the Kotlin namespace/class names stay `com.kidslauncher.mdm`). Was the
   `kids-launcher-mdm` fork. Details: `launcher/CLAUDE.md`.
 - `server/` - admin server + device API (Rust/Axum/SQLite). Was the `kid-phone-server` fork.
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md`.

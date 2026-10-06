@@ -232,7 +232,7 @@
         <h2>Launcher</h2>
         <p class="subtitle">The phone's home screen. Each choice saves itself immediately.</p>
         {% if badges_without_access %}
-        <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener com.kidslauncher.mdm/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build).</div>
+        <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build; a phone still on a launcher from before 2026-10-06 has <code>com.kidslauncher.mdm</code> there).</div>
         {% endif %}
         <label for="launcher_language">Language</label>
         <select id="launcher_language" name="language" onchange="this.form.submit()">

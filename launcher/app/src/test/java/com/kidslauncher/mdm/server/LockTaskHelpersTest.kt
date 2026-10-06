@@ -69,12 +69,12 @@ class LockTaskHelpersTest {
     }
 
     private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true))
-    private val controllable = listOf("com.kidslauncher.mdm", dialer, "org.example.game")
+    private val controllable = listOf("me.vibb.launcher", dialer, "org.example.game")
     private val helpers = lockTaskHelpers(resolved, forbidden)
 
     private fun plan(block: Boolean, locked: Boolean = false, calls: CallPolicyState = callsOn, allow: List<String> = listOf("org.example.game", dialer)) =
         computeEnforcementPlan(
-            allow, true, 0, false, controllable, "com.kidslauncher.mdm", dialer,
+            allow, true, 0, false, controllable, "me.vibb.launcher", dialer,
             callState = calls, ourDialerActive = true, scheduleLocked = locked,
             blockActivityStart = block, lockTaskHelpers = helpers + dialer + "com.android.vending",
         )
@@ -95,7 +95,7 @@ class LockTaskHelpersTest {
     @Test
     fun `with the block the system dialer is always pinned - in-call UI and emergency (qa-09-code 1)`() {
         val noCallsLock = computeEnforcementPlan(
-            listOf("org.example.game"), true, 0, false, controllable, "com.kidslauncher.mdm", dialer,
+            listOf("org.example.game"), true, 0, false, controllable, "me.vibb.launcher", dialer,
             scheduleLocked = true, ruleBlocksCalls = true, blockActivityStart = true, lockTaskHelpers = helpers,
         )
         for (kiosk in listOf(
@@ -119,7 +119,7 @@ class LockTaskHelpersTest {
 
 /** Handy step 10 (design §3, QA 10 #1/#10): the lock-task setting while the PIN lock is LOCKED. */
 class PinLockTaskTest {
-    private val own = "com.kidslauncher.mdm"
+    private val own = "me.vibb.launcher"
     private val kiosk = setOf(own, "org.fossify.calendar", "com.android.phone")
     private val serverFeatures = LOCK_TASK_FEATURE_SYSTEM_INFO or LOCK_TASK_FEATURE_NOTIFICATIONS or
         LOCK_TASK_FEATURE_HOME or LOCK_TASK_FEATURE_OVERVIEW or LOCK_TASK_FEATURE_GLOBAL_ACTIONS or

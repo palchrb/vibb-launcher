@@ -558,7 +558,7 @@ Open items:
 Device checklist (Jelly Star, release build; in addition to §5 items 1-16 and QA criteria T9-T15, which all still
 apply - items 7, 12 and T15 especially):
 1. `cmd role get-role-holders android.app.role.DIALER` shows us without a prompt; grant redirection with
-   `adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION com.kidslauncher.mdm`; the server shows no role
+   `adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION me.vibb.launcher`; the server shows no role
    warnings. If the DPM call fails, the Home prompt appears once a day, also in kiosk (check it isn't blocked by lock task).
 2. `setDefaultDialerApplication` still works with `DISALLOW_CONFIG_DEFAULT_APPS` set (unmanage, then manage again), and
    Settings → Default apps → Phone is blocked.

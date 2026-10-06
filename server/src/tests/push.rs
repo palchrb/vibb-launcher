@@ -538,7 +538,7 @@ async fn catalog_app_installed_from_play_is_refused() {
         &app,
         &token,
         json!({ "installed_apps": [{ "package_name": "com.example.game", "label": "Game",
-                                     "preinstalled": false, "installer": "com.kidslauncher.mdm" }] }),
+                                     "preinstalled": false, "installer": "me.vibb.launcher" }] }),
     )
     .await;
     assert!(select(&app).await.status().is_redirection());

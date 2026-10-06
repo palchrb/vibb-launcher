@@ -33,7 +33,7 @@ ContactCard = sheet with photo. S = kid-phone-server, L = kids-launcher-mdm, bra
   `NotificationManager.setNotificationListenerAccessGranted` needs `MANAGE_NOTIFICATION_LISTENERS`, a system
   permission), and Settings shows "restricted setting" for sideloaded apps. So: adb at provisioning, before
   enrolling (debugging is blocked afterwards): `adb shell cmd notification allow_listener
-  com.kidslauncher.mdm/com.kidslauncher.mdm.badges.BadgeListenerService`. The status report sends
+  me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService` (package `me.vibb.launcher` since 2026-10-06). The status report sends
   `notification_listener_enabled`; the device page warns when it is false. Without it the grid just has no badges.
 - **Contact photos**: one photo per address-book contact (shared by every device that has it, like the name).
   Upload on the calls page (multipart, ≤ 10 MB, JPEG/PNG/WebP sniffed by content, not by name). **Re-encoded

@@ -8,7 +8,7 @@ import org.junit.Test
 /** Design 11 §3 with qa-11-design.md #11-#13: the generic notification auto-cancel rule. */
 class NotificationRuleTest {
     private val gms = "com.google.android.gms"
-    private val own = setOf("com.kidslauncher.mdm", "com.kidslauncher.mdm.debug")
+    private val own = setOf("me.vibb.launcher", "me.vibb.launcher.debug")
     private val policy = NagPolicy(
         enabled = true,
         managed = true,

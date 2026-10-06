@@ -222,11 +222,11 @@ class PlayPolicyTest {
     fun `catalog updates skip Play-installed packages`() {
         assertTrue(catalogUpdateBlockedByPlay(PLAY_STORE))
         assertFalse(catalogUpdateBlockedByPlay(null))
-        assertFalse(catalogUpdateBlockedByPlay("com.kidslauncher.mdm"))
+        assertFalse(catalogUpdateBlockedByPlay("me.vibb.launcher"))
     }
 
     companion object {
-        const val OWN = "com.kidslauncher.mdm"
+        const val OWN = "me.vibb.launcher"
         const val DIALER = "com.android.dialer"
         const val GAME = "org.example.game"
         const val SMS = "com.google.android.apps.messaging"

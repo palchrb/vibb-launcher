@@ -222,7 +222,7 @@ ADMIN_PASSWORD=$ADMIN_PASSWORD
 SERVER_RELEASE_REPO=$REPO
 # Provisioning QR (Devices > Provision). The defaults point at the launcher in
 # the palchrb/vibb-launcher monorepo; only change them if you build your own.
-LAUNCHER_ADMIN_COMPONENT=com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+LAUNCHER_ADMIN_COMPONENT=me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 LAUNCHER_APK_URL=https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk
 # SHA-256 of the launcher's signing certificate, base64url without padding
 # (43 characters). No QR code is shown until this is set. Compute it from a

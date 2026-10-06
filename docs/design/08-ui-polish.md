@@ -78,7 +78,7 @@ Phone book tile. S = kid-phone-server, L = kids-launcher-mdm (branch `handy`). E
   `LastEnforcedPlan`, which has no mask; (c) the newest policy was **not accepted** (`judgeFresh`
   `REJECT_SUSPECT`, `PolicyGate.kt:81-101`), so the cache still holds the pre-tick policy; (d) the screen was open
   when the sync landed (no listener). Diagnose on the emulator: device page `policy_state` + `adb shell run-as
-  com.kidslauncher.mdm.debug cat shared_prefs/*_preferences.xml | grep -o 'quick_controls_mask[^,]*'`
+  me.vibb.launcher.debug cat shared_prefs/*_preferences.xml | grep -o 'quick_controls_mask[^,]*'`
   [needs device test]. Fix in code: (d) listener; model distinguishes `NotOwner` / `NoPolicyYet` / `Unreadable` /
   `NoneEnabled` and logs `describe()` so (b)/(c) are visible; Corrupt keeps 0 (fail closed, kid convenience only).
 

@@ -557,7 +557,7 @@ fn good_call_state() -> Value {
         "state": "managed",
         "dialer_role_held": true,
         "redirection_role_held": true,
-        "default_dialer": "com.kidslauncher.mdm",
+        "default_dialer": "me.vibb.launcher",
         "system_dialer": "com.android.dialer",
         "sms_restricted": false,
         "outgoing_restricted": false,

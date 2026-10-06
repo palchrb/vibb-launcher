@@ -29,7 +29,7 @@ runs: [needs device test] (`getprop ro.build.version.release`).
   `.applicationId`, `.apiKey`, `.senderId` (env `HANDY_FCM_*` first, like `releaseSecret()`), into `BuildConfig`
   fields; empty -> FCM off, SSE only (upstream/local builds unchanged). `-PrequireFcm=true` in the tag release job of
   `.github/workflows/android.yml` (like `requireTsnet`), values from CI secrets. Firebase console: Android apps
-  `com.kidslauncher.mdm` (+ `.debug`), API key restricted to that package + release SHA-1 and to the FCM/Installations
+  `me.vibb.launcher` (+ `.debug`; `com.kidslauncher.mdm` until 2026-10-06), API key restricted to that package + release SHA-1 and to the FCM/Installations
   APIs. Manifest: remove `com.google.firebase.provider.FirebaseInitProvider` (`tools:node="remove"`),
   `firebase_messaging_auto_init_enabled=false`, analytics deactivated. `FirebaseApp.initializeApp(ctx, options)` only
   from `initUnlocked()` (Application.kt:140), never before the first unlock (Firebase keeps its state in CE prefs).
@@ -210,13 +210,16 @@ Optional: without it everything works over the SSE stream, at a higher battery c
 secret is ever committed - no `google-services.json`, no key.
 
 1. **Firebase project**: in the Firebase console create a project used for nothing else (no
-   Analytics). Add two Android apps: `com.kidslauncher.mdm` (release) and, only if you test FCM
-   with debug builds, `com.kidslauncher.mdm.debug`. Skip the google-services.json download
+   Analytics). Add two Android apps: `me.vibb.launcher` (release) and, only if you test FCM
+   with debug builds, `me.vibb.launcher.debug`. (Before 2026-10-06 the package was
+   `com.kidslauncher.mdm`: a Firebase app registered under that name doesn't match the renamed
+   launcher - add the new package names, put the new apps' "App ID"s into
+   `HANDY_FCM_APPLICATION_ID`/`HANDY_FCM_DEBUG_APPLICATION_ID` and restrict the API key to them.) Skip the google-services.json download
    step - we don't use the file, only four values from it (or from Project settings -> General):
    project id, the app's "App ID" (`1:<number>:android:<hex>`), the Web API key, and the
    sender id ("Project number").
 2. **Restrict the API key** (Google Cloud console -> APIs & Services -> Credentials): Android
-   apps only, package `com.kidslauncher.mdm` + the release certificate SHA-1 (and the `.debug`
+   apps only, package `me.vibb.launcher` + the release certificate SHA-1 (and the `.debug`
    package + debug SHA-1 if added); API restrictions: Firebase Cloud Messaging API, Firebase
    Installations API.
 3. **Launcher build** (values are not secrets - they end up in the APK - but they stay out of
@@ -299,7 +302,7 @@ CommandListenerService BackstopAlarm PlayRuntime AppEnforcer` shows what happens
    2 unacked sends + one backstop the card shows SSE and ring works again.
 5. Invalid token (server log 404 UNREGISTERED): token cleared, phone on SSE, renews within a day.
 6. Android 15+: reboot -> no ForegroundServiceStartNotAllowedException; the anchor runs after
-   unlock; `am get-standby-bucket com.kidslauncher.mdm` = EXEMPTED (5).
+   unlock; `am get-standby-bucket me.vibb.launcher` = EXEMPTED (5).
 7. Play with a managed allowlist: Play Store not hidden, **suspended**, not on Home/drawer, not in
    kiosk; Play services/GSF neither. From an allowed app: explicit `setPackage(com.android.vending)`
    and component intents, with and without NEW_TASK, a tapped Play notification, a

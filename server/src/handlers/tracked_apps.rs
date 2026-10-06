@@ -549,7 +549,8 @@ pub async fn update_tracked_app(
 /// `com.kidslauncher.mdm.debug` (every build shipped so far has been the debug variant - see
 /// kids-launcher-mdm's `app/build.gradle.kts`) - a plain heuristic match on package name is too
 /// fragile to be the only way to set this, so there needed to be a direct way to fix it without a
-/// new migration or shell access to the Pi.
+/// new migration or shell access to the Pi. (The launcher's package is `me.vibb.launcher` since
+/// 2026-10-06; migration 0037 renamed a launcher row that still had the old name.)
 pub async fn set_is_launcher(
     State(state): State<AppState>,
     Path(id): Path<i64>,

@@ -1,8 +1,17 @@
 # Testing on the Android emulator (Debian VM)
 
 For a Pixel 7 / Android 16 AVD resized to the Jelly Star screen. Uses the **debug**
-build (package `com.kidslauncher.mdm.debug`, tsnet stub) and a local server. Never put
+build (package `me.vibb.launcher.debug`, tsnet stub) and a local server. Never put
 a debug APK on the real phone.
+
+**Package rename (2026-10-06)**: the launcher's applicationId is `me.vibb.launcher` (debug
+`me.vibb.launcher.debug`); it was `com.kidslauncher.mdm`(`.debug`). The Kotlin classes keep their
+`com.kidslauncher.mdm.*` names, so component names are `me.vibb.launcher.debug/com.kidslauncher.mdm.…`.
+A different applicationId is a different app: `adb install -r` of a new build next to an old
+`com.kidslauncher.mdm.debug` device owner installs a second launcher instead of updating it
+(`scripts/dev-rebuild.sh` warns). Wipe the emulator (or restore the "clean" snapshot) and
+provision again as in §4; the server side needs nothing (its migration renames the launcher's
+catalog row).
 
 ## 1. Build (on the VM)
 
@@ -35,7 +44,7 @@ In the PWA, **before** enrolling the phone:
 ## 4. Provision (adb on the VM)
 
 ```sh
-P=com.kidslauncher.mdm.debug
+P=me.vibb.launcher.debug
 adb install -r ~/repos/handy/launcher/app/build/outputs/apk/debug/app-debug.apk
 adb shell dpm set-device-owner $P/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
@@ -174,15 +183,15 @@ launcher row (A4) exercises the fence and the window.
 Setup: device page -> "Launcher updates and notifications": tick **Update fence** and
 **Notification filter** (both default off until A3/B5 pass). A test self-update for the debug
 build: `./gradlew assembleDebug -PversionCode=<higher than installed>`, PWA Apps -> add a manual
-app (package `com.kidslauncher.mdm.debug`), mark it as the launcher on its page, upload the APK
+app (package `me.vibb.launcher.debug`), mark it as the launcher on its page, upload the APK
 with a new release label. The phone downloads it at the next sync and keeps it pending
 (logcat `MdmSyncWorker`: "waiting for the update window"); **debug builds count a pending update
 as overdue after 2 minutes**, release builds wait for 02:00-05:00 (or 24 h).
 
 ```sh
-P=com.kidslauncher.mdm.debug
+P=me.vibb.launcher.debug
 H="-a android.intent.action.MAIN -c android.intent.category.HOME"
-adb logcat -v time | grep -E "UpdateFence|SelfUpdate|MdmSyncWorker|AppInstall|PinLock|START u0|LockTask|Force stopping|kidslauncher"
+adb logcat -v time | grep -E "UpdateFence|SelfUpdate|MdmSyncWorker|AppInstall|PinLock|START u0|LockTask|Force stopping|kidslauncher|vibb"
 adb shell dumpsys package com.google.android.apps.nexuslauncher | grep -i suspended
 adb shell dumpsys statusbar | grep -E "mDisabled1|mDisabled2"
 adb shell run-as $P cat shared_prefs/update_fence.xml      # the fence record while it's up
@@ -279,7 +288,7 @@ The default debug build has no Firebase config: the phone uses the SSE stream (d
 For anything odd, paste into the chat:
 
 ```sh
-adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock|UpdateFence|SelfUpdate|NotificationRule|CameraLock" > log.txt
+adb logcat -d -t 2000 | grep -iE "kidslauncher|vibb|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock|UpdateFence|SelfUpdate|NotificationRule|CameraLock" > log.txt
 ```
 
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).

@@ -6,7 +6,7 @@ import org.junit.Test
 /** The camera stays unreachable while handy's PIN lock is up (emulator run: the power-button
  * gesture showed com.android.camera2 for a second before the lock came back). */
 class CameraLockTest {
-    private val own = "com.kidslauncher.mdm"
+    private val own = "me.vibb.launcher"
     private val camera = "com.android.camera2"
     private val gcam = "com.google.android.GoogleCamera"
 

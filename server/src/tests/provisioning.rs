@@ -135,7 +135,7 @@ fn provision_payload_defaults_and_wifi_handling() {
     );
     assert_eq!(
         open_wifi["android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME"],
-        "com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver"
+        "me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver"
     );
     assert_eq!(
         open_wifi["android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION"],

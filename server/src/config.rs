@@ -23,7 +23,13 @@ pub const SERVER_RELEASE_TAG_PREFIX: &str = "server-v";
 pub const LEGACY_SERVER_RELEASE_REPO: &str = "palchrb/kid-phone-server";
 pub const LEGACY_LAUNCHER_APK_URL: &str =
     "https://github.com/palchrb/kids-launcher-mdm/releases/latest/download/kids-launcher-mdm.apk";
+/// The launcher's applicationId is `me.vibb.launcher` since 2026-10-06; its Kotlin namespace (the
+/// class names) stayed `com.kidslauncher.mdm`.
 pub const DEFAULT_LAUNCHER_ADMIN_COMPONENT: &str =
+    "me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver";
+/// The default before the package rename; `install.sh` wrote it into `.env`, so it is read as
+/// today's (a QR with the old package would install a build whose admin isn't there).
+pub const LEGACY_LAUNCHER_ADMIN_COMPONENT: &str =
     "com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver";
 /// `releases/latest` only ever serves a normal (non-prerelease) release, only launcher releases
 /// are ever marked latest (server releases are published with makeLatest false), and the
@@ -32,10 +38,11 @@ pub const DEFAULT_LAUNCHER_ADMIN_COMPONENT: &str =
 pub const DEFAULT_LAUNCHER_APK_URL: &str =
     "https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk";
 
-/// Maps a pre-monorepo default to today's (see [`LEGACY_SERVER_RELEASE_REPO`]).
+/// Maps an old default to today's (see [`LEGACY_SERVER_RELEASE_REPO`],
+/// [`LEGACY_LAUNCHER_ADMIN_COMPONENT`]).
 fn migrate_legacy(key: &str, value: String, legacy: &str, current: &str) -> String {
     if value == legacy {
-        tracing::info!("{key}={legacy} is the pre-monorepo default - using {current} instead");
+        tracing::info!("{key}={legacy} is an old default - using {current} instead");
         current.to_string()
     } else {
         value
@@ -104,6 +111,14 @@ impl ForkConfig {
                 })
                 .unwrap_or_else(|| DEFAULT_SERVER_RELEASE_REPO.to_string()),
             launcher_admin_component: read("LAUNCHER_ADMIN_COMPONENT", is_valid_component)
+                .map(|v| {
+                    migrate_legacy(
+                        "LAUNCHER_ADMIN_COMPONENT",
+                        v,
+                        LEGACY_LAUNCHER_ADMIN_COMPONENT,
+                        DEFAULT_LAUNCHER_ADMIN_COMPONENT,
+                    )
+                })
                 .unwrap_or_else(|| DEFAULT_LAUNCHER_ADMIN_COMPONENT.to_string()),
             launcher_apk_url: read("LAUNCHER_APK_URL", is_valid_url)
                 .map(|v| {
@@ -242,6 +257,22 @@ mod tests {
             config.launcher_apk_url,
             "https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk"
         );
+    }
+
+    #[test]
+    fn pre_rename_admin_component_follows_the_package_rename() {
+        let config = ForkConfig::from_vars(&vars(&[(
+            "LAUNCHER_ADMIN_COMPONENT",
+            LEGACY_LAUNCHER_ADMIN_COMPONENT,
+        )]));
+        assert_eq!(
+            config.launcher_admin_component,
+            "me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver"
+        );
+        // Any other value (e.g. a debug build on a test server) is kept as written.
+        let debug = "com.kidslauncher.mdm.debug/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver";
+        let config = ForkConfig::from_vars(&vars(&[("LAUNCHER_ADMIN_COMPONENT", debug)]));
+        assert_eq!(config.launcher_admin_component, debug);
     }
 
     #[test]

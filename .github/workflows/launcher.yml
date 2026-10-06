@@ -267,7 +267,7 @@ jobs:
           exit 1
         fi
         "$BT/aapt2" dump badging kids-launcher-mdm.apk | grep "^package:" > badging.txt
-        grep -q "name='com.kidslauncher.mdm' " badging.txt \
+        grep -q "name='me.vibb.launcher' " badging.txt \
           || { echo "Unexpected package: $(cat badging.txt)" >&2; exit 1; }
         sha256sum kids-launcher-mdm.apk > kids-launcher-mdm.apk.sha256
     - name: Upload signed APK

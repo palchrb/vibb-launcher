@@ -367,7 +367,7 @@ class EnforcementPlanTest {
     }
 
     private companion object {
-        const val OWN = "com.kidslauncher.mdm"
+        const val OWN = "me.vibb.launcher"
         const val DIALER = "com.android.dialer"
         const val SMS = "com.google.android.apps.messaging"
     }

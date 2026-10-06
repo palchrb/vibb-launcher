@@ -97,7 +97,10 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.kidslauncher.mdm"
+        // The installed package (2026-10-06; was com.kidslauncher.mdm). The Kotlin namespace above
+        // stays, so component class names are com.kidslauncher.mdm.* under package me.vibb.launcher
+        // - e.g. the admin component me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver.
+        applicationId = "me.vibb.launcher"
         minSdk = 34
         targetSdk = 36
         versionCode = versionCodeOverride ?: 116

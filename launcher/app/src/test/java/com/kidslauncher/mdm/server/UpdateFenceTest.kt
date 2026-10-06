@@ -7,7 +7,7 @@ import org.junit.Test
 
 /** Design 11 §2 with qa-11-design.md #1-#7: the update fence's plan, record, order and release rule. */
 class UpdateFenceTest {
-    private val own = "com.kidslauncher.mdm"
+    private val own = "me.vibb.launcher"
     private val pixelHome = HomeCandidate("com.google.android.apps.nexuslauncher", system = true, persistent = false, priority = 0)
     private val launcher3 = HomeCandidate("com.android.launcher3", system = true, persistent = false, priority = 0)
 

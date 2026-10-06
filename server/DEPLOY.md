@@ -82,7 +82,7 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 
 | Setting | Default |
 |---|---|
-| `LAUNCHER_ADMIN_COMPONENT` | `com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` |
+| `LAUNCHER_ADMIN_COMPONENT` | `me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` (the launcher's package is `me.vibb.launcher` since 2026-10-06; an `.env` that still has the old `com.kidslauncher.mdm/...` default is read as the new one) |
 | `LAUNCHER_APK_URL` | `https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk` (only launcher releases are ever "latest") |
 | `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
 | `SERVER_RELEASE_REPO` | `palchrb/vibb-launcher` (where the Updates page looks for new server versions - only `server-vX.Y.Z` releases count) |
@@ -111,7 +111,9 @@ The launcher updates itself through the Apps catalog, like any other app. Add it
 - "include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
   - an existing row that watched `palchrb/kids-launcher-mdm` is moved to the monorepo by migration 0031, which also
     turns this off (with it on, every `launcher-vX.Y.Z-rc.N` would roll out to every phone)
-- package name: `com.kidslauncher.mdm`
+- package name: `me.vibb.launcher` (a row that still says `com.kidslauncher.mdm` or `.debug` is renamed by migration
+  0037; a phone still running the old `com.kidslauncher.mdm` build can't update into the renamed app - Android treats a
+  new package name as a different app - so re-provision it)
 - then, on the app's page, turn on "This is the launcher app"
 
 A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is
@@ -121,7 +123,7 @@ broken, fix it forward by releasing the old (or fixed) code under a higher `laun
 
 Without FCM every phone keeps its own connection to this server open (SSE) so changes arrive at once - that costs battery. With FCM, Google's push service wakes the phone instead; the phone still checks in by itself every 30 minutes and falls back to SSE whenever FCM isn't confirmed working (the device page's "Push and Play" card shows which one it uses). The launcher build must have the matching Firebase config (see the launcher repo).
 
-1. In the Firebase console, a project used for nothing else, with the Android app(s) of the launcher.
+1. In the Firebase console, a project used for nothing else, with the Android app(s) of the launcher (package `me.vibb.launcher`, and `me.vibb.launcher.debug` for debug builds - an app registered for the old `com.kidslauncher.mdm` doesn't match).
 2. In Google Cloud IAM for that project: a new service account with **only** the role "Firebase Cloud Messaging API Admin" (`roles/firebasecloudmessaging.admin`) - not the default Admin SDK account. Create a JSON key for it.
 3. Copy the key to the Pi outside the data directory (backups zip and mirror `data/`, the key must never be in a backup):
    ```

@@ -9,7 +9,8 @@ and releases are tagged `launcher-vX.Y.Z` / `server-vX.Y.Z`. The URLs and tags b
 the current values are in `server/DEPLOY.md` and the root `CLAUDE.md`.
 Tags: **[verified]** = checked in code, AOSP source or docs during this design. **[device]** = needs a test on the Jelly Star.
 
-Package/applicationId stays `com.kidslauncher.mdm` (user decision). Release builds use exactly that id. Debug builds keep the
+Package/applicationId: `me.vibb.launcher` since 2026-10-06 (was `com.kidslauncher.mdm`, user decision; the Kotlin
+namespace and class names stay `com.kidslauncher.mdm.*`). Release builds use exactly that id. Debug builds keep the
 `.debug` suffix (`app/build.gradle.kts:66-70`). Only one of the two can be device owner on a phone. Production phones run release.
 
 ## 1. Release signing (L)
@@ -145,7 +146,7 @@ as `config: Arc<ForkConfig>`). `dotenvy` already loads `.env` (`src/main.rs:43`)
 | Env var | Default | Replaces |
 |---|---|---|
 | `SERVER_RELEASE_REPO` | `palchrb/kid-phone-server` | `system_update.rs:29-30` (`REPO_API_URL`), `security.rs:305` (`REINSTALL_HINT`, becomes a fn that formats the repo) |
-| `LAUNCHER_ADMIN_COMPONENT` | `com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` | `provisioning.rs:39-40` |
+| `LAUNCHER_ADMIN_COMPONENT` | `me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` (was `com.kidslauncher.mdm/…` until 2026-10-06, read as the new value) | `provisioning.rs:39-40` |
 | `LAUNCHER_APK_URL` | `https://github.com/palchrb/kids-launcher-mdm/releases/latest/download/kids-launcher-mdm.apk` | `provisioning.rs:54-55` |
 | `LAUNCHER_SIGNATURE_CHECKSUM` | **none** | `provisioning.rs:52` |
 
@@ -171,7 +172,7 @@ as `config: Arc<ForkConfig>`). `dotenvy` already loads `.env` (`src/main.rs:43`)
   - asset filter `kids-launcher-mdm.apk`
   - `include_prereleases` off
   - `is_launcher` on (`tracked_apps.rs:508` `set_is_launcher`)
-  - package `com.kidslauncher.mdm`
+  - package `me.vibb.launcher` (migration 0037 renames a row still on `com.kidslauncher.mdm`)
 
   Document this in DEPLOY.md. There is no migration because there is no row to rewrite on a fresh install.
 - Tests (TestApp):
@@ -342,7 +343,7 @@ Settings during setup, before step 4 - once managed the system language is locke
    - `gh release download v0.24.0 -R palchrb/kids-launcher-mdm -p kids-launcher-mdm.apk`
    - `apksigner verify --print-certs kids-launcher-mdm.apk` must print the SHA-256 recorded in `RELEASE_CERT_SHA256`.
    - `adb install kids-launcher-mdm.apk`
-6. `adb shell dpm set-device-owner com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver`. Use the
+6. `adb shell dpm set-device-owner me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver`. Use the
    fully qualified receiver (L `CLAUDE.md:59-63`). Expect `Success: Device owner set to package …`.
 7. Press Home and pick Kids Launcher if asked. `AppEnforcer.enforceDefaultHome` pins it afterwards. Then enrol: swipe up,
    Settings, then:
@@ -356,7 +357,7 @@ Settings during setup, before step 4 - once managed the system language is locke
    - Toggle an app: it is suspended within seconds (SSE).
    - A blocked domain is blocked (DNS filter, pcap4j under R8).
    - The server is reachable over tsnet away from Wi-Fi (mobile data).
-   - `adb shell run-as com.kidslauncher.mdm true` fails ("package not debuggable").
+   - `adb shell run-as me.vibb.launcher true` fails ("package not debuggable").
    - `adb logcat | grep -iE 'ClassNotFound|NoSuchMethod|Serializer'` shows nothing.
 9. Fail-closed check:
    - Stop the server (or `sqlite3 kidphone.db "DELETE FROM device_policy WHERE device_id=N"` on a test server), then
@@ -364,7 +365,7 @@ Settings during setup, before step 4 - once managed the system language is locke
    - Restore the row.
 10. Leave USB debugging on during the test phase. Since step 4 the server blocks it by default
     (`DISALLOW_DEBUGGING_FEATURES`): before step 7 (enrolling), turn **"Block USB debugging" off** on the device page
-    and grant `adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION com.kidslauncher.mdm`; turn the
+    and grant `adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION me.vibb.launcher`; turn the
     switch back on at handover. Deploy order for an update: server first (migration 0023), set the switches and a PIN,
     then the launcher - a launcher on an older server applies the defaults (adb blocked). See 04-hardening.md
     "Runbook".

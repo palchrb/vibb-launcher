@@ -3,6 +3,7 @@
 //! requests sent straight to the router - no network, no background tasks.
 
 mod calls;
+mod cleanup;
 mod device_api;
 mod hardening;
 mod launcher_ui;

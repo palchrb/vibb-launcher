@@ -71,9 +71,9 @@ class SelfUpdatePlanTest {
     private fun apk(
         size: Long? = pending.sizeBytes,
         sha: String? = pending.sha256.uppercase(),
-        pkg: String? = "com.kidslauncher.mdm",
+        pkg: String? = "me.vibb.launcher",
         code: Long? = 1_003_000L,
-    ) = pendingApkCheck(pending, size, sha, pkg, code, "com.kidslauncher.mdm", 1_002_000L)
+    ) = pendingApkCheck(pending, size, sha, pkg, code, "me.vibb.launcher", 1_002_000L)
 
     @Test
     fun `the right APK passes`() {
@@ -90,7 +90,7 @@ class SelfUpdatePlanTest {
 
     @Test
     fun `another package is never fenced for or installed as our update`() {
-        assertEquals(PendingApkCheck.NOT_OURS, apk(pkg = "com.kidslauncher.mdm.debug"))
+        assertEquals(PendingApkCheck.NOT_OURS, apk(pkg = "me.vibb.launcher.debug"))
         assertEquals(PendingApkCheck.NOT_OURS, apk(pkg = "org.example.other"))
         assertEquals(PendingApkCheck.UNPARSEABLE, apk(pkg = null))
     }
@@ -231,11 +231,11 @@ class SelfUpdatePlanTest {
         assertEquals(true, signerMatches(emptySet(), null))
         assertEquals(
             PendingApkCheck.WRONG_SIGNER,
-            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "com.kidslauncher.mdm", 1_003_000L, "com.kidslauncher.mdm", 1_002_000L, setOf(release), setOf(debug)),
+            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "me.vibb.launcher", 1_003_000L, "me.vibb.launcher", 1_002_000L, setOf(release), setOf(debug)),
         )
         assertEquals(
             PendingApkCheck.OK,
-            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "com.kidslauncher.mdm", 1_003_000L, "com.kidslauncher.mdm", 1_002_000L, setOf(release), setOf(release)),
+            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "me.vibb.launcher", 1_003_000L, "me.vibb.launcher", 1_002_000L, setOf(release), setOf(release)),
         )
     }
 

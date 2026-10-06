@@ -4,7 +4,7 @@
 
 A lightweight, purpose-built parental-control server for the Kid Phone project. It's the sole backend for the client - there is no other MDM server or protocol involved. An earlier prototype used a different MDM stack entirely; that's been fully replaced, not extended, and none of its code, protocol, or data model carried over.
 
-The client is the launcher in `../launcher/` of the same monorepo (`palchrb/vibb-launcher`; was the `kids-launcher-mdm` fork - a custom Kotlin Android launcher that's also the Device-Owner MDM agent, package `com.kidslauncher.mdm`, networking code in its `app/.../server/`). It speaks this server's API directly - enrollment, policy fetch, and status reporting are all this server's own device-facing routes under `/api/devices/*`. See `../launcher/CLAUDE.md` for client-side architecture, and the root `CLAUDE.md` for the layout. Older notes below say "kids-launcher-mdm" or "that repo" for the launcher.
+The client is the launcher in `../launcher/` of the same monorepo (`palchrb/vibb-launcher`; was the `kids-launcher-mdm` fork - a custom Kotlin Android launcher that's also the Device-Owner MDM agent, package `me.vibb.launcher` (Kotlin namespace `com.kidslauncher.mdm`), networking code in its `app/.../server/`). It speaks this server's API directly - enrollment, policy fetch, and status reporting are all this server's own device-facing routes under `/api/devices/*`. See `../launcher/CLAUDE.md` for client-side architecture, and the root `CLAUDE.md` for the layout. Older notes below say "kids-launcher-mdm" or "that repo" for the launcher.
 
 **Both upstream repos are public** (as of 2026-07-31): `siesta5787/kid-phone-server` (GPLv3) and `siesta5787/kids-launcher-mdm` (GPLv3 for its own code; the inherited app-list screen stays MIT per `LICENSE-MIT-UPSTREAM` in that repo - it's a fork of Josia Pietsch's µLauncher, though the fork no longer describes itself that way since almost everything else - the gesture system, Minimalist Mode, the whole parental-control layer - is original).
 
@@ -27,7 +27,9 @@ service user): `install.sh`/`update.sh` take `KPS_REPO=owner/repo` (validated), 
 `actions.sh` at install time. `update.sh` downloads with `curl -f` and unpacks/checks the release before stopping the
 service, restarts it from an `ERR` trap if anything fails after the stop, copies the DB and the old binary to
 `/var/backups/kid-phone-server/` before every swap, and prunes old backups only once the new version is running
-(rollback steps in DEPLOY.md). Production launchers are the release build, package `com.kidslauncher.mdm`
+(rollback steps in DEPLOY.md). Production launchers are the release build, package `me.vibb.launcher` (renamed from
+`com.kidslauncher.mdm` on 2026-10-06: `LAUNCHER_ADMIN_COMPONENT`'s old default is read as the new one, migration 0037
+renames the launcher row's package; the Kotlin class names keep `com.kidslauncher.mdm`)
 (no `.debug` suffix), from normal GitHub releases with the stable asset name `kids-launcher-mdm.apk` - so the
 launcher's catalog row has `include_prereleases` **off** (release candidates are prereleases). Some bullets below
 describe upstream's rolling `pre-release` debug builds; that's history, not how this fork ships.
