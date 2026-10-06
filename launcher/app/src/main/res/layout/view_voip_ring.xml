@@ -2,7 +2,8 @@
 <!-- lock.PinLockActivity's ring screen for a VoIP call (design 17, QA #12): shown over the keypad
      while an allowed app's call rings and the phone is LOCKED - the app's icon and name (never the
      caller: the notification doesn't say who it is), Decline and Answer as on our call screen.
-     Answer opens the app's own ring screen; nothing else leads anywhere. -->
+     Answer opens the app's own ring screen. Emergency call and Parent code stay reachable as on
+     the lock (qa-16-17-code #3); nothing else leads anywhere. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/voip_ring_root"
     android:layout_width="match_parent"
@@ -15,7 +16,7 @@
     android:paddingStart="16dp"
     android:paddingTop="0dp"
     android:paddingEnd="16dp"
-    android:paddingBottom="28dp"
+    android:paddingBottom="4dp"
     android:visibility="gone">
 
     <TextView
@@ -32,9 +33,9 @@
 
     <ImageView
         android:id="@+id/voip_ring_icon"
-        android:layout_width="112dp"
-        android:layout_height="112dp"
-        android:layout_marginTop="32dp"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:layout_marginTop="24dp"
         android:importantForAccessibility="no"
         android:scaleType="fitCenter" />
 
@@ -131,4 +132,48 @@
                 android:text="@string/calls_answer" />
         </LinearLayout>
     </LinearLayout>
+    <LinearLayout
+        android:id="@+id/voip_ring_emergency"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_pin_emergency"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:minHeight="44dp"
+        android:orientation="horizontal"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_kid_phone" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:fontFamily="@font/nunito_extrabold"
+            android:text="@string/pin_lock_emergency"
+            android:textColor="@color/kid_ink"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/voip_ring_parent_code"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:alpha="0.75"
+        android:background="?android:attr/selectableItemBackground"
+        android:fontFamily="@font/nunito_bold"
+        android:gravity="center"
+        android:minHeight="40dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:text="@string/pin_lock_parent_code"
+        android:textColor="@color/kid_ink"
+        android:textSize="13sp" />
 </LinearLayout>

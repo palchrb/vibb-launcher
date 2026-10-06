@@ -105,7 +105,7 @@ pub struct LockState {
     pub exempt_yields: i64,
     /// Design 17 (QA #11): allowed VoIP apps (Element X, Signal) whose last ring had no
     /// full-screen intent - Android dropped it (no USE_FULL_SCREEN_INTENT), so their calls can't
-    /// ring over the lock. Package names, at most [MAX_FSI_DENIED] of 64 characters.
+    /// ring over the lock. Valid package names only, at most [MAX_FSI_DENIED].
     pub voip_fsi_denied: Vec<String>,
 }
 
@@ -120,11 +120,13 @@ pub fn sanitize_lock_state(value: &serde_json::Value) -> Option<String> {
     }
     let mut state: LockState = serde_json::from_value(value.clone()).ok()?;
     state.inactive = state.inactive.map(|i| i.chars().take(64).collect());
+    // Only real package names: they end up in a copy-paste adb command on the device page, and
+    // Askama escapes HTML, not the shell (qa-16-17-code #9).
     state.voip_fsi_denied = state
         .voip_fsi_denied
-        .iter()
+        .into_iter()
+        .filter(|p| crate::time_rules::valid_package_name(p))
         .take(MAX_FSI_DENIED)
-        .map(|p| p.chars().take(64).collect())
         .collect();
     serde_json::to_string(&state).ok()
 }
@@ -417,16 +419,21 @@ mod tests {
     }
 
     #[test]
-    fn voip_fsi_denied_is_capped_when_stored() {
-        let many: Vec<String> = (0..20).map(|i| format!("{}{i}", "p".repeat(100))).collect();
+    fn voip_fsi_denied_keeps_only_package_names_and_is_capped() {
+        let many: Vec<String> = (0..20).map(|i| format!("org.example.app{i}")).collect();
         let stored = sanitize_lock_state(&serde_json::json!({ "voip_fsi_denied": many })).unwrap();
         let state: LockState = serde_json::from_str(&stored).unwrap();
         assert_eq!(state.voip_fsi_denied.len(), MAX_FSI_DENIED);
-        assert!(
-            state
-                .voip_fsi_denied
-                .iter()
-                .all(|p| p.chars().count() == 64)
+        // Nothing that could reach the parent's shell through the adb command.
+        let long = format!("{}.y", "x".repeat(300));
+        let hostile = serde_json::json!({ "voip_fsi_denied": [
+            "io.element.android.x; rm -rf ~", "$(reboot)", "a.b`id`", "nodots", "1x.y", "io.element.android.x", long,
+        ]});
+        let stored = sanitize_lock_state(&hostile).unwrap();
+        let state: LockState = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            state.voip_fsi_denied,
+            vec!["io.element.android.x".to_string()]
         );
         // An older launcher sends none.
         let old = sanitize_lock_state(&serde_json::json!({ "active": true })).unwrap();

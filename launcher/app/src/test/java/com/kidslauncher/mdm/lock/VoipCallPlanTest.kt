@@ -49,6 +49,13 @@ class VoipCallPlanTest {
         assertEquals("the channel without a service isn't a call", VoipNoticeKind.NONE, voipNoticeKind(null, ELEMENT_CALL_CHANNEL, false, false, false))
         assertEquals("a message with a full-screen intent isn't a ring", VoipNoticeKind.NONE, voipNoticeKind("msg", "messages", false, true, false))
         assertEquals(VoipNoticeKind.NONE, voipNoticeKind("call", "missed", false, false, false))
+        // qa-16-17 #8: an incoming CallStyle posted by a call service without an FSI is a ring, never
+        // "the call" (its content intent may answer it).
+        assertEquals(VoipNoticeKind.NONE, voipNoticeKind("call", "ringing", foregroundService = true, hasFullScreenIntent = false, fsiDenied = false, incomingCallStyle = true))
+        assertEquals(VoipNoticeKind.NONE, voipNoticeKind(null, ELEMENT_CALL_CHANNEL, true, false, false, incomingCallStyle = true))
+        assertEquals("with an FSI it still rings", VoipNoticeKind.RINGING, voipNoticeKind("call", "ringing", true, true, false, incomingCallStyle = true))
+        assertEquals(VoipNoticeKind.FSI_DENIED, voipNoticeKind("call", "ringing", true, false, fsiDenied = true, incomingCallStyle = true))
+        assertEquals(1, CALL_TYPE_INCOMING)
     }
 
     // ---- the lifetime (QA #4/#5) ---------------------------------------------------------------
@@ -84,6 +91,7 @@ class VoipCallPlanTest {
         // The call: its service notification plus the audio mode.
         val call = voipExemption(gapLater.record, at(t0 + 60 * 60_000L, inCall = setOf(element), audio = true))
         assertEquals(VoipVerdict(gap.record, VoipPhase.IN_CALL, element), call)
+        assertNull("the ring is over", call.record!!.ringStartedElapsedMs)
         // Hung up: the service is gone - over at once (the grace is only after the ring).
         assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(call.record, at(t0 + 61 * 60_000L)))
     }
@@ -133,15 +141,38 @@ class VoipCallPlanTest {
 
     @Test
     fun `process start - the stored record stays pinned until the listener reports (QA 4)`() {
-        val stored = voipExemption(null, at(t0, ringing = setOf(element))).record!!.copy(ringEndedElapsedMs = null)
         val start = t0 + 600_000L
+        // As VoipCalls restores it: the ring ended long ago (stored), or at the latest at this restore.
+        val stored = voipExemption(null, at(t0, ringing = setOf(element))).record!!.copy(ringEndedElapsedMs = t0 + 10_000, ringStartedElapsedMs = null)
         val early = voipExemption(stored, at(start + 1_000, seen = false, unverifiedSince = start))
         assertEquals(VoipVerdict(stored, VoipPhase.IN_CALL, element), early)
-        // No listener after the grace: only while the audio mode says call.
-        assertEquals(VoipPhase.IN_CALL, voipExemption(stored, at(start + VOIP_GRACE_MS, seen = false, unverifiedSince = start, audio = true)).phase)
+        // No listener after the grace: over - the audio mode alone never holds it (qa-16-17 #7).
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(stored, at(start + VOIP_GRACE_MS, seen = false, unverifiedSince = start, audio = true)))
         assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(stored, at(start + VOIP_GRACE_MS, seen = false, unverifiedSince = start)))
         // The listener reports the call service: as before.
         assertEquals(VoipPhase.IN_CALL, voipExemption(stored, at(start + 2_000, inCall = setOf(element), audio = true)).phase)
+        // The listener reports nothing: no fresh grace from the stored end (qa-16-17 #7).
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(stored, at(start + 2_000)))
+    }
+
+    @Test
+    fun `a ring is the ring screen for at most 2 min, then the lock comes back (qa-16-17 4)`() {
+        val ring = voipExemption(null, at(t0, ringing = setOf(element)))
+        assertEquals(t0, ring.record!!.ringStartedElapsedMs)
+        val still = voipExemption(ring.record, at(t0 + VOIP_RING_LIMIT_MS - 1, ringing = setOf(element)))
+        assertEquals(VoipPhase.RINGING, still.phase)
+        val stuck = voipExemption(still.record, at(t0 + VOIP_RING_LIMIT_MS, ringing = setOf(element)))
+        assertEquals(VoipPhase.NONE, stuck.phase)
+        assertEquals("the record (and its pin) stay while the notification does", element, stuck.pinned)
+        assertEquals(t0, stuck.record!!.ringStartedElapsedMs)
+        // A re-ring after the ring ended is a new ring with its own limit, within the record's cap.
+        val ended = voipExemption(still.record, at(t0 + 60_000))
+        val again = voipExemption(ended.record, at(t0 + 70_000, ringing = setOf(element)))
+        assertEquals(VoipPhase.RINGING, again.phase)
+        assertEquals(t0 + 70_000, again.record!!.ringStartedElapsedMs)
+        // The 3 h cap bounds rings too.
+        val late = VoipRecord(element, ring.record!!.start, ringStartedElapsedMs = t0 + VOIP_CAP_MS - 1_000)
+        assertEquals(VoipPhase.NONE, voipExemption(late, at(t0 + VOIP_CAP_MS, ringing = setOf(element))).phase)
     }
 
     @Test

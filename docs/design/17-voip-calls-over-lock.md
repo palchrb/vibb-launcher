@@ -107,7 +107,9 @@ Built: QA #12 with #1-#11 and the #7 fix, as decided. Launcher paths under `laun
   and a time-rule lock), `voipNoticeKind` (category/channel/flags only), `voipExemption` (ring -> 15 s grace ->
   call foreground service AND audio `IN_COMMUNICATION` -> end; 3 h cap re-fronts but keeps the package pinned; a
   second app's ring during a call is ignored; a reboot ends it; before the listener reports in a new process the
-  stored record keeps it pinned for 15 s, then only with the audio mode), `managedCallActive` (#7), `ringPlan` (#1).
+  stored record keeps it pinned for 15 s from the restore, never on the audio mode alone; the ring end is stored, so
+  no fresh grace after a restart), the 2 min ring limit, `managedCallActive` (#7), `ringPlan` (#1), `voipRingWanted`
+  and `screenOffSilencesRing`; an incoming CallStyle (`EXTRA_CALL_TYPE`) is never "the call" (qa-16-17-code #8).
 - **Reader** (`badges/VoipCallReader`, hooked into `BadgeListenerService`): category, channel id, flags, whether a
   full-screen intent exists; keeps the ring's FSI and CallStyle decline action (`EXTRA_DECLINE_INTENT`) and the call
   service notification's content intent - never the ring's content intent, never text (`VoipCallGuardTest`).
@@ -116,21 +118,30 @@ Built: QA #12 with #1-#11 and the #7 fix, as decided. Launcher paths under `laun
   or lives; tells `LockTaskChrome` (pin changes) and `PinLockRuntime` (phase changes). Counted as a live call by the
   self-update gate, the update's Home and the boot Home.
 - **Lock**: `step` takes `voip` like `systemCall` (never started over a call; `ScreenOn` never covers the app's
-  screen), `VoipRinging` (LOCKED: shown with `setTurnScreenOn`, cleared 1 s after resume), `VoipEnded` (the lock comes
-  back, as after a phone call), `LockResumed` during the call re-sends the call notification's content intent
-  (`showVoipCall`). `RefrontPolicy` yields `"voip"`. The ring screen (`res/layout/view_voip_ring.xml` over the keypad):
-  the app's icon and name ("Ringer deg i Element X"), Avvis/Svar; Svar sends the FSI with
-  `ALLOW_IF_VISIBLE` (36; `ALLOWED` on 34/35) from the resumed lock, Avvis the decline action; a failure shows
-  "Klarte ikke å åpne samtalen". `VoipRinger`: default ringtone (`USAGE_NOTIFICATION_RINGTONE`) + vibration by ringer
-  mode and DND (calls from anyone), from a ring that starts while LOCKED until it ends; the power button silences it.
-  The app label is the app's own (design 14's override isn't wired into it).
+  screen), `VoipRinging` (LOCKED: shown and woken by `lock/VoipWakeActivity`, whose manifest has `turnScreenOn` -
+  the lock never sets the bit itself), `VoipEnded` (the lock comes back, as after a phone call), `LockResumed` during
+  the call re-sends the call notification's content intent (`showVoipCall`). **Our call, the system dialer's call
+  (emergency included), the emergency flow and a ringing alarm always win** (qa-16-17-code #1): `VoipRinging`/
+  `VoipEnded` then neither show nor wake the lock (`LockStep.recheck` - the re-front loop decides), and
+  `RefrontPolicy` checks `"voip"` last. The ring screen (`res/layout/view_voip_ring.xml` over the keypad): the app's
+  icon and name ("Ringer deg i Element X"), Avvis/Svar, plus Nødsamtale and Foreldrekode; Svar sends the FSI and Avvis
+  the decline action with `ALLOW_IF_VISIBLE` (36; `ALLOWED` on 34/35) from the resumed lock; Svar failing shows
+  "Klarte ikke å åpne samtalen", Avvis always hides the card and silences this ring. A ring is the ring screen for at
+  most 2 min (`VOIP_RING_LIMIT_MS`) and within the 3 h cap. `VoipRinger`: default ringtone
+  (`USAGE_NOTIFICATION_RINGTONE`) + vibration by ringer mode and DND (`consolidatedNotificationPolicy` on 36, calls from
+  anyone) while the pure `voipRingWanted` holds - RINGING, LOCKED (a ring that began unlocked rings once the phone
+  locks), not silenced (a screen-off on a ringing lock, or Avvis), no other call, emergency flow or alarm -
+  re-evaluated on every VoIP pass and lock-mode change. The app label is the app's own (design 14's override isn't
+  wired into it).
 - **Kiosk off**: `lockTaskWhileLocked(voipPackages)` pins the package + the permission controller
-  (`AppEnforcer.resolveVoipHelpers`) and sets the app-block bit while pinned; the lock starts no lock task while a
-  package is pinned (`lockTaskEntry(voipPinned)`, #10). Kiosk on: the list is untouched.
+  (`AppEnforcer.resolveVoipHelpers`) and sets the app-block bit while pinned; the lock starts no lock task while the
+  call rings or lives (`lockTaskEntry(voipCall)`, #10 - kiosk off only, and it re-enters lock task when the phase ends,
+  qa-16-17-code #6). Kiosk on: the list is untouched.
 - **#7**: the lock's system-call yield uses `isInManagedCall` (audio `MODE_IN_CALL` without READ_PHONE_STATE).
 - **#9**: `screenTimeCounts(..., voipExempt)` - the app's screen counts while the lock steps aside.
-- **#11**: `lock_state.voip_fsi_denied` (always sent; server `kid_lock::LockState`, capped at 8 x 64 chars) and a
-  device-page warning with the `appops set <pkg> USE_FULL_SCREEN_INTENT allow` fix.
+- **#11**: `lock_state.voip_fsi_denied` (always sent; server `kid_lock::LockState`: valid package names only, at most
+  8 - they go into the device page's copy-paste `appops set <pkg> USE_FULL_SCREEN_INTENT allow` command).
+- **Code review** `qa-16-17-code.md`: all 10 findings fixed (see its "Resolution").
 - Strings `voip_ring_via`, `voip_ring_failed` (nb + en); `VIBRATE` permission.
 
 Known gaps (accepted / documented): any caller of an allowed app rings (who may call is set on vibb.me); during a
@@ -140,8 +151,13 @@ until it ends); with the kiosk off, unlocking after the 3 h cap while the lock i
 task (AOSP `clearLockedTask`).
 
 Open device checks (emulator, then the Jelly Star; Element X from another account):
-- [ ] Screen off + LOCKED, kiosk on and off: the screen wakes, the ring screen shows, the ringtone is audible and
-  vibrates (ringer normal / vibrate / silent, DND).
+- [ ] Screen off + LOCKED, kiosk on and off: the screen wakes (`VoipWakeActivity` on the stopped lock), the ring
+  screen shows, the ringtone is audible and vibrates (ringer normal / vibrate / silent, DND, a Mode); no later lock
+  start (a declined ring's `VoipEnded`) wakes the screen.
+- [ ] A VoIP ring during a phone call (emergency included), the emergency dialer flow and a ringing alarm: no card, no
+  wake, no ringtone; the lock comes back after them. A phone call answered during a VoIP call isn't covered.
+- [ ] A ring that began unlocked starts ringing when the screen times out; the power button on a ringing lock
+  silences it; Nødsamtale and Foreldrekode work from the ring card; a stuck ring ends after 2 min.
 - [ ] Svar opens Element's IncomingCallActivity over the lock (BAL with `ALLOW_IF_VISIBLE`/`ALLOWED`), answering there
   keeps the call through the ring -> foreground-service gap (no call loss, lock stays away), hang-up brings the lock back.
 - [ ] Avvis declines (the decline action), a timed-out ring returns to the lock; the power button silences.

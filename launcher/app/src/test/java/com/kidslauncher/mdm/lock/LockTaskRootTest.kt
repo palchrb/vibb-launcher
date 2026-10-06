@@ -31,13 +31,15 @@ class LockTaskRootTest {
     }
 
     @Test
-    fun `no lock task at all while a VoIP call's app is pinned (design 17 QA 10 - PiP hang-up)`() {
-        for (kiosk in listOf(true, false)) {
-            for (fallback in listOf(true, false)) {
-                assertEquals(LockTaskEntry.NONE, lockTaskEntry(false, true, kiosk, null, fallback, voipPinned = true))
-            }
+    fun `kiosk off - no lock task while a VoIP call rings or lives (design 17 QA 10 - PiP hang-up)`() {
+        for (fallback in listOf(true, false)) {
+            assertEquals(LockTaskEntry.NONE, lockTaskEntry(false, true, kioskOn = false, sinceHomeAskedMs = null, fallbackDue = fallback, voipCall = true))
         }
-        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, false, null, false, voipPinned = false))
+        // After the exemption (only pinned, or no call) the lock roots its lock task again (qa-16-17 6).
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, false, null, false, voipCall = false))
+        // Kiosk on: Home roots it as always - a VoIP call changes nothing there (qa-16-17 6).
+        assertEquals(LockTaskEntry.START_HOME, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false, voipCall = true))
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = 500L, fallbackDue = true, voipCall = true))
     }
 
     @Test

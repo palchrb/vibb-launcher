@@ -281,8 +281,14 @@ object PinLockRuntime {
     /** The ring the power button (or Avvis) silenced ([VoipCalls.ringId]). */
     private var silencedRing: Long? = null
 
-    /** Avvis on the card: this ring stays silent, whatever the decline did. */
-    fun silenceVoipRing(context: Context) {
+    /** The ring Avvis dismissed: the card stays hidden for it (qa-16-17-code #3). */
+    private var dismissedRing: Long? = null
+
+    val voipRingDismissed: Boolean get() = VoipCalls.ringId != null && VoipCalls.ringId == dismissedRing
+
+    /** Avvis on the card: this ring's card goes and it stays silent, whatever the decline did. */
+    fun dismissVoipRing(context: Context) {
+        dismissedRing = VoipCalls.ringId
         silencedRing = VoipCalls.ringId
         syncVoipRinger(context)
     }
@@ -397,14 +403,19 @@ object PinLockRuntime {
     fun activeOrStored(context: Context): Boolean =
         mode != LockMode.DISABLED || PinLockStore.active(context.applicationContext)
 
-    /** [wake]: turn the screen on for it (a VoIP ring, design 17 - [PinLockActivity.EXTRA_WAKE]). */
+    /**
+     * [wake]: turn the screen on for it (a VoIP ring, design 17). The lock itself never sets
+     * turn-screen-on - an existing, stopped lock would learn it only after its start, and a left-over
+     * bit would wake a later start in a pocket (qa-16-17-code #2): a fresh [VoipWakeActivity], whose
+     * manifest says `turnScreenOn`, goes on top of it in its task and finishes itself.
+     */
     fun show(context: Context, wake: Boolean = false) {
         try {
             context.startActivity(
                 Intent(context, PinLockActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                    .putExtra(PinLockActivity.EXTRA_WAKE, wake),
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
             )
+            if (wake) context.startActivity(VoipWakeActivity.intent(context))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't start the lock screen", e)
         }
@@ -480,6 +491,8 @@ object PinLockRuntime {
     fun emergencyFlowStarted() {
         emergencyFlowUntilElapsed = SystemClock.elapsedRealtime() + EMERGENCY_FLOW_MS
         emergencyCallSeen = false
+        // A VoIP ring stops at once (qa-16-17-code #1).
+        appContext?.let { syncVoipRinger(it) }
     }
 
     /** The system clock app (resolved off the main thread at init) - only its alarms open the

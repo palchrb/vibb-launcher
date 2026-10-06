@@ -30,8 +30,12 @@ class VoipCallGuardTest {
         )) {
             assertFalse(banned, reader.contains(banned))
         }
-        // The only extra it reads is the decline action.
-        assertEquals(listOf("EXTRA_DECLINE_INTENT"), Regex("Notification\\.(EXTRA_[A-Z_]+)").findAll(reader).map { it.groupValues[1] }.toList())
+        // The only extras it reads: the decline action and the call type (an int, qa-16-17 #8).
+        assertEquals(
+            setOf("EXTRA_DECLINE_INTENT", "EXTRA_CALL_TYPE"),
+            Regex("Notification\\.(EXTRA_[A-Z_]+)").findAll(reader).map { it.groupValues[1] }.toSet(),
+        )
+        assertTrue(reader.contains("getInt(Notification.EXTRA_CALL_TYPE"))
     }
 
     @Test
@@ -54,6 +58,21 @@ class VoipCallGuardTest {
         for (line in calls.lines().filter { it.contains("Log.") }) {
             assertFalse(line, line.contains("key") || line.contains("notice") || line.contains("intent ="))
         }
+    }
+
+    @Test
+    fun `the lock never sets turn-screen-on - the wake activity's manifest does (qa-16-17 2)`() {
+        for (name in listOf("lock/PinLockActivity.kt", "lock/PinLockRuntime.kt", "lock/VoipCalls.kt", "lock/VoipWakeActivity.kt")) {
+            assertFalse(name, code(file(name)).contains("setTurnScreenOn"))
+        }
+        val manifest = listOf("src/main/AndroidManifest.xml", "app/src/main/AndroidManifest.xml").map(::File).first { it.exists() }.readText()
+        val wake = manifest.substringAfter("android:name=\".lock.VoipWakeActivity\"").substringBefore("/>")
+        for (attr in listOf("android:turnScreenOn=\"true\"", "android:exported=\"false\"", "android:taskAffinity=\"\${applicationId}.pinlock\"", "android:noHistory=\"true\"")) {
+            assertTrue(attr, wake.contains(attr))
+        }
+        assertFalse("never direct-boot-aware", wake.contains("directBootAware"))
+        val lock = manifest.substringAfter("android:name=\".lock.PinLockActivity\"").substringBefore("/>")
+        assertFalse(lock.contains("turnScreenOn"))
     }
 
     @Test

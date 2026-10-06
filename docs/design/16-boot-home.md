@@ -138,7 +138,8 @@ Built: A+B with QA #1-#6. D/16b (boot cover) is not built.
   dispatch), `lock/BootHome.kt`. The update gate reads the stored lock state (`activeOrStored`).
 - **Smoke test**: "no BlockedAppActivity after unlock" (3 s), Recents (`KEYCODE_APP_SWITCH`) and, with gesture
   navigation, a slow and a fast swipe-up - each polls a captured `dumpsys activity activities` for
-  `BlockedAppActivity` in front (`docs/testing/emulator.md` §5b).
+  `BlockedAppActivity` in front (`docs/testing/emulator.md` §5b); Recents/swipe-up only in the kiosk's lock task
+  (qa-16-17-code #10).
 - Tests: `LockTaskRootTest`, `HomeFrontTest`, `PinLockStateTest` (homeFirst), `SelfUpdatePlanTest` (boot gate, PIN
   lock only), `LockTaskHelpersTest` (`kioskFeatures`, the plan).
 

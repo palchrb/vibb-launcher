@@ -149,6 +149,17 @@
             android:showWhenLocked="true"
             android:taskAffinity="${applicationId}.pinlock"
             android:theme="@style/PinLockTheme" />
+        <!-- Design 17 (qa-16-17-code #2): wakes the screen for a VoIP ring - turnScreenOn is known
+             at the start; it sits on the PIN lock in its task and finishes itself. -->
+        <activity
+            android:name=".lock.VoipWakeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:showWhenLocked="true"
+            android:taskAffinity="${applicationId}.pinlock"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:turnScreenOn="true" />
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize"

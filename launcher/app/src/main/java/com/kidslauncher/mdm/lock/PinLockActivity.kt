@@ -72,7 +72,8 @@ class PinLockActivity : AppCompatActivity() {
     private lateinit var voipRing: ViewVoipRingBinding
     /** The package the ring screen was filled for. */
     private var voipShownFor: String? = null
-    private var wakeRequested = false
+    /** A VoIP call held lock task off at the last check (qa-16-17-code #6). */
+    private var voipHeldLockTask = false
 
     private val waitTicker: Runnable = object : Runnable {
         override fun run() {
@@ -109,7 +110,11 @@ class PinLockActivity : AppCompatActivity() {
         com.kidslauncher.mdm.ui.KidInsets.apply(voipRing.root)
         voipRing.voipRingAnswer.setOnClickListener { onVoipAnswer() }
         voipRing.voipRingDecline.setOnClickListener { onVoipDecline() }
-        applyWake(intent)
+        // Emergency call and Parent code stay reachable during a ring (qa-16-17-code #3).
+        voipRing.voipRingEmergency.setOnClickListener {
+            EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() }
+        }
+        voipRing.voipRingParentCode.setOnClickListener { showParentCodeDialog() }
         entered = savedInstanceState?.getString(STATE_ENTERED).orEmpty()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -131,29 +136,22 @@ class PinLockActivity : AppCompatActivity() {
         render()
     }
 
-    override fun onNewIntent(intent: android.content.Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        applyWake(intent)
+    private val voipListener: () -> Unit = {
+        renderVoip()
+        // The lock re-enters lock task as soon as a VoIP call stops holding it off (qa-16-17-code #6).
+        val holds = VoipCalls.phase != VoipPhase.NONE
+        if (holds != voipHeldLockTask) {
+            voipHeldLockTask = holds
+            if (resumed && PinLockRuntime.mode == LockMode.LOCKED) ensureLockTask(fallbackDue = false)
+        }
     }
 
-    /** Design 17: a VoIP ring starts the lock with the screen turned on; any other start doesn't.
-     * Cleared again once the lock is up, so a later start (the power button) can't wake it. */
-    private fun applyWake(intent: android.content.Intent?) {
-        val wake = intent?.getBooleanExtra(EXTRA_WAKE, false) == true
-        if (wake == wakeRequested) return
-        wakeRequested = wake
-        setTurnScreenOn(wake)
-    }
-
-    private val clearWake = Runnable { applyWake(null) }
-
-    private val voipListener: () -> Unit = { renderVoip() }
-
-    /** The ring screen: while an allowed app's call rings and the phone is LOCKED. */
+    /** The ring screen: while an allowed app's call rings and the phone is LOCKED - not after
+     * Avvis for this ring (qa-16-17-code #3). */
     private fun renderVoip() {
         if (!::voipRing.isInitialized) return
-        val ringing = PinLockRuntime.mode == LockMode.LOCKED && VoipCalls.phase == VoipPhase.RINGING && VoipCalls.ringingPackage != null
+        val ringing = PinLockRuntime.mode == LockMode.LOCKED && VoipCalls.phase == VoipPhase.RINGING &&
+            VoipCalls.ringingPackage != null && !PinLockRuntime.voipRingDismissed
         if (!ringing) {
             voipRing.root.visibility = View.GONE
             voipRing.voipRingError.visibility = View.GONE
@@ -183,8 +181,11 @@ class PinLockActivity : AppCompatActivity() {
         if (!VoipCalls.answer(this)) voipRing.voipRingError.visibility = View.VISIBLE
     }
 
+    /** Avvis always hides the card and silences this ring, whatever the decline action did. */
     private fun onVoipDecline() {
-        if (!VoipCalls.decline(this)) voipRing.voipRingError.visibility = View.VISIBLE
+        if (!VoipCalls.decline(this)) Log.w(LOG_TAG, "The VoIP decline action couldn't be sent")
+        PinLockRuntime.dismissVoipRing(this)
+        renderVoip()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -202,10 +203,6 @@ class PinLockActivity : AppCompatActivity() {
         PinLockRuntime.onLockResumed(this)
         ensureLockTask(fallbackDue = false)
         renderVoip()
-        if (wakeRequested) {
-            handler.removeCallbacks(clearWake)
-            handler.postDelayed(clearWake, WAKE_CLEAR_MS)
-        }
         // Step 11: the lock in front ends the update fence in the new build (lock task not required).
         com.kidslauncher.mdm.server.UpdateFence.onFront(this)
         handler.removeCallbacks(waitTicker)
@@ -246,8 +243,10 @@ class PinLockActivity : AppCompatActivity() {
         val permitted = getSystemService(DevicePolicyManager::class.java)?.isLockTaskPermitted(packageName) == true
         val now = SystemClock.elapsedRealtime()
         val since = homeAskedAtElapsed.takeIf { it > 0L }?.let { now - it }
-        // Design 17 (QA #10): while a VoIP call's app is pinned the lock starts no lock task.
-        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipPinned = VoipCalls.pinnedPackage != null)) {
+        // Design 17 (QA #10, qa-16-17-code #6): kiosk off, the lock starts no lock task while a VoIP
+        // call rings or lives (not while merely pinned).
+        voipHeldLockTask = VoipCalls.phase != VoipPhase.NONE
+        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipCall = voipHeldLockTask)) {
             LockTaskEntry.NONE -> if (!running && !permitted) Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
             LockTaskEntry.START_SELF -> try {
                 startLockTask()
@@ -531,12 +530,6 @@ class PinLockActivity : AppCompatActivity() {
         @Volatile
         var instances = 0
             private set
-
-        /** Start extra: turn the screen on for this start (a VoIP ring, design 17). */
-        const val EXTRA_WAKE = "com.kidslauncher.mdm.lock.extra.WAKE"
-
-        /** The wake has happened by then; the flag is cleared so no later start wakes the screen. */
-        private const val WAKE_CLEAR_MS = 1_000L
 
         /** When a lock last started Home to root lock task (elapsed realtime, 0 = never) - kept
          * across instances, so a Home that can't root it is asked at most every 3 s. */

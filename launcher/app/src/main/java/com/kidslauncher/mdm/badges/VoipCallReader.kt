@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import android.service.notification.StatusBarNotification
+import com.kidslauncher.mdm.lock.CALL_TYPE_INCOMING
 import com.kidslauncher.mdm.lock.VoipCalls
 import com.kidslauncher.mdm.lock.VoipNotice
 import com.kidslauncher.mdm.lock.VoipNoticeKind
@@ -12,7 +13,7 @@ import com.kidslauncher.mdm.lock.voipNoticeKind
 /**
  * The notification listener's reader for VoIP calls over the PIN lock (design 17): of every other
  * app's notification only the category, channel id, flags and whether it has a full-screen intent
- * ([voipNoticeKind]); of a call-shaped one also the intents the lock may send - the ring's
+ * ([voipNoticeKind]) and the CallStyle call type (an int); of a call-shaped one also the intents the lock may send - the ring's
  * full-screen intent and CallStyle decline action, and the call service notification's content
  * intent (never the ring's: that is Element's answer intent). Never a title, text, person or
  * message (`VoipCallReaderTest` scans this file); nothing is logged or stored here.
@@ -33,6 +34,8 @@ object VoipCallReader {
             foregroundService = n.flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
             hasFullScreenIntent = n.fullScreenIntent != null,
             fsiDenied = n.flags and FLAG_FSI_REQUESTED_BUT_DENIED != 0,
+            // An int, not text (qa-16-17-code #8): an incoming CallStyle is never "the call".
+            incomingCallStyle = n.extras?.getInt(Notification.EXTRA_CALL_TYPE, 0) == CALL_TYPE_INCOMING,
         )
         return when (kind) {
             VoipNoticeKind.NONE -> null

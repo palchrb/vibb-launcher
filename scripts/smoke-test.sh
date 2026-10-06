@@ -551,9 +551,14 @@ if [ -n "$KID_PIN" ] && [ "$locked" -eq 1 ]; then
 fi
 
 step "Recents and swipe-up (design 16)"
+# Only meaningful in the kiosk's lock task: without it no BlockedAppActivity is possible (qa-16-17 #10).
+lock_task_now="$(lock_task_state)"
 if top_is "$LOCK_ACTIVITY"; then
     skip "Recents shows no BlockedAppActivity" "the PIN lock is in front"
     skip "swipe-up shows no BlockedAppActivity" "the PIN lock is in front"
+elif [ "$lock_task_now" != "LOCKED" ]; then
+    skip "Recents shows no BlockedAppActivity" "no kiosk lock task (mLockTaskModeState=${lock_task_now:-unknown})"
+    skip "swipe-up shows no BlockedAppActivity" "no kiosk lock task (mLockTaskModeState=${lock_task_now:-unknown})"
 else
     sh_ input keyevent KEYCODE_APP_SWITCH >/dev/null
     if stays_false 3 blocked_app_in_front; then

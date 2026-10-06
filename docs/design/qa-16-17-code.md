@@ -30,3 +30,25 @@ Read-only, tests not re-run. Checked OK: every Home start is the typed HOME inte
 5. **Fixed.** The ring follows `voipRingWanted` on every mode change, so a ring that began unlocked starts ringing
    when a screen-off locks the phone; a screen-off silences only a lock that was already LOCKED and ringing
    (`screenOffSilencesRing`, per ring). DND reads `consolidatedNotificationPolicy` on 36 (the manual policy on 34/35).
+2. **Fixed.** The lock never sets turn-screen-on any more. A ring's `show(wake)` also starts `lock/VoipWakeActivity`: an
+   empty translucent activity with `android:turnScreenOn="true"` in its manifest (known at the start), taskAffinity
+   `.pinlock` (on top of the lock in its task, our package is lock-task permitted), `noHistory`, finishing itself
+   0.5 s after its resume. A new instance per ring, so no bit is left for a later start (`VoipCallGuardTest` checks the
+   manifest and that no lock source calls `setTurnScreenOn`).
+3. **Fixed.** The ring card has its own Nødsamtale (the lock's `EmergencyCall.confirm` flow) and Foreldrekode; Avvis
+   always hides the card for this ring and silences it (`PinLockRuntime.dismissVoipRing`), whatever the decline did;
+   the decline action is sent with the visible-sender options like the FSI.
+4. **Fixed.** `VOIP_RING_LIMIT_MS` (2 min from the ring's first sight, `VoipRecord.ringStartedElapsedMs`, stored) and
+   the 3 h cap bound RINGING; past either the phase is NONE (the lock comes back), the package stays pinned while the
+   record lives. A re-ring after the ring ended starts its own limit.
+6. **Fixed.** `lockTaskEntry(voipCall)` only holds lock task off with the kiosk off and while the phase isn't NONE (not
+   while merely pinned); the lock's VoIP listener re-runs `ensureLockTask` when that changes.
+7. **Fixed.** The record stores `ringEndedElapsedMs` (and the ring start); a restored record without either gets the
+   restore time as its ring end, so the listener's first report starts no fresh grace. Before the listener reports,
+   only the 15 s startup grace holds it - the audio-only OR is gone.
+8. **Fixed.** `voipNoticeKind(incomingCallStyle)`: an `EXTRA_CALL_TYPE` of `CALL_TYPE_INCOMING` (an int) is never
+   IN_CALL, so its content intent is never kept; `VoipCallGuardTest` pins the reader's extras (decline intent, call type).
+9. **Fixed.** `sanitize_lock_state` keeps only valid package names (`time_rules::valid_package_name`, the grammar above,
+   <= 255 chars) - no truncation, which could turn a hostile string into a different valid one; test with shell
+   metacharacters.
+10. **Fixed.** The smoke test's Recents and swipe-up checks are skipped unless `mLockTaskModeState` is LOCKED.

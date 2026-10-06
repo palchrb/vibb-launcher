@@ -26,6 +26,10 @@ const val VOIP_GRACE_MS = 15_000L
 /** At most this long; then the lock comes back, but the package stays pinned while its call lives. */
 const val VOIP_CAP_MS = 3 * 60 * 60_000L
 
+/** A ring is the lock's ring screen for at most this long from its first sight (qa-16-17-code #4):
+ * a CALL notification that never goes away must not keep the lock's exemptions forever. */
+const val VOIP_RING_LIMIT_MS = 2 * 60_000L
+
 /** `Notification.CATEGORY_CALL`. */
 const val CATEGORY_CALL = "call"
 
@@ -61,20 +65,30 @@ fun voipNoticeKind(
     foregroundService: Boolean,
     hasFullScreenIntent: Boolean,
     fsiDenied: Boolean,
+    incomingCallStyle: Boolean = false,
 ): VoipNoticeKind = when {
     category == CATEGORY_CALL && hasFullScreenIntent -> VoipNoticeKind.RINGING
     category == CATEGORY_CALL && fsiDenied -> VoipNoticeKind.FSI_DENIED
+    // An incoming CallStyle (`EXTRA_CALL_TYPE` = CALL_TYPE_INCOMING) is a ring, never "the call":
+    // its content intent may answer it (qa-16-17-code #8).
+    incomingCallStyle -> VoipNoticeKind.NONE
     foregroundService && (channelId == ELEMENT_CALL_CHANNEL || category == CATEGORY_CALL) -> VoipNoticeKind.IN_CALL
     else -> VoipNoticeKind.NONE
 }
 
-/** The exemption in force (CE prefs `voip_call` without [ringEndedElapsedMs]): one package at a time. */
+/** `Notification.CallStyle.CALL_TYPE_INCOMING` (the `EXTRA_CALL_TYPE` int). */
+const val CALL_TYPE_INCOMING = 1
+
+/** The exemption in force (CE prefs `voip_call`): one package at a time. */
 data class VoipRecord(
     val packageName: String,
     /** Its start by every clock ([timedWindowActive], cap [VOIP_CAP_MS]); a reboot ends it. */
     val start: WindowStart,
-    /** When its ring ended (the grace counts from here); `null` while ringing or not yet seen. */
+    /** When its ring ended (the grace counts from here); `null` while ringing or not yet seen.
+     * Stored, so a new process doesn't start a fresh grace (qa-16-17-code #7). */
     val ringEndedElapsedMs: Long? = null,
+    /** When the current ring was first seen ([VOIP_RING_LIMIT_MS]); `null` after it ended. */
+    val ringStartedElapsedMs: Long? = null,
 )
 
 data class VoipInputs(
@@ -101,27 +115,35 @@ private val NO_VOIP = VoipVerdict(null, VoipPhase.NONE, null)
 
 /**
  * The exemption's lifetime (QA #4/#5 and the decisions):
- * - the record's package rings: RINGING; else another allowed package rings while no call lives:
- *   a new record, RINGING (one call at a time - a second app's ring during a call is ignored);
+ * - the record's package rings: RINGING - for [VOIP_RING_LIMIT_MS] from the ring's first sight and
+ *   within the cap, then NONE (the lock comes back, qa-16-17-code #4); else another allowed package
+ *   rings while no call lives: a new record, RINGING (one call at a time - a second app's ring
+ *   during a call is ignored);
  * - the ring ended: [VOIP_GRACE_MS] of IN_CALL and pinned (Element cancels the ring before its
  *   call service starts - a re-front or an unpin in that gap would end the answered call);
  * - the call's foreground service: pinned, IN_CALL while the audio mode is IN_COMMUNICATION (or
  *   in the grace), else NONE - the lock comes back but the package stays;
  * - [VOIP_CAP_MS] after the start: NONE (the lock comes back), still pinned while the call lives;
  * - before the listener reported in this process (a crash, an update): the stored record keeps
- *   the package pinned and IN_CALL for [VOIP_GRACE_MS], then only while the audio mode says call;
+ *   the package pinned and IN_CALL for [VOIP_GRACE_MS] from the process start, then it ends - the
+ *   audio mode alone never holds it (qa-16-17-code #7);
  * - another boot (or elapsed time going backwards) ends the record.
  */
 fun voipExemption(stored: VoipRecord?, i: VoipInputs): VoipVerdict {
     val record = stored?.takeIf { sameBoot(it.start, i) }
     if (record != null && record.packageName in i.ringing) {
-        return VoipVerdict(record.copy(ringEndedElapsedMs = null), VoipPhase.RINGING, record.packageName)
+        // The same ring goes on, or (its last ring ended) a new one starts now.
+        val ringStarted = if (record.ringEndedElapsedMs == null) record.ringStartedElapsedMs ?: i.nowElapsedMs else i.nowElapsedMs
+        val next = record.copy(ringEndedElapsedMs = null, ringStartedElapsedMs = ringStarted)
+        val ringActive = i.nowElapsedMs - ringStarted in 0 until VOIP_RING_LIMIT_MS
+        val capActive = timedWindowActive(record.start, i.nowWallMs, i.nowElapsedMs, i.bootCount, VOIP_CAP_MS)
+        return VoipVerdict(next, if (ringActive && capActive) VoipPhase.RINGING else VoipPhase.NONE, record.packageName)
     }
     val current = record?.let { continueCall(it, i) }
     if (current != null) return current
     val ring = i.ringing.minOrNull() ?: return NO_VOIP
     val start = WindowStart(untilWallMs = i.nowWallMs + VOIP_CAP_MS, elapsedStartMs = i.nowElapsedMs, bootCount = i.bootCount)
-    return VoipVerdict(VoipRecord(ring, start), VoipPhase.RINGING, ring)
+    return VoipVerdict(VoipRecord(ring, start, ringStartedElapsedMs = i.nowElapsedMs), VoipPhase.RINGING, ring)
 }
 
 private fun sameBoot(start: WindowStart, i: VoipInputs): Boolean =
@@ -135,10 +157,10 @@ private fun continueCall(record: VoipRecord, i: VoipInputs): VoipVerdict? {
         VoipVerdict(next, if (exempt && capActive) VoipPhase.IN_CALL else VoipPhase.NONE, pkg)
     if (!i.listenerSeen) {
         val startup = i.nowElapsedMs - i.unverifiedSinceElapsedMs in 0 until VOIP_GRACE_MS
-        return if (startup || i.audioInCommunication) live(exempt = true) else null
+        return if (startup) live(exempt = true) else null
     }
     val ringEnded = record.ringEndedElapsedMs ?: i.nowElapsedMs
-    val next = record.copy(ringEndedElapsedMs = ringEnded)
+    val next = record.copy(ringEndedElapsedMs = ringEnded, ringStartedElapsedMs = null)
     val grace = i.nowElapsedMs - ringEnded in 0 until VOIP_GRACE_MS
     return when {
         pkg in i.inCall -> live(exempt = grace || i.audioInCommunication, next)

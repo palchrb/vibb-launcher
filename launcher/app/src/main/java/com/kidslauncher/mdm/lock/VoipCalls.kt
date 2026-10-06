@@ -48,6 +48,8 @@ object VoipCalls {
     private const val KEY_UNTIL = "until_wall"
     private const val KEY_ELAPSED = "elapsed_start"
     private const val KEY_BOOT = "boot"
+    private const val KEY_RING_ENDED = "ring_ended_elapsed"
+    private const val KEY_RING_STARTED = "ring_started_elapsed"
     private const val KEY_FSI_DENIED = "fsi_denied"
 
     /** While a call rings or lives, the grace, the cap and the audio mode are looked at this often. */
@@ -83,7 +85,7 @@ object VoipCalls {
 
     /** Identifies the current ring (silencing and Avvis hold for it only), `null` unless RINGING. */
     val ringId: Long?
-        get() = record?.takeIf { phase == VoipPhase.RINGING }?.start?.elapsedStartMs
+        get() = record?.takeIf { phase == VoipPhase.RINGING }?.ringStartedElapsedMs
 
     /** A VoIP call rings or lives: no self-update commit, no Home at boot. */
     val liveCall: Boolean get() = pinnedPackage != null
@@ -104,7 +106,16 @@ object VoipCalls {
         unverifiedSinceElapsed = SystemClock.elapsedRealtime()
         val prefs = prefs(app)
         record = prefs.getString(KEY_PACKAGE, null)?.let { pkg ->
-            VoipRecord(pkg, WindowStart(prefs.getLong(KEY_UNTIL, 0L), prefs.getLong(KEY_ELAPSED, 0L), prefs.getInt(KEY_BOOT, -1)))
+            val ringEnded = prefs.getLong(KEY_RING_ENDED, -1L).takeIf { it >= 0L }
+            val ringStarted = prefs.getLong(KEY_RING_STARTED, -1L).takeIf { it >= 0L }
+            VoipRecord(
+                pkg,
+                WindowStart(prefs.getLong(KEY_UNTIL, 0L), prefs.getLong(KEY_ELAPSED, 0L), prefs.getInt(KEY_BOOT, -1)),
+                // Neither ringing nor an end seen: the grace counts from this restore, never anew at
+                // the listener's first report (qa-16-17-code #7).
+                ringEndedElapsedMs = ringEnded ?: unverifiedSinceElapsed.takeIf { ringStarted == null },
+                ringStartedElapsedMs = ringStarted,
+            )
         }
         fsiDenied = prefs.getStringSet(KEY_FSI_DENIED, emptySet()).orEmpty().sorted()
         evaluate(app, sideEffects = false)
@@ -169,7 +180,7 @@ object VoipCalls {
         val oldPhase = phase
         val oldPinned = pinnedPackage
         val newRecord = verdict.record
-        if (newRecord?.packageName != record?.packageName || newRecord?.start != record?.start) store(app, newRecord)
+        if (newRecord != record) store(app, newRecord)
         record = newRecord
         phase = verdict.phase
         pinnedPackage = verdict.pinned
@@ -234,9 +245,11 @@ object VoipCalls {
         val editor = prefs(context).edit()
         if (r == null) {
             editor.remove(KEY_PACKAGE).remove(KEY_UNTIL).remove(KEY_ELAPSED).remove(KEY_BOOT)
+                .remove(KEY_RING_ENDED).remove(KEY_RING_STARTED)
         } else {
             editor.putString(KEY_PACKAGE, r.packageName).putLong(KEY_UNTIL, r.start.untilWallMs)
                 .putLong(KEY_ELAPSED, r.start.elapsedStartMs).putInt(KEY_BOOT, r.start.bootCount)
+                .putLong(KEY_RING_ENDED, r.ringEndedElapsedMs ?: -1L).putLong(KEY_RING_STARTED, r.ringStartedElapsedMs ?: -1L)
         }
         editor.apply()
     }
@@ -262,13 +275,14 @@ object VoipCalls {
     /** Answer on the card: the ring's full-screen intent (the app's ring screen) - only ever that. */
     fun answer(context: Context): Boolean {
         val intent = ringingNotice()?.fullScreen ?: return false
-        return send(context, intent, startsActivity = true)
+        return send(context, intent)
     }
 
     /** Decline on the card: the CallStyle decline action. */
     fun decline(context: Context): Boolean {
         val intent = ringingNotice()?.decline ?: return false
-        return send(context, intent, startsActivity = false)
+        // The visible-sender options too: a decline action may be an activity (qa-16-17-code #3).
+        return send(context, intent)
     }
 
     /** The lock resumed during the call: the app's call screen again (its call service
@@ -276,7 +290,7 @@ object VoipCalls {
     fun reopenCall(context: Context): Boolean {
         val pkg = record?.packageName ?: return false
         val intent = notices.values.lastOrNull { it.kind == VoipNoticeKind.IN_CALL && it.packageName == pkg }?.content ?: return false
-        return send(context, intent, startsActivity = true)
+        return send(context, intent)
     }
 
     /**
@@ -286,8 +300,8 @@ object VoipCalls {
      * notification's cancelled intent throws (then `false`: the card says so, the next post brings
      * the new one).
      */
-    private fun send(context: Context, intent: PendingIntent, startsActivity: Boolean): Boolean = try {
-        intent.send(context, 0, null, null, null, null, if (startsActivity) visibleSenderOptions() else null)
+    private fun send(context: Context, intent: PendingIntent): Boolean = try {
+        intent.send(context, 0, null, null, null, null, visibleSenderOptions())
         true
     } catch (e: PendingIntent.CanceledException) {
         Log.w(LOG_TAG, "The call app's intent was cancelled")
