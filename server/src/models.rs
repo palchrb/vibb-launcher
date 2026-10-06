@@ -80,6 +80,11 @@ pub struct DevicePolicy {
     /// Screen timeout in seconds (migrations/0032), one of [SCREEN_TIMEOUTS]; see
     /// [screen_timeout_seconds].
     pub screen_timeout_seconds: i64,
+    /// The launcher's update fence (handy step 11, migrations/0036, default off).
+    pub update_fence: bool,
+    /// The launcher's notification auto-cancel rule (handy step 11, migrations/0036, default
+    /// off).
+    pub notification_auto_cancel: bool,
 }
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.
@@ -262,6 +267,12 @@ pub struct DeviceStatus {
     /// The screen timeout the phone applied, seconds (migrations/0032). `None` from older
     /// launchers.
     pub screen_timeout_seconds: Option<i64>,
+    /// The phone's `update_fence` (handy step 11, migrations/0036), see
+    /// `kiosk_escapes::UpdateFenceState`.
+    pub update_fence_json: Option<String>,
+    /// The phone's `notification_cancels` (handy step 11), see
+    /// `kiosk_escapes::NotificationCancels`.
+    pub notification_cancels_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -511,6 +522,13 @@ pub struct PolicyResponse {
     /// launcher without the key in its DTO (older) ignores it, and an older server's response
     /// without it leaves the phone's setting alone.
     pub screen_timeout_seconds: i64,
+    /// The update fence (handy step 11), always sent: while the launcher installs its own update
+    /// every other Home app is suspended and the status bar disabled; `false` also releases a
+    /// fence that is up. A launcher on a server without the key treats it as off.
+    pub update_fence: bool,
+    /// Notification auto-cancel (handy step 11), always sent: the launcher's listener removes
+    /// other apps' nags (not allowed, not essential). Missing = off on the launcher.
+    pub notification_auto_cancel: bool,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -612,6 +630,14 @@ pub struct StatusReportRequest {
     /// The screen timeout the phone has now (read back after applying the policy's), seconds.
     #[serde(default)]
     pub screen_timeout_seconds: Option<i64>,
+    /// The update fence and the pending launcher update (handy step 11) - opaque, stored
+    /// re-serialized and capped (`kiosk_escapes::sanitize_update_fence`).
+    #[serde(default)]
+    pub update_fence: Option<serde_json::Value>,
+    /// What the notification rule removed since the last report (handy step 11) - package and
+    /// channel ids with counts, stored capped (`kiosk_escapes::sanitize_notification_cancels`).
+    #[serde(default)]
+    pub notification_cancels: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.

@@ -263,6 +263,9 @@ struct DeviceDetailTemplate {
     push: PushCard,
     /// "Screen lock" card (handy step 10): the kid's PIN, the phone's lock state, warnings.
     lock: crate::kid_lock::LockCard,
+    /// "Launcher updates and notifications" card (handy step 11): the update fence and the
+    /// notification auto-cancel switches, and what the phone reports about them.
+    escapes: crate::kiosk_escapes::EscapesCard,
     /// One-shot message after a save (`?notice=`), see `kid_lock::flash_text`.
     notice: Option<&'static str>,
     /// "Screen timeout" card (migrations/0032): the choice, every option, and what the phone
@@ -298,6 +301,42 @@ pub async fn update_kiosk_block(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// The "Launcher updates and notifications" card (handy step 11): the update fence (other Home
+/// apps paused while the launcher installs its own update) and the notification auto-cancel rule.
+/// One auto-saving form, so a missing checkbox is off; 404 for an unknown device; nudges.
+pub async fn update_kiosk_escapes(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let result = sqlx::query(
+        "UPDATE device_policy SET update_fence = ?, notification_auto_cancel = ?, \
+         updated_at = datetime('now') WHERE device_id = ?",
+    )
+    .bind(form.contains_key("update_fence"))
+    .bind(form.contains_key("notification_auto_cancel"))
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(r) if r.rows_affected() == 0 => {
+            (StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&format!("/devices/{id}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't save the kiosk escape switches");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Couldn't save - nothing was changed.",
@@ -914,6 +953,39 @@ pub async fn view_device(
             chrono::Utc::now().timestamp_millis(),
         )
     };
+    let escapes = {
+        let capable = latest_status
+            .as_ref()
+            .and_then(|s| s.capabilities_json.as_deref())
+            .is_some_and(|caps| {
+                caps.contains(&format!(
+                    "\"{}\"",
+                    crate::kiosk_escapes::KIOSK_ESCAPES_CAPABILITY
+                ))
+            });
+        let fence = crate::kiosk_escapes::parse_update_fence(
+            latest_status
+                .as_ref()
+                .and_then(|s| s.update_fence_json.as_deref()),
+        );
+        let cancels = crate::kiosk_escapes::parse_notification_cancels(
+            latest_status
+                .as_ref()
+                .and_then(|s| s.notification_cancels_json.as_deref()),
+        );
+        crate::kiosk_escapes::escapes_card(
+            policy.update_fence,
+            policy.notification_auto_cancel,
+            capable,
+            latest_status.is_some(),
+            fence.as_ref(),
+            cancels.as_ref(),
+            latest_status
+                .as_ref()
+                .and_then(|s| s.notification_listener_enabled),
+            chrono::Utc::now().timestamp_millis(),
+        )
+    };
     let notice = query
         .get("notice")
         .and_then(|code| crate::kid_lock::flash_text(code));
@@ -929,6 +1001,7 @@ pub async fn view_device(
             time,
             push,
             lock,
+            escapes,
             notice,
             screen_timeout_seconds: crate::models::screen_timeout_seconds(
                 policy.screen_timeout_seconds,

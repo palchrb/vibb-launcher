@@ -231,6 +231,8 @@ pub(crate) async fn build_policy(
         screen_timeout_seconds: crate::models::screen_timeout_seconds(
             policy.screen_timeout_seconds,
         ),
+        update_fence: policy.update_fence,
+        notification_auto_cancel: policy.notification_auto_cancel,
         override_pin_hash: policy.override_pin_hash,
         override_pin_salt: policy.override_pin_salt,
         quick_controls_mask: policy.quick_controls_mask,
@@ -575,6 +577,16 @@ pub async fn status(
         .lock_state
         .as_ref()
         .and_then(crate::kid_lock::sanitize_lock_state);
+    // Kiosk escapes (step 11): re-serialized through the known fields and capped - package and
+    // channel ids with counts only, never notification text.
+    let update_fence_json = report
+        .update_fence
+        .as_ref()
+        .and_then(crate::kiosk_escapes::sanitize_update_fence);
+    let notification_cancels_json = report
+        .notification_cancels
+        .as_ref()
+        .and_then(crate::kiosk_escapes::sanitize_notification_cancels);
 
     // The previous report, for the security log below (install mode started, new apps).
     let previous: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
@@ -595,8 +607,8 @@ pub async fn status(
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
           call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
           install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json, \
-          screen_timeout_seconds) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          screen_timeout_seconds, update_fence_json, notification_cancels_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -622,6 +634,8 @@ pub async fn status(
             .screen_timeout_seconds
             .filter(|s| (1..=86_400).contains(s)),
     )
+    .bind(&update_fence_json)
+    .bind(&notification_cancels_json)
     .execute(&state.db)
     .await
     .ok();

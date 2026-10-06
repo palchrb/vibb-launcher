@@ -3,6 +3,7 @@ mod dns_engine;
 mod fcm;
 mod handlers;
 mod kid_lock;
+mod kiosk_escapes;
 mod models;
 mod phone;
 mod photos;
@@ -278,6 +279,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/devices/{id}/kiosk-block",
             post(handlers::devices::update_kiosk_block),
+        )
+        .route(
+            "/devices/{id}/kiosk-escapes",
+            post(handlers::devices::update_kiosk_escapes),
         )
         .route("/devices/{id}/contacts", post(handlers::calls::add_contact))
         .route(
