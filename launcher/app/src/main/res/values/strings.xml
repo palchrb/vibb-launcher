@@ -59,7 +59,6 @@
     <string name="calls_mute">Mute</string>
     <string name="calls_muted">Muted</string>
     <string name="calls_message_opens_in">Message opens in %1$s</string>
-    <string name="call_contact">Call %1$s</string>
     <string name="missed_when_today">today %1$s</string>
     <string name="missed_when_yesterday">yesterday %1$s</string>
     <!-- %1$s = day and month, %2$s = time -->
@@ -72,10 +71,6 @@
     <plurals name="contact_missed">
         <item quantity="one">%1$s, %2$d missed call</item>
         <item quantity="other">%1$s, %2$d missed calls</item>
-    </plurals>
-    <plurals name="call_contact_missed">
-        <item quantity="one">Call %1$s, %2$d missed call</item>
-        <item quantity="other">Call %1$s, %2$d missed calls</item>
     </plurals>
 
     <!--

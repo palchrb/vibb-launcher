@@ -47,7 +47,7 @@ class PhoneBookActivity : UIObjectActivity() {
         )
         binding.phoneBookGrid.layoutManager = GridLayoutManager(this, 3)
         binding.phoneBookGrid.adapter = adapter
-        binding.phoneBookBack.setOnClickListener { finish() }
+        com.kidslauncher.mdm.ui.KidBackButton.bind(this, binding.phoneBookBack)
         handleNumber(intent)
     }
 

@@ -77,6 +77,20 @@ object KidAvatars {
         }
     }
 
+    /**
+     * The green call badge with a ring in the wallpaper's ink (white on dark grounds, near-black on
+     * light ones - [com.kidslauncher.mdm.ui.wallpaper.InkChoice]), so it stays legible on any
+     * wallpaper (emulator run 2026-10-06; it was a ring in the fixed ground colour).
+     */
+    fun bindCallBadge(badge: View, ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice) {
+        badge.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(badge.context.getColor(R.color.kid_call_badge))
+            setStroke(dp(badge.context, 2f), ink.ink)
+        }
+        badge.visibility = View.VISIBLE
+    }
+
     /** The coloured ring around the sheet's photo, in the contact's colour. */
     fun ring(context: Context, contact: RuleContact, isEmergency: Boolean): Drawable =
         GradientDrawable().apply {

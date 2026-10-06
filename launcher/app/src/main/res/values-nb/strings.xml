@@ -49,7 +49,6 @@
     <string name="calls_mute">Demp</string>
     <string name="calls_muted">Dempet</string>
     <string name="calls_message_opens_in">Melding åpnes i %1$s</string>
-    <string name="call_contact">Ring %1$s</string>
     <string name="missed_when_today">i dag %1$s</string>
     <string name="missed_when_yesterday">i går %1$s</string>
     <string name="missed_when_date">%1$s %2$s</string>
@@ -60,10 +59,6 @@
     <plurals name="contact_missed">
         <item quantity="one">%1$s, %2$d tapt anrop</item>
         <item quantity="other">%1$s, %2$d tapte anrop</item>
-    </plurals>
-    <plurals name="call_contact_missed">
-        <item quantity="one">Ring %1$s, %2$d tapt anrop</item>
-        <item quantity="other">Ring %1$s, %2$d tapte anrop</item>
     </plurals>
 
     <!-- Home screen -->

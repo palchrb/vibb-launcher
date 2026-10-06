@@ -9,8 +9,8 @@ ContactCard = sheet with photo. S = kid-phone-server, L = kids-launcher-mdm, bra
 - **Home** (`HomeActivity`, `activity_home.xml`): ground `#14213D`, white ink. Big `TextClock` (52 sp, bold) +
   localized date ("søndag 5. oktober", best pattern `EEEEdMMMM`), Android's own status bar above (kiosk keeps
   `SYSTEM_INFO`). Row of Home contacts: 76 dp avatar (photo or initial on the palette colour), green 28 dp call
-  badge, orange missed-call badge (icon + count) top-right; tap calls at once (02 decision), long-press opens the
-  contact sheet. Below a `GridLayoutManager` grid, **3 columns, 4 if the parent says so**: Phone book tile first
+  badge, orange missed-call badge (icon + count) top-right; tap and long-press open the
+  contact sheet (changed 2026-10-06; it was "tap calls at once", 02 decision). Below a `GridLayoutManager` grid, **3 columns, 4 if the parent says so**: Phone book tile first
   (green, book icon), then every app the drawer would show (`AppFilter`: suspended/hidden apps, kid-hidden apps and
   the blocked system dialer are left out), alphabetical, 60 dp round icon + 13 sp label + orange unread badge.
 - **Drawer stays** behind swipe-up: same `AppFilter`, so it shows nothing the grid doesn't; it is the way to the
@@ -93,7 +93,7 @@ listener warning, tests), `454f1d3` CLAUDE.md. L: `84724fb` (DTOs, `AIRPLANE_MOD
 (25 warning lines). Launcher 191 JVM tests (was 168), `assembleDebug` + `assembleRelease` build. Lint doesn't run
 offline (androidTest deps not cached), so `TranslationsTest` checks keys/placeholders. No emulator here: the UI is
 build-checked only - the device checklist below is the real test.
-Choices: home-contact tap calls, long-press opens the sheet; drawer kept; old minimalist list removed; every string
+Choices: home-contact tap calls, long-press opens the sheet (since 2026-10-06 both open the sheet); drawer kept; old minimalist list removed; every string
 translated (not only handy's); photos pruned by scanning the directory; `InCallActivity` shows no photo (direct boot).
 Fix round after `qa-step5-code.md` (#1-#7): S `5b83dc3` (40 MP/128 MiB cap, crop+shrink before rotate, one upload at
 a time, one file lock for store/commit/prune, photos in backups + startup recovery or NULL); L `32b1d24` (bounded

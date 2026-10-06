@@ -90,7 +90,7 @@ class KidSettingsActivity : UIObjectActivity() {
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)
 
-        binding.kidSettingsBack.setOnClickListener { finish() }
+        com.kidslauncher.mdm.ui.KidBackButton.bind(this, binding.kidSettingsBack)
 
         binding.kidSettingsWifiSwitch.setOnCheckedChangeListener(wifiListener)
         binding.kidSettingsWifiManage.setOnClickListener {

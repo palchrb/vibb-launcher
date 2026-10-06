@@ -511,7 +511,7 @@ class HomeActivity : UIObjectActivity() {
                 item.findViewById<TextView>(R.id.contact_initial),
                 contact, emergency, initialSp = 30f * layout.avatarDp / 76f,
             )
-            item.findViewById<View>(R.id.contact_call_badge).visibility = View.VISIBLE
+            KidAvatars.bindCallBadge(item.findViewById(R.id.contact_call_badge), shownInk)
             val missedCount = missed[contact.number]?.count ?: 0
             KidAvatars.bindBadge(item.findViewById(R.id.contact_badge), missedCount)
             item.findViewById<TextView>(R.id.contact_name).apply {
@@ -520,15 +520,15 @@ class HomeActivity : UIObjectActivity() {
                 maxWidth = KidAvatars.dp(this@HomeActivity, layout.itemDp.toFloat())
             }
             item.contentDescription = if (missedCount > 0) {
-                resources.getQuantityString(R.plurals.call_contact_missed, missedCount, contact.name, missedCount)
+                resources.getQuantityString(R.plurals.contact_missed, missedCount, contact.name, missedCount)
             } else {
-                getString(R.string.call_contact, contact.name)
+                contact.name
             }
+            // Tap and long-press open the contact sheet (Call / Message / Close) - user decision in
+            // the fix round 2026-10-06, replacing "tap calls straight away" (02/05 docs): a stray
+            // tap on Home no longer starts a call.
             item.setOnClickListener {
-                // Tapping calls straight away (02 decision); calling back deals with missed calls.
-                MissedCallsRepo.markSeen(this, contact.number)
-                CallSystem.placeCall(this, contact.number)
-                loadMissedCalls()
+                ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
             }
             item.setOnLongClickListener {
                 ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }

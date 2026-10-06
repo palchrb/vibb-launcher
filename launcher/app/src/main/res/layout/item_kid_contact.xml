@@ -8,13 +8,17 @@
     android:background="?android:attr/selectableItemBackground"
     android:gravity="center_horizontal"
     android:orientation="vertical"
+    android:clipChildren="false"
+    android:clipToPadding="false"
     android:paddingTop="4dp"
     android:paddingBottom="4dp">
 
     <FrameLayout
         android:id="@+id/contact_frame"
         android:layout_width="88dp"
-        android:layout_height="82dp">
+        android:layout_height="82dp"
+        android:clipChildren="false"
+        android:clipToPadding="false">
 
         <FrameLayout
             android:id="@+id/contact_avatar"
@@ -39,20 +43,22 @@
                 android:importantForAccessibility="no"
                 android:maxLines="1"
                 android:textSize="30sp" />
-
-            <ImageView
-                android:id="@+id/contact_call_badge"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_gravity="bottom|end"
-                android:layout_marginEnd="-4dp"
-                android:layout_marginBottom="-2dp"
-                android:background="@drawable/bg_kid_call_badge"
-                android:importantForAccessibility="no"
-                android:padding="7dp"
-                android:src="@drawable/ic_kid_phone"
-                android:visibility="gone" />
         </FrameLayout>
+
+        <!-- The green call badge (Home only), on the frame - not inside the avatar, whose bounds
+             clipped it (emulator run 2026-10-06). Its right edge sits 4 dp past the avatar's, all
+             within the frame; the ring takes the wallpaper's ink (KidAvatars.bindCallBadge). -->
+        <ImageView
+            android:id="@+id/contact_call_badge"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="2dp"
+            android:background="@drawable/bg_kid_call_badge"
+            android:importantForAccessibility="no"
+            android:padding="7dp"
+            android:src="@drawable/ic_kid_phone"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/contact_badge"

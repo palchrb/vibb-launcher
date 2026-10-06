@@ -482,7 +482,11 @@ QA findings override this doc where they conflict. Binding for implementation:
   test-vector file used by both the Rust and Kotlin tests.
 - **Separate switches for calls and SMS** per device (user, 2026-10-04).
 - **Contact actions:** tapping Call in the phone book or a home-screen button calls
-  immediately, no confirmation. A contact can also have a Message button that opens the
+  immediately, no confirmation. *Changed 2026-10-06 (user, fix round):* tapping a home-screen
+  contact opens the contact sheet (Call / Message / Close), like the phone book; only the sheet's
+  Call button calls. And one call at a time: Call is off, and our redirection and in-call
+  services cancel a new outgoing call, while another call rings, dials, is active or held -
+  emergency numbers always go through (`secondCallAllowed`). A contact can also have a Message button that opens the
   messaging app the parent chose for that contact (default set per device): SMS
   (`smsto:` intent, only when SMS is on), Element X (Matrix ID, `https://matrix.to/#/<mxid>`
   with the package set) or Signal/Molly (`https://signal.me/#p/<number>`). The button is
