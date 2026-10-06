@@ -147,9 +147,40 @@ class PinLockStateTest {
 
     @Test
     fun `a VoIP ring while LOCKED wakes the lock as its ring screen - unlocked, the app rings itself`() {
-        assertEquals(LockStep(LockMode.LOCKED, showLock = true, wake = true), step(LockMode.LOCKED, LockEvent.VoipRinging))
-        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.VoipRinging))
-        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.VoipRinging))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true, wake = true), step(LockMode.LOCKED, LockEvent.VoipRinging()))
+        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.VoipRinging()))
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.VoipRinging()))
+    }
+
+    @Test
+    fun `another call, the emergency flow and a ringing alarm always win over a VoIP ring (qa-16-17 1)`() {
+        val others = listOf(
+            "system dialer's call (emergency)" to LockEvent.VoipRinging(systemCall = true),
+            "our call" to LockEvent.VoipRinging(ourCall = true),
+            "emergency dialer flow" to LockEvent.VoipRinging(emergencyFlow = true),
+            "ringing alarm" to LockEvent.VoipRinging(alarmRinging = true),
+        )
+        for ((what, event) in others) {
+            // No card, no wake: the re-front loop decides (it yields to them).
+            assertEquals(what, LockStep(LockMode.LOCKED, recheck = true), step(LockMode.LOCKED, event))
+            assertEquals(what, LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, event))
+        }
+    }
+
+    @Test
+    fun `a VoIP call ending never puts the lock over another call, the emergency flow or the alarm (qa-16-17 1)`() {
+        val others = listOf(
+            LockEvent.VoipEnded(interactive = true, systemCall = true),
+            LockEvent.VoipEnded(interactive = true, ourCall = true),
+            LockEvent.VoipEnded(interactive = true, emergencyFlow = true),
+            LockEvent.VoipEnded(interactive = true, alarmRinging = true),
+        )
+        for (event in others) {
+            assertEquals(event.toString(), LockStep(LockMode.LOCKED, recheck = true), step(LockMode.LOCKED, event))
+            assertEquals(event.toString(), LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, event))
+        }
+        // Ended with the screen off while unlocked (it went off during the call): LOCKED, still not over them.
+        assertEquals(LockStep(LockMode.LOCKED, recheck = true), step(LockMode.UNLOCKED, LockEvent.VoipEnded(interactive = false, systemCall = true)))
     }
 
     @Test

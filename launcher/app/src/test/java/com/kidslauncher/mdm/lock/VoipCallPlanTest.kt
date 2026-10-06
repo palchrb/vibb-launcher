@@ -4,6 +4,7 @@ import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallRules
 import com.kidslauncher.mdm.calls.RuleContact
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -170,6 +171,21 @@ class VoipCallPlanTest {
         assertEquals("no READ_PHONE_STATE: a telephony call's audio mode", true, managedCallActive(null, AUDIO_MODE_IN_CALL))
         assertEquals(false, managedCallActive(null, AUDIO_MODE_IN_COMMUNICATION))
         assertEquals(false, managedCallActive(null, 0))
+    }
+
+    @Test
+    fun `the lock rings only while LOCKED, unsilenced, and never during another call, the emergency flow or an alarm (qa-16-17 1, 5)`() {
+        assertTrue(voipRingWanted(ringing = true, locked = true, silenced = false, otherCall = false, emergencyFlow = false, alarmRinging = false))
+        assertFalse("a phone call (emergency included) or our call", voipRingWanted(true, true, false, otherCall = true, emergencyFlow = false, alarmRinging = false))
+        assertFalse("the emergency dialer flow", voipRingWanted(true, true, false, false, emergencyFlow = true, alarmRinging = false))
+        assertFalse("a ringing alarm", voipRingWanted(true, true, false, false, false, alarmRinging = true))
+        assertFalse("silenced for this ring", voipRingWanted(true, true, silenced = true, otherCall = false, emergencyFlow = false, alarmRinging = false))
+        assertFalse("unlocked: the app's own notification rings", voipRingWanted(true, locked = false, silenced = false, otherCall = false, emergencyFlow = false, alarmRinging = false))
+        assertFalse(voipRingWanted(ringing = false, locked = true, silenced = false, otherCall = false, emergencyFlow = false, alarmRinging = false))
+        // The power button silences a ringing lock; a ring that began unlocked starts at that screen-off.
+        assertTrue(screenOffSilencesRing(lockedBefore = true, ringing = true))
+        assertFalse(screenOffSilencesRing(lockedBefore = false, ringing = true))
+        assertFalse(screenOffSilencesRing(lockedBefore = true, ringing = false))
     }
 
     @Test

@@ -30,6 +30,13 @@ class RefrontPolicyTest {
         assertEquals(RefrontAction.Yield("emergency"), refrontAction(lostFront.copy(emergencyFlow = true), 0))
         assertEquals(RefrontAction.Yield("alarm"), refrontAction(lostFront.copy(alarmRinging = true), 0))
         assertEquals("design 17: a VoIP call rings or lives", RefrontAction.Yield("voip"), refrontAction(lostFront.copy(voipCall = true), 0))
+        // qa-16-17 #1: a phone call, the emergency flow and the alarm win over the VoIP state - the
+        // alarm's exemption only ends after a yield named "alarm".
+        assertEquals(RefrontAction.Yield("system_call"), refrontAction(lostFront.copy(voipCall = true, telecomInCall = true), 0))
+        assertEquals(RefrontAction.Yield("call"), refrontAction(lostFront.copy(voipCall = true, ourCall = true), 0))
+        assertEquals(RefrontAction.Yield("emergency"), refrontAction(lostFront.copy(voipCall = true, emergencyFlow = true), 0))
+        assertEquals(RefrontAction.Yield("alarm"), refrontAction(lostFront.copy(voipCall = true, alarmRinging = true), 0))
+        assertEquals(null, alarmAfterResume(1_000L, "alarm"))
         assertEquals(RefrontAction.Stop, refrontAction(lostFront.copy(voipCall = true, locked = false), 0))
     }
 

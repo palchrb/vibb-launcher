@@ -172,6 +172,26 @@ const val INTERRUPTION_FILTER_ALARMS = 4
 data class RingPlan(val sound: Boolean, val vibrate: Boolean)
 
 /**
+ * Whether the lock's own ring plays now - evaluated on every VoIP, lock-mode and poll change
+ * (qa-16-17-code #1/#5): an allowed app rings while LOCKED (also a ring that began unlocked: once
+ * the phone locks, the lock's status-bar flags mute the app's own sound), not silenced for this
+ * ring (the power button on a ringing lock, or Avvis), and never during another call (ours or
+ * any Telecom-managed one, emergency included), the emergency dialer flow or a ringing alarm.
+ */
+fun voipRingWanted(
+    ringing: Boolean,
+    locked: Boolean,
+    silenced: Boolean,
+    otherCall: Boolean,
+    emergencyFlow: Boolean,
+    alarmRinging: Boolean,
+): Boolean = ringing && locked && !silenced && !otherCall && !emergencyFlow && !alarmRinging
+
+/** A screen-off silences the ring only when it finds the lock already LOCKED and ringing - a
+ * ring that began unlocked starts ringing at that screen-off instead (qa-16-17-code #5). */
+fun screenOffSilencesRing(lockedBefore: Boolean, ringing: Boolean): Boolean = lockedBefore && ringing
+
+/**
  * The lock's own ring (QA #1: the shade flags that keep the lock's status bar closed also mute
  * every notification sound, and Element's ringtone is only its notification sound): the default
  * ringtone and vibration, as the phone's ringer mode and Do Not Disturb allow - DND lets it ring

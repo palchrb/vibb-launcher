@@ -172,6 +172,15 @@ object PinLockRuntime {
                 if (result.mode != LockMode.LOCKED && !LockTaskChrome.hasPlan) requestApply(context)
             }
             modeListeners.toList().forEach { it() }
+            // A ring that began unlocked rings once the phone locks; unlocking stops it (#5).
+            syncVoipRinger(context)
+        }
+        // Something exempt is in front (qa-16-17-code #1): the re-front loop yields to it and brings
+        // the lock back after it.
+        if (result.recheck && !lockResumed) {
+            refrontAttempt = 0
+            handler.removeCallbacks(refrontCheck)
+            handler.postDelayed(refrontCheck, refrontDelayMs(0))
         }
         if (result.showCall) showCall(context)
         // Design 17: the VoIP app's call screen back over the lock (sent from the resumed lock).
@@ -204,9 +213,13 @@ object PinLockRuntime {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 // The lock first: started now, it is drawn before the next screen-on.
                 rememberAlarm(app)
-                // The power button silences a VoIP ring (the lock stays its ring screen).
-                if (VoipCalls.phase == VoipPhase.RINGING) VoipRinger.stop(app)
+                // The power button silences a VoIP ring on a ringing lock; a ring that began
+                // unlocked starts ringing at this screen-off instead (qa-16-17-code #5).
+                if (screenOffSilencesRing(mode == LockMode.LOCKED, VoipCalls.phase == VoipPhase.RINGING)) {
+                    silencedRing = VoipCalls.ringId
+                }
                 dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app), VoipCalls.phase))
+                syncVoipRinger(app)
                 ScreenTimeTracker.update(app)
                 // Step 11: a screen-off may end the update fence in the new build, and starts the
                 // wait for the self-update window.
@@ -251,8 +264,55 @@ object PinLockRuntime {
      */
     fun onVoipPhase(context: Context, before: VoipPhase, after: VoipPhase) {
         val app = context.applicationContext
-        if (after == VoipPhase.RINGING && before != VoipPhase.RINGING) dispatch(app, LockEvent.VoipRinging)
-        if (after == VoipPhase.NONE && before != VoipPhase.NONE) dispatch(app, LockEvent.VoipEnded(interactive(app)))
+        // Another call (emergency included), the emergency flow or a ringing alarm always win
+        // (qa-16-17-code #1): no card and no wake over them, and the lock doesn't come back over them.
+        val telecom = telecomInCall(app)
+        val ours = ourCall()
+        val emergency = emergencyFlowNow(telecom)
+        val alarm = alarmNow(app)
+        if (after == VoipPhase.RINGING && before != VoipPhase.RINGING) {
+            dispatch(app, LockEvent.VoipRinging(ours, !ours && telecom, emergency, alarm))
+        }
+        if (after == VoipPhase.NONE && before != VoipPhase.NONE) {
+            dispatch(app, LockEvent.VoipEnded(interactive(app), ours, !ours && telecom, emergency, alarm))
+        }
+    }
+
+    /** The ring the power button (or Avvis) silenced ([VoipCalls.ringId]). */
+    private var silencedRing: Long? = null
+
+    /** Avvis on the card: this ring stays silent, whatever the decline did. */
+    fun silenceVoipRing(context: Context) {
+        silencedRing = VoipCalls.ringId
+        syncVoipRinger(context)
+    }
+
+    /** The lock's own ring on or off ([voipRingWanted]); on every VoIP evaluation (also the 2 s
+     * poll while it rings) and every lock-mode change. Main thread. */
+    fun syncVoipRinger(context: Context) {
+        val app = context.applicationContext
+        val ringing = VoipCalls.phase == VoipPhase.RINGING
+        val wanted = ringing && voipRingWanted(
+            ringing = true,
+            locked = mode == LockMode.LOCKED,
+            silenced = VoipCalls.ringId != null && VoipCalls.ringId == silencedRing,
+            otherCall = ourCall() || telecomInCall(app),
+            emergencyFlow = emergencyFlowNow(telecomInCall(app)),
+            alarmRinging = alarmNow(app),
+        )
+        if (wanted) VoipRinger.start(app) else if (VoipRinger.active) VoipRinger.stop(app)
+    }
+
+    /** The emergency flow as the re-front check sees it: tapped < 2 min ago, until its call ended. */
+    private fun emergencyFlowNow(telecom: Boolean): Boolean {
+        if (emergencyFlowUntilElapsed > 0L && telecom) emergencyCallSeen = true
+        return SystemClock.elapsedRealtime() < emergencyFlowUntilElapsed && !(emergencyCallSeen && !telecom)
+    }
+
+    /** The system clock app's alarm is probably ringing ([alarmLikelyRinging]). */
+    private fun alarmNow(context: Context): Boolean {
+        rememberAlarm(context)
+        return alarmLikelyRinging(rememberedAlarmMs, System.currentTimeMillis())
     }
 
     /** A time-rule screen was just started over everything: the PIN lock goes on top (QA 10 #4:
@@ -380,17 +440,14 @@ object PinLockRuntime {
     private fun runRefrontCheck() {
         val context = appContext ?: return
         val telecom = telecomInCall(context)
-        if (emergencyFlowUntilElapsed > 0L && telecom) emergencyCallSeen = true
-        val emergencyFlow = SystemClock.elapsedRealtime() < emergencyFlowUntilElapsed && !(emergencyCallSeen && !telecom)
-        rememberAlarm(context)
         val inputs = RefrontInputs(
             locked = chromeLocked,
             lockResumed = lockResumed,
             interactive = interactive(context),
             ourCall = OngoingCalls.hasLiveCall,
             telecomInCall = telecom,
-            emergencyFlow = emergencyFlow,
-            alarmRinging = alarmLikelyRinging(rememberedAlarmMs, System.currentTimeMillis()),
+            emergencyFlow = emergencyFlowNow(telecom),
+            alarmRinging = alarmNow(context),
             voipCall = VoipCalls.phase != VoipPhase.NONE,
         )
         when (val action = refrontAction(inputs, refrontAttempt)) {

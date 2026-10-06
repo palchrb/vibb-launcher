@@ -61,9 +61,11 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     !inputs.locked || inputs.lockResumed || !inputs.interactive -> RefrontAction.Stop
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
-    inputs.voipCall -> RefrontAction.Yield("voip")
     inputs.emergencyFlow -> RefrontAction.Yield("emergency")
     inputs.alarmRinging -> RefrontAction.Yield("alarm")
+    // Last: a phone call, the emergency flow and the alarm always win over a VoIP call
+    // (qa-16-17-code #1 - and the alarm's exemption ends only on a yield named "alarm").
+    inputs.voipCall -> RefrontAction.Yield("voip")
     else -> RefrontAction.Refront(refrontDelayMs(attempt + 1))
 }
 

@@ -81,6 +81,10 @@ object VoipCalls {
     var fsiDenied: List<String> = emptyList()
         private set
 
+    /** Identifies the current ring (silencing and Avvis hold for it only), `null` unless RINGING. */
+    val ringId: Long?
+        get() = record?.takeIf { phase == VoipPhase.RINGING }?.start?.elapsedStartMs
+
     /** A VoIP call rings or lives: no self-update commit, no Home at boot. */
     val liveCall: Boolean get() = pinnedPackage != null
 
@@ -184,11 +188,12 @@ object VoipCalls {
             }
         }
         if (oldPhase != phase) {
-            if (phase == VoipPhase.RINGING && PinLockRuntime.mode == LockMode.LOCKED) VoipRinger.start(app)
-            if (phase != VoipPhase.RINGING) VoipRinger.stop(app)
             ScreenTimeTracker.update(app)
             PinLockRuntime.onVoipPhase(app, oldPhase, phase)
         }
+        // Every pass (also the 2 s poll): a call, the emergency flow or an alarm that starts during
+        // the ring stops it at once (qa-16-17-code #1).
+        PinLockRuntime.syncVoipRinger(app)
         listeners.toList().forEach { it() }
     }
 

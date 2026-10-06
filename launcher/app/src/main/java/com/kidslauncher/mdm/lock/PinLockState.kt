@@ -69,12 +69,33 @@ sealed interface LockEvent {
     /** The server's `lock` command (Locate page). */
     data class RemoteLock(val ourCall: Boolean = false, val systemCall: Boolean = false, val voip: VoipPhase = VoipPhase.NONE) : LockEvent
 
-    /** An allowed app's VoIP call started ringing (design 17): LOCKED, the lock wakes and rings. */
-    data object VoipRinging : LockEvent
+    /**
+     * An allowed app's VoIP call started ringing (design 17): LOCKED, the lock wakes and rings -
+     * unless another call (ours or the system dialer's, emergency included), the emergency dialer
+     * flow or a ringing alarm is in front: those always win (qa-16-17-code #1), the re-front loop
+     * decides.
+     */
+    data class VoipRinging(
+        val ourCall: Boolean = false,
+        val systemCall: Boolean = false,
+        val emergencyFlow: Boolean = false,
+        val alarmRinging: Boolean = false,
+    ) : LockEvent {
+        val otherScreen: Boolean get() = ourCall || systemCall || emergencyFlow || alarmRinging
+    }
 
     /** The VoIP exemption ended (hung up, declined, timed out, the cap); [interactive] as in
-     * [CallsEnded]. */
-    data class VoipEnded(val interactive: Boolean = true) : LockEvent
+     * [CallsEnded]. The lock comes back - never over another call, the emergency flow or the
+     * alarm (qa-16-17-code #1: a phone call answered during the VoIP call ends it). */
+    data class VoipEnded(
+        val interactive: Boolean = true,
+        val ourCall: Boolean = false,
+        val systemCall: Boolean = false,
+        val emergencyFlow: Boolean = false,
+        val alarmRinging: Boolean = false,
+    ) : LockEvent {
+        val otherScreen: Boolean get() = ourCall || systemCall || emergencyFlow || alarmRinging
+    }
 
     /** A time-rule screen (LockActivity) was just started: the PIN lock goes on top of it. */
     data object TimeRuleShown : LockEvent
@@ -100,6 +121,9 @@ data class LockStep(
     /** Bring the VoIP app's call screen in front of the lock (its call notification's content
      * intent, sent from the visible lock - design 17, like [showCall]). */
     val showVoipCall: Boolean = false,
+    /** LOCKED but not shown because something exempt is in front: run the re-front check now -
+     * it yields to that screen and brings the lock back after it (qa-16-17-code #1). */
+    val recheck: Boolean = false,
 )
 
 /** How long the lock waits for Home to show it before it shows itself (design 16 QA #2). */
@@ -164,15 +188,23 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
             LockStep(LockMode.LOCKED, showLock = !event.systemCall && event.voip != VoipPhase.IN_CALL)
         }
 
-    // Unlocked, the app's own ring screen and notification work as usual.
-    LockEvent.VoipRinging ->
-        if (mode == LockMode.LOCKED) LockStep(mode, showLock = true, wake = true) else LockStep(mode)
+    // Unlocked, the app's own ring screen and notification work as usual. Another call, the
+    // emergency flow or an alarm in front always wins: no card, no wake (the re-front loop decides).
+    is LockEvent.VoipRinging -> when {
+        mode != LockMode.LOCKED -> LockStep(mode)
+        event.otherScreen -> LockStep(mode, recheck = true)
+        else -> LockStep(mode, showLock = true, wake = true)
+    }
 
-    // As after a phone call: the lock comes back.
-    is LockEvent.VoipEnded -> when {
-        mode == LockMode.LOCKED -> LockStep(mode, showLock = true)
-        mode == LockMode.UNLOCKED && !event.interactive -> LockStep(LockMode.LOCKED, showLock = true)
-        else -> LockStep(mode)
+    // As after a phone call: the lock comes back - unless another call, the emergency flow or an
+    // alarm is in front (then the re-front loop brings it back after them).
+    is LockEvent.VoipEnded -> {
+        val next = if (mode == LockMode.UNLOCKED && !event.interactive) LockMode.LOCKED else mode
+        when {
+            next != LockMode.LOCKED -> LockStep(mode)
+            event.otherScreen -> LockStep(next, recheck = true)
+            else -> LockStep(next, showLock = true)
+        }
     }
 
     LockEvent.TimeRuleShown -> LockStep(mode, showLock = mode == LockMode.LOCKED)
