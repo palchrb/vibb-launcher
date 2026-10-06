@@ -11,7 +11,9 @@
 #
 # Checks: device owner and kiosk state; the PIN lock at screen-off/on; PIN unlock; incoming calls
 # from an allowed contact (rings, answerable over the lock) vs an unknown number (screened out by
-# our screening service: Telecom's FILTERING_COMPLETED or our log, after the step started);
+# our screening service: Telecom's FILTERING_COMPLETED or our log, after the step started); a
+# missed call from the contact (rings, the caller hangs up) posts our notification (id 1006) and no
+# Telecom TelecomMissedCalls notification (design 12);
 # outgoing calls to an unknown number (cancelled - Telecom's "Canceled from Call Redirection
 # Service" or our log line) vs the contact typed in national form (redirected - our log line - and
 # dialled); one call at a time (our "second call" log line, during the answered incoming call); the
@@ -58,6 +60,7 @@ OUT_DIR="${OUT_DIR:-./smoke-$(date +%Y%m%d-%H%M%S)}"
 STRICT="${STRICT:-0}"
 EXPECT_KIOSK="${EXPECT_KIOSK:-1}"
 CALL_NOTIFICATION_ID=1005
+MISSED_NOTIFICATION_ID=1006
 LOCK_ACTIVITY="$PKG/com.kidslauncher.mdm.lock.PinLockActivity"
 CALL_ACTIVITY="$PKG/com.kidslauncher.mdm.calls.InCallActivity"
 
@@ -243,6 +246,31 @@ call_notification_shown() {
     grep -q -E "key=[0-9]+\|$PKG\|$CALL_NOTIFICATION_ID\|" <<<"$(sh_ dumpsys notification --noredact)"
 }
 call_notification_gone() { ! call_notification_shown; }
+# notification_when <package> <id|-> <channel|-> <dump>: Notification.when of the first active
+# NotificationRecord of that package (and id, and channel) in a `dumpsys notification` dump, empty
+# if there is none. Plain index() matches, no regex built from the package name.
+notification_when() {
+    awk -v pkg="$1" -v id="$2" -v channel="$3" '
+        /NotificationRecord\(/ {
+            inrec = index($0, "pkg=" pkg " ") > 0 &&
+                (id == "-" || index($0, " id=" id " ") > 0) &&
+                (channel == "-" || index($0, "channel=" channel) > 0)
+            next
+        }
+        inrec && /^[[:space:]]*when=[0-9]+/ {
+            sub(/^[[:space:]]*when=/, "")
+            sub(/[^0-9].*$/, "")
+            print
+            exit
+        }
+    ' <<<"$4"
+}
+# missed_notice_since <ms>: our missed-call notification is up, for a call at or after <ms>.
+missed_notice_since() {
+    local when
+    when="$(notification_when "$PKG" "$MISSED_NOTIFICATION_ID" - "$(sh_ dumpsys notification --noredact)")"
+    [ -n "$when" ] && [ "$when" -ge "$1" ]
+}
 # Logcat is cleared at the start of each call step, so everything below happened after it.
 logcat_clear() { adb_ logcat -c >/dev/null 2>&1 || true; }
 logcat_dump() { adb_ logcat -d -v brief 2>/dev/null | tr -d '\r'; }
@@ -433,6 +461,46 @@ else
 fi
 shot incoming-unknown
 hang_up "$UNKNOWN_NUMBER"
+
+step "Missed call"
+# Design 12: as the default dialer with a receiver for SHOW_MISSED_CALLS_NOTIFICATION we get
+# Telecom's broadcast instead of its own notification: ours (id 1006) must come up, and a
+# TelecomMissedCalls record only fails the check when it is for a call after the step started (one
+# Telecom posted before the first unlock may be left over - QA 12 #5). Notification.when is the
+# call's time on both, compared with the device clock at the start.
+wait_for 6 no_call || true
+start_s="$(sh_ date +%s)"
+if ! [[ "$start_s" =~ ^[0-9]+$ ]]; then
+    skip "a missed call posts our notification" "the device clock couldn't be read"
+    skip "no TelecomMissedCalls notification for it" "the device clock couldn't be read"
+else
+    start_ms=$((start_s * 1000))
+    gsm_call "$ALLOWED_NUMBER"
+    if wait_for 8 ringing_from "$ALLOWED_NUMBER"; then
+        hang_up "$ALLOWED_NUMBER"
+        wait_for 6 no_call || true
+        if wait_for 10 missed_notice_since "$start_ms"; then
+            pass "a missed call from the contact posts our notification (id $MISSED_NOTIFICATION_ID)"
+        else
+            dump="$(sh_ dumpsys notification --noredact)"
+            fail "a missed call from the contact posts our notification (id $MISSED_NOTIFICATION_ID)" \
+                "ours: when=$(notification_when "$PKG" "$MISSED_NOTIFICATION_ID" - "$dump") (step start $start_ms)"
+        fi
+        telecom_when="$(notification_when com.android.server.telecom - TelecomMissedCalls "$(sh_ dumpsys notification --noredact)")"
+        if [ -n "$telecom_when" ] && [ "$telecom_when" -ge "$start_ms" ]; then
+            fail "no TelecomMissedCalls notification for it" "Telecom posted its own (when=$telecom_when) - our receiver wasn't used"
+        else
+            pass "no TelecomMissedCalls notification for it${telecom_when:+ (an older one is left: when=$telecom_when)}"
+        fi
+    else
+        fail "a missed call from the contact posts our notification (id $MISSED_NOTIFICATION_ID)" "it didn't ring; calls: $(calls_summary)"
+        skip "no TelecomMissedCalls notification for it" "no missed call"
+        hang_up "$ALLOWED_NUMBER"
+    fi
+    shot missed-call
+    # The call ended with the screen on: the lock comes back before the unlock step.
+    if [ "$locked" -eq 1 ]; then wait_for 6 top_is "$LOCK_ACTIVITY" || true; fi
+fi
 
 step "Unlock"
 if [ -n "$KID_PIN" ] && [ "$locked" -eq 1 ]; then

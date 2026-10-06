@@ -136,6 +136,11 @@ logged after the step started counts (logcat is cleared per step); silence is a 
 - an unknown number is screened out by **our screening service** (`FILTERING_COMPLETED ... [Reject` or
   `KidCallScreening` "Rejecting an incoming call"; a reject only by the in-call service means screening failed
   open and is a FAIL), no call screen;
+- a missed call (design 12): the allowed contact rings and is cancelled unanswered (`gsm cancel`) - **our**
+  notification comes up (`$PKG`, id 1006), and there is no Telecom `TelecomMissedCalls` notification for a call
+  after the step started (one Telecom posted before the first unlock may be left over and doesn't fail). Both
+  are read from `dumpsys notification --noredact`: the record's `Notification.when` (the call's time) against
+  the device clock at the step's start;
 - the PIN unlocks (keypad keys tapped through `uiautomator dump`);
 - while the answered call is on, a second (allowed) outgoing call logs our "second call" line and Telecom keeps one
   live call (one call at a time - tested on the incoming call, since the emulator's modem simulator hangs up
@@ -151,6 +156,17 @@ console's `gsm list` stays empty on the Android 16 emulator (modem simulator), a
 
 Screenshots of every step go into `OUT_DIR` (the lock screen may be black if it is secure). **It never places an
 emergency call** - it prints that manual step at the end.
+
+Missed calls by hand after the run (design 12), unlocked: tap the missed-call notification - the contact's sheet
+opens (calls from several contacts: the phone book); close it - the notification is gone and the call log's
+missed row is read:
+
+```sh
+adb shell content query --uri content://call_log/calls --projection _id:number:type:new   # type=3 -> new=0
+adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.android.cursor.dir/calls
+#   -> $PKG/com.kidslauncher.mdm.calls.PhoneBookActivity (also on the Jelly Star: a privileged dialer
+#      whose call-log filter has a priority above 0 would win over our persistent preferred activity)
+```
 
 ## 6. What to check first (smoke)
 
