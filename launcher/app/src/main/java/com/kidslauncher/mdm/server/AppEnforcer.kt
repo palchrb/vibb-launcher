@@ -333,7 +333,9 @@ object AppEnforcer {
         // Auto-lock: the parent's screen timeout (emulator run 2026-10-06), lifted by the override.
         ScreenTimeout.apply(
             context, dpm, admin,
-            screenTimeoutAction(policy != null, policy?.screenTimeoutSeconds, overrideActive),
+            screenTimeoutAction(
+                hardeningManaged(policy?.allowlist, callState.managed), policy?.screenTimeoutSeconds, overrideActive,
+            ),
         )
 
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
