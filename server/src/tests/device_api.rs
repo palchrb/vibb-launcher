@@ -610,3 +610,21 @@ async fn server_error_policy_state_is_shown() {
     post_status(&app, &token, json!({ "policy_state": "server_error" })).await;
     assert!(device_page(&app, id).await.contains("answered the phone"));
 }
+
+/// Every page with the app header restores the scroll position after an auto-saving form posts
+/// and redirects back (emulator run 2026-10-06).
+#[tokio::test]
+async fn pages_restore_scroll_after_auto_save() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    for page in [
+        format!("/devices/{id}"),
+        format!("/devices/{id}/calls"),
+        "/schedules".to_string(),
+    ] {
+        let text = app.get_page(&page, &cookie).await.text();
+        assert!(text.contains("handy-scroll"), "{page}");
+        assert!(text.contains("this.form.submit()"), "{page}");
+    }
+}
