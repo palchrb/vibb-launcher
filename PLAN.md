@@ -244,6 +244,12 @@ launchable.
   open the sheet, unclipped call badge, sheet Back/swipe, parent-set screen timeout (auto-lock)
   per device, PWA keeps the scroll position on every form, Vibb icon/splash/night palette and
   the "Vibb night" default wallpaper for new phones.
+- **Kiosk escapes (design 11, 2026-10-06) - done, needs the A/B device checks**: the launcher's
+  own update is downloaded at once and installed at night (02-05, screen off, no call; any quiet
+  screen-off after 24 h) behind an update fence (other Home apps suspended, shade off, released by
+  one idempotent check), Home comes back after the update, and other apps' nags are cancelled by
+  the notification listener. Both server switches default off until A3 (Jelly Star) and B5 pass
+  (`docs/testing/emulator.md` §6d).
 - **Build hygiene (user 2026-10-06) - done**: FID-based FCM registration, BluetoothManager,
   WifiConfiguration confined to suppressed DO-only code, kapt, R8 dnsjava warning; Kotlin
   warnings fail CI (`-PwarningsAsErrors=true`). Left: kapt's javac "RELEASE_11" note from the

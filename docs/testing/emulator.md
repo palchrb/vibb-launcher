@@ -111,7 +111,7 @@ calls page nothing arrives (`DISALLOW_SMS`); with SMS on Messages shows every me
     camera appears, collect `adb shell dumpsys activity activities | grep -B2 -A8 camera`
     (launchedFromPackage) and `adb shell dumpsys device_policy | grep -A3 lockTask`.
 
-Then the full checklists in `docs/design/01`–`07`, `09` and `10`.
+Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d below).
 
 ## 6c. Step 10: handy's own PIN lock and the call screens
 
@@ -163,6 +163,78 @@ screen-on must show the PIN lock straight away, never a frame of the app underne
 10. Screenshots (320x568 dp and 411 dp, nb + en): `adb exec-out screencap -p > lock.png`;
     `adb shell wm size 640x1136; adb shell wm density 320` for 320x568 dp, `wm size reset` after.
 
+## 6d. Step 11: kiosk escapes - update fence, night update window, notifications
+
+**`adb install -r` is unfenced** (dev only; adb is gone on managed phones by default): it still
+kills the launcher, so the stock launcher can show for the install's duration. It does bring
+Home back afterwards (`MY_PACKAGE_REPLACED`) and releases a stale fence (our `lastUpdateTime`
+moves even when the debug versionCode doesn't). Only a self-update through the server's
+launcher row (A4) exercises the fence and the window.
+
+Setup: device page -> "Launcher updates and notifications": tick **Update fence** and
+**Notification filter** (both default off until A3/B5 pass). A test self-update for the debug
+build: `./gradlew assembleDebug -PversionCode=<higher than installed>`, PWA Apps -> add a manual
+app (package `com.kidslauncher.mdm.debug`), mark it as the launcher on its page, upload the APK
+with a new release label. The phone downloads it at the next sync and keeps it pending
+(logcat `MdmSyncWorker`: "waiting for the update window"); **debug builds count a pending update
+as overdue after 2 minutes**, release builds wait for 02:00-05:00 (or 24 h).
+
+```sh
+P=com.kidslauncher.mdm.debug
+H="-a android.intent.action.MAIN -c android.intent.category.HOME"
+adb logcat -v time | grep -E "UpdateFence|SelfUpdate|MdmSyncWorker|AppInstall|PinLock|START u0|LockTask|Force stopping|kidslauncher"
+adb shell dumpsys package com.google.android.apps.nexuslauncher | grep -i suspended
+adb shell dumpsys statusbar | grep -E "mDisabled1|mDisabled2"
+adb shell run-as $P cat shared_prefs/update_fence.xml      # the fence record while it's up
+```
+
+Update fence (A, design 11 §4; record times and what is reachable):
+- [ ] **A1 baseline**: `adb shell cmd package query-activities --brief $H`; `cmd package resolve-activity --brief $H` (= ours);
+  `cmd role get-role-holders android.app.role.HOME`; `dumpsys activity activities | grep -E "mLockTaskModeState|mLockTaskPackages"`.
+- [ ] **A2 repro and timing**: poll `adb shell "dumpsys activity activities | grep -m1 mLockTaskModeState; dumpsys package frozen"`
+  each second during an install; record commit -> `Force stopping` -> `MY_PACKAGE_REPLACED` -> fence release (logcat
+  `UpdateFence`). Meanwhile `input keyevent KEYCODE_HOME`, `KEYCODE_APP_SWITCH`, `cmd statusbar expand-notifications`,
+  `adb exec-out screencap -p > w.png`. Repeat with the PIN lock LOCKED (`KEYCODE_SLEEP`, install, `KEYCODE_WAKEUP`).
+  Variant: a call from a **blocked** number mid-window (`adb emu gsm call <number>`) - expected to ring unscreened in the
+  system in-call UI for the ~1 min window (known gap, QA 11 #8); record it.
+- [ ] **A3 fence pre-test (no code)**: `adb shell pm suspend com.google.android.apps.nexuslauncher`, then A2 - what does
+  HOME show? In both nav modes (`cmd overlay enable com.android.internal.systemui.navbar.gestural` / `...threebutton`):
+  `input swipe 540 2350 540 1200 250`, Recents, Back, kiosk on and off; `pm unsuspend` after. Same on the Jelly Star (its
+  launcher package). **The `update_fence` switch may default on only after this passes on the Jelly Star.**
+- [ ] **A4 after implementation**: screen on -> no commit (logcat "waits: screen_on"); `KEYCODE_SLEEP` -> commit 30 s
+  later (logcat `UpdateFence` "Fenced for ..."); `dumpsys package com.google.android.apps.nexuslauncher | grep suspended`
+  true during, false after; the shade disabled during; Home/lock in front (lock task when the kiosk is on) <= 5 s after
+  `MY_PACKAGE_REPLACED`; ROLE_HOME and HOME resolution as in A1. Then:
+  - wake the phone between commit and the kill -> the fence stays (no early release in the old process; logcat
+    "Fence kept (front): installing");
+  - `adb reboot` mid-install -> fence released at boot ("rebooted"), kiosk on and off;
+  - a mismatched-signature APK (another debug key) and a lower versionCode -> the lower one is refused before fencing
+    ("DOWNGRADE"), the mismatched one fails the install and the fence is released at once: packages unsuspended **and**
+    the shade back with the PIN lock off;
+  - a time-rule boundary inside the window -> the stock launcher stays suspended until apply decides;
+  - the tail in both nav modes (gesture Home/Recents with quickstep suspended), power-menu Emergency and an incoming call
+    (allowed and blocked) with the fence up.
+- [ ] **A5 crash** (snapshot first): a build throwing in `HomeActivity.onCreate` over a good one - screen,
+  `adb emu gsm call 4781549300`, power-menu Emergency, `dumpsys activity activities`; the fence must be gone 2 min after
+  the replacement; recover with `adb install -r` of a good build.
+
+Notifications (B; kiosk LOCKED, block on unless noted):
+- [ ] **B1 identify nags**: `adb shell dumpsys notification --noredact | grep -E "NotificationRecord|android.title=|contentIntent|flags="`;
+  `cmd notification list`, `cmd notification get <key>` -> package, channel, clearable, PendingIntent creator/type. List
+  Play services' channels and classify each (nag vs alert) - the rule keeps channels named like earthquake/emergency/
+  cmas/crisis; anything else from GMS is cancelled.
+- [ ] **B2 non-pinned target** (filter off first): `cmd package resolve-activity --brief -a android.intent.action.SET_WALLPAPER` -> C;
+  `cmd notification post -t Nag -c activity -n C nag1 test`; shade, tap -> `BlockedAppActivity`; block off -> toast; kiosk
+  off -> opens. `dumpsys activity recents | grep -E "realActivity|BlockedApp"`.
+- [ ] **B3 pinned helper**: as B2 with `-a android.safetycenter.action.SAFETY_CENTER` -> Safety Center in kiosk?; its
+  "Screen lock" -> `BlockedAppActivity`. **B4** PIN lock LOCKED: `cmd statusbar expand-notifications` does nothing.
+- [ ] **B5 after the rule** (filter on): B2's notification gone <= 1 s (`cmd notification post` posts as shell, which is
+  neither allowed nor essential), B1's nags gone; a re-posting nag (post the same tag 5x within a minute) ends snoozed
+  (logcat `NotificationRule`: "snooze"); a real missed call (`adb emu gsm call` + cancel) and a clock alarm stay; a
+  cell-broadcast test alert (`adb emu cbs ...` / the emulator's extended controls) and the Play services earthquake-alert
+  demo stay. The device page lists the removed package/channel counts. **The `notification_auto_cancel` switch may
+  default on only after this passes.**
+
 ## 6b. Step 7: FCM and Play (optional)
 
 The default debug build has no Firebase config: the phone uses the SSE stream (device page
@@ -186,7 +258,7 @@ The default debug build has no Firebase config: the phone uses the SSE stream (d
 For anything odd, paste into the chat:
 
 ```sh
-adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock" > log.txt
+adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock|UpdateFence|SelfUpdate|NotificationRule" > log.txt
 ```
 
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).

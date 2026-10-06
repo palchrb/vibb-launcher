@@ -133,3 +133,55 @@ calls, alarms, battery/system, our own; never full-screen alerts), re-post budge
 privacy-safe logging (channel ids, capped counts only). adb installs are unfenced (dev only).
 Product defaults (proposed, pending user confirmation): self-update window at night 02–05
 with screen off and no call; if an update has waited >24 h, any 30 s screen-off with no call.
+
+## Implementation status (2026-10-06)
+
+Done on `master` (not pushed). L: `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true`
+green (485 unit tests); S: `cargo test` (190), `fmt --check`, `clippy --all-targets` (no new warnings). Both server switches default
+**off** (A3 / B5 first). Product defaults implemented as proposed, pending the user's confirmation: window 02:00-05:00
+local, screen off >= 30 s, no call; overdue after 24 h (2 min on debug builds, for A4 on the emulator).
+
+| Part | Commit | What |
+|---|---|---|
+| L | `3bd1fb55` | Pure `server/UpdateFencePlan.kt`: `fencePlan` (exclusions of finding 6, controllable, already suspended), versioned record (`update_fence` prefs, keys pinned, unknown `v` still releases), write-ahead `runFence`, `runRelease`, the release rule `fenceRelease`, `suspendTarget`; `lockTaskWhileLocked(fenced)` + `StatusBarLatch`; `UpdateFenceTest`, `PinLockTaskTest` cases |
+| L | `865ab6f8` | Pure `server/SelfUpdatePlan.kt`: pending-APK state machine, `pendingApkCheck` (size, SHA-256, our package, downgrade/same version), `updateWindowDecision` (DST-aware window), `commitCheckDelayMs`; `SelfUpdatePlanTest` |
+| L | `5224b48b` | Pure `badges/NotificationRule.kt`: `nagVerdict`, `RepostBudget` (3/min, then snooze 1 h), `NagCounts` (<= 20, ids <= 64), `nagLogDue`; `NotificationRuleTest` |
+| L | `7fadac42` | Glue: `UpdateFence` (fence before `commit()` under `AppEnforcer`'s lock, checks at process start/boot, install results, `apply()`, Home/lock in front, screen-off, `MY_PACKAGE_REPLACED`, backstop alarm), `LockTaskChrome` owns the status bar with the fence as input, `SelfUpdate` (pending APK in `noBackupFilesDir`, screen state, window alarm), `MdmSyncWorker` (download-and-keep, commit as the sync's last step), `AppInstaller(beforeCommit/commitFailed)`, `AppInstallReceiver` (one `goAsync`, fence input, Home after a post-kill failure), `PackageReplacedReceiver` (Home, then the lock), `NotificationRuleRuntime` + `BadgeListenerService`, DTOs, capability `kiosk_escapes_v1` |
+| S | `95e7b8d8` | Migration `0036`, switches `update_fence`/`notification_auto_cancel` (always sent, card + `POST /devices/{id}/kiosk-escapes`), `update_fence`/`notification_cancels` sanitized and capped (`src/kiosk_escapes.rs`), card texts; `tests/step11.rs` |
+| docs | (this commit) | launcher/server `CLAUDE.md`, `docs/testing/emulator.md` §6d (adb installs unfenced, A1-A5, B1-B5), this section |
+
+How the QA findings were met: **#1** write-ahead record (planned set + session id + our `lastUpdateTime` + boot count,
+then only what the platform suspended); one pure `fenceRelease` run at process start (= boot), every install result
+(any status, any app), `apply()`, Home/lock in front, screen-off, `MY_PACKAGE_REPLACED` and an alarm armed at fencing;
+unmanaged / not device owner / switch off release. **#2** own prefs file `update_fence` with `v`, keys and the v1 parse
+pinned by `UpdateFenceTest`, unknown `v` releases `planned` + `suspended`; CLAUDE.md rule "release code is never
+removed". **#3** the committing process never releases while its session is open (`committingHere`); release only
+when replaced, gone, failed, rebooted or expired. **#4** `statusBarDisabled = locked || fenced` in
+`lockTaskWhileLocked`, `UpdateFence` never calls `setStatusBarDisabled`, the latch is invalidated on every fence/release.
+**#5** `fencePlan` excludes controllable packages, a release leaves now-controllable ones to `apply()`, `apply()` keeps
+fence-held packages suspended, fence and release take `AppEnforcer`'s lock. **#6** every exclusion has a test row; the
+switch defaults off until A3 on the Jelly Star. **#7** release once Home or the lock is in front (lock task not
+required) or the screen is off, at the latest 2 min after the replacement (wall time - also with a crash-looping Home).
+**#8** gate: no live call (`OngoingCalls.hasLiveCall` incl. CONNECTING, Telecom or audio mode), no emergency (lock's
+emergency flow, callback window, an emergency call < 10 min ago, ECBM); the unscreened-call gap is documented
+(CLAUDE.md, emulator A2 variant). **#9** Home first, then `PinLockRuntime.showIfLocked` (posted, so the lock ends on
+top), also after a failure in a restarted process. **#10** APK in `noBackupFilesDir`, `TrackedAppState.pending`
+(newer tag replaces, withdrawn/installed drops), size + SHA-256 + `getPackageArchiveInfo` package/versionCode before
+fencing, commit inside `performMdmSync` (sync mutex). **#11** essentials resolved at runtime (every `SMS_CB_RECEIVED`
+receiver plus the AOSP/module/Google cell-broadcast names, dialers, emergency dialer, Telecom, SMS app while SMS is on,
+clock app, IMEs, `android`, SystemUI), never a full-screen or insistent notification, alert-like channels kept (GMS
+earthquake alerts), allowed = allowlist + messaging apps + a time rule's usable apps; server switch default off until
+B5. **#12** 3 cancels per (package, channel) a minute, then `snoozeNotification(1 h)`; nothing while the policy is
+unknown; decisions from a cache resolved in `apply()`. **#13** `NotificationFacts` has no text fields (tested),
+`Notification.getChannelId()`, no keys/tags in logs, rate-limited lines, status <= 20 entries / 64-char ids, the server
+re-serializes; the card's privacy text names the listener ("App badges"). **#14** adb installs unfenced
+(emulator.md), a stale fence released by the `lastUpdateTime` rule (tested).
+
+Known limits / not done: a call in the ~1 min install window rings unscreened (system in-call UI); a third-party
+launcher the parent allowlisted stays usable during the window (enforcement owns it); nothing is cancelled while the
+listener has no access (server warns) and a heads-up may flash before the cancel; RAPID_CLEAR app-ops are only noted;
+non-launchable "suggestion" packages are not suspended; the design's follow-ups (A5 as a release gate, a server canary
+rollout, tsnet from the anchor if Home hasn't resumed) are not built.
+
+Device checks: A1-A5 and B1-B5 above, with the QA device acceptance items, are written out in
+`docs/testing/emulator.md` §6d [needs device test].

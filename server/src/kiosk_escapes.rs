@@ -257,8 +257,8 @@ pub fn release_text(reason: &str) -> Option<String> {
                 .to_string()
         }
         "install_failed" | "commit_failed" => {
-            "The last launcher update failed to install; the update fence was lifted at once and \
-             the update is retried in an hour."
+            "The last launcher update failed to install; the update fence was lifted at once. \
+             The phone downloads it again after an hour and tries again in a later update window."
                 .to_string()
         }
         "rebooted" => "The phone restarted during the last launcher update; the update fence was \
