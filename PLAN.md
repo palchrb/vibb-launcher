@@ -253,6 +253,17 @@ launchable.
   while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
 - **Pending user decision**: drop the top-left back buttons on full pages
   (`KidHeader.SHOW_BACK_BUTTON`).
+- **Keyboard: HeliBoard** (user, 2026-10-06): open-source AOSP-based keyboard
+  (GitHub/F-Droid → server app catalog, auto-updates), no internet permission,
+  adjustable height for the 3" screen. Launcher restricts keyboards with
+  setPermittedInputMethods and makes HeliBoard the default (check whether
+  DPM.setSecureSetting(DEFAULT_INPUT_METHOD) is allowed for device owners; else
+  set once at setup). Wish: parent sets keyboard languages (nb + en layout) and
+  the Norwegian dictionary from the PWA. Needs research: HeliBoard has no managed
+  configuration as far as known; options are enabled IME subtypes via secure
+  settings (if a device owner may write them), shipping HeliBoard's settings
+  backup or the dictionary file via the launcher, or a one-time setup with the
+  parent code. Design before building.
 - **Recovery / no soft-brick** (2026-10-05): DISALLOW_FACTORY_RESET only blocks
   Settings; a recovery-mode wipe always works (first Jelly Star test: keys and
   menu). After a wipe, FRP asks for the phone's Google account if one was added,
