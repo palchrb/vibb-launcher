@@ -34,7 +34,6 @@
              windowSplashScreenBackground / windowSplashScreenAnimatedIcon). -->
         <item name="android:windowSplashScreenBackground">@color/kid_ground</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_none</item>
-        <item name="android:windowSplashScreenIconBackgroundColor">@color/kid_ground</item>
         <item name="android:windowAnimationStyle">@style/WindowFadeTransition</item>
         <!-- Also for activities outside UIObjectActivity (the in-call screen): an APK resource,
              readable before the first unlock. -->
@@ -62,7 +61,14 @@
         <item name="android:windowLightNavigationBar">false</item>
     </style>
 
+    <!-- Home is what a cold start shows (after boot or an update): its splash is the Vibb mark
+         breathing once on its night ground (drawable/splash_vibb_breathe, under 1000 ms - the
+         SplashScreen API caps an animated icon at 1000 ms and sizes it 288 dp, the mark within the
+         192 dp circle). Every other screen keeps the plain navy, icon-less splash of the base
+         theme. -->
     <style name="launcherHomeTheme" parent="launcherBaseTheme">
+        <item name="android:windowSplashScreenBackground">@color/vibb_night</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_vibb_breathe</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <!--<item name="android:windowDrawsSystemBarBackgrounds">true</item>-->

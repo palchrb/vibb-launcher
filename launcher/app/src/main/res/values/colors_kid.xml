@@ -3,6 +3,8 @@
      mockup "handy launcher skisse"). -->
 <resources>
     <color name="kid_ground">#14213D</color>
+    <!-- The Vibb mark's night ground (palchrb/vibb pi/art): app icon and Home's launch splash. -->
+    <color name="vibb_night">#0C0C14</color>
     <color name="kid_ink">#FFFFFF</color>
     <color name="kid_ink_dim">#BFFFFFFF</color>
     <color name="kid_badge">#D9480F</color>
