@@ -26,6 +26,15 @@
         <!--<item name="android:popupMenuStyle">@style/PopupMenuCustom</item>-->
 
         <item name="android:windowDisablePreview">true</item>
+        <!-- Starting window (API 31+ splash screen): Android ignores windowDisablePreview for a
+             start from a system surface (a notification's full-screen intent, the launcher) and
+             showed the app icon on a light ground before our call screen. Every screen inherits
+             this theme, so its splash is plain navy without an icon - the screen follows at
+             once (developer.android.com/develop/ui/views/launch/splash-screen,
+             windowSplashScreenBackground / windowSplashScreenAnimatedIcon). -->
+        <item name="android:windowSplashScreenBackground">@color/kid_ground</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_none</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/kid_ground</item>
         <item name="android:windowAnimationStyle">@style/WindowFadeTransition</item>
         <!-- Also for activities outside UIObjectActivity (the in-call screen): an APK resource,
              readable before the first unlock. -->
