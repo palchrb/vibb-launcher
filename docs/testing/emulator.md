@@ -134,7 +134,7 @@ screen-on must show the PIN lock straight away, never a frame of the app underne
    (date/time are locked while managed - test on a debug build with the restriction lifted),
    `adb reboot` restarts the full wait. The Parent code link (the unlock code) opens the lock
    during the wait, also in airplane mode.
-4. **Incoming call over the lock**: lock the screen, then `adb emu gsm call 4791234567`
+4. **Incoming call over the lock**: lock the screen, then `adb emu gsm call +4791234567`
    (allowed contact) -> the new incoming-call screen over the lock within a second; answer,
    speaker, mute, `adb emu gsm cancel 4791234567` -> back on the PIN lock, still locked. An
    unknown number is rejected without UI. Power button during the call (`input keyevent 26`
