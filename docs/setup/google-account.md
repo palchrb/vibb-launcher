@@ -26,20 +26,24 @@ for recovery and 2-Step Verification. The kid doesn't know the password.
 
 ## 3. Add the account to the phone
 
-**Preferred: right after `dpm set-device-owner`, before enrolling** (`docs/testing/emulator.md`
+**Preferred with adb: right after `dpm set-device-owner`, before enrolling** (`docs/testing/emulator.md`
 §4 and §6b). `set-device-owner` refuses a phone with any account on it, so the account always
 comes after it; and before enrolling nothing is blocked yet (the first policy blocks account
 changes and starts the kiosk).
+
+**With the provisioning QR there is no "before enrolling":** the QR enrolls the phone by itself,
+and its first policy blocks accounts and starts the kiosk at once. Untick "Block adding or removing
+accounts" on the device row before scanning, then follow the enrolled-phone steps below.
 
 **On an enrolled phone:**
 
 1. PWA, device page, "Phone hardening": untick **"Block adding or removing accounts"** (it saves
    itself and nudges the phone; launcher Settings -> "Sync now" if in doubt).
 2. Phone: launcher Settings (unlock code) -> **"Pause all restrictions"** ("Sett alle
-   begrensninger på pause") -> PIN. Kiosk, time rules and app restrictions are off for up to
+   begrensninger på pause") -> unlock code. Kiosk, time rules and app restrictions are off for up to
    2 hours; the hardening switches stay, which is why step 1 comes first.
-3. Phone: Android Settings (in the app list during the pause) -> Passwords & accounts (or
-   Accounts) -> Add account -> Google, and sign in. Then sections 4 and 5.
+3. Phone: Android Settings (in the app list during the pause) -> Passwords, passkeys & accounts
+   (older Android: Passwords & accounts, or Accounts) -> Add account -> Google, and sign in. Then sections 4 and 5.
 4. Switch "Pause all restrictions" off again, and tick "Block adding or removing accounts" again
    in the PWA.
 
@@ -56,19 +60,20 @@ Open before enrolling.
   Play on this device"**.
 - Family -> **Parental controls** on, with content ratings for the kid's age and a PIN (not one of
   handy's PINs; keep it with the credentials, section 6).
-- Network preferences -> **Auto-update apps** on (handy opens the Play Store for updates in the
-  nightly window while the screen is off).
+- Network preferences -> **Auto-update apps** on, **over Wi-Fi only** (handy un-suspends the Play
+  Store from 02:00 to 04:00 while the screen is off, so Play can update in that window).
 - Profile icon -> **Play Protect** -> settings: "Scan apps with Play Protect" on.
 
 ## 5. Turn off the account's own sync
 
-Android Settings -> Passwords & accounts -> the Google account -> Account sync: turn off
+Android Settings -> Passwords, passkeys & accounts -> the Google account -> Account sync: turn off
 **everything** (Contacts, Calendar, Gmail, Drive, Keep, ...). The phone book comes from the
 server; the calendar is DAVx5's CalDAV account, which is a separate account and isn't affected.
 
 ## 6. Factory reset protection (FRP)
 
-After a wipe from the recovery menu, Android's setup asks for the Google account that was on the
+After a wipe - from the recovery menu, or the remote wipe on the device page (it doesn't clear the
+reset protection, which helps with a lost phone) - Android's setup asks for the Google account that was on the
 phone, and won't continue without it. **Keep the account's address, password and 2-Step backup
 codes with the override PIN** (and the Play parental-controls PIN). After such a wipe, finish
 setup with the account, remove it again in Settings, then `dpm set-device-owner`, then add it back
@@ -83,7 +88,8 @@ launcher checks it and switches it off if anything turned it on; the override PI
 don't change that, and there is no switch for it in the PWA. The device page shows it in the
 "Phone hardening" card: "Backup to Google: off", or a warning if the phone reports it on (nothing
 from a launcher that doesn't report it yet). By hand, with adb allowed:
-`adb shell bmgr enabled` -> "Backup Manager is not activated for user 0".
+`adb shell bmgr activated` -> "Backup Manager currently deactivated" (`bmgr enabled` answers
+"Error: Backup Manager is not activated for user 0").
 
 ## 8. Daily use: installing an app from Play
 
