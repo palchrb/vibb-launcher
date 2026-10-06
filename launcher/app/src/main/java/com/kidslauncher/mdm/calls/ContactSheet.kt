@@ -72,7 +72,10 @@ object ContactSheet {
         }
         val rules = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules
         val message = rules?.let {
-            resolveMessageButton(contact, it.smsEnabled, CallSystem.defaultSmsPackage(activity), usablePackages(activity))
+            resolveMessageButton(
+                contact, it.smsEnabled, CallSystem.defaultSmsPackage(activity), usablePackages(activity),
+                learnedRoom = ElementRoomStore.lookup(activity),
+            )
         }
         val messageButton = view.findViewById<View>(R.id.sheet_message)
         val messageApp = view.findViewById<TextView>(R.id.sheet_message_app)
@@ -98,13 +101,15 @@ object ContactSheet {
     }
 
     fun openMessage(activity: Activity, message: MessageIntent) {
-        for (uri in listOfNotNull(message.uri, message.fallbackUri)) {
+        for (uri in message.uris) {
             try {
                 activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))
                 return
             } catch (e: Exception) {
-                // Not found, or refused (SecurityException): try the fallback form (Element X:
-                // element://user/...), then the toast - never a crash (qa-09-code #10).
+                // Not found, or refused (SecurityException): try the next form (Element X: the
+                // learned room's elementx:// link, then the profile's matrix:u/ and element://user/
+                // links - design 15), then the toast - never a crash (qa-09-code #10). Never logged:
+                // the links carry MXIDs and room IDs.
             }
         }
         Toast.makeText(activity, R.string.calls_could_not_message, Toast.LENGTH_LONG).show()

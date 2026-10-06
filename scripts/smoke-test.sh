@@ -42,6 +42,10 @@
 #   OUT_DIR         screenshot folder (default ./smoke-<date>, gitignored)
 #   EXPECT_KIOSK=0  a phone whose kiosk is off on purpose (lock task isn't required then)
 #   STRICT=1        count SKIP as a failure
+#   ELEMENT_SESSION, ELEMENT_ROOM  optional (design 15): the kid's own Element X MXID and a DM's room
+#                   ID (as the launcher learns them from Element X's DM notification); with both set,
+#                   Element X's elementx://open link is started and must open Element X - whether it
+#                   shows that DM (not the room list) is checked on the screenshot. Unset: not run.
 set -uo pipefail
 
 read -r -a ADB_CMD <<<"${ADB:-adb}"
@@ -59,6 +63,9 @@ KID_PIN="${KID_PIN:-}"
 OUT_DIR="${OUT_DIR:-./smoke-$(date +%Y%m%d-%H%M%S)}"
 STRICT="${STRICT:-0}"
 EXPECT_KIOSK="${EXPECT_KIOSK:-1}"
+ELEMENT_SESSION="${ELEMENT_SESSION:-}"
+ELEMENT_ROOM="${ELEMENT_ROOM:-}"
+ELEMENT_PKG=io.element.android.x
 CALL_NOTIFICATION_ID=1005
 MISSED_NOTIFICATION_ID=1006
 LOCK_ACTIVITY="$PKG/com.kidslauncher.mdm.lock.PinLockActivity"
@@ -240,6 +247,8 @@ top_activity() {
 }
 # top_is <package/class>: exactly that component is the resumed activity.
 top_is() { grep -q -F -- " $1 " <<<"$(top_activity)"; }
+# top_package_is <package>: an activity of that package is the resumed activity.
+top_package_is() { grep -q -F -- " $1/" <<<"$(top_activity)"; }
 top_is_not() { ! top_is "$1"; }
 lock_task_state() { sh_ dumpsys activity activities | grep -m1 -o 'mLockTaskModeState=[A-Z]*' | cut -d= -f2; }
 call_notification_shown() {
@@ -566,6 +575,41 @@ else
     fail "no call screen left after the call" "top: $(top_activity)"
 fi
 shot after-outgoing
+
+# Design 15, optional: Element X's own open link, built like the launcher's elementRoomUri (every
+# byte but RFC 3986 unreserved characters percent-encoded). Needs Element X allowed and signed in
+# as ELEMENT_SESSION, and the phone unlocked.
+uri_encode() {
+    local LC_ALL=C s="$1" out="" c i
+    for ((i = 0; i < ${#s}; i++)); do
+        c="${s:i:1}"
+        case "$c" in
+            [A-Za-z0-9._~-]) out+="$c" ;;
+            *) out+="$(printf '%%%02X' "'$c")" ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+if [ -n "$ELEMENT_SESSION" ] && [ -n "$ELEMENT_ROOM" ]; then
+    step "Element X room link (optional)"
+    element_link="elementx://open/$(uri_encode "$ELEMENT_SESSION")/$(uri_encode "$ELEMENT_ROOM")"
+    element_out="$(sh_ am start -W -a android.intent.action.VIEW -d "$element_link" "$ELEMENT_PKG")"
+    if grep -q -E 'Error|unable to resolve' <<<"$element_out"; then
+        fail "the elementx open link starts Element X" "$(grep -m1 -E 'Error|unable to resolve' <<<"$element_out")"
+    elif wait_for 5 top_package_is "$ELEMENT_PKG"; then
+        pass "the elementx open link starts Element X (screenshot: the DM must be open, not the room list)"
+    else
+        fail "the elementx open link starts Element X" "top: $(top_activity)"
+    fi
+    shot element-room
+    sh_ input keyevent KEYCODE_HOME >/dev/null
+fi
+
+echo
+echo "== Manual step: Element X Message button (design 15)"
+echo "   With Element X allowed and a phone-book contact on Element: the contact sends the kid a DM;"
+echo "   after that notification the contact sheet's Message opens that DM (before it: the profile)."
+echo "   ELEMENT_SESSION/ELEMENT_ROOM check the link itself."
 
 echo
 echo "== Manual step (never automated): emergency call"

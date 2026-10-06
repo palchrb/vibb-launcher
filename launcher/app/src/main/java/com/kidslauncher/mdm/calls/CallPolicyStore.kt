@@ -95,6 +95,10 @@ object CallPolicyStore {
             else -> "unreadable"
         }
         if (bootPolicyStatus != "ok") Log.w(LOG_TAG, "Boot call policy: $bootPolicyStatus")
+        // Learned Element X rooms of contacts that left the phone book, stopped using Element or
+        // changed MXID go with the rules that dropped them (design 15). After the state is set:
+        // never in the way of the call services; never throws.
+        ElementRoomStore.prune(context, newState)
     }
 
     /**

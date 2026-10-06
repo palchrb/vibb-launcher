@@ -81,3 +81,39 @@ link and the permalink each open the DM; no room opens the profile.
   the contact leaves the phone book, stops using Element, or changes MXID.
 - Add the elementx open to `scripts/smoke-test.sh` only as a manual/optional step (it needs a learned room on the
   emulator); the unit tests carry the rule.
+
+## Implementation status (2026-10-06)
+
+Built: the learned variant only, launcher-only - no server, policy or PWA change (§1-3 and §5 not built).
+
+- **Rule** (pure, `calls/ElementRooms.kt`, `ElementRoomsTest`): `learnElementRoom(packageName, ElementDmFacts,
+  CallPolicyState)` exactly as QA #2 - package `io.element.android.x`, managed rules, `group == false` (a missing
+  flag isn't false), tag = room ID (`isElementRoomId`: `!` + 43 base64url, or `!opaque:server`; no `|`, `?`, `#`,
+  `&`, spaces; <= 255), session = the messaging person's key (`isMatrixId`), every `sender_person` keyed and the same
+  MXID, not the session, and an Element contact of `rules.phoneBook` (outbound - the contacts with a Message
+  button). The kid's own messages have no `sender_person` and are skipped; a keyless person, a
+  `mention-or-reply:` key, another sender or two contacts learn nothing. Never the shortcut id.
+- **Reader** (`badges/ElementDmReader.kt`, called by `BadgeListenerService` for each posted notification and on
+  connect): only Element X in our own user; reads `sbn.tag`, `EXTRA_MESSAGING_PERSON`'s key, each `EXTRA_MESSAGES`
+  bundle's `sender_person` key (not `MessagingStyle`'s parser) and `EXTRA_IS_GROUP_CONVERSATION`. `ElementDmFacts`
+  has exactly `tag`, `selfKey`, `senderKeys`, `group` (exact-field test); a source scan forbids text/title/name
+  reads in the reader and the listener, any other extra or bundle key, and any `Log` in the reader, the rule and
+  the store. The listener's and `NotificationRule.kt`'s privacy KDoc now name this reader.
+- **Storage** (`calls/ElementRoomStore.kt`): own CE prefs file `element_rooms`, one JSON map contact MXID ->
+  `{session, room}` (`ElementRoom`, exact-field test) - nothing else; a newer notification replaces the pair.
+  `CallPolicyStore.refresh` prunes it on every CE refresh (after every accepted sync): managed -> only phone-book
+  contacts still on Element with the same MXID; unmanaged -> empty; unknown rules -> unchanged. Never the DE copy,
+  the status report or a log (a test checks `server/`, `push/` and `CallStateReport.kt` never mention it).
+- **Button** (`resolveMessageButton(..., learnedRoom)`, `MessageButtonsTest`): `MessageIntent` holds a URI list;
+  with a learned room `elementx://open/<session>/<room>` (`elementRoomUri`, each segment fully `uriEncode`d - the
+  live link is a test vector) comes first, then today's `matrix:u/…?action=chat` and `element://user/…`.
+  `ContactSheet.openMessage` moves on only when starting one throws (ActivityNotFound/SecurityException). An
+  invalid stored pair gives no link. No new strings.
+- **Smoke test**: optional step with `ELEMENT_SESSION` + `ELEMENT_ROOM` (starts the encoded link, checks Element X
+  comes up, screenshot for "the DM, not the room list"), plus a printed manual step for the Message button
+  (`docs/testing/emulator.md` §5b).
+
+Device checks (not done here): on the Jelly Star with Element X as the kid, a DM from a phone-book contact makes
+Message open that DM; before any DM it opens the profile; a contact removed or moved to another MXID falls back to
+the profile after the next sync; Element X signed out (unknown session) - Element stays on its room list (known,
+QA #4) until the next DM notification replaces the pair.

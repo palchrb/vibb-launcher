@@ -8,10 +8,11 @@ package com.kidslauncher.mdm.badges
  * screen outside the kiosk. Pure, no Android imports - NotificationRuleTest. The glue is
  * NotificationRuleRuntime + BadgeListenerService.
  *
- * Privacy: the input carries only the package, `Notification.channelId` (never the Ranking's
- * conversation channel or a shortcut id - they can encode a contact), the category and flags -
- * no title, text, key or tag. Logs and the status report carry package + channel ids and capped
- * counts only.
+ * Privacy: this rule's input carries only the package, `Notification.channelId` (never the
+ * Ranking's conversation channel or a shortcut id - they can encode a contact), the category and
+ * flags - no title, text, key or tag. Logs and the status report carry package + channel ids and
+ * capped counts only. The listener's one other reader, ElementDmReader (design 15), does read
+ * Element X's tag and person keys - its own ElementDmFacts, never text, never logged or reported.
  */
 
 /** What the rule may know about one notification. Deliberately no text fields (tested). */

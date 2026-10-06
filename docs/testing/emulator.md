@@ -122,7 +122,10 @@ allowed in and out, `UNKNOWN_NUMBER` (default `+4799999999`) no contact, a kid P
 be full E.164 numbers (8-15 digits; short or emergency numbers are refused). Other variables: `PKG` (default
 `me.vibb.launcher.debug`), `ALLOWED_DIAL` (the contact in national form, default the number without `+47`),
 `OUT_DIR` (screenshots, default `./smoke-<date>`, gitignored), `EXPECT_KIOSK=0` for a phone with the kiosk off,
-`STRICT=1` to fail on skipped checks.
+`STRICT=1` to fail on skipped checks. Optional (design 15): `ELEMENT_SESSION` (the kid's Element X MXID) and
+`ELEMENT_ROOM` (a DM's room ID) start Element X's `elementx://open/<session>/<room>` link (each segment fully
+percent-encoded) and check Element X comes up; that it shows the DM is checked on the screenshot. The Message
+button itself is a printed manual step (it needs a room learned from a real DM notification).
 
 What it checks, each a PASS/FAIL line (SKIP without a PIN), summary at the end, exit 1 on a FAIL. Only evidence
 logged after the step started counts (logcat is cleared per step); silence is a FAIL:

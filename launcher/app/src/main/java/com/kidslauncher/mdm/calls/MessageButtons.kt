@@ -5,7 +5,8 @@ package com.kidslauncher.mdm.calls
  * the app per contact (default per device) on the server: SMS, Element X (Matrix ID) or
  * Signal/Molly (phone number). The button is hidden when it can't work: the app isn't usable here
  * (not installed, suspended, or not on the allowlist), SMS is off, or the address is missing.
- * Deep-link handling per app is a device check.
+ * Deep-link handling per app is a device check. Element X opens the DM once its room is learned
+ * from a notification (design 15, ElementRooms.kt), else the profile.
  */
 
 object MessagePackages {
@@ -17,9 +18,9 @@ object MessagePackages {
     val SIGNAL = listOf("im.molly.app", "org.thoughtcrime.securesms")
 }
 
-/** An explicit intent: [action] on [uri], for [packageName] only; [fallbackUri] (same action
- * and package) is tried when [uri] doesn't resolve. */
-data class MessageIntent(val action: String, val uri: String, val packageName: String, val fallbackUri: String? = null)
+/** An explicit intent: [action] for [packageName] only, on the first of [uris] that opens -
+ * the next one is tried only when starting one fails (not found, or refused). */
+data class MessageIntent(val action: String, val uris: List<String>, val packageName: String)
 
 const val ACTION_VIEW = "android.intent.action.VIEW"
 const val ACTION_SENDTO = "android.intent.action.SENDTO"
@@ -42,9 +43,10 @@ fun uriEncode(value: String, keep: String = ""): String = buildString {
 
 /**
  * Element X has no matrix.to filter; it handles MSC2312 `matrix:` URIs: `matrix:u/<user id
- * without the @>?action=chat` (opens or starts the DM - whether it lands on the DM or the user's
- * profile is a device check). Its own `element://user/<mxid>` is the fallback. [mxid] is a
- * valid [isMatrixId]. Element X exposes no call intent, so there is no direct-call button.
+ * without the @>?action=chat` - which opens the user's **profile** (with a "Message" button;
+ * found live 2026-10-06, design 15), so it is only used until the DM room is learned
+ * ([elementRoomUri]). Its own `element://user/<mxid>` is the fallback. [mxid] is a valid
+ * [isMatrixId]. Element X exposes no call intent, so there is no direct-call button.
  */
 fun elementChatUri(mxid: String): String = "matrix:u/${uriEncode(mxid.removePrefix("@"), keep = ":")}?action=chat"
 
@@ -54,22 +56,28 @@ fun elementUserUri(mxid: String): String = "element://user/${uriEncode(mxid, kee
 /**
  * [usable]: the package is installed, not suspended and allowed on this phone (AppEnforcer's
  * allowlist, or unmanaged). [defaultSmsPackage]: `Telephony.Sms.getDefaultSmsPackage`.
+ * [learnedRoom]: the DM room learned for an Element MXID ([ElementRoomStore]); with one, Element
+ * X opens `elementx://open/<session>/<room>` first and falls back to today's profile links.
  */
 fun resolveMessageButton(
     contact: RuleContact,
     smsEnabled: Boolean,
     defaultSmsPackage: String?,
     usable: (String) -> Boolean,
+    learnedRoom: (String) -> ElementRoom? = { null },
 ): MessageIntent? = when (contact.messageApp) {
     "sms" -> defaultSmsPackage
         ?.takeIf { smsEnabled && contact.number.isNotEmpty() && usable(it) }
-        ?.let { MessageIntent(ACTION_SENDTO, "smsto:${contact.number}", it) }
+        ?.let { MessageIntent(ACTION_SENDTO, listOf("smsto:${contact.number}"), it) }
     "element" -> contact.messageAddress
         ?.takeIf { isMatrixId(it) && usable(MessagePackages.ELEMENT_X) }
-        ?.let { MessageIntent(ACTION_VIEW, elementChatUri(it), MessagePackages.ELEMENT_X, fallbackUri = elementUserUri(it)) }
+        ?.let { mxid ->
+            val room = learnedRoom(mxid)?.let(::elementRoomUri)
+            MessageIntent(ACTION_VIEW, listOfNotNull(room, elementChatUri(mxid), elementUserUri(mxid)), MessagePackages.ELEMENT_X)
+        }
     "signal" -> if (contact.number.startsWith("+")) {
         MessagePackages.SIGNAL.firstOrNull(usable)
-            ?.let { MessageIntent(ACTION_VIEW, "https://signal.me/#p/${contact.number}", it) }
+            ?.let { MessageIntent(ACTION_VIEW, listOf("https://signal.me/#p/${contact.number}"), it) }
     } else {
         null
     }

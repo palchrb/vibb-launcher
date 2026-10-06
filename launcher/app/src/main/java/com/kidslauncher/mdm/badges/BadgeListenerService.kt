@@ -8,12 +8,15 @@ import android.util.Log
 /**
  * Counts unread notifications per app for the home-grid badges ([badgeCounts]) and, since handy
  * step 11, applies the notification auto-cancel rule ([nagVerdict]): another app's nag whose tap
- * would open a screen outside the kiosk is cancelled (snoozed past the re-post budget). Reads only
- * the package, channel id, category, flags and `number` - never titles or text - and never logs a
- * key or tag ([NotificationRuleRuntime] keeps package + channel counts only). Needs
- * notification-listener access, granted with adb at provisioning (see
- * [BadgeStore.accessGranted]); without it Android never binds this service: no badges, no
- * auto-cancel. Not direct-boot-aware.
+ * would open a screen outside the kiosk is cancelled (snoozed past the re-post budget). For those
+ * it reads only the package, channel id, category, flags and `number`. Since design 15 one more
+ * reader, [ElementDmReader], looks at Element X's notifications only: their tag (the room ID), the
+ * messaging person's key and the senders' keys (MXIDs) and the group flag, to learn a phone-book
+ * contact's DM room - kept only in CE prefs ([com.kidslauncher.mdm.calls.ElementRoomStore]).
+ * Never titles, names or message bodies, and no key, tag or MXID is ever logged or reported
+ * ([NotificationRuleRuntime] keeps package + channel counts only). Needs notification-listener
+ * access, granted with adb at provisioning (see [BadgeStore.accessGranted]); without it Android
+ * never binds this service: no badges, no auto-cancel, no learned rooms. Not direct-boot-aware.
  */
 class BadgeListenerService : NotificationListenerService() {
 
@@ -33,15 +36,20 @@ class BadgeListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        sbn?.let { applyRule(it, null) }
+        sbn?.let {
+            ElementDmReader.learn(this, it)
+            applyRule(it, null)
+        }
         recount()
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) = recount()
 
-    /** Applies the rule to every active notification (connect, and after a policy change), then recounts. */
+    /** Learns from and applies the rule to every active notification (connect, and after a
+     * policy change), then recounts. */
     internal fun sweep() {
         val active = activeOrNull() ?: return
+        active.forEach { ElementDmReader.learn(this, it) }
         if (NotificationRuleRuntime.policy != null) active.forEach { applyRule(it, active) }
         recount()
     }
