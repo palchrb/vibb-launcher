@@ -63,6 +63,35 @@ class LockTaskHelpersTest {
     }
 
     @Test
+    fun `kiosk features - OVERVIEW goes with the block unless the recents package is pinned (design 16)`() {
+        val recents = "com.google.android.apps.nexuslauncher"
+        val server = LOCK_TASK_FEATURE_SYSTEM_INFO or LOCK_TASK_FEATURE_NOTIFICATIONS or LOCK_TASK_FEATURE_HOME or
+            LOCK_TASK_FEATURE_OVERVIEW or LOCK_TASK_FEATURE_GLOBAL_ACTIONS or LOCK_TASK_FEATURE_KEYGUARD
+        val blocked = server or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK
+        val kiosk = setOf("me.vibb.launcher", "org.example.game")
+        // The block on, Recents not pinned: "App is not available" - no OVERVIEW, nothing else changes.
+        assertEquals(blocked and LOCK_TASK_FEATURE_OVERVIEW.inv(), kioskFeatures(blocked, recents, kiosk))
+        assertEquals("unknown recents package counts as not pinned", blocked and LOCK_TASK_FEATURE_OVERVIEW.inv(), kioskFeatures(blocked, null, kiosk))
+        // Pinned (the parent allowlisted the launcher), no block, or kiosk off: unchanged.
+        assertEquals(blocked, kioskFeatures(blocked, recents, kiosk + recents))
+        assertEquals(server, kioskFeatures(server, recents, kiosk))
+        assertEquals(blocked, kioskFeatures(blocked, recents, null))
+        // HOME stays (Back-only kiosk is a per-device decision after the swipe-up check).
+        assertTrue(kioskFeatures(blocked, recents, kiosk) and LOCK_TASK_FEATURE_HOME != 0)
+    }
+
+    @Test
+    fun `the plan carries the kiosk features (design 16)`() {
+        fun features(block: Boolean, recents: String?, allow: List<String>) = computeEnforcementPlan(
+            allow, true, 63, false, controllable, "me.vibb.launcher", dialer,
+            blockActivityStart = block, lockTaskHelpers = helpers, recentsPackage = recents,
+        ).lockTaskFeatures
+        assertEquals(0, features(true, "com.google.android.apps.nexuslauncher", listOf("org.example.game")) and LOCK_TASK_FEATURE_OVERVIEW)
+        assertTrue(features(true, "org.example.game", listOf("org.example.game")) and LOCK_TASK_FEATURE_OVERVIEW != 0)
+        assertTrue(features(false, null, listOf("org.example.game")) and LOCK_TASK_FEATURE_OVERVIEW != 0)
+    }
+
+    @Test
     fun `the block bit follows the server switch and never comes from lock_task_features`() {
         assertEquals(LOCK_TASK_FEATURE_KEYGUARD or 1, lockTaskFeatures(1 or 64, blockActivityStart = false))
         assertEquals(LOCK_TASK_FEATURE_KEYGUARD or 1 or 64, lockTaskFeatures(1, blockActivityStart = true))

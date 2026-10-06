@@ -122,7 +122,16 @@ object PinLockRuntime {
         }
         // After Application.onCreate returns (an activity start from inside it is too early).
         handler.post {
-            dispatch(app, LockEvent.ProcessStart(active, interactive(app), ourCall(), systemCall(app)))
+            // Design 16 (A, QA #2/#6): the first start of a boot brings our Home to the front -
+            // before the CE unlock a direct-boot-aware stock launcher was Home. Home roots lock
+            // task (kiosk on) and shows the lock; the lock's own start is then a 1 s fallback.
+            val homeFirst = try {
+                BootHome.startIfDue(app, lockActive = active)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Boot Home check failed", e)
+                false
+            }
+            dispatch(app, LockEvent.ProcessStart(active, interactive(app), ourCall(), systemCall(app), homeFirst = homeFirst))
             // The chrome of a lock that was LOCKED when the process died is still set; an inactive
             // lock must not leave it behind either. Same for the camera lock: engaged again when
             // LOCKED, released (idempotently) otherwise.
@@ -141,6 +150,12 @@ object PinLockRuntime {
         // off, PackageManager work) - the lock screen's start must not wait for them (qa-10-code
         // #7). It only resumes after this returns, by when its lock-task packages are set.
         if (result.showLock) show(context)
+        // Home was started first (design 16): the re-front check shows the lock if Home didn't.
+        if (result.showLockLater) {
+            refrontAttempt = 0
+            handler.removeCallbacks(refrontCheck)
+            handler.postDelayed(refrontCheck, LOCK_FALLBACK_MS)
+        }
         if (before != result.mode) {
             Log.i(LOG_TAG, "$before -> ${result.mode} on $event")
             if ((before == LockMode.LOCKED) != (result.mode == LockMode.LOCKED)) {
@@ -157,7 +172,7 @@ object PinLockRuntime {
         }
         if (result.showCall) showCall(context)
         // LOCKED but not shown (the system dialer's call): the re-front loop waits for it to end.
-        if (result.mode == LockMode.LOCKED && !result.showLock && !lockResumed && before != LockMode.LOCKED) {
+        if (result.mode == LockMode.LOCKED && !result.showLock && !result.showLockLater && !lockResumed && before != LockMode.LOCKED) {
             refrontAttempt = 0
             handler.removeCallbacks(refrontCheck)
             handler.postDelayed(refrontCheck, refrontDelayMs(0))
@@ -291,13 +306,19 @@ object PinLockRuntime {
 
     /**
      * After Home was brought to the front by an update (step 11, qa-11-design.md #9): the lock
-     * goes on top when LOCKED. Posted, so a ProcessStart still queued in this new process goes
-     * first and the lock always ends up last.
+     * goes on top when LOCKED. Home's resume shows it (and, with the kiosk on, roots lock task
+     * first - design 16 QA #2), so this is the [LOCK_FALLBACK_MS] backstop: delayed, a
+     * ProcessStart still queued in this new process goes first.
      */
     fun showIfLocked(context: Context) {
         val app = context.applicationContext
-        handler.post { if (mode == LockMode.LOCKED) show(app) }
+        handler.postDelayed({ if (mode == LockMode.LOCKED && !lockResumed) show(app) }, LOCK_FALLBACK_MS)
     }
+
+    /** The lock is active - in memory, else as the last apply stored it (a receiver in a new
+     * process can run before its ProcessStart). */
+    fun activeOrStored(context: Context): Boolean =
+        mode != LockMode.DISABLED || PinLockStore.active(context.applicationContext)
 
     fun show(context: Context) {
         try {

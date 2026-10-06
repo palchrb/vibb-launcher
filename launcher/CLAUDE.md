@@ -220,6 +220,13 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   `downloading`.
 - **Not device-tested**: the checks in the 13 doc ("Implementation status").
 
+## Home at boot, Home roots lock task, no "App is not available" (design 16, `docs/design/16-boot-home.md`, at the monorepo root)
+
+- **Typed HOME only**: every "bring Home" start goes through `lock/HomeFront` (`MAIN` + `HOME`, `setPackage(ours)`, no component) - an explicit `Intent(ctx, HomeActivity)` makes a STANDARD Home task next to the HOME-typed one (`HomeFrontTest` bans it).
+- **Boot** (`lock/BootHome`, pure `bringHomeAtBoot`): before the CE unlock only direct-boot-aware HOMEs resolve, so a stock launcher (Pixel's) was Home for 3-5 s. The first process start of a boot (BOOT_COUNT vs CE prefs `boot_home`, stored after Home started) brings Home from `PinLockRuntime.init`'s ProcessStart when apps are managed, the kiosk is on or the PIN lock is active, never over a call; the lock is then the 1 s fallback (`LockStep.showLockLater`). `HomeActivity` stays non-direct-boot-aware.
+- **Kiosk on: Home roots lock task, never the lock** (pure `lockTaskEntry`/`lockLeave`, `lock/LockTaskRoot.kt`): a lock resumed without lock task starts Home (whose resume calls `startLockTask` and shows the lock), at most every 3 s, and starts lock task itself only as the 1 s fallback. The lock always leaves through Home - Home is started **before** `finishAndRemoveTask`, so the stock launcher's latent Recents task (a BlockedAppActivity in kiosk) never surfaces; a refused finish means the lock is the root (`rootLeave`: stop, Home, finish). Kiosk off is unchanged. `HomeActivity.reconcileKioskMode` catches `startLockTask` failures.
+- **Kiosk features**: pure `kioskFeatures` drops OVERVIEW while the app-block bit is on and `config_recentsComponentName`'s package isn't pinned (`AppEnforcer.recentsPackage`); the server still sends OVERVIEW. `smoke-test.sh` checks no BlockedAppActivity after the unlock, on Recents and on a swipe-up. Not device-tested: the 16 doc's "Implementation status". D (the boot cover, 16b) is not built.
+
 ## Building without tsnet.aar
 
 `libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. CI builds with `-PrequireTsnet=true`, which fails the build if the aar is missing, so a release can't ship the stub. If `mobile/tsembed`'s exported API changes, update the stub to match.

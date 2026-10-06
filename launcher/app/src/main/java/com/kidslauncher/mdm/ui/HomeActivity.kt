@@ -392,12 +392,19 @@ class HomeActivity : UIObjectActivity() {
         }
         val shouldBeLocked = LauncherPreferences.mdm().kioskEnabled()
 
-        if (shouldBeLocked && !currentlyLocked) {
-            startLockTask()
-        } else if (!shouldBeLocked && currentlyLocked && PinLockRuntime.mode != LockMode.LOCKED) {
-            // With the kiosk off, a running lock task while LOCKED is the PIN lock's own (step
-            // 10) - never stopped from here.
-            stopLockTask()
+        // Guarded (design 16, QA #3): the platform throws "Invalid task, not in foreground" when
+        // Home and the lock start back to back (boot); a crash here would count for the lock's
+        // crash guard. The next resume tries again, and the lock's own fallback starts it.
+        try {
+            if (shouldBeLocked && !currentlyLocked) {
+                startLockTask()
+            } else if (!shouldBeLocked && currentlyLocked && PinLockRuntime.mode != LockMode.LOCKED) {
+                // With the kiosk off, a running lock task while LOCKED is the PIN lock's own (step
+                // 10) - never stopped from here.
+                stopLockTask()
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("HomeActivity", "Lock task change failed - retried at the next resume", e)
         }
     }
 

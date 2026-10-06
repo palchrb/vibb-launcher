@@ -23,12 +23,17 @@ sealed interface LockEvent {
     /** An apply decided whether the lock is active ([lockActivation]). */
     data class Configured(val active: Boolean) : LockEvent
 
-    /** This process started (boot, a crash, an update): LOCKED if the lock was active. */
+    /**
+     * This process started (boot, a crash, an update): LOCKED if the lock was active. [homeFirst]:
+     * the boot start brings our Home to the front first (design 16, A with QA #2/#6) - Home's resume
+     * roots lock task with the kiosk on and shows the lock, so the lock itself is only a fallback.
+     */
     data class ProcessStart(
         val active: Boolean,
         val interactive: Boolean,
         val ourCall: Boolean = false,
         val systemCall: Boolean = false,
+        val homeFirst: Boolean = false,
     ) : LockEvent
 
     /**
@@ -69,7 +74,13 @@ data class LockStep(
     val showLock: Boolean = false,
     val showCall: Boolean = false,
     val recheckTimeRules: Boolean = false,
+    /** Show the lock after [LOCK_FALLBACK_MS] unless it is in front by then: Home was started
+     * first and shows it (design 16 QA #2 - never without a lock). */
+    val showLockLater: Boolean = false,
 )
+
+/** How long the lock waits for Home to show it before it shows itself (design 16 QA #2). */
+const val LOCK_FALLBACK_MS = 1_000L
 
 fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
     is LockEvent.Configured -> when {
@@ -85,8 +96,10 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
             LockStep(LockMode.DISABLED)
         } else {
             // Fail closed: nothing says the kid had unlocked. With the screen on (a crash while
-            // the kid was in an app) the lock is shown at once (QA 10 #4).
-            LockStep(LockMode.LOCKED, showLock = event.interactive && !event.systemCall)
+            // the kid was in an app) the lock is shown at once (QA 10 #4) - or, when Home was
+            // started first at boot, by Home with this as the fallback (design 16).
+            val show = event.interactive && !event.systemCall
+            LockStep(LockMode.LOCKED, showLock = show && !event.homeFirst, showLockLater = show && event.homeFirst)
         }
 
     is LockEvent.ScreenOff ->

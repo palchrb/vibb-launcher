@@ -273,11 +273,35 @@ fun commitCheckDelayMs(now: ZonedDateTime, pendingForMs: Long, overdueMs: Long =
 /**
  * After our package was replaced (MY_PACKAGE_REPLACED) or a self-update failed in a restarted
  * process: Home is brought to the front - then the PIN lock on top if LOCKED (qa-11-design.md #9) -
- * when apps are managed or the kiosk is on, and never over a call ([telecomInCall] `null` =
- * unknown, counts as a call). Nothing else brings Home back: lock task doesn't re-enter by itself.
+ * when apps are managed, the kiosk is on or the PIN lock is active (design 16, QA #6: a phone with
+ * only calls managed and the lock would keep the stock launcher under it), and never over a call
+ * ([liveCall]: ours or a VoIP call the lock yields to; [telecomInCall] `null` = unknown, counts as
+ * a call). Nothing else brings Home back: lock task doesn't re-enter by itself.
  */
-fun bringHomeAfterUpdate(appsManaged: Boolean, kioskOn: Boolean, liveCall: Boolean, telecomInCall: Boolean?): Boolean =
-    (appsManaged || kioskOn) && !liveCall && telecomInCall == false
+fun bringHomeAfterUpdate(
+    appsManaged: Boolean,
+    kioskOn: Boolean,
+    liveCall: Boolean,
+    telecomInCall: Boolean?,
+    pinLockActive: Boolean = false,
+): Boolean = (appsManaged || kioskOn || pinLockActive) && !liveCall && telecomInCall == false
+
+/**
+ * Design 16 (A, QA #6): the first process start of a boot ([bootCount] differs from the one stored
+ * after the last boot start, [storedBootCount]; an unknown count, -1, never is) brings our Home to
+ * the front under the same gate as an update - before the CE unlock only a direct-boot-aware HOME
+ * resolves, so a stock launcher like Pixel's is Home until something of ours covers it.
+ */
+fun bringHomeAtBoot(
+    bootCount: Int,
+    storedBootCount: Int?,
+    appsManaged: Boolean,
+    kioskOn: Boolean,
+    pinLockActive: Boolean,
+    liveCall: Boolean,
+    telecomInCall: Boolean?,
+): Boolean = bootCount >= 0 && bootCount != storedBootCount &&
+    bringHomeAfterUpdate(appsManaged, kioskOn, liveCall, telecomInCall, pinLockActive)
 
 /**
  * How long the screen has been off (the screen is off now): since this process's last SCREEN_OFF;

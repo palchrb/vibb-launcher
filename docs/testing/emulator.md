@@ -144,7 +144,10 @@ logged after the step started counts (logcat is cleared per step); silence is a 
   after the step started (one Telecom posted before the first unlock may be left over and doesn't fail). Both
   are read from `dumpsys notification --noredact`: the record's `Notification.when` (the call's time) against
   the device clock at the step's start;
-- the PIN unlocks (keypad keys tapped through `uiautomator dump`);
+- the PIN unlocks (keypad keys tapped through `uiautomator dump`), and for 3 s after it the system's "App is not
+  available" screen (`BlockedAppActivity`) never comes to the front (design 16: the lock leaves through Home);
+- Recents (`KEYCODE_APP_SWITCH`) and, with gesture navigation, a slow and a fast swipe-up from the bottom edge
+  never show `BlockedAppActivity` either (SKIP while the lock is in front or with 3-button navigation);
 - while the answered call is on, a second (allowed) outgoing call logs our "second call" line and Telecom keeps one
   live call (one call at a time - tested on the incoming call, since the emulator's modem simulator hangs up
   outgoing calls at once with DisconnectCause REMOTE);

@@ -198,6 +198,24 @@ class SelfUpdatePlanTest {
         assertEquals(false, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = true, telecomInCall = false))
         assertEquals(false, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = false, telecomInCall = true))
         assertEquals(false, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = false, telecomInCall = null))
+        // Design 16 QA #6: calls managed + the PIN lock only (no allowlist, kiosk off) counts too.
+        assertEquals(true, bringHomeAfterUpdate(appsManaged = false, kioskOn = false, liveCall = false, telecomInCall = false, pinLockActive = true))
+        assertEquals(false, bringHomeAfterUpdate(appsManaged = false, kioskOn = false, liveCall = true, telecomInCall = false, pinLockActive = true))
+    }
+
+    @Test
+    fun `Home at boot - only the first start of a boot, under the update's gate (design 16)`() {
+        fun boot(count: Int, stored: Int?, managed: Boolean = true, lock: Boolean = false, call: Boolean = false, telecom: Boolean? = false) =
+            bringHomeAtBoot(count, stored, appsManaged = managed, kioskOn = false, pinLockActive = lock, liveCall = call, telecomInCall = telecom)
+        assertEquals(true, boot(12, 11))
+        assertEquals("first boot after install", true, boot(12, null))
+        assertEquals("a crash restart in the same boot", false, boot(12, 12))
+        assertEquals("unknown boot count", false, boot(-1, 11))
+        assertEquals(false, boot(12, 11, managed = false))
+        assertEquals("PIN lock only", true, boot(12, 11, managed = false, lock = true))
+        assertEquals("never over a call", false, boot(12, 11, call = true))
+        assertEquals(false, boot(12, 11, telecom = true))
+        assertEquals("unknown Telecom state counts as a call", false, boot(12, 11, telecom = null))
     }
 
     // ---- qa-11-code #2-#4 ----------------------------------------------------------------------

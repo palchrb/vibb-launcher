@@ -17,7 +17,6 @@ import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.push.SyncRunner
-import com.kidslauncher.mdm.ui.HomeActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -314,20 +313,15 @@ object SelfUpdate {
             kioskOn = com.kidslauncher.mdm.preferences.LauncherPreferences.mdm().kioskEnabled(),
             liveCall = OngoingCalls.hasLiveCall,
             telecomInCall = telecomInCall(app),
+            pinLockActive = PinLockRuntime.activeOrStored(app),
         )
         if (!bring) {
             Log.i(LOG_TAG, "Home stays where it is after $why")
             return
         }
-        try {
-            app.startActivity(
-                Intent(app, HomeActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
-            )
-            Log.i(LOG_TAG, "Home brought to the front after $why")
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't bring Home to the front after $why", e)
-        }
+        // A typed HOME start (design 16, QA #1); Home's onResume roots lock task with the kiosk on
+        // and shows the lock when LOCKED - showIfLocked is the backstop.
+        com.kidslauncher.mdm.lock.HomeFront.bring(app, "after $why")
         PinLockRuntime.showIfLocked(app)
     }
 }

@@ -17,7 +17,8 @@
 # outgoing calls to an unknown number (cancelled - Telecom's "Canceled from Call Redirection
 # Service" or our log line) vs the contact typed in national form (redirected - our log line - and
 # dialled); one call at a time (our "second call" log line, during the answered incoming call); the
-# call notification and call screen gone after hang-up. Call state comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
+# call notification and call screen gone after hang-up; never the system's "App is not available"
+# screen (BlockedAppActivity) after the unlock, on Recents or on a gesture swipe-up (design 16). Call state comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
 # end (exit 1 on any FAIL, also on SKIP with STRICT=1).
 #
 # Setup (the PWA): the phone enrolled and managed, calls managed and on, ALLOWED_NUMBER a contact
@@ -288,6 +289,27 @@ logcat_has() { grep -q -E -- "$1" <<<"$(logcat_dump)"; }
 # The last FILTERING_COMPLETED Telecom logged since the step's logcat_clear (no older history).
 filtering_result() { logcat_dump | grep 'FILTERING_COMPLETED' | tail -1; }
 
+# The system's "App is not available" screen (BlockedAppActivity, package android) in front: the kid
+# must never see it (design 16). Greps a captured dump, never a live stream.
+blocked_app_in_front() {
+    local dump front
+    dump="$(sh_ dumpsys activity activities)"
+    front="$(grep -E 'topResumedActivity|mResumedActivity|mFocusedApp' <<<"$dump" || true)"
+    grep -q 'BlockedAppActivity' <<<"$front"
+}
+# stays_false <seconds> <command...>: the command never succeeds in that time (polled every 0.5 s).
+stays_false() {
+    local seconds=$1
+    shift
+    local tries=$((seconds * 2))
+    while [ "$tries" -gt 0 ]; do
+        if "$@"; then return 1; fi
+        sleep 0.5
+        tries=$((tries - 1))
+    done
+    return 0
+}
+
 screen_off() { sh_ input keyevent KEYCODE_SLEEP >/dev/null; }
 screen_on() { sh_ input keyevent KEYCODE_WAKEUP >/dev/null; }
 
@@ -515,10 +537,58 @@ step "Unlock"
 if [ -n "$KID_PIN" ] && [ "$locked" -eq 1 ]; then
     if enter_pin "$KID_PIN" && wait_for 5 top_is_not "$LOCK_ACTIVITY"; then
         pass "PIN unlock"
+        # Design 16: the lock leaves through Home, so a latent Recents task never surfaces.
+        if stays_false 3 blocked_app_in_front; then
+            pass "no BlockedAppActivity after unlock"
+        else
+            fail "no BlockedAppActivity after unlock" "top: $(top_activity)"
+        fi
     else
         fail "PIN unlock" "top: $(top_activity)"
+        skip "no BlockedAppActivity after unlock" "not unlocked"
     fi
     shot unlocked
+fi
+
+step "Recents and swipe-up (design 16)"
+if top_is "$LOCK_ACTIVITY"; then
+    skip "Recents shows no BlockedAppActivity" "the PIN lock is in front"
+    skip "swipe-up shows no BlockedAppActivity" "the PIN lock is in front"
+else
+    sh_ input keyevent KEYCODE_APP_SWITCH >/dev/null
+    if stays_false 3 blocked_app_in_front; then
+        pass "Recents shows no BlockedAppActivity"
+    else
+        fail "Recents shows no BlockedAppActivity" "top: $(top_activity)"
+    fi
+    shot recents
+    sh_ input keyevent KEYCODE_HOME >/dev/null
+    sleep 1
+    nav="$(sh_ settings get secure navigation_mode)"
+    dims="$(grep -o '[0-9][0-9]*x[0-9][0-9]*' <<<"$(sh_ wm size)" | tail -1 || true)"
+    width="${dims%x*}"
+    height="${dims#*x}"
+    if [ "$nav" != "2" ]; then
+        skip "swipe-up shows no BlockedAppActivity" "not gesture navigation (navigation_mode=${nav:-unknown})"
+    elif ! [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]]; then
+        skip "swipe-up shows no BlockedAppActivity" "screen size unknown ('$dims')"
+    else
+        swipe_ok=1
+        # A slow swipe (towards Recents) and a fast one (Home): quickstep starts its fallback
+        # Recents for either while lock task allows the gesture.
+        for duration in 1000 200; do
+            sh_ input swipe $((width / 2)) $((height - 2)) $((width / 2)) $((height * 3 / 5)) "$duration" >/dev/null
+            if ! stays_false 3 blocked_app_in_front; then swipe_ok=0; fi
+            shot "swipe-up-$duration"
+            sh_ input keyevent KEYCODE_HOME >/dev/null
+            sleep 1
+        done
+        if [ "$swipe_ok" -eq 1 ]; then
+            pass "swipe-up shows no BlockedAppActivity"
+        else
+            fail "swipe-up shows no BlockedAppActivity" "seen after a swipe (screenshots swipe-up-*)"
+        fi
+    fi
 fi
 
 step "Outgoing calls"

@@ -29,6 +29,22 @@ class PinLockStateTest {
     }
 
     @Test
+    fun `boot with Home first - the lock is the 1 s fallback, never left out (design 16 QA 2)`() {
+        assertEquals(
+            LockStep(LockMode.LOCKED, showLockLater = true),
+            step(LockMode.DISABLED, LockEvent.ProcessStart(active = true, interactive = true, homeFirst = true)),
+        )
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.DISABLED, LockEvent.ProcessStart(active = true, interactive = false, homeFirst = true)))
+        assertEquals(
+            "never over the system dialer's call",
+            LockStep(LockMode.LOCKED),
+            step(LockMode.DISABLED, LockEvent.ProcessStart(active = true, interactive = true, systemCall = true, homeFirst = true)),
+        )
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.ProcessStart(active = false, interactive = true, homeFirst = true)))
+        assertEquals(1_000L, LOCK_FALLBACK_MS)
+    }
+
+    @Test
     fun `configuration switches the lock on without throwing the kid out, and off from anywhere`() {
         assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.DISABLED, LockEvent.Configured(true)))
         assertEquals(LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.Configured(true)))

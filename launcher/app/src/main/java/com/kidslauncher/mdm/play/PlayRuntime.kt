@@ -24,7 +24,6 @@ import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.dto.InstallModeReport
 import com.kidslauncher.mdm.timerules.TimeRuleAlarm
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
-import com.kidslauncher.mdm.ui.HomeActivity
 import java.text.DateFormat
 import java.time.Instant
 import java.time.LocalTime
@@ -225,11 +224,8 @@ object PlayRuntime {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't cancel the install-mode notification", e)
         }
-        try {
-            app.startActivity(Intent(app, HomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't bring Home to the front", e)
-        }
+        // A typed HOME start (design 16, QA #1).
+        com.kidslauncher.mdm.lock.HomeFront.bring(app, "install mode ended")
     }
 
     private fun showNotification(context: Context, untilMs: Long) {

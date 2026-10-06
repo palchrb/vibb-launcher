@@ -122,6 +122,20 @@ internal fun systemDialerPackage(context: Context): String? =
     }
 
 /**
+ * The package of the system's Recents activity (`config_recentsComponentName`, e.g. Pixel's
+ * quickstep inside the stock launcher), for [kioskFeatures] (design 16, QA #5(b)). `null` when the
+ * platform doesn't say - then OVERVIEW is dropped with the app block.
+ */
+internal fun recentsPackage(): String? = try {
+    val res = android.content.res.Resources.getSystem()
+    val id = res.getIdentifier("config_recentsComponentName", "string", "android")
+    if (id == 0) null else ComponentName.unflattenFromString(res.getString(id))?.packageName
+} catch (e: Exception) {
+    Log.w(LOG_TAG, "Couldn't read the recents component", e)
+    null
+}
+
+/**
  * The default alarm/clock app: the one holding the next alarm, else the resolver of
  * `AlarmClock.ACTION_SHOW_ALARMS`. The schedule lock doesn't suspend it, so an alarm set inside
  * bedtime still rings (QA step 4 #2). `null` if there's none or only a chooser.
@@ -273,6 +287,7 @@ object AppEnforcer {
             playState = playState,
             blockActivityStart = policy?.blockActivityStart == true,
             lockTaskHelpers = if (policy?.blockActivityStart == true) resolveLockTaskHelpers(context) else emptySet(),
+            recentsPackage = recentsPackage(),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -626,15 +641,9 @@ object AppEnforcer {
         true
     }
 
+    /** A typed HOME start (design 16, QA #1), never an explicit component. */
     private fun bringHomeToFront(context: Context) {
-        try {
-            context.startActivity(
-                Intent(context, HomeActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
-            )
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't bring Home to front after a role change", e)
-        }
+        com.kidslauncher.mdm.lock.HomeFront.bring(context, "a role change")
     }
 
     /** See [ownPermissionsToFix]: every role-grantable permission our manifest requests, set to

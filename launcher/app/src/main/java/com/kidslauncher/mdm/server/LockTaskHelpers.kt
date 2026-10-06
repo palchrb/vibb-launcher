@@ -69,6 +69,21 @@ fun lockTaskFeatures(serverFeatures: Long, blockActivityStart: Boolean): Int {
     return if (blockActivityStart) base or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK else base
 }
 
+/**
+ * The kiosk's features as set (design 16, QA #4/#5(b)): with the app-block bit on, a Recents start
+ * whose package isn't lock-task permitted becomes BlockedAppActivity ("App is not available" -
+ * AOSP's `isActivityAllowed` ignores OVERVIEW), so OVERVIEW is dropped unless the system's recents
+ * package ([recentsPackage], `config_recentsComponentName`; `null` = unknown, dropped too) is one of
+ * the [kioskPackages]. Kiosk off ([kioskPackages] `null`) or without the bit: unchanged. Whether the
+ * gesture swipe-up with HOME on still starts the fallback Recents is a device check (16 doc).
+ */
+fun kioskFeatures(features: Int, recentsPackage: String?, kioskPackages: Set<String>?): Int = when {
+    kioskPackages == null -> features
+    features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK == 0 -> features
+    recentsPackage != null && recentsPackage in kioskPackages -> features
+    else -> features and LOCK_TASK_FEATURE_OVERVIEW.inv()
+}
+
 /*
  * Handy's PIN lock (step 10, design 10-lock-and-call-ui.md §3 with qa-10-design.md #1/#10): while
  * the lock is LOCKED the lock screen always runs in lock task. The same pure functions serve the

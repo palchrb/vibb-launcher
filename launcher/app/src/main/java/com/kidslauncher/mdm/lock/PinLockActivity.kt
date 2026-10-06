@@ -6,6 +6,7 @@ import android.app.admin.DevicePolicyManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.format.DateFormat
 import android.util.Log
 import android.util.TypedValue
@@ -38,9 +39,10 @@ private const val STATE_ENTERED = "entered"
  * Handy's own lock screen (step 10, design 10-lock-and-call-ui.md, mockup Lock.dc.html). Shown by
  * [PinLockRuntime] while LOCKED - over every activity, kiosk or not: its own task
  * (`taskAffinity .pinlock`, single task, excluded from recents, portrait), always in lock task
- * while locked (QA 10 #1): with the kiosk on it joins the kiosk's lock task, with the kiosk off it
- * starts lock task itself (our package plus the emergency helpers are pinned for it) and stops it
- * on unlock. Back does nothing; leaving the front any other way brings it back (re-front, never
+ * while locked (QA 10 #1): with the kiosk on it joins the kiosk's lock task - rooted by Home, never
+ * by the lock if it can help it, and it leaves through Home (design 16, [lockTaskEntry],
+ * [lockLeave]) - with the kiosk off it starts lock task itself (our package plus the emergency
+ * helpers are pinned for it) and stops it on unlock. Back does nothing; leaving the front any other way brings it back (re-front, never
  * giving up, except for our call screen, the system dialer/Telecom and the alarm).
  *
  * Only the keypad, Emergency call and the Parent code link are reachable. The PIN is checked off
@@ -57,6 +59,7 @@ class PinLockActivity : AppCompatActivity() {
     private var wrongShown = false
     private var finishingAfterUnlock = false
     private var startedLockTask = false
+    private var resumed = false
     private val keys = mutableListOf<View>()
     /** [PinKeypadLayout.COMPACT_STEPS]: how much of the clock/date gave way to the keypad. */
     private var compactStep = 0
@@ -120,12 +123,13 @@ class PinLockActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
         if (PinLockRuntime.mode != LockMode.LOCKED) {
             leave()
             return
         }
         PinLockRuntime.onLockResumed(this)
-        ensureLockTask()
+        ensureLockTask(fallbackDue = false)
         // Step 11: the lock in front ends the update fence in the new build (lock task not required).
         com.kidslauncher.mdm.server.UpdateFence.onFront(this)
         handler.removeCallbacks(waitTicker)
@@ -133,6 +137,7 @@ class PinLockActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        resumed = false
         handler.removeCallbacks(waitTicker)
         PinLockRuntime.onLockPaused()
         super.onPause()
@@ -152,24 +157,41 @@ class PinLockActivity : AppCompatActivity() {
 
     /**
      * Always in lock task while LOCKED: our package is permitted (kiosk list, or ours + helpers
-     * with the kiosk off, set by [LockTaskChrome] before the lock is shown). Never called for a
-     * package that isn't permitted - that would ask for screen pinning instead.
+     * with the kiosk off, set by [LockTaskChrome] before the lock is shown). Never started for a
+     * package that isn't permitted - that would ask for screen pinning instead. With the kiosk on
+     * the lock is never the root if it can help it (design 16, QA #2, [lockTaskEntry]): it starts
+     * Home, whose resume roots lock task and shows the lock again; only [LOCK_FALLBACK_MS] later
+     * without lock task does it start it itself.
      */
-    private fun ensureLockTask() {
-        val am = getSystemService(ActivityManager::class.java) ?: return
-        if (am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE) return
-        val dpm = getSystemService(DevicePolicyManager::class.java) ?: return
-        if (!dpm.isLockTaskPermitted(packageName)) {
-            Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
-            return
-        }
-        try {
-            startLockTask()
-            startedLockTask = true
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "startLockTask failed", e)
+    private fun ensureLockTask(fallbackDue: Boolean) {
+        handler.removeCallbacks(lockTaskFallback)
+        val running = lockTaskRunning()
+        val permitted = getSystemService(DevicePolicyManager::class.java)?.isLockTaskPermitted(packageName) == true
+        val now = SystemClock.elapsedRealtime()
+        val since = homeAskedAtElapsed.takeIf { it > 0L }?.let { now - it }
+        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue)) {
+            LockTaskEntry.NONE -> if (!running) Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
+            LockTaskEntry.START_SELF -> try {
+                startLockTask()
+                startedLockTask = true
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "startLockTask failed", e)
+            }
+            LockTaskEntry.START_HOME -> {
+                homeAskedAtElapsed = now
+                HomeFront.bring(this, "to root lock task under the lock")
+                handler.postDelayed(lockTaskFallback, LOCK_FALLBACK_MS)
+            }
+            LockTaskEntry.WAIT_FOR_HOME -> handler.postDelayed(lockTaskFallback, LOCK_FALLBACK_MS)
         }
     }
+
+    private val lockTaskFallback = Runnable {
+        if (resumed && PinLockRuntime.mode == LockMode.LOCKED) ensureLockTask(fallbackDue = true)
+    }
+
+    private fun lockTaskRunning(): Boolean =
+        getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
 
     // ---- keypad -----------------------------------------------------------------------------
 
@@ -385,20 +407,40 @@ class PinLockActivity : AppCompatActivity() {
         leave()
     }
 
-    /** Unlocked or the lock was switched off: stop the lock task we started, then go. */
+    /**
+     * Unlocked or the lock was switched off ([lockLeave]): kiosk off - stop the lock task we
+     * started, then go; kiosk on - always through Home (design 16, QA #5(a)): Home is started
+     * *before* the lock finishes, so it sits above any latent task (the stock launcher's preloaded
+     * Recents, a BlockedAppActivity in kiosk) and is never finished by it. A refused finish means
+     * the lock is the lock-task root after all ([rootLeave]).
+     */
     private fun leave() {
         finishingAfterUnlock = true
-        stopOwnLockTask()
+        handler.removeCallbacks(lockTaskFallback)
+        // Twice in a row (the unlock, then its mode change): once is enough.
+        if (isFinishing) return
+        val kioskOn = LockTaskChrome.kioskOn
+        go(lockLeave(kioskOn, startedLockTask, lockTaskRunning()))
+        if (!isFinishing && kioskOn) {
+            Log.w(LOG_TAG, "Finishing the lock was refused - it is the lock-task root; stopping it first")
+            go(rootLeave)
+        }
+    }
+
+    private fun go(plan: LockLeave) {
+        if (plan.stopLockTaskFirst) stopLockTaskQuietly()
+        if (plan.homeFirst) HomeFront.bring(this, "the lock left")
         if (!isFinishing) finishAndRemoveTask()
     }
 
-    /** Ours: we started it, or the kiosk is off (then any lock task is the lock's - also one an
-     * earlier instance of this activity started before the process was restarted). */
+    /** Before the unlock's chrome change: kiosk off, that change unpins our package, which would
+     * tear this task down under us; kiosk on, only a lock that is the root stops it. */
     private fun stopOwnLockTask() {
-        val running = getSystemService(ActivityManager::class.java)?.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
-        val ours = startedLockTask || (running && !LockTaskChrome.kioskOn)
+        if (lockLeave(LockTaskChrome.kioskOn, startedLockTask, lockTaskRunning()).stopLockTaskFirst) stopLockTaskQuietly()
+    }
+
+    private fun stopLockTaskQuietly() {
         startedLockTask = false
-        if (!ours) return
         try {
             stopLockTask()
         } catch (e: Exception) {
@@ -411,5 +453,9 @@ class PinLockActivity : AppCompatActivity() {
         @Volatile
         var instances = 0
             private set
+
+        /** When a lock last started Home to root lock task (elapsed realtime, 0 = never) - kept
+         * across instances, so a Home that can't root it is asked at most every 3 s. */
+        private var homeAskedAtElapsed = 0L
     }
 }
