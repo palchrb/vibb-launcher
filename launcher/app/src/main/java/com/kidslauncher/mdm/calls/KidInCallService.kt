@@ -15,8 +15,10 @@ private const val LOG_TAG = "KidInCallService"
 
 /**
  * Our in-call UI service: Telecom binds it while we hold the dialer role (manifest:
- * BIND_INCALL_SERVICE, IN_CALL_SERVICE_UI). Emergency calls are always shown by the preloaded
- * dialer instead, which is why that one is never suspended or hidden.
+ * BIND_INCALL_SERVICE, IN_CALL_SERVICE_UI) - for emergency calls too (AOSP
+ * `InCallController.bindToServices` wraps the default dialer's connection in
+ * `EmergencyInCallServiceConnection`); the preloaded system dialer is only the fallback when our
+ * UI can't be bound, which is why it is never suspended or hidden.
  *
  * We don't declare IN_CALL_SERVICE_RINGING: Telecom plays the ringtone and handles ringer mode and
  * DND.
@@ -48,14 +50,14 @@ class KidInCallService : InCallService() {
 
     /** Telecom unbinds when it has no call for us any more: nothing of ours may stay. */
     override fun onUnbind(intent: android.content.Intent?): Boolean {
-        OngoingCalls.reconcile(this, telecomInCall = false)
+        OngoingCalls.serviceGone(this)
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         if (OngoingCalls.service === this) OngoingCalls.service = null
         handler.removeCallbacksAndMessages(null)
-        OngoingCalls.reconcile(this, telecomInCall = false)
+        OngoingCalls.serviceGone(this)
         super.onDestroy()
     }
 
@@ -101,8 +103,9 @@ class KidInCallService : InCallService() {
 
     /**
      * Opens the callback window (CallSystem.callbackWindowUntil) for an emergency call that
-     * connected, if we see one at all - normally the preloaded dialer shows emergency calls and
-     * the call log is what opens the window. Only the platform's answer counts.
+     * connected, as our in-call service sees it (Telecom binds us for emergency calls too); when
+     * the system dialer showed it instead, the call log opens the window. Only the platform's
+     * answer counts.
      */
     private fun recordEmergency(call: Call, state: Int) {
         if (call.details.callDirection != Call.Details.DIRECTION_OUTGOING) return
@@ -119,9 +122,12 @@ class KidInCallService : InCallService() {
         call.unregisterCallback(callback)
         OngoingCalls.remove(call)
         val next = OngoingCalls.current
-        if (next == null || !OngoingCalls.hasLiveCall) {
-            OngoingCalls.reconcile(this, telecomInCall = OngoingCalls.telecomInCall(this))
+        if (next == null) {
+            // Nothing left of ours: the notification goes at once (as before this round).
             CallNotifications.cancel(this)
+        } else if (!OngoingCalls.hasLiveCall) {
+            // Only ended calls left: cleared after the debounce unless a call (re)appears.
+            OngoingCalls.reconcile(this)
         } else {
             showUi(next, startActivity = false)
         }

@@ -10,15 +10,19 @@ import android.util.Log
 import java.util.concurrent.CopyOnWriteArrayList
 
 private const val LOG_TAG = "OngoingCalls"
+private const val RECONCILE_DEBOUNCE_MS = 1_000L
 
 /**
  * Emulator run 2026-10-06: after a call ended Telecom had no calls, but our ongoing-call
- * notification stayed and the call screen showed "Ended" with a dead Hang up button. A call counts
- * only while it isn't DISCONNECTED; with none live - or Telecom saying it has no call at all
- * ([telecomInCall] false; `null` = couldn't ask) - every call trace of ours is cleared.
+ * notification stayed and the call screen showed "Ended" with a dead Hang up button. The call UI
+ * goes only when no call at all is live - ours ([ourStates]) or the in-call service's own list
+ * ([serviceStates], `InCallService.getCalls()`): any state but DISCONNECTED counts, including
+ * NEW, CONNECTING, SELECT_PHONE_ACCOUNT, DIALING and PULLING. `TelecomManager.isInCall` is not
+ * used: it leaves out NEW/CONNECTING calls (AOSP `CallsManager.ONGOING_CALL_STATES`), so a quick
+ * 112 redial that is still connecting would have lost its UI (qa-fixround-2026-10-06 #1).
  */
-fun callUiShouldClear(callStates: List<Int>, telecomInCall: Boolean?): Boolean =
-    telecomInCall == false || callStates.none { it != Call.STATE_DISCONNECTED }
+fun callUiShouldClear(ourStates: List<Int>, serviceStates: List<Int>): Boolean =
+    (ourStates + serviceStates).none { it != Call.STATE_DISCONNECTED }
 
 /**
  * The calls [KidInCallService] shows, and the audio state, shared with [InCallActivity] and the
@@ -49,33 +53,60 @@ object OngoingCalls {
     /** A call that isn't DISCONNECTED - "our call" for the PIN lock, locale switches, time rules. */
     val hasLiveCall: Boolean get() = calls.any { it.details.state != Call.STATE_DISCONNECTED }
 
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var reconcilePending = false
+
+    /** Forgets our DISCONNECTED calls; a live call is never dropped. */
+    private fun dropEnded(): Boolean = calls.removeAll { it.details.state == Call.STATE_DISCONNECTED }
+
+    private fun serviceStates(): List<Int> = try {
+        service?.calls?.map { it.details.state }.orEmpty()
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    private fun shouldClear(): Boolean = callUiShouldClear(states, serviceStates())
+
     /**
-     * Clears our call UI when no call is live ([callUiShouldClear]): forgets disconnected calls,
-     * cancels the notification and tells the listeners (the call screen finishes). From
-     * `onCallRemoved`, a disconnect that Telecom never follows up, the service's unbind/destroy
-     * and process start. Main thread.
+     * Clears our call UI when no call is live ([callUiShouldClear]), debounced: checked now and
+     * again [RECONCILE_DEBOUNCE_MS] later, and only cleared (ended calls forgotten, notification
+     * cancelled, listeners told - the call screen finishes) if both times there was none. From a
+     * disconnect that Telecom doesn't follow up with `onCallRemoved`, the "Ended" screen and
+     * process start. Main thread.
      */
-    fun reconcile(context: Context, telecomInCall: Boolean? = telecomInCall(context)) {
-        if (!callUiShouldClear(calls.map { it.details.state }, telecomInCall)) return
-        if (calls.isNotEmpty()) Log.w(LOG_TAG, "Clearing ${calls.size} call(s) Telecom no longer has")
+    fun reconcile(context: Context) {
+        if (!shouldClear() || reconcilePending) return
+        reconcilePending = true
+        val app = context.applicationContext
+        handler.postDelayed({
+            reconcilePending = false
+            if (!shouldClear()) {
+                if (dropEnded()) changed()
+                return@postDelayed
+            }
+            if (calls.isNotEmpty()) Log.w(LOG_TAG, "Clearing ${calls.size} ended call(s) Telecom didn't remove")
+            calls.clear()
+            CallNotifications.cancel(app)
+            changed()
+        }, RECONCILE_DEBOUNCE_MS)
+    }
+
+    /**
+     * The in-call service was unbound or destroyed: Telecom has no call for us any more (it unbinds
+     * only then, or when the dialer role moves - the calls are then another app's), and our `Call`
+     * objects are dead. Clears at once.
+     */
+    fun serviceGone(context: Context) {
+        handler.removeCallbacksAndMessages(null)
+        reconcilePending = false
         calls.clear()
         CallNotifications.cancel(context)
         changed()
     }
 
-    /** Process start: a notification a dead process left behind goes, unless Telecom has a call
-     * (then our service is bound again and re-posts it with onCallAdded). */
-    fun reconcileAtStart(context: Context) {
-        val inCall = telecomInCall(context)
-        if (inCall != true) reconcile(context, inCall ?: false)
-    }
-
-    /** `TelecomManager.isInCall` (we hold READ_PHONE_STATE / the dialer role); `null` if refused. */
-    fun telecomInCall(context: Context): Boolean? = try {
-        context.getSystemService(android.telecom.TelecomManager::class.java)?.isInCall
-    } catch (e: Exception) {
-        null
-    }
+    /** Process start: a notification a dead process left behind goes (debounced, so a call Telecom
+     * is binding us for right now keeps it - onCallAdded re-posts it anyway). */
+    fun reconcileAtStart(context: Context) = reconcile(context)
 
     /** The call the UI is about: a ringing one first, else the newest. */
     val current: Call? get() = calls.firstOrNull { it.details.state == Call.STATE_RINGING } ?: calls.lastOrNull()

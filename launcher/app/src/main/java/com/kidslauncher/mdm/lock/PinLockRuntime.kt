@@ -502,7 +502,8 @@ object PinLockRuntime {
 
     private fun ourCall(): Boolean = OngoingCalls.hasLiveCall
 
-    /** A call only the system dialer shows (emergency, or our dialer role not held). */
+    /** A call only the system dialer shows (our in-call UI couldn't be bound, or our dialer role
+     * isn't held) - Telecom binds our UI for emergency calls too. */
     private fun systemCall(context: Context): Boolean = !ourCall() && telecomInCall(context)
 
     private fun requestApply(context: Context) {
