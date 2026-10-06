@@ -80,11 +80,15 @@ class Application : android.app.Application() {
             // TODO
         }
 
+        // The PIN lock's camera lock suspends/unsuspends at every screen-off and unlock; the app
+        // list doesn't change for it (AppFilter counts those cameras as usable), so no reload.
         override fun onPackagesSuspended(packageNames: Array<out String>?, user: UserHandle?) {
+            if (com.kidslauncher.mdm.lock.CameraLock.ownChange(packageNames?.toList())) return
             loadApps()
         }
 
         override fun onPackagesUnsuspended(packageNames: Array<out String>?, user: UserHandle?) {
+            if (com.kidslauncher.mdm.lock.CameraLock.ownChange(packageNames?.toList())) return
             loadApps()
         }
 

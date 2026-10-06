@@ -40,4 +40,18 @@ class CallCardTest {
         assertEquals(OngoingCallCard(null, 3L), ongoingCallCard(true, "112", true, 1_000L, 4_000L))
         assertEquals(OngoingCallCard("Pappa", null), ongoingCallCard(true, " Pappa ", false, 0L, 0L))
     }
+
+    @Test
+    fun `the emergency verdict is checked once per number`() {
+        val cache = EmergencyVerdictCache()
+        var checks = 0
+        val check: (String) -> Boolean = { checks++; it == "112" }
+        assertEquals(false, cache.isEmergency(null, check))
+        assertEquals(0, checks)
+        repeat(5) { assertEquals(true, cache.isEmergency("112", check)) }
+        assertEquals(1, checks)
+        assertEquals(false, cache.isEmergency("+4791234567", check))
+        assertEquals(false, cache.isEmergency("+4791234567", check))
+        assertEquals(2, checks)
+    }
 }

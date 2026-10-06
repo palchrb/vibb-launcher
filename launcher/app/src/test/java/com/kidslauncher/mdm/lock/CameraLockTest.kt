@@ -1,6 +1,8 @@
 package com.kidslauncher.mdm.lock
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /** The camera stays unreachable while handy's PIN lock is up (emulator run: the power-button
@@ -49,5 +51,42 @@ class CameraLockTest {
         assertEquals("v" to "suspended", CameraLockKeys.VERSION to CameraLockKeys.SUSPENDED)
         assertEquals(setOf(camera), decodeCameraLockRecord(mapOf("v" to 7, "suspended" to setOf(camera), "x" to 1)))
         assertEquals(emptySet<String>(), decodeCameraLockRecord(mapOf("suspended" to "not a set")))
+    }
+
+    @Test
+    fun `of third-party cameras only the one the gesture opens is a handler`() {
+        val messenger = "org.example.snapchat"
+        // System handlers all count; a third-party one only as the gesture's default.
+        assertEquals(setOf(camera), cameraHandlers(setOf(camera), listOf(null, null)))
+        assertEquals(setOf(camera, messenger), cameraHandlers(setOf(camera), listOf(messenger, camera)))
+        // The chooser (several cameras, no default) is not an app to suspend.
+        assertEquals(setOf(camera), cameraHandlers(setOf(camera), listOf("android", "")))
+    }
+
+    @Test
+    fun `a held camera stays in the app lists - unless enforcement suspends it too`() {
+        assertFalse(suspendedForLists(camera, platformSuspended = true, cameraHeld = setOf(camera), enforcementSuspends = emptySet()))
+        assertFalse(suspendedForLists(camera, true, setOf(camera), null))
+        assertTrue(suspendedForLists(camera, true, setOf(camera), setOf(camera)))
+        assertTrue(suspendedForLists(gcam, true, setOf(camera), emptySet()))
+        assertFalse(suspendedForLists(gcam, false, emptySet(), setOf(gcam)))
+    }
+
+    @Test
+    fun `callbacks only about the camera lock's packages don't reload the app list`() {
+        assertTrue(cameraLockOnlyChange(listOf(camera), setOf(camera, gcam)))
+        assertFalse(cameraLockOnlyChange(listOf(camera, "org.example.game"), setOf(camera)))
+        assertFalse(cameraLockOnlyChange(emptyList(), setOf(camera)))
+        assertFalse(cameraLockOnlyChange(null, setOf(camera)))
+    }
+
+    @Test
+    fun `after a release apply looks again when there is no plan or one is still suspended`() {
+        assertTrue(applyAfterRelease(emptySet(), enforcementSuspends = null))
+        assertFalse(applyAfterRelease(emptySet(), emptySet()))
+        // Refused or suspended again by a stale apply() in between: apply settles it.
+        assertTrue(applyAfterRelease(setOf(camera), emptySet()))
+        // Enforcement wants it suspended anyway: nothing to settle.
+        assertFalse(applyAfterRelease(setOf(camera), setOf(camera)))
     }
 }

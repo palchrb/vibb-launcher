@@ -157,6 +157,10 @@ class HomeActivity : UIObjectActivity() {
     private var callCardShown = false
     private var shownCallAvatar: String? = null
     private val callsListener: () -> Unit = { refreshHandler.post { renderCallCard() } }
+    /** Between onStart and onStop: a render posted before onStop must not re-arm the ticker
+     * after it (qa-11b-code #4). */
+    private var started = false
+    private val emergencyVerdict = com.kidslauncher.mdm.calls.EmergencyVerdictCache()
     /** Once a second while the card shows (the live mm:ss); [renderCallCard] re-arms it. */
     private val callTicker = Runnable { renderCallCard() }
 
@@ -290,6 +294,7 @@ class HomeActivity : UIObjectActivity() {
         ContactPhotos.addListener(photoListener)
         WallpaperStore.addListener(wallpaperListener)
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
+        started = true
         renderCallCard()
         try {
             contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callLogObserver)
@@ -397,6 +402,7 @@ class HomeActivity : UIObjectActivity() {
     }
 
     override fun onStop() {
+        started = false
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
@@ -526,10 +532,14 @@ class HomeActivity : UIObjectActivity() {
      */
     private fun renderCallCard() {
         if (!::binding.isInitialized) return
+        if (!started) {
+            refreshHandler.removeCallbacks(callTicker)
+            return
+        }
         val call = com.kidslauncher.mdm.calls.OngoingCalls.current
         val number = com.kidslauncher.mdm.calls.PhoneNumbers.numberFromHandle(call?.details?.handle?.toString())
         val contact = (CallPolicyStore.state as? com.kidslauncher.mdm.calls.CallPolicyState.Managed)?.rules?.contactFor(number)
-        val emergency = number != null && CallSystem.isEmergencyOutgoing(this, number)
+        val emergency = emergencyVerdict.isEmergency(number) { CallSystem.isEmergencyOutgoing(this, it) }
         val card = com.kidslauncher.mdm.calls.ongoingCallCard(
             liveCall = com.kidslauncher.mdm.calls.OngoingCalls.hasLiveCall,
             contactName = contact?.name,

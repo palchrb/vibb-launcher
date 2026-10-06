@@ -20,6 +20,25 @@ fun callAvatar(knownContact: Boolean, emergency: Boolean, unlocked: Boolean): Ca
     if (knownContact && !emergency && unlocked) CallAvatar.CONTACT else CallAvatar.SILHOUETTE
 
 /**
+ * The emergency verdict of the call on screen, computed once per number (qa-11b-code #4): the
+ * platform check is a binder call, and Home's call card and the call screen re-render every
+ * second on the main thread. `null` (no number) is never an emergency, as before.
+ */
+class EmergencyVerdictCache {
+    private var number: String? = null
+    private var verdict = false
+
+    fun isEmergency(number: String?, check: (String) -> Boolean): Boolean {
+        if (number == null) return false
+        if (number != this.number) {
+            verdict = check(number)
+            this.number = number
+        }
+        return verdict
+    }
+}
+
+/**
  * Home's card while a call exists. [name] `null` = no known contact ("Call in progress");
  * [elapsedSec] `null` until the call has connected (ringing, dialing).
  */

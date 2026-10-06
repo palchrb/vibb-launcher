@@ -52,11 +52,14 @@ class AppFilter(
      */
     private fun isMdmSuspended(info: AbstractDetailedAppInfo): Boolean {
         val packageName = (info.getRawInfo() as? AppInfo)?.packageName ?: return false
-        return try {
+        val suspended = try {
             context.packageManager.isPackageSuspended(packageName)
         } catch (e: PackageManager.NameNotFoundException) {
             false
         }
+        // A camera the PIN lock holds is suspended only while LOCKED: it stays on Home, so the
+        // grid doesn't change at every screen-off and unlock (qa-11b-code #1).
+        return com.kidslauncher.mdm.lock.CameraLock.suspendedForLists(packageName, suspended)
     }
 
     /**

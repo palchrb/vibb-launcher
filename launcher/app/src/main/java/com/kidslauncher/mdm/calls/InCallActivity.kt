@@ -38,6 +38,8 @@ class InCallActivity : AppCompatActivity() {
     private var proximityLock: PowerManager.WakeLock? = null
     private var shownAvatar: String? = null
     private var endingPosted = false
+    /** One platform emergency check per number, not one per render (qa-11b-code #4). */
+    private val emergencyVerdict = EmergencyVerdictCache()
 
     private val listener: () -> Unit = { handler.post { render() } }
     private val photoListener: () -> Unit = { shownAvatar = null; render() }
@@ -124,7 +126,7 @@ class InCallActivity : AppCompatActivity() {
         val contact = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules?.contactFor(number)
         val name = contact?.name?.takeIf { it.isNotBlank() } ?: number ?: getString(R.string.calls_unknown_caller)
         binding.inCallName.text = name
-        renderAvatar(contact, CallSystem.isEmergencyOutgoing(this, number), name)
+        renderAvatar(contact, emergencyVerdict.isEmergency(number) { CallSystem.isEmergencyOutgoing(this, it) }, name)
 
         val state = call.details.state
         if (state == Call.STATE_RINGING) renderIncoming() else renderActive(call, state)

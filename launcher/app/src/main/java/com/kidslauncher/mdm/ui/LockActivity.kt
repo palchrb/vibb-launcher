@@ -190,7 +190,8 @@ class LockActivity : UIObjectActivity() {
         for (pkg in packages.sorted()) {
             val launch = pm.getLaunchIntentForPackage(pkg) ?: continue
             val usable = try {
-                !pm.isPackageSuspended(pkg)
+                // A camera the PIN lock holds counts as usable (it is back at the unlock).
+                !com.kidslauncher.mdm.lock.CameraLock.suspendedForLists(pkg, pm.isPackageSuspended(pkg))
             } catch (e: Exception) {
                 false
             }

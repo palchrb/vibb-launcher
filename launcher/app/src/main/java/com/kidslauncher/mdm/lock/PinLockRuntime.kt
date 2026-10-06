@@ -127,7 +127,7 @@ object PinLockRuntime {
             // lock must not leave it behind either. Same for the camera lock: engaged again when
             // LOCKED, released (idempotently) otherwise.
             LockTaskChrome.refresh(app)
-            CameraLock.onLockChanged(app, mode == LockMode.LOCKED)
+            CameraLock.onLockChanged(app)
         }
     }
 
@@ -150,7 +150,7 @@ object PinLockRuntime {
                     Log.w(LOG_TAG, "Lock chrome change failed", e)
                 }
                 // The camera gesture must not open a camera over the lock (background thread).
-                CameraLock.onLockChanged(context, result.mode == LockMode.LOCKED)
+                CameraLock.onLockChanged(context)
                 if (result.mode != LockMode.LOCKED && !LockTaskChrome.hasPlan) requestApply(context)
             }
             modeListeners.toList().forEach { it() }

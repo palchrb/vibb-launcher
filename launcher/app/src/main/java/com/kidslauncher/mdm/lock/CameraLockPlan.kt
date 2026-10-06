@@ -74,6 +74,37 @@ fun cameraLockStep(
     return CameraLockStep.Release(recorded - enforcementSuspends.orEmpty())
 }
 
+/**
+ * The camera handlers to consider (qa-11b-code #3): every **system** handler of the camera actions,
+ * but of third-party apps only the one the power-button gesture really starts - the default for
+ * `STILL_IMAGE_CAMERA_SECURE` / `STILL_IMAGE_CAMERA` ([gestureDefaults], resolved; `android` is the
+ * chooser, not an app). A suspended app's notifications are hidden and it can't ring, so an allowed
+ * camera-first messenger must not go dark at every screen-off just for declaring the action.
+ */
+fun cameraHandlers(systemHandlers: Set<String>, gestureDefaults: List<String?>): Set<String> =
+    systemHandlers + gestureDefaults.filterNotNull().filter { it.isNotBlank() && it != "android" }
+
+/**
+ * What the app grid and the time-rule screen count as suspended (qa-11b-code #1): a camera the
+ * PIN lock holds is suspended only while LOCKED, so it stays on Home - unless enforcement's last
+ * plan suspends it too ([enforcementSuspends]; `null` = no plan yet).
+ */
+fun suspendedForLists(packageName: String, platformSuspended: Boolean, cameraHeld: Set<String>, enforcementSuspends: Set<String>?): Boolean =
+    platformSuspended && !(packageName in cameraHeld && packageName !in enforcementSuspends.orEmpty())
+
+/** A suspend/unsuspend callback only about the camera lock's own packages (held now, or released
+ * moments ago) - the app list doesn't change, so no reload (qa-11b-code #1). */
+fun cameraLockOnlyChange(packages: Collection<String>?, cameraPackages: Set<String>): Boolean =
+    !packages.isNullOrEmpty() && packages.all { it in cameraPackages }
+
+/**
+ * After a release (qa-11b-code #2): `apply()` must look again when there is no plan in this
+ * process yet, or a released package is still suspended though enforcement doesn't want it
+ * ([stillSuspended] - refused, or suspended again by a stale `apply()` pass in between).
+ */
+fun applyAfterRelease(stillSuspended: Set<String>, enforcementSuspends: Set<String>?): Boolean =
+    enforcementSuspends == null || (stillSuspended - enforcementSuspends).isNotEmpty()
+
 /** The recorded set from the prefs ([values] = `SharedPreferences.getAll()`); unreadable = whatever
  * string set is there under [CameraLockKeys.SUSPENDED] (always released when not LOCKED). */
 fun decodeCameraLockRecord(values: Map<String, *>): Set<String> =

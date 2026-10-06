@@ -265,6 +265,28 @@ Fix round (qa-11-code) and user requests, 2026-10-06:
   (`dumpsys package com.android.camera2 | grep suspended` true while LOCKED, false after the right PIN; logcat
   `CameraLock`). The camera works normally after the unlock.
 
+Camera lock follow-ups (qa-11b-code #5, after the fixes of #1-#4):
+- [ ] **Restart while LOCKED**: screen off (LOCKED), `adb reboot` and, separately, `adb shell am crash $P` ->
+  after the restart `dumpsys package com.android.camera2 | grep suspended` is true again while the lock shows,
+  false after the right PIN.
+- [ ] **Lock switched off while LOCKED**: with the screen off, remove the kid PIN on the device page (sync), or set
+  an Android PIN (`adb shell locksettings set-pin 1234`) -> the camera is unsuspended without an unlock (logcat
+  `CameraLock` "Unlocked: camera apps unsuspended"); `locksettings clear --old 1234` afterwards.
+- [ ] **Sync during the unlock**: type the PIN while a sync runs (`adb shell am broadcast` nothing needed - press
+  "Sync now"/send a nudge from the device page right before) -> the camera stays usable after the unlock (no
+  "app paused" dialog when opened; `suspended=false`).
+- [ ] **Home keeps the camera tile**: camera allowlisted, note the grid; screen off/on and unlock 5x -> the camera
+  tile never disappears or moves and the grid doesn't reload (logcat: no "loadApps" burst at screen-off/unlock).
+- [ ] **What shows instead of the camera**: kiosk on and off, LOCKED, double-press power and `adb shell am start -a
+  android.media.action.STILL_IMAGE_CAMERA` -> Android's "app paused"/admin-support dialog ("Learn more" opens
+  Settings' admin info) must not stay usable over the lock - the lock re-fronts within 2 s; screenshot it.
+- [ ] **Third-party cameras**: allowlist a camera-first app that isn't the gesture's default (e.g. a messenger
+  declaring `STILL_IMAGE_CAMERA`) -> it stays unsuspended while LOCKED (its notifications still arrive); only the
+  gesture's default and the system camera are suspended (logcat `CameraLock` "Third-party camera the gesture
+  opens" names only the default).
+- [ ] **Call card after Home stops**: during a call press Home, then open an allowed app -> no 1 s ticker keeps
+  running (logcat quiet, `dumpsys activity` shows Home stopped); back on Home the card counts on.
+
 ## 6b. Step 7: FCM and Play (optional)
 
 The default debug build has no Firebase config: the phone uses the SSE stream (device page
