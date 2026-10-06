@@ -180,9 +180,13 @@ launchable.
   server stores it and sends a hash/URL with the call policy; the launcher
   caches it and shows it in the phone book, on Home and in the contact card
   (initial letter when there is none).
-- **Calendar**: an open-source calendar app in the server catalog (e.g. Fossify
-  Calendar) plus ICSx5/DAVx5 to subscribe to a family calendar by ICS/CalDAV URL
-  without a Google account. Later maybe "next event" on Home.
+- **Calendar** (decided 2026-10-06): Fossify Calendar (agenda view, no internet
+  permission) + DAVx⁵ (CalDAV sync, e.g. iCloud with an app-specific password or
+  Nextcloud), both from GitHub/F-Droid via the server catalog. DAVx⁵ adds an
+  Android account, which "block account changes" prevents — set it up before
+  enrolling or with that switch off briefly. Share calendars read-only on the
+  CalDAV server where the kid shouldn't edit. Sync interval ≥1 h for battery.
+  Later maybe "next event" on Home.
 - **Notification shade**: pulling down notifications like normal Android. Already
   on in kiosk upstream (lock-task NOTIFICATIONS feature forced on). Check what
   Quick Settings exposes there (airplane mode, Wi-Fi, Bluetooth, the Tailscale
