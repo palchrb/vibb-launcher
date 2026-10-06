@@ -253,6 +253,11 @@ launchable.
   while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
 - **Pending user decision**: drop the top-left back buttons on full pages
   (`KidHeader.SHOW_BACK_BUTTON`).
+- **Custom DNS upstream** (user, 2026-10-06): DNS page option "own DNS server"
+  (address, port, protocol plain UDP/TCP or DoT + TLS hostname) for the on-device
+  filter's upstream, e.g. AdGuard Home on a tailnet IP; tailnet addresses routed
+  through the embedded tsnet (TCP). In Tailscale-app mode the user's Headscale DNS
+  override sends all DNS to AdGuard and our filter VPN is off for that phone.
 - **Keyboard: HeliBoard** (user, 2026-10-06): open-source AOSP-based keyboard
   (GitHub/F-Droid → server app catalog, auto-updates), no internet permission,
   adjustable height for the 3" screen. Launcher restricts keyboards with
