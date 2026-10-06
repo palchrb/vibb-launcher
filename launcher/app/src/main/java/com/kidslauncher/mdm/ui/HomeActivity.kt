@@ -153,6 +153,13 @@ class HomeActivity : UIObjectActivity() {
     // (timerules.TimeRuleAlarm), which updates lock_reason - the listener above redirects.
     private val refreshHandler = Handler(Looper.getMainLooper())
 
+    /** The ongoing-call card is showing instead of the contacts row. */
+    private var callCardShown = false
+    private var shownCallAvatar: String? = null
+    private val callsListener: () -> Unit = { refreshHandler.post { renderCallCard() } }
+    /** Once a second while the card shows (the live mm:ss); [renderCallCard] re-arms it. */
+    private val callTicker = Runnable { renderCallCard() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -174,6 +181,14 @@ class HomeActivity : UIObjectActivity() {
             ) { gridLayout.spanCount }
         )
         apps.observeForever(appsObserver)
+        // Back to our call screen from the ongoing-call card.
+        binding.homeCallCard.setOnClickListener {
+            try {
+                startActivity(com.kidslauncher.mdm.calls.InCallActivity.intent(this))
+            } catch (e: Exception) {
+                android.util.Log.w("HomeActivity", "Couldn't bring the call screen back", e)
+            }
+        }
 
         // Back does nothing on the home screen, same as stock Android launchers.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -274,6 +289,8 @@ class HomeActivity : UIObjectActivity() {
         BadgeStore.addListener(badgeListener)
         ContactPhotos.addListener(photoListener)
         WallpaperStore.addListener(wallpaperListener)
+        com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
+        renderCallCard()
         try {
             contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callLogObserver)
         } catch (e: SecurityException) {
@@ -382,6 +399,8 @@ class HomeActivity : UIObjectActivity() {
     override fun onStop() {
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)
+        com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
+        refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
         contentResolver.unregisterContentObserver(callLogObserver)
@@ -499,10 +518,66 @@ class HomeActivity : UIObjectActivity() {
         )
     }
 
+    /**
+     * While a call exists the contacts row gives way to a green card (user request after the
+     * emulator run): the caller's avatar as on Home, "Call with <name> · mm:ss" (live, from the
+     * connect time) or "Call in progress", and "Tap to go back" - a tap brings our call screen
+     * back. Gone when the call ends ([ongoingCallCard]).
+     */
+    private fun renderCallCard() {
+        if (!::binding.isInitialized) return
+        val call = com.kidslauncher.mdm.calls.OngoingCalls.current
+        val number = com.kidslauncher.mdm.calls.PhoneNumbers.numberFromHandle(call?.details?.handle?.toString())
+        val contact = (CallPolicyStore.state as? com.kidslauncher.mdm.calls.CallPolicyState.Managed)?.rules?.contactFor(number)
+        val emergency = number != null && CallSystem.isEmergencyOutgoing(this, number)
+        val card = com.kidslauncher.mdm.calls.ongoingCallCard(
+            liveCall = com.kidslauncher.mdm.calls.OngoingCalls.hasLiveCall,
+            contactName = contact?.name,
+            emergency = emergency,
+            connectTimeMs = call?.details?.connectTimeMillis ?: 0L,
+            nowMs = System.currentTimeMillis(),
+        )
+        val wasShown = callCardShown
+        callCardShown = card != null
+        if (card == null) {
+            binding.homeCallCard.visibility = View.GONE
+            refreshHandler.removeCallbacks(callTicker)
+            shownCallAvatar = null
+            // The contacts row comes back.
+            if (wasShown) renderCallParts()
+            return
+        }
+        binding.homeContactsScroll.visibility = View.GONE
+        binding.homeCallCard.visibility = View.VISIBLE
+        val title = card.name?.let { getString(R.string.home_call_with, it) } ?: getString(R.string.home_call_ongoing)
+        binding.homeCallTitle.text = card.elapsedSec?.let { "$title · ${android.text.format.DateUtils.formatElapsedTime(it)}" } ?: title
+        binding.homeCallCard.contentDescription = "${binding.homeCallTitle.text}. ${getString(R.string.home_call_back)}"
+        val avatar = com.kidslauncher.mdm.calls.callAvatar(contact != null, emergency, unlocked = true)
+        val key = if (avatar == com.kidslauncher.mdm.calls.CallAvatar.CONTACT && contact != null) {
+            "c|${contact.id}|${contact.name}|${contact.photo}|${ContactPhotos.cached(this, contact.photo) != null}"
+        } else {
+            "silhouette"
+        }
+        if (key != shownCallAvatar) {
+            shownCallAvatar = key
+            if (avatar == com.kidslauncher.mdm.calls.CallAvatar.CONTACT && contact != null) {
+                binding.homeCallPhoto.setBackgroundResource(R.drawable.bg_kid_circle)
+                KidAvatars.bindContact(binding.homeCallPhoto, binding.homeCallInitial, contact, isEmergency = false, initialSp = 22f)
+            } else {
+                binding.homeCallPhoto.backgroundTintList = null
+                binding.homeCallPhoto.background = null
+                binding.homeCallPhoto.setImageResource(R.drawable.ic_call_avatar_placeholder)
+                binding.homeCallInitial.visibility = View.GONE
+            }
+        }
+        refreshHandler.removeCallbacks(callTicker)
+        refreshHandler.postDelayed(callTicker, 1000)
+    }
+
     private fun renderContacts(contacts: List<RuleContact>) {
         val row = binding.homeContacts
         row.removeAllViews()
-        binding.homeContactsScroll.visibility = if (contacts.isEmpty()) View.GONE else View.VISIBLE
+        binding.homeContactsScroll.visibility = if (contacts.isEmpty() || callCardShown) View.GONE else View.VISIBLE
         val layout = contactRow(contacts.size, contentWidthDp())
         // Centred while everything fits, from the left (with the peek at the edge) when it scrolls.
         row.gravity = if (layout.scrolls) Gravity.START else Gravity.CENTER_HORIZONTAL

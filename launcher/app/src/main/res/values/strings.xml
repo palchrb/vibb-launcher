@@ -305,4 +305,8 @@
     <string name="calls_photo_of">Contact photo of %1$s</string>
     <string name="call_toggle_on">On</string>
     <string name="call_toggle_off">Off</string>
+    <!-- Home's ongoing-call card (handy step 11 round) -->
+    <string name="home_call_with">Call with %1$s</string>
+    <string name="home_call_ongoing">Call in progress</string>
+    <string name="home_call_back">Tap to go back</string>
 </resources>

@@ -254,4 +254,8 @@
     <string name="calls_photo_of">Kontaktbilde av %1$s</string>
     <string name="call_toggle_on">På</string>
     <string name="call_toggle_off">Av</string>
+    <!-- Home's ongoing-call card (handy step 11 round) -->
+    <string name="home_call_with">Samtale med %1$s</string>
+    <string name="home_call_ongoing">Samtale pågår</string>
+    <string name="home_call_back">Trykk for å gå tilbake</string>
 </resources>
