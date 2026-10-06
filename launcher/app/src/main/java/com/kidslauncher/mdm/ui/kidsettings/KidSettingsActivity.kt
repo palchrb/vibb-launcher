@@ -280,6 +280,7 @@ class KidSettingsActivity : UIObjectActivity() {
 
     /** Built-ins in the kid's language; uploads with the parent's name for them. */
     private fun wallpaperLabel(wallpaper: Wallpaper): String = when (wallpaper.builtinKey) {
+        "vibb_night" -> getString(R.string.wallpaper_vibb_night)
         "navy" -> getString(R.string.wallpaper_navy)
         "forest" -> getString(R.string.wallpaper_forest)
         "plum" -> getString(R.string.wallpaper_plum)

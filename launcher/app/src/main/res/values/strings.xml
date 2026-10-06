@@ -103,6 +103,7 @@
     <string name="kid_settings_unreadable">The switches can\'t be read right now. Ask mum or dad.</string>
     <string name="kid_settings_wallpaper_selected">%1$s, chosen</string>
     <string name="wallpaper_navy">Dark blue</string>
+    <string name="wallpaper_vibb_night">Night</string>
     <string name="wallpaper_forest">Forest</string>
     <string name="wallpaper_plum">Plum</string>
     <string name="wallpaper_green">Green</string>

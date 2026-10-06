@@ -169,16 +169,35 @@ async fn every_phone_gets_the_builtins_with_every_key() {
         .iter()
         .map(|w| w["builtin_key"].as_str().unwrap())
         .collect();
-    assert_eq!(keys, ["navy", "forest", "plum", "green", "sky", "sunset"]);
+    // Vibb night (migrations/0033) first: the default on a new phone.
+    assert_eq!(
+        keys,
+        [
+            "vibb_night",
+            "navy",
+            "forest",
+            "plum",
+            "green",
+            "sky",
+            "sunset"
+        ]
+    );
     assert_eq!(
         list[0],
+        json!({
+            "id": 7, "kind": "color", "colors": ["#0C0C14"], "image": null,
+            "label": "Vibb night", "builtin_key": "vibb_night", "lock_screen": false
+        })
+    );
+    assert_eq!(
+        list[1],
         json!({
             "id": 1, "kind": "color", "colors": ["#14213D"], "image": null,
             "label": "Navy", "builtin_key": "navy", "lock_screen": false
         })
     );
-    assert_eq!(list[5]["kind"], "gradient");
-    assert_eq!(list[5]["colors"], json!(["#F76707", "#862E9C"]));
+    assert_eq!(list[6]["kind"], "gradient");
+    assert_eq!(list[6]["colors"], json!(["#F76707", "#862E9C"]));
     for w in &list {
         let mut k: Vec<&str> = w.as_object().unwrap().keys().map(String::as_str).collect();
         k.sort_unstable();

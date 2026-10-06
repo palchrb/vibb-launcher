@@ -1,10 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The kid-facing home screen, phone book and contact sheet (design 05-ui-photos-i18n.md,
-     mockup "handy launcher skisse"). -->
+<!-- The kid-facing screens (design 05-ui-photos-i18n.md, mockup "handy launcher skisse"), in the
+     Vibb night palette since the fix round 2026-10-06 (palchrb/vibb pi/art): ground #0C0C14,
+     accent #F0A884 (the rings), light #FBE4DC (the core). Functional colours stay: green call and
+     answer, red hang-up and emergency. Contrast on the ground (KidPaletteTest): white 19:1, accent
+     9.9:1, light 16:1. Use these resources, not literals. -->
 <resources>
-    <color name="kid_ground">#14213D</color>
-    <!-- The Vibb mark's night ground (palchrb/vibb pi/art): app icon and Home's launch splash. -->
-    <color name="vibb_night">#0C0C14</color>
+    <color name="kid_ground">#0C0C14</color>
+    <!-- A slightly lifted night, the top of the call screens' gradient and their status bar. -->
+    <color name="kid_ground_lift">#1C1A2A</color>
+    <color name="kid_accent">#F0A884</color>
+    <color name="kid_core">#FBE4DC</color>
+    <!-- The Vibb mark's night ground: app icon and Home's launch splash. -->
+    <color name="vibb_night">@color/kid_ground</color>
     <color name="kid_ink">#FFFFFF</color>
     <color name="kid_ink_dim">#BFFFFFFF</color>
     <color name="kid_badge">#D9480F</color>
@@ -21,7 +28,7 @@
     <color name="kid_emergency">#E03131</color>
     <color name="kid_icon_fallback">#F1F3F5</color>
     <color name="kid_settings_tile">#868E96</color>
-    <color name="kid_switch_on">#2B8A3E</color>
-    <color name="kid_slider">#4DABF7</color>
+    <color name="kid_switch_on">@color/kid_accent</color>
+    <color name="kid_slider">@color/kid_accent</color>
     <color name="kid_divider">#1AFFFFFF</color>
 </resources>

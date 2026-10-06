@@ -55,8 +55,8 @@
     <!-- The call screens (step 10 mockups): gradient window, matching system bars. -->
     <style name="InCallTheme" parent="launcherBaseTheme">
         <item name="android:windowBackground">@drawable/bg_call_screen</item>
-        <item name="android:statusBarColor">#1C3A6B</item>
-        <item name="android:navigationBarColor">#14213D</item>
+        <item name="android:statusBarColor">@color/kid_ground_lift</item>
+        <item name="android:navigationBarColor">@color/kid_ground</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
     </style>
