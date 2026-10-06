@@ -39,6 +39,19 @@
             android:scaleType="centerCrop"
             android:src="@drawable/ic_call_avatar_placeholder" />
 
+        <!-- A known contact without a photo: the initial on the contact's colour, as on Home and
+             in the phone book (KidAvatars.bindContact). -->
+        <TextView
+            android:id="@+id/in_call_initial"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:importantForAccessibility="no"
+            android:maxLines="1"
+            android:textSize="56sp"
+            android:visibility="gone" />
+
         <View
             android:layout_width="match_parent"
             android:layout_height="match_parent"

@@ -12,14 +12,14 @@ import android.text.format.DateUtils
 import android.view.View
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityInCallBinding
 
 /**
  * The call screen for every call [KidInCallService] lets through (design 10-lock-and-call-ui.md
- * §6, mockups IncomingCall.dc.html / InCall.dc.html): the caller's photo (contact photo, else the
- * placeholder figure) with a ring, name (from the call rules) or number, and
+ * §6, mockups IncomingCall.dc.html / InCall.dc.html): the caller's avatar with a ring - a known
+ * contact's as on Home (photo, else the initial on its colour), else the placeholder figure -,
+ * name (from the call rules) or number, and
  * - ringing ([renderIncoming]): "Calling you…", Decline and Answer;
  * - otherwise ([renderActive]): the timer or "Calling…"/"On hold"/"Ended", Speaker and Mute (on =
  *   white circle, navy icon) and Hang up.
@@ -29,18 +29,18 @@ import com.kidslauncher.mdm.databinding.ActivityInCallBinding
  * lock. Holds a proximity wake lock while a call is active. Back does nothing while a call exists,
  * and the PIN lock brings this screen back whenever it comes to the front during our call
  * (qa-10-code #1).
- * Direct-boot-aware: no contact photos before the first unlock.
+ * Direct-boot-aware: no contact avatars before the first unlock (the silhouette then).
  */
 class InCallActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityInCallBinding
     private val handler = Handler(Looper.getMainLooper())
     private var proximityLock: PowerManager.WakeLock? = null
-    private var shownPhoto: String? = null
+    private var shownAvatar: String? = null
     private var endingPosted = false
 
     private val listener: () -> Unit = { handler.post { render() } }
-    private val photoListener: () -> Unit = { shownPhoto = null; render() }
+    private val photoListener: () -> Unit = { shownAvatar = null; render() }
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -124,7 +124,7 @@ class InCallActivity : AppCompatActivity() {
         val contact = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules?.contactFor(number)
         val name = contact?.name?.takeIf { it.isNotBlank() } ?: number ?: getString(R.string.calls_unknown_caller)
         binding.inCallName.text = name
-        renderPhoto(contact?.photo, name)
+        renderAvatar(contact, CallSystem.isEmergencyOutgoing(this, number), name)
 
         val state = call.details.state
         if (state == Call.STATE_RINGING) renderIncoming() else renderActive(call, state)
@@ -168,20 +168,32 @@ class InCallActivity : AppCompatActivity() {
         button.stateDescription = getString(if (on) R.string.call_toggle_on else R.string.call_toggle_off)
     }
 
-    /** The contact photo (only after the first unlock - photos are in CE storage), else the
-     * placeholder figure on #DCE7F2. */
-    private fun renderPhoto(hash: String?, name: String) {
-        val bitmap = if (hash != null && CallPolicyStore.userUnlocked(this)) ContactPhotos.cached(this, hash) else null
-        val key = if (bitmap != null) hash else null
+    /**
+     * A known contact gets the same avatar as on Home and in the phone book - the cached photo,
+     * else the initial on the contact's colour (user request, emulator run 2026-10-06); the peach
+     * silhouette only for unknown/withheld and emergency numbers, and before the first unlock
+     * (photos are in CE storage) - [callAvatar].
+     */
+    private fun renderAvatar(contact: RuleContact?, emergency: Boolean, name: String) {
         binding.inCallAvatar.contentDescription = getString(R.string.calls_photo_of, name)
-        if (key == shownPhoto && binding.inCallPhoto.drawable != null) return
-        shownPhoto = key
-        if (bitmap != null) {
-            binding.inCallPhoto.setImageDrawable(
-                RoundedBitmapDrawableFactory.create(resources, bitmap).apply { isCircular = true },
+        val kind = callAvatar(contact != null, emergency, CallPolicyStore.userUnlocked(this))
+        val key = if (kind == CallAvatar.CONTACT && contact != null) {
+            "c|${contact.id}|${contact.name}|${contact.photo}|${ContactPhotos.cached(this, contact.photo) != null}"
+        } else {
+            "silhouette"
+        }
+        if (key == shownAvatar) return
+        shownAvatar = key
+        if (kind == CallAvatar.CONTACT && contact != null) {
+            binding.inCallPhoto.setBackgroundResource(R.drawable.bg_kid_circle)
+            com.kidslauncher.mdm.ui.home.KidAvatars.bindContact(
+                binding.inCallPhoto, binding.inCallInitial, contact, isEmergency = false, initialSp = 56f,
             )
         } else {
+            binding.inCallPhoto.backgroundTintList = null
+            binding.inCallPhoto.background = null
             binding.inCallPhoto.setImageResource(R.drawable.ic_call_avatar_placeholder)
+            binding.inCallInitial.visibility = View.GONE
         }
     }
 
