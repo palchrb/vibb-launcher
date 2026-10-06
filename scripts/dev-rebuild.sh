@@ -6,6 +6,10 @@
 #        ./scripts/dev-rebuild.sh --no-pull
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
+# Always sign debug builds with the same keystore, whatever the shell's XDG_CONFIG_HOME is:
+# AGP looks for debug.keystore under the Android user home, and a different one (auto-created)
+# makes `adb install -r` fail with INSTALL_FAILED_UPDATE_INCOMPATIBLE on a device-owner app.
+export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"
 
 if [ "${1:-}" != "--no-pull" ]; then
     git -C "$root" pull --ff-only
