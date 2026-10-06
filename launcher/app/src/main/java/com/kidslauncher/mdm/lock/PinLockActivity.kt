@@ -126,6 +126,8 @@ class PinLockActivity : AppCompatActivity() {
         }
         PinLockRuntime.onLockResumed(this)
         ensureLockTask()
+        // Step 11: the lock in front ends the update fence in the new build (lock task not required).
+        com.kidslauncher.mdm.server.UpdateFence.onFront(this)
         handler.removeCallbacks(waitTicker)
         handler.post(waitTicker)
     }

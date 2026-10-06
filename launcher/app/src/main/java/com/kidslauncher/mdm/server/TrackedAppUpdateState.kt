@@ -21,6 +21,10 @@ data class TrackedAppState(
      * failure) - see [TrackedAppUpdateState.recordAttemptStarted]'s doc comment for what this
      * guards against. */
     val attemptStartedAtMs: Long? = null,
+    /** The launcher's own downloaded update waiting for the update window (handy step 11,
+     * [PendingSelfUpdate]) - only ever on the launcher's row. [TrackedAppUpdateState.recordInstalled]
+     * and [TrackedAppUpdateState.recordFailed] drop it; the attempt marker keeps it. */
+    val pending: PendingSelfUpdate? = null,
 )
 
 /**
@@ -110,6 +114,25 @@ object TrackedAppUpdateState {
         val current = state[appKey] ?: TrackedAppState()
         state[appKey] = current.copy(attemptStartedAtMs = System.currentTimeMillis())
         save(context, state)
+    }
+
+    /** The launcher's pending update and its row key, if one is waiting (at most one row has one). */
+    fun pendingEntry(): Pair<String, PendingSelfUpdate>? =
+        load().entries.firstNotNullOfOrNull { (key, state) -> state.pending?.let { key to it } }
+
+    /** Keeps [pending] on [appKey]'s row (and ends its attempt); any other row's pending is dropped. */
+    fun recordPending(context: Context, appKey: String, pending: PendingSelfUpdate) {
+        val state = load().mapValues { (_, value) -> value.copy(pending = null) }.toMutableMap()
+        val current = state[appKey] ?: TrackedAppState()
+        state[appKey] = current.copy(pending = pending, attemptStartedAtMs = null)
+        save(context, state)
+    }
+
+    /** Drops the pending update on every row (the caller deletes the file). */
+    fun dropPending(context: Context) {
+        val state = load()
+        if (state.values.none { it.pending != null }) return
+        save(context, state.mapValues { (_, value) -> value.copy(pending = null) })
     }
 
     /** Clears an in-flight marker without touching `lastInstalledTag`/`lastFailedTag` - used for a

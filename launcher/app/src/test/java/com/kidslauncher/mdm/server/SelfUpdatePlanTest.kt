@@ -155,6 +155,15 @@ class SelfUpdatePlanTest {
     }
 
     @Test
+    fun `debug builds count an update overdue after 2 minutes (emulator A4), release builds after 24 h`() {
+        val debug = UpdateWindowInputs(at(14), 60_000L, liveCall = false, emergency = false, pendingForMs = DEBUG_UPDATE_OVERDUE_MS, overdueMs = DEBUG_UPDATE_OVERDUE_MS)
+        assertEquals(UpdateWindowDecision.Commit, updateWindowDecision(debug))
+        assertEquals(UpdateWindowDecision.Wait(UpdateWaitReason.OUTSIDE_WINDOW, 12 * hour), updateWindowDecision(debug.copy(overdueMs = UPDATE_OVERDUE_MS)))
+        assertEquals(UPDATE_SCREEN_OFF_MS, commitCheckDelayMs(at(14), DEBUG_UPDATE_OVERDUE_MS - 1_000L, DEBUG_UPDATE_OVERDUE_MS))
+        assertEquals(DEBUG_UPDATE_OVERDUE_MS, commitCheckDelayMs(at(14), 60_000L, DEBUG_UPDATE_OVERDUE_MS + 60_000L))
+    }
+
+    @Test
     fun `a clock set back never makes an update overdue`() {
         val decision = gate(time = at(14), pendingFor = -5 * UPDATE_OVERDUE_MS)
         assertEquals(UpdateWindowDecision.Wait(UpdateWaitReason.OUTSIDE_WINDOW, 12 * hour), decision)
@@ -178,5 +187,16 @@ class SelfUpdatePlanTest {
         assertEquals(4 * hour, commitCheckDelayMs(at(22), hour))
         assertEquals(UPDATE_SCREEN_OFF_MS, commitCheckDelayMs(at(1, 59).plusSeconds(50), hour))
         assertEquals(hour, commitCheckDelayMs(at(22), UPDATE_OVERDUE_MS - hour))
+    }
+
+    @Test
+    fun `Home comes back after the update only on a managed phone and never over a call (qa-11 9)`() {
+        assertEquals(true, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = false, telecomInCall = false))
+        assertEquals(true, bringHomeAfterUpdate(appsManaged = true, kioskOn = false, liveCall = false, telecomInCall = false))
+        assertEquals(true, bringHomeAfterUpdate(appsManaged = false, kioskOn = true, liveCall = false, telecomInCall = false))
+        assertEquals(false, bringHomeAfterUpdate(appsManaged = false, kioskOn = false, liveCall = false, telecomInCall = false))
+        assertEquals(false, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = true, telecomInCall = false))
+        assertEquals(false, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = false, telecomInCall = true))
+        assertEquals(false, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = false, telecomInCall = null))
     }
 }

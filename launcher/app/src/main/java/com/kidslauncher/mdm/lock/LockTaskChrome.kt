@@ -8,16 +8,19 @@ import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockTaskSetting
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.StatusBarLatch
+import com.kidslauncher.mdm.server.UpdateFence
 import com.kidslauncher.mdm.server.lockTaskWhileLocked
 
 private const val LOG_TAG = "LockTaskChrome"
 
 /**
- * The one place that sets lock-task packages and features, the status-bar backstop and
+ * The one place that sets lock-task packages and features, the status bar and
  * `DISALLOW_CREATE_WINDOWS` (handy step 10). [AppEnforcer.apply] hands over the plan
  * ([applyPlan]); [PinLockRuntime] calls [refresh] when LOCKED begins or ends - fast single DPM
  * calls outside apply()'s lock, both synchronized here, and both through the pure
- * [lockTaskWhileLocked], so neither can undo the other.
+ * [lockTaskWhileLocked], so neither can undo the other. Since step 11 the update fence is an
+ * input too ([UpdateFence.fenced], [fenceChanged]): the status bar is off while LOCKED or fenced.
  */
 object LockTaskChrome {
 
@@ -27,7 +30,7 @@ object LockTaskChrome {
     private var plan: Plan? = null
     @Volatile
     private var helpers: Set<String>? = null
-    private var appliedStatusBar: Boolean? = null
+    private val statusBar = StatusBarLatch()
 
     /** Whether the kiosk is on as far as we know (the plan, else the last pinned state). */
     val kioskOn: Boolean
@@ -68,6 +71,14 @@ object LockTaskChrome {
         applyNow(context)
     }
 
+    /** The update fence went up or was released (qa-11-design.md #4): the next pass writes the
+     * status bar whatever the latch remembers. Any thread. */
+    @Synchronized
+    fun fenceChanged(context: Context) {
+        statusBar.invalidate()
+        refresh(context)
+    }
+
     private fun admin(context: Context) = ComponentName(context, MdmDeviceAdminReceiver::class.java)
 
     private fun dpm(context: Context): DevicePolicyManager? =
@@ -85,6 +96,7 @@ object LockTaskChrome {
         }
         val setting = lockTaskWhileLocked(
             current.kioskPackages, current.features, current.restrictCreateWindows, locked, context.packageName, lockHelpers,
+            fenced = UpdateFence.fenced,
         )
         apply(context, dpm, setting, kioskOn = current.kioskPackages != null)
     }
@@ -122,6 +134,7 @@ object LockTaskChrome {
             locked = locked,
             ownPackage = context.packageName,
             lockHelpers = lockHelpers,
+            fenced = UpdateFence.fenced,
         )
         apply(context, dpm, setting, kioskOn = kiosk)
     }
@@ -152,10 +165,15 @@ object LockTaskChrome {
                 Log.w(LOG_TAG, "Failed to pin lock-task packages", e)
             }
         }
-        if (appliedStatusBar != setting.statusBarDisabled) {
+        statusBar.toWrite(setting.statusBarDisabled)?.let { wanted ->
             try {
-                // Blocks the shade and quick settings outside lock task only - a backstop.
-                if (dpm.setStatusBarDisabled(admin, setting.statusBarDisabled)) appliedStatusBar = setting.statusBarDisabled
+                // Blocks the shade and quick settings outside lock task: the lock's backstop and
+                // the update fence's shade block.
+                if (dpm.setStatusBarDisabled(admin, wanted)) {
+                    statusBar.written(wanted)
+                } else {
+                    Log.w(LOG_TAG, "The platform refused setStatusBarDisabled($wanted)")
+                }
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Failed to set the status bar state", e)
             }

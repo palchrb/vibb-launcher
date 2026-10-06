@@ -298,6 +298,9 @@ class HomeActivity : UIObjectActivity() {
         // showing is exactly when kiosk pinning should also be engaged, so the kid can't use
         // recents/home/notification-shade to route around LockActivity.
         reconcileKioskMode()
+        // Step 11: our Home in front ends the update fence in the new build (finding 7: lock task
+        // not required). A no-op without a fence.
+        com.kidslauncher.mdm.server.UpdateFence.onFront(this)
         // Checked here (not just via the preference listener) so pressing Home while the lock
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return

@@ -153,7 +153,13 @@ data class UpdateWindowInputs(
     val emergency: Boolean,
     /** Wall time since the pending APK was downloaded (negative = the clock went back). */
     val pendingForMs: Long,
+    /** [UPDATE_OVERDUE_MS]; debug builds pass [DEBUG_UPDATE_OVERDUE_MS] (emulator A4). */
+    val overdueMs: Long = UPDATE_OVERDUE_MS,
 )
+
+/** Debug builds only: a pending update is overdue after 2 minutes, so the emulator's A4 check
+ * doesn't wait for the night (docs/testing/emulator.md). */
+const val DEBUG_UPDATE_OVERDUE_MS = 2 * 60_000L
 
 /**
  * The commit gate (qa-11-design.md #8: the freeze also kills our screening, redirection and
@@ -165,10 +171,10 @@ fun updateWindowDecision(i: UpdateWindowInputs): UpdateWindowDecision {
     if (i.liveCall) return UpdateWindowDecision.Wait(UpdateWaitReason.CALL, null)
     if (i.emergency) return UpdateWindowDecision.Wait(UpdateWaitReason.EMERGENCY, EMERGENCY_RECHECK_MS)
     val off = i.screenOffForMs ?: return UpdateWindowDecision.Wait(UpdateWaitReason.SCREEN_ON, null)
-    val overdue = i.pendingForMs >= UPDATE_OVERDUE_MS
+    val overdue = i.pendingForMs >= i.overdueMs
     if (!overdue && !inUpdateWindow(i.now.toLocalTime())) {
         val untilWindow = msUntilUpdateWindow(i.now)
-        val untilOverdue = if (i.pendingForMs >= 0) UPDATE_OVERDUE_MS - i.pendingForMs else Long.MAX_VALUE
+        val untilOverdue = if (i.pendingForMs >= 0) i.overdueMs - i.pendingForMs else Long.MAX_VALUE
         return UpdateWindowDecision.Wait(UpdateWaitReason.OUTSIDE_WINDOW, minOf(untilWindow, untilOverdue))
     }
     if (off < UPDATE_SCREEN_OFF_MS) return UpdateWindowDecision.Wait(UpdateWaitReason.SCREEN_OFF_SHORT, UPDATE_SCREEN_OFF_MS - off)
@@ -192,9 +198,18 @@ fun msUntilUpdateWindow(now: ZonedDateTime): Long {
  * When to look again after a screen-off with a pending update: 30 s later when it could go in
  * then, else at the window start (or when it becomes overdue) - never sooner than 30 s.
  */
-fun commitCheckDelayMs(now: ZonedDateTime, pendingForMs: Long): Long {
-    val overdue = pendingForMs >= UPDATE_OVERDUE_MS
+fun commitCheckDelayMs(now: ZonedDateTime, pendingForMs: Long, overdueMs: Long = UPDATE_OVERDUE_MS): Long {
+    val overdue = pendingForMs >= overdueMs
     if (overdue || inUpdateWindow(now.toLocalTime())) return UPDATE_SCREEN_OFF_MS
-    val untilOverdue = if (pendingForMs >= 0) UPDATE_OVERDUE_MS - pendingForMs else Long.MAX_VALUE
+    val untilOverdue = if (pendingForMs >= 0) overdueMs - pendingForMs else Long.MAX_VALUE
     return maxOf(UPDATE_SCREEN_OFF_MS, minOf(msUntilUpdateWindow(now), untilOverdue))
 }
+
+/**
+ * After our package was replaced (MY_PACKAGE_REPLACED) or a self-update failed in a restarted
+ * process: Home is brought to the front - then the PIN lock on top if LOCKED (qa-11-design.md #9) -
+ * when apps are managed or the kiosk is on, and never over a call ([telecomInCall] `null` =
+ * unknown, counts as a call). Nothing else brings Home back: lock task doesn't re-enter by itself.
+ */
+fun bringHomeAfterUpdate(appsManaged: Boolean, kioskOn: Boolean, liveCall: Boolean, telecomInCall: Boolean?): Boolean =
+    (appsManaged || kioskOn) && !liveCall && telecomInCall == false

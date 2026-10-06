@@ -221,6 +221,10 @@ object AppEnforcer {
         val scheduleLocked = lock.locked
         val timePolicy = KidModeEnforcer.timePolicyOf(policy)
 
+        // The update fence (step 11): the one release rule runs on every pass, and while the fence
+        // is up the packages it holds are never unsuspended here (qa-11-design.md #5).
+        val fenceHeld = UpdateFence.duringApply(context, policy, managed = policy?.allowlist != null || callState.managed)
+
         val ownPackage = context.packageName
         val pm = context.packageManager
         val installedPackages = controllablePackages(pm)
@@ -266,7 +270,7 @@ object AppEnforcer {
         for (packageName in installedPackages) {
             if (packageName == ownPackage) continue
 
-            val shouldBeSuspended = packageName in plan.suspend
+            val shouldBeSuspended = suspendTarget(packageName, plan.suspend, fenceHeld)
             // Only apps that aren't allowed at all are hidden; the schedule lock only suspends
             // (hiding broadcasts PACKAGE_REMOVED and drops alarms/jobs - QA step 4 #2).
             val shouldBeHidden = packageName in plan.hide
@@ -363,6 +367,52 @@ object AppEnforcer {
         // Last, after the always-on VPN is in place (DISALLOW_CONFIG_VPN). Not lifted by the
         // override or pause - see hardeningPlan.
         applyHardening(context, dpm, admin, hardening, policy?.locationPolicy)
+
+        // Notification auto-cancel (step 11): the rule's inputs, resolved here off the main thread.
+        try {
+            com.kidslauncher.mdm.badges.NotificationRuleRuntime.refresh(
+                context, policy, overrideActive, lock.usableApps, callState, essentialNotificationPackages(context, callState),
+            )
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Notification rule refresh failed", e)
+        }
+    }
+
+    /**
+     * Packages whose notifications always stay (step 11, qa-11-design.md #11), resolved on this
+     * phone: the system and default dialer, the emergency dialer and Telecom, every receiver of
+     * `SMS_CB_RECEIVED` (emergency alerts, whatever the package is called here), the SMS app
+     * while SMS is on, the alarm/clock app and the keyboards. The pure rule adds the fixed ones
+     * (`android`, SystemUI, `com.android.phone`, the known cell-broadcast names).
+     */
+    private fun essentialNotificationPackages(context: Context, callState: CallPolicyState): Set<String> {
+        val pm = context.packageManager
+        val (resolved, _) = resolveHelpers(context)
+        val cellBroadcast = try {
+            pm.queryBroadcastReceivers(Intent(android.provider.Telephony.Sms.Intents.SMS_CB_RECEIVED_ACTION), PackageManager.MATCH_SYSTEM_ONLY)
+                .mapNotNull { it.activityInfo?.packageName }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val defaultDialer = try {
+            context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage
+        } catch (e: Exception) {
+            null
+        }
+        val smsOn = when (callState) {
+            is CallPolicyState.Managed -> callState.rules.smsEnabled
+            CallPolicyState.Unmanaged -> true
+            CallPolicyState.UnknownFailClosed -> false
+        }
+        return setOfNotNull(
+            systemDialerPackage(context),
+            defaultDialer,
+            resolved[HelperKind.EMERGENCY_DIALER]?.packageName,
+            resolved[HelperKind.TELECOM]?.packageName,
+            resolved[HelperKind.CELL_BROADCAST]?.packageName,
+            alarmAppPackage(context),
+            CallSystem.defaultSmsPackage(context).takeIf { smsOn },
+        ) + cellBroadcast + inputMethodPackages(context)
     }
 
     /**
@@ -612,7 +662,7 @@ object AppEnforcer {
      * forbidden first match doesn't hide the real helper (qa-09-code #6). The system dialer is
      * pinned by the plan itself. The result is logged for the device checks.
      */
-    private fun resolveLockTaskHelpers(context: Context): Set<String> {
+    internal fun resolveLockTaskHelpers(context: Context): Set<String> {
         val (resolved, forbidden) = resolveHelpers(context)
         val helpers = lockTaskHelpers(resolved, forbidden)
         Log.i(LOG_TAG, "Kiosk app block helpers: $resolved -> $helpers (forbidden $forbidden)")

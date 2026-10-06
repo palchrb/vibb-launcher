@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.kidslauncher.mdm.notifyAppInstallResult
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -30,13 +32,19 @@ class AppInstallReceiver : BroadcastReceiver() {
         val status =
             intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
         val apkPath = intent.getStringExtra(APP_INSTALL_APK_PATH_EXTRA)
         val installKey = intent.getStringExtra(APP_INSTALL_KEY_EXTRA)
         val installName = intent.getStringExtra(APP_INSTALL_NAME_EXTRA) ?: installKey ?: "app"
         val isLauncher = intent.getBooleanExtra(APP_INSTALL_IS_LAUNCHER_EXTRA, false)
         val releaseTag = intent.getStringExtra(APP_INSTALL_RELEASE_TAG_EXTRA)
         val appId = installKey?.toLongOrNull()
+        val app = context.applicationContext
+        // Only a process restarted for this result (not the one that committed) brings Home back
+        // after a failed self-update - the committing one never left it (qa-11-design.md #9).
+        val restarted = !SelfUpdate.committedInThisProcess
 
+        var failed = false
         when (status) {
             PackageInstaller.STATUS_SUCCESS -> {
                 Log.i(LOG_TAG, "Installed $installKey successfully ($releaseTag)")
@@ -49,10 +57,13 @@ class AppInstallReceiver : BroadcastReceiver() {
                 // Shouldn't happen as device owner with USER_ACTION_NOT_REQUIRED, but if it does
                 // there's nothing this receiver can silently do about it - just log for
                 // visibility rather than leaving the downloaded file behind unexplained. Leaves
-                // the "Installing..." notification as-is - this isn't a resolved failure.
+                // the "Installing..." notification as-is - this isn't a resolved failure. The
+                // update fence is released all the same (below).
                 Log.w(LOG_TAG, "Install of $installKey requires user action unexpectedly: $message")
+                if (isLauncher && installKey != null) TrackedAppUpdateState.clearAttempt(context, installKey)
             }
             else -> {
+                failed = true
                 Log.w(LOG_TAG, "Install of $installKey failed: status=$status message=$message")
                 // Remembering the failed tag stops the next sync from re-attempting the exact
                 // same doomed install every 2 minutes forever.
@@ -60,18 +71,43 @@ class AppInstallReceiver : BroadcastReceiver() {
                     TrackedAppUpdateState.recordFailed(context, installKey, releaseTag)
                 }
                 appId?.let { notifyAppInstallResult(context, it, installName, success = false) }
-                appId?.let { reportInstallFailureToServer(context, it) }
             }
         }
 
         // Not deleted on success for the launcher's own self-update: the running process is about
         // to be replaced anyway, and there's a real chance this callback never gets to finish
-        // running before that happens. Any other app's file is always safe to clean up
-        // immediately. isLauncher comes from the server (TrackedAppUpdate.isLauncher), not a
-        // packageName == context.packageName comparison - a tracked app's package name is optional
-        // now (see kid-phone-server's tracked_app_add.html) and can't be trusted for this.
+        // running before that happens (the new process's SelfUpdate.cleanup removes it). Any
+        // other app's file is always safe to clean up immediately. isLauncher comes from the
+        // server (TrackedAppUpdate.isLauncher), not a packageName == context.packageName
+        // comparison - a tracked app's package name is optional now (see kid-phone-server's
+        // tracked_app_add.html) and can't be trusted for this.
         if (status != PackageInstaller.STATUS_SUCCESS || !isLauncher) {
             apkPath?.let { File(it).delete() }
+        }
+
+        // One goAsync for everything that may wait: the update fence's check (every result is a
+        // trigger; the fence's own session's result is its input - step 11) and the failure report.
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val fenceSession = try {
+                    UpdateFence.onInstallResult(app, sessionId, status)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Update fence check after an install result failed", e)
+                    false
+                }
+                if (isLauncher && status != PackageInstaller.STATUS_SUCCESS && restarted) {
+                    // A failure after the kill restarted the old build for this broadcast: nothing
+                    // else brings Home (and lock task) back.
+                    Log.i(LOG_TAG, "Self-update failed after the kill (fence session: $fenceSession) - Home comes back")
+                    Handler(Looper.getMainLooper()).post { SelfUpdate.bringHomeToFront(app, "a failed self-update") }
+                }
+                if (failed) appId?.let { reportInstallFailureToServer(app, it) }
+                // A finished self-update's file (kept on success, see above) or a failed one's.
+                if (isLauncher) SelfUpdate.cleanup(app)
+            } finally {
+                pendingResult.finish()
+            }
         }
     }
 
@@ -83,22 +119,16 @@ class AppInstallReceiver : BroadcastReceiver() {
      * the device. `goAsync()` keeps this receiver's process alive long enough for the network call
      * to finish - same reasoning as [MdmDeviceAdminReceiver.onProfileProvisioningComplete].
      */
-    private fun reportInstallFailureToServer(context: Context, trackedAppId: Long) {
+    private suspend fun reportInstallFailureToServer(context: Context, trackedAppId: Long) {
         val mdm = LauncherPreferences.mdm()
         val serverUrl = mdm.serverUrl()
         val deviceToken = mdm.deviceToken()
         if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) return
-
-        val pendingResult = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                createMdmApi(serverUrl, deviceToken)
-                    .reportInstallProgress(InstallProgressReport(trackedAppId, percent = 0, failed = true))
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Failed to report install failure", e)
-            } finally {
-                pendingResult.finish()
-            }
+        try {
+            createMdmApi(serverUrl, deviceToken)
+                .reportInstallProgress(InstallProgressReport(trackedAppId, percent = 0, failed = true))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to report install failure", e)
         }
     }
 }

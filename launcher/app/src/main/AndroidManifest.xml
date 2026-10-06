@@ -420,6 +420,14 @@
         <receiver
             android:name=".push.BackstopReceiver"
             android:exported="false" />
+        <!-- Handy step 11: the update fence's backstop check and the self-update window's wake-up -
+             our own explicit PendingIntents only. -->
+        <receiver
+            android:name=".server.UpdateFenceReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".server.SelfUpdateReceiver"
+            android:exported="false" />
         <!-- "End now" on the Play install-mode notification - our own PendingIntent only. -->
         <receiver
             android:name=".play.InstallModeReceiver"

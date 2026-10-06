@@ -24,6 +24,7 @@ import com.kidslauncher.mdm.server.dto.LocationReport
 import com.kidslauncher.mdm.server.dto.PendingCommand
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
+import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.server.dto.LocationPolicy
@@ -206,7 +207,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 restrictionsPaused = RestrictionsPause.isActive(),
                 capabilities = listOf(
                     CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY, FCM_PUSH_CAPABILITY, PLAY_POLICY_CAPABILITY,
-                    com.kidslauncher.mdm.lock.PIN_LOCK_CAPABILITY,
+                    com.kidslauncher.mdm.lock.PIN_LOCK_CAPABILITY, KIOSK_ESCAPES_CAPABILITY,
                 ),
                 callState = CallStateReport.build(context),
                 notificationListenerEnabled = BadgeStore.accessGranted(context),
@@ -217,6 +218,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 playStoreSuspendable = PlayRuntime.storeSuspendable(context),
                 lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
                 screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
+                updateFence = UpdateFence.report(context, decision.policy),
+                notificationCancels = com.kidslauncher.mdm.badges.NotificationRuleRuntime.report(),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -248,9 +251,16 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     checkForTrackedAppUpdates(context, api)
     reportBlockedDnsEvents(context, api)
+    // Last of all (handy step 11): committing our own update gets this process killed seconds
+    // later. Offline too - the APK was downloaded and checked when the server advertised it.
+    commitPendingSelfUpdateIfDue(context, api)
 
     return freshPolicy != null
 }
+
+/** Status-report capability: the update fence, the pending self-update and the notification rule
+ * (handy step 11). */
+const val KIOSK_ESCAPES_CAPABILITY = "kiosk_escapes_v1"
 
 /** Drains whatever [KidVpnService] has queued via [BlockedEventLog] since the last successful
  * report - best-effort, same as the status report above; only clears the queue once the server
@@ -361,20 +371,15 @@ private suspend fun currentLocationReport(
  * Downloads and silently installs a newer release for every app tracked server-side (see
  * kid-phone-server's `handlers::tracked_apps`) that's actually scoped to this device (or is the
  * launcher itself, see [TrackedAppUpdate.isLauncher] - always included regardless of scoping) -
- * either from a GitHub repo's Releases (e.g. Tailscale) or manually uploaded by an admin. The
- * launcher's own self-update goes through this exact same path now too, since it's just another
- * tracked app server-side - so there's no special-cased launcher-update code here at all. The one
- * real place self-update still differs is [AppInstallReceiver] skipping its cache-file cleanup on
- * success, since installing over yourself risks the process dying before that line runs. One
- * app's failure never affects another's, or the rest of the sync - *except* the launcher's own
- * self-update, which is why it's always processed last (see the reordering below): installing an
- * update over the running app can get this process SIGKILLed the moment [AppInstaller] commits
- * that session, and everything after that point in this function (any other app still queued in
- * this loop, [reportBlockedDnsEvents] back in [performMdmSync]) would simply never run this cycle.
- * A committed [android.content.pm.PackageInstaller] session is handled by the OS from that point
- * on regardless of whether this process survives, so every other app's install is safe to have
- * already been kicked off first - it isn't reverted just because we don't stick around to see the
- * result.
+ * either from a GitHub repo's Releases (e.g. Tailscale) or manually uploaded by an admin. Other
+ * apps are installed right after their download. The launcher's own update (handy step 11) is
+ * only downloaded here ([handleLauncherUpdate]) and kept pending; [performMdmSync]'s very last
+ * step, [commitPendingSelfUpdateIfDue], commits it in the update window behind the update fence -
+ * committing over the running app gets this process SIGKILLed seconds later, so nothing may come
+ * after it. A committed [android.content.pm.PackageInstaller] session is handled by the OS from
+ * that point on regardless of whether this process survives, so every other app's install is
+ * safe to have been kicked off first. One app's failure never affects another's, or the rest of
+ * the sync.
  */
 // Generous for a slow download+install over a poor connection, short enough that a genuinely
 // abandoned attempt (process died mid-download, AppInstallReceiver's callback somehow never
@@ -399,13 +404,13 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
 
     val (launcherUpdates, otherUpdates) = updates.partition { it.isLauncher }
     val state = TrackedAppUpdateState.load()
-    for (update in otherUpdates + launcherUpdates) {
+    for (update in otherUpdates) {
         val key = update.id.toString()
         // One source per package (handy step 7): an app Play installed is Play's to update
         // (other signature; Android 14 update ownership). Switching source = uninstall first.
         val installedFrom = update.packageName.takeIf { it.isNotBlank() }
             ?.let { installerOf(context.packageManager, it) }
-        if (!update.isLauncher && catalogUpdateBlockedByPlay(installedFrom)) {
+        if (catalogUpdateBlockedByPlay(installedFrom)) {
             Log.w(LOG_TAG, "Skipping ${update.name}: the installed copy comes from Play")
             reportInstallFailure(api, update.id)
             continue
@@ -475,6 +480,175 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
             reportInstallFailure(api, update.id)
         }
     }
+    // The launcher's own update: downloaded now, committed only in the update window (step 11).
+    handleLauncherUpdate(context, api, launcherUpdates.firstOrNull())
+}
+
+/**
+ * The launcher's own row (handy step 11, [launcherUpdateStep]): the APK is downloaded once into
+ * `noBackupFilesDir` with its SHA-256 and kept as [PendingSelfUpdate] until
+ * [commitPendingSelfUpdateIfDue] finds the update window - not re-fetched every sync, replaced by
+ * a newer tag, dropped when the release is withdrawn or installed. [update] `null` = the list
+ * arrived without the launcher.
+ */
+private suspend fun handleLauncherUpdate(context: Context, api: MdmApi, update: TrackedAppUpdate?) {
+    val state = TrackedAppUpdateState.load()
+    val pendingEntry = TrackedAppUpdateState.pendingEntry()
+    val key = update?.id?.toString() ?: pendingEntry?.first ?: return
+    val known = state[key]
+    // A pending APK on another row (the server's launcher row changed) is stale.
+    val pending = pendingEntry?.second?.takeIf { pendingEntry.first == key }
+    if (pendingEntry != null && pendingEntry.first != key) SelfUpdate.dropPending(context)
+    val now = System.currentTimeMillis()
+    val attemptStartedAt = known?.attemptStartedAtMs
+    // The server's launcher row names another package (a debug build on a dev phone, the release
+    // APK on the server): never ours to install, never downloaded.
+    val rowPackage = update?.packageName?.takeIf { it.isNotBlank() }
+    if (rowPackage != null && rowPackage != context.packageName) {
+        Log.i(LOG_TAG, "The launcher row is $rowPackage, this build is ${context.packageName} - not installing it")
+        if (pending != null) SelfUpdate.dropPending(context)
+        return
+    }
+    val step = launcherUpdateStep(
+        advertisedTag = update?.releaseTag,
+        lastInstalledTag = known?.lastInstalledTag,
+        lastFailedTag = known?.lastFailedTag,
+        lastFailedAtMs = known?.lastFailedAtMs,
+        attemptInFlight = attemptStartedAt != null && now - attemptStartedAt < INSTALL_ATTEMPT_TIMEOUT_MS,
+        pending = pending,
+        pendingFileOk = SelfUpdate.fileOk(context, pending),
+        nowMs = now,
+        failedBackoffMs = FAILED_RETRY_BACKOFF_MS,
+    )
+    when (step) {
+        LauncherUpdateStep.NOTHING, LauncherUpdateStep.KEEP_PENDING -> {}
+        LauncherUpdateStep.DROP_PENDING -> {
+            Log.i(LOG_TAG, "Dropping the pending launcher update ${pending?.releaseTag} (installed or withdrawn)")
+            SelfUpdate.dropPending(context)
+        }
+        LauncherUpdateStep.REPLACE_PENDING -> {
+            Log.i(LOG_TAG, "Replacing the pending launcher update ${pending?.releaseTag} with ${update?.releaseTag}")
+            SelfUpdate.dropPending(context)
+            update?.let { downloadSelfUpdate(context, api, key, it) }
+        }
+        LauncherUpdateStep.DOWNLOAD -> update?.let { downloadSelfUpdate(context, api, key, it) }
+    }
+}
+
+private suspend fun downloadSelfUpdate(context: Context, api: MdmApi, key: String, update: TrackedAppUpdate) {
+    TrackedAppUpdateState.recordAttemptStarted(context, key)
+    notifyAppInstalling(context, update.id, update.name)
+    val apkFile = SelfUpdate.newFile(context)
+    try {
+        val body = api.downloadTrackedApp(update.downloadUrl).body()
+        if (body == null) {
+            notifyAppInstallResult(context, update.id, update.name, success = false)
+            TrackedAppUpdateState.clearAttempt(context, key)
+            reportInstallFailure(api, update.id)
+            return
+        }
+        val sha256 = copyWithProgressReports(body, apkFile, api, update.id)
+        TrackedAppUpdateState.recordPending(
+            context,
+            key,
+            PendingSelfUpdate(update.releaseTag, apkFile.name, apkFile.length(), sha256, System.currentTimeMillis(), update.name),
+        )
+        // Nothing is installing yet: the "Installing" notification goes until the commit.
+        notifyAppInstallResult(context, update.id, update.name, success = true)
+        Log.i(LOG_TAG, "Downloaded launcher ${update.releaseTag} - waiting for the update window")
+        SelfUpdate.onPendingStored(context)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        apkFile.delete()
+        TrackedAppUpdateState.clearAttempt(context, key)
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Downloading the launcher update failed", e)
+        apkFile.delete()
+        notifyAppInstallResult(context, update.id, update.name, success = false)
+        TrackedAppUpdateState.clearAttempt(context, key)
+        reportInstallFailure(api, update.id)
+    }
+}
+
+/**
+ * Commits the pending launcher update when the window gate passes ([updateWindowDecision]: night,
+ * screen off 30 s, no call, no emergency - or overdue), after checking the file's size and SHA-256
+ * and that it is our package and newer ([pendingApkCheck]); the update fence goes up right before
+ * `commit()` ([UpdateFence.fenceBeforeCommit]). Inside `performMdmSync`, so under [syncMutex].
+ */
+private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) {
+    val (key, pending) = TrackedAppUpdateState.pendingEntry() ?: return
+    val known = TrackedAppUpdateState.load()[key]
+    val attemptStartedAt = known?.attemptStartedAtMs
+    if (attemptStartedAt != null && System.currentTimeMillis() - attemptStartedAt < INSTALL_ATTEMPT_TIMEOUT_MS) return
+    val decision = updateWindowDecision(SelfUpdate.windowInputs(context, pending))
+    if (decision is UpdateWindowDecision.Wait) {
+        SelfUpdate.lastWait = decision.reason
+        Log.i(LOG_TAG, "Launcher ${pending.releaseTag} waits: ${decision.reason.wire}")
+        val recheck = decision.recheckInMs
+        if (recheck != null && SelfUpdate.screenOffForMs(context) != null) SelfUpdate.armAlarm(context, recheck)
+        return
+    }
+    SelfUpdate.lastWait = null
+    val file = SelfUpdate.file(context, pending)
+    val archive = try {
+        context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+    } catch (e: Exception) {
+        null
+    }
+    val check = pendingApkCheck(
+        pending = pending,
+        fileSize = file.takeIf { it.isFile }?.length(),
+        fileSha256 = try {
+            file.takeIf { it.isFile }?.let { SelfUpdate.sha256(it) }
+        } catch (e: Exception) {
+            null
+        },
+        archivePackage = archive?.packageName,
+        archiveVersionCode = archive?.longVersionCode,
+        ownPackage = context.packageName,
+        ownVersionCode = BuildConfig.VERSION_CODE.toLong(),
+    )
+    val appId = key.toLongOrNull()
+    when (check) {
+        PendingApkCheck.OK -> {}
+        PendingApkCheck.MISSING, PendingApkCheck.CORRUPT -> {
+            Log.w(LOG_TAG, "Pending launcher ${pending.releaseTag}: ${check.name} - downloading again at the next sync")
+            SelfUpdate.dropPending(context)
+            return
+        }
+        PendingApkCheck.SAME_VERSION -> {
+            Log.i(LOG_TAG, "Pending launcher ${pending.releaseTag} is the running version - nothing to install")
+            TrackedAppUpdateState.recordInstalled(context, key, pending.releaseTag)
+            SelfUpdate.dropPending(context)
+            return
+        }
+        PendingApkCheck.NOT_OURS, PendingApkCheck.DOWNGRADE, PendingApkCheck.UNPARSEABLE -> {
+            Log.w(LOG_TAG, "Pending launcher ${pending.releaseTag} refused before installing: ${check.name}")
+            TrackedAppUpdateState.recordFailed(context, key, pending.releaseTag)
+            SelfUpdate.dropPending(context)
+            appId?.let {
+                notifyAppInstallResult(context, it, pending.name, success = false)
+                reportInstallFailure(api, it)
+            }
+            return
+        }
+    }
+    Log.i(LOG_TAG, "Committing launcher ${pending.releaseTag} (update window)")
+    TrackedAppUpdateState.recordAttemptStarted(context, key)
+    appId?.let { notifyAppInstalling(context, it, pending.name) }
+    SelfUpdate.committedInThisProcess = true
+    val committed = AppInstaller.installSilently(
+        context, file, key, pending.name, isLauncher = true, releaseTag = pending.releaseTag,
+        beforeCommit = { sessionId -> UpdateFence.fenceBeforeCommit(context, sessionId, pending.releaseTag) },
+        commitFailed = { UpdateFence.commitFailed(context) },
+    )
+    if (!committed) {
+        SelfUpdate.committedInThisProcess = false
+        TrackedAppUpdateState.clearAttempt(context, key)
+        SelfUpdate.dropPending(context)
+        appId?.let { notifyAppInstallResult(context, it, pending.name, success = false) }
+    }
 }
 
 /** Best-effort visibility for the admin site - a download-level failure here doesn't mark
@@ -498,9 +672,10 @@ private suspend fun copyWithProgressReports(
     apkFile: File,
     api: MdmApi,
     trackedAppId: Long,
-) {
+): String {
     val contentLength = body.contentLength()
     var lastReportedPercent = -1
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
     body.byteStream().use { input ->
         apkFile.outputStream().use { output ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -509,6 +684,7 @@ private suspend fun copyWithProgressReports(
                 val read = input.read(buffer)
                 if (read == -1) break
                 output.write(buffer, 0, read)
+                digest.update(buffer, 0, read)
                 bytesRead += read
                 if (contentLength <= 0) continue
                 val percent = ((bytesRead * 100) / contentLength).toInt().coerceIn(0, 100)
@@ -523,6 +699,8 @@ private suspend fun copyWithProgressReports(
             }
         }
     }
+    // The SHA-256 of what was written, for the pending self-update's check before fencing.
+    return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
 /**

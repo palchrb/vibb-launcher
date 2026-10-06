@@ -8,6 +8,7 @@ import com.kidslauncher.mdm.server.dto.PolicyContact
 import com.kidslauncher.mdm.server.dto.KidLock
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -76,6 +77,47 @@ class PolicyResponseCompatTest {
         val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, screenTimeoutSeconds = 60)
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
         assertEquals("60", json["screen_timeout_seconds"].toString())
+    }
+
+    @Test
+    fun `step 11 switches - missing means off, and the fallback never carries them`() {
+        val none = ServerJson.decodeFromString(PolicyResponse.serializer(), "{}")
+        assertEquals(false, none.updateFence)
+        assertEquals(false, none.notificationAutoCancel)
+        val both = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"update_fence":true,"notification_auto_cancel":true}""")
+        assertEquals(true, both.updateFence)
+        assertEquals(true, both.notificationAutoCancel)
+        // With no usable cache the fence is off (released) and nothing is cancelled.
+        val fallback = LastEnforcedPlan.of(both).toPolicy()
+        assertEquals(false, fallback.updateFence)
+        assertEquals(false, fallback.notificationAutoCancel)
+    }
+
+    @Test
+    fun `step 11 status keys are the server's - update_fence and notification_cancels`() {
+        val report = StatusReportRequest(
+            lockReason = "NONE",
+            kioskEngaged = true,
+            updateFence = com.kidslauncher.mdm.server.dto.UpdateFenceReport(
+                enabled = true, state = "fenced", unsuspendable = listOf("a.home"), lastRelease = "replaced",
+                homeRoleHeld = true, pendingTag = "launcher-v1.2.3", pendingSinceMs = 5L, waitingFor = "outside_window",
+            ),
+            notificationCancels = com.kidslauncher.mdm.server.dto.NotificationCancelsReport(
+                active = true,
+                entries = listOf(com.kidslauncher.mdm.server.dto.NotificationCancelEntry("com.google.android.gms", "nag", 2, 1)),
+                dropped = 0,
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        val fence = json["update_fence"]!!.jsonObject
+        assertEquals(
+            setOf("enabled", "state", "unsuspendable", "last_release", "home_role_held", "pending_tag", "pending_since_ms", "waiting_for"),
+            fence.keys,
+        )
+        val cancels = json["notification_cancels"]!!.jsonObject
+        assertEquals(setOf("active", "entries", "dropped"), cancels.keys)
+        val entry = cancels["entries"]!!.jsonArray.single().jsonObject
+        assertEquals(setOf("package_name", "channel", "cancelled", "snoozed"), entry.keys)
     }
 
     @Test

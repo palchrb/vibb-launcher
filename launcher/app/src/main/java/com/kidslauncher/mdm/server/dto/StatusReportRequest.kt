@@ -39,6 +39,52 @@ data class StatusReportRequest(
     /** The screen timeout the phone has now (read back from Settings.System), seconds; `null` =
      * unreadable. See [com.kidslauncher.mdm.server.ScreenTimeout]. */
     val screenTimeoutSeconds: Int? = null,
+    /** The update fence and the pending self-update (handy step 11) - see [UpdateFenceReport]. */
+    val updateFence: UpdateFenceReport? = null,
+    /** What the notification rule removed since the last report (handy step 11) - see
+     * [NotificationCancelsReport]. */
+    val notificationCancels: NotificationCancelsReport? = null,
+)
+
+/**
+ * `StatusReportRequest.updateFence` (no defaults: every field is always sent): whether the server's switch is on as the phone sees it, the
+ * fence's [state] ("none", "planned", "fenced"), the Home packages the platform refused to
+ * suspend, why the last fence ended, whether we hold ROLE_HOME (a partial fence otherwise), and
+ * the downloaded launcher update waiting for the night window ([pendingTag], since
+ * [pendingSinceMs], [waitingFor] = the gate's last reason: "call", "emergency", "screen_on",
+ * "screen_off_short", "outside_window").
+ */
+@Serializable
+data class UpdateFenceReport(
+    val enabled: Boolean,
+    val state: String,
+    val unsuspendable: List<String>,
+    val lastRelease: String?,
+    val homeRoleHeld: Boolean?,
+    val pendingTag: String?,
+    val pendingSinceMs: Long?,
+    val waitingFor: String?,
+)
+
+/**
+ * `StatusReportRequest.notificationCancels`: whether the rule is [active] now and, per (package,
+ * channel id), how many notifications it cancelled or snoozed since the last report - at most 20
+ * entries, ids capped at 64 characters, [dropped] = entries left out. Never titles, text, keys or
+ * tags (privacy).
+ */
+@Serializable
+data class NotificationCancelsReport(
+    val active: Boolean,
+    val entries: List<NotificationCancelEntry>,
+    val dropped: Int,
+)
+
+@Serializable
+data class NotificationCancelEntry(
+    val packageName: String,
+    val channel: String?,
+    val cancelled: Int,
+    val snoozed: Int,
 )
 
 /**

@@ -83,6 +83,15 @@ data class PolicyResponse(
      * [com.kidslauncher.mdm.server.ScreenTimeout]; `null` from an older server = the phone's own
      * setting is left alone. */
     val screenTimeoutSeconds: Int? = null,
+    /** The update fence (handy step 11): while our own update is installed every other Home is
+     * suspended and the status bar disabled. Missing (an older server) = **off**; off also releases
+     * a fence that is up. Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]: with no usable
+     * cache the fence is off. */
+    val updateFence: Boolean = false,
+    /** Other apps' nags are cancelled by our notification listener (handy step 11). Missing (an
+     * older server) = **off**; not in the last-enforced plan, so with an unknown policy nothing is
+     * cancelled. */
+    val notificationAutoCancel: Boolean = false,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

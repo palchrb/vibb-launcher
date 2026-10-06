@@ -37,7 +37,13 @@ object AppInstaller {
      * update the install-progress notification [MdmSyncWorker] shows under the same [installKey].
      * [isLauncher] is also threaded through to [AppInstallReceiver] so it can decide whether this
      * install is the launcher's own self-update without relying on a package-name string
-     * comparison. */
+     * comparison.
+     *
+     * The launcher's own update (handy step 11) passes [beforeCommit]: the update fence goes up
+     * with the session id right before `commit()` - the point of no return (the kill follows
+     * seconds later, after verification). If anything throws after it ran and before the commit
+     * went through, [commitFailed] releases the fence. A session that wasn't committed is
+     * abandoned. Returns whether the commit went through. */
     fun installSilently(
         context: Context,
         apkFile: File,
@@ -45,7 +51,9 @@ object AppInstaller {
         displayName: String,
         isLauncher: Boolean,
         releaseTag: String,
-    ) {
+        beforeCommit: ((sessionId: Int) -> Unit)? = null,
+        commitFailed: (() -> Unit)? = null,
+    ): Boolean {
         val packageInstaller = context.packageManager.packageInstaller
         val params =
             PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
@@ -53,8 +61,11 @@ object AppInstaller {
             params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         }
 
+        var sessionId = -1
+        var fenceRan = false
+        var committed = false
         try {
-            val sessionId = packageInstaller.createSession(params)
+            sessionId = packageInstaller.createSession(params)
             packageInstaller.openSession(sessionId).use { session ->
                 apkFile.inputStream().use { input ->
                     session.openWrite(installKey, 0, apkFile.length()).use { output ->
@@ -86,11 +97,27 @@ object AppInstaller {
                     }
                 val pendingIntent =
                     PendingIntent.getBroadcast(context, sessionId, resultIntent, flags)
+                if (beforeCommit != null) {
+                    fenceRan = true
+                    beforeCommit(sessionId)
+                }
                 session.commit(pendingIntent.intentSender)
+                committed = true
             }
+            return true
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to start silent install of $installKey", e)
+            if (committed) return true
+            if (fenceRan) commitFailed?.invoke()
+            if (sessionId >= 0) {
+                try {
+                    packageInstaller.abandonSession(sessionId)
+                } catch (abandon: Exception) {
+                    Log.w(LOG_TAG, "Couldn't abandon session $sessionId", abandon)
+                }
+            }
             apkFile.delete()
+            return false
         }
     }
 

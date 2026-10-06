@@ -29,6 +29,12 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
  * reachability (and so kid-phone-server sync) still waits for the next actual unlock after an
  * update; only the tsnet-independent parts - most notably [UnifiedPushRelay], which deliberately
  * never goes through tsnet's proxy - come back immediately via this receiver.
+ *
+ * Handy step 11 (design 11 §2, escape A): nothing else brings Home back after the replacement -
+ * lock task ended with the kill and doesn't re-enter by itself - so on a managed phone Home is
+ * started here, then the PIN lock on top if LOCKED (qa-11-design.md #9), never over a call
+ * ([SelfUpdate.bringHomeToFront]). Same for `adb install -r` (dev). Then the update fence's check:
+ * it ends once Home or the lock is in front or the screen is off (2 min backstop).
  */
 class PackageReplacedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -37,5 +43,12 @@ class PackageReplacedReceiver : BroadcastReceiver() {
         if (LauncherPreferences.mdm().vpnFilterEnabled()) {
             KidVpnService.start(context)
         }
+        try {
+            SelfUpdate.bringHomeToFront(context, "our package was replaced")
+        } catch (e: Exception) {
+            android.util.Log.w("PackageReplaced", "Couldn't bring Home back", e)
+        }
+        val pending = goAsync()
+        UpdateFence.checkAsync(context.applicationContext, "package_replaced") { pending.finish() }
     }
 }

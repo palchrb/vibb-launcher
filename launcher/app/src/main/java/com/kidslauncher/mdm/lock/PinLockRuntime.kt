@@ -73,6 +73,7 @@ object PinLockRuntime {
     private var yielding: String? = null
     @Volatile
     private var exemptYields = 0
+    @Volatile
     private var emergencyFlowUntilElapsed = 0L
     private var emergencyCallSeen = false
     private var rememberedAlarmMs: Long? = null
@@ -181,6 +182,10 @@ object PinLockRuntime {
                 rememberAlarm(app)
                 dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app)))
                 ScreenTimeTracker.update(app)
+                // Step 11: a screen-off may end the update fence in the new build, and starts the
+                // wait for the self-update window.
+                com.kidslauncher.mdm.server.UpdateFence.onFront(app)
+                com.kidslauncher.mdm.server.SelfUpdate.onScreenOff(app)
                 // The nightly Play update window opens when the screen goes off inside it.
                 try {
                     reevaluateLockReasonFromCache(app)
@@ -190,7 +195,11 @@ object PinLockRuntime {
             } else {
                 // First, synchronously: end the Play update window before anything else (QA
                 // step 7 #8); the full re-apply follows in the background.
-                if (intent.action == Intent.ACTION_SCREEN_ON) PlayRuntime.suspendStoreAtScreenOn(app)
+                if (intent.action == Intent.ACTION_SCREEN_ON) {
+                    PlayRuntime.suspendStoreAtScreenOn(app)
+                    // No self-update commit while someone uses the phone (step 11).
+                    com.kidslauncher.mdm.server.SelfUpdate.onScreenOn(app)
+                }
                 // May start the time-rule screen - the PIN lock then goes above it.
                 TimeRulesRuntime.recheck(app)
                 dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app)))
@@ -276,6 +285,16 @@ object PinLockRuntime {
 
     // ---- showing the lock, re-front -------------------------------------------------------
 
+    /**
+     * After Home was brought to the front by an update (step 11, qa-11-design.md #9): the lock
+     * goes on top when LOCKED. Posted, so a ProcessStart still queued in this new process goes
+     * first and the lock always ends up last.
+     */
+    fun showIfLocked(context: Context) {
+        val app = context.applicationContext
+        handler.post { if (mode == LockMode.LOCKED) show(app) }
+    }
+
     fun show(context: Context) {
         try {
             context.startActivity(
@@ -349,6 +368,11 @@ object PinLockRuntime {
             }
         }
     }
+
+    /** "Emergency call" was tapped on the lock less than [EMERGENCY_FLOW_MS] ago (the self-update
+     * waits, step 11). */
+    val emergencyFlowActive: Boolean
+        get() = emergencyFlowUntilElapsed > 0L && SystemClock.elapsedRealtime() < emergencyFlowUntilElapsed
 
     /** "Emergency call" on the lock was tapped: the dialer/Telecom screens are left alone. */
     fun emergencyFlowStarted() {

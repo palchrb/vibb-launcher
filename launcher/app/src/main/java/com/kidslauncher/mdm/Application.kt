@@ -271,6 +271,16 @@ class Application : android.app.Application() {
         com.kidslauncher.mdm.timerules.ScreenTimeTracker.init(this)
         com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(this)
 
+        // The update fence (step 11): a fence recorded by this or an older build is checked now
+        // (process start = boot, update, crash) - before the PIN lock, whose first chrome refresh
+        // reads it. Then the self-update's screen state and leftover files.
+        try {
+            com.kidslauncher.mdm.server.UpdateFence.init(this)
+            com.kidslauncher.mdm.server.SelfUpdate.init(this)
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "Update fence/self-update init failed, continuing", e)
+        }
+
         // Handy's own PIN lock (step 10): starts LOCKED when it was active (a crashed or killed
         // process fails closed, and with the screen on the lock is shown at once), and holds the
         // screen on/off/unlock receiver for the whole process (QA 10 #4) - screen time, time

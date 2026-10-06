@@ -348,7 +348,10 @@ enum class FenceReleaseReason(val wire: String) {
     NO_SESSION("no_session"),
     NOT_COMMITTED("not_committed"),
     SESSION_GONE("session_gone"),
+    /** The commit threw after the fence went up (the session is abandoned). */
     COMMIT_FAILED("commit_failed"),
+    /** A new fence replaces a leftover one (released first, then fenced anew). */
+    SUPERSEDED("superseded"),
 }
 
 enum class FenceKeepReason(val wire: String) {
