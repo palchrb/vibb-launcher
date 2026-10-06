@@ -156,4 +156,19 @@ class NotificationRuleTest {
         assertEquals(listOf(1, 10, 100, 1000), due)
         assertFalse(nagLogDue(0))
     }
+
+    @Test
+    fun `a group summary is only cancelled when every non-ongoing child would be (qa-11-code 6)`() {
+        val nagChild = nag(channel = "nag")
+        val alertChild = nag(channel = "earthquake_alerts")
+        val callChild = nag(category = "call")
+        val ongoingChild = nag(ongoing = true)
+        fun children(vararg facts: NotificationFacts) = facts.map { it to nagVerdict(it, policy) }
+        assertTrue(groupSummaryCancellable(children(nagChild, nagChild)))
+        assertTrue("an ongoing child isn't cancelled with its summary", groupSummaryCancellable(children(nagChild, ongoingChild)))
+        assertTrue("no children left", groupSummaryCancellable(emptyList()))
+        assertFalse(groupSummaryCancellable(children(nagChild, alertChild)))
+        assertFalse(groupSummaryCancellable(children(callChild)))
+        assertFalse(groupSummaryCancellable(children(nag(fsi = true))))
+    }
 }

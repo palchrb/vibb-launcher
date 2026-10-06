@@ -33,7 +33,7 @@ class BadgeListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        sbn?.let { applyRule(it) }
+        sbn?.let { applyRule(it, null) }
         recount()
     }
 
@@ -42,18 +42,28 @@ class BadgeListenerService : NotificationListenerService() {
     /** Applies the rule to every active notification (connect, and after a policy change), then recounts. */
     internal fun sweep() {
         val active = activeOrNull() ?: return
-        if (NotificationRuleRuntime.policy != null) active.forEach { applyRule(it) }
+        if (NotificationRuleRuntime.policy != null) active.forEach { applyRule(it, active) }
         recount()
     }
 
-    /** Main thread: only the cached [NotificationRuleRuntime.policy], no PackageManager work. */
-    private fun applyRule(sbn: StatusBarNotification) {
+    /** Main thread: only the cached [NotificationRuleRuntime.policy], no PackageManager work.
+     * [active]: the active notifications if already read (a summary needs its group's children). */
+    private fun applyRule(sbn: StatusBarNotification, active: List<StatusBarNotification>?) {
         val facts = try {
             facts(sbn)
         } catch (e: Exception) {
             return
         }
-        if (nagVerdict(facts, NotificationRuleRuntime.policy) != NagVerdict.Cancel) return
+        val policy = NotificationRuleRuntime.policy
+        if (nagVerdict(facts, policy) != NagVerdict.Cancel) return
+        if (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) {
+            // Cancelling a summary takes its non-ongoing children with it (qa-11-code #6). The
+            // group key stays in memory here - never logged or reported.
+            val children = (active ?: activeOrNull() ?: return)
+                .filter { it.key != sbn.key && it.groupKey == sbn.groupKey && it.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 }
+                .mapNotNull { child -> runCatching { facts(child) }.getOrNull()?.let { it to nagVerdict(it, policy) } }
+            if (!groupSummaryCancellable(children)) return
+        }
         try {
             when (NotificationRuleRuntime.act(facts)) {
                 NagAction.CANCEL -> cancelNotification(sbn.key)

@@ -52,6 +52,9 @@ private val OWN_CALL_PERMISSIONS = listOf(
     android.Manifest.permission.READ_CALL_LOG,
 )
 
+/** `Telephony.Sms.Intents.ACTION_SMS_EMERGENCY_CB_RECEIVED` (system API). */
+private const val ACTION_SMS_EMERGENCY_CB_RECEIVED = "android.provider.action.SMS_EMERGENCY_CB_RECEIVED"
+
 /** applicationId of the kids-mdm-browser fork - see [AppEnforcer.applyBrowserPolicy]. */
 private const val BROWSER_PACKAGE_NAME = "com.kidsmdm.browser"
 
@@ -388,12 +391,17 @@ object AppEnforcer {
     private fun essentialNotificationPackages(context: Context, callState: CallPolicyState): Set<String> {
         val pm = context.packageManager
         val (resolved, _) = resolveHelpers(context)
-        val cellBroadcast = try {
-            pm.queryBroadcastReceivers(Intent(android.provider.Telephony.Sms.Intents.SMS_CB_RECEIVED_ACTION), PackageManager.MATCH_SYSTEM_ONLY)
-                .mapNotNull { it.activityInfo?.packageName }
-        } catch (e: Exception) {
-            emptyList()
-        }
+        // Cell broadcast: CellBroadcastService hands emergency alerts to the receiver of
+        // ACTION_SMS_EMERGENCY_CB_RECEIVED (system API - the literal), so an OEM-named alert app
+        // is found there too (qa-11-code #7). System apps only.
+        val cellBroadcast = listOf(android.provider.Telephony.Sms.Intents.SMS_CB_RECEIVED_ACTION, ACTION_SMS_EMERGENCY_CB_RECEIVED)
+            .flatMap { action ->
+                try {
+                    pm.queryBroadcastReceivers(Intent(action), PackageManager.MATCH_SYSTEM_ONLY).mapNotNull { it.activityInfo?.packageName }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
         val defaultDialer = try {
             context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage
         } catch (e: Exception) {

@@ -121,6 +121,16 @@ fun nagVerdict(facts: NotificationFacts, policy: NagPolicy?): NagVerdict {
     return if (keep != null) NagVerdict.Keep(keep) else NagVerdict.Cancel
 }
 
+/**
+ * qa-11-code #6: cancelling a group summary makes NotificationManagerService cancel every
+ * non-ongoing child of its group too, whatever this rule says about them. So a summary is only
+ * cancelled when every non-ongoing child ([children]: each child's facts and verdict) would be
+ * cancelled on its own - a kept child (an alert channel, CALL/ALARM, full-screen) keeps its
+ * summary.
+ */
+fun groupSummaryCancellable(children: List<Pair<NotificationFacts, NagVerdict>>): Boolean =
+    children.filter { (facts, _) -> !facts.ongoing }.all { (_, verdict) -> verdict == NagVerdict.Cancel }
+
 // ---- re-post budget ---------------------------------------------------------------------------
 
 /** Cancels per (package, channel) within [REPOST_WINDOW_MS] before the rule snoozes instead. */

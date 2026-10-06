@@ -222,7 +222,10 @@ Notifications (B; kiosk LOCKED, block on unless noted):
 - [ ] **B1 identify nags**: `adb shell dumpsys notification --noredact | grep -E "NotificationRecord|android.title=|contentIntent|flags="`;
   `cmd notification list`, `cmd notification get <key>` -> package, channel, clearable, PendingIntent creator/type. List
   Play services' channels and classify each (nag vs alert) - the rule keeps channels named like earthquake/emergency/
-  cmas/crisis; anything else from GMS is cancelled.
+  cmas/crisis; anything else from GMS is cancelled. Classify Play services' system-update "restart to install"
+  notification too: the rule cancels it today, so a patch can wait for an unplanned reboot (qa-11-code #7). Record
+  the OEM's emergency-alert app (`cmd package query-receivers --brief -a android.provider.action.SMS_EMERGENCY_CB_RECEIVED`)
+  - it must stay. A grouped nag whose group also holds a kept notification keeps its summary (qa-11-code #6).
 - [ ] **B2 non-pinned target** (filter off first): `cmd package resolve-activity --brief -a android.intent.action.SET_WALLPAPER` -> C;
   `cmd notification post -t Nag -c activity -n C nag1 test`; shade, tap -> `BlockedAppActivity`; block off -> toast; kiosk
   off -> opens. `dumpsys activity recents | grep -E "realActivity|BlockedApp"`.
