@@ -45,7 +45,8 @@ enum class LauncherUpdateStep {
  * The launcher's own update at sync time:
  * - [advertisedTag] `null` = the server's list (which arrived) no longer has the launcher: a
  *   pending APK is dropped (withdrawn release);
- * - the advertised release is installed: nothing (a pending leftover is dropped);
+ * - the advertised release is installed, or was refused for good ([refusedTag]): nothing (a
+ *   pending leftover is dropped);
  * - a download or commit in flight ([attemptInFlight]): nothing;
  * - the advertised release failed less than an hour ago: nothing (the backoff), a pending APK of
  *   another release is dropped;
@@ -63,8 +64,11 @@ fun launcherUpdateStep(
     pendingFileOk: Boolean,
     nowMs: Long,
     failedBackoffMs: Long,
+    refusedTag: String? = null,
 ): LauncherUpdateStep {
-    if (advertisedTag == null || advertisedTag == lastInstalledTag) {
+    // Installed, withdrawn, or refused for good (a deterministic failure - wrong signer, older,
+    // not ours: qa-11-code #4) until the server advertises another release.
+    if (advertisedTag == null || advertisedTag == lastInstalledTag || advertisedTag == refusedTag) {
         return if (pending != null) LauncherUpdateStep.DROP_PENDING else LauncherUpdateStep.NOTHING
     }
     if (attemptInFlight) return LauncherUpdateStep.NOTHING
@@ -94,7 +98,23 @@ enum class PendingApkCheck {
     SAME_VERSION,
     /** PackageManager couldn't parse it (recorded as failed). */
     UNPARSEABLE,
+    /** Signed by another key than ours - Android would refuse the update (qa-11-code #4). */
+    WRONG_SIGNER,
 }
+
+/** The refusals that would refuse the same APK again: never retried until the tag changes. */
+val PendingApkCheck.deterministic: Boolean
+    get() = this == PendingApkCheck.NOT_OURS || this == PendingApkCheck.DOWNGRADE ||
+        this == PendingApkCheck.UNPARSEABLE || this == PendingApkCheck.WRONG_SIGNER
+
+/**
+ * [ourSigners]/[archiveSigners]: SHA-256 hex of every certificate in our and the APK's signing
+ * lineage (`SigningInfo`: the signers, or the certificate history). They must share one -
+ * the debug key against the release APK, or a stranger's key, never do; a rotation (the new
+ * lineage contains our certificate) does. Empty [ourSigners] = couldn't read ours: not checked.
+ */
+fun signerMatches(ourSigners: Set<String>, archiveSigners: Set<String>?): Boolean =
+    ourSigners.isEmpty() || (archiveSigners != null && ourSigners.any { it in archiveSigners })
 
 fun pendingApkCheck(
     pending: PendingSelfUpdate,
@@ -104,14 +124,59 @@ fun pendingApkCheck(
     archiveVersionCode: Long?,
     ownPackage: String,
     ownVersionCode: Long,
+    ourSigners: Set<String> = emptySet(),
+    archiveSigners: Set<String>? = null,
 ): PendingApkCheck = when {
     fileSize == null -> PendingApkCheck.MISSING
     fileSize != pending.sizeBytes || !fileSha256.equals(pending.sha256, ignoreCase = true) -> PendingApkCheck.CORRUPT
     archivePackage == null || archiveVersionCode == null -> PendingApkCheck.UNPARSEABLE
     archivePackage != ownPackage -> PendingApkCheck.NOT_OURS
+    !signerMatches(ourSigners, archiveSigners) -> PendingApkCheck.WRONG_SIGNER
     archiveVersionCode < ownVersionCode -> PendingApkCheck.DOWNGRADE
     archiveVersionCode == ownVersionCode -> PendingApkCheck.SAME_VERSION
     else -> PendingApkCheck.OK
+}
+
+/** What a failed result of our own update's session means (qa-11-code #4). */
+enum class SelfUpdateFailure {
+    /** Transient (storage, timeout, aborted, generic): keep the verified APK, try again after the
+     * backoff in a later window - no new download. */
+    RETRY_KEEP_APK,
+    /** The same APK would fail again (invalid, conflicting, incompatible - a signature or version
+     * clash -, blocked, or user action needed on a device-owner install): drop it, never retry
+     * this release. */
+    REFUSE_RELEASE,
+}
+
+/** `PackageInstaller.STATUS_*` (public constants, literal here to stay Android-free). */
+const val INSTALL_STATUS_PENDING_USER_ACTION = -1
+const val INSTALL_STATUS_FAILURE_BLOCKED = 2
+const val INSTALL_STATUS_FAILURE_INVALID = 4
+const val INSTALL_STATUS_FAILURE_CONFLICT = 5
+const val INSTALL_STATUS_FAILURE_INCOMPATIBLE = 7
+
+fun selfUpdateFailure(status: Int): SelfUpdateFailure = when (status) {
+    INSTALL_STATUS_PENDING_USER_ACTION, INSTALL_STATUS_FAILURE_BLOCKED, INSTALL_STATUS_FAILURE_INVALID,
+    INSTALL_STATUS_FAILURE_CONFLICT, INSTALL_STATUS_FAILURE_INCOMPATIBLE,
+    -> SelfUpdateFailure.REFUSE_RELEASE
+    else -> SelfUpdateFailure.RETRY_KEEP_APK
+}
+
+/**
+ * The commit step for a pending APK that passed every check: wait out the backoff after a
+ * transient failure of the same release (the APK is kept), and never commit a refused one.
+ */
+fun pendingCommitAllowed(
+    pendingTag: String,
+    lastFailedTag: String?,
+    lastFailedAtMs: Long?,
+    refusedTag: String?,
+    nowMs: Long,
+    failedBackoffMs: Long,
+): Boolean {
+    if (pendingTag == refusedTag) return false
+    if (pendingTag == lastFailedTag && lastFailedAtMs != null && nowMs - lastFailedAtMs in 0 until failedBackoffMs) return false
+    return true
 }
 
 // ---- the update window ------------------------------------------------------------------------
@@ -213,3 +278,14 @@ fun commitCheckDelayMs(now: ZonedDateTime, pendingForMs: Long, overdueMs: Long =
  */
 fun bringHomeAfterUpdate(appsManaged: Boolean, kioskOn: Boolean, liveCall: Boolean, telecomInCall: Boolean?): Boolean =
     (appsManaged || kioskOn) && !liveCall && telecomInCall == false
+
+/**
+ * How long the screen has been off (the screen is off now): since this process's last SCREEN_OFF;
+ * before any screen event in this process since its start (it was off when we started); after a
+ * SCREEN_ON with the SCREEN_OFF not yet delivered, 0 (qa-11-code #3 - a power-button press must
+ * not read as "off for hours").
+ */
+fun screenOffForMs(offSinceElapsed: Long?, screenEventSeen: Boolean, processStartElapsed: Long, nowElapsed: Long): Long {
+    val since = offSinceElapsed ?: if (!screenEventSeen) processStartElapsed else return 0
+    return (nowElapsed - since).coerceAtLeast(0)
+}

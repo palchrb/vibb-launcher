@@ -45,6 +45,9 @@ class AppInstallReceiver : BroadcastReceiver() {
         val restarted = !SelfUpdate.committedInThisProcess
 
         var failed = false
+        // The launcher's own update keeps its verified APK after a transient failure (retried
+        // after the backoff without a new download, qa-11-code #4).
+        var keepFile = false
         when (status) {
             PackageInstaller.STATUS_SUCCESS -> {
                 Log.i(LOG_TAG, "Installed $installKey successfully ($releaseTag)")
@@ -52,36 +55,41 @@ class AppInstallReceiver : BroadcastReceiver() {
                     TrackedAppUpdateState.recordInstalled(context, installKey, releaseTag)
                 }
                 appId?.let { notifyAppInstallResult(context, it, installName, success = true) }
-            }
-            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                // Shouldn't happen as device owner with USER_ACTION_NOT_REQUIRED, but if it does
-                // there's nothing this receiver can silently do about it - just log for
-                // visibility rather than leaving the downloaded file behind unexplained. Leaves
-                // the "Installing..." notification as-is - this isn't a resolved failure. The
-                // update fence is released all the same (below).
-                Log.w(LOG_TAG, "Install of $installKey requires user action unexpectedly: $message")
-                if (isLauncher && installKey != null) TrackedAppUpdateState.clearAttempt(context, installKey)
+                // Not deleted for the launcher's own self-update: the running process is about to
+                // be replaced anyway (the new process's SelfUpdate.cleanup removes it).
+                keepFile = isLauncher
             }
             else -> {
                 failed = true
-                Log.w(LOG_TAG, "Install of $installKey failed: status=$status message=$message")
-                // Remembering the failed tag stops the next sync from re-attempting the exact
-                // same doomed install every 2 minutes forever.
+                if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                    // Shouldn't happen as device owner with USER_ACTION_NOT_REQUIRED; nobody can
+                    // act on it silently, so the session is abandoned rather than left open
+                    // (qa-11-code #4) and the release counts as failed.
+                    Log.w(LOG_TAG, "Install of $installKey requires user action unexpectedly: $message")
+                    AppInstaller.abandonSession(context, sessionId)
+                } else {
+                    Log.w(LOG_TAG, "Install of $installKey failed: status=$status message=$message")
+                }
                 if (installKey != null && releaseTag != null) {
-                    TrackedAppUpdateState.recordFailed(context, installKey, releaseTag)
+                    if (isLauncher && selfUpdateFailure(status) == SelfUpdateFailure.REFUSE_RELEASE) {
+                        // The same APK would fail again: not retried until another release.
+                        TrackedAppUpdateState.recordRefused(context, installKey, releaseTag)
+                    } else {
+                        // Remembering the failed tag stops the next sync from re-attempting the
+                        // exact same doomed install every 2 minutes forever.
+                        keepFile = isLauncher
+                        TrackedAppUpdateState.recordFailed(context, installKey, releaseTag, keepPending = isLauncher)
+                    }
                 }
                 appId?.let { notifyAppInstallResult(context, it, installName, success = false) }
             }
         }
 
-        // Not deleted on success for the launcher's own self-update: the running process is about
-        // to be replaced anyway, and there's a real chance this callback never gets to finish
-        // running before that happens (the new process's SelfUpdate.cleanup removes it). Any
-        // other app's file is always safe to clean up immediately. isLauncher comes from the
+        // Any other app's file is always safe to clean up immediately. isLauncher comes from the
         // server (TrackedAppUpdate.isLauncher), not a packageName == context.packageName
         // comparison - a tracked app's package name is optional now (see kid-phone-server's
         // tracked_app_add.html) and can't be trusted for this.
-        if (status != PackageInstaller.STATUS_SUCCESS || !isLauncher) {
+        if (!keepFile) {
             apkPath?.let { File(it).delete() }
         }
 

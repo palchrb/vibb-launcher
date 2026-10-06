@@ -199,4 +199,69 @@ class SelfUpdatePlanTest {
         assertEquals(false, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = false, telecomInCall = true))
         assertEquals(false, bringHomeAfterUpdate(appsManaged = true, kioskOn = true, liveCall = false, telecomInCall = null))
     }
+
+    // ---- qa-11-code #2-#4 ----------------------------------------------------------------------
+
+    @Test
+    fun `a refused release is never downloaded or kept again until the tag changes`() {
+        assertEquals(LauncherUpdateStep.NOTHING, launcherUpdateStep("t1", "t0", "t1", now, false, null, false, now + 5 * backoff, backoff, refusedTag = "t1"))
+        assertEquals(LauncherUpdateStep.DROP_PENDING, launcherUpdateStep("t1", "t0", null, null, false, pending.copy(releaseTag = "t1"), true, now, backoff, refusedTag = "t1"))
+        assertEquals(LauncherUpdateStep.DOWNLOAD, launcherUpdateStep("t2", "t0", "t1", now, false, null, false, now, backoff, refusedTag = "t1"))
+    }
+
+    @Test
+    fun `deterministic refusals stick, a missing or corrupt file is downloaded again`() {
+        assertEquals(
+            setOf(PendingApkCheck.NOT_OURS, PendingApkCheck.DOWNGRADE, PendingApkCheck.UNPARSEABLE, PendingApkCheck.WRONG_SIGNER),
+            PendingApkCheck.entries.filter { it.deterministic }.toSet(),
+        )
+    }
+
+    @Test
+    fun `the APK must share a signing certificate with us - a rotation does, the debug key doesn't`() {
+        val release = "aa".repeat(32)
+        val debug = "bb".repeat(32)
+        val rotated = "cc".repeat(32)
+        assertEquals(true, signerMatches(setOf(release), setOf(release)))
+        assertEquals(true, signerMatches(setOf(release), setOf(release, rotated)))
+        assertEquals(false, signerMatches(setOf(debug), setOf(release)))
+        assertEquals(false, signerMatches(setOf(release), null))
+        assertEquals(false, signerMatches(setOf(release), emptySet()))
+        // Ours unreadable: not checked (PackageInstaller still refuses a wrong key).
+        assertEquals(true, signerMatches(emptySet(), null))
+        assertEquals(
+            PendingApkCheck.WRONG_SIGNER,
+            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "com.kidslauncher.mdm", 1_003_000L, "com.kidslauncher.mdm", 1_002_000L, setOf(release), setOf(debug)),
+        )
+        assertEquals(
+            PendingApkCheck.OK,
+            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "com.kidslauncher.mdm", 1_003_000L, "com.kidslauncher.mdm", 1_002_000L, setOf(release), setOf(release)),
+        )
+    }
+
+    @Test
+    fun `failed results - transient ones keep the APK, deterministic ones refuse the release`() {
+        for (status in listOf(1, 3, 6, 8)) assertEquals("status $status", SelfUpdateFailure.RETRY_KEEP_APK, selfUpdateFailure(status))
+        for (status in listOf(-1, 2, 4, 5, 7)) assertEquals("status $status", SelfUpdateFailure.REFUSE_RELEASE, selfUpdateFailure(status))
+    }
+
+    @Test
+    fun `a kept APK waits out the backoff, a refused one is never committed`() {
+        assertEquals(true, pendingCommitAllowed("t1", null, null, null, now, backoff))
+        assertEquals(false, pendingCommitAllowed("t1", "t1", now - 60_000L, null, now, backoff))
+        assertEquals(true, pendingCommitAllowed("t1", "t1", now - backoff, null, now, backoff))
+        assertEquals(true, pendingCommitAllowed("t1", "t0", now, null, now, backoff))
+        assertEquals(false, pendingCommitAllowed("t1", null, null, "t1", now, backoff))
+    }
+
+    @Test
+    fun `screen-off time - a SCREEN_ON with the SCREEN_OFF still queued counts 0, not since the process start`() {
+        // Off since the process started (no screen event yet).
+        assertEquals(50_000L, screenOffForMs(null, screenEventSeen = false, processStartElapsed = 10_000L, nowElapsed = 60_000L))
+        // Off since a SCREEN_OFF.
+        assertEquals(5_000L, screenOffForMs(55_000L, screenEventSeen = true, processStartElapsed = 10_000L, nowElapsed = 60_000L))
+        // A SCREEN_ON came, the screen reads off but its SCREEN_OFF hasn't arrived: 0 (qa-11-code #3).
+        assertEquals(0L, screenOffForMs(null, screenEventSeen = true, processStartElapsed = 10_000L, nowElapsed = 60_000L))
+        assertEquals(0L, screenOffForMs(70_000L, screenEventSeen = true, processStartElapsed = 10_000L, nowElapsed = 60_000L))
+    }
 }

@@ -55,6 +55,11 @@ object SelfUpdate {
     @Volatile
     private var screenOffSinceElapsed: Long? = null
 
+    /** A SCREEN_ON/OFF arrived in this process: from then on only a SCREEN_OFF starts the count
+     * (qa-11-code #3 - not the process start, while a late SCREEN_OFF is still queued). */
+    @Volatile
+    private var screenEventSeen = false
+
     /** This process committed the launcher's own update (its result, if it ever arrives here,
      * is a pre-kill one - Home never left). */
     @Volatile
@@ -83,6 +88,7 @@ object SelfUpdate {
 
     /** PinLockRuntime's screen receiver (main thread). */
     fun onScreenOff(context: Context) {
+        screenEventSeen = true
         screenOffSinceElapsed = SystemClock.elapsedRealtime()
         val app = context.applicationContext
         scope.launch {
@@ -96,6 +102,7 @@ object SelfUpdate {
 
     /** PinLockRuntime's screen receiver (main thread): nothing goes in while someone uses the phone. */
     fun onScreenOn(context: Context) {
+        screenEventSeen = true
         screenOffSinceElapsed = null
         cancelAlarm(context.applicationContext)
     }
@@ -109,8 +116,32 @@ object SelfUpdate {
     /** How long the screen has been off, `null` while on. */
     fun screenOffForMs(context: Context): Long? {
         if (interactive(context)) return null
-        val since = screenOffSinceElapsed ?: Process.getStartElapsedRealtime().also { screenOffSinceElapsed = it }
-        return (SystemClock.elapsedRealtime() - since).coerceAtLeast(0)
+        return com.kidslauncher.mdm.server.screenOffForMs(
+            screenOffSinceElapsed, screenEventSeen, Process.getStartElapsedRealtime(), SystemClock.elapsedRealtime(),
+        )
+    }
+
+    // ---- signing certificates (qa-11-code #4) -------------------------------------------------
+
+    /** SHA-256 hex of every certificate in [info] (the signers, else the lineage); `null` = none. */
+    fun signers(info: android.content.pm.SigningInfo?): Set<String>? {
+        info ?: return null
+        val certs = if (info.hasMultipleSigners()) info.apkContentsSigners else info.signingCertificateHistory
+        return certs?.mapTo(mutableSetOf()) { cert ->
+            MessageDigest.getInstance("SHA-256").digest(cert.toByteArray()).joinToString("") { "%02x".format(it) }
+        }?.takeIf { it.isNotEmpty() }
+    }
+
+    /** Ours; empty when they can't be read (then not checked). */
+    fun ourSigners(context: Context): Set<String> = try {
+        signers(
+            context.packageManager.getPackageInfo(
+                context.packageName,
+                android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+            ).signingInfo,
+        ).orEmpty()
+    } catch (e: Exception) {
+        emptySet()
     }
 
     // ---- files ----------------------------------------------------------------------------------

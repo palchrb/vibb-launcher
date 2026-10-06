@@ -510,6 +510,7 @@ private suspend fun handleLauncherUpdate(context: Context, api: MdmApi, update: 
         return
     }
     val step = launcherUpdateStep(
+        refusedTag = known?.refusedTag,
         advertisedTag = update?.releaseTag,
         lastInstalledTag = known?.lastInstalledTag,
         lastFailedTag = known?.lastFailedTag,
@@ -579,20 +580,26 @@ private suspend fun downloadSelfUpdate(context: Context, api: MdmApi, key: Strin
 private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) {
     val (key, pending) = TrackedAppUpdateState.pendingEntry() ?: return
     val known = TrackedAppUpdateState.load()[key]
+    val now = System.currentTimeMillis()
     val attemptStartedAt = known?.attemptStartedAtMs
-    if (attemptStartedAt != null && System.currentTimeMillis() - attemptStartedAt < INSTALL_ATTEMPT_TIMEOUT_MS) return
+    if (attemptStartedAt != null && now - attemptStartedAt < INSTALL_ATTEMPT_TIMEOUT_MS) return
+    // A transient failure of this release keeps its APK and waits out the backoff; a refused one
+    // is never committed (qa-11-code #4).
+    if (!pendingCommitAllowed(pending.releaseTag, known?.lastFailedTag, known?.lastFailedAtMs, known?.refusedTag, now, FAILED_RETRY_BACKOFF_MS)) {
+        if (known?.refusedTag == pending.releaseTag) SelfUpdate.dropPending(context)
+        return
+    }
     val decision = updateWindowDecision(SelfUpdate.windowInputs(context, pending))
     if (decision is UpdateWindowDecision.Wait) {
-        SelfUpdate.lastWait = decision.reason
-        Log.i(LOG_TAG, "Launcher ${pending.releaseTag} waits: ${decision.reason.wire}")
-        val recheck = decision.recheckInMs
-        if (recheck != null && SelfUpdate.screenOffForMs(context) != null) SelfUpdate.armAlarm(context, recheck)
+        waitForWindow(context, pending, decision)
         return
     }
     SelfUpdate.lastWait = null
     val file = SelfUpdate.file(context, pending)
     val archive = try {
-        context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        context.packageManager.getPackageArchiveInfo(
+            file.absolutePath, PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+        )
     } catch (e: Exception) {
         null
     }
@@ -608,25 +615,29 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
         archiveVersionCode = archive?.longVersionCode,
         ownPackage = context.packageName,
         ownVersionCode = BuildConfig.VERSION_CODE.toLong(),
+        ourSigners = SelfUpdate.ourSigners(context),
+        archiveSigners = SelfUpdate.signers(archive?.signingInfo),
     )
     val appId = key.toLongOrNull()
-    when (check) {
-        PendingApkCheck.OK -> {}
-        PendingApkCheck.MISSING, PendingApkCheck.CORRUPT -> {
+    when {
+        check == PendingApkCheck.OK -> {}
+        check == PendingApkCheck.MISSING || check == PendingApkCheck.CORRUPT -> {
             Log.w(LOG_TAG, "Pending launcher ${pending.releaseTag}: ${check.name} - downloading again at the next sync")
             SelfUpdate.dropPending(context)
             return
         }
-        PendingApkCheck.SAME_VERSION -> {
+        check == PendingApkCheck.SAME_VERSION -> {
             Log.i(LOG_TAG, "Pending launcher ${pending.releaseTag} is the running version - nothing to install")
             TrackedAppUpdateState.recordInstalled(context, key, pending.releaseTag)
             SelfUpdate.dropPending(context)
             return
         }
-        PendingApkCheck.NOT_OURS, PendingApkCheck.DOWNGRADE, PendingApkCheck.UNPARSEABLE -> {
+        check.deterministic -> {
+            // The same APK would be refused again: never fenced, downloaded or tried again until
+            // the server advertises another release (qa-11-code #4).
             Log.w(LOG_TAG, "Pending launcher ${pending.releaseTag} refused before installing: ${check.name}")
-            TrackedAppUpdateState.recordFailed(context, key, pending.releaseTag)
             SelfUpdate.dropPending(context)
+            TrackedAppUpdateState.recordRefused(context, key, pending.releaseTag)
             appId?.let {
                 notifyAppInstallResult(context, it, pending.name, success = false)
                 reportInstallFailure(api, it)
@@ -638,17 +649,48 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
     TrackedAppUpdateState.recordAttemptStarted(context, key)
     appId?.let { notifyAppInstalling(context, it, pending.name) }
     SelfUpdate.committedInThisProcess = true
-    val committed = AppInstaller.installSilently(
+    val started = AppInstaller.installSilently(
         context, file, key, pending.name, isLauncher = true, releaseTag = pending.releaseTag,
-        beforeCommit = { sessionId -> UpdateFence.fenceBeforeCommit(context, sessionId, pending.releaseTag) },
+        beforeCommit = { sessionId ->
+            // The archive parse, the hash and the copy into the session took seconds: a wake or a
+            // call in between cancels the commit (qa-11-code #2) - only then the fence goes up.
+            val again = updateWindowDecision(SelfUpdate.windowInputs(context, pending))
+            if (again is UpdateWindowDecision.Wait) {
+                waitForWindow(context, pending, again)
+                false
+            } else {
+                UpdateFence.fenceBeforeCommit(context, sessionId, pending.releaseTag)
+                true
+            }
+        },
         commitFailed = { UpdateFence.commitFailed(context) },
+        deleteOnFailure = false,
     )
-    if (!committed) {
-        SelfUpdate.committedInThisProcess = false
-        TrackedAppUpdateState.clearAttempt(context, key)
-        SelfUpdate.dropPending(context)
-        appId?.let { notifyAppInstallResult(context, it, pending.name, success = false) }
+    when (started) {
+        InstallStart.COMMITTED -> {}
+        InstallStart.DEFERRED -> {
+            // Nothing happened: the APK stays pending, no backoff.
+            SelfUpdate.committedInThisProcess = false
+            TrackedAppUpdateState.clearAttempt(context, key)
+            appId?.let { notifyAppInstallResult(context, it, pending.name, success = true) }
+        }
+        InstallStart.FAILED -> {
+            // Couldn't start (no space for the session copy, commit() threw): keep the verified APK
+            // and back off an hour (qa-11-code #4) - no new download.
+            SelfUpdate.committedInThisProcess = false
+            TrackedAppUpdateState.recordFailed(context, key, pending.releaseTag, keepPending = true)
+            appId?.let { notifyAppInstallResult(context, it, pending.name, success = false) }
+        }
     }
+}
+
+/** The gate said wait: remember why (status report) and, with the screen off, look again when it
+ * could pass. */
+private fun waitForWindow(context: Context, pending: PendingSelfUpdate, decision: UpdateWindowDecision.Wait) {
+    SelfUpdate.lastWait = decision.reason
+    Log.i(LOG_TAG, "Launcher ${pending.releaseTag} waits: ${decision.reason.wire}")
+    val recheck = decision.recheckInMs
+    if (recheck != null && SelfUpdate.screenOffForMs(context) != null) SelfUpdate.armAlarm(context, recheck)
 }
 
 /** Best-effort visibility for the admin site - a download-level failure here doesn't mark

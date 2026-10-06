@@ -25,6 +25,9 @@ data class TrackedAppState(
      * [PendingSelfUpdate]) - only ever on the launcher's row. [TrackedAppUpdateState.recordInstalled]
      * and [TrackedAppUpdateState.recordFailed] drop it; the attempt marker keeps it. */
     val pending: PendingSelfUpdate? = null,
+    /** A release refused for good (handy step 11, qa-11-code #4: wrong signer, older, not ours,
+     * an invalid or incompatible APK) - not downloaded or tried again until the tag changes. */
+    val refusedTag: String? = null,
 )
 
 /**
@@ -75,13 +78,31 @@ object TrackedAppUpdateState {
         save(context, state)
     }
 
-    fun recordFailed(context: Context, appKey: String, releaseTag: String) {
+    /** [keepPending]: the launcher's verified APK stays for a retry after the backoff (a
+     * transient failure, qa-11-code #4) instead of being downloaded again. */
+    fun recordFailed(context: Context, appKey: String, releaseTag: String, keepPending: Boolean = false) {
         val state = load().toMutableMap()
-        val lastInstalledTag = state[appKey]?.lastInstalledTag
+        val current = state[appKey]
         state[appKey] = TrackedAppState(
-            lastInstalledTag,
+            current?.lastInstalledTag,
             lastFailedTag = releaseTag,
             lastFailedAtMs = System.currentTimeMillis(),
+            pending = current?.pending?.takeIf { keepPending && it.releaseTag == releaseTag },
+            refusedTag = current?.refusedTag,
+        )
+        save(context, state)
+    }
+
+    /** The launcher's [releaseTag] is refused for good (until the server advertises another): the
+     * pending APK is dropped (the caller deletes the file). */
+    fun recordRefused(context: Context, appKey: String, releaseTag: String) {
+        val state = load().toMutableMap()
+        val current = state[appKey]
+        state[appKey] = TrackedAppState(
+            current?.lastInstalledTag,
+            lastFailedTag = releaseTag,
+            lastFailedAtMs = System.currentTimeMillis(),
+            refusedTag = releaseTag,
         )
         save(context, state)
     }

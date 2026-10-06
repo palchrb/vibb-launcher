@@ -27,6 +27,16 @@ const val APP_UNINSTALL_PACKAGE_NAME_EXTRA = "package_name"
  * [AppInstallReceiver] skipping its cache-file cleanup on success, since installing over yourself
  * risks the process dying before that line gets to run - see [isLauncher].
  */
+/** What [AppInstaller.installSilently] did. */
+enum class InstallStart {
+    /** Committed - the result arrives at [AppInstallReceiver]. */
+    COMMITTED,
+    /** `beforeCommit` said not now: session abandoned, file kept, nothing to record. */
+    DEFERRED,
+    /** Writing or committing failed: session abandoned. */
+    FAILED,
+}
+
 object AppInstaller {
 
     /** [installKey] is [TrackedAppUpdate.id], stringified - an arbitrary-but-stable label for
@@ -39,11 +49,13 @@ object AppInstaller {
      * install is the launcher's own self-update without relying on a package-name string
      * comparison.
      *
-     * The launcher's own update (handy step 11) passes [beforeCommit]: the update fence goes up
-     * with the session id right before `commit()` - the point of no return (the kill follows
-     * seconds later, after verification). If anything throws after it ran and before the commit
-     * went through, [commitFailed] releases the fence. A session that wasn't committed is
-     * abandoned. Returns whether the commit went through. */
+     * The launcher's own update (handy step 11) passes [beforeCommit]: right before `commit()` -
+     * the point of no return (the kill follows seconds later, after verification) - it checks the
+     * update window again and puts the update fence up with the session id; `false` = don't
+     * commit now ([InstallStart.DEFERRED]: the session is abandoned, the file kept). If anything
+     * throws after it ran and before the commit went through, [commitFailed] releases the fence.
+     * A session that wasn't committed is abandoned; [deleteOnFailure] `false` keeps the file (the
+     * launcher's pending APK). */
     fun installSilently(
         context: Context,
         apkFile: File,
@@ -51,9 +63,10 @@ object AppInstaller {
         displayName: String,
         isLauncher: Boolean,
         releaseTag: String,
-        beforeCommit: ((sessionId: Int) -> Unit)? = null,
+        beforeCommit: ((sessionId: Int) -> Boolean)? = null,
         commitFailed: (() -> Unit)? = null,
-    ): Boolean {
+        deleteOnFailure: Boolean = true,
+    ): InstallStart {
         val packageInstaller = context.packageManager.packageInstaller
         val params =
             PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
@@ -64,6 +77,7 @@ object AppInstaller {
         var sessionId = -1
         var fenceRan = false
         var committed = false
+        var deferred = false
         try {
             sessionId = packageInstaller.createSession(params)
             packageInstaller.openSession(sessionId).use { session ->
@@ -99,26 +113,42 @@ object AppInstaller {
                     PendingIntent.getBroadcast(context, sessionId, resultIntent, flags)
                 if (beforeCommit != null) {
                     fenceRan = true
-                    beforeCommit(sessionId)
+                    if (!beforeCommit(sessionId)) {
+                        deferred = true
+                        return@use
+                    }
                 }
                 session.commit(pendingIntent.intentSender)
                 committed = true
             }
-            return true
+            if (deferred) {
+                Log.i(LOG_TAG, "Install of $installKey deferred right before the commit")
+                abandon(packageInstaller, sessionId)
+                return InstallStart.DEFERRED
+            }
+            return InstallStart.COMMITTED
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to start silent install of $installKey", e)
-            if (committed) return true
-            if (fenceRan) commitFailed?.invoke()
-            if (sessionId >= 0) {
-                try {
-                    packageInstaller.abandonSession(sessionId)
-                } catch (abandon: Exception) {
-                    Log.w(LOG_TAG, "Couldn't abandon session $sessionId", abandon)
-                }
-            }
-            apkFile.delete()
-            return false
+            if (committed) return InstallStart.COMMITTED
+            if (fenceRan && !deferred) commitFailed?.invoke()
+            if (sessionId >= 0) abandon(packageInstaller, sessionId)
+            if (deleteOnFailure) apkFile.delete()
+            return InstallStart.FAILED
         }
+    }
+
+    private fun abandon(packageInstaller: PackageInstaller, sessionId: Int) {
+        try {
+            packageInstaller.abandonSession(sessionId)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't abandon session $sessionId", e)
+        }
+    }
+
+    /** A session that needs user action can't go anywhere for a device-owner install - abandoned
+     * (qa-11-code #4), so it doesn't sit open. */
+    fun abandonSession(context: Context, sessionId: Int) {
+        if (sessionId >= 0) abandon(context.packageManager.packageInstaller, sessionId)
     }
 
     /** Silently uninstalls [packageName] - no confirmation dialog, same Device Owner privilege
