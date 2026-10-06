@@ -12,40 +12,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Kids MDM">
 <script src="/static/register-sw.js" defer></script>
-<script>
-// No POST may make the page jump to the top (server/CLAUDE.md). Every form posts and redirects
-// back, which used to land at the top. Remember the scroll position just before any form leaves
-// the page - a submit button (submit event) or script (form.submit(), as the auto-saving
-// onchange="this.form.submit()" controls do) - per path in sessionStorage for 20 s, and restore
-// it on the page that comes back. A redirect with a #fragment keeps its anchor instead. In the
-// head partial, so every page has it. No framework.
-(function () {
-    var KEY = "handy-scroll";
-    function remember() {
-        try {
-            sessionStorage.setItem(KEY, JSON.stringify({ path: location.pathname, y: window.scrollY, t: Date.now() }));
-        } catch (e) {}
-    }
-    document.addEventListener("submit", remember, true);
-    var nativeSubmit = HTMLFormElement.prototype.submit;
-    HTMLFormElement.prototype.submit = function () {
-        remember();
-        return nativeSubmit.apply(this, arguments);
-    };
-    var saved = null;
-    try {
-        saved = JSON.parse(sessionStorage.getItem(KEY) || "null");
-        sessionStorage.removeItem(KEY);
-    } catch (e) {}
-    if (saved && saved.path === location.pathname && Date.now() - saved.t < 20000 && !location.hash) {
-        if ("scrollRestoration" in history) history.scrollRestoration = "manual";
-        var restore = function () { window.scrollTo(0, saved.y); };
-        if (document.readyState === "loading") {
-            document.addEventListener("DOMContentLoaded", restore);
-        } else {
-            restore();
-        }
-        window.addEventListener("load", restore);
-    }
-})();
-</script>
+<!-- No POST may make the page jump to the top (server/CLAUDE.md): static/scroll-restore.js. Not
+     deferred, so form.submit() is hooked before any control can call it. -->
+<script src="/static/scroll-restore.js?v=1"></script>

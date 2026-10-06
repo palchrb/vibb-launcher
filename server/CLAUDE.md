@@ -152,13 +152,16 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 ## Fix round 2026-10-06 (emulator run, `docs/testing/2026-10-06-emulator-run.md`)
 
 - **No POST may make the page jump to the top - always return to the edited card.** Every form
-  posts and redirects back; `templates/partials/head.html` (included by every page template)
-  remembers the scroll position when any form leaves the page (submit event, and a wrapped
+  posts and redirects back; `static/scroll-restore.js` (loaded, not deferred, by
+  `templates/partials/head.html`, which every page template includes) remembers the scroll
+  position when any form leaves the page (submit event, and a wrapped
   `HTMLFormElement.prototype.submit` for the auto-saving `onchange="this.form.submit()"`
   controls) per path in sessionStorage for 20 s, and restores it on the page that comes back; a
   redirect with a `#fragment` (e.g. `#screen-lock` with a notice) keeps its anchor instead. A new
   page template must include the head partial (`pages_restore_scroll_after_auto_save` checks
-  every template); a new form needs nothing else as long as it redirects back to its own page.
+  every template and runs `node --test jstest/`, the script's behaviour tests, when node is
+  installed - CI always runs them); a new form needs nothing else as long as it redirects back to
+  its own page. External file, so a future CSP needs no inline-script exception.
 - **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of
   `models::SCREEN_TIMEOUTS` = 15/30/60/120/300/600, default 60; anything else is sent as 60),
   "Screen timeout" card on the device page (`POST /devices/{id}/screen-timeout`, 400 for other

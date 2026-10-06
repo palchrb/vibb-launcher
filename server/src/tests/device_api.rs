@@ -696,7 +696,22 @@ async fn screen_timeout_policy_form_and_report() {
 #[tokio::test]
 async fn pages_restore_scroll_after_auto_save() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("handy-scroll") && head.contains("HTMLFormElement.prototype.submit"));
+    assert!(head.contains("<script src=\"/static/scroll-restore.js"));
+    let script = std::fs::read_to_string("static/scroll-restore.js").unwrap();
+    assert!(script.contains("handy-scroll") && script.contains("proto.submit = function"));
+    // Its behaviour (path match, 20 s expiry, #fragment skip, the form.submit() hook) is tested
+    // with node in jstest/ - run here when node is installed, always in CI.
+    match std::process::Command::new("node")
+        .args(["--test", "jstest/"])
+        .output()
+    {
+        Ok(out) => assert!(
+            out.status.success(),
+            "node --test jstest/ failed:\n{}",
+            String::from_utf8_lossy(&out.stdout)
+        ),
+        Err(_) => eprintln!("node not installed - jstest/ skipped here (CI runs it)"),
+    }
     for entry in std::fs::read_dir("templates").unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|e| e == "html") {
@@ -719,6 +734,6 @@ async fn pages_restore_scroll_after_auto_save() {
         "/settings".to_string(),
     ] {
         let text = app.get_page(&page, &cookie).await.text();
-        assert!(text.contains("handy-scroll"), "{page}");
+        assert!(text.contains("/static/scroll-restore.js"), "{page}");
     }
 }
