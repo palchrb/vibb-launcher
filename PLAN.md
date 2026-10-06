@@ -237,6 +237,11 @@ launchable.
   low-battery shutdown) with the last known fix (no time for a fresh GPS fix), and
   an active fix + report when the battery drops to ~5% so a dying phone leaves a
   fresh position. Sudden power loss sends nothing; airplane mode means no network.
+- **Build hygiene (next commits, user 2026-10-06)**: remove deprecated API use and
+  build warnings — FcmSupport `deleteToken()`/`token` (Firebase), QuickControls
+  `WifiConfiguration`/`BluetoothAdapter.getDefaultAdapter()`, `annotationProcessor`
+  → `kapt`, `kapt.include.compile.classpath=false`, the PreferenceProcessor
+  warning; then treat new Kotlin warnings as errors in CI so the log stays clean.
 - **Recovery / no soft-brick** (2026-10-05): DISALLOW_FACTORY_RESET only blocks
   Settings; a recovery-mode wipe always works (first Jelly Star test: keys and
   menu). After a wipe, FRP asks for the phone's Google account if one was added,
