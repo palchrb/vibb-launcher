@@ -84,3 +84,27 @@ fun hardeningPlan(policy: HardeningPolicy?, managed: Boolean): HardeningPlan =
  * plan - an override doesn't change which policy is enforced) or calls are managed. */
 fun hardeningManaged(allowlist: List<String>?, callsManaged: Boolean): Boolean =
     allowlist != null || callsManaged
+
+/**
+ * What [AppEnforcer.apply] does about Android's backup service (Backup Manager, which sends app
+ * data to the Google account's backup) - see [BackupService] and docs/setup/google-account.md at
+ * the monorepo root. There is deliberately **no action that switches it on**: AOSP turns it off
+ * when a device owner is set and only the device owner can turn it on again, so nothing of ours
+ * ever does (BackupServiceInvariantsTest scans for it).
+ */
+enum class BackupServiceAction {
+    /** Leave it as it is: off already, unreadable, or the phone isn't managed. */
+    NONE,
+
+    /** It is on while the phone is managed: switch it off. */
+    TURN_OFF,
+}
+
+/**
+ * [managed] ([hardeningManaged]) and the state the device owner read ([enabled], `null` =
+ * unreadable). Like [hardeningPlan] there is no `overrideActive` parameter: the offline override
+ * and the pause never let it back on. Unlike the restrictions there is no server switch, and
+ * unmanaging doesn't undo anything - an unmanaged phone keeps whatever state it has (AOSP's off).
+ */
+fun backupServiceAction(managed: Boolean, enabled: Boolean?): BackupServiceAction =
+    if (managed && enabled == true) BackupServiceAction.TURN_OFF else BackupServiceAction.NONE

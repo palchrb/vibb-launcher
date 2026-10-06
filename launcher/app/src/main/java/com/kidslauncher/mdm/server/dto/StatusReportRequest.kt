@@ -39,6 +39,10 @@ data class StatusReportRequest(
     /** The screen timeout the phone has now (read back from Settings.System), seconds; `null` =
      * unreadable. See [com.kidslauncher.mdm.server.ScreenTimeout]. */
     val screenTimeoutSeconds: Int? = null,
+    /** Android's backup service (backup to the Google account) is on; `null` = not device owner or
+     * unreadable (left out of the JSON, like an older launcher). Kept off while managed - see
+     * [com.kidslauncher.mdm.server.BackupService]. */
+    val backupServiceEnabled: Boolean? = null,
     /** The update fence and the pending self-update (handy step 11) - see [UpdateFenceReport]. */
     val updateFence: UpdateFenceReport? = null,
     /** What the notification rule removed since the last report (handy step 11) - see

@@ -81,6 +81,20 @@ class HardeningTest {
     }
 
     @Test
+    fun `the backup service is only ever switched off, and only while managed`() {
+        assertEquals(BackupServiceAction.TURN_OFF, backupServiceAction(managed = true, enabled = true))
+        assertEquals(BackupServiceAction.NONE, backupServiceAction(managed = true, enabled = false))
+        // Unreadable: nothing to do (the next apply reads it again).
+        assertEquals(BackupServiceAction.NONE, backupServiceAction(managed = true, enabled = null))
+        // Unmanaged: left as it is - never switched on, not even to "undo" anything.
+        for (enabled in listOf(true, false, null)) {
+            assertEquals(BackupServiceAction.NONE, backupServiceAction(managed = false, enabled = enabled))
+        }
+        // There is no action that turns it on.
+        assertEquals(setOf(BackupServiceAction.NONE, BackupServiceAction.TURN_OFF), BackupServiceAction.entries.toSet())
+    }
+
+    @Test
     fun `managed means an enforced allowlist or managed calls`() {
         assertTrue(hardeningManaged(emptyList(), callsManaged = false))
         assertTrue(hardeningManaged(listOf("org.example.music"), callsManaged = false))

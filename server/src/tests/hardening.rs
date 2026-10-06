@@ -285,3 +285,114 @@ async fn rows_from_before_the_migration_get_the_defaults() {
     assert!(policy.hardening.disallow_debugging_features);
     assert!(!policy.hardening.disallow_safe_boot);
 }
+
+async fn report_backup(app: &TestApp, token: &str, backup: Option<Value>) {
+    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
+    if let Some(value) = backup {
+        report["backup_service_enabled"] = value;
+    }
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(token),
+            Some(report),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+}
+
+async fn stored_backup(app: &TestApp, id: i64) -> Option<bool> {
+    sqlx::query_scalar(
+        "SELECT backup_service_enabled FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+/// The "Phone hardening" card's part of it: the text between the card's form tag and its end.
+fn hardening_card(html: &str, id: i64) -> &str {
+    let start = html
+        .find(&format!("action=\"/devices/{id}/hardening\""))
+        .expect("hardening card");
+    let end = start + html[start..].find("</form>").expect("end of the card");
+    &html[start..end]
+}
+
+/// Google account on the phone (docs/setup/google-account.md, migrations/0041): the launcher
+/// reports whether Android's backup service is on. Off is one quiet line in the hardening card, on
+/// is a warning, and a report without it (an older launcher, or the phone couldn't read it) shows
+/// nothing.
+#[tokio::test]
+async fn backup_service_state_is_stored_and_shown() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let quiet = "Backup to Google: off";
+    let warning = "Backup to Google is on";
+
+    // No report yet.
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains(quiet) && !html.contains(warning));
+
+    // An older launcher: the field is missing - stored as NULL, nothing shown.
+    report_backup(&app, &token, None).await;
+    assert_eq!(stored_backup(&app, id).await, None);
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains(quiet) && !html.contains(warning), "{html}");
+
+    report_backup(&app, &token, Some(json!(false))).await;
+    assert_eq!(stored_backup(&app, id).await, Some(false));
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(hardening_card(&html, id).contains(quiet), "{html}");
+    assert!(!html.contains(warning));
+    // The page keeps the scroll position after the card's auto-saving switches (no jump to the top).
+    assert!(html.contains("/static/scroll-restore.js"));
+
+    report_backup(&app, &token, Some(json!(true))).await;
+    assert_eq!(stored_backup(&app, id).await, Some(true));
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(hardening_card(&html, id).contains(warning), "{html}");
+    assert!(!html.contains(quiet));
+
+    // Unknown again (an explicit null): only the latest report counts, so nothing is shown.
+    report_backup(&app, &token, Some(Value::Null)).await;
+    assert_eq!(stored_backup(&app, id).await, None);
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains(quiet) && !html.contains(warning), "{html}");
+}
+
+#[tokio::test]
+async fn backup_service_state_is_per_device() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (a, token_a) = app.enrolled_device("a").await;
+    let (b, _) = app.enrolled_device("b").await;
+    report_backup(&app, &token_a, Some(json!(true))).await;
+    assert!(
+        app.get_page(&format!("/devices/{a}"), &cookie)
+            .await
+            .text()
+            .contains("Backup to Google is on")
+    );
+    let html = app.get_page(&format!("/devices/{b}"), &cookie).await.text();
+    assert!(!html.contains("Backup to Google"));
+}

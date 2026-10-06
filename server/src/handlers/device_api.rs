@@ -618,8 +618,9 @@ pub async fn status(
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
           call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
           install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json, \
-          screen_timeout_seconds, update_fence_json, notification_cancels_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          screen_timeout_seconds, update_fence_json, notification_cancels_json, \
+          backup_service_enabled) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -647,6 +648,7 @@ pub async fn status(
     )
     .bind(&update_fence_json)
     .bind(&notification_cancels_json)
+    .bind(report.backup_service_enabled)
     .execute(&state.db)
     .await
     .ok();

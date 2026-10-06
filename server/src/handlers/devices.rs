@@ -273,6 +273,9 @@ struct DeviceDetailTemplate {
     screen_timeout_seconds: i64,
     screen_timeout_options: Vec<(i64, &'static str)>,
     screen_timeout_applied: Option<String>,
+    /// "Phone hardening" card: the latest report's `backup_service_enabled` - `Some(false)` is a
+    /// quiet line, `Some(true)` a warning, `None` (older launcher, unreadable) nothing.
+    backup_service_enabled: Option<bool>,
     /// "Launcher crashes" card (cleanup 2026-10-06): the newest crash reports.
     crashes: Vec<crate::crashes::DeviceCrash>,
 }
@@ -1016,6 +1019,9 @@ pub async fn view_device(
                 .as_ref()
                 .and_then(|s| s.screen_timeout_seconds)
                 .map(crate::models::screen_timeout_label),
+            backup_service_enabled: latest_status
+                .as_ref()
+                .and_then(|s| s.backup_service_enabled),
             title: device.name.clone(),
             calls_summary,
             call_warnings,

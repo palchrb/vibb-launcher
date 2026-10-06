@@ -80,6 +80,20 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `backup_service_enabled is reported under the server's key and left out when unknown`() {
+        val off = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, backupServiceEnabled = false)
+        val offJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), off)).jsonObject
+        assertEquals("false", offJson["backup_service_enabled"].toString())
+        val on = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, backupServiceEnabled = true)
+        val onJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), on)).jsonObject
+        assertEquals("true", onJson["backup_service_enabled"].toString())
+        // Unknown (not device owner, unreadable): absent, like a report from an older launcher.
+        val unknown = StatusReportRequest(lockReason = "NONE", kioskEngaged = true)
+        val unknownJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), unknown)).jsonObject
+        assertTrue("backup_service_enabled" !in unknownJson)
+    }
+
+    @Test
     fun `step 11 switches - missing means off, and the fallback never carries them`() {
         val none = ServerJson.decodeFromString(PolicyResponse.serializer(), "{}")
         assertEquals(false, none.updateFence)

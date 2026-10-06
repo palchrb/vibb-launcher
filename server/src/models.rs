@@ -270,6 +270,9 @@ pub struct DeviceStatus {
     /// The screen timeout the phone applied, seconds (migrations/0032). `None` from older
     /// launchers.
     pub screen_timeout_seconds: Option<i64>,
+    /// Android's backup service (backup to the Google account) is on (migrations/0041). `None`
+    /// from older launchers, or when the phone couldn't read it.
+    pub backup_service_enabled: Option<bool>,
     /// The phone's `update_fence` (handy step 11, migrations/0036), see
     /// `kiosk_escapes::UpdateFenceState`.
     pub update_fence_json: Option<String>,
@@ -636,6 +639,11 @@ pub struct StatusReportRequest {
     /// The screen timeout the phone has now (read back after applying the policy's), seconds.
     #[serde(default)]
     pub screen_timeout_seconds: Option<i64>,
+    /// Android's backup service (backup to the Google account) is on, read by the launcher as
+    /// device owner; it keeps it off while the phone is managed. Absent from older launchers and
+    /// when the phone couldn't read it.
+    #[serde(default)]
+    pub backup_service_enabled: Option<bool>,
     /// The update fence and the pending launcher update (handy step 11) - opaque, stored
     /// re-serialized and capped (`kiosk_escapes::sanitize_update_fence`).
     #[serde(default)]

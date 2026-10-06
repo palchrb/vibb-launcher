@@ -211,8 +211,13 @@ object AppEnforcer {
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
         // restrictions that stay on are (re)set at the end, after the always-on VPN.
         CallPolicyStore.ensureLoaded(context)
-        val hardening = hardeningPlan(policy?.hardening, hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed))
+        val managedForHardening = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
+        val hardening = hardeningPlan(policy?.hardening, managedForHardening)
         clearHardening(context, dpm, admin, hardening)
+        // Android's backup to Google stays off while managed (google-account runbook) - early, so
+        // nothing that throws below can skip it. Like the hardening, never lifted by the override
+        // or the pause, and nothing ever switches it on. Catches and logs everything itself.
+        BackupService.enforce(dpm, admin, managedForHardening)
 
         // Calls: never lifted by an override or pause. The dialer role first - whether our dialer
         // is in place decides the outgoing-call restriction below.

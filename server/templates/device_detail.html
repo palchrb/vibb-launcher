@@ -357,6 +357,13 @@
             Block safe mode
         </label>
         <p class="subtitle">Off by default, and switched on when you set the kid's PIN (safe mode would skip handy's lock). Safe mode starts the phone without the launcher, so the kid can use it unfiltered (the app restrictions above still apply there). It does not repair anything: the restrictions, the blocked USB debugging and the blocked factory reset all stay in safe mode. If a launcher update breaks the phone, the ways back are: this server sending a fixed launcher (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Only turn this on once this launcher version has been tested on the phone.</p>
+        {% match backup_service_enabled %}
+        {% when Some(true) %}
+        <div class="error">Backup to Google is on: Android may copy this phone's app data, call history, SMS and settings to its Google account. The launcher switches it off whenever the phone is managed (an app list or managed calls; the PIN and a pause don't change that) - if it is still on after the next sync, check the launcher's log ("BackupService").</div>
+        {% when Some(false) %}
+        <p class="subtitle">Backup to Google: off</p>
+        {% when None %}
+        {% endmatch %}
         <noscript><button type="submit">Save</button></noscript>
     </form>
 

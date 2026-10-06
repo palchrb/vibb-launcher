@@ -221,6 +221,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 playStoreSuspendable = PlayRuntime.storeSuspendable(context),
                 lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
                 screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
+                backupServiceEnabled = BackupService.reportedState(context),
                 updateFence = UpdateFence.report(context, decision.policy),
                 notificationCancels = com.kidslauncher.mdm.badges.NotificationRuleRuntime.report(),
             )
