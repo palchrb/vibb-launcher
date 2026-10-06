@@ -185,7 +185,7 @@ class KidSettingsActivity : UIObjectActivity() {
         }
         binding.kidSettingsBluetoothRow.visibility = if (rows?.bluetooth == true) View.VISIBLE else View.GONE
         if (rows?.bluetooth == true) {
-            val on = QuickControls.isBluetoothEnabled()
+            val on = QuickControls.isBluetoothEnabled(this)
             binding.kidSettingsBluetoothSwitch.setOnCheckedChangeListener(null)
             binding.kidSettingsBluetoothSwitch.isChecked = on
             binding.kidSettingsBluetoothSwitch.setOnCheckedChangeListener(bluetoothListener)

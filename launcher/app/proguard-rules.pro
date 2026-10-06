@@ -46,3 +46,8 @@
 -keep class go.** { *; }
 -keep class tsembed.** { *; }
 -keep class org.pcap4j.packet.** { *; }
+
+# dnsjava registers a java.net.spi.InetAddressResolverProvider (Java 18+ SPI). Android has no
+# such service and nothing loads it; R8 warned about the reference on every release build.
+-dontwarn java.net.spi.InetAddressResolverProvider
+-dontwarn org.xbill.DNS.spi.DnsjavaInetAddressResolverProvider

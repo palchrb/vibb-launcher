@@ -56,8 +56,8 @@ class BluetoothDevicesActivity : UIObjectActivity() {
 
         adapter = BluetoothDeviceAdapter(
             onPair = ::onPairTapped,
-            onConnect = { QuickControls.connectBluetoothDevice(it.address); refreshOne(it.address) },
-            onDisconnect = { QuickControls.disconnectBluetoothDevice(it.address); refreshOne(it.address) },
+            onConnect = { QuickControls.connectBluetoothDevice(this, it.address); refreshOne(it.address) },
+            onDisconnect = { QuickControls.disconnectBluetoothDevice(this, it.address); refreshOne(it.address) },
             onForget = ::onForgetTapped,
         )
         binding.bluetoothDevicesList.layoutManager = LinearLayoutManager(this)
@@ -103,7 +103,7 @@ class BluetoothDevicesActivity : UIObjectActivity() {
     private fun scan() {
         QuickControls.stopBluetoothScan(this, discoveryReceiver)
         discovered.clear()
-        QuickControls.bondedBluetoothDevices().forEach { discovered[it.address] = it }
+        QuickControls.bondedBluetoothDevices(this).forEach { discovered[it.address] = it }
         refreshList()
 
         binding.bluetoothDevicesStatusMessage.text = getString(R.string.bluetooth_devices_scanning)
@@ -146,14 +146,14 @@ class BluetoothDevicesActivity : UIObjectActivity() {
     }
 
     private fun refreshOne(address: String) {
-        QuickControls.bluetoothDeviceInfo(address)?.let { discovered[address] = it }
+        QuickControls.bluetoothDeviceInfo(this, address)?.let { discovered[address] = it }
         refreshList()
     }
 
     private fun onPairTapped(device: QuickControls.BluetoothDeviceInfo) {
         pairingAddress = device.address
         adapter.setPairing(device.address)
-        val started = QuickControls.pairBluetoothDevice(device.address)
+        val started = QuickControls.pairBluetoothDevice(this, device.address)
         if (!started) {
             pairingAddress = null
             adapter.setPairing(null)
@@ -165,7 +165,7 @@ class BluetoothDevicesActivity : UIObjectActivity() {
     }
 
     private fun onForgetTapped(device: QuickControls.BluetoothDeviceInfo) {
-        QuickControls.forgetBluetoothDevice(device.address)
+        QuickControls.forgetBluetoothDevice(this, device.address)
         discovered.remove(device.address)
         refreshList()
     }

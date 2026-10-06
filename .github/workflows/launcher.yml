@@ -98,7 +98,8 @@ jobs:
     - name: Build with Gradle
       # Debug, unsigned release, lint and unit tests. No release keystore here: the release
       # build comes out unsigned.
-      run: ./gradlew build -PrequireTsnet=true
+      # Kotlin warnings fail this build (app/build.gradle.kts, warningsAsErrors).
+      run: ./gradlew build -PrequireTsnet=true -PwarningsAsErrors=true
     - name: Upload APK
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:

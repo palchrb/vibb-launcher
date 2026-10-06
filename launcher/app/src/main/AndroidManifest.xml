@@ -375,6 +375,11 @@
         <meta-data
             android:name="firebase_messaging_auto_init_enabled"
             android:value="false" />
+        <!-- FCM registration by Firebase installation ID (firebase-messaging 25.1+, replacing the
+             deprecated getToken/onNewToken): push/FcmSupport.register, KidFcmService.onRegistered. -->
+        <meta-data
+            android:name="firebase_messaging_installation_id_enabled"
+            android:value="true" />
         <meta-data
             android:name="firebase_analytics_collection_deactivated"
             android:value="true" />

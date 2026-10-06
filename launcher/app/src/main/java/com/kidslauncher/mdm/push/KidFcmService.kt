@@ -60,8 +60,11 @@ class KidFcmService : FirebaseMessagingService() {
         SyncRunner.request(applicationContext, "fcm_deleted")
     }
 
-    override fun onNewToken(token: String) {
-        Log.i(LOG_TAG, "New FCM token (${fcmTokenHash(token)})")
+    /** FID registration (firebase-messaging 25.1+, replaces the deprecated `onNewToken`): the
+     * installation ID is what the server sends to. Also called when the ID changes. */
+    override fun onRegistered(installationId: String) {
+        val token = installationId
+        Log.i(LOG_TAG, "FCM registration (${fcmTokenHash(token)})")
         PushState.saveToken(applicationContext, token)
         // The next status report carries it; until the server has seen it work we stay on SSE.
         SyncRunner.request(applicationContext, "fcm_token")

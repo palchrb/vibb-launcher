@@ -163,6 +163,9 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+        // CI passes -PwarningsAsErrors=true (.github/workflows/launcher.yml): the build log has
+        // no Kotlin warnings, and a new one fails the build there (local builds only warn).
+        allWarningsAsErrors = providers.gradleProperty("warningsAsErrors").orNull == "true"
     }
     buildFeatures {
         buildConfig = true
@@ -232,7 +235,7 @@ dependencies {
     implementation(libs.squareup.okhttp)
     implementation(libs.squareup.okhttp.sse)
     implementation(libs.jonahbauer.android.preference.annotations)
-    annotationProcessor(libs.jonahbauer.android.preference.annotations)
+    kapt(libs.jonahbauer.android.preference.annotations)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.test.ext.junit)

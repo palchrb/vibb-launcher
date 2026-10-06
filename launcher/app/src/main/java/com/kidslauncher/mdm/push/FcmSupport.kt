@@ -6,6 +6,7 @@ import android.util.Log
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
+import com.google.firebase.installations.FirebaseInstallations
 import com.google.firebase.messaging.FirebaseMessaging
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.calls.CallPolicyStore
@@ -113,16 +114,27 @@ object FcmSupport {
         if (!ensureInitialized(context) || !gmsAvailable(context)) return
         PushState.markTokenRequested(context, now)
         try {
+            // FID registration (firebase-messaging 25.1+; getToken/deleteToken are deprecated):
+            // the "token" we report is the Firebase installation ID, which the server's HTTP v1
+            // `token` field accepts. Renewing deletes the installation, so the ID really changes
+            // (the server ignores re-reports of one it saw rejected). [needs device test]
             val messaging = FirebaseMessaging.getInstance()
+            val installations = FirebaseInstallations.getInstance()
             if (action == TokenAction.RENEW) {
-                Tasks.await(messaging.deleteToken(), TOKEN_TIMEOUT_S, TimeUnit.SECONDS)
+                try {
+                    Tasks.await(messaging.unregister(), TOKEN_TIMEOUT_S, TimeUnit.SECONDS)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "FCM unregister failed - deleting the installation anyway", e)
+                }
+                Tasks.await(installations.delete(), TOKEN_TIMEOUT_S, TimeUnit.SECONDS)
                 PushState.saveToken(context, null)
                 PushState.setServerKnewHash(context, null)
             }
-            val token = Tasks.await(messaging.token, TOKEN_TIMEOUT_S, TimeUnit.SECONDS)
+            Tasks.await(messaging.register(), TOKEN_TIMEOUT_S, TimeUnit.SECONDS)
+            val token = Tasks.await(installations.id, TOKEN_TIMEOUT_S, TimeUnit.SECONDS)
             if (!token.isNullOrBlank()) {
                 PushState.saveToken(context, token)
-                Log.i(LOG_TAG, "FCM token ${if (action == TokenAction.RENEW) "renewed" else "obtained"} (${fcmTokenHash(token)})")
+                Log.i(LOG_TAG, "FCM registration ${if (action == TokenAction.RENEW) "renewed" else "obtained"} (${fcmTokenHash(token)})")
             }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't get an FCM token", e)

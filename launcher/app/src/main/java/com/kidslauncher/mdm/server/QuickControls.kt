@@ -3,12 +3,12 @@ package com.kidslauncher.mdm.server
 import android.app.admin.DevicePolicyManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.provider.Settings
@@ -37,6 +37,10 @@ object QuickControlFeature {
  * bypassing its managed-config restriction - that motivated this).
  */
 object QuickControls {
+
+    /** The adapter via [BluetoothManager] (`BluetoothAdapter.getDefaultAdapter()` is deprecated). */
+    private fun bluetoothAdapter(context: Context): BluetoothAdapter? =
+        context.applicationContext.getSystemService(BluetoothManager::class.java)?.adapter
 
     /**
      * [WifiManager.setWifiEnabled] is deprecated for regular apps since Android 10, which always
@@ -81,7 +85,7 @@ object QuickControls {
     ): Boolean {
         return try {
             grantBluetoothConnectIfNeeded(context, dpm, admin)
-            val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+            val adapter = bluetoothAdapter(context) ?: return false
             @Suppress("DEPRECATION", "MissingPermission")
             if (enabled) adapter.enable() else adapter.disable()
         } catch (e: Exception) {
@@ -91,8 +95,8 @@ object QuickControls {
     }
 
     @Suppress("MissingPermission")
-    fun isBluetoothEnabled(): Boolean {
-        return BluetoothAdapter.getDefaultAdapter()?.isEnabled == true
+    fun isBluetoothEnabled(context: Context): Boolean {
+        return bluetoothAdapter(context)?.isEnabled == true
     }
 
     private fun grantBluetoothConnectIfNeeded(
@@ -309,7 +313,7 @@ object QuickControls {
         }
         val savedIdBySsid = saved.associate { it.SSID?.trim('"').orEmpty() to it.networkId }
         val currentSsid = saved
-            .firstOrNull { it.status == WifiConfiguration.Status.CURRENT }
+            .firstOrNull { it.status == android.net.wifi.WifiConfiguration.Status.CURRENT }
             ?.SSID?.trim('"')
 
         val results = try {
@@ -349,6 +353,12 @@ object QuickControls {
      * key-management bits when a password is given (standard "transition mode" pattern) rather
      * than trying to precisely tell WPA2 from WPA3 out of the scan result's capabilities string.
      *
+     * `WifiConfiguration` is deprecated as a whole since API 36 (in favour of network suggestions
+     * and specifiers, which can't save a system network for every app), but
+     * [WifiManager.addNetworkPrivileged] - the device-owner API this needs, not deprecated - still
+     * takes one, and [WifiManager.enableNetwork]/[WifiManager.removeNetwork] work on its ids. So
+     * the deprecation is suppressed here only, with the config built exactly as before.
+     *
      * There is no public callback-based connect API on this platform version (the documented
      * `WifiManager.connect(int, ActionListener)` is a hidden/system-only overload, not present in
      * the public SDK this app compiles against) - [WifiManager.enableNetwork] with
@@ -358,6 +368,7 @@ object QuickControls {
      * learn the real outcome (see `WifiNetworksActivity.pollForConnection`) - a wrong password
      * shows up as a silent connect/retry loop rather than a clean failure either way.
      */
+    @Suppress("DEPRECATION")
     fun connectToWifiNetwork(
         context: Context,
         ssid: String,
@@ -368,14 +379,14 @@ object QuickControls {
         val wm = wifiManager(context)
         return try {
             val networkId = savedNetworkId ?: run {
-                val config = WifiConfiguration().apply {
+                val config = android.net.wifi.WifiConfiguration().apply {
                     SSID = "\"$ssid\""
                     if (secured && !password.isNullOrEmpty()) {
-                        allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK)
-                        allowedKeyManagement.set(WifiConfiguration.KeyMgmt.SAE)
+                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK)
+                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.SAE)
                         preSharedKey = "\"$password\""
                     } else {
-                        allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE)
+                        allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE)
                     }
                 }
                 val result = wm.addNetworkPrivileged(config)
@@ -392,6 +403,8 @@ object QuickControls {
         }
     }
 
+    /** [WifiManager.removeNetwork] - deprecated with `WifiConfiguration`, see [connectToWifiNetwork]. */
+    @Suppress("DEPRECATION")
     fun forgetWifiNetwork(context: Context, networkId: Int): Boolean {
         return try {
             wifiManager(context).removeNetwork(networkId)
@@ -437,8 +450,8 @@ object QuickControls {
     }
 
     @Suppress("MissingPermission")
-    fun bondedBluetoothDevices(): List<BluetoothDeviceInfo> {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return emptyList()
+    fun bondedBluetoothDevices(context: Context): List<BluetoothDeviceInfo> {
+        val adapter = bluetoothAdapter(context) ?: return emptyList()
         return try {
             adapter.bondedDevices.map { it.toInfo() }
         } catch (e: Exception) {
@@ -451,8 +464,8 @@ object QuickControls {
      * `ACTION_BOND_STATE_CHANGED`) without needing a full rescan.
      */
     @Suppress("MissingPermission")
-    fun bluetoothDeviceInfo(address: String): BluetoothDeviceInfo? {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return null
+    fun bluetoothDeviceInfo(context: Context, address: String): BluetoothDeviceInfo? {
+        val adapter = bluetoothAdapter(context) ?: return null
         return try {
             adapter.getRemoteDevice(address).toInfo()
         } catch (e: Exception) {
@@ -477,7 +490,7 @@ object QuickControls {
     ): BroadcastReceiver? {
         selfGrantPermission(context, dpm, admin, android.Manifest.permission.BLUETOOTH_SCAN)
         grantBluetoothConnectIfNeeded(context, dpm, admin)
-        val adapter = BluetoothAdapter.getDefaultAdapter()
+        val adapter = bluetoothAdapter(context)
         if (adapter == null) {
             Log.w(LOG_TAG, "scanBluetoothDevices: no default BluetoothAdapter")
             return null
@@ -537,15 +550,15 @@ object QuickControls {
         }
         try {
             @Suppress("MissingPermission")
-            BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery()
+            bluetoothAdapter(context)?.cancelDiscovery()
         } catch (e: Exception) {
             // Ignore - best-effort cleanup.
         }
     }
 
     @Suppress("MissingPermission")
-    fun pairBluetoothDevice(address: String): Boolean {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+    fun pairBluetoothDevice(context: Context, address: String): Boolean {
+        val adapter = bluetoothAdapter(context) ?: return false
         return try {
             adapter.getRemoteDevice(address).createBond()
         } catch (e: Exception) {
@@ -561,8 +574,8 @@ object QuickControls {
      * crashing if some OS build ever removes/renames it.
      */
     @Suppress("MissingPermission")
-    fun forgetBluetoothDevice(address: String): Boolean {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+    fun forgetBluetoothDevice(context: Context, address: String): Boolean {
+        val adapter = bluetoothAdapter(context) ?: return false
         return try {
             val device = adapter.getRemoteDevice(address)
             val method = device.javaClass.getMethod("removeBond")
@@ -582,8 +595,8 @@ object QuickControls {
      * this breaks on some OS build, pairing/scanning/forgetting are unaffected.
      */
     @Suppress("MissingPermission")
-    fun connectBluetoothDevice(address: String): Boolean {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+    fun connectBluetoothDevice(context: Context, address: String): Boolean {
+        val adapter = bluetoothAdapter(context) ?: return false
         return try {
             val device = adapter.getRemoteDevice(address)
             val method = device.javaClass.getMethod("connect")
@@ -595,8 +608,8 @@ object QuickControls {
     }
 
     @Suppress("MissingPermission")
-    fun disconnectBluetoothDevice(address: String): Boolean {
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
+    fun disconnectBluetoothDevice(context: Context, address: String): Boolean {
+        val adapter = bluetoothAdapter(context) ?: return false
         return try {
             val device = adapter.getRemoteDevice(address)
             val method = device.javaClass.getMethod("disconnect")
