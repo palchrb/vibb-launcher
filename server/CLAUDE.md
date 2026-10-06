@@ -149,6 +149,30 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - **Device page**: the card shows privacy text (no Android code any more: forensic reading possible, bank/ID apps, no fingerprint, safe mode, don't reuse the PIN, ~100 tries a day), the phone's state, and warnings: launcher without `pin_lock_v1`, safe boot allowed, and every `inactive` but `no_pin` (`android_credential` with the removal runbook, `crash_guard`, `bad_hash`, `keyguard_not_disabled`, `unmanaged`). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The locate page explains what "Lock" does with and without a kid PIN (result "locked (handy lock)" / "locked (Android)").
 - Tests: `src/tests/step10.rs`, `kid_lock::tests`, `security::tests::pin_hash_shared_vector` (same vector as the launcher's `PinHashTest`).
 
+## Fix round 2026-10-06 (emulator run, `docs/testing/2026-10-06-emulator-run.md`)
+
+- **No POST may make the page jump to the top - always return to the edited card.** Every form
+  posts and redirects back; `templates/partials/head.html` (included by every page template)
+  remembers the scroll position when any form leaves the page (submit event, and a wrapped
+  `HTMLFormElement.prototype.submit` for the auto-saving `onchange="this.form.submit()"`
+  controls) per path in sessionStorage for 20 s, and restores it on the page that comes back; a
+  redirect with a `#fragment` (e.g. `#screen-lock` with a notice) keeps its anchor instead. A new
+  page template must include the head partial (`pages_restore_scroll_after_auto_save` checks
+  every template); a new form needs nothing else as long as it redirects back to its own page.
+- **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of
+  `models::SCREEN_TIMEOUTS` = 15/30/60/120/300/600, default 60; anything else is sent as 60),
+  "Screen timeout" card on the device page (`POST /devices/{id}/screen-timeout`, 400 for other
+  values), `PolicyResponse.screen_timeout_seconds` always sent (`policy_json_keys_snapshot`). The
+  launcher applies it as device owner (`setSystemSetting(SCREEN_OFF_TIMEOUT)`) and reports the
+  value it reads back as `screen_timeout_seconds` (`device_status`, kept only if 1 s..1 day),
+  shown on the card. Handy's PIN lock locks at screen-off, so this is the auto-lock delay.
+- **Vibb night wallpaper** (migration `0033`): built-in `vibb_night` (`#0C0C14`, sort 5, so first
+  and the default on phones added from now on; no fixed id). Existing phones don't get it
+  automatically - their list and shown wallpaper stay as they were.
+- **FCM**: the launcher now registers by Firebase installation ID (firebase-messaging 25.1+) and
+  reports the FID as its `fcm_token`; HTTP v1's `token` field accepts a FID during Firebase's
+  transition, so `fcm.rs` is unchanged (move to the `fid` field when it is retired).
+
 ## Tests
 
 `cargo test` runs in-process tests in `src/tests/` (and in CI): `build_router` (split out of `main()` for this) is driven directly with `tower::ServiceExt::oneshot`, against a fresh migrated SQLite file in a temp dir per test - no network, no background tasks. `TestApp` (`src/tests/mod.rs`) has helpers to create and enroll a device and send JSON requests with or without a bearer token; handlers extracting `ConnectInfo` get a fixed loopback address. A test that documents a known bug is marked `#[ignore = "..."]` until the fix lands - run `cargo test -- --ignored` to see them fail. Admin handlers can be called directly with `TestApp::state` (skipping the session/2FA middleware), or through the real middleware: `TestApp::admin_cookie()` seeds an onboarded admin with a fixed TOTP secret, logs in via `/login` + `/auth/verify-2fa` and returns the session cookie for `request_form` (urlencoded POSTs) and `get_page`. `policy_json_keys_snapshot` is the contract with the launcher's `PolicyResponse` DTO - update both sides together.

@@ -691,10 +691,23 @@ async fn screen_timeout_policy_form_and_report() {
     );
 }
 
-/// Every page with the app header restores the scroll position after an auto-saving form posts
-/// and redirects back (emulator run 2026-10-06).
+/// No POST may make the page jump to the top (server/CLAUDE.md): every page template includes the
+/// head partial with the scroll-restore script, and the rendered pages carry it.
 #[tokio::test]
 async fn pages_restore_scroll_after_auto_save() {
+    let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
+    assert!(head.contains("handy-scroll") && head.contains("HTMLFormElement.prototype.submit"));
+    for entry in std::fs::read_dir("templates").unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "html") {
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                text.contains("{% include \"partials/head.html\" %}"),
+                "{} lacks the head partial",
+                path.display()
+            );
+        }
+    }
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
@@ -702,9 +715,10 @@ async fn pages_restore_scroll_after_auto_save() {
         format!("/devices/{id}"),
         format!("/devices/{id}/calls"),
         "/schedules".to_string(),
+        "/dns".to_string(),
+        "/settings".to_string(),
     ] {
         let text = app.get_page(&page, &cookie).await.text();
         assert!(text.contains("handy-scroll"), "{page}");
-        assert!(text.contains("this.form.submit()"), "{page}");
     }
 }

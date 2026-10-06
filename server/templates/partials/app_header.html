@@ -30,37 +30,6 @@
 </nav>
 
 <script>
-// Auto-saving forms (onchange="this.form.submit()") and other posts redirect back to the same
-// page, which used to land at the top. Remember the scroll position just before the post (per
-// path, sessionStorage, 20 s) and restore it on the page that comes back. No framework.
-(function () {
-    var KEY = "handy-scroll";
-    function remember() {
-        try {
-            sessionStorage.setItem(KEY, JSON.stringify({ path: location.pathname, y: window.scrollY, t: Date.now() }));
-        } catch (e) {}
-    }
-    document.addEventListener("change", function (event) {
-        var onchange = event.target && event.target.getAttribute && event.target.getAttribute("onchange");
-        if (onchange && onchange.indexOf("submit") !== -1) remember();
-    }, true);
-    document.addEventListener("submit", remember, true);
-    var saved = null;
-    try {
-        saved = JSON.parse(sessionStorage.getItem(KEY) || "null");
-        sessionStorage.removeItem(KEY);
-    } catch (e) {}
-    if (saved && saved.path === location.pathname && Date.now() - saved.t < 20000 && !location.hash) {
-        if ("scrollRestoration" in history) history.scrollRestoration = "manual";
-        var restore = function () { window.scrollTo(0, saved.y); };
-        if (document.readyState === "loading") {
-            document.addEventListener("DOMContentLoaded", restore);
-        } else {
-            restore();
-        }
-        window.addEventListener("load", restore);
-    }
-})();
 (function () {
     var path = location.pathname;
     document.querySelectorAll(".bottom-nav-item").forEach(function (el) {
