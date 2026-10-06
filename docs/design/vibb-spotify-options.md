@@ -182,3 +182,11 @@ First step: the device spike (§ test plan) on a Play emulator image / the Jelly
 kill criteria in this doc. handy needs an "engine app" state for Spotify (installed, never
 hidden or suspended, not on Home, not launchable by the kid; activities only in PIN setup mode;
 paused by time rules).
+
+### Offline downloads (2026-10-06)
+Neither the Web API nor App Remote can trigger downloads (to confirm in the spike). Plan:
+a few fixed "container" playlists per kid (e.g. "Vibb – Musikk", "Vibb – Lydbøker") are
+switched to Download once in the Spotify app (PIN setup mode); the parent curates their
+contents from the PWA via the Web API (add/remove tracks/albums); Spotify auto-syncs
+downloaded playlists when online. Spike checks: new tracks in a downloaded playlist download
+while Spotify only runs in the background and is never shown; how long; Wi-Fi-only setting.
