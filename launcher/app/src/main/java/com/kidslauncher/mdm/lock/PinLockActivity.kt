@@ -33,8 +33,6 @@ import java.util.Locale
 
 private const val LOG_TAG = "PinLockActivity"
 private const val STATE_ENTERED = "entered"
-private const val KEY_MAX_DP = 72f
-private const val KEY_ROW_GAP_DP = 10f
 
 /**
  * Handy's own lock screen (step 10, design 10-lock-and-call-ui.md, mockup Lock.dc.html). Shown by
@@ -60,6 +58,8 @@ class PinLockActivity : AppCompatActivity() {
     private var finishingAfterUnlock = false
     private var startedLockTask = false
     private val keys = mutableListOf<View>()
+    /** [PinKeypadLayout.COMPACT_STEPS]: how much of the clock/date gave way to the keypad. */
+    private var compactStep = 0
 
     private val modeListener: () -> Unit = {
         if (PinLockRuntime.mode != LockMode.LOCKED && !isFinishing) leave()
@@ -179,7 +179,7 @@ class PinLockActivity : AppCompatActivity() {
             val rowView = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                    .apply { if (rowIndex > 0) topMargin = dp(KEY_ROW_GAP_DP) }
+                    .apply { if (rowIndex > 0) topMargin = dp(PinKeypadLayout.GAP_DP) }
             }
             for (label in row) {
                 val cell = FrameLayout(this).apply {
@@ -205,7 +205,7 @@ class PinLockActivity : AppCompatActivity() {
                         setOnClickListener { onDigit(label[0]) }
                     }
                 }
-                cell.addView(key, FrameLayout.LayoutParams(dp(KEY_MAX_DP), dp(KEY_MAX_DP), Gravity.CENTER))
+                cell.addView(key, FrameLayout.LayoutParams(dp(PinKeypadLayout.MIN_DP), dp(PinKeypadLayout.MIN_DP), Gravity.CENTER))
                 if (label.isNotEmpty()) keys += key
                 rowView.addView(cell)
             }
@@ -213,22 +213,40 @@ class PinLockActivity : AppCompatActivity() {
         }
     }
 
-    /** Keys at most 72 dp, smaller when the keypad's share of the screen is less (320x568). */
+    /**
+     * Keys sized to the keypad's measured height ([PinKeypadLayout]): 48-72 dp. Below 48 dp the
+     * date, then the clock's size, then the clock give way (one step per layout pass). The new
+     * params are set with [View.setLayoutParams] - mutating them in place left the measure cache
+     * of the rows untouched, so the first 2026-10-06 build kept 72 dp keys and clipped 7-8-9 and 0.
+     */
     private fun sizeKeys(keypadHeight: Int) {
         if (keypadHeight <= 0) return
-        val byHeight = (keypadHeight - 3 * dp(KEY_ROW_GAP_DP)) / 4
-        val byWidth = (binding.pinKeypad.width / 3) - dp(8f)
-        val size = minOf(dp(KEY_MAX_DP), byHeight, byWidth).coerceAtLeast(dp(40f))
-        var changed = false
-        for (key in keys) {
-            val params = key.layoutParams
-            if (params.width != size) {
-                params.width = size
-                params.height = size
-                changed = true
+        val density = resources.displayMetrics.density
+        var size = PinKeypadLayout.keySizePx(keypadHeight, binding.pinKeypad.width, density)
+        if (!PinKeypadLayout.fits(size, density) && compactStep < PinKeypadLayout.COMPACT_STEPS) {
+            compactStep++
+            applyCompactStep()
+            return
+        }
+        size = size.coerceAtLeast(dp(PinKeypadLayout.MIN_DP))
+        val changed = keys.filter { it.layoutParams.width != size }
+        if (changed.isEmpty()) return
+        binding.pinKeypad.post {
+            for (key in changed) {
+                key.layoutParams = key.layoutParams.apply {
+                    width = size
+                    height = size
+                }
             }
         }
-        if (changed) binding.pinKeypad.post { binding.pinKeypad.requestLayout() }
+    }
+
+    private fun applyCompactStep() {
+        binding.pinKeypad.post {
+            if (compactStep >= 1) binding.pinDate.visibility = View.GONE
+            if (compactStep >= 2) binding.pinClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, PinKeypadLayout.CLOCK_SMALL_SP)
+            if (compactStep >= 3) binding.pinClock.visibility = View.GONE
+        }
     }
 
     private fun onDigit(digit: Char) {
