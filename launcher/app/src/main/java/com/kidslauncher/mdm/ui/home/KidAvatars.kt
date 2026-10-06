@@ -122,8 +122,11 @@ object KidAvatars {
 
     /** Cache key of a rendered app icon: the app, the size and the density (QA 08 #5), plus the
      * parent's glyph and colour (design 14, [appIconKey]) - one key for the lookup and the render. */
-    fun iconKey(context: Context, key: String, sizePx: Int): String =
-        appIconKey(key, sizePx, context.resources.displayMetrics.densityDpi, displayOf(key))
+    fun iconKey(context: Context, key: String, sizePx: Int): String = iconKey(context, key, sizePx, displayOf(key))
+
+    /** [iconKey] for a choice already read - the render keys and draws the same one (qa-14-code #1). */
+    private fun iconKey(context: Context, key: String, sizePx: Int, display: AppDisplayEntry?): String =
+        appIconKey(key, sizePx, context.resources.displayMetrics.densityDpi, display)
 
     /** An already-rendered icon, or null. Never renders: safe on the main thread. */
     fun cachedAppIcon(context: Context, key: String, sizePx: Int): Bitmap? =
@@ -151,10 +154,11 @@ object KidAvatars {
      * The result is cached by app, size and density.
      */
     fun renderAppIcon(context: Context, key: String, icon: () -> Drawable, sizePx: Int): Bitmap {
-        val cacheKey = iconKey(context, key, sizePx)
-        iconCache.get(cacheKey)?.let { return it }
-        // The parent's glyph and colour (design 14) replace the app's own icon.
+        // The parent's glyph and colour (design 14) replace the app's own icon - read once, so a
+        // sync in between can't store one choice's bitmap under the other's key (qa-14-code #1).
         val display = displayOf(key)
+        val cacheKey = iconKey(context, key, sizePx, display)
+        iconCache.get(cacheKey)?.let { return it }
         val glyph = display?.icon?.let { AppGlyphs.ICONS[it] }
         if (display != null && glyph != null) {
             val tile = AppGlyphs.COLORS[display.color]?.tile

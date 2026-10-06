@@ -266,8 +266,8 @@ class Application : android.app.Application() {
             )
         }
 
-        // The parent's app names and icons (design 14), before the first list is drawn.
-        com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(this, reload = false)
+        // The first loadApps also loads the parent's app names and icons (design 14), off the main
+        // thread (qa-14-code #3).
         loadApps()
 
         createNotificationChannels(this)
@@ -331,8 +331,18 @@ class Application : android.app.Application() {
      * app names and icons changed ([com.kidslauncher.mdm.appdisplay.AppDisplay], design 14). */
     fun reloadApps() = loadApps()
 
+    /** The parent's app names and icons were read from the cached policy in this process. */
+    @Volatile
+    private var appDisplayLoaded = false
+
     private fun loadApps() {
         CoroutineScope(Dispatchers.Default).launch {
+            // Once per process, before the first list (it decodes the cached policy - never on
+            // the main thread, qa-14-code #3); later changes come from the sync's refresh.
+            if (!appDisplayLoaded) {
+                appDisplayLoaded = true
+                com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(applicationContext, reload = false)
+            }
             apps.postValue(getApps(packageManager, applicationContext))
         }
     }

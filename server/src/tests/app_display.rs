@@ -292,6 +292,14 @@ async fn refused_input_keeps_the_values_by_the_field() {
     .await
     .text();
     assert!(html.contains(r#"value="Chat""#), "the entered name is kept");
+    // The browser doesn't cut the name (it would count UTF-16 units; we count characters, and a
+    // refused save keeps the value - qa-14-code #4).
+    assert!(html.contains(&format!(r#"id="app-{ELEMENT}-label" name="label""#)));
+    assert!(!html.contains(&format!(
+        r#"id="app-{ELEMENT}-label" name="label" value="Chat" maxlength"#
+    )));
+    let partial = std::fs::read_to_string("templates/partials/app_display_form.html").unwrap();
+    assert!(!partial.contains("maxlength"));
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_display")
         .fetch_one(&app.db)
         .await

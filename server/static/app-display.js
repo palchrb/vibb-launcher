@@ -13,8 +13,10 @@
         var icon = form.querySelector('input[name="icon"]:checked');
         var color = form.querySelector('input[name="color"]:checked');
         if (!tile || !glyph || !own || !label) return;
-        tile.style.background = (color && color.getAttribute("data-tile")) || "#868E96";
         var key = icon ? icon.value : "";
+        // Without a glyph the tile only says "its own icon": the darker grey keeps that text at
+        // 4.5:1 (app_display::OWN_PREVIEW).
+        tile.style.background = key ? (color && color.getAttribute("data-tile")) || "#868E96" : "#5C6370";
         if (key) {
             glyph.src = "/static/app-icons/" + key + ".svg";
             glyph.hidden = false;

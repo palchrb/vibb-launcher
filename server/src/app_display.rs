@@ -20,6 +20,9 @@ pub const AUTO: &str = "auto";
 /// What the preview shows for [AUTO]: the launcher's neutral grey (QA #3 - the real colour comes
 /// from the app's icon on the phone).
 pub const AUTO_PREVIEW: &str = "#868E96";
+/// The preview tile without a glyph ("its own icon"): dark enough for its white text at 4.5:1
+/// (qa-14-code #4; white on [AUTO_PREVIEW] is only 3.3:1). Also in `static/app-display.js`.
+pub const OWN_PREVIEW: &str = "#5C6370";
 
 /// One entry of `launcher_ui.app_display` - every key always present. `label`/`icon` `null` = the
 /// app's own; `color` is [AUTO] or a key of [COLORS].
@@ -328,7 +331,11 @@ impl AppDisplayForm {
             package_name,
             summary: current.describe(),
             app_label,
-            preview_tile: tile_of(&color).to_string(),
+            preview_tile: if icon.trim().is_empty() {
+                OWN_PREVIEW.to_string()
+            } else {
+                tile_of(&color).to_string()
+            },
             label,
             icon,
             color,
@@ -437,6 +444,27 @@ mod tests {
             );
             assert!(!(r > 180 && g < 80 && b < 80), "{key} is red");
         }
+    }
+
+    /** qa-14-code #4: the "its own icon" text is white on [OWN_PREVIEW] at 4.5:1 or more. */
+    #[test]
+    fn the_own_icon_preview_is_readable() {
+        let rgb = u32::from_str_radix(OWN_PREVIEW.trim_start_matches('#'), 16).unwrap();
+        let channel = |c: u32| {
+            let v = (c & 0xFF) as f64 / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let lum = 0.2126 * channel(rgb >> 16) + 0.7152 * channel(rgb >> 8) + 0.0722 * channel(rgb);
+        assert!(1.05 / (lum + 0.05) >= 4.5);
+        let script = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("static/app-display.js"),
+        )
+        .unwrap();
+        assert!(script.contains(OWN_PREVIEW));
     }
 
     #[test]

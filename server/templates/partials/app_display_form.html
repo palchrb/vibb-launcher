@@ -19,7 +19,7 @@
         <div class="error">{{ error }}</div>
         {% endif %}
         <label for="{{ form.anchor }}-label">Name on the phone (at most 20 characters; empty = the app's own)</label>
-        <input type="text" id="{{ form.anchor }}-label" name="label" value="{{ form.label }}" maxlength="20" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}"{% if form.error_field == "label" %} autofocus{% endif %}>
+        <input type="text" id="{{ form.anchor }}-label" name="label" value="{{ form.label }}" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}"{% if form.error_field == "label" %} autofocus{% endif %}>
         <fieldset class="glyph-grid">
             <legend>Icon</legend>
             <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}> Its own</label>

@@ -107,6 +107,29 @@ object AppDisplay {
 
     fun label(packageName: String?): String? = entry(packageName)?.label
 
+    /**
+     * The name an app shows outside the app list - the time-rule screen, the contact sheet
+     * (qa-14-code #2): [displayLabel] of the parent's name, the kid's rename of that package and
+     * the app's own label.
+     */
+    fun shownLabel(context: Context, packageName: String): String {
+        val app = context.applicationContext as? com.kidslauncher.mdm.Application
+        val kidRename = try {
+            app?.getCustomAppNames()?.entries
+                ?.firstOrNull { (it.key as? com.kidslauncher.mdm.apps.AppInfo)?.packageName == packageName }
+                ?.value
+        } catch (e: Exception) {
+            null
+        }
+        val own = try {
+            val pm = context.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+        } catch (e: Exception) {
+            packageName
+        }
+        return displayLabel(label(packageName), kidRename, own)
+    }
+
     /** Reads the cached policy (`Ok` only - a corrupt or missing cache shows the apps' own names);
      * with [reload] a change reloads the app list. Returns true when the map changed. */
     fun refresh(context: Context, reload: Boolean = true): Boolean {

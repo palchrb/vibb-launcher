@@ -189,13 +189,7 @@ class LockActivity : UIObjectActivity() {
         val pm = packageManager
         // The parent's names (design 14), sorted by what the kid reads (QA #6).
         val labelled = packages.map { pkg ->
-            pkg to (
-                com.kidslauncher.mdm.appdisplay.AppDisplay.label(pkg) ?: try {
-                    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-                } catch (e: Exception) {
-                    pkg
-                }
-                )
+            pkg to com.kidslauncher.mdm.appdisplay.AppDisplay.shownLabel(this, pkg)
         }.sortedBy { it.second.lowercase() }
         for ((pkg, label) in labelled) {
             val launch = pm.getLaunchIntentForPackage(pkg) ?: continue
