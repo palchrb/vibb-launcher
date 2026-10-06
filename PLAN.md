@@ -248,6 +248,9 @@ launchable.
   WifiConfiguration confined to suppressed DO-only code, kapt, R8 dnsjava warning; Kotlin
   warnings fail CI (`-PwarningsAsErrors=true`). Left: kapt's javac "RELEASE_11" note from the
   PreferenceProcessor. Device tests: FCM after the FID switch, Wi-Fi/Bluetooth toggles.
+- **Provisioning (2026-10-06)**: QR carries locale/time zone (`nb_NO`/`Europe/Oslo`), the
+  launcher has the Android 12+ provisioning-mode/compliance activities, system language locked
+  while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
 - **Pending user decision**: drop the top-left back buttons on full pages
   (`KidHeader.SHOW_BACK_BUTTON`).
 - **Recovery / no soft-brick** (2026-10-05): DISALLOW_FACTORY_RESET only blocks
