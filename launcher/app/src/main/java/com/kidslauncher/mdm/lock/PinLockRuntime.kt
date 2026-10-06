@@ -108,6 +108,9 @@ object PinLockRuntime {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         OngoingCalls.addListener(callsListener)
+        // Design 17: a VoIP call's stored exemption keeps its package pinned from the first chrome
+        // refresh on, until the notification listener reports again (QA #4).
+        VoipCalls.init(app)
         // Off the main thread: the clock app for the alarm exemption, and the kiosk-off lock
         // helpers, so a screen-off never waits for PackageManager (qa-10-code #7).
         CoroutineScope(Dispatchers.IO).launch {
@@ -131,7 +134,7 @@ object PinLockRuntime {
                 Log.w(LOG_TAG, "Boot Home check failed", e)
                 false
             }
-            dispatch(app, LockEvent.ProcessStart(active, interactive(app), ourCall(), systemCall(app), homeFirst = homeFirst))
+            dispatch(app, LockEvent.ProcessStart(active, interactive(app), ourCall(), systemCall(app), homeFirst = homeFirst, voip = VoipCalls.phase))
             // The chrome of a lock that was LOCKED when the process died is still set; an inactive
             // lock must not leave it behind either. Same for the camera lock: engaged again when
             // LOCKED, released (idempotently) otherwise.
@@ -149,7 +152,7 @@ object PinLockRuntime {
         // The lock first: the chrome below may do binder calls (and, the first time with the kiosk
         // off, PackageManager work) - the lock screen's start must not wait for them (qa-10-code
         // #7). It only resumes after this returns, by when its lock-task packages are set.
-        if (result.showLock) show(context)
+        if (result.showLock) show(context, wake = result.wake)
         // Home was started first (design 16): the re-front check shows the lock if Home didn't.
         if (result.showLockLater) {
             refrontAttempt = 0
@@ -171,6 +174,8 @@ object PinLockRuntime {
             modeListeners.toList().forEach { it() }
         }
         if (result.showCall) showCall(context)
+        // Design 17: the VoIP app's call screen back over the lock (sent from the resumed lock).
+        if (result.showVoipCall && !VoipCalls.reopenCall(context)) Log.i(LOG_TAG, "No VoIP call screen to bring back")
         // LOCKED but not shown (the system dialer's call): the re-front loop waits for it to end.
         if (result.mode == LockMode.LOCKED && !result.showLock && !result.showLockLater && !lockResumed && before != LockMode.LOCKED) {
             refrontAttempt = 0
@@ -199,7 +204,9 @@ object PinLockRuntime {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 // The lock first: started now, it is drawn before the next screen-on.
                 rememberAlarm(app)
-                dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app)))
+                // The power button silences a VoIP ring (the lock stays its ring screen).
+                if (VoipCalls.phase == VoipPhase.RINGING) VoipRinger.stop(app)
+                dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app), VoipCalls.phase))
                 ScreenTimeTracker.update(app)
                 // Step 11: a screen-off may end the update fence in the new build, and starts the
                 // wait for the self-update window.
@@ -221,7 +228,7 @@ object PinLockRuntime {
                 }
                 // May start the time-rule screen - the PIN lock then goes above it.
                 TimeRulesRuntime.recheck(app)
-                dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app)))
+                dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase))
                 // Backstop for the migration (QA 10 #15): the Android credential is gone but no
                 // onPasswordChanged arrived - check now rather than at the next sync.
                 if (intent.action == Intent.ACTION_USER_PRESENT && inactive == LockInactive.ANDROID_CREDENTIAL && !deviceSecure(app)) {
@@ -236,6 +243,16 @@ object PinLockRuntime {
         val any = OngoingCalls.hasLiveCall
         if (ctx != null && callsSeen && !any) dispatch(ctx, LockEvent.CallsEnded(interactive(ctx)))
         callsSeen = any
+    }
+
+    /**
+     * From [VoipCalls] (main thread): a VoIP ring began - the lock wakes, rings and shows its card;
+     * the exemption ended - the lock comes back, as after a phone call (design 17).
+     */
+    fun onVoipPhase(context: Context, before: VoipPhase, after: VoipPhase) {
+        val app = context.applicationContext
+        if (after == VoipPhase.RINGING && before != VoipPhase.RINGING) dispatch(app, LockEvent.VoipRinging)
+        if (after == VoipPhase.NONE && before != VoipPhase.NONE) dispatch(app, LockEvent.VoipEnded(interactive(app)))
     }
 
     /** A time-rule screen was just started over everything: the PIN lock goes on top (QA 10 #4:
@@ -320,11 +337,13 @@ object PinLockRuntime {
     fun activeOrStored(context: Context): Boolean =
         mode != LockMode.DISABLED || PinLockStore.active(context.applicationContext)
 
-    fun show(context: Context) {
+    /** [wake]: turn the screen on for it (a VoIP ring, design 17 - [PinLockActivity.EXTRA_WAKE]). */
+    fun show(context: Context, wake: Boolean = false) {
         try {
             context.startActivity(
                 Intent(context, PinLockActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    .putExtra(PinLockActivity.EXTRA_WAKE, wake),
             )
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't start the lock screen", e)
@@ -341,7 +360,7 @@ object PinLockRuntime {
         yielding = null
         handler.removeCallbacks(refrontCheck)
         // During our call, the call screen goes back on top (qa-10-code #1).
-        dispatch(context.applicationContext, LockEvent.LockResumed(ourCall()))
+        dispatch(context.applicationContext, LockEvent.LockResumed(ourCall(), VoipCalls.phase))
     }
 
     fun onLockPaused() {
@@ -372,6 +391,7 @@ object PinLockRuntime {
             telecomInCall = telecom,
             emergencyFlow = emergencyFlow,
             alarmRinging = alarmLikelyRinging(rememberedAlarmMs, System.currentTimeMillis()),
+            voipCall = VoipCalls.phase != VoipPhase.NONE,
         )
         when (val action = refrontAction(inputs, refrontAttempt)) {
             RefrontAction.Stop -> yielding = null
@@ -504,7 +524,7 @@ object PinLockRuntime {
     fun lockNow(context: Context): Boolean {
         if (mode == LockMode.DISABLED) return false
         val app = context.applicationContext
-        onMain { dispatch(app, LockEvent.RemoteLock(ourCall(), systemCall(app))) }
+        onMain { dispatch(app, LockEvent.RemoteLock(ourCall(), systemCall(app), VoipCalls.phase)) }
         return true
     }
 
@@ -524,6 +544,7 @@ object PinLockRuntime {
             failures = backoff.failures,
             backoffUntilMs = if (wait > 0L) now.wallMs + wait else null,
             exemptYields = yields,
+            voipFsiDenied = VoipCalls.fsiDenied,
         )
     }
 
@@ -542,11 +563,21 @@ object PinLockRuntime {
     private fun interactive(context: Context): Boolean =
         context.getSystemService(PowerManager::class.java)?.isInteractive == true
 
-    private fun telecomInCall(context: Context): Boolean = try {
-        context.getSystemService(TelecomManager::class.java)?.isInCall == true
-    } catch (e: Exception) {
-        // No READ_PHONE_STATE: a telephony call still sets the audio mode.
-        context.getSystemService(AudioManager::class.java)?.mode == AudioManager.MODE_IN_CALL
+    /** A call the system dialer may show: Telecom's managed calls only - a self-managed app's
+     * call (WhatsApp, Signal, a game) never holds the lock open (design 17 QA #7, [managedCallActive]).
+     * Without READ_PHONE_STATE a telephony call still sets the audio mode. */
+    private fun telecomInCall(context: Context): Boolean {
+        val managed = try {
+            context.getSystemService(TelecomManager::class.java)?.isInManagedCall
+        } catch (e: Exception) {
+            null
+        }
+        val audioMode = try {
+            context.getSystemService(AudioManager::class.java)?.mode ?: AudioManager.MODE_NORMAL
+        } catch (e: Exception) {
+            AudioManager.MODE_NORMAL
+        }
+        return managedCallActive(managed, audioMode)
     }
 
     private fun ourCall(): Boolean = OngoingCalls.hasLiveCall

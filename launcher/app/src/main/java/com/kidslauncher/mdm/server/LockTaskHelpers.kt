@@ -140,6 +140,10 @@ data class LockTaskSetting(
  * The status bar is disabled while LOCKED **or** while the update fence is up ([fenced], step 11,
  * qa-11-design.md #4): the fence is an input here, so LockTaskChrome stays the only owner of the
  * status bar and a release always re-enables it when nothing else wants it off.
+ * [voipPackages] (design 17, QA #4/#6): while an allowed app's VoIP call rings or lives, LOCKED
+ * with the kiosk off also pins that package and the permission controller (mic/camera prompts)
+ * and sets the app-block bit, so the call app's other screens (links, viewers) can't open over the
+ * lock. With the kiosk on the list is untouched (the app is allowlisted).
  */
 fun lockTaskWhileLocked(
     kioskPackages: Set<String>?,
@@ -149,14 +153,21 @@ fun lockTaskWhileLocked(
     ownPackage: String,
     lockHelpers: Set<String>,
     fenced: Boolean = false,
+    voipPackages: Set<String> = emptySet(),
 ): LockTaskSetting = when {
     !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
     kioskPackages != null -> LockTaskSetting(
         kioskPackages, featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
     )
-    else -> LockTaskSetting(
-        setOf(ownPackage) + (lockHelpers - PLAY_CORE), PIN_LOCK_FEATURES_KIOSK_OFF, statusBarDisabled = true, createWindowsBlocked = true,
-    )
+    else -> {
+        val voip = voipPackages - PLAY_CORE
+        LockTaskSetting(
+            setOf(ownPackage) + (lockHelpers - PLAY_CORE) + voip,
+            if (voip.isEmpty()) PIN_LOCK_FEATURES_KIOSK_OFF else PIN_LOCK_FEATURES_KIOSK_OFF or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK,
+            statusBarDisabled = true,
+            createWindowsBlocked = true,
+        )
+    }
 }
 
 /**

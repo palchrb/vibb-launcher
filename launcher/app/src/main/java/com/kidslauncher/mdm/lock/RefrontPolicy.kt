@@ -14,13 +14,17 @@ data class RefrontInputs(
     val interactive: Boolean,
     /** One of our calls exists (our in-call screen is the call UI). */
     val ourCall: Boolean,
-    /** `TelecomManager.isInCall`: the system dialer shows a call (emergency calls). */
+    /** The system dialer shows a call (emergency calls): Telecom's `isInManagedCall` - never a
+     * self-managed app's call ([managedCallActive], design 17 QA #7). */
     val telecomInCall: Boolean,
     /** "Emergency call" was tapped on the lock less than [EMERGENCY_FLOW_MS] ago: the
      * emergency dialer / Telecom confirmation is in front. */
     val emergencyFlow: Boolean,
     /** The default clock app's alarm is probably ringing ([alarmLikelyRinging]). */
     val alarmRinging: Boolean,
+    /** An allowed app's VoIP call rings or is on ([VoipPhase] not NONE, design 17): its ring or
+     * call screen may be in front. */
+    val voipCall: Boolean = false,
 )
 
 /** How long after "Emergency call" the lock stays out of the way even without a call. */
@@ -33,7 +37,7 @@ sealed interface RefrontAction {
     /** Nothing to do (unlocked, in front, or the screen is off). */
     data object Stop : RefrontAction
 
-    /** An exempt screen is in front (our call, the system dialer, Telecom, the alarm): don't
+    /** An exempt screen is in front (our call, the system dialer, Telecom, a VoIP call, the alarm): don't
      * fight it; look again in [recheckMs]. Each such episode is counted and reported. */
     data class Yield(val reason: String, val recheckMs: Long = EXEMPT_RECHECK_MS) : RefrontAction
 
@@ -57,6 +61,7 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     !inputs.locked || inputs.lockResumed || !inputs.interactive -> RefrontAction.Stop
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
+    inputs.voipCall -> RefrontAction.Yield("voip")
     inputs.emergencyFlow -> RefrontAction.Yield("emergency")
     inputs.alarmRinging -> RefrontAction.Yield("alarm")
     else -> RefrontAction.Refront(refrontDelayMs(attempt + 1))

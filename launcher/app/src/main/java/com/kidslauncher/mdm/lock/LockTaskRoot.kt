@@ -33,6 +33,8 @@ enum class LockTaskEntry {
 /**
  * At the lock's resume ([fallbackDue] = false) and [LOCK_FALLBACK_MS] after asking Home (true).
  * [sinceHomeAskedMs]: elapsed time since the lock last started Home for this (`null` = never).
+ * [voipPinned]: a VoIP call's package is kept pinned (design 17) - the lock then starts no lock
+ * task at all: starting it removes pinned (PiP) tasks, and Element hangs up when its PiP goes (QA #10).
  */
 fun lockTaskEntry(
     running: Boolean,
@@ -40,8 +42,9 @@ fun lockTaskEntry(
     kioskOn: Boolean,
     sinceHomeAskedMs: Long?,
     fallbackDue: Boolean,
+    voipPinned: Boolean = false,
 ): LockTaskEntry = when {
-    running || !permitted -> LockTaskEntry.NONE
+    running || !permitted || voipPinned -> LockTaskEntry.NONE
     !kioskOn || fallbackDue -> LockTaskEntry.START_SELF
     sinceHomeAskedMs != null && sinceHomeAskedMs in 0 until HOME_ROOT_RETRY_MS -> LockTaskEntry.WAIT_FOR_HOME
     else -> LockTaskEntry.START_HOME

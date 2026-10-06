@@ -29,6 +29,8 @@ class RefrontPolicyTest {
         assertEquals(RefrontAction.Yield("system_call"), refrontAction(lostFront.copy(telecomInCall = true), 0))
         assertEquals(RefrontAction.Yield("emergency"), refrontAction(lostFront.copy(emergencyFlow = true), 0))
         assertEquals(RefrontAction.Yield("alarm"), refrontAction(lostFront.copy(alarmRinging = true), 0))
+        assertEquals("design 17: a VoIP call rings or lives", RefrontAction.Yield("voip"), refrontAction(lostFront.copy(voipCall = true), 0))
+        assertEquals(RefrontAction.Stop, refrontAction(lostFront.copy(voipCall = true, locked = false), 0))
     }
 
     @Test

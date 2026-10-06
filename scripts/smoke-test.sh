@@ -682,6 +682,13 @@ echo "   after that notification the contact sheet's Message opens that DM (befo
 echo "   ELEMENT_SESSION/ELEMENT_ROOM check the link itself."
 
 echo
+echo "== Manual step: a VoIP call over the PIN lock (design 17)"
+echo "   Element X allowed and a contact's messaging app, the phone LOCKED with the screen off: call the kid"
+echo "   from another Element account. The lock wakes and rings with 'Ringer deg i Element X' (Avvis/Svar);"
+echo "   Svar opens Element's ring screen, answer there - the lock stays away during the call (logcat"
+echo "   VoipCalls 'VoIP RINGING -> IN_CALL', PinLock 'exempt screen: voip') and comes back after hang-up."
+
+echo
 echo "== Manual step (never automated): emergency call"
 echo "   On the PIN lock tap 'Emergency call' -> 'Call 112?' and confirm only on the emulator"
 echo "   (it fakes 112) or on a phone in its emergency test mode. The emergency dialer/in-call UI must"

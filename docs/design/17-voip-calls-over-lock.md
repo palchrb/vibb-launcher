@@ -97,3 +97,61 @@ Checked against `lock/`, `badges/`, `LockTaskHelpers.kt`, `timerules/ScreenTime.
   during the grace. While exempt the lock doesn't start lock task (avoids the PiP hang-up, #10).
 - Gate = the phone path's answer (#8); screen time counts while exempt (#9); FSI-denied state is reported (#11).
 - Fix the existing hole (#7): the system-call yield uses `isInManagedCall`; self-managed apps go through this gate.
+
+## Implementation status (2026-10-06)
+
+Built: QA #12 with #1-#11 and the #7 fix, as decided. Launcher paths under `launcher/app/src/main/java/com/kidslauncher/mdm/`.
+- **Pure** (`lock/VoipCallPlan.kt`, `VoipCallPlanTest`): `voipCandidates` (the gate, #8: the effective call state -
+  managed with calls on = the contacts' messaging apps, never the SMS app; unmanaged = Element X, Signal, Molly;
+  calls off/no-calls rule/unknown = none; the runtime also requires the package unsuspended, which covers "allowlisted"
+  and a time-rule lock), `voipNoticeKind` (category/channel/flags only), `voipExemption` (ring -> 15 s grace ->
+  call foreground service AND audio `IN_COMMUNICATION` -> end; 3 h cap re-fronts but keeps the package pinned; a
+  second app's ring during a call is ignored; a reboot ends it; before the listener reports in a new process the
+  stored record keeps it pinned for 15 s, then only with the audio mode), `managedCallActive` (#7), `ringPlan` (#1).
+- **Reader** (`badges/VoipCallReader`, hooked into `BadgeListenerService`): category, channel id, flags, whether a
+  full-screen intent exists; keeps the ring's FSI and CallStyle decline action (`EXTRA_DECLINE_INTENT`) and the call
+  service notification's content intent - never the ring's content intent, never text (`VoipCallGuardTest`).
+- **Runtime** (`lock/VoipCalls`): the exemption in memory and CE prefs `voip_call` (package + start; FSI-denied
+  packages), re-derived in `PinLockRuntime.init` before the first chrome refresh, polled every 2 s while a call rings
+  or lives; tells `LockTaskChrome` (pin changes) and `PinLockRuntime` (phase changes). Counted as a live call by the
+  self-update gate, the update's Home and the boot Home.
+- **Lock**: `step` takes `voip` like `systemCall` (never started over a call; `ScreenOn` never covers the app's
+  screen), `VoipRinging` (LOCKED: shown with `setTurnScreenOn`, cleared 1 s after resume), `VoipEnded` (the lock comes
+  back, as after a phone call), `LockResumed` during the call re-sends the call notification's content intent
+  (`showVoipCall`). `RefrontPolicy` yields `"voip"`. The ring screen (`res/layout/view_voip_ring.xml` over the keypad):
+  the app's icon and name ("Ringer deg i Element X"), Avvis/Svar; Svar sends the FSI with
+  `ALLOW_IF_VISIBLE` (36; `ALLOWED` on 34/35) from the resumed lock, Avvis the decline action; a failure shows
+  "Klarte ikke å åpne samtalen". `VoipRinger`: default ringtone (`USAGE_NOTIFICATION_RINGTONE`) + vibration by ringer
+  mode and DND (calls from anyone), from a ring that starts while LOCKED until it ends; the power button silences it.
+  The app label is the app's own (design 14's override isn't wired into it).
+- **Kiosk off**: `lockTaskWhileLocked(voipPackages)` pins the package + the permission controller
+  (`AppEnforcer.resolveVoipHelpers`) and sets the app-block bit while pinned; the lock starts no lock task while a
+  package is pinned (`lockTaskEntry(voipPinned)`, #10). Kiosk on: the list is untouched.
+- **#7**: the lock's system-call yield uses `isInManagedCall` (audio `MODE_IN_CALL` without READ_PHONE_STATE).
+- **#9**: `screenTimeCounts(..., voipExempt)` - the app's screen counts while the lock steps aside.
+- **#11**: `lock_state.voip_fsi_denied` (always sent; server `kid_lock::LockState`, capped at 8 x 64 chars) and a
+  device-page warning with the `appops set <pkg> USE_FULL_SCREEN_INTENT allow` fix.
+- Strings `voip_ring_via`, `voip_ring_failed` (nb + en); `VIBRATE` permission.
+
+Known gaps (accepted / documented): any caller of an allowed app rings (who may call is set on vibb.me); during a
+call the app's other screens are reachable (kiosk on: every allowlisted app an Element intent reaches; kiosk off:
+blocked by the app-block bit, but a call that began while UNLOCKED runs without lock task, so Recents stays usable
+until it ends); with the kiosk off, unlocking after the 3 h cap while the lock is the lock-task root clears the call's
+task (AOSP `clearLockedTask`).
+
+Open device checks (emulator, then the Jelly Star; Element X from another account):
+- [ ] Screen off + LOCKED, kiosk on and off: the screen wakes, the ring screen shows, the ringtone is audible and
+  vibrates (ringer normal / vibrate / silent, DND).
+- [ ] Svar opens Element's IncomingCallActivity over the lock (BAL with `ALLOW_IF_VISIBLE`/`ALLOWED`), answering there
+  keeps the call through the ring -> foreground-service gap (no call loss, lock stays away), hang-up brings the lock back.
+- [ ] Avvis declines (the decline action), a timed-out ring returns to the lock; the power button silences.
+- [ ] Does SystemUI launch Element's FSI itself while the status bar is disabled (two ring screens)?
+- [ ] Element's call FGS notification: really `FLAG_FOREGROUND_SERVICE` on `call_foreground_service_channel`, and its
+  content intent reopens ElementCallActivity; the audio mode is `IN_COMMUNICATION` during the call.
+- [ ] Kill our process mid-call (`am crash`/`kill`): the package stays pinned, the call survives, the lock doesn't
+  cover it.
+- [ ] Kiosk off: PiP + screen-off doesn't hang up; a link in the chat during the call shows BlockedAppActivity, the
+  mic/camera prompt (permission controller) works.
+- [ ] A sideloaded Element without USE_FULL_SCREEN_INTENT: `FLAG_FSI_REQUESTED_BUT_DENIED` (0x4000) is set, the device
+  page warns.
+- [ ] A self-managed call (WhatsApp/Signal) no longer holds the lock open (`isInManagedCall`).

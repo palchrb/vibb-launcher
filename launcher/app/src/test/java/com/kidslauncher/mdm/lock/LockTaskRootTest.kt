@@ -31,6 +31,16 @@ class LockTaskRootTest {
     }
 
     @Test
+    fun `no lock task at all while a VoIP call's app is pinned (design 17 QA 10 - PiP hang-up)`() {
+        for (kiosk in listOf(true, false)) {
+            for (fallback in listOf(true, false)) {
+                assertEquals(LockTaskEntry.NONE, lockTaskEntry(false, true, kiosk, null, fallback, voipPinned = true))
+            }
+        }
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, false, null, false, voipPinned = false))
+    }
+
+    @Test
     fun `kiosk on - the lock always leaves through Home, stopping lock task only as the root`() {
         assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true))
         assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = true, lockTaskRunning = true))

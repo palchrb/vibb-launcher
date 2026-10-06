@@ -26,6 +26,7 @@ import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.databinding.ActivityPinLockBinding
+import com.kidslauncher.mdm.databinding.ViewVoipRingBinding
 import com.kidslauncher.mdm.server.OfflineOverride
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -68,6 +69,11 @@ class PinLockActivity : AppCompatActivity() {
         if (PinLockRuntime.mode != LockMode.LOCKED && !isFinishing) leave()
     }
 
+    private lateinit var voipRing: ViewVoipRingBinding
+    /** The package the ring screen was filled for. */
+    private var voipShownFor: String? = null
+    private var wakeRequested = false
+
     private val waitTicker: Runnable = object : Runnable {
         override fun run() {
             val ticker = this
@@ -93,9 +99,17 @@ class PinLockActivity : AppCompatActivity() {
             return
         }
         binding = ActivityPinLockBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        // The VoIP ring screen (design 17) lies over the keypad while an allowed app's call rings.
+        val frame = FrameLayout(this)
+        frame.addView(binding.root)
+        voipRing = ViewVoipRingBinding.inflate(layoutInflater, frame, true)
+        setContentView(frame)
         // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
+        com.kidslauncher.mdm.ui.KidInsets.apply(voipRing.root)
+        voipRing.voipRingAnswer.setOnClickListener { onVoipAnswer() }
+        voipRing.voipRingDecline.setOnClickListener { onVoipDecline() }
+        applyWake(intent)
         entered = savedInstanceState?.getString(STATE_ENTERED).orEmpty()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -113,7 +127,64 @@ class PinLockActivity : AppCompatActivity() {
         }
         binding.pinParentCode.setOnClickListener { showParentCodeDialog() }
         PinLockRuntime.addModeListener(modeListener)
+        VoipCalls.addListener(voipListener)
         render()
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyWake(intent)
+    }
+
+    /** Design 17: a VoIP ring starts the lock with the screen turned on; any other start doesn't.
+     * Cleared again once the lock is up, so a later start (the power button) can't wake it. */
+    private fun applyWake(intent: android.content.Intent?) {
+        val wake = intent?.getBooleanExtra(EXTRA_WAKE, false) == true
+        if (wake == wakeRequested) return
+        wakeRequested = wake
+        setTurnScreenOn(wake)
+    }
+
+    private val clearWake = Runnable { applyWake(null) }
+
+    private val voipListener: () -> Unit = { renderVoip() }
+
+    /** The ring screen: while an allowed app's call rings and the phone is LOCKED. */
+    private fun renderVoip() {
+        if (!::voipRing.isInitialized) return
+        val ringing = PinLockRuntime.mode == LockMode.LOCKED && VoipCalls.phase == VoipPhase.RINGING && VoipCalls.ringingPackage != null
+        if (!ringing) {
+            voipRing.root.visibility = View.GONE
+            voipRing.voipRingError.visibility = View.GONE
+            voipShownFor = null
+            return
+        }
+        val pkg = VoipCalls.ringingPackage
+        if (pkg != voipShownFor) {
+            voipShownFor = pkg
+            val label = VoipCalls.ringingLabel(this).orEmpty()
+            voipRing.voipRingName.text = label
+            voipRing.voipRingStatus.text = getString(R.string.voip_ring_via, label)
+            voipRing.voipRingIcon.setImageDrawable(
+                try {
+                    pkg?.let { packageManager.getApplicationIcon(it) }
+                } catch (e: Exception) {
+                    null
+                },
+            )
+            voipRing.voipRingError.visibility = View.GONE
+        }
+        voipRing.root.visibility = View.VISIBLE
+    }
+
+    /** Answer: the app's own ring screen (its full-screen intent), sent from this visible lock. */
+    private fun onVoipAnswer() {
+        if (!VoipCalls.answer(this)) voipRing.voipRingError.visibility = View.VISIBLE
+    }
+
+    private fun onVoipDecline() {
+        if (!VoipCalls.decline(this)) voipRing.voipRingError.visibility = View.VISIBLE
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -130,6 +201,11 @@ class PinLockActivity : AppCompatActivity() {
         }
         PinLockRuntime.onLockResumed(this)
         ensureLockTask(fallbackDue = false)
+        renderVoip()
+        if (wakeRequested) {
+            handler.removeCallbacks(clearWake)
+            handler.postDelayed(clearWake, WAKE_CLEAR_MS)
+        }
         // Step 11: the lock in front ends the update fence in the new build (lock task not required).
         com.kidslauncher.mdm.server.UpdateFence.onFront(this)
         handler.removeCallbacks(waitTicker)
@@ -150,6 +226,7 @@ class PinLockActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         PinLockRuntime.removeModeListener(modeListener)
+        VoipCalls.removeListener(voipListener)
         handler.removeCallbacksAndMessages(null)
         instances--
         super.onDestroy()
@@ -169,8 +246,9 @@ class PinLockActivity : AppCompatActivity() {
         val permitted = getSystemService(DevicePolicyManager::class.java)?.isLockTaskPermitted(packageName) == true
         val now = SystemClock.elapsedRealtime()
         val since = homeAskedAtElapsed.takeIf { it > 0L }?.let { now - it }
-        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue)) {
-            LockTaskEntry.NONE -> if (!running) Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
+        // Design 17 (QA #10): while a VoIP call's app is pinned the lock starts no lock task.
+        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipPinned = VoipCalls.pinnedPackage != null)) {
+            LockTaskEntry.NONE -> if (!running && !permitted) Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
             LockTaskEntry.START_SELF -> try {
                 startLockTask()
                 startedLockTask = true
@@ -453,6 +531,12 @@ class PinLockActivity : AppCompatActivity() {
         @Volatile
         var instances = 0
             private set
+
+        /** Start extra: turn the screen on for this start (a VoIP ring, design 17). */
+        const val EXTRA_WAKE = "com.kidslauncher.mdm.lock.extra.WAKE"
+
+        /** The wake has happened by then; the flag is cleared so no later start wakes the screen. */
+        private const val WAKE_CLEAR_MS = 1_000L
 
         /** When a lock last started Home to root lock task (elapsed realtime, 0 = never) - kept
          * across instances, so a Home that can't root it is asked at most every 3 s. */

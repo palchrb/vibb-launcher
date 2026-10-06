@@ -142,6 +142,10 @@ data class LockStateReport(
     val failures: Int,
     val backoffUntilMs: Long?,
     val exemptYields: Int,
+    /** Design 17 (QA #11): allowed VoIP apps whose last ring had no full-screen intent - Android
+     * dropped it (no USE_FULL_SCREEN_INTENT), so their calls can't ring over the lock. Package
+     * names only; always sent. */
+    val voipFsiDenied: List<String>,
 )
 
 /**

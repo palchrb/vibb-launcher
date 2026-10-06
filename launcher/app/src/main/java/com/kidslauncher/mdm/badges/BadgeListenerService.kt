@@ -13,6 +13,8 @@ import android.util.Log
  * reader, [ElementDmReader], looks at Element X's notifications only: their tag (the room ID), the
  * messaging person's key and the senders' keys (MXIDs) and the group flag, to learn a phone-book
  * contact's DM room - kept only in CE prefs ([com.kidslauncher.mdm.calls.ElementRoomStore]).
+ * Since design 17 [VoipCallReader] reads call-shaped notifications (category, channel, flags and
+ * the call intents, never text) for VoIP calls over the PIN lock.
  * Never titles, names or message bodies, and no key, tag or MXID is ever logged or reported
  * ([NotificationRuleRuntime] keeps package + channel counts only). Needs notification-listener
  * access, granted with adb at provisioning (see [BadgeStore.accessGranted]); without it Android
@@ -28,6 +30,7 @@ class BadgeListenerService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         NotificationRuleRuntime.detach(this)
         BadgeStore.update(emptyMap())
+        VoipCallReader.disconnected(this)
     }
 
     override fun onDestroy() {
@@ -38,18 +41,23 @@ class BadgeListenerService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn?.let {
             ElementDmReader.learn(this, it)
+            VoipCallReader.posted(this, it)
             applyRule(it, null)
         }
         recount()
     }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) = recount()
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        sbn?.let { VoipCallReader.removed(this, it) }
+        recount()
+    }
 
     /** Learns from and applies the rule to every active notification (connect, and after a
      * policy change), then recounts. */
     internal fun sweep() {
         val active = activeOrNull() ?: return
         active.forEach { ElementDmReader.learn(this, it) }
+        VoipCallReader.connected(this, active)
         if (NotificationRuleRuntime.policy != null) active.forEach { applyRule(it, active) }
         recount()
     }

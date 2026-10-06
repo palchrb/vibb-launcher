@@ -143,6 +143,48 @@ class PinLockStateTest {
         assertFalse(wantKeyguardDisabled(true, false, false))
     }
 
+    // ---- design 17: VoIP calls over the lock ------------------------------------------------
+
+    @Test
+    fun `a VoIP ring while LOCKED wakes the lock as its ring screen - unlocked, the app rings itself`() {
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true, wake = true), step(LockMode.LOCKED, LockEvent.VoipRinging))
+        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.VoipRinging))
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.VoipRinging))
+    }
+
+    @Test
+    fun `during a VoIP call the lock is never started over it - like the system dialer's call (QA 2)`() {
+        val inCall = VoipPhase.IN_CALL
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.UNLOCKED, LockEvent.ScreenOff(voip = inCall)))
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.ScreenOff(voip = inCall)))
+        assertEquals("its own FLAG_TURN_SCREEN_ON must not put the lock over it", LockStep(LockMode.LOCKED),
+            step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, voip = inCall)))
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.DISABLED, LockEvent.ProcessStart(active = true, interactive = true, voip = inCall)))
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.UNLOCKED, LockEvent.RemoteLock(voip = inCall)))
+        // Ringing: the lock (or the app's ring screen after Answer) is in front already.
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, voip = VoipPhase.RINGING)))
+        assertEquals("the power button only silences", LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.ScreenOff(voip = VoipPhase.RINGING)))
+        assertEquals("ringing while unlocked: a screen-off locks as always", LockStep(LockMode.LOCKED, showLock = true),
+            step(LockMode.UNLOCKED, LockEvent.ScreenOff(voip = VoipPhase.RINGING)))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.UNLOCKED, LockEvent.RemoteLock(voip = VoipPhase.RINGING)))
+    }
+
+    @Test
+    fun `the lock resumed during a VoIP call brings the app's call screen back, like ours`() {
+        assertEquals(LockStep(LockMode.LOCKED, showVoipCall = true), step(LockMode.LOCKED, LockEvent.LockResumed(ourCall = false, voip = VoipPhase.IN_CALL)))
+        assertEquals("our call first", LockStep(LockMode.LOCKED, showCall = true), step(LockMode.LOCKED, LockEvent.LockResumed(ourCall = true, voip = VoipPhase.IN_CALL)))
+        assertEquals("ringing: the card is the lock itself", LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.LockResumed(false, VoipPhase.RINGING)))
+        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.LockResumed(false, VoipPhase.IN_CALL)))
+    }
+
+    @Test
+    fun `a VoIP call ending brings the lock back, as after a phone call`() {
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.LOCKED, LockEvent.VoipEnded(interactive = true)))
+        assertEquals(LockStep(LockMode.LOCKED, showLock = true), step(LockMode.UNLOCKED, LockEvent.VoipEnded(interactive = false)))
+        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.VoipEnded(interactive = true)))
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.VoipEnded(interactive = false)))
+    }
+
     @Test
     fun `PIN entry`() {
         assertEquals(4, kidPinLength(null))

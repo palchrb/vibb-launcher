@@ -238,6 +238,9 @@
     <string name="pin_lock_parent_not_set">Ingen foreldrekode er satt for denne telefonen.</string>
     <string name="pin_lock_delete">Slett</string>
     <string name="pin_lock_dots">%1$d av %2$d siffer</string>
+    <!-- Design 17: the lock's ring screen for a VoIP call (no caller name). -->
+    <string name="voip_ring_via">Ringer deg i %1$s</string>
+    <string name="voip_ring_failed">Klarte ikke å åpne samtalen. Prøv igjen.</string>
     <string name="calls_calling_you">Ringer deg …</string>
     <string name="calls_waiting">Venter</string>
     <string name="calls_finished">Avsluttet</string>

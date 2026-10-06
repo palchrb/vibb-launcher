@@ -18,6 +18,11 @@ enum class LockMode { DISABLED, LOCKED, UNLOCKED }
  * role isn't held). The lock is started over our calls - its resume brings our call screen back on
  * top, inside the lock task ([LockStep.showCall]) - but never over the system dialer's call; the
  * re-front loop brings it back when that call ends.
+ *
+ * VoIP (design 17, [VoipPhase]): while an allowed app's call rings the lock is its ring screen (it
+ * wakes, rings, shows Answer/Decline - [LockEvent.VoipRinging]); during the call ([VoipPhase.IN_CALL])
+ * it is never started over it, like the system dialer's call, and its resume brings the app's call
+ * screen back ([LockStep.showVoipCall]); when the call ends it comes back ([LockEvent.VoipEnded]).
  */
 sealed interface LockEvent {
     /** An apply decided whether the lock is active ([lockActivation]). */
@@ -34,19 +39,25 @@ sealed interface LockEvent {
         val ourCall: Boolean = false,
         val systemCall: Boolean = false,
         val homeFirst: Boolean = false,
+        val voip: VoipPhase = VoipPhase.NONE,
     ) : LockEvent
 
     /**
      * The screen went off: always LOCKED, also during a call - a proximity blank doesn't change
      * interactivity, so an `ACTION_SCREEN_OFF` in a call is the power button or the timeout.
      */
-    data class ScreenOff(val ourCall: Boolean = false, val systemCall: Boolean = false) : LockEvent
+    data class ScreenOff(val ourCall: Boolean = false, val systemCall: Boolean = false, val voip: VoipPhase = VoipPhase.NONE) : LockEvent
 
     /** Screen on or USER_PRESENT: a backstop when the lock isn't showing. */
-    data class ScreenOn(val lockShowing: Boolean, val ourCall: Boolean = false, val systemCall: Boolean = false) : LockEvent
+    data class ScreenOn(
+        val lockShowing: Boolean,
+        val ourCall: Boolean = false,
+        val systemCall: Boolean = false,
+        val voip: VoipPhase = VoipPhase.NONE,
+    ) : LockEvent
 
     /** The lock screen came to the front. */
-    data class LockResumed(val ourCall: Boolean) : LockEvent
+    data class LockResumed(val ourCall: Boolean, val voip: VoipPhase = VoipPhase.NONE) : LockEvent
 
     /** The correct kid PIN, or the parent code. */
     data object Unlocked : LockEvent
@@ -56,7 +67,14 @@ sealed interface LockEvent {
     data class CallsEnded(val interactive: Boolean = true) : LockEvent
 
     /** The server's `lock` command (Locate page). */
-    data class RemoteLock(val ourCall: Boolean = false, val systemCall: Boolean = false) : LockEvent
+    data class RemoteLock(val ourCall: Boolean = false, val systemCall: Boolean = false, val voip: VoipPhase = VoipPhase.NONE) : LockEvent
+
+    /** An allowed app's VoIP call started ringing (design 17): LOCKED, the lock wakes and rings. */
+    data object VoipRinging : LockEvent
+
+    /** The VoIP exemption ended (hung up, declined, timed out, the cap); [interactive] as in
+     * [CallsEnded]. */
+    data class VoipEnded(val interactive: Boolean = true) : LockEvent
 
     /** A time-rule screen (LockActivity) was just started: the PIN lock goes on top of it. */
     data object TimeRuleShown : LockEvent
@@ -77,6 +95,11 @@ data class LockStep(
     /** Show the lock after [LOCK_FALLBACK_MS] unless it is in front by then: Home was started
      * first and shows it (design 16 QA #2 - never without a lock). */
     val showLockLater: Boolean = false,
+    /** Start the lock with the screen turned on - a VoIP ring (design 17). */
+    val wake: Boolean = false,
+    /** Bring the VoIP app's call screen in front of the lock (its call notification's content
+     * intent, sent from the visible lock - design 17, like [showCall]). */
+    val showVoipCall: Boolean = false,
 )
 
 /** How long the lock waits for Home to show it before it shows itself (design 16 QA #2). */
@@ -98,22 +121,31 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
             // Fail closed: nothing says the kid had unlocked. With the screen on (a crash while
             // the kid was in an app) the lock is shown at once (QA 10 #4) - or, when Home was
             // started first at boot, by Home with this as the fallback (design 16).
-            val show = event.interactive && !event.systemCall
+            val show = event.interactive && !event.systemCall && event.voip != VoipPhase.IN_CALL
             LockStep(LockMode.LOCKED, showLock = show && !event.homeFirst, showLockLater = show && event.homeFirst)
         }
 
-    is LockEvent.ScreenOff ->
-        if (mode == LockMode.DISABLED) {
-            LockStep(mode)
-        } else {
-            // Started at once while the screen is off, so it is drawn before the next screen-on.
-            LockStep(LockMode.LOCKED, showLock = !event.systemCall)
-        }
+    is LockEvent.ScreenOff -> when {
+        mode == LockMode.DISABLED -> LockStep(mode)
+        // A VoIP call: never started over it; while it rings and the lock (its ring screen) is
+        // up already, the power button only silences the ring (the runtime does that).
+        event.voip == VoipPhase.IN_CALL -> LockStep(LockMode.LOCKED)
+        event.voip == VoipPhase.RINGING && mode == LockMode.LOCKED -> LockStep(LockMode.LOCKED)
+        // Started at once while the screen is off, so it is drawn before the next screen-on.
+        else -> LockStep(LockMode.LOCKED, showLock = !event.systemCall)
+    }
 
     is LockEvent.ScreenOn ->
-        LockStep(mode, showLock = mode == LockMode.LOCKED && !event.lockShowing && !event.systemCall)
+        LockStep(
+            mode,
+            showLock = mode == LockMode.LOCKED && !event.lockShowing && !event.systemCall && event.voip == VoipPhase.NONE,
+        )
 
-    is LockEvent.LockResumed -> LockStep(mode, showCall = mode == LockMode.LOCKED && event.ourCall)
+    is LockEvent.LockResumed -> LockStep(
+        mode,
+        showCall = mode == LockMode.LOCKED && event.ourCall,
+        showVoipCall = mode == LockMode.LOCKED && !event.ourCall && event.voip == VoipPhase.IN_CALL,
+    )
 
     LockEvent.Unlocked ->
         if (mode == LockMode.LOCKED) LockStep(LockMode.UNLOCKED, recheckTimeRules = true) else LockStep(mode)
@@ -126,7 +158,22 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
     }
 
     is LockEvent.RemoteLock ->
-        if (mode == LockMode.DISABLED) LockStep(mode) else LockStep(LockMode.LOCKED, showLock = !event.systemCall)
+        if (mode == LockMode.DISABLED) {
+            LockStep(mode)
+        } else {
+            LockStep(LockMode.LOCKED, showLock = !event.systemCall && event.voip != VoipPhase.IN_CALL)
+        }
+
+    // Unlocked, the app's own ring screen and notification work as usual.
+    LockEvent.VoipRinging ->
+        if (mode == LockMode.LOCKED) LockStep(mode, showLock = true, wake = true) else LockStep(mode)
+
+    // As after a phone call: the lock comes back.
+    is LockEvent.VoipEnded -> when {
+        mode == LockMode.LOCKED -> LockStep(mode, showLock = true)
+        mode == LockMode.UNLOCKED && !event.interactive -> LockStep(LockMode.LOCKED, showLock = true)
+        else -> LockStep(mode)
+    }
 
     LockEvent.TimeRuleShown -> LockStep(mode, showLock = mode == LockMode.LOCKED)
 }

@@ -72,6 +72,8 @@
     <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Design 17: the PIN lock's own ring for a VoIP call vibrates (lock.VoipRinger). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- LOCKED_BOOT_COMPLETED for calls.BootCallReceiver (direct boot, task 15). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- One exact alarm at the next time-rule boundary (timerules.TimeRuleAlarm, handy step 6).

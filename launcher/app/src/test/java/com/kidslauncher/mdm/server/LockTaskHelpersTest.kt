@@ -234,6 +234,22 @@ class PinLockTaskTest {
     }
 
     @Test
+    fun `a VoIP call - kiosk off pins its app and the permission controller with the block bit (design 17)`() {
+        val element = "io.element.android.x"
+        val permissions = "com.google.android.permissioncontroller"
+        val locked = lockTaskWhileLocked(null, serverFeatures, false, locked = true, ownPackage = own, lockHelpers = helpers,
+            voipPackages = setOf(element, permissions, com.kidslauncher.mdm.play.PLAY_STORE))
+        assertEquals(setOf(own) + helpers + element + permissions, locked.packages)
+        assertEquals(PIN_LOCK_FEATURES_KIOSK_OFF or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK, locked.features)
+        assertTrue(locked.statusBarDisabled)
+        // Kiosk on: the list is never touched (the app is allowlisted); unlocked: as planned.
+        assertEquals(kiosk, lockTaskWhileLocked(kiosk, serverFeatures, false, true, own, helpers, voipPackages = setOf(element)).packages)
+        assertEquals(null, lockTaskWhileLocked(null, serverFeatures, false, false, own, helpers, voipPackages = setOf(element)).packages)
+        // No call: no block bit with the kiosk off.
+        assertEquals(PIN_LOCK_FEATURES_KIOSK_OFF, lockTaskWhileLocked(null, serverFeatures, false, true, own, helpers).features)
+    }
+
+    @Test
     fun `the lock's helpers are system packages only, never Settings, the camera or Play`() {
         val got = pinLockHelpers(
             emergencyDialer = ResolvedHelper("com.android.phone", system = true),

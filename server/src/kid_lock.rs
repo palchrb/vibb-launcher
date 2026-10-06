@@ -103,7 +103,14 @@ pub struct LockState {
     /// Times the lock stepped aside for an exempt screen (call, emergency dialer, alarm) since
     /// the last report (QA 10 #2: these are the only fights that are counted).
     pub exempt_yields: i64,
+    /// Design 17 (QA #11): allowed VoIP apps (Element X, Signal) whose last ring had no
+    /// full-screen intent - Android dropped it (no USE_FULL_SCREEN_INTENT), so their calls can't
+    /// ring over the lock. Package names, at most [MAX_FSI_DENIED] of 64 characters.
+    pub voip_fsi_denied: Vec<String>,
 }
+
+/// How many `voip_fsi_denied` packages are kept.
+const MAX_FSI_DENIED: usize = 8;
 
 /// `StatusReportRequest.lock_state` as stored: only the [LockState] fields, `inactive` capped at
 /// 64 characters; `None` for anything that isn't such an object.
@@ -113,6 +120,12 @@ pub fn sanitize_lock_state(value: &serde_json::Value) -> Option<String> {
     }
     let mut state: LockState = serde_json::from_value(value.clone()).ok()?;
     state.inactive = state.inactive.map(|i| i.chars().take(64).collect());
+    state.voip_fsi_denied = state
+        .voip_fsi_denied
+        .iter()
+        .take(MAX_FSI_DENIED)
+        .map(|p| p.chars().take(64).collect())
+        .collect();
     serde_json::to_string(&state).ok()
 }
 
@@ -197,6 +210,13 @@ pub fn lock_card(
     }
     if let Some(warning) = state.inactive.as_deref().and_then(inactive_warning) {
         card.warnings.push(warning);
+    }
+    for package in &state.voip_fsi_denied {
+        card.warnings.push(format!(
+            "{package} may not show full-screen notifications, so its calls can't ring over the \
+             lock (they only ring once the phone is unlocked). Allow it once with adb: \
+             adb shell appops set {package} USE_FULL_SCREEN_INTENT allow"
+        ));
     }
     card
 }
@@ -379,6 +399,39 @@ mod tests {
                 .iter()
                 .any(|l| l.contains("Wrong PINs in a row: 6"))
         );
+    }
+
+    #[test]
+    fn card_warns_about_voip_apps_without_full_screen_intents() {
+        let mut p = policy_with_pins(Some("1234"), Some("999999"));
+        p.hardening.disallow_safe_boot = true;
+        let state = LockState {
+            active: true,
+            voip_fsi_denied: vec!["io.element.android.x".to_string()],
+            ..Default::default()
+        };
+        let card = lock_card(&p, Some(&state), true, true, 0);
+        assert_eq!(card.warnings.len(), 1);
+        assert!(card.warnings[0].contains("io.element.android.x"));
+        assert!(card.warnings[0].contains("USE_FULL_SCREEN_INTENT"));
+    }
+
+    #[test]
+    fn voip_fsi_denied_is_capped_when_stored() {
+        let many: Vec<String> = (0..20).map(|i| format!("{}{i}", "p".repeat(100))).collect();
+        let stored = sanitize_lock_state(&serde_json::json!({ "voip_fsi_denied": many })).unwrap();
+        let state: LockState = serde_json::from_str(&stored).unwrap();
+        assert_eq!(state.voip_fsi_denied.len(), MAX_FSI_DENIED);
+        assert!(
+            state
+                .voip_fsi_denied
+                .iter()
+                .all(|p| p.chars().count() == 64)
+        );
+        // An older launcher sends none.
+        let old = sanitize_lock_state(&serde_json::json!({ "active": true })).unwrap();
+        let state: LockState = serde_json::from_str(&old).unwrap();
+        assert!(state.voip_fsi_denied.is_empty());
     }
 
     #[test]

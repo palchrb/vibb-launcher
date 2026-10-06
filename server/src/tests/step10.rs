@@ -281,12 +281,14 @@ async fn lock_state_is_stored_sanitized_and_capped() {
         json!({ "lock_state": {
             "active": true, "inactive": null, "locked": true, "failures": 5,
             "backoff_until_ms": 1_700_000_030_000_i64, "exempt_yields": 2,
+            "voip_fsi_denied": ["io.element.android.x"],
             "unlocked_at_ms": 1_700_000_000_000_i64, "pin": "1234",
         }}),
     )
     .await;
     let json: Value = serde_json::from_str(&stored(&app).await.unwrap()).unwrap();
     assert_eq!(json["failures"], 5);
+    assert_eq!(json["voip_fsi_denied"], json!(["io.element.android.x"]));
     assert_eq!(json["locked"], true);
     assert!(json.get("unlocked_at_ms").is_none(), "{json}");
     assert!(json.get("pin").is_none(), "{json}");

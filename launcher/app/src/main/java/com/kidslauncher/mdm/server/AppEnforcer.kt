@@ -731,6 +731,15 @@ object AppEnforcer {
         return helpers
     }
 
+    /**
+     * What a VoIP call over the lock needs pinned besides its app with the kiosk off (design 17,
+     * QA #6): the permission controller (the call app's microphone/camera prompts). System only.
+     */
+    internal fun resolveVoipHelpers(context: Context): Set<String> {
+        val (resolved, forbidden) = resolveHelpers(context)
+        return lockTaskHelpers(mapOf(HelperKind.PERMISSION_CONTROLLER to resolved[HelperKind.PERMISSION_CONTROLLER]), forbidden)
+    }
+
     private fun helperInfo(context: Context, pkg: String?): ResolvedHelper? = pkg?.let {
         try {
             val flags = context.packageManager.getApplicationInfo(it, PackageManager.MATCH_UNINSTALLED_PACKAGES).flags

@@ -38,7 +38,7 @@ object BootHome {
             appsManaged = currentPolicyDecision().policy?.allowlist != null,
             kioskOn = LauncherPreferences.mdm().kioskEnabled(),
             pinLockActive = lockActive,
-            liveCall = OngoingCalls.hasLiveCall,
+            liveCall = OngoingCalls.hasLiveCall || VoipCalls.liveCall,
             telecomInCall = SelfUpdate.telecomInCall(app),
         )
         if (!due) {

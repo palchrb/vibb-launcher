@@ -415,13 +415,15 @@ class PolicyResponseCompatTest {
             lockReason = "NONE", kioskEngaged = true,
             lockState = com.kidslauncher.mdm.server.dto.LockStateReport(
                 active = true, inactive = null, locked = true, failures = 5, backoffUntilMs = 1L, exemptYields = 2,
+                voipFsiDenied = emptyList(),
             ),
         )
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
         assertEquals(
-            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields"),
+            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields", "voip_fsi_denied"),
             json["lock_state"]!!.jsonObject.keys,
         )
+        assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
         val failed = CallState(
             state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, defaultDialer = null, systemDialer = null,
             smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,

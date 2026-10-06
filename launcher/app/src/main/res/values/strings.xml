@@ -293,6 +293,9 @@
     <string name="pin_lock_parent_not_set">No parent code has been set for this phone.</string>
     <string name="pin_lock_delete">Delete</string>
     <string name="pin_lock_dots">%1$d of %2$d digits</string>
+    <!-- Design 17: the lock's ring screen for a VoIP call (no caller name). -->
+    <string name="voip_ring_via">Calling you in %1$s</string>
+    <string name="voip_ring_failed">Couldn\'t open the call. Try again.</string>
     <string name="calls_calling_you">Calling you…</string>
     <string name="calls_waiting">On hold</string>
     <string name="calls_finished">Ended</string>

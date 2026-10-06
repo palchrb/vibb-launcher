@@ -194,6 +194,14 @@ class ScreenTimeTest {
     }
 
     @Test
+    fun `a VoIP call over the lock counts - the app's screen isn't free (design 17 QA 9)`() {
+        assertTrue(screenTimeCounts(true, false, false, false, pinLocked = true, voipExempt = true))
+        assertFalse("our lock (its ring screen) in front stays free", screenTimeCounts(true, false, true, false, pinLocked = true, voipExempt = true))
+        assertFalse("screen off", screenTimeCounts(false, false, false, false, pinLocked = true, voipExempt = true))
+        assertFalse("no call", screenTimeCounts(true, false, false, false, pinLocked = true, voipExempt = false))
+    }
+
+    @Test
     fun `an unreadable record fails closed`() {
         val lifts = listOf(Lift(40, TARGET_BUDGET, null, 30, 0), Lift(41, TARGET_RULE, 1, 30, 0))
         val ledger = unreadableLedger(clocks(wall(12), bootAt), zone, lifts)

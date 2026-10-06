@@ -21,6 +21,8 @@ private const val LOG_TAG = "LockTaskChrome"
  * calls outside apply()'s lock, both synchronized here, and both through the pure
  * [lockTaskWhileLocked], so neither can undo the other. Since step 11 the update fence is an
  * input too ([UpdateFence.fenced], [fenceChanged]): the status bar is off while LOCKED or fenced.
+ * Since design 17 a VoIP call's pinned package ([VoipCalls.pinnedPackage]) is one more input of the
+ * kiosk-off lock list; [VoipCalls] calls [refresh] whenever it changes.
  */
 object LockTaskChrome {
 
@@ -30,6 +32,10 @@ object LockTaskChrome {
     private var plan: Plan? = null
     @Volatile
     private var helpers: Set<String>? = null
+    /** The permission controller, pinned next to a VoIP call's app (design 17); resolved off the
+     * main thread at init. */
+    @Volatile
+    private var voipHelpers: Set<String>? = null
     private val statusBar = StatusBarLatch()
 
     /** Whether the kiosk is on as far as we know (the plan, else the last pinned state). */
@@ -53,9 +59,21 @@ object LockTaskChrome {
 
     /** Resolves the kiosk-off lock helpers ahead of the first screen-off (background thread). */
     fun prefetchHelpers(context: Context) {
+        if (voipHelpers == null) {
+            runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolveVoipHelpers(context) }.getOrNull()
+                ?.let { resolved -> synchronized(this) { if (voipHelpers == null) voipHelpers = resolved } }
+        }
         if (helpers != null) return
         val resolved = runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolvePinLockHelpers(context) }.getOrNull() ?: return
         synchronized(this) { if (helpers == null) helpers = resolved }
+    }
+
+    /** A VoIP call's package to keep pinned while LOCKED with the kiosk off, plus its helpers. */
+    private fun voipPackages(context: Context): Set<String> {
+        val pkg = VoipCalls.pinnedPackage ?: return emptySet()
+        val extra = voipHelpers ?: runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolveVoipHelpers(context) }
+            .getOrDefault(emptySet()).also { voipHelpers = it }
+        return setOf(pkg) + extra
     }
 
     /** After a LOCKED/not-LOCKED change. Main thread; a few binder calls. */
@@ -97,6 +115,7 @@ object LockTaskChrome {
         val setting = lockTaskWhileLocked(
             current.kioskPackages, current.features, current.restrictCreateWindows, locked, context.packageName, lockHelpers,
             fenced = UpdateFence.fenced,
+            voipPackages = if (locked && current.kioskPackages == null) voipPackages(context) else emptySet(),
         )
         apply(context, dpm, setting, kioskOn = current.kioskPackages != null)
     }
@@ -135,6 +154,7 @@ object LockTaskChrome {
             ownPackage = context.packageName,
             lockHelpers = lockHelpers,
             fenced = UpdateFence.fenced,
+            voipPackages = if (locked && !kiosk) voipPackages(context) else emptySet(),
         )
         apply(context, dpm, setting, kioskOn = kiosk)
     }

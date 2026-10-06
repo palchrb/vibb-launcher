@@ -71,6 +71,7 @@ object ScreenTimeTracker {
         freeScreenInFront = resumedFree.isNotEmpty(),
         freeScreenSharesScreen = resumedFree.any { it.isInMultiWindowMode || it.isInPictureInPictureMode },
         pinLocked = com.kidslauncher.mdm.lock.PinLockRuntime.chromeLocked,
+        voipExempt = com.kidslauncher.mdm.lock.VoipCalls.exempt,
     )
 
     /** Folds the running stretch into the ledger and decides whether to keep counting. */

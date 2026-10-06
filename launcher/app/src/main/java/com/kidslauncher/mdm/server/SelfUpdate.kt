@@ -199,7 +199,8 @@ object SelfUpdate {
     fun windowInputs(context: Context, pending: PendingSelfUpdate): UpdateWindowInputs = UpdateWindowInputs(
         now = ZonedDateTime.now(),
         screenOffForMs = screenOffForMs(context),
-        liveCall = OngoingCalls.hasLiveCall || telecomInCall(context) != false,
+        // A VoIP call over the lock counts too (design 17 QA #4): the update would drop its pin.
+        liveCall = OngoingCalls.hasLiveCall || telecomInCall(context) != false || com.kidslauncher.mdm.lock.VoipCalls.liveCall,
         emergency = emergencyRecent(context),
         pendingForMs = System.currentTimeMillis() - pending.downloadedAtMs,
         overdueMs = overdueMs,
@@ -311,7 +312,7 @@ object SelfUpdate {
         val bring = bringHomeAfterUpdate(
             appsManaged = decision?.allowlist != null,
             kioskOn = com.kidslauncher.mdm.preferences.LauncherPreferences.mdm().kioskEnabled(),
-            liveCall = OngoingCalls.hasLiveCall,
+            liveCall = OngoingCalls.hasLiveCall || com.kidslauncher.mdm.lock.VoipCalls.liveCall,
             telecomInCall = telecomInCall(app),
             pinLockActive = PinLockRuntime.activeOrStored(app),
         )
