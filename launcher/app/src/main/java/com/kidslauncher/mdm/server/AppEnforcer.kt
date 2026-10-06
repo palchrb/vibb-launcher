@@ -50,6 +50,8 @@ private val OWN_CALL_PERMISSIONS = listOf(
     android.Manifest.permission.CALL_PHONE,
     android.Manifest.permission.READ_PHONE_STATE,
     android.Manifest.permission.READ_CALL_LOG,
+    // Only to delete blocked calls after 30 days (calls.BlockedCallLog, cleanup 2026-10-06).
+    android.Manifest.permission.WRITE_CALL_LOG,
 )
 
 /** `Telephony.Sms.Intents.ACTION_SMS_EMERGENCY_CB_RECEIVED` (system API). */

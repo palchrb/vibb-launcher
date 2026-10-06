@@ -162,8 +162,8 @@ async fn main() {
         state.clone(),
     ));
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
-    tokio::task::spawn(handlers::dns_filter::run_dns_event_pruning(state.clone()));
-    tokio::task::spawn(handlers::locate::run_location_pruning(state.clone()));
+    // Blocked domains, location history and status history (src/retention.rs).
+    tokio::task::spawn(retention::run_pruning(state.clone()));
     push::spawn(state.clone());
 
     let app = build_router(state, session_layer);
@@ -240,6 +240,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/devices/{id}/location-policy",
             post(handlers::locate::update_location_policy),
+        )
+        .route(
+            "/devices/{id}/location-retention",
+            post(handlers::locate::update_location_retention),
         )
         .route(
             "/devices/{id}/command/locate",
@@ -427,6 +431,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             post(handlers::dns_filter::set_device_blocklist_override),
         )
         .route("/dns/log", get(handlers::dns_filter::show_dns_log))
+        .route(
+            "/dns/log/{device_id}",
+            post(handlers::dns_filter::set_dns_log),
+        )
         .route("/settings", get(handlers::settings::settings_hub))
         .route(
             "/settings/provisioning",

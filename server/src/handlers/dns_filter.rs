@@ -6,15 +6,17 @@
 //! - same shape as `handlers::devices::update_policy`.
 
 use askama::Template;
-use axum::Form;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect};
+use axum::{Extension, Form};
 use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::AppState;
 use crate::dns_engine;
 use crate::models::{Device, DeviceDnsEvent, DnsBlocklist, DnsCustomDomain, DnsFilterSettings};
+use crate::security::CurrentAdmin;
 
 /// One blocklist feed as shown on a specific device's row - `effective_enabled`
 /// already resolves the global default against any `device_blocklist_overrides`
@@ -314,6 +316,9 @@ struct DnsLogTemplate {
     selected: Option<Device>,
     selected_id: i64,
     events: Vec<DeviceDnsEvent>,
+    /// The selected phone's opt-in (`device_policy.dns_log_enabled`, off by default).
+    log_enabled: bool,
+    retention_days: i64,
 }
 
 /// Blocked-domain log admin page - near-identical shape to
@@ -345,6 +350,14 @@ pub async fn show_dns_log(
     };
 
     let selected_id = selected.as_ref().map(|d| d.id).unwrap_or(0);
+    let log_enabled: bool =
+        sqlx::query_scalar("SELECT dns_log_enabled FROM device_policy WHERE device_id = ?")
+            .bind(selected_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(false);
 
     Html(
         DnsLogTemplate {
@@ -353,10 +366,72 @@ pub async fn show_dns_log(
             selected,
             selected_id,
             events,
+            log_enabled,
+            retention_days: crate::retention::DNS_LOG_RETENTION_DAYS,
         }
         .render()
         .unwrap(),
     )
+}
+
+/// The per-phone blocked-domain log switch (cleanup 2026-10-06), on the Blocked activity page:
+/// off by default; while on, the phone reports blocked domains and they are kept
+/// `retention::DNS_LOG_RETENTION_DAYS`. Switching it off deletes the phone's log at once.
+/// One auto-saving checkbox (missing = off); 404 for an unknown device; nudges the phone.
+pub async fn set_dns_log(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Path(device_id): Path<i64>,
+    Form(form): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    let enabled = form.contains_key("dns_log_enabled");
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let updated = sqlx::query(
+            "UPDATE device_policy SET dns_log_enabled = ?, updated_at = datetime('now') \
+             WHERE device_id = ?",
+        )
+        .bind(enabled)
+        .bind(device_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if updated > 0 && !enabled {
+            sqlx::query("DELETE FROM device_dns_events WHERE device_id = ?")
+                .bind(device_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok::<u64, sqlx::Error>(updated)
+    }
+    .await;
+    match result {
+        Ok(0) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(_) => {
+            crate::security::record_security_event(
+                &state.db,
+                "dns_log_changed",
+                Some(&admin.username),
+                None,
+                Some(&format!(
+                    "device {device_id}: {}",
+                    if enabled { "on" } else { "off" }
+                )),
+            )
+            .await;
+            let _ = state.command_notify.send(device_id);
+            Redirect::to(&format!("/dns/log?device={device_id}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id, %err, "couldn't save the blocked-domain log switch");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed.",
+            )
+                .into_response()
+        }
+    }
 }
 
 pub async fn delete_custom_domain(
@@ -398,22 +473,5 @@ pub async fn run_blocklist_refresh(state: AppState) {
     loop {
         interval.tick().await;
         dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
-    }
-}
-
-/// Keeps the blocked-domain log bounded - same shape as
-/// `handlers::locate::run_location_pruning`, just a longer retention window
-/// (60 vs 30 days) since this log is lower-volume and higher conversational
-/// value ("did my kid try to visit X") than a location trail.
-pub async fn run_dns_event_pruning(state: AppState) {
-    let mut interval = tokio::time::interval(Duration::from_secs(60 * 60 * 24));
-    loop {
-        interval.tick().await;
-        sqlx::query(
-            "DELETE FROM device_dns_events WHERE received_at < datetime('now', '-60 days')",
-        )
-        .execute(&state.db)
-        .await
-        .ok();
     }
 }

@@ -66,6 +66,16 @@
             <p class="subtitle">A fix uses GPS and some battery, and the phone shows its location indicator while it takes one.</p>
             <noscript><button type="submit">Save</button></noscript>
         </form>
+        <form method="post" action="/devices/{{ device.id }}/location-retention" style="margin-top:12px;">
+            <label for="location_retention">Keep the location history for</label>
+            <select id="location_retention" name="days" onchange="this.form.submit()">
+                {% for d in retention_choices %}
+                <option value="{{ d }}" {% if *d == location_retention %}selected{% endif %}>{% if *d == 1 %}1 day{% else %}{{ d }} days{% endif %}</option>
+                {% endfor %}
+            </select>
+            <p class="subtitle">Older positions are deleted. The newest one is always kept, so this page can show where the phone was last seen.</p>
+            <noscript><button type="submit">Save</button></noscript>
+        </form>
     </div>
 
     <div class="card" style="position:relative; z-index:0; overflow:hidden; padding:0;">

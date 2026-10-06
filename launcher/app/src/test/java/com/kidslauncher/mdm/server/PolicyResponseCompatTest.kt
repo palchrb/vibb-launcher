@@ -94,6 +94,15 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `the blocked-domain log is off unless the server says on`() {
+        assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").dnsLogEnabled)
+        assertEquals(true, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"dns_log_enabled":true}""").dnsLogEnabled)
+        // No usable cache: no log.
+        val on = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"dns_log_enabled":true}""")
+        assertEquals(false, LastEnforcedPlan.of(on).toPolicy().dnsLogEnabled)
+    }
+
+    @Test
     fun `step 11 status keys are the server's - update_fence and notification_cancels`() {
         val report = StatusReportRequest(
             lockReason = "NONE",

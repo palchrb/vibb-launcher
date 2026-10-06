@@ -9,7 +9,7 @@
     <div class="page-header">
         <h1>Blocked activity</h1>
     </div>
-    <p class="subtitle">What the on-device filter has blocked recently, so you can see if something's worth a conversation.</p>
+    <p class="subtitle">What the on-device filter has blocked recently, so you can see if something's worth a conversation. The log is off for every phone until you switch it on for that phone here; while it's on, entries are kept {{ retention_days }} days.</p>
 
     {% if devices.is_empty() %}
     <p class="empty-state">No devices yet.</p>
@@ -25,9 +25,21 @@
     </div>
 
     {% if let Some(device) = selected %}
+    <form method="post" action="/dns/log/{{ device.id }}" class="card" id="dns-log-switch">
+        <h2>Blocked-domain log for {{ device.name }}</h2>
+        <label class="checkbox-row">
+            <input type="checkbox" name="dns_log_enabled" value="on" {% if log_enabled %}checked{% endif %} onchange="this.form.submit()">
+            Keep a log of blocked domains for this phone
+        </label>
+        <p class="subtitle">Off by default. When on, the phone reports each blocked domain (at most once per 10 minutes per domain) and the server keeps it for {{ retention_days }} days. Switching it off deletes this phone's log right away. Filtering works the same either way.</p>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
     <div class="card">
         <h2>Recent blocks for {{ device.name }}</h2>
-        {% if events.is_empty() %}
+        {% if !log_enabled %}
+        <p class="subtitle">The log is off for this phone.</p>
+        {% else if events.is_empty() %}
         <p class="subtitle">Nothing blocked yet.</p>
         {% else %}
         <table>

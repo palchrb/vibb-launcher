@@ -231,6 +231,7 @@ pub(crate) async fn build_policy(
         ),
         update_fence: policy.update_fence,
         notification_auto_cancel: policy.notification_auto_cancel,
+        dns_log_enabled: policy.dns_log_enabled,
         override_pin_hash: policy.override_pin_hash,
         override_pin_salt: policy.override_pin_salt,
         quick_controls_mask: policy.quick_controls_mask,
@@ -511,6 +512,18 @@ pub async fn dns_events(
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
     Json(events): Json<Vec<DnsEventReport>>,
 ) -> impl IntoResponse {
+    // The log is a per-phone opt-in (off by default): an older launcher that still reports is
+    // answered 204 and nothing is stored.
+    let enabled: Option<bool> =
+        sqlx::query_scalar("SELECT dns_log_enabled FROM device_policy WHERE device_id = ?")
+            .bind(device.id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
+    if enabled != Some(true) {
+        return StatusCode::NO_CONTENT;
+    }
     for event in events.into_iter().take(200) {
         sqlx::query(
             "INSERT INTO device_dns_events (device_id, domain, category, blocked_at) \

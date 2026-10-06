@@ -10,7 +10,6 @@ use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse, Json, Redirect};
 use axum::{Extension, Form};
 use std::collections::HashMap;
-use std::time::Duration;
 
 use crate::AppState;
 use crate::models::{Device, DeviceCommand, DeviceLocation};
@@ -31,6 +30,9 @@ struct LocateTemplate {
     location_mode: String,
     location_interval: i64,
     intervals: Vec<i64>,
+    /// Days of location history kept (`device_policy.location_retention_days`) and the choices.
+    location_retention: i64,
+    retention_choices: Vec<i64>,
     /// The newest fix: "12 min ago (±25 m)", or none yet.
     last_fix: Option<String>,
     /// `captured_at` of the newest fix ("" if none) - the page waits for a newer one after
@@ -118,15 +120,23 @@ async fn render_locate_page(
 
     let selected_id = selected.as_ref().map(|d| d.id).unwrap_or(0);
 
-    let (location_mode, location_interval): (String, i64) = sqlx::query_as(
-        "SELECT location_mode, location_interval_minutes FROM device_policy WHERE device_id = ?",
-    )
-    .bind(selected_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_else(|| ("on_request".to_string(), 30));
+    let (location_mode, location_interval, location_retention): (String, i64, i64) =
+        sqlx::query_as(
+            "SELECT location_mode, location_interval_minutes, location_retention_days \
+             FROM device_policy WHERE device_id = ?",
+        )
+        .bind(selected_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| {
+            (
+                "on_request".to_string(),
+                30,
+                crate::retention::DEFAULT_LOCATION_RETENTION_DAYS,
+            )
+        });
 
     let newest = sqlx::query_as::<_, DeviceLocation>(
         "SELECT * FROM device_locations WHERE device_id = ? ORDER BY captured_at DESC, id DESC \
@@ -154,6 +164,8 @@ async fn render_locate_page(
             location_mode,
             location_interval,
             intervals: crate::time_rules::LOCATION_INTERVALS.to_vec(),
+            location_retention,
+            retention_choices: crate::retention::LOCATION_RETENTION_DAYS.to_vec(),
             last_fix,
             last_fix_at,
             waiting_for_fix,
@@ -283,6 +295,64 @@ pub async fn locate(
     Redirect::to(&format!("/devices/locate?device={id}&requested=1"))
 }
 
+/// How long this phone's location history is kept (`POST /devices/{id}/location-retention`,
+/// `days` = one of `retention::LOCATION_RETENTION_DAYS`; cleanup 2026-10-06). Older fixes are
+/// deleted at once - the newest one always stays - and by the hourly pruning from then on.
+/// 400 for another value, 404 for an unknown device; nothing is sent to the phone.
+pub async fn update_location_retention(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Path(id): Path<i64>,
+    Form(form): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    let Some(days) = form
+        .get("days")
+        .and_then(|d| d.trim().parse::<i64>().ok())
+        .filter(|d| crate::retention::LOCATION_RETENTION_DAYS.contains(d))
+    else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "Unknown retention period",
+        )
+            .into_response();
+    };
+    let result = sqlx::query(
+        "UPDATE device_policy SET location_retention_days = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
+    )
+    .bind(days)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(done) if done.rows_affected() == 0 => {
+            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            security::record_security_event(
+                &state.db,
+                "location_retention_changed",
+                Some(&admin.username),
+                None,
+                Some(&format!("device {id}: {days} days")),
+            )
+            .await;
+            if let Err(err) = crate::retention::prune(&state.db).await {
+                tracing::error!(%err, "pruning after a retention change failed");
+            }
+            Redirect::to(&format!("/devices/locate?device={id}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "failed to save the location retention");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed. Check the server log.",
+            )
+                .into_response()
+        }
+    }
+}
+
 /// The location policy: `mode` off / on_request / interval, `interval_minutes` from
 /// `time_rules::LOCATION_INTERVALS` (kept as is unless the mode is "interval"). 400 on an unknown
 /// value, 404 for an unknown device; nudges the phone.
@@ -391,18 +461,4 @@ pub async fn wipe(
     )
     .await;
     Redirect::to(&format!("/devices/locate?device={id}")).into_response()
-}
-
-/// Keeps the location trail bounded - same shape as the other scheduled
-/// background loops in this project (`handlers::backups::run_scheduled_backups`,
-/// `handlers::tracked_apps::run_scheduled_tracked_app_sync`).
-pub async fn run_location_pruning(state: AppState) {
-    let mut interval = tokio::time::interval(Duration::from_secs(60 * 60 * 24));
-    loop {
-        interval.tick().await;
-        sqlx::query("DELETE FROM device_locations WHERE received_at < datetime('now', '-30 days')")
-            .execute(&state.db)
-            .await
-            .ok();
-    }
 }

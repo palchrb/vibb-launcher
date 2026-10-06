@@ -140,3 +140,337 @@ async fn journal_media_is_deleted_once() {
     // Nothing there any more: a no-op at every later start.
     assert!(!crate::retention::remove_journal_media(&media).await);
 }
+
+async fn count(db: &SqlitePool, sql: &str) -> i64 {
+    sqlx::query_scalar(sql).fetch_one(db).await.unwrap()
+}
+
+#[tokio::test]
+async fn retention_migration_deletes_the_old_dns_log_and_defaults() {
+    let (db, _dir) = migrated_before(39).await;
+    let device: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES ('kid') RETURNING id")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO device_policy (device_id, kiosk_desired) VALUES (?, 1)")
+        .bind(device)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO device_dns_events (device_id, domain, category, blocked_at) \
+         VALUES (?, 'ads.example', 'Ads', '2026-10-01T10:00:00Z')",
+    )
+    .bind(device)
+    .execute(&db)
+    .await
+    .unwrap();
+    finish(&db).await;
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM device_dns_events").await,
+        0
+    );
+    let (log, days): (bool, i64) = sqlx::query_as(
+        "SELECT dns_log_enabled, location_retention_days FROM device_policy WHERE device_id = ?",
+    )
+    .bind(device)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(!log);
+    assert_eq!(days, 7);
+}
+
+async fn policy(app: &super::TestApp, token: &str) -> serde_json::Value {
+    app.request(
+        axum::http::Method::GET,
+        "/api/devices/policy",
+        Some(token),
+        None,
+    )
+    .await
+    .json()
+}
+
+#[tokio::test]
+async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
+    use axum::http::{Method, StatusCode};
+    let app = super::TestApp::new().await;
+    let (id, token) = app.enrolled_device("kid").await;
+    assert_eq!(policy(&app, &token).await["dns_log_enabled"], false);
+    let events = serde_json::json!([
+        { "domain": "ads.example", "category": "Ads", "blocked_at": "2026-10-06T10:00:00Z" }
+    ]);
+    // Off: answered, never stored (an older launcher still reports).
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/dns-events",
+            Some(&token),
+            Some(events.clone()),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        count(&app.db, "SELECT COUNT(*) FROM device_dns_events").await,
+        0
+    );
+
+    // Unauthenticated: nothing changes.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/dns/log/{id}"),
+            None,
+            &[("dns_log_enabled", "on")],
+        )
+        .await;
+    // Not signed in: sent to the login page, nothing written.
+    assert_ne!(
+        res.location(),
+        Some(format!("/dns/log?device={id}").as_str())
+    );
+    assert_eq!(policy(&app, &token).await["dns_log_enabled"], false);
+
+    let cookie = app.admin_cookie().await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/dns/log/{id}"),
+            Some(&cookie),
+            &[("dns_log_enabled", "on")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/dns/log?device={id}").as_str())
+    );
+    assert_eq!(policy(&app, &token).await["dns_log_enabled"], true);
+    app.request(
+        Method::POST,
+        "/api/devices/dns-events",
+        Some(&token),
+        Some(events),
+    )
+    .await;
+    assert_eq!(
+        count(&app.db, "SELECT COUNT(*) FROM device_dns_events").await,
+        1
+    );
+    let page = app
+        .get_page(&format!("/dns/log?device={id}"), &cookie)
+        .await;
+    assert!(page.text().contains("ads.example"));
+    assert!(page.text().contains("keeps it for 7 days"));
+
+    // Off again: the phone's log is deleted at once.
+    let res = app
+        .request_form(Method::POST, &format!("/dns/log/{id}"), Some(&cookie), &[])
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/dns/log?device={id}").as_str())
+    );
+    assert_eq!(
+        count(&app.db, "SELECT COUNT(*) FROM device_dns_events").await,
+        0
+    );
+    assert_eq!(policy(&app, &token).await["dns_log_enabled"], false);
+    let res = app
+        .request_form(
+            Method::POST,
+            "/dns/log/999",
+            Some(&cookie),
+            &[("dns_log_enabled", "on")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+/// Inserts a row with a `received_at`/`reported_at` `age` in the past (an SQLite modifier such
+/// as "-8 days").
+async fn dns_event(db: &SqlitePool, device: i64, age: &str) {
+    sqlx::query(
+        "INSERT INTO device_dns_events (device_id, domain, category, blocked_at, received_at) \
+         VALUES (?, 'ads.example', 'Ads', '', datetime('now', ?))",
+    )
+    .bind(device)
+    .bind(age)
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+async fn location(db: &SqlitePool, device: i64, captured_at: &str, age: &str) {
+    sqlx::query(
+        "INSERT INTO device_locations (device_id, latitude, longitude, captured_at, received_at) \
+         VALUES (?, 59.9, 10.7, ?, datetime('now', ?))",
+    )
+    .bind(device)
+    .bind(captured_at)
+    .bind(age)
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+async fn status(db: &SqlitePool, device: i64, age: &str) {
+    sqlx::query(
+        "INSERT INTO device_status (device_id, time_state_json, reported_at) \
+         VALUES (?, '{\"used_minutes\": 5}', datetime('now', ?))",
+    )
+    .bind(device)
+    .bind(age)
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn pruning_keeps_only_what_retention_allows() {
+    let app = super::TestApp::new().await;
+    let db = &app.db;
+    let (logged, _) = app.create_device("logged").await;
+    let (quiet, _) = app.create_device("quiet").await;
+    let (long, _) = app.create_device("long").await;
+    sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")
+        .bind(logged)
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE device_policy SET location_retention_days = 30 WHERE device_id = ?")
+        .bind(long)
+        .execute(db)
+        .await
+        .unwrap();
+
+    // DNS log: 7 days while on; nothing at all for a phone with the log off.
+    dns_event(db, logged, "-8 days").await;
+    dns_event(db, logged, "-6 days").await;
+    dns_event(db, quiet, "-1 hours").await;
+    // Locations: the default 7 days, the newest fix always kept; 30 days for `long`.
+    location(db, logged, "2026-09-01T10:00:00Z", "-20 days").await;
+    location(db, logged, "2026-09-02T10:00:00Z", "-10 days").await;
+    location(db, quiet, "2026-10-05T10:00:00Z", "-1 days").await;
+    location(db, quiet, "2026-09-20T10:00:00Z", "-8 days").await;
+    location(db, long, "2026-09-20T10:00:00Z", "-8 days").await;
+    location(db, long, "2026-09-01T10:00:00Z", "-31 days").await;
+    location(db, long, "2026-09-25T10:00:00Z", "-2 days").await;
+    // Status history (screen time): 30 days, the newest report per phone always kept.
+    status(db, logged, "-40 days").await;
+    status(db, logged, "-35 days").await;
+    status(db, quiet, "-40 days").await;
+    status(db, quiet, "-1 days").await;
+
+    let pruned = crate::retention::prune(db).await.unwrap();
+    assert_eq!(
+        pruned,
+        crate::retention::Pruned {
+            dns_events: 2,
+            locations: 3,
+            status_reports: 2,
+        }
+    );
+    assert_eq!(count(db, "SELECT COUNT(*) FROM device_dns_events").await, 1);
+    let kept: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT device_id, captured_at FROM device_locations ORDER BY device_id, captured_at",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        vec![
+            // `logged` has only old fixes: the newest stays ("last seen").
+            (logged, "2026-09-02T10:00:00Z".to_string()),
+            (quiet, "2026-10-05T10:00:00Z".to_string()),
+            (long, "2026-09-20T10:00:00Z".to_string()),
+            (long, "2026-09-25T10:00:00Z".to_string()),
+        ]
+    );
+    let statuses: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT device_id, COUNT(*) FROM device_status GROUP BY device_id ORDER BY device_id",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap();
+    assert_eq!(statuses, vec![(logged, 1), (quiet, 1)]);
+    // A second pass finds nothing more.
+    assert_eq!(
+        crate::retention::prune(db).await.unwrap(),
+        crate::retention::Pruned::default()
+    );
+}
+
+#[tokio::test]
+async fn location_retention_is_chosen_per_phone_and_applied_at_once() {
+    use axum::http::{Method, StatusCode};
+    let app = super::TestApp::new().await;
+    let (id, _) = app.enrolled_device("kid").await;
+    location(&app.db, id, "2026-10-01T10:00:00Z", "-3 days").await;
+    location(&app.db, id, "2026-10-05T10:00:00Z", "-1 hours").await;
+    let uri = format!("/devices/{id}/location-retention");
+
+    let res = app
+        .request_form(Method::POST, &uri, None, &[("days", "1")])
+        .await;
+    assert_ne!(
+        res.location(),
+        Some(format!("/devices/locate?device={id}").as_str())
+    );
+    assert_eq!(
+        count(&app.db, "SELECT COUNT(*) FROM device_locations").await,
+        2
+    );
+
+    let cookie = app.admin_cookie().await;
+    let page = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await;
+    assert!(
+        page.text()
+            .contains(r#"<option value="7" selected>7 days</option>"#)
+    );
+    for bad in ["5", "0", "", "x"] {
+        let res = app
+            .request_form(Method::POST, &uri, Some(&cookie), &[("days", bad)])
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad:?}");
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/999/location-retention",
+            Some(&cookie),
+            &[("days", "1")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+
+    let res = app
+        .request_form(Method::POST, &uri, Some(&cookie), &[("days", "1")])
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/locate?device={id}").as_str())
+    );
+    assert_eq!(
+        count(&app.db, "SELECT COUNT(*) FROM device_locations").await,
+        1
+    );
+    let page = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await;
+    assert!(
+        page.text()
+            .contains(r#"<option value="1" selected>1 day</option>"#)
+    );
+    assert_eq!(
+        count(
+            &app.db,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'location_retention_changed'"
+        )
+        .await,
+        1
+    );
+}

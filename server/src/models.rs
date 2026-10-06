@@ -85,6 +85,9 @@ pub struct DevicePolicy {
     /// The launcher's notification auto-cancel rule (handy step 11, migrations/0036, default
     /// off).
     pub notification_auto_cancel: bool,
+    /// The blocked-domain log (migrations/0039): off by default, a per-phone opt-in; while on,
+    /// entries are kept `retention::DNS_LOG_RETENTION_DAYS`.
+    pub dns_log_enabled: bool,
 }
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.
@@ -529,6 +532,9 @@ pub struct PolicyResponse {
     /// Notification auto-cancel (handy step 11), always sent: the launcher's listener removes
     /// other apps' nags (not allowed, not essential). Missing = off on the launcher.
     pub notification_auto_cancel: bool,
+    /// The blocked-domain log (cleanup 2026-10-06), always sent: only while it is on does the
+    /// launcher record and report blocked domains. Missing = off on the launcher.
+    pub dns_log_enabled: bool,
 }
 
 /// `PolicyResponse.kid_lock`.

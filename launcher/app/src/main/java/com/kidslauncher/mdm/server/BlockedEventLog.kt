@@ -11,11 +11,16 @@ import kotlinx.serialization.encodeToString
 
 private const val DEDUP_WINDOW_MS = 10 * 60 * 1000L
 private const val MAX_QUEUED = 200
+private const val KEY_ENABLED = "dns_log_enabled"
 
 @Serializable
 private data class QueuedEvent(val domain: String, val category: String, val blockedAtEpochMs: Long)
 
 /**
+ * Only while the parent switched the log on for this phone ([setEnabled], from the policy's
+ * `dns_log_enabled`, off by default since the 2026-10-06 cleanup; the server keeps entries 7
+ * days) - otherwise nothing is recorded and the queue is empty.
+ *
  * Records blocked-domain events for later reporting to the server (see [MdmSyncWorker]'s
  * drain-and-report step) - deduplicated so a single ad-heavy page loading dozens of identical
  * blocked tracker requests in a few seconds doesn't flood the admin log; the point is "things
@@ -26,9 +31,33 @@ private data class QueuedEvent(val domain: String, val category: String, val blo
 object BlockedEventLog {
     private val lastLoggedAt = HashMap<String, Long>()
     private val lock = Any()
+    /** `null` until read from prefs (process start) or set by a sync. */
+    @Volatile
+    private var enabled: Boolean? = null
+
+    private fun isEnabled(context: Context): Boolean = enabled ?: PreferenceManager
+        .getDefaultSharedPreferences(context)
+        .getBoolean(KEY_ENABLED, false)
+        .also { enabled = it }
+
+    /** After every accepted policy. Off clears the queue (synchronously, like every write here). */
+    fun setEnabled(context: Context, on: Boolean) {
+        synchronized(lock) {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+            if (prefs.getBoolean(KEY_ENABLED, false) != on || enabled != on) {
+                prefs.edit().putBoolean(KEY_ENABLED, on).commit()
+            }
+            enabled = on
+            if (!on) {
+                lastLoggedAt.clear()
+                if (loadQueue(context).isNotEmpty()) saveQueue(context, emptyList())
+            }
+        }
+    }
 
     /** Called from [KidVpnService]'s packet-handling coroutines - safe to call concurrently. */
     fun record(context: Context, domain: String, category: String) {
+        if (!isEnabled(context)) return
         val now = System.currentTimeMillis()
         synchronized(lock) {
             val last = lastLoggedAt[domain]
@@ -46,6 +75,7 @@ object BlockedEventLog {
      * must only call [clearReported] after the server call actually succeeds, so a failed report
      * doesn't silently lose events. */
     fun drain(context: Context): List<DnsEventReport> {
+        if (!isEnabled(context)) return emptyList()
         return loadQueue(context).map {
             DnsEventReport(it.domain, it.category, Instant.ofEpochMilli(it.blockedAtEpochMs).toString())
         }

@@ -137,6 +137,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // KidVpnService reads this cached value directly (it never talks to the network itself for
         // policy) - see DnsFilterEngine.resolveUpstream.
         mdm.dnsUpstreamProvider(freshPolicy.dnsUpstreamProvider)
+        // The blocked-domain log is a per-phone opt-in (off by default, cleanup 2026-10-06): off
+        // also drops whatever is still queued.
+        BlockedEventLog.setEnabled(context, freshPolicy.dnsLogEnabled)
         // Only actually re-fetches the (potentially 100k+ domain) full list if the version token
         // changed - see DnsFilterEngine's doc comment.
         DnsFilterEngine.refreshIfNeeded(context, api, freshPolicy.dnsFilterVersion)
@@ -234,6 +237,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         val (ok, message) = locateResultMessage(location.action, location.accuracyMeters, location.ageSeconds)
         reportCommandResult(api, command.id, ok, message)
     }
+
+    // Retention (cleanup 2026-10-06): blocked calls older than 30 days leave the call log.
+    com.kidslauncher.mdm.calls.BlockedCallLog.pruneIfDue(context)
 
     // After enforcement and the report: photos are cosmetic and may take a moment to download.
     if (freshPolicy != null) ContactPhotos.sync(context, api)

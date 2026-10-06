@@ -92,6 +92,9 @@ data class PolicyResponse(
      * older server) = **off**; not in the last-enforced plan, so with an unknown policy nothing is
      * cancelled. */
     val notificationAutoCancel: Boolean = false,
+    /** The blocked-domain log (cleanup 2026-10-06): only while this is on does the launcher record
+     * and report blocked domains. Missing (an older server) = **off**. */
+    val dnsLogEnabled: Boolean = false,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see
