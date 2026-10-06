@@ -2,7 +2,9 @@
 <!-- Home (design 08-ui-polish.md, mockup Main.dc.html at 320x568 dp): no clock - the time is in
      Android's status bar above (fitsSystemWindows pads the content, the wallpaper is drawn under
      the bar) - then the parent's Home contacts as big round buttons, then the app grid (phone book
-     first, Settings last). Sizes come from gridMetrics/contactRow. -->
+     first, Settings last). Sizes come from gridMetrics/contactRow. The mockup's 6 dp padding and
+     14 dp gap under its drawn status row are Android's status bar here, so the contacts start
+     right under the bar (emulator run 2026-10-06: the gap was too large). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/home_container"
@@ -13,7 +15,7 @@
     android:longClickable="false"
     android:orientation="vertical"
     android:paddingStart="16dp"
-    android:paddingTop="6dp"
+    android:paddingTop="0dp"
     android:paddingEnd="16dp"
     tools:context=".ui.HomeActivity">
 
@@ -21,7 +23,7 @@
         android:id="@+id/home_contacts_scroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
+        android:layout_marginTop="4dp"
         android:fillViewport="true"
         android:scrollbars="none"
         android:visibility="gone">
