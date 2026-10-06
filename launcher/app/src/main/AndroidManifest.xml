@@ -282,6 +282,35 @@
             </intent-filter>
         </receiver>
 
+        <!-- QR/NFC device-owner provisioning on Android 12+ needs these two (AOSP
+             DevicePolicyManager ACTION_GET_PROVISIONING_MODE / ACTION_ADMIN_POLICY_COMPLIANCE):
+             exported, only startable by holders of BIND_DEVICE_ADMIN (the system), no UI.
+             [needs device test: QR provisioning on the Jelly Star; adb stays the fallback] -->
+        <activity
+            android:name=".server.ProvisioningModeActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".server.PolicyComplianceActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name=".server.MdmDeviceAdminReceiver"
             android:exported="true"
