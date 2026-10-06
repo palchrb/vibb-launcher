@@ -124,8 +124,10 @@ object PinLockRuntime {
         handler.post {
             dispatch(app, LockEvent.ProcessStart(active, interactive(app), ourCall(), systemCall(app)))
             // The chrome of a lock that was LOCKED when the process died is still set; an inactive
-            // lock must not leave it behind either.
+            // lock must not leave it behind either. Same for the camera lock: engaged again when
+            // LOCKED, released (idempotently) otherwise.
             LockTaskChrome.refresh(app)
+            CameraLock.onLockChanged(app, mode == LockMode.LOCKED)
         }
     }
 
@@ -147,6 +149,8 @@ object PinLockRuntime {
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Lock chrome change failed", e)
                 }
+                // The camera gesture must not open a camera over the lock (background thread).
+                CameraLock.onLockChanged(context, result.mode == LockMode.LOCKED)
                 if (result.mode != LockMode.LOCKED && !LockTaskChrome.hasPlan) requestApply(context)
             }
             modeListeners.toList().forEach { it() }

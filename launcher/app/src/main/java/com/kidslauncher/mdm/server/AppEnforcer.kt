@@ -178,6 +178,12 @@ object AppEnforcer {
     var lastEnforcedPlayState: PlayState? = null
         private set
 
+    /** The packages the last [apply] in this process wanted suspended (`null` = none ran yet) -
+     * the PIN lock's camera release never lifts one of these (CameraLock). */
+    @Volatile
+    var lastPlanSuspend: Set<String>? = null
+        private set
+
     /**
      * Synchronized: the sync, the pause switch, the offline override and the schedule re-check
      * ([reevaluateLockReasonFromCache]) can all call this from different threads, and two passes
@@ -270,10 +276,10 @@ object AppEnforcer {
         setRestriction(dpm, admin, UserManager.DISALLOW_SMS, plan.restrictSms)
         applyCallPermissions(context, dpm, admin, plan.denyCallPermissions)
 
+        lastPlanSuspend = plan.suspend
         for (packageName in installedPackages) {
             if (packageName == ownPackage) continue
 
-            val shouldBeSuspended = suspendTarget(packageName, plan.suspend, fenceHeld)
             // Only apps that aren't allowed at all are hidden; the schedule lock only suspends
             // (hiding broadcasts PACKAGE_REMOVED and drops alarms/jobs - QA step 4 #2).
             val shouldBeHidden = packageName in plan.hide
@@ -282,6 +288,10 @@ object AppEnforcer {
             } catch (e: PackageManager.NameNotFoundException) {
                 continue
             }
+            // Read after the current state: the PIN lock's camera lock records a package before it
+            // suspends it, so a camera it just suspended is never undone here (and neither is a
+            // package the update fence holds).
+            val shouldBeSuspended = suspendTarget(packageName, plan.suspend, fenceHeld + com.kidslauncher.mdm.lock.CameraLock.held)
             // Checked separately, every cycle: the two states can disagree (an older build, a
             // policy applied before an exemption, the lock ending), e.g. the system dialer left
             // hidden must be released outright.
@@ -323,6 +333,12 @@ object AppEnforcer {
         }
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
+        // The PIN lock's camera targets for this phone now (no PackageManager work at screen-off).
+        try {
+            com.kidslauncher.mdm.lock.CameraLock.refreshTargets(context, installedPackages.toSet())
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Camera lock targets failed", e)
+        }
 
         // Handy's PIN lock (step 10) first - whether it is LOCKED changes the lock-task setting
         // below (featuresWhileLocked / lockTaskWhileLocked), so a sync can't undo the lock.
