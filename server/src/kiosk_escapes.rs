@@ -17,6 +17,16 @@ pub const MAX_ENTRIES: usize = 20;
 pub const MAX_ID: usize = 64;
 /// Short status words ("fenced", "outside_window", ...).
 const MAX_WORD: usize = 32;
+/// Phone-supplied times are kept within 1970..2100 (qa-11-code #8: no overflow in the card).
+const MAX_MS: i64 = 4_102_444_800_000;
+/// Phone-supplied counts are kept within 0..=1_000_000.
+const MAX_COUNT: i64 = 1_000_000;
+/// A fence the phone reported more than this long ago is no longer "right now".
+const FENCE_STALE_MS: i64 = 15 * 60 * 1000;
+
+fn clamp_ms(value: Option<i64>) -> Option<i64> {
+    value.map(|v| v.clamp(0, MAX_MS))
+}
 
 fn cut(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
@@ -42,6 +52,9 @@ pub struct UpdateFenceState {
     /// The window gate's last reason to wait: "call", "emergency", "screen_on",
     /// "screen_off_short", "outside_window".
     pub waiting_for: Option<String>,
+    /// The last fence's start and end on the phone's clock (qa-11-code #5).
+    pub last_fenced_at_ms: Option<i64>,
+    pub last_released_at_ms: Option<i64>,
 }
 
 /// `StatusReportRequest.update_fence` as stored: only the [UpdateFenceState] fields, lists and
@@ -61,6 +74,9 @@ pub fn sanitize_update_fence(value: &serde_json::Value) -> Option<String> {
     state.last_release = state.last_release.map(|r| cut(&r, MAX_WORD));
     state.pending_tag = state.pending_tag.map(|t| cut(&t, MAX_ID));
     state.waiting_for = state.waiting_for.map(|w| cut(&w, MAX_WORD));
+    state.pending_since_ms = clamp_ms(state.pending_since_ms);
+    state.last_fenced_at_ms = clamp_ms(state.last_fenced_at_ms);
+    state.last_released_at_ms = clamp_ms(state.last_released_at_ms);
     serde_json::to_string(&state).ok()
 }
 
@@ -102,10 +118,10 @@ pub fn sanitize_notification_cancels(value: &serde_json::Value) -> Option<String
     for entry in &mut cancels.entries {
         entry.package_name = cut(&entry.package_name, MAX_ID);
         entry.channel = entry.channel.as_deref().map(|c| cut(c, MAX_ID));
-        entry.cancelled = entry.cancelled.max(0);
-        entry.snoozed = entry.snoozed.max(0);
+        entry.cancelled = entry.cancelled.clamp(0, MAX_COUNT);
+        entry.snoozed = entry.snoozed.clamp(0, MAX_COUNT);
     }
-    cancels.dropped = cancels.dropped.max(0).saturating_add(extra);
+    cancels.dropped = cancels.dropped.clamp(0, MAX_COUNT).saturating_add(extra);
     serde_json::to_string(&cancels).ok()
 }
 
@@ -160,11 +176,21 @@ pub fn escapes_card(
     }
     if let Some(fence) = fence {
         if fence.state == "fenced" || fence.state == "planned" {
-            card.lines.push(
-                "The launcher is installing its own update right now: other home screens and the \
-                 notification shade are paused until it is back."
-                    .to_string(),
-            );
+            // A phone that went silent while fenced must not say "right now" forever.
+            match fence
+                .last_fenced_at_ms
+                .filter(|at| now_ms.saturating_sub(*at) > FENCE_STALE_MS)
+            {
+                Some(at) => card.lines.push(format!(
+                    "A launcher update started at {} and the phone hasn't reported since.",
+                    utc_time(at)
+                )),
+                None => card.lines.push(
+                    "The launcher is installing its own update right now: other home screens and \
+                     the notification shade are paused until it is back."
+                        .to_string(),
+                ),
+            }
         }
         if !fence.unsuspendable.is_empty() {
             card.warnings.push(format!(
@@ -180,7 +206,10 @@ pub fn escapes_card(
             );
         }
         if let Some(text) = fence.last_release.as_deref().and_then(release_text) {
-            if fence.last_release.as_deref() == Some("install_failed") {
+            if matches!(
+                fence.last_release.as_deref(),
+                Some("install_failed" | "commit_failed" | "orphan")
+            ) {
                 card.warnings.push(text);
             } else {
                 card.lines.push(text);
@@ -189,7 +218,7 @@ pub fn escapes_card(
         if let Some(tag) = fence.pending_tag.as_deref() {
             let overdue = fence
                 .pending_since_ms
-                .is_some_and(|since| now_ms - since >= 24 * 60 * 60 * 1000);
+                .is_some_and(|since| now_ms.saturating_sub(since) >= 24 * 60 * 60 * 1000);
             let mut line = format!(
                 "Launcher update {tag} is downloaded and goes in at night (02:00-05:00, screen off \
                  for 30 seconds, no call)"
@@ -239,7 +268,7 @@ pub fn escapes_card(
             line.push('.');
             card.lines.push(line);
         }
-        let more = cancels.entries.len().saturating_sub(5) as i64 + cancels.dropped;
+        let more = (cancels.entries.len().saturating_sub(5) as i64).saturating_add(cancels.dropped);
         if more > 0 {
             card.lines
                 .push(format!("... and {more} more app/channel pair(s)."));
@@ -256,9 +285,21 @@ pub fn release_text(reason: &str) -> Option<String> {
              back."
                 .to_string()
         }
-        "install_failed" | "commit_failed" => {
+        "install_failed" => {
             "The last launcher update failed to install; the update fence was lifted at once. \
-             The phone downloads it again after an hour and tries again in a later update window."
+             The phone keeps the download and tries again in an update window an hour or more \
+             later (a wrong signing key or an older version waits for a new release)."
+                .to_string()
+        }
+        "commit_failed" => {
+            "The last launcher update couldn't be started on the phone; the update fence was \
+             lifted at once. The phone keeps the download and tries again in an update window an \
+             hour or more later."
+                .to_string()
+        }
+        "orphan" => {
+            "A paused home screen was found without its update fence record (lost or corrupt); \
+             the phone lifted it."
                 .to_string()
         }
         "rebooted" => "The phone restarted during the last launcher update; the update fence was \
@@ -271,6 +312,12 @@ pub fn release_text(reason: &str) -> Option<String> {
         "switched_off" | "unmanaged" => return None,
         other => format!("The last update fence ended: {other}."),
     })
+}
+
+fn utc_time(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_default()
 }
 
 fn wait_text(reason: &str) -> Option<&'static str> {
@@ -367,6 +414,7 @@ mod tests {
             pending_tag: Some("launcher-v1.4.0".to_string()),
             pending_since_ms: Some(0),
             waiting_for: Some("outside_window".to_string()),
+            ..Default::default()
         };
         let day = 24 * 60 * 60 * 1000;
         let card = escapes_card(true, false, true, true, Some(&fence), None, None, day);
@@ -419,10 +467,101 @@ mod tests {
     }
 
     #[test]
+    fn extreme_phone_values_neither_overflow_nor_get_stored() {
+        let stored = sanitize_update_fence(&json!({
+            "state": "fenced", "pending_tag": "t", "pending_since_ms": i64::MIN,
+            "last_fenced_at_ms": i64::MAX, "last_released_at_ms": i64::MIN,
+        }))
+        .unwrap();
+        let fence = parse_update_fence(Some(&stored)).unwrap();
+        assert_eq!(fence.pending_since_ms, Some(0));
+        assert_eq!(fence.last_fenced_at_ms, Some(MAX_MS));
+        assert_eq!(fence.last_released_at_ms, Some(0));
+        let stored = sanitize_notification_cancels(&json!({
+            "entries": [{ "package_name": "a", "cancelled": i64::MAX, "snoozed": i64::MIN }],
+            "dropped": i64::MAX,
+        }))
+        .unwrap();
+        let cancels = parse_notification_cancels(Some(&stored)).unwrap();
+        assert_eq!(cancels.dropped, MAX_COUNT);
+        assert_eq!(cancels.entries[0].cancelled, MAX_COUNT);
+        // Unsanitized extremes (an old row) still render without panicking.
+        let raw_fence = UpdateFenceState {
+            state: "fenced".to_string(),
+            pending_tag: Some("t".to_string()),
+            pending_since_ms: Some(i64::MIN),
+            last_fenced_at_ms: Some(i64::MIN),
+            ..Default::default()
+        };
+        let raw_cancels = NotificationCancels {
+            active: true,
+            entries: (0..7).map(|_| NotificationCancel::default()).collect(),
+            dropped: i64::MAX,
+        };
+        for now in [i64::MIN, 0, i64::MAX] {
+            let card = escapes_card(
+                true,
+                true,
+                true,
+                true,
+                Some(&raw_fence),
+                Some(&raw_cancels),
+                None,
+                now,
+            );
+            assert!(!card.lines.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_stale_fence_is_no_longer_right_now() {
+        let fence = UpdateFenceState {
+            state: "fenced".to_string(),
+            last_fenced_at_ms: Some(1_000),
+            ..Default::default()
+        };
+        let fresh = escapes_card(
+            true,
+            false,
+            true,
+            true,
+            Some(&fence),
+            None,
+            None,
+            1_000 + 60_000,
+        );
+        assert!(fresh.lines.iter().any(|l| l.contains("right now")));
+        let stale = escapes_card(
+            true,
+            false,
+            true,
+            true,
+            Some(&fence),
+            None,
+            None,
+            1_000 + FENCE_STALE_MS + 1,
+        );
+        assert!(
+            stale
+                .lines
+                .iter()
+                .any(|l| l.contains("hasn't reported since")),
+            "{stale:?}"
+        );
+        assert!(!stale.lines.iter().any(|l| l.contains("right now")));
+    }
+
+    #[test]
     fn release_texts() {
         assert!(release_text("replaced").unwrap().contains("went in"));
         assert!(release_text("rebooted").unwrap().contains("restarted"));
         assert_eq!(release_text("switched_off"), None);
+        assert!(
+            release_text("commit_failed")
+                .unwrap()
+                .contains("couldn't be started")
+        );
+        assert!(release_text("orphan").unwrap().contains("lifted it"));
         assert!(release_text("weird").unwrap().contains("weird"));
     }
 }
