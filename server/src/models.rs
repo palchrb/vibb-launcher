@@ -77,6 +77,39 @@ pub struct DevicePolicy {
     pub kid_pin_salt: Option<String>,
     /// 4-6; the keypad submits at the last digit.
     pub kid_pin_length: Option<i64>,
+    /// Screen timeout in seconds (migrations/0032), one of [SCREEN_TIMEOUTS]; see
+    /// [screen_timeout_seconds].
+    pub screen_timeout_seconds: i64,
+}
+
+/// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.
+pub const SCREEN_TIMEOUTS: [(i64, &str); 6] = [
+    (15, "15 seconds"),
+    (30, "30 seconds"),
+    (60, "1 minute"),
+    (120, "2 minutes"),
+    (300, "5 minutes"),
+    (600, "10 minutes"),
+];
+pub const DEFAULT_SCREEN_TIMEOUT_SECONDS: i64 = 60;
+
+/// The stored timeout if it is one of [SCREEN_TIMEOUTS], else the default (a row written by
+/// hand, or `DevicePolicy::default()` in tests).
+pub fn screen_timeout_seconds(stored: i64) -> i64 {
+    if SCREEN_TIMEOUTS.iter().any(|(s, _)| *s == stored) {
+        stored
+    } else {
+        DEFAULT_SCREEN_TIMEOUT_SECONDS
+    }
+}
+
+/// "1 minute", or "45 s" for a value that isn't one of the choices (what a phone reported).
+pub fn screen_timeout_label(seconds: i64) -> String {
+    SCREEN_TIMEOUTS
+        .iter()
+        .find(|(s, _)| *s == seconds)
+        .map(|(_, label)| (*label).to_string())
+        .unwrap_or_else(|| format!("{seconds} s"))
 }
 
 /// The launcher languages a parent can choose; "system" follows the phone's language.
@@ -222,6 +255,9 @@ pub struct DeviceStatus {
     pub play_store_suspendable: Option<bool>,
     /// The launcher's `lock_state` (handy step 10, migrations/0030), see `kid_lock::LockState`.
     pub lock_state_json: Option<String>,
+    /// The screen timeout the phone applied, seconds (migrations/0032). `None` from older
+    /// launchers.
+    pub screen_timeout_seconds: Option<i64>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -460,6 +496,11 @@ pub struct PolicyResponse {
     /// off. Always sent. A launcher without `pin_lock_v1` ignores it. Only ever in this response
     /// (CE storage on the phone) - never in a status report, a log or a page.
     pub kid_lock: Option<KidLock>,
+    /// Screen timeout in seconds (migrations/0032), always sent: one of [SCREEN_TIMEOUTS]. The
+    /// launcher applies it with `DevicePolicyManager.setSystemSetting(SCREEN_OFF_TIMEOUT)`; a
+    /// launcher without the key in its DTO (older) ignores it, and an older server's response
+    /// without it leaves the phone's setting alone.
+    pub screen_timeout_seconds: i64,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -558,6 +599,9 @@ pub struct StatusReportRequest {
     /// backoff_until_ms, ...}` - opaque, stored capped. Never unlock times.
     #[serde(default)]
     pub lock_state: Option<serde_json::Value>,
+    /// The screen timeout the phone has now (read back after applying the policy's), seconds.
+    #[serde(default)]
+    pub screen_timeout_seconds: Option<i64>,
 }
 
 /// `StatusReportRequest.install_mode`.

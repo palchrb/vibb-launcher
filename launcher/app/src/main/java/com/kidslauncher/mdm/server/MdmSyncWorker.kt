@@ -216,6 +216,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
                 playStoreSuspendable = PlayRuntime.storeSuspendable(context),
                 lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
+                screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,

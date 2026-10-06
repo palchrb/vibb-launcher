@@ -67,6 +67,18 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `screen_timeout_seconds decodes, is reported under the server's key, and survives the fallback`() {
+        assertNull(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").screenTimeoutSeconds)
+        val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"screen_timeout_seconds":120}""")
+        assertEquals(120, policy.screenTimeoutSeconds)
+        assertEquals(120, LastEnforcedPlan.of(policy).toPolicy().screenTimeoutSeconds)
+        assertNull(LastEnforcedPlan.decode("{}")!!.screenTimeoutSeconds)
+        val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, screenTimeoutSeconds = 60)
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals("60", json["screen_timeout_seconds"].toString())
+    }
+
+    @Test
     fun `a cache without kid_lock is a phone without handy's lock (step 10)`() {
         assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.kidLock)
         val withLock = serverResponse.replaceFirst("{", """{"kid_lock":{"pin_hash":"ab","pin_salt":"cd","pin_length":6},""")

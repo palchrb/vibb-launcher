@@ -124,6 +124,8 @@ data class LastEnforcedPlan(
     val timePolicy: TimePolicy? = null,
     /** The kiosk app block switch (step 9); missing = off, like [PolicyResponse.blockActivityStart]. */
     val blockActivityStart: Boolean = false,
+    /** The parent's screen timeout (seconds), so a fallback keeps auto-lock; `null` = none known. */
+    val screenTimeoutSeconds: Int? = null,
 ) {
     fun toPolicy(): PolicyResponse = PolicyResponse(
         allowlist = allowlist,
@@ -138,6 +140,7 @@ data class LastEnforcedPlan(
         hardening = hardening,
         timePolicy = timePolicy,
         blockActivityStart = blockActivityStart,
+        screenTimeoutSeconds = screenTimeoutSeconds,
     )
 
     companion object {
@@ -154,6 +157,7 @@ data class LastEnforcedPlan(
             hardening = policy.hardening,
             timePolicy = policy.timePolicy?.copy(lifts = emptyList()),
             blockActivityStart = policy.blockActivityStart,
+            screenTimeoutSeconds = policy.screenTimeoutSeconds,
         )
 
         /** `null` if missing or unreadable. */

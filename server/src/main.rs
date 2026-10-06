@@ -303,6 +303,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             post(handlers::devices::update_launcher_ui),
         )
         .route(
+            "/devices/{id}/screen-timeout",
+            post(handlers::devices::update_screen_timeout),
+        )
+        .route(
             "/devices/{id}/wallpapers",
             post(handlers::wallpapers::save_device_wallpapers),
         )

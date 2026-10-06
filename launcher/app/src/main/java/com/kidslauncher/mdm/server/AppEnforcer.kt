@@ -330,6 +330,12 @@ object AppEnforcer {
 
         applyKeyguardFeatures(dpm, admin, managed = managed)
 
+        // Auto-lock: the parent's screen timeout (emulator run 2026-10-06), lifted by the override.
+        ScreenTimeout.apply(
+            context, dpm, admin,
+            screenTimeoutAction(policy != null, policy?.screenTimeoutSeconds, overrideActive),
+        )
+
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
 
         clearRadioRestrictions(dpm, admin)

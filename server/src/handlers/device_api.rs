@@ -228,6 +228,9 @@ pub(crate) async fn build_policy(
             & !LOCK_TASK_BLOCK_ACTIVITY_START,
         block_activity_start: policy.block_activity_start,
         kid_lock: crate::kid_lock::policy_kid_lock(&policy),
+        screen_timeout_seconds: crate::models::screen_timeout_seconds(
+            policy.screen_timeout_seconds,
+        ),
         override_pin_hash: policy.override_pin_hash,
         override_pin_salt: policy.override_pin_salt,
         quick_controls_mask: policy.quick_controls_mask,
@@ -591,8 +594,9 @@ pub async fn status(
          (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
           call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
-          install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json, \
+          screen_timeout_seconds) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -612,6 +616,12 @@ pub async fn status(
     .bind(report.play_window_active)
     .bind(report.play_store_suspendable)
     .bind(&lock_state_json)
+    // Only a plausible value (1 s .. 1 day) is kept; anything else is dropped, not stored.
+    .bind(
+        report
+            .screen_timeout_seconds
+            .filter(|s| (1..=86_400).contains(s)),
+    )
     .execute(&state.db)
     .await
     .ok();

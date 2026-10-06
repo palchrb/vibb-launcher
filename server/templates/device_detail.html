@@ -272,6 +272,21 @@
     </form>
     {% endif %}
 
+    <form method="post" action="/devices/{{ device.id }}/screen-timeout" class="card" id="screen-timeout">
+        <h2>Screen timeout</h2>
+        <p class="subtitle">How long the screen stays on without being touched. When it turns off, the phone locks (with a kid PIN set). The phone keeps this setting: changes made on the phone are put back. Saves itself immediately.</p>
+        <label for="screen_timeout_seconds">Turn the screen off after</label>
+        <select id="screen_timeout_seconds" name="screen_timeout_seconds" onchange="this.form.submit()">
+            {% for (seconds, label) in screen_timeout_options %}
+            <option value="{{ seconds }}" {% if *seconds == screen_timeout_seconds %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        {% if let Some(applied) = screen_timeout_applied %}
+        <p class="subtitle">The phone last reported: {{ applied }}.</p>
+        {% endif %}
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+
     <form method="post" action="/devices/{{ device.id }}/hardening" class="card">
         <h2>Phone hardening</h2>
         <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The offline-override PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>

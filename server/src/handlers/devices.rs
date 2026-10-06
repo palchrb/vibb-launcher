@@ -265,6 +265,11 @@ struct DeviceDetailTemplate {
     lock: crate::kid_lock::LockCard,
     /// One-shot message after a save (`?notice=`), see `kid_lock::flash_text`.
     notice: Option<&'static str>,
+    /// "Screen timeout" card (migrations/0032): the choice, every option, and what the phone
+    /// last reported it applied.
+    screen_timeout_seconds: i64,
+    screen_timeout_options: Vec<(i64, &'static str)>,
+    screen_timeout_applied: Option<String>,
 }
 
 /// The kiosk app block switch on the "Push and Play" card (handy step 9): with it on, kiosk mode
@@ -925,6 +930,14 @@ pub async fn view_device(
             push,
             lock,
             notice,
+            screen_timeout_seconds: crate::models::screen_timeout_seconds(
+                policy.screen_timeout_seconds,
+            ),
+            screen_timeout_options: crate::models::SCREEN_TIMEOUTS.to_vec(),
+            screen_timeout_applied: latest_status
+                .as_ref()
+                .and_then(|s| s.screen_timeout_seconds)
+                .map(crate::models::screen_timeout_label),
             title: device.name.clone(),
             calls_summary,
             call_warnings,
@@ -1642,6 +1655,51 @@ pub async fn update_launcher_ui(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save launcher settings");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed. Check the server log.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// The "Screen timeout" card (migrations/0032): one auto-submitting select. Only a value from
+/// `SCREEN_TIMEOUTS` is accepted; anything else is a 400 and nothing is written.
+pub async fn update_screen_timeout(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    let Some(seconds) = form
+        .get("screen_timeout_seconds")
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|s| crate::models::SCREEN_TIMEOUTS.iter().any(|(v, _)| v == s))
+    else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "Unknown screen timeout",
+        )
+            .into_response();
+    };
+    let result = sqlx::query(
+        "UPDATE device_policy SET screen_timeout_seconds = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
+    )
+    .bind(seconds)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(done) if done.rows_affected() == 0 => {
+            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&format!("/devices/{id}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "failed to save the screen timeout");
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "Couldn't save - nothing was changed. Check the server log.",

@@ -322,6 +322,7 @@ async fn policy_json_keys_snapshot() {
             "pending_command",
             "push",
             "quick_controls_mask",
+            "screen_timeout_seconds",
             "time_policy",
             "vpn_filter_enabled",
             "weekday_end_minutes",
@@ -344,6 +345,7 @@ async fn policy_json_keys_snapshot() {
         "packages_to_uninstall",
         "push",
         "quick_controls_mask",
+        "screen_timeout_seconds",
         "time_policy",
         "vpn_filter_enabled",
     ] {
@@ -609,6 +611,84 @@ async fn server_error_policy_state_is_shown() {
     let (id, token) = app.enrolled_device("phone").await;
     post_status(&app, &token, json!({ "policy_state": "server_error" })).await;
     assert!(device_page(&app, id).await.contains("answered the phone"));
+}
+
+async fn timeout(app: &TestApp, token: String) -> serde_json::Value {
+    app.request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json()["screen_timeout_seconds"]
+        .clone()
+}
+
+/// Auto-lock (migrations/0032, emulator run 2026-10-06): the parent's screen timeout reaches the
+/// policy, only the offered values are accepted, and the phone's applied value is shown.
+#[tokio::test]
+async fn screen_timeout_policy_form_and_report() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    assert_eq!(timeout(&app, token.clone()).await, json!(60));
+
+    let mut nudges = app.state.command_notify.subscribe();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/screen-timeout"),
+            Some(&cookie),
+            &[("screen_timeout_seconds", "300")],
+        )
+        .await;
+    assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    assert_eq!(timeout(&app, token.clone()).await, json!(300));
+
+    for bad in ["0", "45", "-1", "never", ""] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/screen-timeout"),
+                Some(&cookie),
+                &[("screen_timeout_seconds", bad)],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    assert_eq!(timeout(&app, token.clone()).await, json!(300));
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/999/screen-timeout",
+            Some(&cookie),
+            &[("screen_timeout_seconds", "60")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+
+    // A hand-written out-of-range value falls back to the default.
+    sqlx::query("UPDATE device_policy SET screen_timeout_seconds = 7 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    assert_eq!(timeout(&app, token.clone()).await, json!(60));
+
+    let page = device_page(&app, id).await;
+    assert!(page.contains("action=\"/devices/"));
+    assert!(page.contains("<option value=\"60\" selected>1 minute</option>"));
+    assert!(!page.contains("The phone last reported"));
+    post_status(&app, &token, json!({ "screen_timeout_seconds": 120 })).await;
+    assert!(
+        device_page(&app, id)
+            .await
+            .contains("The phone last reported: 2 minutes.")
+    );
+    // An implausible report isn't stored.
+    post_status(&app, &token, json!({ "screen_timeout_seconds": -5 })).await;
+    assert!(
+        !device_page(&app, id)
+            .await
+            .contains("The phone last reported")
+    );
 }
 
 /// Every page with the app header restores the scroll position after an auto-saving form posts

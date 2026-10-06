@@ -36,6 +36,9 @@ data class StatusReportRequest(
     val playStoreSuspendable: Boolean? = null,
     /** Handy's own PIN lock (step 10) - see [LockStateReport]. */
     val lockState: LockStateReport? = null,
+    /** The screen timeout the phone has now (read back from Settings.System), seconds; `null` =
+     * unreadable. See [com.kidslauncher.mdm.server.ScreenTimeout]. */
+    val screenTimeoutSeconds: Int? = null,
 )
 
 /**

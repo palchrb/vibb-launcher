@@ -79,6 +79,10 @@ data class PolicyResponse(
     /** Handy's own PIN lock (step 10): the kid's PIN hash, or `null` = no lock. Never copied to
      * device-protected storage, logs or the status report. */
     val kidLock: KidLock? = null,
+    /** The parent's screen timeout in seconds (15/30/60/120/300/600), applied by
+     * [com.kidslauncher.mdm.server.ScreenTimeout]; `null` from an older server = the phone's own
+     * setting is left alone. */
+    val screenTimeoutSeconds: Int? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see
