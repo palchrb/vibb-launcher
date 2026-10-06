@@ -11,8 +11,8 @@ use serde_json::json;
 use super::TestApp;
 use crate::fcm::testing::FakeSender;
 use crate::fcm::{
-    FcmErrorClass, FcmSender, HttpFcmConfig, HttpFcmSender, SendOutcome, classify_fcm_error,
-    load_service_account, parse_service_account, token_hash,
+    FcmErrorClass, FcmSender, HttpFcmConfig, HttpFcmSender, SendOutcome, Target, TargetKind,
+    classify_fcm_error, load_service_account, parse_service_account, token_hash,
 };
 
 const FIXTURE_KEY: &str = include_str!("../../testdata/fcm_test_fixture_key.pem");
@@ -657,8 +657,14 @@ async fn http_sender(fake: &FakeGoogle) -> HttpFcmSender {
 async fn http_sender_sends_a_constant_high_priority_message_with_a_valid_jwt() {
     let fake = FakeGoogle::default();
     let sender = http_sender(&fake).await;
-    assert_eq!(sender.send("reg-token", "nonce1").await, SendOutcome::Sent);
-    assert_eq!(sender.send("reg-token", "nonce2").await, SendOutcome::Sent);
+    assert_eq!(
+        sender.send(Target::token("reg-token"), "nonce1").await,
+        SendOutcome::Sent
+    );
+    assert_eq!(
+        sender.send(Target::token("reg-token"), "nonce2").await,
+        SendOutcome::Sent
+    );
 
     let assertions = fake.assertions.lock().unwrap().clone();
     assert_eq!(assertions.len(), 1, "access token cached");
@@ -700,6 +706,64 @@ async fn http_sender_sends_a_constant_high_priority_message_with_a_valid_jwt() {
     .expect("signature verifies");
 }
 
+/// qa-fixround-2026-10-06 #2: an FID goes in `message.fid`, never in the deprecated `token`.
+#[tokio::test]
+async fn http_sender_targets_an_fid_with_the_fid_field() {
+    let fake = FakeGoogle::default();
+    let sender = http_sender(&fake).await;
+    let fid = "dIsVQ2QVRT-nQyYvE0SNfx";
+    assert_eq!(sender.send(Target::fid(fid), "n1").await, SendOutcome::Sent);
+    let sends = fake.sends.lock().unwrap().clone();
+    assert_eq!(
+        sends[0].1,
+        json!({"message": {"fid": fid, "data": {"k": "sync", "n": "n1"},
+                           "android": {"priority": "HIGH", "ttl": "600s"}}})
+    );
+}
+
+#[test]
+fn target_kind_from_report_and_shape() {
+    let fid = "dIsVQ2QVRT-nQyYvE0SNfx";
+    let token = "dIsVQ2QVRT-nQyYvE0SNfx:APA91bH_long-registration-token";
+    assert_eq!(TargetKind::of(fid, Some("fid")), TargetKind::Fid);
+    assert_eq!(TargetKind::of(fid, None), TargetKind::Fid);
+    assert_eq!(TargetKind::of(fid, Some("token")), TargetKind::Token);
+    assert_eq!(TargetKind::of(token, None), TargetKind::Token);
+    // A token always has ':' - a contradicting report doesn't make it an FID.
+    assert_eq!(TargetKind::of(token, Some("fid")), TargetKind::Token);
+    assert_eq!(TargetKind::of("tok-1", None), TargetKind::Token);
+    assert_eq!(TargetKind::of("tok-1", Some("fid")), TargetKind::Fid);
+}
+
+/// The phone says what it registered; the test nudge goes to the matching field, and a report
+/// without the kind (an older launcher) falls back to the shape.
+#[tokio::test]
+async fn reported_kind_picks_the_fcm_field() {
+    let (app, fake) = app_with_fake().await;
+    let (_, token) = app.enrolled_device("phone").await;
+    let fid = "eAbcdefghijklmnopqrstu";
+    post_status(
+        &app,
+        &token,
+        json!({ "push": { "fcm_token": fid, "fcm_token_kind": "fid", "transport": "sse",
+                          "fcm_configured": true, "gms_available": true } }),
+    )
+    .await;
+    wait_for_sends(&fake, 1).await;
+    assert_eq!(fake.kinds(), [TargetKind::Fid]);
+
+    let (_, token2) = app.enrolled_device("phone2").await;
+    post_status(
+        &app,
+        &token2,
+        json!({ "push": { "fcm_token": "abc:legacy-token", "transport": "sse",
+                          "fcm_configured": true, "gms_available": true } }),
+    )
+    .await;
+    wait_for_sends(&fake, 2).await;
+    assert_eq!(fake.kinds(), [TargetKind::Fid, TargetKind::Token]);
+}
+
 #[tokio::test]
 async fn http_sender_classifies_and_retries() {
     let fake = FakeGoogle::default();
@@ -712,7 +776,7 @@ async fn http_sender_classifies_and_retries() {
         r#"{"error":{"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}"#,
     ));
     assert_eq!(
-        sender.send("t", "n").await,
+        sender.send(Target::token("t"), "n").await,
         SendOutcome::TokenDead("UNREGISTERED".into())
     );
     assert_eq!(fake.sends.lock().unwrap().len(), 1);
@@ -725,7 +789,10 @@ async fn http_sender_classifies_and_retries() {
         r#"{"error":{"status":"RESOURCE_EXHAUSTED"}}"#,
     ));
     let started = std::time::Instant::now();
-    assert_eq!(sender.send("t", "n").await, SendOutcome::Sent);
+    assert_eq!(
+        sender.send(Target::token("t"), "n").await,
+        SendOutcome::Sent
+    );
     assert!(
         started.elapsed() >= Duration::from_secs(1),
         "Retry-After honoured"
@@ -741,7 +808,7 @@ async fn http_sender_classifies_and_retries() {
             .push((503, None, r#"{"error":{"status":"UNAVAILABLE"}}"#));
     }
     assert!(matches!(
-        sender.send("t", "n").await,
+        sender.send(Target::token("t"), "n").await,
         SendOutcome::Failed(_)
     ));
     assert_eq!(fake.sends.lock().unwrap().len(), 3);
@@ -754,7 +821,7 @@ async fn http_sender_classifies_and_retries() {
         r#"{"error":{"status":"RESOURCE_EXHAUSTED"}}"#,
     ));
     assert!(matches!(
-        sender.send("t", "n").await,
+        sender.send(Target::token("t"), "n").await,
         SendOutcome::Failed(_)
     ));
     assert_eq!(fake.sends.lock().unwrap().len(), 1);
@@ -766,7 +833,10 @@ async fn http_sender_classifies_and_retries() {
         .unwrap()
         .push((401, None, r#"{"error":{"status":"UNAUTHENTICATED"}}"#));
     let before = fake.assertions.lock().unwrap().len();
-    assert_eq!(sender.send("t", "n").await, SendOutcome::Sent);
+    assert_eq!(
+        sender.send(Target::token("t"), "n").await,
+        SendOutcome::Sent
+    );
     assert_eq!(fake.assertions.lock().unwrap().len(), before + 1);
 }
 
@@ -776,7 +846,7 @@ async fn http_sender_times_out_against_a_hanging_server() {
     let sender = http_sender(&fake).await;
     *fake.hang.lock().unwrap() = true;
     let started = std::time::Instant::now();
-    let outcome = sender.send("t", "n").await;
+    let outcome = sender.send(Target::token("t"), "n").await;
     assert!(matches!(outcome, SendOutcome::Failed(_)), "{outcome:?}");
     assert!(
         started.elapsed() < Duration::from_secs(5),
@@ -791,13 +861,16 @@ async fn token_endpoint_failure_is_reported_for_the_device_page() {
     let sender = http_sender(&fake).await;
     *fake.token_fails.lock().unwrap() = true;
     assert!(matches!(
-        sender.send("t", "n").await,
+        sender.send(Target::token("t"), "n").await,
         SendOutcome::Failed(_)
     ));
     let problem = sender.server_problem().expect("problem reported");
     assert!(problem.contains("token endpoint"), "{problem}");
     *fake.token_fails.lock().unwrap() = false;
-    assert_eq!(sender.send("t", "n").await, SendOutcome::Sent);
+    assert_eq!(
+        sender.send(Target::token("t"), "n").await,
+        SendOutcome::Sent
+    );
     assert_eq!(sender.server_problem(), None);
 }
 

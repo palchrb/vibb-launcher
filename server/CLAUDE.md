@@ -176,9 +176,12 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   ones are left out (`provisioning::valid_locale`/`valid_time_zone`), the settings form refuses
   malformed values (400, nothing written). Hardening switch `disallow_config_locale`
   (`device_policy`, default 1) -> `DISALLOW_CONFIG_LOCALE` on the phone.
-- **FCM**: the launcher now registers by Firebase installation ID (firebase-messaging 25.1+) and
-  reports the FID as its `fcm_token`; HTTP v1's `token` field accepts a FID during Firebase's
-  transition, so `fcm.rs` is unchanged (move to the `fid` field when it is retired).
+- **FCM by installation ID** (migration `0035`, qa-fixround-2026-10-06 #2): the launcher registers
+  by Firebase installation ID (firebase-messaging 25.1+) and reports `push.fcm_token_kind`
+  ("fid"/"token", stored as `device_push.fcm_token_kind`). `fcm::TargetKind::of` (report when it
+  agrees with the value, else the shape: an FID is 22 chars of base64url, a token has ':') picks
+  `message.fid` or `message.token` - `token` is deprecated and takes FIDs only during Firebase's
+  migration period. `FcmSender::send` takes a `fcm::Target {id, kind}`; the fake records kinds.
 
 ## Tests
 

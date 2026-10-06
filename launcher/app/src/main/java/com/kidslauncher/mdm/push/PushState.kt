@@ -64,8 +64,10 @@ object PushState {
     fun report(context: Context, fcmConfigured: Boolean, gmsAvailable: Boolean): PushReport {
         val p = prefs(context)
         val decision = lastDecision
+        val token = p.getString(TOKEN, null)
         return PushReport(
-            fcmToken = p.getString(TOKEN, null),
+            fcmToken = token,
+            fcmTokenKind = fcmTokenKind(token),
             transport = decision.transport.wire,
             fcmConfigured = fcmConfigured,
             gmsAvailable = gmsAvailable,

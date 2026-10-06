@@ -17,7 +17,8 @@ import org.junit.Test
 
 class PushTransportTest {
 
-    private val token = "fcm-token-abc"
+    /** A Firebase installation ID (22 chars of base64url) - what we register since 25.1. */
+    private val token = "dIsVQ2QVRT-nQyYvE0SNfx"
     private val known = PushPolicy(fcmEnabled = true, fcmOk = true, fcmTokenHash = fcmTokenHash(token))
     private val good = PushInputs(fcmConfigured = true, gmsAvailable = true, playStorePresent = true, token = token, server = known)
 
@@ -71,6 +72,24 @@ class PushTransportTest {
         // A server without FCM never makes us churn tokens.
         assertEquals(TokenAction.NONE, tokenAction(true, token, null, 0, now))
         assertEquals(TokenAction.NONE, tokenAction(true, token, PushPolicy(), 0, now))
+    }
+
+    /** qa-fixround-2026-10-06 #2: a legacy registration token from before the FID switch is
+     * replaced by an FID registration once (retried hourly), and the report says which kind. */
+    @Test
+    fun `a legacy registration token is migrated to an FID`() {
+        val now = 10 * TOKEN_RENEW_INTERVAL_MS
+        val legacy = "dIsVQ2QVRT-nQyYvE0SNfx:APA91bHlegacy-registration-token"
+        val legacyKnown = known.copy(fcmTokenHash = fcmTokenHash(legacy))
+        assertEquals(TokenAction.GET, tokenAction(true, legacy, legacyKnown, 0, now))
+        assertEquals(TokenAction.NONE, tokenAction(true, legacy, legacyKnown, now - 60_000, now))
+        assertEquals(TokenAction.GET, tokenAction(true, legacy, legacyKnown, now - TOKEN_RETRY_INTERVAL_MS, now))
+        assertTrue(isFid(token))
+        assertFalse(isFid(legacy))
+        assertFalse(isFid("dIsVQ2QVRT-nQyYvE0SNf=")) // not base64url
+        assertEquals("fid", fcmTokenKind(token))
+        assertEquals("token", fcmTokenKind(legacy))
+        assertEquals(null, fcmTokenKind(null))
     }
 
     @Test
@@ -158,7 +177,7 @@ class PushTransportTest {
             kioskEngaged = true,
             installedApps = listOf(InstalledApp("org.example", "Example", false, installer = "com.android.vending")),
             push = PushReport(
-                fcmToken = "t", transport = "fcm", fcmConfigured = true, gmsAvailable = true,
+                fcmToken = "t", fcmTokenKind = "fid", transport = "fcm", fcmConfigured = true, gmsAvailable = true,
                 lastNudgeMs = 5, lastNudgeId = "abc", lastPriority = "high", lastOriginalPriority = "high", reason = null,
             ),
             installMode = InstallModeReport(untilMs = 99),
@@ -166,7 +185,7 @@ class PushTransportTest {
         )
         val json = ServerJson.encodeToJsonElement(StatusReportRequest.serializer(), report).jsonObject
         val push = json["push"]!!.jsonObject
-        for (key in listOf("fcm_token", "transport", "fcm_configured", "gms_available", "last_nudge_ms", "last_nudge_id", "last_priority", "last_original_priority")) {
+        for (key in listOf("fcm_token", "fcm_token_kind", "transport", "fcm_configured", "gms_available", "last_nudge_ms", "last_nudge_id", "last_priority", "last_original_priority")) {
             assertTrue(key, key in push)
         }
         assertEquals("99", json["install_mode"]!!.jsonObject["until_ms"].toString())

@@ -270,9 +270,72 @@ pub enum SendOutcome {
 
 pub type SendFuture<'a> = Pin<Box<dyn Future<Output = SendOutcome> + Send + 'a>>;
 
-/// Sends one nudge to one registration token. Behind a trait so tests use a fake.
+/// What a phone's `fcm_token` is: a Firebase installation ID (the launcher registers by FID since
+/// firebase-messaging 25.1) or a legacy registration token. HTTP v1 targets an FID with
+/// `message.fid`; `message.token` is deprecated and accepts FIDs only during Firebase's migration
+/// period (firebase.google.com/docs/cloud-messaging/send/admin-sdk).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetKind {
+    Fid,
+    Token,
+}
+
+impl TargetKind {
+    /// The phone's report ("fid"/"token") when it agrees with the value, else the shape: an FID
+    /// is 22 characters of base64url; a registration token is longer and contains ':'.
+    pub fn of(value: &str, reported: Option<&str>) -> TargetKind {
+        if value.contains(':') {
+            return TargetKind::Token;
+        }
+        match reported {
+            Some("token") => TargetKind::Token,
+            Some("fid") => TargetKind::Fid,
+            _ if looks_like_fid(value) => TargetKind::Fid,
+            _ => TargetKind::Token,
+        }
+    }
+
+    pub fn field(self) -> &'static str {
+        match self {
+            TargetKind::Fid => "fid",
+            TargetKind::Token => "token",
+        }
+    }
+}
+
+/// A Firebase installation ID: exactly 22 characters of base64url (no padding).
+pub fn looks_like_fid(value: &str) -> bool {
+    value.len() == 22
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Where a nudge goes: the phone's FID or registration token, and which of the two it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Target<'a> {
+    pub id: &'a str,
+    pub kind: TargetKind,
+}
+
+impl<'a> Target<'a> {
+    pub fn token(id: &'a str) -> Self {
+        Target {
+            id,
+            kind: TargetKind::Token,
+        }
+    }
+    pub fn fid(id: &'a str) -> Self {
+        Target {
+            id,
+            kind: TargetKind::Fid,
+        }
+    }
+}
+
+/// Sends one nudge to one phone (FID or registration token). Behind a trait so tests use a fake.
 pub trait FcmSender: Send + Sync {
-    fn send<'a>(&'a self, token: &'a str, nonce: &'a str) -> SendFuture<'a>;
+    fn send<'a>(&'a self, target: Target<'a>, nonce: &'a str) -> SendFuture<'a>;
     /// Why this server can't reach FCM right now (the token endpoint keeps failing), for the
     /// device page; `None` when fine.
     fn server_problem(&self) -> Option<String> {
@@ -457,7 +520,7 @@ impl HttpFcmSender {
         *self.token.lock().await = None;
     }
 
-    async fn try_once(&self, token: &str, nonce: &str) -> TryResult {
+    async fn try_once(&self, target: Target<'_>, nonce: &str) -> TryResult {
         let access = match self.access_token().await {
             Ok(a) => a,
             Err(e) => return TryResult::Done(SendOutcome::Failed(e)),
@@ -467,13 +530,13 @@ impl HttpFcmSender {
             self.config.fcm_base_url.trim_end_matches('/'),
             self.account.project_id
         );
-        let message = serde_json::json!({
+        let mut message = serde_json::json!({
             "message": {
-                "token": token,
                 "data": {"k": "sync", "n": nonce},
                 "android": {"priority": "HIGH", "ttl": "600s"},
             }
         });
+        message["message"][target.kind.field()] = serde_json::Value::from(target.id);
         let response = match self
             .client
             .post(&url)
@@ -505,13 +568,13 @@ impl HttpFcmSender {
         }
     }
 
-    async fn send_with_retries(&self, token: &str, nonce: &str) -> SendOutcome {
+    async fn send_with_retries(&self, target: Target<'_>, nonce: &str) -> SendOutcome {
         let started = Instant::now();
         let mut tries = 0;
         let mut reauthed = false;
         loop {
             tries += 1;
-            match self.try_once(token, nonce).await {
+            match self.try_once(target, nonce).await {
                 TryResult::Done(outcome) => return outcome,
                 TryResult::Unauthorized if !reauthed => {
                     reauthed = true;
@@ -539,8 +602,8 @@ impl HttpFcmSender {
 }
 
 impl FcmSender for HttpFcmSender {
-    fn send<'a>(&'a self, token: &'a str, nonce: &'a str) -> SendFuture<'a> {
-        Box::pin(self.send_with_retries(token, nonce))
+    fn send<'a>(&'a self, target: Target<'a>, nonce: &'a str) -> SendFuture<'a> {
+        Box::pin(self.send_with_retries(target, nonce))
     }
 
     fn server_problem(&self) -> Option<String> {
@@ -560,6 +623,8 @@ pub mod testing {
     #[derive(Default)]
     pub struct FakeSender {
         pub sent: std::sync::Mutex<Vec<(String, String)>>,
+        /// The target kind of each send, in order.
+        pub kinds: std::sync::Mutex<Vec<TargetKind>>,
         pub next: std::sync::Mutex<Option<SendOutcome>>,
     }
 
@@ -567,17 +632,21 @@ pub mod testing {
         pub fn sends(&self) -> Vec<(String, String)> {
             self.sent.lock().unwrap().clone()
         }
+        pub fn kinds(&self) -> Vec<TargetKind> {
+            self.kinds.lock().unwrap().clone()
+        }
         pub fn answer(&self, outcome: SendOutcome) {
             *self.next.lock().unwrap() = Some(outcome);
         }
     }
 
     impl FcmSender for FakeSender {
-        fn send<'a>(&'a self, token: &'a str, nonce: &'a str) -> SendFuture<'a> {
+        fn send<'a>(&'a self, target: Target<'a>, nonce: &'a str) -> SendFuture<'a> {
             self.sent
                 .lock()
                 .unwrap()
-                .push((token.to_string(), nonce.to_string()));
+                .push((target.id.to_string(), nonce.to_string()));
+            self.kinds.lock().unwrap().push(target.kind);
             let outcome = self
                 .next
                 .lock()

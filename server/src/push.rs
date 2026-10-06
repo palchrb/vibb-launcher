@@ -136,6 +136,8 @@ pub struct DevicePush {
     pub last_ack_at: Option<i64>,
     /// Hash of the last token FCM rejected (see [record_report]).
     pub rejected_token_hash: Option<String>,
+    /// "fid" or "token" as the phone reported it (migrations/0035); `None` = older launcher.
+    pub fcm_token_kind: Option<String>,
 }
 
 impl DevicePush {
@@ -210,6 +212,10 @@ pub async fn push_policy(state: &AppState, device_id: i64) -> Result<PushPolicy,
 pub struct PushReport {
     #[serde(default)]
     pub fcm_token: Option<String>,
+    /// "fid" (Firebase installation ID) or "token" (legacy registration token); absent from
+    /// launchers before the FID switch.
+    #[serde(default)]
+    pub fcm_token_kind: Option<String>,
     #[serde(default)]
     pub transport: Option<String>,
     #[serde(default)]
@@ -262,6 +268,12 @@ pub async fn record_report(
         reported.filter(|t| row.rejected_token_hash.as_deref() != Some(token_hash(t).as_str()));
 
     let token_changed = row.fcm_token.as_deref() != token;
+    let kind = token.and(
+        report
+            .fcm_token_kind
+            .as_deref()
+            .filter(|k| matches!(*k, "fid" | "token")),
+    );
     let health = if token_changed {
         Health::reset()
     } else {
@@ -282,20 +294,24 @@ pub async fn record_report(
             .await?;
         }
         sqlx::query(
-            "UPDATE device_push SET fcm_token = ?, fcm_token_updated_at = datetime('now'), \
-             last_fcm_error = NULL, last_fcm_error_at = NULL WHERE device_id = ?",
+            "UPDATE device_push SET fcm_token = ?, fcm_token_kind = ?, \
+             fcm_token_updated_at = datetime('now'), last_fcm_error = NULL, \
+             last_fcm_error_at = NULL WHERE device_id = ?",
         )
         .bind(token)
+        .bind(kind)
         .bind(device_id)
         .execute(&state.db)
         .await?;
     }
     sqlx::query(
         "UPDATE device_push SET fcm_token_seen_at = CASE WHEN ? IS NULL THEN fcm_token_seen_at \
-         ELSE datetime('now') END, push_transport = COALESCE(?, push_transport), \
+         ELSE datetime('now') END, fcm_token_kind = COALESCE(?, fcm_token_kind), \
+         push_transport = COALESCE(?, push_transport), \
          last_nudge_at = COALESCE(?, last_nudge_at) WHERE device_id = ?",
     )
     .bind(token)
+    .bind(kind)
     .bind(transport)
     .bind(&last_nudge_at)
     .bind(device_id)
@@ -337,7 +353,11 @@ pub async fn nudge(state: &AppState, device_id: i64) {
         return;
     };
     let nonce = new_nonce();
-    let outcome = sender.send(&token, &nonce).await;
+    let target = crate::fcm::Target {
+        id: &token,
+        kind: crate::fcm::TargetKind::of(&token, row.fcm_token_kind.as_deref()),
+    };
+    let outcome = sender.send(target, &nonce).await;
     let now = chrono::Utc::now().timestamp();
     let result = match &outcome {
         SendOutcome::Sent => {

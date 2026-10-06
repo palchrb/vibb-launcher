@@ -109,7 +109,9 @@ fun tokenAction(
 ): TokenAction {
     if (!fcmConfigured) return TokenAction.NONE
     val since = nowMs - lastRequestMs
-    if (token.isNullOrBlank()) {
+    if (token.isNullOrBlank() || !isFid(token)) {
+        // None yet - or a legacy registration token from before the FID switch: register once
+        // by installation ID (qa-fixround-2026-10-06 #2), retried hourly like a missing one.
         val due = lastRequestMs == 0L || since < 0 || since >= TOKEN_RETRY_INTERVAL_MS
         return if (due) TokenAction.GET else TokenAction.NONE
     }
@@ -120,6 +122,19 @@ fun tokenAction(
     if (serverKnewToken) return TokenAction.RENEW
     val stale = since < 0 || since >= TOKEN_RENEW_INTERVAL_MS
     return if (stale) TokenAction.RENEW else TokenAction.NONE
+}
+
+/** A Firebase installation ID: 22 characters of base64url (a legacy registration token is longer
+ * and contains ':'). */
+fun isFid(token: String): Boolean =
+    token.length == 22 && token.all { it.isLetterOrDigit() && it.code < 128 || it == '-' || it == '_' }
+
+/** `PushReport.fcmTokenKind`: "fid" or "token" (legacy), so the server picks `message.fid` or
+ * `message.token`; `null` without a token. */
+fun fcmTokenKind(token: String?): String? = when {
+    token.isNullOrBlank() -> null
+    isFid(token) -> "fid"
+    else -> "token"
 }
 
 /** RemoteMessage.PRIORITY_* as reported strings (duplicated so this file stays Android-free). */

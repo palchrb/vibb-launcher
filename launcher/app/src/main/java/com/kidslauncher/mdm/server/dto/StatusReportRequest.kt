@@ -68,6 +68,9 @@ data class LockStateReport(
 @Serializable
 data class PushReport(
     val fcmToken: String?,
+    /** "fid" (Firebase installation ID, what we register since firebase-messaging 25.1) or
+     * "token" (a legacy registration token) - see [com.kidslauncher.mdm.push.fcmTokenKind]. */
+    val fcmTokenKind: String? = null,
     val transport: String,
     val fcmConfigured: Boolean,
     val gmsAvailable: Boolean,
