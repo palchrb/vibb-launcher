@@ -273,6 +273,8 @@ struct DeviceDetailTemplate {
     screen_timeout_seconds: i64,
     screen_timeout_options: Vec<(i64, &'static str)>,
     screen_timeout_applied: Option<String>,
+    /// "Launcher crashes" card (cleanup 2026-10-06): the newest crash reports.
+    crashes: Vec<crate::crashes::DeviceCrash>,
 }
 
 /// The kiosk app block switch on the "Push and Play" card (handy step 9): with it on, kiosk mode
@@ -996,8 +998,11 @@ pub async fn view_device(
             Vec::new()
         });
 
+    let crashes = crate::crashes::latest(&state.db, id).await;
+
     Html(
         DeviceDetailTemplate {
+            crashes,
             time,
             push,
             lock,

@@ -1113,3 +1113,51 @@ pub async fn wallpaper_image(
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
+
+/// `POST /api/devices/crashes` (cleanup 2026-10-06): the launcher's crash reports - hash, short
+/// trace, count, times, build - checked by `crashes::sanitize` (a report in another shape is
+/// skipped) and kept per phone and hash (counts add up). 204 once stored; the launcher drops what
+/// it sent only then. 400 for more than `crashes::MAX_PER_BATCH`, 500 on a DB error.
+pub async fn crash_reports(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    Json(batch): Json<crate::crashes::CrashReportBatch>,
+) -> impl IntoResponse {
+    if batch.crashes.len() > crate::crashes::MAX_PER_BATCH {
+        return StatusCode::BAD_REQUEST;
+    }
+    let Ok(mut tx) = state.db.begin().await else {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
+    for crash in batch.crashes.iter().filter_map(crate::crashes::sanitize) {
+        let result = sqlx::query(
+            "INSERT INTO device_crashes \
+             (device_id, hash, trace, count, first_at_ms, last_at_ms, app_version_code) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(device_id, hash) DO UPDATE SET \
+                trace = excluded.trace, \
+                count = MIN(device_crashes.count + excluded.count, 1000000000), \
+                first_at_ms = MIN(device_crashes.first_at_ms, excluded.first_at_ms), \
+                last_at_ms = MAX(device_crashes.last_at_ms, excluded.last_at_ms), \
+                app_version_code = excluded.app_version_code, \
+                reported_at = datetime('now')",
+        )
+        .bind(device.id)
+        .bind(&crash.hash)
+        .bind(&crash.trace)
+        .bind(crash.count)
+        .bind(crash.first_at_ms)
+        .bind(crash.last_at_ms)
+        .bind(crash.app_version_code)
+        .execute(&mut *tx)
+        .await;
+        if let Err(err) = result {
+            tracing::error!(device_id = device.id, %err, "couldn't store a crash report");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    }
+    if tx.commit().await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    StatusCode::NO_CONTENT
+}

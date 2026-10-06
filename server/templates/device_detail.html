@@ -94,6 +94,21 @@
     </div>
     {% endif %}
 
+    <div class="card" id="crashes">
+        <h2>Launcher crashes</h2>
+        {% if crashes.is_empty() %}
+        <p class="subtitle">No crashes reported in the last 30 days.</p>
+        {% else %}
+        <p class="subtitle">The launcher restarts by itself after a crash; nothing is shown on the phone. Each report has only where in the code it happened (no messages or personal data). Kept 30 days after the last one.</p>
+        {% for c in crashes %}
+        <details>
+            <summary><code>{{ c.exception() }}</code> - {{ c.count }}&times;, last {{ c.last_at() }}, build {{ c.app_version_code }} <span class="subtitle">({{ c.hash }})</span></summary>
+            <pre style="white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px;">{{ c.trace }}</pre>
+        </details>
+        {% endfor %}
+        {% endif %}
+    </div>
+
     <div class="card">
         <h2>Time rules</h2>
         <p class="subtitle">{% if time.custom %}This phone has its own time rules and screen time.{% else %}This phone follows the global time rules and screen time.{% endif %} Emergency calls always work.</p>

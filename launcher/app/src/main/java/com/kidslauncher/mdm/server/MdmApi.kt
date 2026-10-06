@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.server
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import com.kidslauncher.mdm.server.dto.CommandResultRequest
+import com.kidslauncher.mdm.server.dto.CrashReportBatch
 import com.kidslauncher.mdm.server.dto.DnsBlocklistCategory
 import com.kidslauncher.mdm.server.dto.DnsEventReport
 import com.kidslauncher.mdm.server.dto.EnrollRequest
@@ -78,6 +79,10 @@ interface MdmApi {
     @Streaming
     @GET
     suspend fun downloadTrackedApp(@Url url: String): Response<ResponseBody>
+
+    /** Launcher crashes (hash + short trace, no personal data) - see [com.kidslauncher.mdm.crash.CrashReports]. */
+    @POST("api/devices/crashes")
+    suspend fun sendCrashReports(@Body batch: CrashReportBatch): Response<Unit>
 }
 
 /** [token] is omitted for the enroll-only call (no token exists yet); pass it for every

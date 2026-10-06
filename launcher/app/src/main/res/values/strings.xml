@@ -231,8 +231,6 @@
     <string name="toast_activity_not_found_browser">Can\'t open URL: no browser found.</string>
 
     <string name="dialog_ok">Ok</string>
-    <string name="notification_crash_title">App crashed</string>
-    <string name="notification_crash_explanation">Sorry! Click for more information.</string>
     <string name="notification_channel_ring">Find My Device ring</string>
     <string name="notification_ring_title">Phone is ringing</string>
     <string name="notification_ring_text">A parent triggered this from Find My Device.</string>
@@ -246,22 +244,6 @@
     <string name="notification_channel_app_install">App installs and updates</string>
     <string name="notification_app_installing_title">Installing %1$s…</string>
     <string name="notification_app_install_failed_title">Couldn\'t install %1$s</string>
-    <string name="crash_info"><![CDATA[
-        Looks like something went wrong, sorry about that!<br><br>
-        For privacy reasons, crash logs are not collected automatically.<br>
-        You can copy the crash report below for debugging.<br><br>
-        Note that crash logs might contain <strong>sensitive information</strong>, e.g. the name of an app you tried to launch.
-        <h2>What can I do now?</h2>
-        If this bug appears again and again, you can try:
-        <ul>
-        <li>Force stop the app</li>
-        <li>Clear the app\'s storage (<strong>Your settings will be lost!</strong>)</li>
-        </ul>
-        ]]>
-    </string>
-    <string name="report_crash_button_copy">Copy crash report to clipboard</string>
-    <string name="report_crash_title">App crashed</string>
-    <string name="notification_channel_crash">Crashes and Debug Information</string>
     <!--
       -
       - Content Descriptions

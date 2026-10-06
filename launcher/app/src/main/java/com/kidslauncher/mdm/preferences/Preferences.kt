@@ -14,7 +14,6 @@ import com.kidslauncher.mdm.preferences.legacy.migratePreferencesFromVersion2
 import com.kidslauncher.mdm.preferences.legacy.migratePreferencesFromVersion3
 import com.kidslauncher.mdm.preferences.legacy.migratePreferencesFromVersion4
 import com.kidslauncher.mdm.preferences.legacy.migratePreferencesFromVersionUnknown
-import com.kidslauncher.mdm.sendCrashNotification
 import com.kidslauncher.mdm.ui.HomeActivity
 
 /* Current version of the structure of preferences.
@@ -82,7 +81,7 @@ fun migratePreferencesToNewVersion(context: Context) {
         }
     } catch (e: Exception) {
         Log.e(TAG, "Unable to restore preferences:\n${e.stackTrace}")
-        sendCrashNotification(context, e)
+        com.kidslauncher.mdm.crash.CrashReports.record(context, e)
         resetPreferences(context)
     }
 }

@@ -158,7 +158,9 @@ class Application : android.app.Application() {
                     // Never let the guard stop the crash report.
                 }
             }
-            sendCrashNotification(this@Application, throwable)
+            // Recorded for the server (cleanup 2026-10-06) - no crash screen, notification, share
+            // or email on the phone.
+            com.kidslauncher.mdm.crash.CrashReports.record(this@Application, throwable)
             exitProcess(1)
         }
 
@@ -193,7 +195,7 @@ class Application : android.app.Application() {
             initRest()
         } catch (e: Exception) {
             android.util.Log.e("Application", "Setup failed, continuing", e)
-            sendCrashNotification(this, e)
+            com.kidslauncher.mdm.crash.CrashReports.record(this, e)
         }
     }
 

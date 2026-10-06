@@ -369,6 +369,7 @@ async fn pruning_keeps_only_what_retention_allows() {
             dns_events: 2,
             locations: 3,
             status_reports: 2,
+            crashes: 0,
         }
     );
     assert_eq!(count(db, "SELECT COUNT(*) FROM device_dns_events").await, 1);
@@ -473,4 +474,95 @@ async fn location_retention_is_chosen_per_phone_and_applied_at_once() {
         .await,
         1
     );
+}
+
+#[tokio::test]
+async fn crash_reports_reach_the_device_page_without_free_text() {
+    use axum::http::{Method, StatusCode};
+    let app = super::TestApp::new().await;
+    let (id, token) = app.enrolled_device("kid").await;
+    let trace = "java.lang.IllegalStateException\n    at com.kidslauncher.mdm.calls.PhoneBookActivity.call(PhoneBookActivity.kt:10)\nMamma +4791234567\n";
+    let batch = |count: i64, last: i64| {
+        serde_json::json!({ "crashes": [{
+            "hash": "0123456789abcdef", "trace": trace, "count": count,
+            "first_at_ms": 1_790_000_000_000_i64, "last_at_ms": last, "app_version_code": 23_007_000
+        }, {
+            "hash": "not a hash", "trace": trace, "count": 1,
+            "first_at_ms": 0, "last_at_ms": 0, "app_version_code": 1
+        }]})
+    };
+    // Without a token: refused, nothing stored.
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/crashes",
+            None,
+            Some(batch(1, 1)),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/crashes",
+            Some(&token),
+            Some(batch(2, 1_790_000_100_000)),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/crashes",
+            Some(&token),
+            Some(batch(1, 1_790_000_200_000)),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let rows: Vec<(String, String, i64, i64)> =
+        sqlx::query_as("SELECT hash, trace, count, last_at_ms FROM device_crashes")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(
+            "0123456789abcdef".to_string(),
+            "java.lang.IllegalStateException\n    at com.kidslauncher.mdm.calls.PhoneBookActivity.call(PhoneBookActivity.kt:10)\n".to_string(),
+            3,
+            1_790_000_200_000
+        )]
+    );
+    let too_many = serde_json::json!({ "crashes": vec![batch(1, 1)["crashes"][0].clone(); 11] });
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/crashes",
+            Some(&token),
+            Some(too_many),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+
+    let cookie = app.admin_cookie().await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("Launcher crashes"));
+    assert!(page.contains("java.lang.IllegalStateException"));
+    assert!(page.contains("3&times;") || page.contains("3×"));
+    assert!(!page.contains("4791234567"));
+
+    // Pruned 30 days after the phone last reported it.
+    sqlx::query("UPDATE device_crashes SET reported_at = datetime('now', '-31 days')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(crate::retention::prune(&app.db).await.unwrap().crashes, 1);
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("No crashes reported in the last 30 days."));
 }

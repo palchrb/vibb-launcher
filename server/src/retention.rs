@@ -18,6 +18,8 @@ pub const DEFAULT_LOCATION_RETENTION_DAYS: i64 = 7;
 /// Status reports - the history of screen time (`time_state_json`), call state and app lists.
 /// The newest report per phone is always kept (the device page shows it).
 pub const STATUS_HISTORY_DAYS: i64 = 30;
+/// Launcher crash reports, counted from when the phone last reported that crash.
+pub const CRASH_REPORT_DAYS: i64 = 30;
 /// How often [run_pruning] runs (and once at startup).
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -27,6 +29,7 @@ pub struct Pruned {
     pub dns_events: u64,
     pub locations: u64,
     pub status_reports: u64,
+    pub crashes: u64,
 }
 
 /// One pruning pass:
@@ -34,7 +37,8 @@ pub struct Pruned {
 ///   is off (an older launcher may still send them; the server drops those at the door too);
 /// - locations older than the phone's `location_retention_days` (by the server's receive time),
 ///   except the newest fix per phone, which Find My Device shows as "last seen";
-/// - status reports older than [STATUS_HISTORY_DAYS], except the newest per phone.
+/// - status reports older than [STATUS_HISTORY_DAYS], except the newest per phone;
+/// - crash reports not reported again for [CRASH_REPORT_DAYS].
 pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     let dns_events = sqlx::query(
         "DELETE FROM device_dns_events \
@@ -67,10 +71,18 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
+    let crashes = sqlx::query(
+        "DELETE FROM device_crashes WHERE reported_at < datetime('now', '-' || ? || ' days')",
+    )
+    .bind(CRASH_REPORT_DAYS)
+    .execute(db)
+    .await?
+    .rows_affected();
     Ok(Pruned {
         dns_events,
         locations,
         status_reports,
+        crashes,
     })
 }
 

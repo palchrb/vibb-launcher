@@ -227,6 +227,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - `contacts` (global address book, unique normalised `phone_number`, `photo_hash`), `device_contacts` (device_id, contact_id, `allow_inbound`/`allow_outbound`/`show_on_home`, `message_app`/`message_address`, `sort_order`), `call_settings` (singleton, `default_country_code`) - see "Calls & SMS" above; `device_policy.calls_managed`/`calls_enabled`/`sms_enabled`/`default_message_app` are the per-device switches; the hardening switches are `device_policy` columns too (see "Hardening")
 - `wallpapers` (built-ins + uploads, `image_hash`, `lock_screen`), `device_wallpapers` (which a phone may use) - see "Wallpapers" above
 - `device_push` - per device: FCM token (+ updated/last reported), reported transport, last nudge received, `fcm_ok` health verdict, last FCM error, last send nonce/time, pending/unacked sends, last ack (migration `0026`, see "Push via FCM, Play")
+- `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
 - `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (`requested_at`/`delivered_at`/`acknowledged_at`/`result`), see the Find My Device architecture bullet above
 
 ## Device-facing API (plain JSON, no envelope)
@@ -237,6 +238,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused, capabilities, call_state, notification_listener_enabled, time_state, push, install_mode, play_window_active, play_store_suspendable, lock_state, screen_timeout_seconds, update_fence, notification_cancels}` (installed apps may carry `installer`) → 204
 - `GET /api/devices/contact-photos/{hash}` (bearer) - a contact photo, only for this device's contacts
 - `GET /api/devices/wallpapers/{hash}` (bearer) - a wallpaper image, only when ticked for this device
+- `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204
+- `POST /api/devices/dns-events` (bearer) - blocked domains, stored only while the phone's log is on (default off) -> 204
 - `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download, scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above
 
 ## Architecture change in progress (2026-08-07): on-device DNS filtering + embedded tsnet
@@ -269,6 +272,16 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - `retention::run_pruning` (spawned from `main` only) runs `prune` at startup and hourly - it replaced the old
   `run_dns_event_pruning` (60 days) and `run_location_pruning` (30 days). Connections use `secure_delete`.
 - Tests: `src/tests/cleanup.rs`.
+
+## Crash reports (cleanup 2026-10-06, `src/crashes.rs`, migration `0040_device_crashes.sql`)
+
+- `POST /api/devices/crashes` (bearer): `{crashes: [{hash, trace, count, first_at_ms, last_at_ms, app_version_code}]}`, at
+  most 10 (else 400), 204 once stored (the launcher clears its copy only then), 500 on a DB error. `crashes::sanitize`
+  keeps a report only with a 16-lowercase-hex hash and drops every trace line that isn't an exception class, `    at
+  class.method(File:line)`, `Caused by: class` or `    ... N more` (so no free text - the launcher never sends
+  messages), cuts the trace to 4000 chars and clamps counts/times. `device_crashes` is one row per phone and hash
+  (counts add up), shown on the device page's "Launcher crashes" card (newest 5, trace in a `<details>`), pruned 30
+  days after the phone last reported it (`retention::prune`). It replaced upstream's on-phone crash screen.
 
 ## Removed monitoring (2026-10-06)
 

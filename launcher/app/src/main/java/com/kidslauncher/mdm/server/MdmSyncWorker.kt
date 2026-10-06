@@ -238,6 +238,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         reportCommandResult(api, command.id, ok, message)
     }
 
+    // Crashes since the last sync (hash + short trace, no personal data) for the device page.
+    com.kidslauncher.mdm.crash.CrashReports.upload(context, api)
     // Retention (cleanup 2026-10-06): blocked calls older than 30 days leave the call log.
     com.kidslauncher.mdm.calls.BlockedCallLog.pruneIfDue(context)
 

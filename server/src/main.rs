@@ -1,4 +1,5 @@
 mod config;
+mod crashes;
 mod dns_engine;
 mod fcm;
 mod handlers;
@@ -557,6 +558,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/api/devices/dns-events",
             post(handlers::device_api::dns_events),
+        )
+        .route(
+            "/api/devices/crashes",
+            post(handlers::device_api::crash_reports),
         )
         .layer(from_fn_with_state(
             state.clone(),

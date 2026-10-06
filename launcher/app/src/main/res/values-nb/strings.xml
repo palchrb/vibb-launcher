@@ -183,8 +183,6 @@
     <string name="toast_activity_not_found_browser">Kan ikke åpne lenken: fant ingen nettleser.</string>
 
     <string name="dialog_ok">OK</string>
-    <string name="notification_crash_title">Appen krasjet</string>
-    <string name="notification_crash_explanation">Beklager! Trykk for mer informasjon.</string>
     <string name="notification_channel_ring">Finn enheten – ringing</string>
     <string name="notification_ring_title">Telefonen ringer</string>
     <string name="notification_ring_text">En forelder startet dette fra Finn enheten.</string>
@@ -198,22 +196,6 @@
     <string name="notification_channel_app_install">Installering og oppdatering av apper</string>
     <string name="notification_app_installing_title">Installerer %1$s …</string>
     <string name="notification_app_install_failed_title">Klarte ikke å installere %1$s</string>
-    <string name="crash_info"><![CDATA[
-        Noe gikk galt, beklager!<br><br>
-        Av personvernhensyn samles ikke krasjlogger inn automatisk.<br>
-        Du kan kopiere krasjrapporten nedenfor for feilsøking.<br><br>
-        Merk at krasjlogger kan inneholde <strong>sensitiv informasjon</strong>, for eksempel navnet på en app du prøvde å åpne.
-        <h2>Hva kan jeg gjøre nå?</h2>
-        Hvis feilen kommer igjen og igjen, kan du prøve å:
-        <ul>
-        <li>tvangsstoppe appen</li>
-        <li>tømme appens lagring (<strong>innstillingene dine går tapt!</strong>)</li>
-        </ul>
-        ]]>
-    </string>
-    <string name="report_crash_button_copy">Kopier krasjrapporten til utklippstavlen</string>
-    <string name="report_crash_title">Appen krasjet</string>
-    <string name="notification_channel_crash">Krasj og feilsøkingsinformasjon</string>
 
     <!-- Content descriptions -->
     <string name="content_description_close">Lukk</string>
