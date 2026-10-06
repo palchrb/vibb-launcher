@@ -259,6 +259,10 @@ launchable.
   while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
 - **Pending user decision**: drop the top-left back buttons on full pages
   (`KidHeader.SHOW_BACK_BUTTON`).
+- **Vibb music on Android: Spotify via App Remote (option A) is the main plan**
+  (user, 2026-10-06; docs/design/vibb-spotify-options.md). Requires a Play account
+  on the phone and an "engine app" state in handy for Spotify. Start with the
+  device spike.
 - **Custom DNS upstream** (user, 2026-10-06): DNS page option "own DNS server"
   (address, port, protocol plain UDP/TCP or DoT + TLS hostname) for the on-device
   filter's upstream, e.g. AdGuard Home on a tailnet IP; tailnet addresses routed

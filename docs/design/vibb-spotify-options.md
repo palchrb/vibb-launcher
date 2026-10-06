@@ -170,3 +170,15 @@ families-expansion (+ 2026-07-28 update), 9to5mac.com/2026/07/15 ("music only")
 [S23] github.com/tidal-music/tidal-sdk-android player/README.md; github.com/orgs/tidal-music/discussions/179
 [S24] support.deezer.com "Deezer FAQs For Developers" · [S25] developer.apple.com/musickit/android;
 github.com/assembleinc/kids-tunes-android · [S26] lovdata.no/dokument/NL/lov/2018-06-15-40 (§§ 26, 99)
+
+## Decision (user, 2026-10-06)
+
+Option A — the Spotify app as a hidden playback engine controlled by Vibb through the App
+Remote SDK — is the main plan for music in Vibb on Android. NRK/podcasts/Storytel/own files
+remain built into Vibb. Accepted: Developer Policy III.8 risk (family-only dev-mode app, ≤5
+users), Play account on the phone (Spotify comes from Play), and that a cold start without
+network can't connect until it is online (downloads play once connected).
+First step: the device spike (§ test plan) on a Play emulator image / the Jelly Star, with the
+kill criteria in this doc. handy needs an "engine app" state for Spotify (installed, never
+hidden or suspended, not on Home, not launchable by the kid; activities only in PIN setup mode;
+paused by time rules).
