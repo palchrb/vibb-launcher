@@ -54,4 +54,9 @@ kiosk and PIN lock as before, calls only through our screening/redirection.
    `-PwarningsAsErrors=true` (allWarningsAsErrors).
 7. **No upstream splash**: our own screens get a navy, icon-less starting window
    (`windowSplashScreenBackground`, transparent `windowSplashScreenAnimatedIcon`, API 31+).
-8. **Own app icon**: navy adaptive icon with a white house+phone glyph and a monochrome layer.
+8. **Own app icon**: the Vibb mark (palchrb/vibb pi/art) as adaptive + monochrome icon; Home's
+   cold-start splash breathes it once (< 1000 ms). 9. Vibb night palette, "Vibb night" wallpaper.
+10. No stuck call notification/screen: reconcile on call removal, unbind and process start.
+11. One call at a time (emergency excepted). 12. Home contact tap opens the sheet. 13. Call
+badge unclipped, ringed in the wallpaper ink. 14. Scroll restore on every PWA page. 15. Sheet:
+Back/swipe close it, the page's back arrow hides; `KidBackButton` is the one back-button switch.

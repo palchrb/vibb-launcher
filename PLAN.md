@@ -237,15 +237,19 @@ launchable.
   low-battery shutdown) with the last known fix (no time for a fresh GPS fix), and
   an active fix + report when the battery drops to ~5% so a dying phone leaves a
   fresh position. Sudden power loss sends nothing; airplane mode means no network.
-- **Fixes from the 2026-10-06 emulator run** (docs/testing/2026-10-06-emulator-run.md):
-  PIN keypad fits small screens, less top space on lock and Home, silent call
-  notification while our call screen is in front, parent-set screen timeout
-  (auto-lock) per device in the PWA.
-- **Build hygiene (next commits, user 2026-10-06)**: remove deprecated API use and
-  build warnings — FcmSupport `deleteToken()`/`token` (Firebase), QuickControls
-  `WifiConfiguration`/`BluetoothAdapter.getDefaultAdapter()`, `annotationProcessor`
-  → `kapt`, `kapt.include.compile.classpath=false`, the PreferenceProcessor
-  warning; then treat new Kotlin warnings as errors in CI so the log stays clean.
+- **Fixes from the 2026-10-06 emulator run** (docs/testing/2026-10-06-emulator-run.md) -
+  **done 2026-10-06, needs an emulator/device pass**: PIN keypad fits 320x569 dp, less top
+  space on lock and Home, silent call notification while our call screen is in front, no stuck
+  call notification/screen after a call, one call at a time (emergency excepted), Home contacts
+  open the sheet, unclipped call badge, sheet Back/swipe, parent-set screen timeout (auto-lock)
+  per device, PWA keeps the scroll position on every form, Vibb icon/splash/night palette and
+  the "Vibb night" default wallpaper for new phones.
+- **Build hygiene (user 2026-10-06) - done**: FID-based FCM registration, BluetoothManager,
+  WifiConfiguration confined to suppressed DO-only code, kapt, R8 dnsjava warning; Kotlin
+  warnings fail CI (`-PwarningsAsErrors=true`). Left: kapt's javac "RELEASE_11" note from the
+  PreferenceProcessor. Device tests: FCM after the FID switch, Wi-Fi/Bluetooth toggles.
+- **Pending user decision**: drop the top-left back buttons on full pages
+  (`KidBackButton.SHOW_ON_PAGES`).
 - **Recovery / no soft-brick** (2026-10-05): DISALLOW_FACTORY_RESET only blocks
   Settings; a recovery-mode wipe always works (first Jelly Star test: keys and
   menu). After a wipe, FRP asks for the phone's Google account if one was added,
