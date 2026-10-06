@@ -56,11 +56,35 @@ object UpdateFence {
     @Volatile
     private var frontSeen = false
 
-    @Volatile
-    private var lastRelease: FenceReleaseReason? = null
-
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(UPDATE_FENCE_PREFS, Context.MODE_PRIVATE)
+
+    private fun summaryPrefs(context: Context) =
+        context.applicationContext.getSharedPreferences(UPDATE_FENCE_LAST_PREFS, Context.MODE_PRIVATE)
+
+    /** The last fence's summary (qa-11-code #5), `null` if there never was one. */
+    fun lastSummary(context: Context): FenceSummary? = try {
+        decodeFenceSummary(summaryPrefs(context).all)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun writeSummary(context: Context, summary: FenceSummary) {
+        try {
+            val editor = summaryPrefs(context).edit().clear()
+            for ((key, value) in encodeFenceSummary(summary)) {
+                when (value) {
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is String -> editor.putString(key, value)
+                    is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+                }
+            }
+            editor.commit()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't keep the fence summary", e)
+        }
+    }
 
     fun record(context: Context): FenceRecord? = try {
         decodeFenceRecord(prefs(context).all)
@@ -77,6 +101,15 @@ object UpdateFence {
         if (fenced) {
             Log.i(LOG_TAG, "A fence is recorded at process start - checking")
             checkAsync(app, "process_start")
+        } else {
+            // No record: a lost or corrupt one must not strand suspended HOME apps (qa-11-code #1).
+            scope.launch {
+                try {
+                    synchronized(AppEnforcer) { if (record(app) == null) sweepOrphansLocked(app, "process_start") }
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Orphan sweep at process start failed", e)
+                }
+            }
         }
     }
 
@@ -160,7 +193,14 @@ object UpdateFence {
     /** [AppEnforcer.apply]'s hook (it holds the lock): the check with apply's own policy, then the
      * packages this pass must not unsuspend. Never throws. */
     fun duringApply(context: Context, policy: PolicyResponse?, managed: Boolean): Set<String> {
-        if (!fenced && record(context) == null) return emptySet()
+        if (!fenced && record(context) == null) {
+            try {
+                sweepOrphansLocked(context.applicationContext, "apply")
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Orphan sweep in apply failed", e)
+            }
+            return emptySet()
+        }
         return try {
             when (check(context, "apply", policy = policy, managed = managed, inApply = true)) {
                 is FenceVerdict.Keep -> heldPackages(context)
@@ -236,11 +276,22 @@ object UpdateFence {
             return false
         }
         fenced = true
-        lastRelease = null
+        val roleHeld = homeRoleHeld(app)
+        writeSummary(
+            app,
+            FenceSummary(
+                reason = null,
+                unsuspendable = active.unsuspendable,
+                homeRoleHeld = roleHeld,
+                fencedAtMs = active.startedWallMs,
+                releasedAtMs = null,
+                releaseTag = releaseTag,
+            ),
+        )
         Log.i(
             LOG_TAG,
             "Fenced for $releaseTag (session $sessionId): suspended ${active.suspended}, refused ${active.unsuspendable}, " +
-                "skipped ${plan.skipped}, home role ours ${homeRoleHeld(app)}",
+                "skipped ${plan.skipped}, home role ours $roleHeld",
         )
         LockTaskChrome.fenceChanged(app)
         scheduleAlarm(app, FENCE_MAX_MS + 5_000L)
@@ -286,7 +337,12 @@ object UpdateFence {
         val outcome = runRelease(platform(app, dpm, admin), record, controllableNow)
         fenced = false
         committingSession = null
-        lastRelease = reason
+        val before = lastSummary(app)
+        writeSummary(
+            app,
+            (before ?: FenceSummary(unsuspendable = record.unsuspendable, fencedAtMs = record.startedWallMs, releaseTag = record.releaseTag))
+                .copy(reason = reason.wire, releasedAtMs = System.currentTimeMillis()),
+        )
         cancelAlarm(app)
         Log.i(
             LOG_TAG,
@@ -305,6 +361,47 @@ object UpdateFence {
                     Log.w(LOG_TAG, "Apply after the release failed", e)
                 }
             }
+        }
+    }
+
+    /**
+     * qa-11-code #1: with no record, unsuspends every HOME package only a fence can have suspended
+     * ([orphanFenceTargets]). Cheap when there's nothing to do (one HOME query and a suspended
+     * check per candidate); the protected set is only resolved when a candidate qualifies. Holds
+     * [AppEnforcer]'s lock (the caller takes it).
+     */
+    private fun sweepOrphansLocked(app: Context, trigger: String) {
+        val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return
+        if (!dpm.isDeviceOwnerApp(app.packageName)) return
+        val pm = app.packageManager
+        val candidates = homeCandidates(pm)
+        val suspendedHomes = candidates.map { it.packageName }.filterTo(mutableSetOf()) { pkg ->
+            try {
+                pm.isPackageSuspended(pkg)
+            } catch (e: Exception) {
+                false
+            }
+        }
+        if (suspendedHomes.isEmpty()) return
+        val controllable = controllablePackages(pm).toSet()
+        if ((suspendedHomes - controllable).isEmpty()) return
+        val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
+        val targets = orphanFenceTargets(candidates, app.packageName, protectedPackages(app, dpm, admin), controllable, suspendedHomes)
+        if (targets.isEmpty()) return
+        val refused = try {
+            dpm.setPackagesSuspended(admin, targets.toTypedArray(), false).orEmpty().toSet()
+        } catch (e: Exception) {
+            targets
+        }
+        Log.w(LOG_TAG, "Orphaned fence ($trigger): no record, unsuspended ${targets - refused}, refused $refused")
+        writeSummary(
+            app,
+            (lastSummary(app) ?: FenceSummary()).copy(reason = FenceReleaseReason.ORPHAN.wire, releasedAtMs = System.currentTimeMillis()),
+        )
+        try {
+            LockTaskChrome.fenceChanged(app)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Status bar refresh after the orphan sweep failed", e)
         }
     }
 
@@ -447,6 +544,7 @@ object UpdateFence {
     fun report(context: Context, policy: PolicyResponse?): UpdateFenceReport {
         val app = context.applicationContext
         val record = record(app)
+        val summary = lastSummary(app)
         val pending = TrackedAppUpdateState.pendingEntry()?.second
         return UpdateFenceReport(
             enabled = policy?.updateFence == true,
@@ -455,12 +553,15 @@ object UpdateFence {
                 record.stage == FenceStage.ACTIVE -> "fenced"
                 else -> "planned"
             },
-            unsuspendable = record?.unsuspendable.orEmpty().sorted().take(20),
-            lastRelease = lastRelease?.wire,
-            homeRoleHeld = homeRoleHeld(app),
+            // The live record's refusals, else the last fence's (qa-11-code #5).
+            unsuspendable = (record?.unsuspendable ?: summary?.unsuspendable).orEmpty().sorted().take(20),
+            lastRelease = summary?.reason,
+            homeRoleHeld = summary?.homeRoleHeld ?: homeRoleHeld(app),
             pendingTag = pending?.releaseTag,
             pendingSinceMs = pending?.downloadedAtMs,
             waitingFor = if (pending != null) SelfUpdate.lastWait?.wire else null,
+            lastFencedAtMs = summary?.fencedAtMs,
+            lastReleasedAtMs = summary?.releasedAtMs,
         )
     }
 }

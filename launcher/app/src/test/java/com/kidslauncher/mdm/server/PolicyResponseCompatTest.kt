@@ -101,6 +101,7 @@ class PolicyResponseCompatTest {
             updateFence = com.kidslauncher.mdm.server.dto.UpdateFenceReport(
                 enabled = true, state = "fenced", unsuspendable = listOf("a.home"), lastRelease = "replaced",
                 homeRoleHeld = true, pendingTag = "launcher-v1.2.3", pendingSinceMs = 5L, waitingFor = "outside_window",
+                lastFencedAtMs = 6L, lastReleasedAtMs = 7L,
             ),
             notificationCancels = com.kidslauncher.mdm.server.dto.NotificationCancelsReport(
                 active = true,
@@ -111,7 +112,10 @@ class PolicyResponseCompatTest {
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
         val fence = json["update_fence"]!!.jsonObject
         assertEquals(
-            setOf("enabled", "state", "unsuspendable", "last_release", "home_role_held", "pending_tag", "pending_since_ms", "waiting_for"),
+            setOf(
+                "enabled", "state", "unsuspendable", "last_release", "home_role_held", "pending_tag", "pending_since_ms", "waiting_for",
+                "last_fenced_at_ms", "last_released_at_ms",
+            ),
             fence.keys,
         )
         val cancels = json["notification_cancels"]!!.jsonObject

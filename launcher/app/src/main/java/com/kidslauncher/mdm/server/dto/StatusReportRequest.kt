@@ -49,7 +49,8 @@ data class StatusReportRequest(
 /**
  * `StatusReportRequest.updateFence` (no defaults: every field is always sent): whether the server's switch is on as the phone sees it, the
  * fence's [state] ("none", "planned", "fenced"), the Home packages the platform refused to
- * suspend, why the last fence ended, whether we hold ROLE_HOME (a partial fence otherwise), and
+ * suspend (the live fence's, else the last one's), why the last fence ended ("orphan" = a lost
+ * record swept), whether we held ROLE_HOME (a partial fence otherwise), and
  * the downloaded launcher update waiting for the night window ([pendingTag], since
  * [pendingSinceMs], [waitingFor] = the gate's last reason: "call", "emergency", "screen_on",
  * "screen_off_short", "outside_window").
@@ -64,6 +65,10 @@ data class UpdateFenceReport(
     val pendingTag: String?,
     val pendingSinceMs: Long?,
     val waitingFor: String?,
+    /** The last fence's start and end (wall clock; qa-11-code #5): the card ages "installing
+     * right now" out by them. */
+    val lastFencedAtMs: Long?,
+    val lastReleasedAtMs: Long?,
 )
 
 /**

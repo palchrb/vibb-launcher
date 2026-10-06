@@ -352,6 +352,9 @@ enum class FenceReleaseReason(val wire: String) {
     COMMIT_FAILED("commit_failed"),
     /** A new fence replaces a leftover one (released first, then fenced anew). */
     SUPERSEDED("superseded"),
+    /** No record, but HOME packages only a fence can have suspended were found suspended (a lost or
+     * corrupt record, qa-11-code #1) - unsuspended by [orphanFenceTargets]. */
+    ORPHAN("orphan"),
 }
 
 enum class FenceKeepReason(val wire: String) {
@@ -423,3 +426,73 @@ fun fenceRelease(record: FenceRecord?, now: FenceCheck): FenceVerdict {
  */
 fun suspendTarget(packageName: String, planSuspend: Set<String>, fenceHeld: Set<String>): Boolean =
     packageName in planSuspend || packageName in fenceHeld
+
+/**
+ * The orphan sweep (qa-11-code #1): a lost or corrupt record (SharedPreferences swallows a parse
+ * error and loads an empty map; a later build could drop the file) would leave the fenced HOME
+ * packages suspended for good - and every later fence would skip them as already suspended. With
+ * **no record**, every HOME candidate the fence could have suspended ([fencePlan] with nothing
+ * counted as already suspended: not ours, never, persistent, FallbackHome, protected or
+ * controllable) that is suspended now is unsuspended. Safe: nothing else in the launcher suspends
+ * such a package (`apply()` only touches controllable ones, Play's rule only the Play Store), and
+ * `setPackagesSuspended(false)` removes only our own suspension.
+ */
+fun orphanFenceTargets(
+    homeCandidates: Collection<HomeCandidate>,
+    ownPackage: String,
+    protected: Set<String>,
+    controllable: Set<String>,
+    suspendedNow: Set<String>,
+): Set<String> = fencePlan(homeCandidates, ownPackage, protected, controllable, alreadySuspended = emptySet()).suspend intersect suspendedNow
+
+// ---- the last fence, for the status report (qa-11-code #5) -------------------------------------
+
+/**
+ * The last fence's summary, kept after the record is gone: the status report goes out before the
+ * commit and the new build releases at its start, so the live record alone never reaches the
+ * parent. Its own prefs file; keys pinned by UpdateFenceTest - only ever add keys.
+ */
+const val UPDATE_FENCE_LAST_PREFS = "update_fence_last"
+
+object FenceSummaryKeys {
+    const val REASON = "reason"
+    const val UNSUSPENDABLE = "unsuspendable"
+    /** -1 unknown, 0 no, 1 yes. */
+    const val HOME_ROLE = "home_role"
+    const val FENCED_AT_MS = "fenced_at_ms"
+    const val RELEASED_AT_MS = "released_at_ms"
+    const val RELEASE_TAG = "release_tag"
+}
+
+data class FenceSummary(
+    /** Why it ended ([FenceReleaseReason.wire]); `null` while it is up. */
+    val reason: String? = null,
+    val unsuspendable: Set<String> = emptySet(),
+    /** We held ROLE_HOME when fencing (`false` = a partial fence). */
+    val homeRoleHeld: Boolean? = null,
+    val fencedAtMs: Long? = null,
+    val releasedAtMs: Long? = null,
+    val releaseTag: String? = null,
+)
+
+fun encodeFenceSummary(summary: FenceSummary): Map<String, Any> = buildMap {
+    summary.reason?.let { put(FenceSummaryKeys.REASON, it) }
+    put(FenceSummaryKeys.UNSUSPENDABLE, summary.unsuspendable)
+    put(FenceSummaryKeys.HOME_ROLE, when (summary.homeRoleHeld) { null -> -1; true -> 1; false -> 0 })
+    summary.fencedAtMs?.let { put(FenceSummaryKeys.FENCED_AT_MS, it) }
+    summary.releasedAtMs?.let { put(FenceSummaryKeys.RELEASED_AT_MS, it) }
+    summary.releaseTag?.let { put(FenceSummaryKeys.RELEASE_TAG, it) }
+}
+
+/** Lenient: whatever is readable; `null` for an empty file. */
+fun decodeFenceSummary(values: Map<String, *>): FenceSummary? {
+    if (values.isEmpty()) return null
+    return FenceSummary(
+        reason = values[FenceSummaryKeys.REASON] as? String,
+        unsuspendable = (values[FenceSummaryKeys.UNSUSPENDABLE] as? Set<*>)?.filterIsInstance<String>()?.toSet().orEmpty(),
+        homeRoleHeld = when (values[FenceSummaryKeys.HOME_ROLE] as? Int) { 1 -> true; 0 -> false; else -> null },
+        fencedAtMs = values[FenceSummaryKeys.FENCED_AT_MS] as? Long,
+        releasedAtMs = values[FenceSummaryKeys.RELEASED_AT_MS] as? Long,
+        releaseTag = values[FenceSummaryKeys.RELEASE_TAG] as? String,
+    )
+}

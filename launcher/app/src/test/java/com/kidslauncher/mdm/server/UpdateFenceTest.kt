@@ -394,4 +394,49 @@ class UpdateFenceTest {
         assertTrue(suspendTarget("x", planSuspend = setOf("x"), fenceHeld = emptySet()))
         assertEquals(false, suspendTarget("y", planSuspend = setOf("x"), fenceHeld = setOf("a.home")))
     }
+
+    // ---- orphan sweep and the last-fence summary (qa-11-code #1, #5) -----------------------------
+
+    @Test
+    fun `with no record, suspended HOMEs only a fence can have suspended are swept - nothing else`() {
+        val persistent = HomeCandidate("com.oem.persistenthome", system = true, persistent = true, priority = 0)
+        val fallback = HomeCandidate("com.oem.settings", system = true, persistent = false, priority = -1000)
+        val nova = HomeCandidate("com.teslacoilsw.launcher", system = false, persistent = false, priority = 0)
+        val ours = HomeCandidate(own, system = false, persistent = false, priority = 0)
+        val guarded = HomeCandidate("com.oem.protected", system = true, persistent = false, priority = 0)
+        val all = listOf(pixelHome, launcher3, persistent, fallback, nova, ours, guarded)
+        val suspendedNow = all.map { it.packageName }.toSet()
+        assertEquals(
+            setOf(pixelHome.packageName, launcher3.packageName),
+            orphanFenceTargets(all, own, protected = setOf(guarded.packageName), controllable = setOf(nova.packageName), suspendedNow = suspendedNow),
+        )
+        // Not suspended: nothing to do.
+        assertEquals(emptySet<String>(), orphanFenceTargets(all, own, emptySet(), emptySet(), suspendedNow = emptySet()))
+        assertEquals(setOf(launcher3.packageName), orphanFenceTargets(all, own, emptySet(), emptySet(), suspendedNow = setOf(launcher3.packageName)))
+    }
+
+    @Test
+    fun `a corrupt record file loads as empty - no fence, so the sweep is what releases it`() {
+        // SharedPreferencesImpl swallows the XML parse error and loads an empty map.
+        assertNull(decodeFenceRecord(emptyMap<String, Any>()))
+        assertEquals(FenceReleaseReason.ORPHAN, FenceReleaseReason.entries.first { it.wire == "orphan" })
+    }
+
+    @Test
+    fun `the last-fence summary has its own pinned file and keys and survives the record`() {
+        assertEquals("update_fence_last", UPDATE_FENCE_LAST_PREFS)
+        assertEquals(
+            listOf("reason", "unsuspendable", "home_role", "fenced_at_ms", "released_at_ms", "release_tag"),
+            listOf(
+                FenceSummaryKeys.REASON, FenceSummaryKeys.UNSUSPENDABLE, FenceSummaryKeys.HOME_ROLE,
+                FenceSummaryKeys.FENCED_AT_MS, FenceSummaryKeys.RELEASED_AT_MS, FenceSummaryKeys.RELEASE_TAG,
+            ),
+        )
+        val summary = FenceSummary("replaced", setOf("b.home"), homeRoleHeld = false, fencedAtMs = 1L, releasedAtMs = 2L, releaseTag = "t")
+        assertEquals(summary, decodeFenceSummary(encodeFenceSummary(summary)))
+        val up = FenceSummary(unsuspendable = emptySet(), homeRoleHeld = null, fencedAtMs = 5L, releaseTag = "t")
+        assertEquals(up, decodeFenceSummary(encodeFenceSummary(up)))
+        assertNull(decodeFenceSummary(emptyMap<String, Any>()))
+        assertEquals(FenceSummary(reason = "x"), decodeFenceSummary(mapOf("reason" to "x", "home_role" to "junk", "fenced_at_ms" to "junk")))
+    }
 }
