@@ -93,12 +93,14 @@ object ContactSheet {
         dialog.show()
     }
 
-    private fun appLabel(activity: Activity, packageName: String): CharSequence = try {
-        val pm = activity.packageManager
-        pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0))
-    } catch (e: PackageManager.NameNotFoundException) {
-        packageName
-    }
+    /** "Message opens in Chat" when the parent named the app (design 14), else its own label. */
+    private fun appLabel(activity: Activity, packageName: String): CharSequence =
+        com.kidslauncher.mdm.apps.AppDisplay.label(packageName) ?: try {
+            val pm = activity.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0))
+        } catch (e: PackageManager.NameNotFoundException) {
+            packageName
+        }
 
     fun openMessage(activity: Activity, message: MessageIntent) {
         for (uri in message.uris) {

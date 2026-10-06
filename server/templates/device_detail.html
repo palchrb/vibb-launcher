@@ -228,6 +228,14 @@
             {% endfor %}
         </div>
         {% endif %}
+        {% if !display_forms.is_empty() %}
+        <h3>Names and icons on the phone</h3>
+        <p class="subtitle">Give an allowed app another name and one of the icons on this phone - "Chat" for Element X, for instance. An app's default from the <a href="/apps">Apps</a> catalog applies unless you choose here. The kid can rename only the apps you haven't named.</p>
+        {% for form in display_forms %}
+        {% include "partials/app_display_form.html" %}
+        {% endfor %}
+        <script src="/static/app-display.js?v=1" defer></script>
+        {% endif %}
     </div>
 
     {% if any_app_installing %}

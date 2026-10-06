@@ -143,6 +143,11 @@ data class LauncherUi(
      * missing from an older server = only the built-in navy
      * ([com.kidslauncher.mdm.ui.wallpaper.effectiveWallpaper]). */
     val wallpapers: List<PolicyWallpaper> = emptyList(),
+    /** How apps show on this phone (design 14): `[{package_name, label, icon, color}]`, the
+     * catalog default resolved against the phone's own choice by the server. Kept as raw JSON and
+     * read field by field ([com.kidslauncher.mdm.apps.appDisplayMap], QA #1): nothing in it - a
+     * `null`, a wrong type, a newer server's icon - can fail the policy. Missing = none. */
+    val appDisplay: kotlinx.serialization.json.JsonElement? = null,
 )
 
 /** One entry of `launcher_ui.wallpapers` - see kid-phone-server's `PolicyWallpaper`. Checked by

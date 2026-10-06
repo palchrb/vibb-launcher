@@ -187,7 +187,17 @@ class LockActivity : UIObjectActivity() {
         val container = binding.lockApps
         container.removeAllViews()
         val pm = packageManager
-        for (pkg in packages.sorted()) {
+        // The parent's names (design 14), sorted by what the kid reads (QA #6).
+        val labelled = packages.map { pkg ->
+            pkg to (
+                com.kidslauncher.mdm.apps.AppDisplay.label(pkg) ?: try {
+                    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                } catch (e: Exception) {
+                    pkg
+                }
+                )
+        }.sortedBy { it.second.lowercase() }
+        for ((pkg, label) in labelled) {
             val launch = pm.getLaunchIntentForPackage(pkg) ?: continue
             val usable = try {
                 // A camera the PIN lock holds counts as usable (it is back at the unlock).
@@ -196,11 +206,6 @@ class LockActivity : UIObjectActivity() {
                 false
             }
             if (!usable) continue
-            val label = try {
-                pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-            } catch (e: Exception) {
-                pkg
-            }
             val button = LayoutInflater.from(this).inflate(R.layout.item_lock_app, container, false) as TextView
             button.text = label
             button.setOnClickListener {

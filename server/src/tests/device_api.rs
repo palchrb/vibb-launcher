@@ -380,7 +380,12 @@ async fn policy_json_keys_snapshot() {
     let launcher_ui = object["launcher_ui"].as_object().unwrap();
     let mut ui_keys: Vec<&str> = launcher_ui.keys().map(String::as_str).collect();
     ui_keys.sort_unstable();
-    assert_eq!(ui_keys, ["home_columns", "language", "wallpapers"]);
+    assert_eq!(
+        ui_keys,
+        ["app_display", "home_columns", "language", "wallpapers"]
+    );
+    // Design 14 (QA #1): always a list, even when nothing is named.
+    assert_eq!(launcher_ui["app_display"], serde_json::json!([]));
     assert!(
         launcher_ui["wallpapers"]
             .as_array()

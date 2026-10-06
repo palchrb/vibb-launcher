@@ -829,6 +829,9 @@ struct TrackedAppDetailTemplate {
     sync_running_since: Option<String>,
     /// How the last sync (hourly or "Check now") failed, if it did.
     sync_failure: Option<SyncFailure>,
+    /// "Show on the kid's phones as" (design 14): the default for every phone with the app
+    /// (`partials/app_display_form.html` reads `form`).
+    form: crate::app_display::AppDisplayForm,
 }
 
 /// What the Details form shows: the saved values, or - when a save was refused - what was
@@ -857,6 +860,17 @@ async fn render_detail_page(
     error: Option<String>,
     details: Option<DetailsForm>,
 ) -> Response {
+    render_detail_full(state, id, error, details, None).await
+}
+
+/// The app's page; `display` = a refused "Show on the kid's phone as" save (design 14).
+async fn render_detail_full(
+    state: &AppState,
+    id: i64,
+    error: Option<String>,
+    details: Option<DetailsForm>,
+    display: Option<crate::app_display::Entered>,
+) -> Response {
     let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
@@ -875,9 +889,23 @@ async fn render_detail_page(
         error: None,
     });
     let sync = state.app_syncs.status(id);
+    let current = crate::app_display::DisplayValues {
+        label: app.display_label.clone(),
+        icon: app.display_icon.clone(),
+        color: app.display_color.clone(),
+    };
+    let form = crate::app_display::AppDisplayForm::new(
+        format!("/apps/tracked/{id}/display"),
+        "display".to_string(),
+        String::new(),
+        app.name.clone(),
+        &current,
+        display.as_ref(),
+    );
     Html(
         TrackedAppDetailTemplate {
             title: app.name.clone(),
+            form,
             app,
             error,
             details,
@@ -1029,6 +1057,70 @@ pub async fn upload_tracked_app_release(
     // Back to the app's page (its own path, so the scroll position is kept and a reload doesn't
     // post the file again).
     Redirect::to(&format!("/apps/tracked/{id}")).into_response()
+}
+
+/// `POST /apps/tracked/{id}/display` (design 14): the catalog default for how the app shows on the
+/// kid's phones (by the row's package name; a phone's own choice replaces it). `action` "own"
+/// clears it. Refused input: 400, the page with the entered values, the error by the field and
+/// that field focused. Saved: back to the card (`#display`); nudges every phone (cosmetic, cheap).
+pub async fn save_display(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let field = |name: &str| form.get(name).map(String::as_str).unwrap_or("");
+    let values = if field("action") == "own" {
+        crate::app_display::DisplayValues::own()
+    } else {
+        match crate::app_display::validate(field("label"), field("icon"), field("color")) {
+            Ok(values) => values,
+            Err(error) => {
+                let entered = crate::app_display::Entered {
+                    label: field("label").to_string(),
+                    icon: field("icon").to_string(),
+                    color: field("color").to_string(),
+                    error,
+                };
+                let mut page = render_detail_full(&state, id, None, None, Some(entered)).await;
+                if page.status() == StatusCode::OK {
+                    *page.status_mut() = StatusCode::BAD_REQUEST;
+                }
+                return page;
+            }
+        }
+    };
+    let result = sqlx::query(
+        "UPDATE tracked_apps SET display_label = ?, display_icon = ?, display_color = ? \
+         WHERE id = ?",
+    )
+    .bind(&values.label)
+    .bind(&values.icon)
+    .bind(&values.color)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, "App not found").into_response(),
+        Ok(_) => {
+            // Every phone may have the app: nudge them all (a sync is cheap).
+            let devices: Vec<i64> = sqlx::query_scalar("SELECT id FROM devices")
+                .fetch_all(&state.db)
+                .await
+                .unwrap_or_default();
+            for device in devices {
+                let _ = state.command_notify.send(device);
+            }
+            Redirect::to(&format!("/apps/tracked/{id}#display")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(app_id = id, %err, "couldn't save the app's name and icon");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed.",
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Lets an admin fix any of a tracked app's identifying details after creation - there was

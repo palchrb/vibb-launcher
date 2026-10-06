@@ -19,9 +19,11 @@ sealed interface AbstractDetailedAppInfo {
     fun getAction(): AppAction
 
 
+    /** The parent's name for the app (design 14), else the kid's rename, else its own label. */
     fun getCustomLabel(context: Context): String {
         val map = (context.applicationContext as? Application)?.getCustomAppNames()
-        return map?.get(getRawInfo()) ?: getLabel()
+        val packageName = (getRawInfo() as? AppInfo)?.packageName
+        return displayLabel(AppDisplay.label(packageName), map?.get(getRawInfo()), getLabel())
     }
 
 

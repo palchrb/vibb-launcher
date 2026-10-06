@@ -1,0 +1,29 @@
+{
+  "comment": "Design 14: the parent's icon and colour choices for an app on the kid's launcher. Identical copies in server/testdata and launcher/app/src/test/resources; scripts/material-symbols.sh makes the glyphs and both runtime tables from this file. icons: key -> Material Symbols Rounded name (filled, 24 px). colors: key -> seed and tile (the launcher's tileColor(seed): white on it >= 3:1).",
+  "icons": {
+    "chat": "chat",
+    "mail": "mail",
+    "photo_camera": "photo_camera",
+    "photo_library": "photo_library",
+    "music_note": "music_note",
+    "play_circle": "play_circle",
+    "sports_esports": "sports_esports",
+    "menu_book": "menu_book",
+    "school": "school",
+    "calculate": "calculate",
+    "map": "map",
+    "calendar_month": "calendar_month",
+    "alarm": "alarm",
+    "public": "public",
+    "partly_cloudy_day": "partly_cloudy_day",
+    "star": "star"
+  },
+  "colors": {
+    "peach": {"seed": "#F0A884", "tile": "#E4763F"},
+    "plum": {"seed": "#4A2545", "tile": "#4A2545"},
+    "sky": {"seed": "#1C7ED6", "tile": "#1E7ED4"},
+    "sunset": {"seed": "#F76707", "tile": "#DE6C20"},
+    "night": {"seed": "#1C1A2A", "tile": "#1C1A2A"},
+    "grey": {"seed": "#868E96", "tile": "#868E96"}
+  }
+}

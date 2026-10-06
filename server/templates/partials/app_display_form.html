@@ -1,0 +1,44 @@
+{# "Name and icon" for one app (design 14): the device page's Apps card and the catalog page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview; the form works without it. #}
+<details class="app-display" id="{{ form.anchor }}"{% if form.open %} open{% endif %}>
+    <summary><strong>{{ form.app_label }}</strong> <span class="subtitle">- {{ form.summary }}</span></summary>
+    <form method="post" action="{{ form.action }}" class="app-display-form">
+        {% if !form.package_name.is_empty() %}
+        <input type="hidden" name="package_name" value="{{ form.package_name }}">
+        {% endif %}
+        <div class="app-preview">
+            <span class="app-tile" data-preview-tile style="background: {{ form.preview_tile }}">
+                <img data-preview-glyph alt=""{% if form.icon.is_empty() %} hidden{% else %} src="/static/app-icons/{{ form.icon }}.svg"{% endif %}>
+                <span class="app-tile-own" data-preview-own{% if !form.icon.is_empty() %} hidden{% endif %}>its own icon</span>
+            </span>
+            <span data-preview-label>{{ form.preview_label() }}</span>
+        </div>
+        {% if let Some(default) = form.catalog_default %}
+        <p class="hint">Catalog default: {{ default }}.</p>
+        {% endif %}
+        {% if let Some(error) = form.error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        <label for="{{ form.anchor }}-label">Name on the phone (at most 20 characters; empty = the app's own)</label>
+        <input type="text" id="{{ form.anchor }}-label" name="label" value="{{ form.label }}" maxlength="20" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}"{% if form.error_field == "label" %} autofocus{% endif %}>
+        <fieldset class="glyph-grid">
+            <legend>Icon</legend>
+            <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}> Its own</label>
+            {% for choice in form.icons %}
+            <label class="glyph-choice" title="{{ choice.label }}"><input type="radio" name="icon" value="{{ choice.key }}"{% if choice.checked %} checked{% endif %}><span class="app-tile app-tile-small"><img src="/static/app-icons/{{ choice.key }}.svg" alt="{{ choice.label }}"></span></label>
+            {% endfor %}
+        </fieldset>
+        <fieldset class="color-grid">
+            <legend>Colour behind the icon</legend>
+            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="#868E96"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}> The app's own</label>
+            {% for choice in form.colors %}
+            <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.key }}</label>
+            {% endfor %}
+        </fieldset>
+        <p class="hint">Shown on the home screen, in the app list, on the lock screen and in the contact card. The app's own notifications, its screens and Android's settings and permission dialogs still use the app's own name - Android doesn't let a launcher change those.</p>
+        <button type="submit" name="action" value="save">Save</button>
+        <button type="submit" name="action" value="own" class="button-secondary">Use the app's own</button>
+        {% if form.own_row && form.catalog_default.is_some() %}
+        <button type="submit" name="action" value="catalog" class="button-secondary">Follow the catalog</button>
+        {% endif %}
+    </form>
+</details>

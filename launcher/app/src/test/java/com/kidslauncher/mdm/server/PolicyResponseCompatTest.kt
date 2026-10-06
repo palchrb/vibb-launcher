@@ -147,6 +147,44 @@ class PolicyResponseCompatTest {
         assertEquals(setOf("package_name", "channel", "cancelled", "snoozed"), entry.keys)
     }
 
+    /** Design 14 (QA #1): `launcher_ui.app_display` - present, absent, `null`, an unknown icon, a
+     * `null` colour, a number for the label, not even a list: the policy always decodes, the map
+     * takes what it can use, and the cache round trip keeps it. */
+    @Test
+    fun `launcher_ui app_display never fails the policy`() {
+        fun withDisplay(display: String) = serverResponse.replaceFirst(
+            "{",
+            """{"launcher_ui": {"language": "nb", "home_columns": 3, "wallpapers": [], "app_display": $display},""",
+        )
+        val good = withDisplay(
+            """[{"package_name": "io.element.android.x", "label": "Chat", "icon": "chat", "color": "peach"}]""",
+        )
+        val policy = (decodeCached(good) as CachedPolicy.Ok).policy
+        assertEquals(
+            mapOf("io.element.android.x" to com.kidslauncher.mdm.apps.AppDisplayEntry("Chat", "chat", "peach")),
+            com.kidslauncher.mdm.apps.appDisplayMap(policy.launcherUi!!.appDisplay),
+        )
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        for (display in listOf(
+            """[{"package_name": "io.element.android.x", "label": "Chat", "icon": "rocket", "color": "peach"}]""",
+            """[{"package_name": "io.element.android.x", "label": "Chat", "icon": "chat", "color": null}]""",
+            """[{"package_name": "io.element.android.x", "label": 5, "icon": "chat"}]""",
+            """[null, 5, "x", {"package_name": null}]""",
+            "null", "{}", "\"x\"", "[]",
+        )) {
+            val decoded = decodeCached(withDisplay(display))
+            assertTrue(display, decoded is CachedPolicy.Ok)
+            assertTrue(display, decodeFresh(withDisplay(display)) is FreshDecode.Ok)
+        }
+        val unknownIcon = (decodeCached(withDisplay("""[{"package_name": "io.element.android.x", "label": "Chat", "icon": "rocket"}]""")) as CachedPolicy.Ok).policy
+        assertEquals(
+            com.kidslauncher.mdm.apps.AppDisplayEntry("Chat", null),
+            com.kidslauncher.mdm.apps.appDisplayMap(unknownIcon.launcherUi!!.appDisplay)["io.element.android.x"],
+        )
+        // An older server: no app_display.
+        assertNull((decodeCached(withDisplay("[]").replace(", \"app_display\": []", "")) as CachedPolicy.Ok).policy.launcherUi!!.appDisplay)
+    }
+
     /** Design 13: "App updates only on Wi-Fi". Missing (an older server) or `null` = off, as
      * before - nothing in this key can fail the policy; the fallback keeps the parent's choice. */
     @Test
@@ -377,13 +415,15 @@ class PolicyResponseCompatTest {
             lockReason = "NONE", kioskEngaged = true,
             lockState = com.kidslauncher.mdm.server.dto.LockStateReport(
                 active = true, inactive = null, locked = true, failures = 5, backoffUntilMs = 1L, exemptYields = 2,
+                voipFsiDenied = emptyList(),
             ),
         )
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
         assertEquals(
-            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields"),
+            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields", "voip_fsi_denied"),
             json["lock_state"]!!.jsonObject.keys,
         )
+        assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
         val failed = CallState(
             state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, defaultDialer = null, systemDialer = null,
             smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,

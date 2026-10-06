@@ -258,6 +258,17 @@ pub(crate) async fn build_policy(
                     );
                     Vec::new()
                 }),
+            // Cosmetic like the wallpapers: a failing query sends no names and icons.
+            app_display: crate::app_display::policy_app_display(&state.db, device_id)
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::error!(
+                        device_id,
+                        %err,
+                        "couldn't load the app names and icons - policy sent without them"
+                    );
+                    Vec::new()
+                }),
         },
         time_policy,
         location_policy,

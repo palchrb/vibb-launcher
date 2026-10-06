@@ -18,7 +18,14 @@ import android.widget.TextView
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
 import androidx.palette.graphics.Palette
+import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.apps.AbstractAppInfo
+import com.kidslauncher.mdm.apps.AppDisplay
+import com.kidslauncher.mdm.apps.AppDisplayEntry
+import com.kidslauncher.mdm.apps.AppGlyphs
+import com.kidslauncher.mdm.apps.AppInfo
+import com.kidslauncher.mdm.apps.appIconKey
 import com.kidslauncher.mdm.calls.ContactPhotos
 import com.kidslauncher.mdm.calls.MissedSummary
 import com.kidslauncher.mdm.calls.RuleContact
@@ -113,13 +120,25 @@ object KidAvatars {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
 
-    /** Cache key of a rendered app icon: the app, the size and the density (QA 08 #5). */
+    /** Cache key of a rendered app icon: the app, the size and the density (QA 08 #5), plus the
+     * parent's glyph and colour (design 14, [appIconKey]) - one key for the lookup and the render. */
     fun iconKey(context: Context, key: String, sizePx: Int): String =
-        "$key|$sizePx|${context.resources.displayMetrics.densityDpi}"
+        appIconKey(key, sizePx, context.resources.displayMetrics.densityDpi, displayOf(key))
 
     /** An already-rendered icon, or null. Never renders: safe on the main thread. */
     fun cachedAppIcon(context: Context, key: String, sizePx: Int): Bitmap? =
         iconCache.get(iconKey(context, key, sizePx))
+
+    /** The parent's choice for the app behind a serialized [AppInfo] key (design 14), if any. */
+    fun displayOf(key: String): AppDisplayEntry? {
+        if (AppDisplay.map.isEmpty()) return null
+        val packageName = try {
+            (AbstractAppInfo.deserialize(key) as? AppInfo)?.packageName
+        } catch (e: Exception) {
+            null
+        }
+        return AppDisplay.entry(packageName)
+    }
 
     /**
      * An app icon as a coloured circle (design 08 §1) - **off the main thread only** (loading,
@@ -134,6 +153,14 @@ object KidAvatars {
     fun renderAppIcon(context: Context, key: String, icon: () -> Drawable, sizePx: Int): Bitmap {
         val cacheKey = iconKey(context, key, sizePx)
         iconCache.get(cacheKey)?.let { return it }
+        // The parent's glyph and colour (design 14) replace the app's own icon.
+        val display = displayOf(key)
+        val glyph = display?.icon?.let { AppGlyphs.ICONS[it] }
+        if (display != null && glyph != null) {
+            val tile = AppGlyphs.COLORS[display.color]?.tile
+                ?: tileColor(seedColour(privateCopy(context, icon())))
+            return renderSymbolIcon(context, glyph, tile, sizePx).also { iconCache.put(cacheKey, it) }
+        }
         // Our own copy: the drawer draws the same cached icon object on the main thread, so the
         // background pass must not change its bounds or tint (qa-08-code.md #5).
         val drawable = privateCopy(context, icon())
@@ -172,6 +199,29 @@ object KidAvatars {
         iconCache.put(cacheKey, bmp)
         return bmp
     }
+
+    /**
+     * The parent's icon (design 14): a [tile] circle (an [AppGlyphs.COLORS] tile, or `tileColor` of
+     * the app's own colour - white on it reaches 3:1) with the white glyph at about 55 %. Off the
+     * main thread, like [renderAppIcon].
+     */
+    fun renderSymbolIcon(context: Context, glyphRes: Int, tile: Int, sizePx: Int): Bitmap {
+        val bmp = createBitmap(sizePx, sizePx)
+        val canvas = Canvas(bmp)
+        val circle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = tile }
+        canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, circle)
+        val glyph = ContextCompat.getDrawable(context, glyphRes)?.mutate()
+        if (glyph != null) {
+            glyph.setTint(Color.WHITE)
+            val inset = (sizePx * (1 - GLYPH_FRACTION) / 2).toInt()
+            glyph.setBounds(inset, inset, sizePx - inset, sizePx - inset)
+            glyph.draw(canvas)
+        }
+        return bmp
+    }
+
+    /** The glyph's share of the tile. */
+    private const val GLYPH_FRACTION = 0.55f
 
     /** A new drawable from the icon's constant state, mutated (falls back to the original only
      * when it has none - then nothing else shares a state with it either). */

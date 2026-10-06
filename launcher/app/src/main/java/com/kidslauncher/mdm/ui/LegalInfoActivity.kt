@@ -25,10 +25,17 @@ class LegalInfoActivity : UIObjectActivity() {
         } catch (e: java.io.IOException) {
             OFL_ASSET
         }
+        // So do the app icons' (Material Symbols, Apache-2.0 §4(a); design 14).
+        binding.legalInfoApache.text = try {
+            assets.open(APACHE_ASSET).bufferedReader().use { it.readText() }
+        } catch (e: java.io.IOException) {
+            APACHE_ASSET
+        }
     }
 
     companion object {
         const val OFL_ASSET = "licenses/OFL.txt"
+        const val APACHE_ASSET = "licenses/Apache-2.0.txt"
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

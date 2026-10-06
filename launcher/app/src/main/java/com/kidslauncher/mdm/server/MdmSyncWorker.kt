@@ -123,6 +123,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         CallPolicyStore.refresh(context)
         // The parent's language choice, switched when Home is next in front (LauncherLocales).
         LauncherLocales.remember(context, freshPolicy.launcherUi)
+        // The parent's app names and icons (design 14): a change re-renders Home and the drawer.
+        com.kidslauncher.mdm.apps.AppDisplay.refresh(context)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.
@@ -483,7 +485,8 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
 private fun TrackedAppUpdate.wanted() = WantedDownload(
     appId = id,
     tag = releaseTag,
-    name = name,
+    // The install notification says what the kid sees: the parent's name when there is one (design 14).
+    name = com.kidslauncher.mdm.apps.AppDisplay.label(packageName.takeIf { it.isNotBlank() }) ?: name,
     isLauncher = isLauncher,
     downloadUrl = downloadUrl,
     sha256 = sha256,

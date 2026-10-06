@@ -107,6 +107,11 @@ fun showAppContextMenu(activity: Activity, anchor: View, appInfo: AbstractDetail
     // Home's grid shows every app (design 05), so "add to/remove from home screen" means nothing.
     popup.menu.findItem(R.id.app_menu_minimalist).isVisible = false
 
+    // The kid renames only apps the parent hasn't named (design 14); their own name stays stored.
+    val packageName = (appInfo.getRawInfo() as? com.kidslauncher.mdm.apps.AppInfo)?.packageName
+    popup.menu.findItem(R.id.app_menu_rename).isVisible =
+        com.kidslauncher.mdm.apps.kidMayRename(com.kidslauncher.mdm.apps.AppDisplay.entry(packageName))
+
     if (LauncherPreferences.apps().hidden()?.contains(appInfo.getRawInfo()) == true) {
         popup.menu.findItem(R.id.app_menu_hidden).setTitle(R.string.list_app_hidden_remove)
     }

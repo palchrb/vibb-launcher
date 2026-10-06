@@ -2,6 +2,7 @@
 //! test (a temp file, so WAL mode and multiple pool connections behave as in production), and
 //! requests sent straight to the router - no network, no background tasks.
 
+mod app_display;
 mod calls;
 mod cleanup;
 mod device_api;

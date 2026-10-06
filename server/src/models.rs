@@ -135,6 +135,9 @@ pub struct LauncherUi {
     /// The wallpapers this phone may use, in the parent's order (design 08-ui-polish.md); the kid
     /// picks one on the phone. Always sent, possibly empty (the launcher then uses navy).
     pub wallpapers: Vec<PolicyWallpaper>,
+    /// How apps show on this phone (design 14): the catalog defaults resolved against the phone's
+    /// own choices (`app_display::policy_app_display`). Always sent, possibly empty.
+    pub app_display: Vec<crate::app_display::PolicyAppDisplay>,
 }
 
 /// One allowed wallpaper in `launcher_ui.wallpapers` - every key always present.
@@ -337,6 +340,11 @@ pub struct TrackedApp {
     /// SHA-256 (hex) of the cached file (migrations/0043, design 13 QA #2), sent to the phones in
     /// `TrackedAppUpdate.sha256`. `None` until computed (`tracked_apps::backfill_release_hashes`).
     pub latest_release_sha256: Option<String>,
+    /// The catalog default for how the app shows on the kid's phones (migrations/0044, design 14):
+    /// a label and an icon key (`None` = the app's own) and a colour key ("auto").
+    pub display_label: Option<String>,
+    pub display_icon: Option<String>,
+    pub display_color: String,
 }
 
 impl TrackedApp {

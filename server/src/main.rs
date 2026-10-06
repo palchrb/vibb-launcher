@@ -1,4 +1,6 @@
+mod app_display;
 mod app_downloads;
+mod app_icons;
 mod config;
 mod crashes;
 mod dns_engine;
@@ -424,6 +426,14 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/devices/{id}/app-updates",
             post(handlers::devices::update_app_updates),
+        )
+        .route(
+            "/devices/{id}/apps/display",
+            post(handlers::devices::save_app_display),
+        )
+        .route(
+            "/apps/tracked/{id}/display",
+            post(handlers::tracked_apps::save_display),
         )
         .route("/dns", get(handlers::dns_filter::show_dns_filter))
         .route("/dns/upstream", post(handlers::dns_filter::set_upstream))

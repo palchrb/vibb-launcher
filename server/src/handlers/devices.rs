@@ -289,6 +289,8 @@ struct DeviceDetailTemplate {
     /// about the phone's network.
     app_updates_wifi_only: bool,
     app_downloads_line: Option<String>,
+    /// Apps card (design 14): "Name and icon" for every allowed app with a package name.
+    display_forms: Vec<crate::app_display::AppDisplayForm>,
 }
 
 /// The kiosk app block switch on the "Push and Play" card (handy step 9): with it on, kiosk mode
@@ -317,6 +319,184 @@ pub async fn update_kiosk_block(
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// The "Name and icon" forms of the device page (design 14): every allowed (checked) app with a
+/// valid package name but the launcher - installed apps, Play apps and catalog apps not installed
+/// yet. Each shows this phone's own choice, else the catalog default; a refused save shows what
+/// was entered.
+async fn app_display_forms(
+    state: &AppState,
+    device_id: i64,
+    apps: &[UnifiedAppRow],
+    entered: Option<&(String, crate::app_display::Entered)>,
+) -> Vec<crate::app_display::AppDisplayForm> {
+    use crate::app_display::{AppDisplayForm, DisplayValues};
+    let defaults = crate::app_display::catalog_defaults(&state.db)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(%err, "couldn't read the catalog's app names");
+            Default::default()
+        });
+    let own = crate::app_display::device_rows(&state.db, device_id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id, %err, "couldn't read the phone's app names");
+            Default::default()
+        });
+    apps.iter()
+        .filter(|a| {
+            a.checked && !a.is_launcher && crate::app_display::valid_package_name(&a.package_name)
+        })
+        .map(|a| {
+            let default = defaults.get(&a.package_name);
+            let row = own.get(&a.package_name);
+            let current = row.or(default).cloned().unwrap_or_else(DisplayValues::own);
+            let mut form = AppDisplayForm::new(
+                format!("/devices/{device_id}/apps/display"),
+                format!("app-{}", a.package_name),
+                a.package_name.clone(),
+                a.label.clone(),
+                &current,
+                entered
+                    .filter(|(package, _)| *package == a.package_name)
+                    .map(|(_, e)| e),
+            );
+            form.catalog_default = default.map(DisplayValues::describe);
+            form.own_row = row.is_some();
+            if row.is_none() && default.is_some() {
+                form.summary = format!("{} (from the catalog)", form.summary);
+            }
+            form
+        })
+        .collect()
+}
+
+/// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
+/// `action` "own" = the app's own (on this phone, even with a catalog default), "catalog" =
+/// follow the catalog default (the phone's row goes), else save the fields. A choice equal to the
+/// catalog default, or "the app's own" without a default, keeps no row. Refused input: 400, the
+/// device page with that app's form open, the entered values and the error by the field, the field
+/// focused (so the page doesn't jump to the top). Saved: back to the app (`#app-<package>`); nudges.
+pub async fn save_app_display(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    use crate::app_display::{DisplayValues, Entered, FieldError};
+    let field = |name: &str| form.get(name).map(String::as_str).unwrap_or("");
+    let package = field("package_name").trim().to_string();
+    if !crate::app_display::valid_package_name(&package) || crate::play::is_play_core(&package) {
+        return (StatusCode::BAD_REQUEST, "Not an app this page can name.").into_response();
+    }
+    let exists: Option<i64> = match sqlx::query_scalar("SELECT id FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(found) => found,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't read the device");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed.",
+            )
+                .into_response();
+        }
+    };
+    if exists.is_none() {
+        return (StatusCode::NOT_FOUND, "Device not found").into_response();
+    }
+    let refuse = |error: FieldError| {
+        let entered = Entered {
+            label: field("label").to_string(),
+            icon: field("icon").to_string(),
+            color: field("color").to_string(),
+            error,
+        };
+        let state = state.clone();
+        let package = package.clone();
+        async move {
+            let mut response =
+                render_device(&state, id, &Default::default(), Some((package, entered))).await;
+            *response.status_mut() = StatusCode::BAD_REQUEST;
+            response
+        }
+    };
+    let action = field("action");
+    let values = match action {
+        "own" => DisplayValues::own(),
+        _ => match crate::app_display::validate(field("label"), field("icon"), field("color")) {
+            Ok(values) => values,
+            Err(error) => return refuse(error).await,
+        },
+    };
+    let default = match crate::app_display::catalog_defaults(&state.db).await {
+        Ok(defaults) => defaults.get(&package).cloned(),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't read the catalog's app names");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed.",
+            )
+                .into_response();
+        }
+    };
+    let keep_row = action != "catalog"
+        && match &default {
+            Some(default) => *default != values,
+            None => !values.is_own(),
+        };
+    let result = if keep_row {
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_app_display WHERE device_id = ? AND package_name != ?",
+        )
+        .bind(id)
+        .bind(&package)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+        if rows >= crate::app_display::MAX_ROWS_PER_DEVICE {
+            return refuse(FieldError {
+                field: "label",
+                message: format!(
+                    "This phone already has {} names and icons - remove some first.",
+                    crate::app_display::MAX_ROWS_PER_DEVICE
+                ),
+            })
+            .await;
+        }
+        sqlx::query(
+            "INSERT INTO device_app_display (device_id, package_name, label, icon_key, color_key)              VALUES (?, ?, ?, ?, ?) ON CONFLICT(device_id, package_name) DO UPDATE SET              label = excluded.label, icon_key = excluded.icon_key, color_key = excluded.color_key,              updated_at = datetime('now')",
+        )
+        .bind(id)
+        .bind(&package)
+        .bind(&values.label)
+        .bind(&values.icon)
+        .bind(&values.color)
+        .execute(&state.db)
+        .await
+    } else {
+        sqlx::query("DELETE FROM device_app_display WHERE device_id = ? AND package_name = ?")
+            .bind(id)
+            .bind(&package)
+            .execute(&state.db)
+            .await
+    };
+    match result {
+        Ok(_) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&format!("/devices/{id}#app-{package}")).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't save the app's name and icon");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Couldn't save - nothing was changed.",
@@ -763,6 +943,18 @@ pub async fn view_device(
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    render_device(&state, id, &query, None).await
+}
+
+/// The device page; `entered` = a refused "Name and icon" save (that app's form opens with the
+/// entered values and the error, design 14).
+async fn render_device(
+    state: &AppState,
+    id: i64,
+    query: &std::collections::HashMap<String, String>,
+    entered: Option<(String, crate::app_display::Entered)>,
+) -> Response {
+    let state = state.clone();
     let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
@@ -966,6 +1158,7 @@ pub async fn view_device(
         .map(|s| s.offline_override_used)
         .unwrap_or(false);
     let any_app_installing = apps.iter().any(|a| a.is_installing);
+    let display_forms = app_display_forms(&state, id, &apps, entered.as_ref()).await;
     let app_downloads_line = downloads
         .as_ref()
         .and_then(crate::app_downloads::network_line);
@@ -1083,6 +1276,7 @@ pub async fn view_device(
             crashes,
             app_updates_wifi_only: policy.app_updates_wifi_only,
             app_downloads_line,
+            display_forms,
             time,
             push,
             lock,

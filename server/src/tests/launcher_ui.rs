@@ -24,7 +24,12 @@ async fn policy(app: &TestApp, token: &str) -> serde_json::Value {
 async fn launcher_settings(app: &TestApp, token: &str) -> serde_json::Value {
     let mut ui = policy(app, token).await["launcher_ui"].clone();
     assert!(ui["wallpapers"].is_array(), "wallpapers always sent");
+    assert!(
+        ui["app_display"].is_array(),
+        "app_display always sent (design 14)"
+    );
     ui.as_object_mut().unwrap().remove("wallpapers");
+    ui.as_object_mut().unwrap().remove("app_display");
     ui
 }
 

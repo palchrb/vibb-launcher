@@ -266,6 +266,8 @@ class Application : android.app.Application() {
             )
         }
 
+        // The parent's app names and icons (design 14), before the first list is drawn.
+        com.kidslauncher.mdm.apps.AppDisplay.refresh(this, reload = false)
         loadApps()
 
         createNotificationChannels(this)
@@ -324,6 +326,10 @@ class Application : android.app.Application() {
         return (customAppNames ?: LauncherPreferences.apps().customNames() ?: HashMap())
             .also { customAppNames = it }
     }
+
+    /** Reloads the app list (Home and the drawer re-render and re-sort) - e.g. when the parent's
+     * app names and icons changed ([com.kidslauncher.mdm.apps.AppDisplay], design 14). */
+    fun reloadApps() = loadApps()
 
     private fun loadApps() {
         CoroutineScope(Dispatchers.Default).launch {
