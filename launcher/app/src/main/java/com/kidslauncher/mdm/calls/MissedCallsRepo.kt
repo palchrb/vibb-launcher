@@ -1,6 +1,8 @@
 package com.kidslauncher.mdm.calls
 
+import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
 import android.provider.CallLog
 import android.util.Log
 import androidx.core.content.edit
@@ -8,7 +10,9 @@ import androidx.core.content.edit
 /**
  * Feeds [missedCallSummaries]: the call log of the last 14 days (READ_CALL_LOG, self-granted while
  * calls are managed - nothing without it) and the "seen" marks, kept in CE preferences
- * `missed_calls_seen` (never device-protected storage). Query on a background thread.
+ * `missed_calls_seen` (never device-protected storage). Query on a background thread. The same
+ * rows feed the missed-call notification ([missedCallNotice], [MissedCallNotifier]), which also
+ * marks the log read.
  */
 object MissedCallsRepo {
     private const val LOG_TAG = "MissedCalls"
@@ -19,8 +23,66 @@ object MissedCallsRepo {
     /** Missed calls per contact number while calls are managed; empty otherwise. */
     fun summaries(context: Context, state: CallPolicyState, nowMs: Long = System.currentTimeMillis()): Map<String, MissedSummary> {
         val rules = (state as? CallPolicyState.Managed)?.rules ?: return emptyMap()
-        val seen = prefs(context).all.mapNotNull { (key, value) -> (value as? Long)?.let { key to it } }.toMap()
-        return missedCallSummaries(readLog(context, nowMs - WINDOW_MS), rules.contacts, rules.defaultCc, seen)
+        return missedCallSummaries(recentLog(context, nowMs), rules.contacts, rules.defaultCc, seenMarks(context))
+    }
+
+    /** The call log of the last 14 days, newest first (with `_id` and `new`); empty when it can't be read. */
+    fun recentLog(context: Context, nowMs: Long = System.currentTimeMillis()): List<CallLogEntry> =
+        readLog(context, nowMs - WINDOW_MS)
+
+    /** Contact number -> when the kid last opened it or called it. */
+    fun seenMarks(context: Context): Map<String, Long> =
+        prefs(context).all.mapNotNull { (key, value) -> (value as? Long)?.let { key to it } }.toMap()
+
+    /**
+     * The `_id` of the newest missed call the log still has as unread (`new = 1`, any age), 0 for
+     * none or when the log can't be read. Queried before [recentLog]: everything up to it has been
+     * looked at by the time it is marked read (design 12, QA #1).
+     */
+    fun newestUnreadMissedId(context: Context): Long {
+        if (!readable(context)) return 0
+        return try {
+            context.contentResolver.query(
+                CallLog.Calls.CONTENT_URI.buildUpon().appendQueryParameter(CallLog.Calls.LIMIT_PARAM_KEY, "1").build(),
+                arrayOf(CallLog.Calls._ID),
+                "${CallLog.Calls.TYPE} = ? AND ${CallLog.Calls.NEW} = 1",
+                arrayOf(CallLog.Calls.MISSED_TYPE.toString()),
+                "${CallLog.Calls._ID} DESC",
+            )?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L } ?: 0L
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't read the newest unread missed call", e)
+            0L
+        }
+    }
+
+    /**
+     * Marks the unread missed calls up to [upToId] read (`new = 0`, `is_read = 1`), as Telecom
+     * would for a dialer without the receiver - otherwise it sends them to us again at every boot
+     * (design 12, QA #1). WRITE_CALL_LOG, held by policy while calls are managed. Never throws.
+     */
+    fun markMissedRead(context: Context, upToId: Long): Boolean {
+        if (upToId <= 0 || !readable(context)) return false
+        if (context.checkSelfPermission(android.Manifest.permission.WRITE_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+            Log.w(LOG_TAG, "No WRITE_CALL_LOG - missed calls stay unread")
+            return false
+        }
+        return try {
+            val values = ContentValues().apply {
+                put(CallLog.Calls.NEW, 0)
+                put(CallLog.Calls.IS_READ, 1)
+            }
+            val updated = context.contentResolver.update(
+                CallLog.Calls.CONTENT_URI,
+                values,
+                "${CallLog.Calls.TYPE} = ? AND ${CallLog.Calls.NEW} = 1 AND ${CallLog.Calls._ID} <= ?",
+                arrayOf(CallLog.Calls.MISSED_TYPE.toString(), upToId.toString()),
+            )
+            Log.i(LOG_TAG, "Marked $updated missed calls read")
+            true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't mark missed calls read", e)
+            false
+        }
     }
 
     /** The kid opened this contact or called it: its missed calls so far are dealt with. */
@@ -30,13 +92,16 @@ object MissedCallsRepo {
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    private fun readable(context: Context): Boolean =
+        canReadCallLog(CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.state.managed)
+
     private fun readLog(context: Context, sinceMs: Long): List<CallLogEntry> =
-        if (!canReadCallLog(CallSystem.callLogGranted(context), CallPolicyStore.userUnlocked(context), CallPolicyStore.state.managed)) emptyList() else queryLog(context, sinceMs)
+        if (!readable(context)) emptyList() else queryLog(context, sinceMs)
 
     private fun queryLog(context: Context, sinceMs: Long): List<CallLogEntry> = try {
         context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
-            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.TYPE, CallLog.Calls.DATE),
+            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.TYPE, CallLog.Calls.DATE, CallLog.Calls._ID, CallLog.Calls.NEW),
             "${CallLog.Calls.DATE} >= ?",
             arrayOf(sinceMs.toString()),
             // No LIMIT in the sort order: the call-log provider uses strict SQL grammar.
@@ -50,7 +115,7 @@ object MissedCallsRepo {
                         CallLog.Calls.INCOMING_TYPE, CallLog.Calls.ANSWERED_EXTERNALLY_TYPE -> LoggedCallType.INCOMING_ANSWERED
                         else -> LoggedCallType.OTHER // rejected, blocked, voicemail
                     }
-                    add(CallLogEntry(cursor.getString(0), type, cursor.getLong(2)))
+                    add(CallLogEntry(cursor.getString(0), type, cursor.getLong(2), id = cursor.getLong(3), unread = cursor.getInt(4) == 1))
                 }
             }
         }.orEmpty()

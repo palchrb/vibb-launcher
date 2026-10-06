@@ -31,4 +31,18 @@ class PlayInvariantsTest {
         assertTrue("enforceDefaultHome(dpm, admin, context)" in enforcer)
         assertTrue("enforcePlayLinkBlocker(dpm, admin, context)" in enforcer)
     }
+
+    /** Design 12 (QA #6): the call log goes to the phone book, set next to the Play link blocker on
+     * every apply() - before anything in apply() that can throw - and never lifted. */
+    @Test
+    fun `apply pins the call log to the phone book next to the link blocker`() {
+        val enforcer = sources.walkTopDown().first { it.name == "AppEnforcer.kt" }.readText()
+        val apply = enforcer.substringAfter("fun apply(context: Context").substringBefore("CallPolicyStore.ensureLoaded(context)")
+        assertTrue("enforcePlayLinkBlocker(dpm, admin, context)" in apply)
+        assertTrue("enforceCallLogPin(dpm, admin, context)" in apply)
+        val pin = enforcer.substringAfter("private fun enforceCallLogPin(").substringBefore("\n    }\n")
+        assertTrue("addDataType(CALL_LOG_TYPE)" in pin)
+        assertTrue("Intent.CATEGORY_DEFAULT" in pin)
+        assertTrue("PhoneBookActivity::class.java" in pin)
+    }
 }

@@ -60,6 +60,16 @@
         <item quantity="one">%1$s, %2$d tapt anrop</item>
         <item quantity="other">%1$s, %2$d tapte anrop</item>
     </plurals>
+    <string name="notification_channel_missed_calls">Tapte anrop</string>
+    <string name="missed_call_from">Tapt anrop fra %1$s</string>
+    <plurals name="missed_calls_from">
+        <item quantity="one">%1$d tapt anrop fra %2$s</item>
+        <item quantity="other">%1$d tapte anrop fra %2$s</item>
+    </plurals>
+    <plurals name="missed_calls_count">
+        <item quantity="one">%1$d tapt anrop</item>
+        <item quantity="other">%1$d tapte anrop</item>
+    </plurals>
 
     <!-- Home screen -->
     <plurals name="app_unread">

@@ -27,6 +27,8 @@ object ContactSheet {
 
     fun show(activity: Activity, contact: RuleContact, missed: MissedSummary?, onDone: () -> Unit) {
         MissedCallsRepo.markSeen(activity, contact.number)
+        // Any contact sheet deals with the missed-call notification (design 12, QA #3).
+        MissedCallNotifier.dismiss(activity)
         val emergency = CallSystem.isEmergencyOutgoing(activity, contact.number)
         val view = LayoutInflater.from(activity).inflate(R.layout.sheet_contact, null)
         val dialog = Dialog(activity, R.style.KidSheetDialog)

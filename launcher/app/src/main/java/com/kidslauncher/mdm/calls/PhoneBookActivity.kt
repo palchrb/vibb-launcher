@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.calls
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
@@ -27,18 +28,31 @@ import kotlinx.coroutines.withContext
  *
  * A `tel:` number from another app is checked with [decideOutgoing]: allowed asks "Call X?",
  * anything else says it isn't allowed.
+ *
+ * Missed calls (design 12): it is also the call-log viewer (`VIEW` `vnd.android.cursor.dir/calls`,
+ * pinned as a persistent preferred activity) - while calls are unmanaged it passes that on to the
+ * system dialer. Our missed-call notification opens it, with [EXTRA_MISSED_CONTACT] when the calls
+ * came from one contact (that contact's sheet opens, once). Being opened clears the notification
+ * ([MissedCallNotifier.dismiss]).
  */
 class PhoneBookActivity : UIObjectActivity() {
 
     private lateinit var binding: ActivityPhoneBookBinding
     private lateinit var adapter: PhoneBookAdapter
     private var missed: Map<String, MissedSummary> = emptyMap()
+    /** The contact whose sheet the missed-call notification asked for, opened once the missed
+     * calls are loaded. */
+    private var pendingSheet: String? = null
     private val photoListener: () -> Unit = { render() }
     private val wallpaperListener: () -> Unit = { render() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CallPolicyStore.ensureLoaded(this)
+        if (passOnCallLog(intent)) {
+            finish()
+            return
+        }
         binding = ActivityPhoneBookBinding.inflate(layoutInflater)
         setContentView(binding.root)
         adapter = PhoneBookAdapter(
@@ -49,6 +63,8 @@ class PhoneBookActivity : UIObjectActivity() {
         binding.phoneBookGrid.adapter = adapter
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
         com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.phoneBookHeader, R.string.calls_phone_book)
+        // Once: not again after a recreation.
+        if (savedInstanceState == null) takeMissedContact(intent)
         handleNumber(intent)
     }
 
@@ -67,6 +83,8 @@ class PhoneBookActivity : UIObjectActivity() {
         WallpaperStore.refreshAsync(this)
         render()
         loadMissedCalls()
+        // Opening the phone book deals with the missed-call notification (design 12, QA #3).
+        MissedCallNotifier.dismiss(this)
     }
 
     override fun onStop() {
@@ -77,7 +95,39 @@ class PhoneBookActivity : UIObjectActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (passOnCallLog(intent)) return
+        takeMissedContact(intent)
         handleNumber(intent)
+    }
+
+    /** The notification's contact, only when it is in the phone book now (QA #8); the extra is
+     * removed, so it opens once. */
+    private fun takeMissedContact(intent: Intent?) {
+        val number = intent?.getStringExtra(EXTRA_MISSED_CONTACT) ?: return
+        intent.removeExtra(EXTRA_MISSED_CONTACT)
+        pendingSheet = number
+    }
+
+    /**
+     * The call log asked for while calls are unmanaged: the system dialer's, explicitly - our pin
+     * is permanent, so it stays ours to pass on (as the Play link blocker does). Managed (or
+     * rules unknown): the phone book is the call log. A fresh intent: never the caller's extras.
+     */
+    private fun passOnCallLog(intent: Intent?): Boolean {
+        if (intent == null || !isCallLogView(intent.action, intent.type, intent.dataString)) return false
+        if (CallPolicyStore.effectiveState() != CallPolicyState.Unmanaged) return false
+        val dialer = com.kidslauncher.mdm.server.systemDialerPackage(this)
+        if (dialer != null && dialer != packageName) {
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW).setType(CALL_LOG_TYPE).setPackage(dialer)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            } catch (e: Exception) {
+                Log.w("PhoneBookActivity", "The system dialer has no call log to pass on to", e)
+            }
+        }
+        return true
     }
 
     private fun loadMissedCalls() {
@@ -87,8 +137,18 @@ class PhoneBookActivity : UIObjectActivity() {
             if (!isDestroyed) {
                 missed = result
                 render()
+                openPendingSheet()
             }
         }
+    }
+
+    private fun openPendingSheet() {
+        val number = pendingSheet ?: return
+        pendingSheet = null
+        if (isFinishing) return
+        val contact = missedCallContact(number, phoneBookView(CallPolicyStore.effectiveState()) { CallSystem.isEmergencyOutgoing(this, it) })
+            ?: return
+        ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
     }
 
     private fun render() {
@@ -129,7 +189,8 @@ class PhoneBookActivity : UIObjectActivity() {
     }
 
     private fun handleNumber(intent: Intent?) {
-        val data = intent?.data ?: return
+        if (intent == null || isCallLogView(intent.action, intent.type, intent.dataString)) return
+        val data = intent.data ?: return
         val raw = PhoneNumbers.numberFromHandle(data.toString())
         val state = CallPolicyStore.effectiveState()
         if (decideOutgoing(raw, state, CallSystem.isEmergencyOutgoing(this, raw)) == Verdict.BLOCK || raw == null) {
@@ -150,6 +211,15 @@ class PhoneBookActivity : UIObjectActivity() {
     }
 
     companion object {
+        /** The phone number (as in the call rules) of the contact whose sheet to open. */
+        const val EXTRA_MISSED_CONTACT = "com.kidslauncher.mdm.extra.MISSED_CONTACT"
+
         fun intent(context: Context) = Intent(context, PhoneBookActivity::class.java)
+
+        /** The missed-call notification's tap: the phone book, with [contactNumber]'s sheet. */
+        fun missedCallsIntent(context: Context, contactNumber: String?): Intent =
+            intent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
+                if (contactNumber != null) putExtra(EXTRA_MISSED_CONTACT, contactNumber)
+            }
     }
 }

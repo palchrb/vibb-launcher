@@ -29,6 +29,9 @@ const val NOTIFICATION_CHANNEL_CALLS_SILENT = "launcher:calls_silent"
  * install-mode notification. */
 const val CALL_NOTIFICATION_ID = 1005
 private const val APP_INSTALL_NOTIFICATION_ID_BASE = 2000
+/** Missed calls (calls.MissedCallNotifier, design 12) - DEFAULT: sound, no full-screen intent. */
+const val NOTIFICATION_CHANNEL_MISSED_CALLS = "launcher:missed_calls"
+const val MISSED_CALL_NOTIFICATION_ID = 1006
 /** Play install mode (handy step 7, play.PlayRuntime) - LOW, ongoing, with "End now". */
 const val NOTIFICATION_CHANNEL_INSTALL_MODE = "launcher:install_mode"
 const val INSTALL_MODE_NOTIFICATION_ID = 1004
@@ -57,6 +60,18 @@ fun createCallChannels(context: Context) {
     )
 }
 
+/** The missed-call channel; also called before each post (idempotent), like [createCallChannels]. */
+fun createMissedCallChannel(context: Context) {
+    val notificationManager = context.getSystemService(NotificationManager::class.java) ?: return
+    notificationManager.createNotificationChannel(
+        NotificationChannel(
+            NOTIFICATION_CHANNEL_MISSED_CALLS,
+            context.getString(R.string.notification_channel_missed_calls),
+            NotificationManager.IMPORTANCE_DEFAULT
+        )
+    )
+}
+
 fun createNotificationChannels(context: Context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         val notificationManager =
@@ -65,6 +80,7 @@ fun createNotificationChannels(context: Context) {
         // Crashes go to the server since the 2026-10-06 cleanup; drop the old crash channel.
         notificationManager.deleteNotificationChannel(NOTIFICATION_CHANNEL_CRASH)
         createCallChannels(context)
+        createMissedCallChannel(context)
         // HIGH importance + own channel so this reliably heads-up/appears even over the lock
         // screen while Find My Device's ring is playing - the whole point is to give the kid an
         // obvious, immediate way to silence it once they unlock the device, not something that

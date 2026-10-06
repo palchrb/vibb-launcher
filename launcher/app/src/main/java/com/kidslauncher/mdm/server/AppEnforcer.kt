@@ -22,7 +22,10 @@ import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallPrefs
 import com.kidslauncher.mdm.calls.CallSystem
+import com.kidslauncher.mdm.calls.CALL_LOG_TYPE
 import com.kidslauncher.mdm.calls.EmergencyDialer
+import com.kidslauncher.mdm.calls.MissedCallNotifier
+import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.RoleAction
 import com.kidslauncher.mdm.calls.RoleSnapshot
 import com.kidslauncher.mdm.calls.dialerRoleAction
@@ -206,6 +209,8 @@ object AppEnforcer {
         enforceDefaultHome(dpm, admin, context)
         // Never lifted (QA #2) - the blocker passes links on to Play whenever Play is open.
         enforcePlayLinkBlocker(dpm, admin, context)
+        // The call log opens the phone book (design 12), never lifted either.
+        enforceCallLogPin(dpm, admin, context)
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
@@ -586,6 +591,8 @@ object AppEnforcer {
                 try {
                     if (systemDialer != null) dpm.setDefaultDialerApplication(systemDialer)
                     CallPrefs.dialerRoleTakenByUs(context, false)
+                    // Telecom tells the system dialer about missed calls from now on (QA 12 #8).
+                    MissedCallNotifier.cancelOurs(context)
                     CallPrefs.lastError(context, null)
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Handing the dialer role back to $systemDialer failed", e)
@@ -1050,6 +1057,28 @@ object AppEnforcer {
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Failed to set the Play link blocker", e)
             }
+        }
+    }
+
+    /**
+     * `VIEW vnd.android.cursor.dir/calls` - the call log, which Telecom's own missed-call
+     * notification and other apps open - goes to [PhoneBookActivity] (design 12): the system
+     * dialer's call log is its full UI with a keypad, and a chooser would be just as bad. Set on
+     * every [apply] next to the Play link blocker and never cleared (that would drop the HOME pin,
+     * `PlayInvariantsTest`); the activity declares the same filter and passes the intent on to the
+     * system dialer while calls are unmanaged. A privileged dialer whose call-log filter has a
+     * priority above 0 still wins (PackageManager picks it before reading persistent preferred
+     * activities) - device check on the Jelly Star.
+     */
+    private fun enforceCallLogPin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        try {
+            val filter = IntentFilter(Intent.ACTION_VIEW).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+                addDataType(CALL_LOG_TYPE)
+            }
+            dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, PhoneBookActivity::class.java))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the call-log pin", e)
         }
     }
 

@@ -198,7 +198,28 @@
                 <action android:name="android.intent.action.CALL_BUTTON" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- The call log (design 12): Telecom's own missed-call notification opens it, and so
+                 may other apps. Its own filter, plus a persistent preferred activity set in every
+                 AppEnforcer.apply() and never cleared, so neither the system dialer's call log
+                 (its full keypad) nor a chooser wins; while calls are unmanaged the phone book
+                 passes it on to the system dialer. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="vnd.android.cursor.dir/calls" />
+            </intent-filter>
         </activity>
+        <!-- Telecom's SHOW_MISSED_CALLS_NOTIFICATION (design 12): with this receiver in the default
+             dialer Telecom sends us the broadcast instead of posting its own notification. A
+             protected broadcast sent with READ_PHONE_STATE as the receiver permission, so
+             exported="true" without android:permission (as AOSP Dialer). Not directBootAware. -->
+        <receiver
+            android:name=".calls.MissedCallReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.action.SHOW_MISSED_CALLS_NOTIFICATION" />
+            </intent-filter>
+        </receiver>
         <!-- Unread counts for the home grid (design 05-ui-photos-i18n.md). Android binds it only
              once notification access is granted - no device-owner API exists for that, so it's
              `adb shell cmd notification allow_listener <package>/com.kidslauncher.mdm.badges.BadgeListenerService`

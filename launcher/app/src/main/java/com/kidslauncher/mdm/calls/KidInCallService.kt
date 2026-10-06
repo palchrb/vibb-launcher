@@ -121,6 +121,9 @@ class KidInCallService : InCallService() {
     override fun onCallRemoved(call: Call) {
         call.unregisterCallback(callback)
         OngoingCalls.remove(call)
+        // A call back deals with missed calls: the notification is looked at again once the call
+        // log has this call (design 12, QA #3).
+        MissedCallNotifier.afterCall(this)
         val next = OngoingCalls.current
         if (next == null) {
             // Nothing left of ours: the notification goes at once (as before this round).

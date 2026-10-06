@@ -72,6 +72,20 @@
         <item quantity="one">%1$s, %2$d missed call</item>
         <item quantity="other">%1$s, %2$d missed calls</item>
     </plurals>
+    <!-- The missed-call notification (design 12) -->
+    <string name="notification_channel_missed_calls">Missed calls</string>
+    <!-- %1$s = contact name -->
+    <string name="missed_call_from">Missed call from %1$s</string>
+    <!-- %1$d = count (2 or more), %2$s = contact name -->
+    <plurals name="missed_calls_from">
+        <item quantity="one">%1$d missed call from %2$s</item>
+        <item quantity="other">%1$d missed calls from %2$s</item>
+    </plurals>
+    <!-- %1$d = count; the notification's text lists the names -->
+    <plurals name="missed_calls_count">
+        <item quantity="one">%1$d missed call</item>
+        <item quantity="other">%1$d missed calls</item>
+    </plurals>
 
     <!--
       -
