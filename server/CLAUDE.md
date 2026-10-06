@@ -313,6 +313,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `Content-Type` and `Content-Length` as before (the launcher's progress needs the length); no Range support.
 - New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth and brightness on
   (`devices::DEFAULT_QUICK_CONTROLS`, mask 7, set in `insert_device_with_policy`); existing devices keep theirs.
+- **Package-name backfill** (`device_api::status`): after allowlisting the backfilled app it nudges the phone
+  (`command_notify`, so SSE and FCM), which otherwise kept the app hidden and suspended until its next backstop sync
+  (found on the emulator). Its "previous report" query orders by `reported_at DESC, id DESC`, so two reports in
+  the same second no longer compare a report with itself.
 - Tests: `tracked_apps::tests`, `src/tests/tracked_apps.rs`, `a_new_device_starts_with_all_kid_settings_on`.
 
 ## Current status (2026-08-08, `v0.13.0`)

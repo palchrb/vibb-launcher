@@ -767,7 +767,7 @@ pub async fn status(
         if let [tracked_app_id] = awaiting_package_name.as_slice() {
             let previous_json: Option<String> = sqlx::query_scalar(
                 "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
-                 ORDER BY reported_at DESC LIMIT 1 OFFSET 1",
+                 ORDER BY reported_at DESC, id DESC LIMIT 1 OFFSET 1",
             )
             .bind(device.id)
             .fetch_optional(&state.db)
@@ -793,11 +793,22 @@ pub async fn status(
                     .execute(&state.db)
                     .await
                     .ok();
-                if let Err(err) =
-                    crate::handlers::devices::add_to_allowlist(&state, device.id, &app.package_name)
-                        .await
+                match crate::handlers::devices::add_to_allowlist(
+                    &state,
+                    device.id,
+                    &app.package_name,
+                )
+                .await
                 {
-                    tracing::error!(device_id = device.id, %err, "failed to allowlist a backfilled app");
+                    // The phone keeps the new app hidden and suspended until it re-fetches the
+                    // policy - nudged now (SSE, and FCM through the push dispatcher), not at the
+                    // next backstop sync up to 30 min later.
+                    Ok(()) => {
+                        let _ = state.command_notify.send(device.id);
+                    }
+                    Err(err) => {
+                        tracing::error!(device_id = device.id, %err, "failed to allowlist a backfilled app");
+                    }
                 }
             }
         }

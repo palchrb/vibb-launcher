@@ -1,5 +1,5 @@
-//! The app catalog's forms (regex asset filters), the status card's file line, and the device
-//! API's streamed APK download.
+//! The app catalog's forms (regex asset filters), the status card's file line, the device API's
+//! streamed APK download, and the package-name backfill's nudge.
 
 use super::*;
 
@@ -231,4 +231,82 @@ async fn the_cached_apk_is_streamed_with_its_length() {
     std::fs::remove_file(&path).unwrap();
     let gone = app.request(Method::GET, &uri, Some(&token), None).await;
     assert_eq!(gone.status, StatusCode::NOT_FOUND);
+}
+
+/// A catalog app without a package name is matched to the package that newly appeared in the
+/// status report; it is allowlisted and the phone is nudged at once, so it doesn't stay hidden
+/// and suspended until the next backstop sync.
+#[tokio::test]
+async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let tracked = insert_app(&app, "Element X", Some(r"^\d+\.apk$")).await;
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(id)
+        .bind(tracked)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let report = |packages: &[&str]| {
+        let installed: Vec<serde_json::Value> = packages
+            .iter()
+            .map(|p| serde_json::json!({ "package_name": p, "label": p }))
+            .collect();
+        serde_json::json!({
+            "lock_reason": "none",
+            "kiosk_engaged": true,
+            "installed_apps": installed,
+        })
+    };
+    let post = |body: serde_json::Value| {
+        let app = &app;
+        let token = token.clone();
+        async move {
+            let res = app
+                .request(
+                    Method::POST,
+                    "/api/devices/status",
+                    Some(&token),
+                    Some(body),
+                )
+                .await;
+            assert!(res.status.is_success(), "{}", res.text());
+        }
+    };
+
+    // Two apps on the first report, so nothing is "the one new package" yet.
+    post(report(&["org.example.clock", "org.example.notes"])).await;
+    let mut nudges = app.state.command_notify.subscribe();
+    post(report(&[
+        "org.example.clock",
+        "org.example.notes",
+        "io.element.android.x",
+    ]))
+    .await;
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    assert!(nudges.try_recv().is_err());
+    let package: String = sqlx::query_scalar("SELECT package_name FROM tracked_apps WHERE id = ?")
+        .bind(tracked)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(package, "io.element.android.x");
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    let allowlist = policy["allowlist"].as_array().expect("allowlist").clone();
+    assert!(
+        allowlist.contains(&serde_json::json!("io.element.android.x")),
+        "{allowlist:?}"
+    );
+
+    // Nothing new on the next report: no backfill, no nudge.
+    post(report(&[
+        "org.example.clock",
+        "org.example.notes",
+        "io.element.android.x",
+    ]))
+    .await;
+    assert!(nudges.try_recv().is_err());
 }
