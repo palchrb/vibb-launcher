@@ -238,6 +238,24 @@ Notifications (B; kiosk LOCKED, block on unless noted):
   demo stay. The device page lists the removed package/channel counts. **The `notification_auto_cancel` switch may
   default on only after this passes.**
 
+Fix round (qa-11-code) and user requests, 2026-10-06:
+- [ ] **Orphan sweep**: with the fence up (A4, during the window) `adb shell run-as $P rm shared_prefs/update_fence.xml`,
+  `am crash $P` -> after the restart the stock launcher is unsuspended (logcat `UpdateFence` "Orphaned fence").
+- [ ] **Wake right before the commit**: screen off until the commit starts, then `KEYGUARD_WAKEUP` within the hash/copy
+  seconds -> logcat "deferred right before the commit", no fence, the APK stays pending.
+- [ ] **Wrong signer**: an APK with the launcher's package name signed by another key -> "WRONG_SIGNER" before fencing,
+  no new download of that release (device page: failed), a newer release goes through.
+- [ ] **Call screen avatar**: an allowed contact with a photo, one without (initial on its colour, same as on Home),
+  and an unknown number (calls unmanaged, so it rings) -> the silhouette only for the unknown one; 112 (emulator fake)
+  -> silhouette.
+- [ ] **Ongoing-call card**: answer an allowed call, press Home -> the green card replaces the contacts row with
+  "Samtale med <navn> · 00:0x" counting; tap -> the call screen; `adb emu gsm cancel` -> the card goes, the contacts
+  come back. Unknown caller (calls unmanaged) -> "Samtale pågår".
+- [ ] **Camera while locked**: kiosk on and off, camera allowlisted: screen off, double-press power (or
+  `adb shell am start -a android.media.action.STILL_IMAGE_CAMERA`) -> no camera frame, the lock stays
+  (`dumpsys package com.android.camera2 | grep suspended` true while LOCKED, false after the right PIN; logcat
+  `CameraLock`). The camera works normally after the unlock.
+
 ## 6b. Step 7: FCM and Play (optional)
 
 The default debug build has no Firebase config: the phone uses the SSE stream (device page
@@ -261,7 +279,7 @@ The default debug build has no Firebase config: the phone uses the SSE stream (d
 For anything odd, paste into the chat:
 
 ```sh
-adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock|UpdateFence|SelfUpdate|NotificationRule" > log.txt
+adb logcat -d -t 2000 | grep -iE "kidslauncher|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock|UpdateFence|SelfUpdate|NotificationRule|CameraLock" > log.txt
 ```
 
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).

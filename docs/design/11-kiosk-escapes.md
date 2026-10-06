@@ -185,3 +185,24 @@ rollout, tsnet from the anchor if Home hasn't resumed) are not built.
 
 Device checks: A1-A5 and B1-B5 above, with the QA device acceptance items, are written out in
 `docs/testing/emulator.md` §6d [needs device test].
+
+### Fix round after qa-11-code.md and user requests (2026-10-06)
+
+L: `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` green (505 unit tests); S: `cargo test`
+(192), `fmt --check`, `clippy --all-targets` (no new warnings). Not pushed.
+
+| Part | Commit | What |
+|---|---|---|
+| L | `84d315d5` | #1 orphan sweep at process start and in every `apply()` when no record exists (pure `orphanFenceTargets`, `last_release` "orphan"); #5 last-fence summary in its own pinned prefs file `update_fence_last`, reported (`last_fenced_at_ms`, `last_released_at_ms`, refusals, ROLE_HOME, reason) |
+| S | `1356516b` | #5 the card ages "right now" out after 15 min, texts for `commit_failed`/`orphan`; #8 clamped times/counts, saturating arithmetic, `i64::MIN`/`MAX` test |
+| L | `d8411716` | #2 window gate again inside `beforeCommit` (deferral abandons the session, keeps the APK); #3 screen-off counted from the process start only before any screen event; #4 transient failures keep the verified APK and back off, deterministic refusals (incl. a new signer check before fencing) stick until the tag changes, `PENDING_USER_ACTION` abandons its session |
+| L | `de3eaac6` | #6 a group summary is cancelled only when every non-ongoing child would be; #7 `SMS_EMERGENCY_CB_RECEIVED` receivers are essential; B1 classifies the Play services system-update notification |
+| L | `ed65874a` | Call screens: a known contact's Home avatar (photo, else the initial on its colour); silhouette for unknown/withheld/emergency numbers and before the first unlock |
+| L | `9f6d1443` | Home: green "Samtale med <navn> · mm:ss" / "Samtale pågår" card instead of the contacts row while a call is live; tap = back to the call screen |
+| L | `797bb8af` | PIN lock: allowed camera apps (still-image/video camera handlers, system image-capture handlers) suspended while LOCKED, released at the unlock; record before act, idempotent release at process start, `apply()` never undoes it, enforcement's suspensions never claimed |
+| docs | (this commit) | launcher/server `CLAUDE.md`, `docs/testing/emulator.md` §6d additions, this section, `qa-11-code.md` |
+
+Notes: `KEYGUARD_DISABLE_SECURE_CAMERA` stays ORed in but does nothing without an Android keyguard (step 10), hence the
+camera suspension; the gesture's own setting (`camera_double_tap_power_gesture_disabled`) is a secure setting a device
+owner can't write - the emulator runbook still turns it off before enrolling. Device checks for this round are in
+`docs/testing/emulator.md` §6d [needs device test].
