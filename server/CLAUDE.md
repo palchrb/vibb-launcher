@@ -318,9 +318,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   60 s without data fails, 30 min overall. The row's UPDATE comes first, then the old file is removed
   (`replace_cached_file`; an UPDATE that matched no row - the app deleted meanwhile - removes the new file). Deleting an
   app removes its whole directory. A manual upload follows the same order and redirects back to the page.
-- **Device API** `GET /api/devices/apps/{id}/download` streams the file from disk (64 KiB chunks) with
-  `Content-Type` and `Content-Length` as before (the launcher's progress needs the length); no Range support. It checks
-  only the bearer token, not the device's selection - scoping and Range are designed in `docs/design/13-app-downloads.md`.
+- **Device API** `GET /api/devices/apps/{id}/download`: since design 13 scoped and resumable - see "App downloads"
+  below.
 - New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth and brightness on
   (`devices::DEFAULT_QUICK_CONTROLS`, mask 7, set in `insert_device_with_policy`); existing devices keep theirs.
 - **Package-name backfill** (`device_api::status`): after allowlisting the backfilled app it nudges the phone
@@ -328,6 +327,30 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (found on the emulator). It compares with the previous report read before this one is stored (the same `previous`
   the security log uses).
 - Tests: `tracked_apps::tests`, `src/tests/tracked_apps.rs`, `a_new_device_starts_with_all_kid_settings_on`.
+
+## App downloads: Wi-Fi only, resumable (design 13, `docs/design/13-app-downloads.md`, migration `0043_app_downloads.sql`)
+
+- **Switch**: `device_policy.app_updates_wifi_only` (default 1, existing phones too) -> `PolicyResponse.app_updates_wifi_only`,
+  always sent (`policy_json_keys_snapshot`). Apps card on the device page, `POST /devices/{id}/app-updates` (auto-save,
+  back to the page - scroll-restore keeps the place -, nudges the phone). The phone: catalog apps only on an unmetered
+  network, its own update after 3 days on any; roaming always waits.
+- **Scope**: one query for the list and the download (`device_api::scoped_apps`: enabled, a release, launcher OR
+  `device_tracked_apps`) - a deselected or another phone's app is a 404 like an unknown id.
+- **Download** is tower-http's `ServeFile` (`try_call` with the original request): `Content-Length`, a strong `ETag`
+  (mtime + size), one `Range` -> 206 + `Content-Range`, `If-Match` -> 412, past the end -> 416 `bytes */size`; plus
+  `X-Release-Tag` = the device's `tag@asset_id` from the same row as the path (`release_tag_header`: anything outside
+  visible ASCII, and `%`, percent-encoded - the launcher encodes its tag the same way and compares).
+- **Hash**: `tracked_apps.latest_release_sha256`, computed while a sync streams the file (`stream_to_file` returns
+  `Downloaded {size, sha256}`) or from an upload; sent as `TrackedAppUpdate.sha256` (`null` until known). Files cached
+  before 0043 are hashed at startup (`backfill_release_hashes`, own task, stored only while the row still names that file).
+- **Status**: `app_downloads` (`{wifi_only, network, entries: <= 20 {tracked_app_id, release_tag, state, bytes, total,
+  since_ms, any_network_at_ms}}`, a full snapshot) -> `device_status.app_downloads_json` (`src/app_downloads.rs`: known
+  fields only, capped). The app rows show it ("Waiting for Wi-Fi since 6 Oct · 120 of 326 MB", "Installed · update
+  waiting for Wi-Fi since ...", the launcher's "Installed · 0.32.0 waits for Wi-Fi, any network from 9 Oct") plus a line
+  about the phone's network; a fresh progress row (< 10 min) still wins for the live percentage.
+- Tests: `app_downloads::tests`, `src/tests/tracked_apps.rs` (`downloads_resume_with_range_and_if_match`,
+  `only_this_devices_apps_download`, `the_list_carries_each_files_hash`, `the_app_update_switch_saves_and_reaches_the_phone`,
+  `app_downloads_are_stored_and_shown`).
 
 ## Current status (2026-08-08, `v0.13.0`)
 

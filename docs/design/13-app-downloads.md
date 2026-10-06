@@ -105,3 +105,66 @@ All five QA findings accepted as written. User answers (2026-10-06):
 - Roaming always blocks every download, the launcher's included, switch on or off.
 - No size rule: with the switch off, any size downloads on any (non-roaming) network.
 - Play's own "Wi-Fi only" stays a runbook item (`docs/setup/google-account.md`).
+
+## Implementation status (2026-10-06)
+
+Done on `master` (not pushed). S: `cargo test` green (236, 9 new), `cargo fmt --check` clean, `cargo clippy
+--all-targets` 17 warnings as before (none new). L: `./gradlew testDebugUnitTest assembleDebug -PwarningsAsErrors=true`
+green at `4c8015db` (588 unit tests, 20 new). Not run on a device or the emulator.
+
+| Part | Commit | What |
+|---|---|---|
+| S + L | `4c8015db` | S: migration `0043_app_downloads.sql`; `device_api::scoped_apps` (list and download), `ServeFile` download with `X-Release-Tag` (`release_tag_header`); `latest_release_sha256` from `stream_to_file`/upload, `backfill_release_hashes` at startup; `src/app_downloads.rs` (status sanitizing, the device page's labels); the Apps card switch (`POST /devices/{id}/app-updates`). L: `setMetered(false)` (`VpnMeteredInvariantTest`); pure `server/AppDownloadPlan.kt` (`AppDownloadPlanTest`); `server/AppDownloads.kt` (runner, `AppDownloadStore`); the sync lists and queues; `installMutex`; DTOs (`appUpdatesWifiOnly`, `TrackedAppUpdate.sha256`, `AppDownloadsReport`); `PolicyResponseCompatTest`, `policy_json_keys_snapshot` |
+| docs | (this commit) | this section, `launcher/CLAUDE.md`, `server/CLAUDE.md`, `docs/setup/google-account.md` §4 and §10 |
+
+How the design, the QA findings and the decisions were met:
+- **§1** `KidVpnService`'s builder calls `setMetered(false)`; nothing sets the underlying networks. The gate reads
+  `getNetworkCapabilities(activeNetwork)`.
+- **§2** `device_policy.app_updates_wifi_only` (default 1, existing phones too) -> `app_updates_wifi_only`, always sent;
+  the launcher's DTO field is nullable (missing or `null` = off), `LastEnforcedPlan` carries it, the override and the
+  pause don't lift it. The Apps card's switch is an auto-saving form that redirects to its own page - the house rule:
+  `scroll-restore.js` puts the page back where it was (a `#fragment` would move it to the card's top instead).
+- **§3, #1** `downloadGate`: INTERNET **and** a Wi-Fi/cellular/ethernet transport (a VPN without an underlying network
+  waits for a network), never roaming (switch on or off, our own update included), with the switch NOT_METERED - our
+  own update only for 3 days from first sight (`LAUNCHER_WIFI_GRACE_MS`, a clock before first sight doesn't count),
+  catalog apps without grace, no size rule; space = rest + total + 100 MB. `onCapabilitiesChanged` (and `onLost`) of a
+  default-network callback cancels the call of a download that no longer qualifies.
+- **§4, #5** The sync fetches the list and reconciles the records before the status report; `AppDownloads` runs one
+  download at a time on its own coroutine, started through the anchor (`ACTION_DOWNLOADS`), wake lock
+  `kidslauncher:download` (`setReferenceCounted(false)`, 5 min, renewed every minute of progress, released while waiting
+  and in `finally`), a new `createMdmApi` per attempt, no overall timeout (a stall = retry after 30 s, 1 and 2 min,
+  then the next trigger). Triggers: every sync, process start, the network callback on the edge to "one may run".
+  `MdmApi.downloadTrackedApp` is a `Call<ResponseBody>`; `attemptStartedAtMs` covers commit -> receiver;
+  `TrackedAppUpdateState`'s mutators are `@Synchronized`.
+- **§5, #2** Server: `ServeFile` (`try_call` keeps the request's headers), `X-Release-Tag` from the same row as the
+  file, `sha256` in `/apps`. Launcher (`resumeAction`): 206 appends, 200 truncates, 412 / an incomplete 416 restart at
+  once, a complete 416 finishes, 404 drops the record (and backs off an hour - a deselected app or a file missing on
+  the server, so it doesn't loop). A different `X-Release-Tag` drops the record and requests a sync for the new list (at
+  most every 10 minutes); a hash mismatch deletes and downloads again without installing or backing off - a second one
+  in a row waits out the hourly backoff (a guard against downloading 326 MB in a loop). A failed install deletes the
+  file (`AppInstallReceiver`).
+- **§6, #4** Partial `noBackupFilesDir/app_downloads/<appId>-<16 hex>.part`, record in CE prefs `app_downloads`
+  (`commit()`). Only a successful list fetch drops records (not advertised, deselected, installed, another tag); without
+  one only installed releases' records; files without a record go, never the runner's active file (a running download
+  checks every 2 s that its record is still wanted, and stops and deletes its file otherwise). Old `cacheDir`
+  `tracked_app_*.apk` go once an hour old. `AppInstallReceiver` clears the record too. Our own finished update is
+  renamed into `self_update/` + `recordPending` (synchronized with `SelfUpdate.cleanup`).
+- **§7, #3** The night commit takes `AppDownloads.installMutex` (a catalog install holds it from `createSession` to
+  `commit()`) and sets `committedInThisProcess` inside it; the runner opens no session after that (the file and record
+  stay for the next process).
+- **§8** Status `app_downloads` `{wifi_only, network, entries}` every report (a full snapshot, <= 20); a record that may
+  run but hasn't started yet says `downloading`. Server: `device_status.app_downloads_json` (known fields, capped); the
+  app rows say "Waiting for Wi-Fi since 6 Oct · 120 of 326 MB", "Installed · update waiting for Wi-Fi since ...", the
+  launcher row "Installed · 0.32.0 waits for Wi-Fi, any network from 9 Oct", plus the phone's network; a fresh
+  progress row still wins (the runner reports the percentage as before).
+- **§9** Runbook: `docs/setup/google-account.md` §4 (note) and §10 (the device check).
+- The "Installing X" notification shows only while a download or install runs, not while it waits.
+
+Open device checks (none run yet):
+- `dumpsys connectivity`: our VPN has `NOT_METERED` on Wi-Fi, not on cellular (runbook §10).
+- `svc wifi disable` mid-download (with tsnet): the download pauses within seconds and keeps the partial; `svc wifi
+  enable` resumes it with a `Range` request (server log shows 206).
+- A ring or lock sent during a large download arrives at once ("Sync now" returns at once too).
+- The download goes on with the screen off in Doze (anchor FGS + wake lock) and stops while roaming.
+- Play's "over Wi-Fi only" updates go in during the night window with the filter VPN on (runbook §10).
+- A catalog install and the self-update commit in the same night: the commit waits for the session copy.

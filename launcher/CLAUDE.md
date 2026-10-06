@@ -183,6 +183,43 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 - **Privacy**: `badges/ElementDmReader` is the listener's only reader past package/flags, only for Element X: `ElementDmFacts(tag, selfKey, senderKeys, group)` (exact-field test), each message bundle's `sender_person` only (never `MessagingStyle`'s parser), never text/titles/names (allowlist source scan: identifiers, Bundle reads on the named keys, `Person.key` only), never logged. `ElementRoomStore` keeps only contact MXID -> (session, room) in CE prefs `element_rooms` (`learn` re-checks the contact against the rules read under its lock); pruned on every CE `CallPolicyStore.refresh` (left the phone book, not on Element, changed MXID; unmanaged = all; unknown rules = kept); nothing goes to the server or DE storage.
 - **Button**: `MessageIntent.uris` - with a learned room `elementx://open/<session>/<room>` (each segment fully `uriEncode`d) first, then the profile links; `openMessage` moves on only on a throw. An unknown session fails silently in Element (room list), so `smoke-test.sh` has an optional `ELEMENT_SESSION`/`ELEMENT_ROOM` step. Not device-tested: the checks in the 15 doc.
 
+## Catalog downloads: Wi-Fi only, resumable (design 13, `docs/design/13-app-downloads.md`, at the monorepo root)
+
+- **Downloads left the sync**: `performMdmSync` only fetches `GET /api/devices/apps` and turns it into the queue before
+  the status report (`checkForTrackedAppUpdates`: the installed/backoff/Play/in-flight rules as before;
+  `handleLauncherUpdate` returns the release to download). `AppDownloads.reconcile` makes the records exactly that list -
+  only after a successful fetch; without one only installed releases' records and files without a record are swept (QA #4).
+  `server/AppDownloads.kt` runs one download at a time on its own coroutine, started through the anchor
+  (`CommandListenerService.ACTION_DOWNLOADS`), with the `kidslauncher:download` wake lock (5 min, renewed every minute of
+  progress, released while waiting) and no overall timeout: OkHttp's 10 s read timeout makes a stall a retry (30 s, 1, 2
+  min, then the next trigger). Triggers: every sync, process start (`AppDownloads.init`), a default-network callback while
+  something waits (only on the edge to "one may run"). The `cacheDir`/`nanoTime` files and the in-sync download in the
+  Architecture bullets are history; old `cacheDir/tracked_app_*.apk` go once an hour old.
+- **Gate** (pure `server/AppDownloadPlan.kt`, `AppDownloadPlanTest`) on `getNetworkCapabilities(activeNetwork)` (our VPN's,
+  with the underlying transport): INTERNET + a physical transport (QA #1), never roaming (switch on or off, our own update
+  too), with the switch NOT_METERED - our own update only for 3 days from first sight (`LAUNCHER_WIFI_GRACE_MS`), catalog
+  apps without grace; room for the rest + a session copy + 100 MB (`getAllocatableBytes`). A network change that fails it
+  cancels the `Call<ResponseBody>` (`MdmApi.downloadTrackedApp`); the partial stays. `PolicyResponse.appUpdatesWifiOnly`
+  is nullable (missing/`null` = off), `LastEnforcedPlan` carries it, the override/pause don't lift it.
+- **VPN not metered**: `KidVpnService`'s builder calls `setMetered(false)` - the default made the whole phone metered on
+  Wi-Fi, so Play's and our unmetered work never ran. Never set underlying networks (`VpnMeteredInvariantTest` scans).
+- **Resume and checks**: partial `noBackupFilesDir/app_downloads/<appId>-<16 hex SHA-256(tag)>.part`, record
+  `DownloadRecord` in CE prefs `app_downloads` (`AppDownloadStore`, synchronized, `commit()`; id, tag, URL, server
+  SHA-256, first `ETag` and size, first seen, hash failures). `Range` + `If-Match`: 206 appends, 200 truncates (older
+  server: no `ETag`, no resume), 412 or an incomplete 416 restart at once, 404 drops it and backs off an hour
+  (`resumeAction`). `X-Release-Tag` differing (`releaseTagHeader`) = drop + a sync for the list (at most every 10 min);
+  the whole file's SHA-256 against `TrackedAppUpdate.sha256` (`null` = unchecked): a mismatch downloads again at once,
+  the second waits out the backoff. A running download checks every 2 s that its record is still wanted.
+- **Install**: catalog apps install from the runner under `AppDownloads.installMutex`; `attemptStartedAtMs` now covers
+  only commit -> `AppInstallReceiver` (which also clears the record). Our own update's file is renamed into
+  `self_update/` + `recordPending` (under `synchronized(SelfUpdate)`, like `cleanup`); the night commit takes
+  `installMutex` and sets `committedInThisProcess` inside it - no session opens after that (QA #3).
+  `TrackedAppUpdateState`'s mutators are `@Synchronized`.
+- **Status** `app_downloads`: `{wifi_only, network, entries}` (<= 20 `{tracked_app_id, release_tag, state, bytes, total,
+  since_ms, any_network_at_ms}`), a full snapshot in every report; a record that may run but hasn't started says
+  `downloading`.
+- **Not device-tested**: the checks in the 13 doc ("Implementation status").
+
 ## Building without tsnet.aar
 
 `libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. CI builds with `-PrequireTsnet=true`, which fails the build if the aar is missing, so a release can't ship the stub. If `mobile/tsembed`'s exported API changes, update the stub to match.

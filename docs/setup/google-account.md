@@ -61,7 +61,11 @@ Open before enrolling.
 - Family -> **Parental controls** on, with content ratings for the kid's age and a PIN (not one of
   handy's PINs; keep it with the credentials, section 6).
 - Network preferences -> **Auto-update apps** on, **over Wi-Fi only** (handy un-suspends the Play
-  Store from 02:00 to 04:00 while the screen is off, so Play can update in that window).
+  Store from 02:00 to 04:00 while the screen is off, so Play can update in that window). This is
+  Play's own setting - handy's "App updates only on Wi-Fi" on the device page covers only the apps
+  from handy's catalog and the launcher. Before launcher design 13 handy's VPN made the whole phone
+  "metered", so Play's Wi-Fi-only updates (and other apps' unmetered jobs) never ran behind it; the
+  VPN now takes its meteredness from the network below (section 10).
 - Profile icon -> **Play Protect** -> settings: "Scan apps with Play Protect" on.
 
 ## 5. Turn off the account's own sync
@@ -119,3 +123,16 @@ A top activity `com.android.internal.app.BlockedAppActivity` right after Play as
 `com.google.android.gms/...` screen is this case. For now: switch "Kiosk app block" off for the
 install and on again afterwards. Possible fix (not built): also pin Play services while install
 mode is on (next to the Play Store in the kiosk packages, `EnforcementPlan.kt`, `installModePin`).
+
+## 10. Open device check: Wi-Fi-only updates behind handy's VPN (design 13)
+
+With the filter VPN on and the phone on Wi-Fi, the VPN must not be metered; on mobile data it must
+be (adb needs "Block USB debugging" off, or use the emulator):
+
+```sh
+adb shell dumpsys connectivity | grep -A3 'VPN' | grep -oE 'Capabilities: [^]]*'
+```
+
+On Wi-Fi the VPN's capabilities list `NOT_METERED`; on mobile data they don't. Then, with Play's
+"over Wi-Fi only" on: a Play update that is due goes in during the night window (02:00-04:00, screen
+off) - Play Store -> Manage apps shows nothing pending the next morning.
