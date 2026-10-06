@@ -27,15 +27,11 @@ import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
-import com.kidslauncher.mdm.server.UnifiedPushRegistrationReceiver
-import com.kidslauncher.mdm.server.UnifiedPushRelay
 import com.kidslauncher.mdm.server.applyProvisioningExtras
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.createMdmApi
 import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
-import com.kidslauncher.mdm.server.performBrowserHistorySync
-import com.kidslauncher.mdm.server.performJournalSync
 import com.kidslauncher.mdm.server.performMdmSync
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.openAppsList
@@ -203,33 +199,6 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     PlayRuntime.startInstallMode(context)
                     updateInstallModeSummary(installMode)
                 }
-            }
-            true
-        }
-
-        val unifiedPushEnabled =
-            findPreference<Preference>(mdm.keys().unifiedpushDistributorEnabled())
-        unifiedPushEnabled?.setOnPreferenceChangeListener { _, newValue ->
-            val enabled = newValue as Boolean
-            val context = requireContext()
-            // The receiver's manifest declaration is exported unconditionally (see its own doc
-            // comment on why), but this component-enabled flip is a second, independent gate: a
-            // parent who's never touched this toggle should never have their phone silently
-            // discoverable as a UnifiedPush distributor. DONT_KILL_APP since flipping this off
-            // shouldn't restart the whole launcher process.
-            context.packageManager.setComponentEnabledSetting(
-                ComponentName(context, UnifiedPushRegistrationReceiver::class.java),
-                if (enabled) {
-                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                } else {
-                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                },
-                PackageManager.DONT_KILL_APP,
-            )
-            if (enabled) {
-                UnifiedPushRelay.start(context.applicationContext)
-            } else {
-                UnifiedPushRelay.stop()
             }
             true
         }
@@ -470,11 +439,8 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
      * Dev-testing shortcut: runs the same policy fetch + enforcement cycle
      * [com.kidslauncher.mdm.server.CommandListenerService] runs periodically, immediately - avoids
      * waiting a full cycle per test iteration (e.g. right after changing the allowlist or kiosk
-     * setting on the admin site). Also kicks off the journal/browser-history syncs the same way
-     * [CommandListenerService] does off its own triggers - own coroutines, not awaited before the
-     * toast below, since [performMdmSync]'s return value (whether policy fetch succeeded) is
-     * already the more useful "did this reach the server at all" signal, and a slow media upload
-     * from the journal sync shouldn't hold up that feedback.
+     * setting on the admin site). [performMdmSync]'s return value (whether the policy fetch
+     * succeeded) is the "did this reach the server at all" signal the toast shows.
      */
     private fun syncNowWithServer(context: Context) {
         val mdm = LauncherPreferences.mdm()
@@ -483,9 +449,6 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 .show()
             return
         }
-
-        CoroutineScope(Dispatchers.IO).launch { performJournalSync(context) }
-        CoroutineScope(Dispatchers.IO).launch { performBrowserHistorySync(context) }
 
         CoroutineScope(Dispatchers.IO).launch {
             val reachedServer = try {

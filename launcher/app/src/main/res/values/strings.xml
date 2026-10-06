@@ -193,8 +193,6 @@
     <string name="settings_mdm_restrictions_paused_pin_title">Enter the PIN to pause restrictions</string>
     <string name="toast_mdm_pause_needs_pin">Pausing restrictions needs a PIN. Set one for this phone on the server first.</string>
 
-    <string name="settings_mdm_unifiedpush_distributor_enabled">Push notifications for other apps</string>
-    <string name="settings_mdm_unifiedpush_distributor_enabled_summary">Lets other apps on this phone receive push notifications through this app (UnifiedPush) instead of needing a separate app installed for it. Off unless you turn it on.</string>
 
     <string name="settings_gate_dialog_title">Enter code to open settings</string>
     <string name="settings_gate_no_pin">Settings are locked. Set an unlock code for this phone on the server to open them.</string>

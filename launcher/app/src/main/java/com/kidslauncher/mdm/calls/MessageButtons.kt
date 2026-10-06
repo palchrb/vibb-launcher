@@ -12,8 +12,9 @@ object MessagePackages {
     const val ELEMENT_X = "io.element.android.x"
 
     /** Signal-protocol apps that open `https://signal.me/#p/<number>`, in order of preference:
-     * our own Molly fork (kids-mdm-im), Molly, Signal. */
-    val SIGNAL = listOf("com.kidsmdm.im", "im.molly.app", "org.thoughtcrime.securesms")
+     * Molly, Signal. (Upstream's journaling Molly fork, kids-mdm-im, was dropped with the
+     * conversation journal on 2026-10-06.) */
+    val SIGNAL = listOf("im.molly.app", "org.thoughtcrime.securesms")
 }
 
 /** An explicit intent: [action] on [uri], for [packageName] only; [fallbackUri] (same action

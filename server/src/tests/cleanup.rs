@@ -65,3 +65,78 @@ async fn package_rename_migration_renames_only_the_launcher_row() {
         ]
     );
 }
+
+#[tokio::test]
+async fn monitoring_migration_drops_the_journal_and_browser_history() {
+    let (db, _dir) = migrated_before(38).await;
+    let device: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES ('kid') RETURNING id")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO device_journal_entries (device_id, remote_id, thread_id, recipient_id, \
+         direction, entry_type, occurred_at, body, device_created_at) \
+         VALUES (?, 1, 1, 'r', 'in', 'MESSAGE', 0, 'secret message', 0)",
+    )
+    .bind(device)
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO device_browser_history_entries (device_id, remote_id, url, visited_at, \
+         device_created_at) VALUES (?, 1, 'https://example.org/secret', 0, 0)",
+    )
+    .bind(device)
+    .execute(&db)
+    .await
+    .unwrap();
+    finish(&db).await;
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE name LIKE '%journal%' OR name LIKE '%browser%'",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert!(tables.is_empty(), "left over: {tables:?}");
+}
+
+#[tokio::test]
+async fn journal_and_history_routes_are_gone() {
+    use axum::http::{Method, StatusCode};
+    let app = super::TestApp::new().await;
+    let (id, token) = app.enrolled_device("kid").await;
+    for uri in [
+        "/api/devices/journal",
+        "/api/devices/journal/media/1",
+        "/api/devices/browser-history",
+    ] {
+        let res = app
+            .request(Method::POST, uri, Some(&token), Some(serde_json::json!([])))
+            .await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{uri}");
+    }
+    let cookie = app.admin_cookie().await;
+    for uri in [
+        format!("/devices/{id}/journal"),
+        format!("/devices/{id}/browser-history"),
+    ] {
+        // Unmatched: whatever the router's fallback answers, never the old viewer.
+        let res = app.get_page(&uri, &cookie).await;
+        assert!(!res.status.is_success(), "{uri}: {}", res.status);
+    }
+    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    assert!(!page.text().contains("/journal"));
+    assert!(!page.text().contains("browser-history"));
+}
+
+#[tokio::test]
+async fn journal_media_is_deleted_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let media = dir.path().join("journal_media");
+    std::fs::create_dir_all(media.join("1")).unwrap();
+    std::fs::write(media.join("1").join("5.jpg"), b"photo").unwrap();
+    assert!(crate::retention::remove_journal_media(&media).await);
+    assert!(!media.exists());
+    // Nothing there any more: a no-op at every later start.
+    assert!(!crate::retention::remove_journal_media(&media).await);
+}

@@ -59,14 +59,6 @@
          element's android:permission attribute (restricting who may bind to it, i.e. only the
          OS) - not something this app requests for its own use, so no <uses-permission> for it. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- Gates com.kidsmdm.im.journal's ContentProvider (protectionLevel="signature") - granted
-         only if this app is signed with the exact same certificate as com.kidsmdm.im. See
-         server.JournalSync.kt and this repo's CLAUDE.md for the signing-key requirement. -->
-    <uses-permission android:name="com.kidsmdm.im.ACCESS_JOURNAL" />
-    <!-- Same signature-permission gate as above, but for com.kidsmdm.browser.journal's
-         ContentProvider (the kids-mdm-browser fork's history journal). See
-         server.BrowserHistorySync.kt - same signing-key requirement applies. -->
-    <uses-permission android:name="com.kidsmdm.browser.ACCESS_JOURNAL" />
     <!-- Calls (calls/ package, design 02-calls.md): placing calls from the phone book, reading the
          caller's number, contact-independent screening (CallScreeningService only sees numbers
          outside the user's contacts unless READ_CONTACTS is granted), the call log for the
@@ -342,26 +334,6 @@
         <receiver
             android:name=".server.StopRingReceiver"
             android:exported="false" />
-
-        <!-- Deliberately exported, unlike every other receiver in this app - see
-             UnifiedPushRegistrationReceiver's own doc comment for why. Other apps' UnifiedPush
-             connector libraries send these two actions as implicit broadcasts to discover an
-             installed distributor; there's no component name they could target instead.
-             android:enabled="false" here matches the spec's own recommendation to keep a
-             distributor's registration receiver disabled until its setup precondition is met -
-             here, that's a parent opting in from Settings, which flips this at runtime via
-             PackageManager.setComponentEnabledSetting (see SettingsFragmentLauncher). Until then
-             this app isn't even discoverable as a distributor, not just non-functional. -->
-        <receiver
-            android:name=".server.UnifiedPushRegistrationReceiver"
-            android:exported="true"
-            android:enabled="false">
-            <intent-filter>
-                <action android:name="org.unifiedpush.android.distributor.REGISTER" />
-                <action android:name="org.unifiedpush.android.distributor.UNREGISTER" />
-                <action android:name="org.unifiedpush.android.distributor.MESSAGE_ACK" />
-            </intent-filter>
-        </receiver>
 
         <service
             android:name=".server.CommandListenerService"

@@ -55,9 +55,6 @@ private val OWN_CALL_PERMISSIONS = listOf(
 /** `Telephony.Sms.Intents.ACTION_SMS_EMERGENCY_CB_RECEIVED` (system API). */
 private const val ACTION_SMS_EMERGENCY_CB_RECEIVED = "android.provider.action.SMS_EMERGENCY_CB_RECEIVED"
 
-/** applicationId of the kids-mdm-browser fork - see [AppEnforcer.applyBrowserPolicy]. */
-private const val BROWSER_PACKAGE_NAME = "com.kidsmdm.browser"
-
 /**
  * The set of packages [AppEnforcer] will ever consider suspending/hiding, and that
  * [com.kidslauncher.mdm.server.MdmSyncWorker]'s status report offers the admin site as
@@ -380,8 +377,6 @@ object AppEnforcer {
         applyPrivateDnsLock(dpm, admin)
 
         applySideloadRestriction(dpm, admin, blockSideloading = !overrideActive)
-
-        applyBrowserPolicy(dpm, admin, context, locked = !overrideActive)
 
         // Last, after the always-on VPN is in place (DISALLOW_CONFIG_VPN). Not lifted by the
         // override or pause - see hardeningPlan.
@@ -925,59 +920,6 @@ object AppEnforcer {
     private fun applySideloadRestriction(dpm: DevicePolicyManager, admin: ComponentName, blockSideloading: Boolean) {
         setRestriction(dpm, admin, UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES, blockSideloading)
         setRestriction(dpm, admin, UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES_GLOBALLY, blockSideloading)
-    }
-
-    /**
-     * Pushes a Chrome enterprise-policy bundle to the kids-mdm-browser fork via Android's
-     * managed-configuration mechanism (`DevicePolicyManager.setApplicationRestrictions` ->
-     * Chrome's built-in `AppRestrictionsProvider` on the browser side - no browser-side patch
-     * needed for this to take effect, only for it to *not* be strippable by the kid). A no-op if
-     * the browser isn't installed (`NameNotFoundException`) - safe to call unconditionally on
-     * every [apply] cycle, same tolerance pattern as every other per-package call in this file.
-     *
-     * Scope is deliberately narrow: DNS-based blocking is handled elsewhere (KidVpnService's
-     * on-device filter / the server's DNS blocklist), so this only closes the browser-side gaps
-     * that would otherwise route around it or hide activity from the history journal -
-     * Secure DNS (would bypass the DNS filter entirely), Incognito/Guest mode (would hide
-     * browsing from [performBrowserHistorySync]), developer tools and extension installs
-     * (both plausible tamper vectors on a kid's device), and the browser's own proxy settings
-     * (another potential bypass route). Same "fully open" treatment as every other restriction
-     * in [apply] while an override is active - [locked] is false in that case and every value
-     * below reverts to Chrome's un-managed default.
-     *
-     * Policy keys/types follow https://chromeenterprise.google/policies/ as of Chrome 151;
-     * verify against `chrome://policy` on the actual device after the first build, since Android
-     * app-restriction bundle typing (plain values vs. JSON-encoded strings for object/array
-     * policies) isn't unit-testable from here.
-     */
-    private fun applyBrowserPolicy(dpm: DevicePolicyManager, admin: ComponentName, context: Context, locked: Boolean) {
-        try {
-            context.packageManager.getApplicationInfo(BROWSER_PACKAGE_NAME, 0)
-        } catch (e: PackageManager.NameNotFoundException) {
-            return
-        }
-
-        val bundle = if (!locked) {
-            Bundle()
-        } else {
-            Bundle().apply {
-                putString("DnsOverHttpsMode", "off")
-                putInt("IncognitoModeAvailability", 1) // 1 = Disabled
-                putBoolean("BrowserGuestModeEnabled", false)
-                putInt("DeveloperToolsAvailability", 2) // 2 = DeveloperToolsDisallowed
-                putStringArray("ExtensionInstallBlocklist", arrayOf("*"))
-                // Object-valued policy - Chrome's Android provider expects these JSON-encoded,
-                // unlike the scalar policies above (Android restriction bundles have no native
-                // nested-object type).
-                putString("ProxySettings", """{"ProxyMode":"system"}""")
-            }
-        }
-
-        try {
-            dpm.setApplicationRestrictions(admin, BROWSER_PACKAGE_NAME, bundle)
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to set browser app restrictions", e)
-        }
     }
 
     /**

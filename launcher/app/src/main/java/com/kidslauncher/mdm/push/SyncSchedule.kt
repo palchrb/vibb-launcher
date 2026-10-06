@@ -58,10 +58,9 @@ const val SSE_GAP_SYNC_MS = 150_000L
 fun syncOnSseReopen(downForMs: Long?): Boolean = downForMs == null || downForMs < 0 || downForMs >= SSE_GAP_SYNC_MS
 
 /** Hard limits for one sync run (policy + status + app updates, which can include a large APK
- * download over the tailnet; the journal and browser history run beside it). The wake lock is
- * released when the run ends, at the latest after [SYNC_WAKELOCK_MS]. */
+ * download over the tailnet). The wake lock is released when the run ends, at the latest after
+ * [SYNC_WAKELOCK_MS]. */
 const val SYNC_TIMEOUT_MS = 10 * 60_000L
-const val SIDE_SYNC_TIMEOUT_MS = 5 * 60_000L
 const val SYNC_WAKELOCK_MS = 11 * 60_000L
 
 /**

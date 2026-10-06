@@ -216,7 +216,7 @@ dependencies {
     implementation("dnsjava:dnsjava:3.6.5")
     // In-app "Scan setup QR" flow (SettingsFragmentLauncher) - ZXing, not Google's ML Kit, to
     // match this project's existing avoid-Google/Play-Services-dependencies pattern (embedded
-    // tsnet over the standalone Tailscale app, UnifiedPush over FCM, etc.). Zero GMS footprint.
+    // tsnet over the standalone Tailscale app, etc.). Zero GMS footprint.
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // Sync nudges over FCM (handy step 7, design 07-battery-fcm-play.md). Messaging only - no
     // analytics, no google-services plugin; initialised by hand (FcmSupport) and only when the

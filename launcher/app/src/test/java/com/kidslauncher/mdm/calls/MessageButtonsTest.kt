@@ -60,7 +60,7 @@ class MessageButtonsTest {
             MessageIntent(ACTION_VIEW, "https://signal.me/#p/+4791234567", "im.molly.app"),
             resolveMessageButton(contact("signal"), true, messages) { it == "im.molly.app" || it == "org.thoughtcrime.securesms" },
         )
-        assertEquals("com.kidsmdm.im", resolveMessageButton(contact("signal"), true, messages, everything)?.packageName)
+        assertEquals("im.molly.app", resolveMessageButton(contact("signal"), true, messages, everything)?.packageName)
         assertNull(resolveMessageButton(contact("signal"), true, messages, nothing))
         assertNull(resolveMessageButton(contact("signal", number = "1881"), true, messages, everything))
     }

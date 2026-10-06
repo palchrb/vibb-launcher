@@ -4,20 +4,17 @@ import android.content.Context
 import android.os.PowerManager
 import android.util.Log
 import com.kidslauncher.mdm.server.CommandListenerService
-import com.kidslauncher.mdm.server.performBrowserHistorySync
-import com.kidslauncher.mdm.server.performJournalSync
 import com.kidslauncher.mdm.server.performMdmSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 private const val LOG_TAG = "SyncRunner"
 
 /**
- * Runs the background syncs (policy + status + app updates, journal, browser history) for every
+ * Runs the background sync (policy + status + app updates) for every
  * trigger - an FCM or SSE nudge, the backstop alarm, process start - inside the anchor
  * foreground service (decision after QA review: no separate dataSync service; a dataSync FGS has
  * a 6 h daily budget and may not start from BOOT_COMPLETED on Android 15).
@@ -70,13 +67,8 @@ object SyncRunner {
             val reasons = synchronized(this@SyncRunner) { coalescer.takeReasons() }
             Log.i(LOG_TAG, "Sync for $reasons")
             try {
-                coroutineScope {
-                    // Own coroutines: a slow media upload mustn't delay the policy.
-                    launch { withTimeoutOrNull(SIDE_SYNC_TIMEOUT_MS) { performJournalSync(context) } }
-                    launch { withTimeoutOrNull(SIDE_SYNC_TIMEOUT_MS) { performBrowserHistorySync(context) } }
-                    if (withTimeoutOrNull(SYNC_TIMEOUT_MS) { performMdmSync(context) } == null) {
-                        Log.w(LOG_TAG, "Policy sync timed out")
-                    }
+                if (withTimeoutOrNull(SYNC_TIMEOUT_MS) { performMdmSync(context) } == null) {
+                    Log.w(LOG_TAG, "Policy sync timed out")
                 }
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Sync failed", e)

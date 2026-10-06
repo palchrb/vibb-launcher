@@ -39,9 +39,8 @@ private const val EXTRA_SYNC_REASON = "reason"
  * The process anchor (handy step 7, design 07 §2 and the decisions after QA review): an always-on
  * foreground service of type `specialUse` ("parental control enforcement" - no 6 h daily cap, and
  * allowed to start from BOOT_COMPLETED on Android 15, unlike `dataSync`). It keeps the process
- * alive for what needs a live process - the optional UnifiedPush relay; the screen on/off/unlock
- * signals moved to the process-wide receiver in `lock/PinLockRuntime` (step 10) - and every
- * background sync runs inside it
+ * alive (the screen on/off/unlock signals moved to the process-wide receiver in
+ * `lock/PinLockRuntime` in step 10), and every background sync runs inside it
  * ([SyncRunner], with a wake lock and timeouts).
  *
  * Sync nudges arrive one of two ways ([com.kidslauncher.mdm.push.decidePushTransport]):
@@ -93,9 +92,6 @@ class CommandListenerService : Service() {
         // The screen on/off/unlock signals (screen time, time rules, the Play window, handy's PIN
         // lock) live in PinLockRuntime since step 10 - registered for the whole process from
         // Application, not for this service's lifetime (QA 10 #4).
-        if (LauncherPreferences.mdm().unifiedpushDistributorEnabled()) {
-            UnifiedPushRelay.start(applicationContext)
-        }
         // Firebase is initialised when the anchor starts (decision after QA review) - never before
         // the first unlock: this service isn't direct-boot-aware.
         FcmSupport.ensureInitialized(applicationContext)
@@ -131,7 +127,6 @@ class CommandListenerService : Service() {
         if (running === this) running = null
         handler.removeCallbacksAndMessages(null)
         stopSse()
-        UnifiedPushRelay.stop()
         super.onDestroy()
     }
 

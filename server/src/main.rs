@@ -9,6 +9,7 @@ mod phone;
 mod photos;
 mod play;
 mod push;
+mod retention;
 mod security;
 #[cfg(test)]
 mod tests;
@@ -149,6 +150,8 @@ async fn main() {
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
     // from the backups, or drop the reference (design 05, 08).
     photos::recover_missing(&state, std::path::Path::new(handlers::backups::BACKUP_DIR)).await;
+    // The conversation journal is gone (migration 0038); so are its media files.
+    retention::remove_journal_media(std::path::Path::new(retention::JOURNAL_MEDIA_DIR)).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
     tokio::task::spawn(handlers::backups::run_live_mirror(state.clone()));
@@ -424,18 +427,6 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             post(handlers::dns_filter::set_device_blocklist_override),
         )
         .route("/dns/log", get(handlers::dns_filter::show_dns_log))
-        .route(
-            "/devices/{id}/journal",
-            get(handlers::journal::show_journal),
-        )
-        .route(
-            "/devices/{id}/journal/media/{remote_id}",
-            get(handlers::journal::download_media),
-        )
-        .route(
-            "/devices/{id}/browser-history",
-            get(handlers::browser_history::show_history),
-        )
         .route("/settings", get(handlers::settings::settings_hub))
         .route(
             "/settings/provisioning",
@@ -559,19 +550,6 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             "/api/devices/dns-events",
             post(handlers::device_api::dns_events),
         )
-        .route(
-            "/api/devices/journal",
-            post(handlers::device_api::journal_upload),
-        )
-        .route(
-            "/api/devices/journal/media/{remote_id}",
-            post(handlers::device_api::journal_media_upload)
-                .layer(DefaultBodyLimit::max(200 * 1024 * 1024)),
-        )
-        .route(
-            "/api/devices/browser-history",
-            post(handlers::device_api::browser_history_upload),
-        )
         .layer(from_fn_with_state(
             state.clone(),
             security::require_device_token,
@@ -596,7 +574,10 @@ pub async fn connect_db(database_url: &str) -> SqlitePool {
         .foreign_keys(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
-        .busy_timeout(std::time::Duration::from_secs(5));
+        .busy_timeout(std::time::Duration::from_secs(5))
+        // Deleted rows (retention pruning, the dropped monitoring tables) are overwritten in the
+        // file instead of lingering in free pages.
+        .pragma("secure_delete", "on");
 
     let db = SqlitePoolOptions::new()
         .connect_with(connect_options)

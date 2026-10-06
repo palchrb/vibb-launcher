@@ -72,7 +72,7 @@ sudo chown kidphone:kidphone /opt/kid-phone-server/kid_phone_server /opt/kid-pho
 sudo systemctl start kid-phone-server
 ```
 
-Anything the devices reported after that backup (status, locations, journal) is lost. Turn off scheduled automatic
+Anything the devices reported after that backup (status, locations) is lost. Turn off scheduled automatic
 updates on the Updates page first, or the next scheduled check installs the bad version again.
 
 ## Launcher provisioning settings
@@ -145,28 +145,11 @@ Without FCM every phone keeps its own connection to this server open (SSE) so ch
 
 Built in - see the **Backups** page under Settings in the admin UI. Create a backup on demand, set a schedule for automatic ones, and optionally mirror them live to an external drive plugged into the Pi. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
 
-## Optional: Molly (Signal) push notifications via MollySocket
+## Removed: MollySocket and the launcher's UnifiedPush distributor
 
-If a kid's phone uses [Molly](https://molly.im/) (a de-Googled Signal fork) and you want it to receive push notifications without Google/FCM, Molly needs a [MollySocket](https://github.com/mollyim/mollysocket) server to relay them over [UnifiedPush](https://unifiedpush.org/). This is a separate, independently-maintained project (AGPLv3) - not something this repo forks or embeds, just an optional sibling service you can run on the same Pi. See the chat that led to this for the reasoning: it's not published as a library, and merging its Signal-protocol code into this server's own binary would mean permanently hand-maintaining someone else's security-sensitive networking code.
-
-**Prerequisite**: enable "Push notifications for other apps" in the kid's launcher app itself (Settings, on the phone) first - MollySocket needs a UnifiedPush distributor already running on that phone to hand a push endpoint to, and the launcher can be that distributor without installing a second app.
-
-1. Install it the same way as the main server:
-
-    ```
-    curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install_mollysocket.sh | sudo bash
-    ```
-
-   This sets up its own systemd service (`mollysocket`), listening on `127.0.0.1:8020` only, same "local by default" posture as the main server.
-
-2. Give it an HTTPS URL, same pattern as step 2 above but on a different port (kid-phone-server's admin site is already on 443):
-
-    ```
-    sudo tailscale serve --bg --https=8443 http://127.0.0.1:8020
-    ```
-
-3. On the kid's phone, open Molly → Settings → Notifications → change delivery method to **UnifiedPush** → "MollySocket server" → enter `https://<hostname>.<tailnet>.ts.net:8443` → scan the QR code it shows.
-
-**Updating**: re-run the same install command - it re-downloads the latest binary and restarts the service without touching your config or the accounts already registered.
-
-Its own database lives at `/opt/mollysocket/data/db.sqlite` if you ever need it directly - separate from kid-phone-server's own database, and not covered by this app's built-in Backups page.
+The optional MollySocket installer (`deploy/install_mollysocket.sh`) and the launcher's built-in UnifiedPush distributor
+(an ntfy.sh relay) were removed on 2026-10-06, together with the conversation journal and browser history (migration
+0038 drops their tables, and the server deletes `data/journal_media` at startup; backups made before the update still
+contain them until the backup schedule prunes them). An existing MollySocket install keeps running on its own until you
+remove it (`sudo systemctl disable --now mollysocket`, then delete `/opt/mollysocket` and its `tailscale serve` on
+port 8443). If a phone ever needs UnifiedPush again, install the ntfy app on it as the distributor.

@@ -170,18 +170,6 @@
     </div>
 
     <div class="card">
-        <h2>Conversations</h2>
-        <p class="subtitle">Messages, photos/videos, and calls synced from this device's messenger, if it's running one that supports the journal integration.</p>
-        <a href="/devices/{{ device.id }}/journal" class="button-small">View conversations</a>
-    </div>
-
-    <div class="card">
-        <h2>Browsing history</h2>
-        <p class="subtitle">URLs visited on this device, if it's running the browser fork with the history-journal integration.</p>
-        <a href="/devices/{{ device.id }}/browser-history" class="button-small">View history</a>
-    </div>
-
-    <div class="card">
         <h2>Apps</h2>
         {% if allowlist_corrupt %}
         <div class="error">The stored app list for this device can't be read, so the phone gets an error instead of its policy and keeps enforcing the last one it had. The checkboxes below don't show what the phone allows, and changing them fails. Check this server's log ("failed to build device policy"), or restore a backup.</div>

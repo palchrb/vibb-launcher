@@ -121,7 +121,7 @@ If the phone has a Play-installed Tailscale, signatures may differ [device: `apk
     { "src": ["tag:kid"], "dst": ["pi"], "ip": ["tcp:8444", "udp:53", "tcp:53", "tcp:<immich>", "tcp:8443"] } ],
   "tests": [ { "src": "tag:kid", "accept": ["pi:8444", "pi:53"], "deny": ["pi:443", "pi:8445", "pi:22"] } ] }
 ```
-`8443` only if Molly on the kid's phone registers with MollySocket (S DEPLOY.md:126-132). No `autogroup:internet` for
+`8443` was for MollySocket (removed 2026-10-06 - drop it from the ACL). No `autogroup:internet` for
 `tag:kid`, so exit nodes are unusable. ACLs are L3/L4: path filtering on 443 is impossible, hence the port split.
 The tsnet node uses the same tagged key, so **all** devices must use the 8444 URL before this policy goes live.
 

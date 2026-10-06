@@ -92,6 +92,7 @@ runs: [needs device test] (`getprop ro.build.version.release`).
   `specialUse` (no 6 h cap; subtype "parental control enforcement"), same MIN notification. An idle FGS costs no
   wakeups. KidVpnService (also `specialUse`) keeps the process up today but is optional and may go (PLAN Tailscale).
 - **UnifiedPush relay**: stays in the anchor, opt-in, off by default (PLAN.md:212); its 20 s ping costs if turned on.
+  (Removed in the 2026-10-06 cleanup, with the journal and browser-history syncs; use the ntfy app if ever needed.)
 - **One sync at process start** after unlock (today the first tick is 5 min later): catches nudges missed before it.
 
 ## 3. Battery hygiene and measurement

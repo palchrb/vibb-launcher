@@ -10,8 +10,8 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
  * via [AppInstaller], or an `adb install -r` sideload - without waiting for the next physical
  * unlock. Found live (2026-08-15): this app isn't direct-boot-aware, and a killed pinned-Home-app
  * process isn't eagerly relaunched by the OS while the device sits at the keyguard, so without
- * this, [CommandListenerService] (and with it the UnifiedPush relay, the SSE command-push
- * connection, and the periodic sync backstop) simply stayed dead until someone next unlocked the
+ * this, [CommandListenerService] (and with it the SSE command-push connection and the periodic
+ * sync backstop) simply stayed dead until someone next unlocked the
  * phone - a real reachability gap for a device this project's whole point is being able to reach.
  *
  * `android.intent.action.MY_PACKAGE_REPLACED` is a protected broadcast (only the OS can send it),
@@ -27,8 +27,7 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
  * on why that connection only ever starts from [HomeActivity]'s first `onResume()`, never from a
  * non-UI entry point, given tsnet's real native-crash history on this project. That means tailnet
  * reachability (and so kid-phone-server sync) still waits for the next actual unlock after an
- * update; only the tsnet-independent parts - most notably [UnifiedPushRelay], which deliberately
- * never goes through tsnet's proxy - come back immediately via this receiver.
+ * update; only the tsnet-independent parts come back immediately via this receiver.
  *
  * Handy step 11 (design 11 §2, escape A): nothing else brings Home back after the replacement -
  * lock task ended with the kill and doesn't re-enter by itself - so on a managed phone Home is

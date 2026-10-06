@@ -153,8 +153,6 @@
     <string name="settings_mdm_restrictions_paused_summary">Slår av kioskmodus, tidsreglene og app-begrensningene i 2 timer (samtaler er fortsatt bare til de godkjente kontaktene), så slås de på igjen av seg selv. Krever telefonens PIN-kode, og er ikke tilgjengelig når det ikke er satt noen PIN-kode på serveren. Forelderen ser på serveren at pausen er på. Bare til nødbruk, for eksempel hvis en oppdatering skaper problemer.</string>
     <string name="settings_mdm_restrictions_paused_pin_title">Skriv inn PIN-koden for å sette begrensningene på pause</string>
     <string name="toast_mdm_pause_needs_pin">Pause krever en PIN-kode. Sett en for denne telefonen på serveren først.</string>
-    <string name="settings_mdm_unifiedpush_distributor_enabled">Push-varsler for andre apper</string>
-    <string name="settings_mdm_unifiedpush_distributor_enabled_summary">Lar andre apper på telefonen få push-varsler gjennom denne appen (UnifiedPush), uten å installere en egen app for det. Av med mindre du slår det på.</string>
     <string name="settings_gate_dialog_title">Skriv inn koden for å åpne innstillingene</string>
     <string name="settings_gate_no_pin">Innstillingene er låst. Sett en opplåsingskode for denne telefonen på serveren for å åpne dem.</string>
     <string name="alert_cant_choose_home_screen">Klarte ikke å åpne valget av hjemskjerm. Velg hjemskjerm i Androids innstillinger.</string>

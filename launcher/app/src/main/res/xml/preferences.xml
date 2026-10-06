@@ -50,10 +50,4 @@
         android:title="@string/settings_mdm_restrictions_paused"
         android:summary="@string/settings_mdm_restrictions_paused_summary" />
 
-    <SwitchPreference
-        android:key="@string/settings_mdm_unifiedpush_distributor_enabled_key"
-        android:defaultValue="false"
-        android:title="@string/settings_mdm_unifiedpush_distributor_enabled"
-        android:summary="@string/settings_mdm_unifiedpush_distributor_enabled_summary" />
-
 </PreferenceScreen>

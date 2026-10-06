@@ -1,12 +1,10 @@
 pub mod admin;
 pub mod auth;
 pub mod backups;
-pub mod browser_history;
 pub mod calls;
 pub mod device_api;
 pub mod devices;
 pub mod dns_filter;
-pub mod journal;
 pub mod lifts;
 pub mod locate;
 pub mod provisioning;

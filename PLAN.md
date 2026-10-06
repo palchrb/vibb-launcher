@@ -37,8 +37,9 @@ Already there (from the code, more than the README says):
   server, private DNS lock, DNS log.
 - Find my device: locate, ring, lock, wipe.
 - Server→phone nudges over SSE held by a foreground service (plus periodic
-  sync); launcher is also a UnifiedPush distributor for other apps.
-- Journal, browser history, install progress, blocked-event log.
+  sync). (Upstream's UnifiedPush distributor, conversation journal and browser
+  history were removed in the 2026-10-06 cleanup.)
+- Install progress, blocked-event log (opt-in since the cleanup).
 - Admin: argon2 password + mandatory TOTP, separate device bearer tokens.
 
 Lesson they already learned: always-on VPN *with lockdown* breaks all
@@ -123,7 +124,7 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 - **Home server** (`server/`, fork of kid-phone-server): defines all rules, serves the
   parent PWA, reachable over Tailscale. Runs on a Pi or similar.
 - **Phone** (`launcher/`, fork of kids-launcher-mdm): subscribes to the server (SSE nudge
-  today; ntfy/UnifiedPush is an option) and fetches policy on a nudge or on
+  today, FCM since step 7) and fetches policy on a nudge or on
   the periodic sync. The phone does not serve anything.
 - **Principles**:
   - Local enforcement: cached rules apply when the server or network is down;
@@ -139,7 +140,8 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 - Later option: a Pixel with GrapheneOS if Unihertz updates dry up.
 - Upstream installs apps itself and has zero GMS footprint, so no Google
   account is needed for updates. Element X from Play uses FCM; the F-Droid
-  build can use UnifiedPush via the launcher's distributor.
+  build would need UnifiedPush via the ntfy app (the launcher's own distributor
+  was removed in the 2026-10-06 cleanup).
 
 ## Status (2026-10-05)
 
@@ -221,8 +223,9 @@ launchable.
   Play services; periodic sync every 15-30 min as the backstop. Server sends via
   the FCM HTTP v1 API with a service-account key in `.env` (secret); the
   launcher's Firebase config is injected at build time (CI variable / gradle
-  property), not committed, so the fork stays generic. The UnifiedPush
-  distributor (ntfy.sh relay) stays off unless F-Droid-flavoured apps need it.
+  property), not committed, so the fork stays generic. The launcher's UnifiedPush
+  distributor (ntfy.sh relay) was removed in the 2026-10-06 cleanup; use the ntfy
+  app if F-Droid-flavoured apps ever need one.
 - **Own lock screen instead of Android's PIN** (user, 2026-10-05): Android screen
   lock "None" + `setKeyguardDisabled(true)`; the launcher shows its own PIN lock
   (kid's PIN set by the parent in the PWA, stored hashed) on screen-on, in the
@@ -375,5 +378,4 @@ builds (`cargo build` OK, 0 tests). Android needs JDK 17, SDK 36, AGP 8.13.
   phone that Tailscale DNS applies to all lookups without an exit node.
   Tailnet ACLs: kid's device reaches Immich and the server's device API, not
   the admin UI. Per-device switch between this and upstream's tsnet mode.
-- Keep SSE for nudges, or switch to ntfy/UnifiedPush?
 - Messaging: own Matrix homeserver so Element X contacts are enforced there?
