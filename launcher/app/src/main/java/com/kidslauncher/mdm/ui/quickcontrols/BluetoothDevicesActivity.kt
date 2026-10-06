@@ -8,8 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -47,9 +45,8 @@ class BluetoothDevicesActivity : UIObjectActivity() {
         binding = ActivityBluetoothDevicesBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        setTitle(R.string.bluetooth_devices_title)
-        setSupportActionBar(binding.bluetoothDevicesAppbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
+        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.bluetoothDevicesHeader, R.string.bluetooth_devices_title, R.string.bluetooth_devices_scan) { scan() }
 
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)
@@ -76,27 +73,6 @@ class BluetoothDevicesActivity : UIObjectActivity() {
             } catch (e: Exception) {
                 // Already unregistered - harmless.
             }
-        }
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.menu_bluetooth_devices, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            android.R.id.home -> {
-                finish()
-                true
-            }
-
-            R.id.bluetooth_devices_menu_scan -> {
-                scan()
-                true
-            }
-
-            else -> super.onOptionsItemSelected(item)
         }
     }
 

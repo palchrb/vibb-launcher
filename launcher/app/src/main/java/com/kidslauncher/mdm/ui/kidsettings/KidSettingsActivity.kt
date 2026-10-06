@@ -90,7 +90,8 @@ class KidSettingsActivity : UIObjectActivity() {
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)
 
-        com.kidslauncher.mdm.ui.KidBackButton.bind(this, binding.kidSettingsBack)
+        com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
+        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.kidSettingsHeader, R.string.kid_settings_title)
 
         binding.kidSettingsWifiSwitch.setOnCheckedChangeListener(wifiListener)
         binding.kidSettingsWifiManage.setOnClickListener {
@@ -199,7 +200,7 @@ class KidSettingsActivity : UIObjectActivity() {
 
     private fun renderInk(ink: InkChoice) {
         for (view in listOf(
-            binding.kidSettingsTitle, binding.kidSettingsWallpaperHeading, binding.kidSettingsWallpaperCaption,
+            binding.kidSettingsHeader.kidHeaderTitle, binding.kidSettingsWallpaperHeading, binding.kidSettingsWallpaperCaption,
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel,
         )) {

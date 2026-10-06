@@ -159,6 +159,8 @@ class HomeActivity : UIObjectActivity() {
         // Initialise layout
         binding = ActivityHomeBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
+        com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
 
         // No clock or date any more (design 08): the status bar shows the time.
         gridAdapter = HomeGridAdapter(this)

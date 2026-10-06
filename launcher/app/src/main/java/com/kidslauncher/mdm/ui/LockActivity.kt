@@ -59,6 +59,8 @@ class LockActivity : UIObjectActivity() {
 
         binding = ActivityLockBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
+        com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {}

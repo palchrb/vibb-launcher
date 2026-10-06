@@ -47,7 +47,8 @@ class PhoneBookActivity : UIObjectActivity() {
         )
         binding.phoneBookGrid.layoutManager = GridLayoutManager(this, 3)
         binding.phoneBookGrid.adapter = adapter
-        com.kidslauncher.mdm.ui.KidBackButton.bind(this, binding.phoneBookBack)
+        com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
+        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.phoneBookHeader, R.string.calls_phone_book)
         handleNumber(intent)
     }
 
@@ -92,7 +93,7 @@ class PhoneBookActivity : UIObjectActivity() {
 
     private fun render() {
         val ink = WallpaperGround.apply(this, binding.root).ink
-        KidInk.label(binding.phoneBookTitle, ink)
+        KidInk.label(binding.phoneBookHeader.kidHeaderTitle, ink)
         KidInk.label(binding.phoneBookInfo, ink, dim = true)
         val state = CallPolicyStore.effectiveState()
         val rules = (state as? CallPolicyState.Managed)?.rules

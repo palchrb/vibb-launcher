@@ -10,7 +10,6 @@
     android:layout_height="match_parent"
     android:background="@color/kid_ground"
     android:fillViewport="true"
-    android:fitsSystemWindows="true"
     tools:context=".ui.kidsettings.KidSettingsActivity">
 
     <LinearLayout
@@ -18,44 +17,19 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:paddingStart="16dp"
-        android:paddingTop="6dp"
+        android:paddingTop="4dp"
         android:paddingEnd="16dp"
         android:paddingBottom="16dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <ImageButton
-                android:id="@+id/kid_settings_back"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:layout_marginStart="-2dp"
-                android:background="@drawable/bg_kid_back_button"
-                android:contentDescription="@string/kid_back_home"
-                android:padding="13dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_kid_back" />
-
-            <TextView
-                android:id="@+id/kid_settings_title"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:accessibilityHeading="true"
-                android:fontFamily="@font/nunito_extrabold"
-                android:text="@string/kid_settings_title"
-                android:textColor="@color/kid_ink"
-                android:textSize="24sp" />
-        </LinearLayout>
+        <include
+            android:id="@+id/kid_settings_header"
+            layout="@layout/include_kid_header" />
 
         <LinearLayout
             android:id="@+id/kid_settings_wallpaper_section"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="4dp"
             android:orientation="vertical">
 
             <TextView

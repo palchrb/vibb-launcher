@@ -53,6 +53,8 @@ class InCallActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityInCallBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
+        com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
         CallPolicyStore.ensureLoaded(this)
 
         binding.inCallAnswer.setOnClickListener { OngoingCalls.current?.let(OngoingCalls::answer) }

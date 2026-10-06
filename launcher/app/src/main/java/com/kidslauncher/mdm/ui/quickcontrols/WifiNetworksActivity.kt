@@ -7,8 +7,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.widget.EditText
 import android.widget.Toast
@@ -51,9 +49,8 @@ class WifiNetworksActivity : UIObjectActivity() {
         binding = ActivityWifiNetworksBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        setTitle(R.string.wifi_networks_title)
-        setSupportActionBar(binding.wifiNetworksAppbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
+        com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.wifiNetworksHeader, R.string.wifi_networks_title, R.string.wifi_networks_scan) { scan() }
 
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)
@@ -78,27 +75,6 @@ class WifiNetworksActivity : UIObjectActivity() {
         handler.removeCallbacksAndMessages(null)
         if (locationEnabledByUs) {
             QuickControls.setLocationEnabled(dpm, admin, false)
-        }
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.menu_wifi_networks, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            android.R.id.home -> {
-                finish()
-                true
-            }
-
-            R.id.wifi_networks_menu_scan -> {
-                scan()
-                true
-            }
-
-            else -> super.onOptionsItemSelected(item)
         }
     }
 

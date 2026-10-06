@@ -91,6 +91,8 @@ class PinLockActivity : AppCompatActivity() {
         }
         binding = ActivityPinLockBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
+        com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
         entered = savedInstanceState?.getString(STATE_ENTERED).orEmpty()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {

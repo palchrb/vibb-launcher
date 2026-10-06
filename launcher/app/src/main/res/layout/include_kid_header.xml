@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The one header of our full pages (phone book, kid Settings, Wi-Fi networks, Bluetooth
+     devices; fix round 2026-10-06 - they had drifted apart): a compact 56 dp row with the round
+     back button (48 dp touch target, 2 dp into the page's 16 dp side padding, as kid Settings had
+     it), the title vertically centred, and an optional text action on the right. Bound by
+     ui.KidHeader; the page's top padding is the status-bar inset (ui.KidInsets) plus at most
+     8 dp, and its content starts right below this row (KidHeaderLayoutTest). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="56dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <ImageButton
+        android:id="@+id/kid_header_back"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="-2dp"
+        android:background="@drawable/bg_kid_back_button"
+        android:contentDescription="@string/kid_back_home"
+        android:padding="13dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_kid_back" />
+
+    <TextView
+        android:id="@+id/kid_header_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_weight="1"
+        android:accessibilityHeading="true"
+        android:ellipsize="end"
+        android:fontFamily="@font/nunito_extrabold"
+        android:maxLines="1"
+        android:textColor="@color/kid_ink"
+        android:textSize="24sp" />
+
+    <TextView
+        android:id="@+id/kid_header_action"
+        style="@style/KidManageLink"
+        android:visibility="gone" />
+</LinearLayout>

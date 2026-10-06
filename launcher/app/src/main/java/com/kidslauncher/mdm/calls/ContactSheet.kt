@@ -85,34 +85,7 @@ object ContactSheet {
             }
         }
         view.findViewById<View>(R.id.sheet_close).setOnClickListener { dialog.dismiss() }
-        // System Back closes the sheet (the dialog is cancelable), and so does a swipe down.
-        dialog.setCancelable(true)
-        dialog.setCanceledOnTouchOutside(true)
-        dismissOnSwipeDown(view, dialog)
-        com.kidslauncher.mdm.ui.KidBackButton.hideWhile(activity, dialog)
         dialog.show()
-    }
-
-    /** A downward fling on the sheet (outside its buttons) closes it. */
-    private fun dismissOnSwipeDown(sheet: View, dialog: Dialog) {
-        val minDistance = 48f * sheet.resources.displayMetrics.density
-        val detector = android.view.GestureDetector(sheet.context, object : android.view.GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: android.view.MotionEvent): Boolean = true
-
-            override fun onFling(e1: android.view.MotionEvent?, e2: android.view.MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                val start = e1 ?: return false
-                if (e2.rawY - start.rawY > minDistance && velocityY > 0 && velocityY > kotlin.math.abs(velocityX)) {
-                    dialog.dismiss()
-                    return true
-                }
-                return false
-            }
-        })
-        sheet.setOnTouchListener { v, event ->
-            val handled = detector.onTouchEvent(event)
-            if (event.action == android.view.MotionEvent.ACTION_UP && !handled) v.performClick()
-            handled
-        }
     }
 
     private fun appLabel(activity: Activity, packageName: String): CharSequence = try {

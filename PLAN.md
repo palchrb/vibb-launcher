@@ -249,7 +249,7 @@ launchable.
   warnings fail CI (`-PwarningsAsErrors=true`). Left: kapt's javac "RELEASE_11" note from the
   PreferenceProcessor. Device tests: FCM after the FID switch, Wi-Fi/Bluetooth toggles.
 - **Pending user decision**: drop the top-left back buttons on full pages
-  (`KidBackButton.SHOW_ON_PAGES`).
+  (`KidHeader.SHOW_BACK_BUTTON`).
 - **Recovery / no soft-brick** (2026-10-05): DISALLOW_FACTORY_RESET only blocks
   Settings; a recovery-mode wipe always works (first Jelly Star test: keys and
   menu). After a wipe, FRP asks for the phone's Google account if one was added,
