@@ -42,7 +42,7 @@ object LauncherLocales {
     }
 
     private fun callActive(context: Context): Boolean {
-        if (OngoingCalls.calls.isNotEmpty()) return true
+        if (OngoingCalls.hasLiveCall) return true
         return try {
             context.getSystemService(TelecomManager::class.java)?.isInCall == true
         } catch (e: SecurityException) {

@@ -132,6 +132,20 @@ class Application : android.app.Application() {
         } catch (e: Exception) {
             android.util.Log.e("Application", "BootClock.init failed", e)
         }
+        // A call notification a dead process left behind (emulator run 2026-10-06): posted to the
+        // main thread so a bind that is already queued (onCallAdded) goes first.
+        try {
+            val app = this
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    com.kidslauncher.mdm.calls.OngoingCalls.reconcileAtStart(app)
+                } catch (e: Exception) {
+                    android.util.Log.w("Application", "Call UI reconcile failed", e)
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "Call UI reconcile not scheduled", e)
+        }
         // TODO  Error: Invalid resource ID 0x00000000.
         // DynamicColors.applyToActivitiesIfAvailable(this)
 

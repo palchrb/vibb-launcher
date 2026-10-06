@@ -28,6 +28,11 @@ class KidInCallService : InCallService() {
             recordEmergency(call, state)
             showUi(call, startActivity = false)
             OngoingCalls.changed()
+            // Telecom normally follows with onCallRemoved; if it doesn't, don't leave a dead
+            // "ongoing call" behind (emulator run 2026-10-06).
+            if (state == Call.STATE_DISCONNECTED) {
+                handler.postDelayed({ OngoingCalls.reconcile(this@KidInCallService) }, 2_000L)
+            }
         }
 
         override fun onDetailsChanged(call: Call, details: Call.Details) {
@@ -41,8 +46,16 @@ class KidInCallService : InCallService() {
         OngoingCalls.service = this
     }
 
+    /** Telecom unbinds when it has no call for us any more: nothing of ours may stay. */
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        OngoingCalls.reconcile(this, telecomInCall = false)
+        return super.onUnbind(intent)
+    }
+
     override fun onDestroy() {
         if (OngoingCalls.service === this) OngoingCalls.service = null
+        handler.removeCallbacksAndMessages(null)
+        OngoingCalls.reconcile(this, telecomInCall = false)
         super.onDestroy()
     }
 
@@ -96,7 +109,12 @@ class KidInCallService : InCallService() {
         call.unregisterCallback(callback)
         OngoingCalls.remove(call)
         val next = OngoingCalls.current
-        if (next == null) CallNotifications.cancel(this) else showUi(next, startActivity = false)
+        if (next == null || !OngoingCalls.hasLiveCall) {
+            OngoingCalls.reconcile(this, telecomInCall = OngoingCalls.telecomInCall(this))
+            CallNotifications.cancel(this)
+        } else {
+            showUi(next, startActivity = false)
+        }
     }
 
     private fun outgoingVerdict(call: Call): Verdict {

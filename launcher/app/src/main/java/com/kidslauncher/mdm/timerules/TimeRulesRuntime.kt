@@ -200,7 +200,7 @@ object TimeRulesRuntime {
         ScreenTimeTracker.update(context)
         try {
             val changedTo = reevaluateLockReasonFromCache(context)
-            if (changedTo != null && changedTo != LockReason.NONE && OngoingCalls.calls.isEmpty()) {
+            if (changedTo != null && changedTo != LockReason.NONE && !OngoingCalls.hasLiveCall) {
                 LockActivity.start(context)
             }
         } catch (e: Exception) {

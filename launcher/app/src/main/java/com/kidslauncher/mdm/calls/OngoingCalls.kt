@@ -12,6 +12,15 @@ import java.util.concurrent.CopyOnWriteArrayList
 private const val LOG_TAG = "OngoingCalls"
 
 /**
+ * Emulator run 2026-10-06: after a call ended Telecom had no calls, but our ongoing-call
+ * notification stayed and the call screen showed "Ended" with a dead Hang up button. A call counts
+ * only while it isn't DISCONNECTED; with none live - or Telecom saying it has no call at all
+ * ([telecomInCall] false; `null` = couldn't ask) - every call trace of ours is cleared.
+ */
+fun callUiShouldClear(callStates: List<Int>, telecomInCall: Boolean?): Boolean =
+    telecomInCall == false || callStates.none { it != Call.STATE_DISCONNECTED }
+
+/**
  * The calls [KidInCallService] shows, and the audio state, shared with [InCallActivity] and the
  * notification buttons ([CallActionReceiver]). Main thread only (Telecom calls InCallService on
  * the main thread).
@@ -33,6 +42,37 @@ object OngoingCalls {
     fun removeListener(listener: () -> Unit) { listeners -= listener }
 
     fun changed() = listeners.forEach { it() }
+
+    /** A call that isn't DISCONNECTED - "our call" for the PIN lock, locale switches, time rules. */
+    val hasLiveCall: Boolean get() = calls.any { it.details.state != Call.STATE_DISCONNECTED }
+
+    /**
+     * Clears our call UI when no call is live ([callUiShouldClear]): forgets disconnected calls,
+     * cancels the notification and tells the listeners (the call screen finishes). From
+     * `onCallRemoved`, a disconnect that Telecom never follows up, the service's unbind/destroy
+     * and process start. Main thread.
+     */
+    fun reconcile(context: Context, telecomInCall: Boolean? = telecomInCall(context)) {
+        if (!callUiShouldClear(calls.map { it.details.state }, telecomInCall)) return
+        if (calls.isNotEmpty()) Log.w(LOG_TAG, "Clearing ${calls.size} call(s) Telecom no longer has")
+        calls.clear()
+        CallNotifications.cancel(context)
+        changed()
+    }
+
+    /** Process start: a notification a dead process left behind goes, unless Telecom has a call
+     * (then our service is bound again and re-posts it with onCallAdded). */
+    fun reconcileAtStart(context: Context) {
+        val inCall = telecomInCall(context)
+        if (inCall != true) reconcile(context, inCall ?: false)
+    }
+
+    /** `TelecomManager.isInCall` (we hold READ_PHONE_STATE / the dialer role); `null` if refused. */
+    fun telecomInCall(context: Context): Boolean? = try {
+        context.getSystemService(android.telecom.TelecomManager::class.java)?.isInCall
+    } catch (e: Exception) {
+        null
+    }
 
     /** The call the UI is about: a ringing one first, else the newest. */
     val current: Call? get() = calls.firstOrNull { it.details.state == Call.STATE_RINGING } ?: calls.lastOrNull()

@@ -167,7 +167,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // an app (not over a call), then re-arm the boundary alarm and the screen-time timer.
     val appContext = context.applicationContext
     Handler(Looper.getMainLooper()).post {
-        if (previousReason == LockReason.NONE && reason != LockReason.NONE && OngoingCalls.calls.isEmpty()) {
+        if (previousReason == LockReason.NONE && reason != LockReason.NONE && !OngoingCalls.hasLiveCall) {
             LockActivity.start(appContext)
         }
         TimeRulesRuntime.recheck(appContext)

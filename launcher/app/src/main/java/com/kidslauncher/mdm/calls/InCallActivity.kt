@@ -37,6 +37,7 @@ class InCallActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var proximityLock: PowerManager.WakeLock? = null
     private var shownPhoto: String? = null
+    private var endingPosted = false
 
     private val listener: () -> Unit = { handler.post { render() } }
     private val photoListener: () -> Unit = { shownPhoto = null; render() }
@@ -56,14 +57,18 @@ class InCallActivity : AppCompatActivity() {
 
         binding.inCallAnswer.setOnClickListener { OngoingCalls.current?.let(OngoingCalls::answer) }
         binding.inCallDecline.setOnClickListener { OngoingCalls.current?.let(OngoingCalls::hangUp) }
-        binding.inCallHangUp.setOnClickListener { OngoingCalls.current?.let(OngoingCalls::hangUp) }
+        // With no live call left (Telecom already ended it) the button just closes the screen.
+        binding.inCallHangUp.setOnClickListener {
+            val call = OngoingCalls.current
+            if (call == null || !OngoingCalls.hasLiveCall) finishNoCall() else OngoingCalls.hangUp(call)
+        }
         binding.inCallSpeaker.setOnClickListener { OngoingCalls.toggleSpeaker(this) }
         binding.inCallMute.setOnClickListener { OngoingCalls.toggleMute() }
         // Back never leaves a ringing or active call behind the PIN lock (qa-10-code #1) - the
         // lock has no "return to call" and the shade is off while it is locked.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (OngoingCalls.calls.isEmpty()) finish()
+                if (!OngoingCalls.hasLiveCall) finishNoCall()
             }
         })
     }
@@ -99,9 +104,19 @@ class InCallActivity : AppCompatActivity() {
     private fun render() {
         val call = OngoingCalls.current
         if (call == null) {
-            releaseProximity()
-            finish()
+            finishNoCall()
             return
+        }
+        // Ended: shown for a moment, then the screen goes even if Telecom never removes the call.
+        if (!OngoingCalls.hasLiveCall && !endingPosted) {
+            endingPosted = true
+            handler.postDelayed({
+                endingPosted = false
+                if (!OngoingCalls.hasLiveCall) {
+                    OngoingCalls.reconcile(this)
+                    finishNoCall()
+                }
+            }, ENDED_SHOWN_MS)
         }
         val number = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
         val contact = (CallPolicyStore.state as? CallPolicyState.Managed)?.rules?.contactFor(number)
@@ -168,6 +183,11 @@ class InCallActivity : AppCompatActivity() {
         }
     }
 
+    private fun finishNoCall() {
+        releaseProximity()
+        if (!isFinishing) finish()
+    }
+
     private fun acquireProximity() {
         if (proximityLock?.isHeld == true) return
         val power = getSystemService(PowerManager::class.java) ?: return
@@ -182,6 +202,8 @@ class InCallActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val ENDED_SHOWN_MS = 1_500L
+
         /** The call screen is in front (KidInCallService's retry over the PIN lock, QA 10 #8). */
         @Volatile
         var resumed = false

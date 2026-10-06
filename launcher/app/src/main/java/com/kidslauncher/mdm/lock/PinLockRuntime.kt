@@ -205,7 +205,7 @@ object PinLockRuntime {
 
     private val callsListener: () -> Unit = {
         val ctx = appContext
-        val any = OngoingCalls.calls.isNotEmpty()
+        val any = OngoingCalls.hasLiveCall
         if (ctx != null && callsSeen && !any) dispatch(ctx, LockEvent.CallsEnded(interactive(ctx)))
         callsSeen = any
     }
@@ -324,7 +324,7 @@ object PinLockRuntime {
             locked = chromeLocked,
             lockResumed = lockResumed,
             interactive = interactive(context),
-            ourCall = OngoingCalls.calls.isNotEmpty(),
+            ourCall = OngoingCalls.hasLiveCall,
             telecomInCall = telecom,
             emergencyFlow = emergencyFlow,
             alarmRinging = alarmLikelyRinging(rememberedAlarmMs, System.currentTimeMillis()),
@@ -440,7 +440,7 @@ object PinLockRuntime {
     private fun afterUnlock(context: Context) {
         try {
             TimeRulesRuntime.recheck(context)
-            if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && OngoingCalls.calls.isEmpty()) {
+            if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !OngoingCalls.hasLiveCall) {
                 LockActivity.start(context)
             }
         } catch (e: Exception) {
@@ -500,7 +500,7 @@ object PinLockRuntime {
         context.getSystemService(AudioManager::class.java)?.mode == AudioManager.MODE_IN_CALL
     }
 
-    private fun ourCall(): Boolean = OngoingCalls.calls.isNotEmpty()
+    private fun ourCall(): Boolean = OngoingCalls.hasLiveCall
 
     /** A call only the system dialer shows (emergency, or our dialer role not held). */
     private fun systemCall(context: Context): Boolean = !ourCall() && telecomInCall(context)
