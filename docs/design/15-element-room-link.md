@@ -96,11 +96,12 @@ Built: the learned variant only, launcher-only - no server, policy or PWA change
 - **Reader** (`badges/ElementDmReader.kt`, called by `BadgeListenerService` for each posted notification and on
   connect): only Element X in our own user; reads `sbn.tag`, `EXTRA_MESSAGING_PERSON`'s key, each `EXTRA_MESSAGES`
   bundle's `sender_person` key (not `MessagingStyle`'s parser) and `EXTRA_IS_GROUP_CONVERSATION`. `ElementDmFacts`
-  has exactly `tag`, `selfKey`, `senderKeys`, `group` (exact-field test); a source scan forbids text/title/name
-  reads in the reader and the listener, any other extra or bundle key, and any `Log` in the reader, the rule and
-  the store. The listener's and `NotificationRule.kt`'s privacy KDoc now name this reader.
+  has exactly `tag`, `selfKey`, `senderKeys`, `group` (exact-field test); an allowlist source scan (qa-15-code #1)
+  admits only the reader's own identifiers, the named Bundle reads on the named keys and `Person.key`, forbids
+  text/title/name reads in the reader and the listener, and any `Log` in the reader, the rule and the store. The listener's and `NotificationRule.kt`'s privacy KDoc now name this reader.
 - **Storage** (`calls/ElementRoomStore.kt`): own CE prefs file `element_rooms`, one JSON map contact MXID ->
-  `{session, room}` (`ElementRoom`, exact-field test) - nothing else; a newer notification replaces the pair.
+  `{session, room}` (`ElementRoom`, exact-field test) - nothing else; a newer notification replaces the pair, added
+  only if the rules read under the store's lock still have the contact (qa-15-code #2).
   `CallPolicyStore.refresh` prunes it on every CE refresh (after every accepted sync): managed -> only phone-book
   contacts still on Element with the same MXID; unmanaged -> empty; unknown rules -> unchanged. Never the DE copy,
   the status report or a log (a test checks `server/`, `push/` and `CallStateReport.kt` never mention it).

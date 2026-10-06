@@ -46,6 +46,8 @@ class DirectBootComponentsTest {
             "com.kidslauncher.mdm.ui.HomeActivity", "com.kidslauncher.mdm.ui.LockActivity",
             "com.kidslauncher.mdm.server.KidVpnService", "com.kidslauncher.mdm.server.CommandListenerService",
             "com.kidslauncher.mdm.server.PackageReplacedReceiver",
+            // Writes the learned Element rooms to CE prefs (design 15, qa-15-code #3).
+            "com.kidslauncher.mdm.badges.BadgeListenerService",
         )) {
             assertTrue(name, name in all)
             assertTrue(name, DirectBootComponents.needsUnlockedSetup(name))

@@ -26,14 +26,14 @@ object ElementDmReader {
     /** Main thread (listener callbacks): bundle reads and an async prefs write only. */
     fun learn(context: Context, sbn: StatusBarNotification) {
         if (sbn.packageName != MessagePackages.ELEMENT_X || sbn.user != Process.myUserHandle()) return
-        val state = CallPolicyStore.state
         val facts = try {
             facts(sbn)
         } catch (e: Exception) {
             return
         }
-        val learned = learnElementRoom(sbn.packageName, facts, state) ?: return
-        ElementRoomStore.learn(context, learned, state)
+        val learned = learnElementRoom(sbn.packageName, facts, CallPolicyStore.state) ?: return
+        // The store checks the contact again against the rules it reads under its lock.
+        ElementRoomStore.learn(context, learned)
     }
 
     private fun facts(sbn: StatusBarNotification): ElementDmFacts {

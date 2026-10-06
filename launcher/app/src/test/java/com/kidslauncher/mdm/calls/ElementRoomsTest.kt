@@ -180,6 +180,23 @@ class ElementRoomsTest {
     }
 
     @Test
+    fun `a pair learned under rules a refresh just replaced is not brought back (qa-15-code 2)`() {
+        // The reader judged the notification against the old rules; the store reads the new ones
+        // under its lock: Pappa is gone, so nothing is added and the prune still applies.
+        val stored = mapOf(mamma to ElementRoom(kid, dmRoom))
+        val withoutPappa = CallPolicyState.Managed(CallRules(contacts = contacts.filter { it.id != 2L }))
+        val pappaLearned = learned(contact = pappa, room = "!AbCdEf:matrix.org")
+        assertEquals(stored, withLearnedRoom(stored, pappaLearned, withoutPappa))
+        val pappaNewMxid = CallPolicyState.Managed(CallRules(contacts = contacts.map { if (it.id == 2L) it.copy(messageAddress = "@pappa:new.org") else it }))
+        assertEquals(stored, withLearnedRoom(stored, pappaLearned, pappaNewMxid))
+        assertEquals(emptyMap<String, ElementRoom>(), withLearnedRoom(stored, pappaLearned, CallPolicyState.Unmanaged))
+        // Unknown rules: nothing added, nothing dropped.
+        assertEquals(stored, withLearnedRoom(stored, pappaLearned, CallPolicyState.UnknownFailClosed))
+        // Still a contact: added.
+        assertEquals(stored + (pappa to ElementRoom(kid, "!AbCdEf:matrix.org")), withLearnedRoom(stored, pappaLearned, managed))
+    }
+
+    @Test
     fun `the codec keeps only valid pairs`() {
         val rooms = mapOf(mamma to ElementRoom(kid, dmRoom), pappa to ElementRoom(kid, "!AbCdEf:matrix.org"))
         assertEquals(rooms, decodeElementRooms(encodeElementRooms(rooms)))
@@ -201,27 +218,82 @@ class ElementRoomsTest {
     private fun code(name: String): String =
         source(name).replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("""//[^\n]*"""), "")
 
+    /** Shapes that read more than the allowlist, in the reader and the listener (qa-15-code #1):
+     * a name, all keys of a bundle, a generic or indexed read, a member reference. */
+    private val forbiddenShapes = listOf(
+        """\bname\b""", "getName", "keySet", """\.get\(""", """\bget\(""", """\[""", """::(?!class\.java\b)""",
+        "title", "MessagingStyle", "getCharSequence", "getString", "shortcut",
+    ).map { Regex(it, RegexOption.IGNORE_CASE) }
+
     @Test
-    fun `the reader never reads text, titles or names and never logs`() {
+    fun `the reader and the listener never read text, titles or names`() {
         for (file in listOf("ElementDmReader.kt", "BadgeListenerService.kt")) {
             val code = code(file)
             val withoutContext = code.replace(Regex("context", RegexOption.IGNORE_CASE), "")
             assertFalse("$file reads text", Regex("text", RegexOption.IGNORE_CASE).containsMatchIn(withoutContext))
-            for (forbidden in listOf("title", "MessagingStyle", "getCharSequence", "getString", ".name", "shortcut", "tickerText")) {
-                assertFalse("$file: $forbidden", code.contains(forbidden, ignoreCase = true))
-            }
+            for (shape in forbiddenShapes) assertFalse("$file: ${shape.pattern}", shape.containsMatchIn(code))
         }
-        val reader = code("ElementDmReader.kt")
-        assertFalse("ElementDmReader logs", "Log" in reader)
-        // Only these extras and bundle keys.
-        val extras = Regex("""Notification\.EXTRA_[A-Z_]+""").findAll(reader).map { it.value }.toSet()
-        assertEquals(
-            setOf("Notification.EXTRA_MESSAGES", "Notification.EXTRA_MESSAGING_PERSON", "Notification.EXTRA_IS_GROUP_CONVERSATION"),
-            extras,
-        )
-        assertEquals(setOf("\"sender_person\""), Regex(""""[^"]*"""").findAll(reader).map { it.value }.toSet())
-        // The listener itself still reads no extras: only the reader does.
+        // The listener itself reads no extras: only the reader does.
         assertFalse("extras" in code("BadgeListenerService.kt"))
+    }
+
+    /** Every identifier the reader may use (imports, strings and comments aside). Anything new -
+     * another Person member, Bundle method, Notification field or helper - fails until it is
+     * reviewed here (qa-15-code #1). */
+    private val readerIdentifiers = setOf(
+        // Kotlin
+        "object", "fun", "val", "private", "const", "if", "else", "return", "try", "catch", "null", "class", "java", "it",
+        "map", "filter", "filterIsInstance", "orEmpty",
+        // ours
+        "ElementDmReader", "learn", "facts", "learned", "context", "sbn", "e", "extras", "messages", "SENDER_PERSON",
+        "Context", "Exception", "MessagePackages", "ELEMENT_X", "CallPolicyStore", "state", "ElementRoomStore",
+        "learnElementRoom", "ElementDmFacts", "tag", "selfKey", "senderKeys", "group",
+        // the platform: only these members
+        "StatusBarNotification", "packageName", "user", "notification", "Process", "myUserHandle",
+        "Notification", "EXTRA_MESSAGES", "EXTRA_MESSAGING_PERSON", "EXTRA_IS_GROUP_CONVERSATION",
+        "Bundle", "Parcelable", "getParcelableArray", "getParcelable", "containsKey", "getBoolean", "Person", "key",
+    )
+
+    @Test
+    fun `the reader reads only the allowlisted fields`() {
+        val source = code("ElementDmReader.kt")
+        val imports = Regex("""^import (\S+)""", RegexOption.MULTILINE).findAll(source).map { it.groupValues[1] }.toSet()
+        assertEquals(
+            setOf(
+                "android.app.Notification", "android.app.Person", "android.content.Context", "android.os.Bundle",
+                "android.os.Parcelable", "android.os.Process", "android.service.notification.StatusBarNotification",
+                "com.kidslauncher.mdm.calls.CallPolicyStore", "com.kidslauncher.mdm.calls.ElementDmFacts",
+                "com.kidslauncher.mdm.calls.ElementRoomStore", "com.kidslauncher.mdm.calls.MessagePackages",
+                "com.kidslauncher.mdm.calls.learnElementRoom",
+            ),
+            imports,
+        )
+        val body = source.lines().filterNot { it.startsWith("import ") || it.startsWith("package ") }.joinToString("\n")
+        // The one string: the message bundle's sender key.
+        val literal = Regex(""""[^"]*"""")
+        assertEquals(setOf("\"sender_person\""), literal.findAll(body).map { it.value }.toSet())
+        val code = body.replace(literal, "\"\"")
+        val identifiers = Regex("""[A-Za-z_][A-Za-z0-9_]*""").findAll(code).map { it.value }.toSet()
+        assertEquals("not allowlisted", emptySet<String>(), identifiers - readerIdentifiers)
+        // Bundle reads: only these calls on these keys.
+        val bundleReads = Regex("""\b(getParcelableArray|getParcelable|getBoolean|containsKey)\(\s*([A-Za-z_.]+)""")
+            .findAll(code).map { it.groupValues[1] to it.groupValues[2] }.toSet()
+        assertEquals(
+            setOf(
+                "getParcelableArray" to "Notification.EXTRA_MESSAGES",
+                "getParcelable" to "Notification.EXTRA_MESSAGING_PERSON",
+                "getParcelable" to "SENDER_PERSON",
+                "containsKey" to "SENDER_PERSON",
+                "containsKey" to "Notification.EXTRA_IS_GROUP_CONVERSATION",
+                "getBoolean" to "Notification.EXTRA_IS_GROUP_CONVERSATION",
+            ),
+            bundleReads,
+        )
+        // Of a Person only the key: every Person read ends in `?.key`, and `key` is read nowhere else.
+        val personReads = Regex("""Person::class\.java\)(\??\.[A-Za-z_]+)?""").findAll(code).map { it.groupValues[1] }.toList()
+        assertEquals(listOf("?.key", "?.key"), personReads)
+        assertEquals(2, Regex("""\bkey\b""").findAll(code).count())
+        assertFalse("ElementDmReader logs", "Log" in code)
     }
 
     @Test
@@ -233,7 +305,7 @@ class ElementRoomsTest {
         val offenders = sources.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .filter { "/mdm/server/" in it.invariantSeparatorsPath || "/mdm/push/" in it.invariantSeparatorsPath || it.name == "CallStateReport.kt" }
-            .filter { "ElementRoom" in it.readText() || "ElementDm" in it.readText() }
+            .filter { file -> listOf("ElementRoom", "ElementDm", "element_rooms").any { it in file.readText() } }
             .map { it.name }
             .toList()
         assertTrue("Found in $offenders", offenders.isEmpty())

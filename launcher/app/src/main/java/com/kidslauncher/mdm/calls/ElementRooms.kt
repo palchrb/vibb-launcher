@@ -98,9 +98,17 @@ fun pruneElementRooms(stored: Map<String, ElementRoom>, state: CallPolicyState):
     is CallPolicyState.Managed -> elementContactIds(state.rules).let { ids -> stored.filterKeys { it in ids } }
 }
 
-/** The stored map after [learned]: pruned against [state], then the newer pair replaces the old one. */
-fun withLearnedRoom(stored: Map<String, ElementRoom>, learned: LearnedElementRoom, state: CallPolicyState): Map<String, ElementRoom> =
-    pruneElementRooms(stored, state) + (learned.contactMxid to learned.room)
+/**
+ * The stored map after [learned]: pruned against [state] (the rules read under the store's lock),
+ * then the newer pair replaces the old one - only while the contact is still a phone-book Element
+ * contact in [state] (qa-15-code #2: a notification judged against the rules a refresh just
+ * replaced must not bring back a pair its prune dropped).
+ */
+fun withLearnedRoom(stored: Map<String, ElementRoom>, learned: LearnedElementRoom, state: CallPolicyState): Map<String, ElementRoom> {
+    val pruned = pruneElementRooms(stored, state)
+    val rules = (state as? CallPolicyState.Managed)?.rules ?: return pruned
+    return if (learned.contactMxid in elementContactIds(rules)) pruned + (learned.contactMxid to learned.room) else pruned
+}
 
 /**
  * `elementx://open/<session>/<room>` (Element X's own notification link), each segment fully

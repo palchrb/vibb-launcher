@@ -28,12 +28,16 @@ object ElementRoomStore {
         editor.apply()
     }
 
-    /** A newer notification replaces the contact's pair; the rest is pruned against [state]. */
+    /**
+     * A newer notification replaces the contact's pair; the rest is pruned. The rules are read
+     * here, under the lock (qa-15-code #2): [CallPolicyStore.refresh] sets its new state before it
+     * calls [prune], so either this sees the new rules or the prune runs after this write.
+     */
     @Synchronized
-    fun learn(context: Context, learned: LearnedElementRoom, state: CallPolicyState) {
+    fun learn(context: Context, learned: LearnedElementRoom) {
         try {
             val stored = read(context)
-            write(context, stored, withLearnedRoom(stored, learned, state))
+            write(context, stored, withLearnedRoom(stored, learned, CallPolicyStore.state))
         } catch (e: Exception) {
             // CE not readable, or the write failed: nothing learned this time.
         }
