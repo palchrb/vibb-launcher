@@ -237,6 +237,10 @@ launchable.
   low-battery shutdown) with the last known fix (no time for a fresh GPS fix), and
   an active fix + report when the battery drops to ~5% so a dying phone leaves a
   fresh position. Sudden power loss sends nothing; airplane mode means no network.
+- **Fixes from the 2026-10-06 emulator run** (docs/testing/2026-10-06-emulator-run.md):
+  PIN keypad fits small screens, less top space on lock and Home, silent call
+  notification while our call screen is in front, parent-set screen timeout
+  (auto-lock) per device in the PWA.
 - **Build hygiene (next commits, user 2026-10-06)**: remove deprecated API use and
   build warnings — FcmSupport `deleteToken()`/`token` (Firebase), QuickControls
   `WifiConfiguration`/`BluetoothAdapter.getDefaultAdapter()`, `annotationProcessor`
