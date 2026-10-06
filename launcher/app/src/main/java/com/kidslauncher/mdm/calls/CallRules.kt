@@ -247,3 +247,24 @@ fun withTimeRule(state: CallPolicyState, callsBlocked: Boolean): CallPolicyState
     } else {
         state
     }
+
+/**
+ * Never a second call while one exists (user, fix round 2026-10-06): a new outgoing call is
+ * refused while any call is ringing, dialling, active or on hold - except an emergency number,
+ * which always goes through. [otherCallStates] are `android.telecom.Call` states of the calls we
+ * know; a call still being set up (NEW/CONNECTING/SELECT_PHONE_ACCOUNT - the one being placed
+ * now) or already ended doesn't count.
+ */
+fun secondCallAllowed(otherCallStates: List<Int>, emergency: Boolean): Boolean =
+    emergency || otherCallStates.none { it in BUSY_CALL_STATES }
+
+/** Ringing, dialling, active, on hold (`android.telecom.Call.STATE_*`, constants inlined). */
+private val BUSY_CALL_STATES = setOf(
+    2, // STATE_RINGING
+    1, // STATE_DIALING
+    4, // STATE_ACTIVE
+    3, // STATE_HOLDING
+    11, // STATE_PULLING_CALL
+    12, // STATE_AUDIO_PROCESSING
+    13, // STATE_SIMULATED_RINGING
+)

@@ -43,6 +43,9 @@ object OngoingCalls {
 
     fun changed() = listeners.forEach { it() }
 
+    /** The states of the calls we show, for [secondCallAllowed]. */
+    val states: List<Int> get() = calls.map { it.details.state }
+
     /** A call that isn't DISCONNECTED - "our call" for the PIN lock, locale switches, time rules. */
     val hasLiveCall: Boolean get() = calls.any { it.details.state != Call.STATE_DISCONNECTED }
 

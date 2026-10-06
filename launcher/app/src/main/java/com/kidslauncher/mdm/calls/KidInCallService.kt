@@ -68,6 +68,16 @@ class KidInCallService : InCallService() {
             Toast.makeText(applicationContext, R.string.calls_not_allowed, Toast.LENGTH_LONG).show()
             return
         }
+        // One call at a time (fix round 2026-10-06), backstop for the redirection service: a
+        // second outgoing call while another rings/dials/is active or held - emergency excepted.
+        if (call.details.callDirection == Call.Details.DIRECTION_OUTGOING &&
+            !secondCallAllowed(OngoingCalls.states, CallSystem.isEmergencyOutgoing(this, PhoneNumbers.numberFromHandle(call.details.handle?.toString())))
+        ) {
+            Log.i(LOG_TAG, "Disconnecting a second outgoing call")
+            call.disconnect()
+            Toast.makeText(applicationContext, R.string.calls_busy, Toast.LENGTH_LONG).show()
+            return
+        }
         // Backstop for incoming calls screening didn't decide: withheld numbers (never screened),
         // a screening timeout, or the service not bound. Rejected without any UI; a withheld call
         // may ring for a moment first.

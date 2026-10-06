@@ -28,10 +28,17 @@ class KidCallRedirectionService : CallRedirectionService() {
     override fun onPlaceCall(handle: Uri, initialPhoneAccount: PhoneAccountHandle, allowInteractiveResponsePostRedirect: Boolean) {
         val state = CallPolicyStore.effectiveState()
         var target: String? = null
+        var busy = false
         val verdict = try {
             val raw = PhoneNumbers.numberFromHandle(handle.toString())
             val emergency = CallSystem.isEmergencyOutgoing(this, raw)
-            decideOutgoing(raw, state, emergency).also {
+            // One call at a time (fix round 2026-10-06): whoever dials it, a second call is
+            // cancelled while one rings, dials, is active or held - emergency numbers excepted.
+            if (!secondCallAllowed(OngoingCalls.states, emergency)) {
+                Log.i(LOG_TAG, "Cancelling a second call while one exists")
+                busy = true
+                Verdict.BLOCK
+            } else decideOutgoing(raw, state, emergency).also {
                 if (it == Verdict.ALLOW) target = outgoingDialTarget(raw, state, emergency)
             }
         } catch (e: Exception) {
@@ -46,7 +53,7 @@ class KidCallRedirectionService : CallRedirectionService() {
             placeCallUnmodified()
         } else {
             cancelCall()
-            Toast.makeText(applicationContext, R.string.calls_not_allowed, Toast.LENGTH_LONG).show()
+            Toast.makeText(applicationContext, if (busy) R.string.calls_busy else R.string.calls_not_allowed, Toast.LENGTH_LONG).show()
         }
     }
 }

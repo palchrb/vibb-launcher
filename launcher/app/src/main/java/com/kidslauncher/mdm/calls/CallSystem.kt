@@ -69,9 +69,15 @@ object CallSystem {
      * says so) if Telecom refuses, e.g. while outgoing calls are restricted.
      */
     fun placeCall(context: Context, number: String): Boolean = try {
-        context.getSystemService(TelecomManager::class.java)
-            .placeCall(Uri.fromParts("tel", number, null), Bundle())
-        true
+        if (!secondCallAllowed(OngoingCalls.states, isEmergencyOutgoing(context, number))) {
+            // One call at a time (fix round 2026-10-06); emergency numbers always go through.
+            Toast.makeText(context, R.string.calls_busy, Toast.LENGTH_LONG).show()
+            false
+        } else {
+            context.getSystemService(TelecomManager::class.java)
+                .placeCall(Uri.fromParts("tel", number, null), Bundle())
+            true
+        }
     } catch (e: Exception) {
         Log.w(LOG_TAG, "placeCall failed", e)
         Toast.makeText(context, R.string.calls_could_not_call, Toast.LENGTH_LONG).show()

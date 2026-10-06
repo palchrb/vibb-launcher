@@ -43,6 +43,7 @@
     <string name="calls_confirm_title">Call %1$s?</string>
     <string name="calls_cancel">Cancel</string>
     <string name="calls_not_allowed">This number is not allowed.</string>
+    <string name="calls_busy">Hang up the call you are in first.</string>
     <string name="calls_could_not_call">Couldn\'t start the call.</string>
     <string name="calls_could_not_message">Couldn\'t open the messaging app.</string>
     <string name="calls_incoming">Incoming call</string>

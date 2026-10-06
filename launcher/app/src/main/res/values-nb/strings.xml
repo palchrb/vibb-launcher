@@ -33,6 +33,7 @@
     <string name="calls_confirm_title">Ringe %1$s?</string>
     <string name="calls_cancel">Avbryt</string>
     <string name="calls_not_allowed">Dette nummeret er ikke tillatt.</string>
+    <string name="calls_busy">Legg på samtalen du er i først.</string>
     <string name="calls_could_not_call">Klarte ikke å starte samtalen.</string>
     <string name="calls_could_not_message">Klarte ikke å åpne meldingsappen.</string>
     <string name="calls_incoming">Innkommende samtale</string>
