@@ -43,6 +43,9 @@ class AppInstallReceiver : BroadcastReceiver() {
         // Only a process restarted for this result (not the one that committed) brings Home back
         // after a failed self-update - the committing one never left it (qa-11-design.md #9).
         val restarted = !SelfUpdate.committedInThisProcess
+        // Our own update failed in the process that committed it: nothing is being replaced any
+        // more, so catalog installs go on (design 13, qa-13-code #1).
+        if (isLauncher && status != PackageInstaller.STATUS_SUCCESS) SelfUpdate.committedInThisProcess = false
 
         var failed = false
         // The launcher's own update keeps its verified APK after a transient failure (retried
@@ -85,16 +88,6 @@ class AppInstallReceiver : BroadcastReceiver() {
             }
         }
 
-        // The download record of this release is done either way (design 13 QA #4; the runner
-        // removes it at the commit already - this covers a record written again meanwhile).
-        if (appId != null && releaseTag != null) {
-            try {
-                AppDownloadStore.remove(context, appId, releaseTag)
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't clear the download record of $installKey", e)
-            }
-        }
-
         // Any other app's file is always safe to clean up immediately. isLauncher comes from the
         // server (TrackedAppUpdate.isLauncher), not a packageName == context.packageName
         // comparison - a tracked app's package name is optional now (see kid-phone-server's
@@ -108,6 +101,16 @@ class AppInstallReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                // The download record of this release is done either way (design 13 QA #4; the
+                // runner removes it at the commit already - this covers a record written again
+                // meanwhile). Off the main thread: it decodes and commits (qa-13-code #5).
+                if (appId != null && releaseTag != null) {
+                    try {
+                        AppDownloadStore.remove(app, appId, releaseTag)
+                    } catch (e: Exception) {
+                        Log.w(LOG_TAG, "Couldn't clear the download record of $installKey", e)
+                    }
+                }
                 val fenceSession = try {
                     UpdateFence.onInstallResult(app, sessionId, status)
                 } catch (e: Exception) {

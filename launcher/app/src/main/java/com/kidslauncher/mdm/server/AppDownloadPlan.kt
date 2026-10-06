@@ -163,9 +163,10 @@ fun releaseTagMismatch(headerValue: String?, expectedTag: String): Boolean =
 
 /**
  * One download the phone wants (CE prefs `app_downloads`, written with `commit()`): the release
- * from `GET /api/devices/apps`, the first response's `ETag` and size (resume), when the phone first
- * saw this release (the launcher's grace, the device page's "since"), and how often the finished
- * file failed its hash.
+ * from `GET /api/devices/apps`, the first response's `ETag` and size (resume), and when the phone
+ * first saw this release (the launcher's grace, the device page's "since"). How often a finished
+ * file failed its hash is kept per release in `TrackedAppUpdateState` (qa-13-code #4: a dropped
+ * and re-created record must not reset it).
  */
 @Serializable
 data class DownloadRecord(
@@ -179,7 +180,6 @@ data class DownloadRecord(
     val etag: String? = null,
     val total: Long? = null,
     val firstSeenMs: Long = 0,
-    val hashFailures: Int = 0,
 )
 
 /** The partial file of [appId]'s release [tag]: `<appId>-<16 hex of SHA-256(tag)>.part` - stable
@@ -201,7 +201,7 @@ data class WantedDownload(
 
 /**
  * The records after a successful list fetch: exactly the wanted releases - a record of the same
- * release is kept (ETag, size, first seen, hash failures; the list's URL, name and hash refreshed),
+ * release is kept (ETag, size, first seen; the list's URL, name and hash refreshed),
  * a new release gets a fresh record seen [nowMs]; everything else (another tag, deselected,
  * installed, withdrawn) is dropped.
  */
@@ -242,5 +242,36 @@ fun legacyCacheFilesToDelete(files: List<Pair<String, Long>>, nowMs: Long): List
 fun downloadOrder(records: List<DownloadRecord>): List<DownloadRecord> = records.sortedBy { it.isLauncher }
 
 /** A finished file that failed its hash this often waits out the failed-release backoff instead
- * of being downloaded again at once (design 13 §5 allows one immediate restart). */
+ * of being downloaded again at once (design 13 §5 allows one immediate restart). Counted per
+ * release, across records and backoffs (qa-13-code #4). */
 const val MAX_HASH_FAILURES = 2
+
+/**
+ * Whether a release may still be downloaded (qa-13-code #3) - checked under the record lock when
+ * the sync reconciles and by the runner before each attempt, against the install state read then:
+ * not when it is installed or refused, not while an install of the app is between commit and
+ * result ([attemptTimeoutMs]), and not our own update when it already waits as the pending APK.
+ */
+fun releaseStillWanted(
+    tag: String,
+    isLauncher: Boolean,
+    state: TrackedAppState?,
+    pendingTag: String?,
+    nowMs: Long,
+    attemptTimeoutMs: Long,
+): Boolean {
+    if (state != null) {
+        if (tag == state.lastInstalledTag || tag == state.refusedTag) return false
+        val attempt = state.attemptStartedAtMs
+        if (attempt != null && nowMs - attempt in 0 until attemptTimeoutMs) return false
+    }
+    return !(isLauncher && pendingTag == tag)
+}
+
+/**
+ * Whether our own update's commit in this process may still be running (qa-13-code #1): the
+ * process committed it and the launcher's attempt is in flight. A failed commit whose result came
+ * back to this process ends the attempt, so catalog installs go on.
+ */
+fun selfUpdateCommitting(committedInThisProcess: Boolean, launcherAttemptStartedAtMs: Long?, nowMs: Long, attemptTimeoutMs: Long): Boolean =
+    committedInThisProcess && launcherAttemptStartedAtMs != null && nowMs - launcherAttemptStartedAtMs in 0 until attemptTimeoutMs

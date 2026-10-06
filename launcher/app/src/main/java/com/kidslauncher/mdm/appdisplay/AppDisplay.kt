@@ -1,4 +1,4 @@
-package com.kidslauncher.mdm.apps
+package com.kidslauncher.mdm.appdisplay
 
 import android.content.Context
 import android.util.Log

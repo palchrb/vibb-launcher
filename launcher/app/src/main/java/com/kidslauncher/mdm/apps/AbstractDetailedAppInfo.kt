@@ -6,6 +6,8 @@ import android.os.UserHandle
 import android.util.Log
 import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.actions.AppAction
+import com.kidslauncher.mdm.appdisplay.AppDisplay
+import com.kidslauncher.mdm.appdisplay.displayLabel
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 
 /**

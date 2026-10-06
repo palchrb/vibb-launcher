@@ -54,4 +54,5 @@ directories in the same commit.
 
 Everything is GPL-3.0 (or later) - see `LICENSE` and `NOTICE.md`. All new code is GPL-3.0; any
 third-party code or asset brought in must be GPL-compatible (the launcher's app-list code stays MIT,
-`launcher/LICENSE-MIT-UPSTREAM`; Nunito is OFL 1.1).
+`launcher/LICENSE-MIT-UPSTREAM`; Nunito is OFL 1.1; the app icons from Material Symbols are Apache-2.0,
+`scripts/material-symbols.sh`). New GPL code doesn't go into the MIT directories (`ui/list/`, `apps/`).

@@ -1,4 +1,4 @@
-package com.kidslauncher.mdm.apps
+package com.kidslauncher.mdm.appdisplay
 
 import com.kidslauncher.mdm.server.ServerJson
 import org.junit.Assert.assertEquals

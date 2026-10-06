@@ -124,7 +124,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // The parent's language choice, switched when Home is next in front (LauncherLocales).
         LauncherLocales.remember(context, freshPolicy.launcherUi)
         // The parent's app names and icons (design 14): a change re-renders Home and the drawer.
-        com.kidslauncher.mdm.apps.AppDisplay.refresh(context)
+        com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(context)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.
@@ -405,7 +405,7 @@ private suspend fun currentLocationReport(
 // TrackedAppUpdateState.recordAttemptStarted's own doc comment for the actual bug this guards
 // against. Since design 13 the attempt covers only commit -> AppInstallReceiver (the download is
 // AppDownloads' record).
-private const val INSTALL_ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000L
+internal const val INSTALL_ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000L
 
 // A release that failed to install once is retried automatically after this window rather than
 // being skipped forever - see TrackedAppUpdateState's own doc comment for the incident that
@@ -486,7 +486,7 @@ private fun TrackedAppUpdate.wanted() = WantedDownload(
     appId = id,
     tag = releaseTag,
     // The install notification says what the kid sees: the parent's name when there is one (design 14).
-    name = com.kidslauncher.mdm.apps.AppDisplay.label(packageName.takeIf { it.isNotBlank() }) ?: name,
+    name = com.kidslauncher.mdm.appdisplay.AppDisplay.label(packageName.takeIf { it.isNotBlank() }) ?: name,
     isLauncher = isLauncher,
     downloadUrl = downloadUrl,
     sha256 = sha256,

@@ -149,7 +149,7 @@ class AppDownloadPlanTest {
 
     @Test
     fun `the records become exactly what the list wants`() {
-        val kept = DownloadRecord(1, "v1@1", "App 1", downloadUrl = "/old", etag = "\"e\"", total = 99, firstSeenMs = 5, hashFailures = 1)
+        val kept = DownloadRecord(1, "v1@1", "App 1", downloadUrl = "/old", etag = "\"e\"", total = 99, firstSeenMs = 5)
         val replaced = DownloadRecord(2, "v1@2", firstSeenMs = 5)
         val deselected = DownloadRecord(3, "v1@3", firstSeenMs = 5)
         val after = reconcileRecords(
@@ -205,6 +205,36 @@ class AppDownloadPlanTest {
     fun `catalog apps go first, our own update last`() {
         val records = listOf(DownloadRecord(1, "l", isLauncher = true), DownloadRecord(2, "a"), DownloadRecord(3, "b"))
         assertEquals(listOf(2L, 3L, 1L), downloadOrder(records).map { it.appId })
+    }
+
+    /** qa-13-code #3: the sync and the runner skip a release that is installed, refused, between
+     * commit and result, or already our pending update. */
+    @Test
+    fun `a release is wanted only while nothing else has it`() {
+        val timeout = 10 * 60_000L
+        fun wanted(state: TrackedAppState?, launcher: Boolean = false, pending: String? = null) =
+            releaseStillWanted("v2", launcher, state, pending, now, timeout)
+        assertTrue(wanted(null))
+        assertTrue(wanted(TrackedAppState(lastInstalledTag = "v1")))
+        assertFalse(wanted(TrackedAppState(lastInstalledTag = "v2")))
+        assertFalse(wanted(TrackedAppState(refusedTag = "v2")))
+        assertFalse(wanted(TrackedAppState(attemptStartedAtMs = now - 60_000)))
+        assertTrue(wanted(TrackedAppState(attemptStartedAtMs = now - timeout)))
+        // A clock that went back doesn't hold it forever.
+        assertTrue(wanted(TrackedAppState(attemptStartedAtMs = now + 60_000)))
+        assertFalse(wanted(null, launcher = true, pending = "v2"))
+        assertTrue(wanted(null, launcher = true, pending = "v1"))
+        assertTrue(wanted(null, launcher = false, pending = "v2"))
+    }
+
+    /** qa-13-code #1: a failed commit in this process ends the attempt, so installs go on. */
+    @Test
+    fun `our own commit holds installs back only while its attempt runs`() {
+        val timeout = 10 * 60_000L
+        assertTrue(selfUpdateCommitting(true, now - 1_000, now, timeout))
+        assertFalse(selfUpdateCommitting(true, null, now, timeout))
+        assertFalse(selfUpdateCommitting(true, now - timeout, now, timeout))
+        assertFalse(selfUpdateCommitting(false, now - 1_000, now, timeout))
     }
 
     @Test

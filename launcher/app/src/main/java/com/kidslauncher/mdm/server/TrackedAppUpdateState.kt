@@ -28,6 +28,10 @@ data class TrackedAppState(
     /** A release refused for good (handy step 11, qa-11-code #4: wrong signer, older, not ours,
      * an invalid or incompatible APK) - not downloaded or tried again until the tag changes. */
     val refusedTag: String? = null,
+    /** How often a finished download of [hashMismatchTag] failed the server's SHA-256 (design 13,
+     * qa-13-code #4) - kept across records and backoffs, reset by another release. */
+    val hashMismatchTag: String? = null,
+    val hashMismatches: Int = 0,
 )
 
 /**
@@ -93,6 +97,8 @@ object TrackedAppUpdateState {
             lastFailedAtMs = System.currentTimeMillis(),
             pending = current?.pending?.takeIf { keepPending && it.releaseTag == releaseTag },
             refusedTag = current?.refusedTag,
+            hashMismatchTag = current?.hashMismatchTag,
+            hashMismatches = current?.hashMismatches ?: 0,
         )
         save(context, state)
     }
@@ -108,6 +114,8 @@ object TrackedAppUpdateState {
             lastFailedTag = releaseTag,
             lastFailedAtMs = System.currentTimeMillis(),
             refusedTag = releaseTag,
+            hashMismatchTag = current?.hashMismatchTag,
+            hashMismatches = current?.hashMismatches ?: 0,
         )
         save(context, state)
     }
@@ -141,6 +149,17 @@ object TrackedAppUpdateState {
         val current = state[appKey] ?: TrackedAppState()
         state[appKey] = current.copy(attemptStartedAtMs = System.currentTimeMillis())
         save(context, state)
+    }
+
+    /** One more failed hash for [releaseTag] (another release starts over at 1); returns the count. */
+    @Synchronized
+    fun recordHashMismatch(context: Context, appKey: String, releaseTag: String): Int {
+        val state = load().toMutableMap()
+        val current = state[appKey] ?: TrackedAppState()
+        val count = if (current.hashMismatchTag == releaseTag) current.hashMismatches + 1 else 1
+        state[appKey] = current.copy(hashMismatchTag = releaseTag, hashMismatches = count)
+        save(context, state)
+        return count
     }
 
     /** The launcher's pending update and its row key, if one is waiting (at most one row has one). */

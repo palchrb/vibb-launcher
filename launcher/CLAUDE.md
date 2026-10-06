@@ -206,14 +206,20 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 - **Resume and checks**: partial `noBackupFilesDir/app_downloads/<appId>-<16 hex SHA-256(tag)>.part`, record
   `DownloadRecord` in CE prefs `app_downloads` (`AppDownloadStore`, synchronized, `commit()`; id, tag, URL, server
   SHA-256, first `ETag` and size, first seen, hash failures). `Range` + `If-Match`: 206 appends, 200 truncates (older
-  server: no `ETag`, no resume), 412 or an incomplete 416 restart at once, 404 drops it and backs off an hour
+  server: no `ETag`, no resume), 412 or an incomplete 416 restart at once, 404 drops it, backs off an hour and re-lists
   (`resumeAction`). `X-Release-Tag` differing (`releaseTagHeader`) = drop + a sync for the list (at most every 10 min);
-  the whole file's SHA-256 against `TrackedAppUpdate.sha256` (`null` = unchecked): a mismatch downloads again at once,
-  the second waits out the backoff. A running download checks every 2 s that its record is still wanted.
+  the whole file's SHA-256 against `TrackedAppUpdate.sha256` (`null` = unchecked): a mismatch re-lists and downloads
+  again at once, the second waits out the backoff (counted per release in `TrackedAppState.hashMismatches`, so a new
+  record doesn't reset it). A running download checks every 2 s that its record is still wanted; records change only
+  through `AppDownloadStore.mutate`/`update`/`remove` under the store lock, and the sync and the runner both skip a
+  release that is installed, refused, between commit and result or already pending (`releaseStillWanted`,
+  qa-13-code #3).
 - **Install**: catalog apps install from the runner under `AppDownloads.installMutex`; `attemptStartedAtMs` now covers
-  only commit -> `AppInstallReceiver` (which also clears the record). Our own update's file is renamed into
-  `self_update/` + `recordPending` (under `synchronized(SelfUpdate)`, like `cleanup`); the night commit takes
-  `installMutex` and sets `committedInThisProcess` inside it - no session opens after that (QA #3).
+  only commit -> `AppInstallReceiver` (which also clears the record, off the main thread); an install that can't
+  start waits out the hourly backoff (qa-13-code #2). Our own update's file is renamed into `self_update/` +
+  `recordPending` (under `synchronized(SelfUpdate)`, like `cleanup`); the night commit takes `installMutex` and sets
+  `committedInThisProcess` inside it - no session opens while that commit's attempt runs (QA #3,
+  `selfUpdateCommitting`); a failed result in the same process clears the flag (qa-13-code #1).
   `TrackedAppUpdateState`'s mutators are `@Synchronized`.
 - **Status** `app_downloads`: `{wifi_only, network, entries}` (<= 20 `{tracked_app_id, release_tag, state, bytes, total,
   since_ms, any_network_at_ms}`), a full snapshot in every report; a record that may run but hasn't started says
@@ -226,6 +232,33 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 - **Boot** (`lock/BootHome`, pure `bringHomeAtBoot`): before the CE unlock only direct-boot-aware HOMEs resolve, so a stock launcher (Pixel's) was Home for 3-5 s. The first process start of a boot (BOOT_COUNT vs CE prefs `boot_home`, stored after Home started) brings Home from `PinLockRuntime.init`'s ProcessStart when apps are managed, the kiosk is on or the PIN lock is active, never over a call; the lock is then the 1 s fallback (`LockStep.showLockLater`). `HomeActivity` stays non-direct-boot-aware.
 - **Kiosk on: Home roots lock task, never the lock** (pure `lockTaskEntry`/`lockLeave`, `lock/LockTaskRoot.kt`): a lock resumed without lock task starts Home (whose resume calls `startLockTask` and shows the lock), at most every 3 s, and starts lock task itself only as the 1 s fallback. The lock always leaves through Home - Home is started **before** `finishAndRemoveTask`, so the stock launcher's latent Recents task (a BlockedAppActivity in kiosk) never surfaces; a refused finish means the lock is the root (`rootLeave`: stop, Home, finish). Kiosk off is unchanged. `HomeActivity.reconcileKioskMode` catches `startLockTask` failures.
 - **Kiosk features**: pure `kioskFeatures` drops OVERVIEW while the app-block bit is on and `config_recentsComponentName`'s package isn't pinned (`AppEnforcer.recentsPackage`); the server still sends OVERVIEW. `smoke-test.sh` checks no BlockedAppActivity after the unlock, on Recents and on a swipe-up. Not device-tested: the 16 doc's "Implementation status". D (the boot cover, 16b) is not built.
+
+## App names and icons (design 14, `docs/design/14-app-display.md`, at the monorepo root)
+
+- **Wire**: `PolicyResponse.launcherUi.appDisplay` is a raw `JsonElement?` - the server's resolved list (catalog
+  default or the phone's own choice) `{package_name, label, icon, color}` - read field by field by the pure
+  `appdisplay/AppDisplay.kt` `appDisplayMap` (QA #1): nothing in it can fail the policy; a bad label keeps the icon, an
+  unknown icon keeps the label, an unknown/missing colour is `auto`, an entry without a valid package or anything to
+  show is dropped (`AppDisplayTest`, `PolicyResponseCompatTest`). New GPL code lives in `appdisplay/`, not in the MIT
+  `apps/`.
+- **`AppDisplay`** holds the map in memory: loaded from the `Ok` cache at process start (before the first app load)
+  and after every accepted sync; a change calls `Application.reloadApps()`, so Home and the drawer re-render and
+  re-sort (QA #2).
+- **Names**: `displayLabel(parent, kidRename, appLabel)` feeds `getCustomLabel` (Home, drawer, `AppFilter`'s sort),
+  the time-rule screen's usable-app buttons (sorted by that name now, QA #6), the contact sheet's "Message opens in
+  Chat" and the install notification (`WantedDownload.name`). Long-press Rename is hidden for an app the parent named
+  (`kidMayRename`); the kid's stored rename stays and returns when the parent clears the name.
+- **Icons**: `KidAvatars.renderAppIcon` draws the parent's glyph white at 55 % on the colour's tile (the
+  `AppGlyphs.COLORS` tile, or `tileColor` of the app's own colour for `auto`) - `renderSymbolIcon`; one key for lookup
+  and render (`appIconKey`: `|g=<icon>|c=<colour>` when overridden). The drawer is a text list (its icon view is
+  `gone`), so only the name applies there. Not applied (Android doesn't let a launcher): the app's own notifications,
+  screens and splash, Recents, the chooser, permission and "app paused" dialogs, Settings, Play.
+- **Glyphs**: 16 Material Symbols (Rounded, filled, Apache-2.0) as `res/drawable/app_glyph_<key>.xml`, each with its
+  "Converted from" line, and `appdisplay/AppGlyphs.kt` (icon -> drawable, colour -> seed + tile), both generated by
+  `scripts/material-symbols.sh` (root) from `server/testdata/app_icons.json` - the test copy in
+  `src/test/resources/` must be identical (`AppGlyphsTest`, which also checks `tileColor(seed) == tile`). The
+  Apache-2.0 text is `assets/licenses/Apache-2.0.txt`, shown on the licences screen (`LegalInfoActivity`).
+- **Not device-tested**: the checks in the 14 doc ("Implementation status").
 
 ## Building without tsnet.aar
 

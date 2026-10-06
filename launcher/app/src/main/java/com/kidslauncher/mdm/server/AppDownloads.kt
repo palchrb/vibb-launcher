@@ -86,6 +86,16 @@ object AppDownloadStore {
         return record
     }
 
+    /** Reads, changes and writes the records in one step under the lock (qa-13-code #3): a runner
+     * step can't land between the read and the write and be overwritten. */
+    @Synchronized
+    fun mutate(context: Context, transform: (List<DownloadRecord>) -> List<DownloadRecord>): List<DownloadRecord> {
+        val before = load(context)
+        val after = transform(before)
+        if (after != before) save(context, after)
+        return after
+    }
+
     /** Drops [appId]'s record ([tag] `null` = whichever release it is for). */
     @Synchronized
     fun remove(context: Context, appId: Long, tag: String? = null) {
@@ -209,9 +219,17 @@ object AppDownloads {
      * that drops a release because the list no longer has it), then the files are swept. */
     fun reconcile(context: Context, wanted: List<WantedDownload>) {
         val app = context.applicationContext
-        val before = AppDownloadStore.load(app)
-        val after = reconcileRecords(before, wanted, System.currentTimeMillis())
-        if (after != before) AppDownloadStore.save(app, after)
+        AppDownloadStore.mutate(app) { current ->
+            // The install state as it is now, under the lock - not the sync's earlier snapshot: a
+            // release the runner committed or handed over meanwhile is not wanted again (qa-13-code #3).
+            val now = System.currentTimeMillis()
+            val state = TrackedAppUpdateState.load()
+            val pendingTag = TrackedAppUpdateState.pendingEntry()?.second?.releaseTag
+            val still = wanted.filter {
+                releaseStillWanted(it.tag, it.isLauncher, state[it.appId.toString()], pendingTag, now, INSTALL_ATTEMPT_TIMEOUT_MS)
+            }
+            reconcileRecords(current, still, now)
+        }
         sweepFiles(app)
         sweepLegacy(app)
         // The switch may have just come on while a download runs on mobile data.
@@ -222,10 +240,10 @@ object AppDownloads {
      * without a record, the old cache files. */
     fun sweepWithoutList(context: Context) {
         val app = context.applicationContext
-        val records = AppDownloadStore.load(app)
-        val installedTags = TrackedAppUpdateState.load().mapNotNull { (key, state) -> key.toLongOrNull()?.let { it to state.lastInstalledTag } }.toMap()
-        val installed = installedRecords(records, installedTags)
-        if (installed.isNotEmpty()) AppDownloadStore.save(app, records - installed.toSet())
+        AppDownloadStore.mutate(app) { records ->
+            val installedTags = TrackedAppUpdateState.load().mapNotNull { (key, state) -> key.toLongOrNull()?.let { it to state.lastInstalledTag } }.toMap()
+            records - installedRecords(records, installedTags).toSet()
+        }
         sweepFiles(app)
         sweepLegacy(app)
     }
@@ -371,6 +389,7 @@ object AppDownloads {
         Log.i(LOG_TAG, "Downloads ($reason)")
         var failures = 0
         var steps = 0
+        var rechecks = 0
         try {
             while (true) {
                 synchronized(this) { again = false }
@@ -393,7 +412,21 @@ object AppDownloads {
                 val next = downloadOrder(records).firstOrNull { gates[it.appId] == DownloadGate.GO }
                 anyGoLast = next != null
                 if (next == null) {
+                    // A network that began to qualify after the caps were read left the callback no
+                    // edge (qa-13-code #6): look once more now that anyGoLast says "none".
+                    val again = currentCaps(app)
+                    if (again != caps && rechecks++ < 3 && records.any {
+                            downloadGate(again, wifiOnly, anyNetworkAtMs(it.isLauncher, it.firstSeenMs), now, 0, null, null) == DownloadGate.GO
+                        }
+                    ) {
+                        continue
+                    }
                     Log.i(LOG_TAG, "Waiting: " + records.joinToString { "${it.name} ${gates[it.appId]?.wire}" })
+                    break
+                }
+                if (selfUpdateCommittingNow()) {
+                    // Our own update is going in: this process ends soon; the next one carries on.
+                    Log.i(LOG_TAG, "Our own update is being committed - downloads wait for the next process")
                     break
                 }
                 if (++steps > MAX_STEPS_PER_RUN) {
@@ -440,6 +473,15 @@ object AppDownloads {
         val token = mdm.deviceToken()
         if (serverUrl.isNullOrBlank() || token.isNullOrBlank()) return Outcome.STOP
         val file = partial(app, record)
+        // The install state may have moved since the sync queued this (qa-13-code #3).
+        val state = TrackedAppUpdateState.load()
+        val pendingTag = TrackedAppUpdateState.pendingEntry()?.second?.releaseTag
+        if (!releaseStillWanted(record.tag, record.isLauncher, state[record.appId.toString()], pendingTag, System.currentTimeMillis(), INSTALL_ATTEMPT_TIMEOUT_MS)) {
+            Log.i(LOG_TAG, "${record.name} ${record.tag} is installed, refused or installing - dropping the download")
+            AppDownloadStore.remove(app, record.appId, record.tag)
+            file.delete()
+            return Outcome.PROGRESS
+        }
         val current = Active(record, file.name)
         active = current
         try {
@@ -486,6 +528,8 @@ object AppDownloads {
                     Log.w(LOG_TAG, "${rec.name}: 404 - dropping the download")
                     drop(app, rec, file)
                     TrackedAppUpdateState.recordFailed(app, rec.appId.toString(), rec.tag)
+                    // The server's 404 also means "ask for the list again" (qa-13-code #4).
+                    relist(app)
                     return Outcome.PROGRESS
                 }
                 ResumeAction.RETRY -> {
@@ -620,7 +664,8 @@ object AppDownloads {
         }
         if (rec.sha256 != null && !sha256.equals(rec.sha256, ignoreCase = true)) {
             file.delete()
-            val failures = rec.hashFailures + 1
+            // Counted per release, across records and backoffs (qa-13-code #4).
+            val failures = TrackedAppUpdateState.recordHashMismatch(app, rec.appId.toString(), rec.tag)
             if (failures >= MAX_HASH_FAILURES) {
                 Log.w(LOG_TAG, "${rec.name}: the download failed its hash again - waiting out the backoff")
                 AppDownloadStore.remove(app, rec.appId, rec.tag)
@@ -628,10 +673,13 @@ object AppDownloads {
                 notifyAppInstallResult(app, rec.appId, rec.name, success = false)
                 reportFailure(api, rec.appId)
             } else {
-                // Not installed, no backoff: downloaded again at once (design 13 QA #2).
+                // Not installed, no backoff: downloaded again at once (design 13 QA #2) - with the
+                // list asked again first, so a re-upload under the same label brings its own hash
+                // (qa-13-code #4).
                 Log.w(LOG_TAG, "${rec.name}: the download doesn't match the server's hash - starting over")
-                AppDownloadStore.update(app, rec.copy(etag = null, total = null, hashFailures = failures))
+                AppDownloadStore.update(app, rec.copy(etag = null, total = null))
                 notifyAppInstallResult(app, rec.appId, rec.name, success = true)
+                relist(app)
             }
             return Outcome.PROGRESS
         }
@@ -642,7 +690,7 @@ object AppDownloads {
         val key = rec.appId.toString()
         current.installing = true
         val started = installMutex.withLock {
-            if (SelfUpdate.committedInThisProcess) return@withLock null
+            if (selfUpdateCommittingNow()) return@withLock null
             // In flight from the commit until AppInstallReceiver's result (design 13 §4).
             TrackedAppUpdateState.recordAttemptStarted(app, key)
             notifyAppInstalling(app, rec.appId, rec.name)
@@ -661,9 +709,9 @@ object AppDownloads {
                 Outcome.PROGRESS
             }
             InstallStart.FAILED, InstallStart.DEFERRED -> {
-                // The install couldn't start (installSilently deleted the file): the next sync
-                // downloads it again.
-                TrackedAppUpdateState.clearAttempt(app, key)
+                // The install couldn't start (installSilently deleted the file): the hourly backoff
+                // of a failed release, then a new download - not one per sync (qa-13-code #2).
+                TrackedAppUpdateState.recordFailed(app, key, rec.tag)
                 AppDownloadStore.remove(app, rec.appId, rec.tag)
                 notifyAppInstallResult(app, rec.appId, rec.name, success = false)
                 reportFailure(api, rec.appId)
@@ -696,6 +744,15 @@ object AppDownloads {
         Log.i(LOG_TAG, "Downloaded launcher ${rec.tag} - waiting for the update window")
         SelfUpdate.onPendingStored(app)
         return Outcome.PROGRESS
+    }
+
+    /** Our own update's commit may be running in this process (qa-13-code #1): the flag alone stays
+     * set after a failed commit whose result came back here; the launcher's attempt doesn't. */
+    private fun selfUpdateCommittingNow(): Boolean {
+        if (!SelfUpdate.committedInThisProcess) return false
+        val launcherKey = TrackedAppUpdateState.pendingEntry()?.first
+        val attempt = launcherKey?.let { TrackedAppUpdateState.load()[it]?.attemptStartedAtMs }
+        return selfUpdateCommitting(true, attempt, System.currentTimeMillis(), INSTALL_ATTEMPT_TIMEOUT_MS)
     }
 
     private fun drop(app: Context, rec: DownloadRecord, file: File) {

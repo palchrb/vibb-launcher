@@ -241,7 +241,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - `GET /api/devices/wallpapers/{hash}` (bearer) - a wallpaper image, only when ticked for this device
 - `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204
 - `POST /api/devices/dns-events` (bearer) - blocked domains, stored only while the phone's log is on (default off) -> 204
-- `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download; the check is scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above. The download itself isn't scoped yet (any enrolled phone, any catalog id; `docs/design/13-app-downloads.md`)
+- `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download, both scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above; the download is resumable (`Range`/`If-Match`, `X-Release-Tag`; "App downloads" below)
 
 ## Architecture change in progress (2026-08-07): on-device DNS filtering + embedded tsnet
 
@@ -351,6 +351,31 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - Tests: `app_downloads::tests`, `src/tests/tracked_apps.rs` (`downloads_resume_with_range_and_if_match`,
   `only_this_devices_apps_download`, `the_list_carries_each_files_hash`, `the_app_update_switch_saves_and_reaches_the_phone`,
   `app_downloads_are_stored_and_shown`).
+
+## App names and icons (design 14, `docs/design/14-app-display.md`, migration `0044_app_display.sql`)
+
+- **Two levels**: a catalog default (`tracked_apps.display_label/display_icon/display_color`, by the row's package
+  name; the catalog's admin name is never used) and a per-phone row (`device_app_display`, PK device + package,
+  cascades with the device, <= 200 per phone) that replaces the default **as a whole** - also for Play and
+  preinstalled apps outside the catalog. A phone row with neither label nor icon = "the app's own" there; it is kept
+  only while a default exists. Saving exactly the default, or "own" without one, keeps no row.
+- **Wire**: `launcher_ui.app_display` - always a list (`policy_json_keys_snapshot`), `{package_name, label|null,
+  icon|null, color}` resolved per phone (`app_display::policy_app_display`): unknown icons left out, unknown colours
+  `auto`, entries with nothing left dropped; a failing query sends `[]` and logs (cosmetic, like wallpapers).
+- **Forms** (`partials/app_display_form.html`, `AppDisplayForm`): every allowed app with a valid package (not the
+  launcher) on the device page's Apps card (`POST /devices/{id}/apps/display`, `action` save/own/catalog, back to
+  `#app-<package>`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `#display`, nudges every
+  phone). Validation (`app_display::validate`): label trimmed, 1-20 chars (`chars().count()`), no control chars;
+  icon empty or known; colour `auto` or known; package per Android's grammar, never Play core. Refused: 400 with the
+  device/catalog page, that form open, the values kept, the error by the field and that field `autofocus`ed (the
+  POST path differs, so scroll-restore can't help - the focus keeps the place). `static/app-display.js` previews
+  live (the tile in the phone's resolved colour; `auto` previews grey).
+- **Icons and colours**: `testdata/app_icons.json` (16 Material Symbols, 6 colours with seed **and** the launcher's
+  `tileColor` result), byte-identical to the launcher's test copy; `scripts/material-symbols.sh` (root) fetches the
+  SVGs at a pinned commit with SHA-256s and writes `static/app-icons/<key>.svg` + `LICENSE.txt` (Apache-2.0), the
+  launcher's vectors and both tables (`src/app_icons.rs`, generated, rustfmt-clean - don't edit). Tests check the
+  table against the JSON, a glyph per icon with its "Converted from" line, and white >= 3:1 on every tile.
+- Tests: `app_display::tests`, `src/tests/app_display.rs`.
 
 ## Current status (2026-08-08, `v0.13.0`)
 

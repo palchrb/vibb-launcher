@@ -161,8 +161,8 @@ class PolicyResponseCompatTest {
         )
         val policy = (decodeCached(good) as CachedPolicy.Ok).policy
         assertEquals(
-            mapOf("io.element.android.x" to com.kidslauncher.mdm.apps.AppDisplayEntry("Chat", "chat", "peach")),
-            com.kidslauncher.mdm.apps.appDisplayMap(policy.launcherUi!!.appDisplay),
+            mapOf("io.element.android.x" to com.kidslauncher.mdm.appdisplay.AppDisplayEntry("Chat", "chat", "peach")),
+            com.kidslauncher.mdm.appdisplay.appDisplayMap(policy.launcherUi!!.appDisplay),
         )
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
         for (display in listOf(
@@ -178,8 +178,8 @@ class PolicyResponseCompatTest {
         }
         val unknownIcon = (decodeCached(withDisplay("""[{"package_name": "io.element.android.x", "label": "Chat", "icon": "rocket"}]""")) as CachedPolicy.Ok).policy
         assertEquals(
-            com.kidslauncher.mdm.apps.AppDisplayEntry("Chat", null),
-            com.kidslauncher.mdm.apps.appDisplayMap(unknownIcon.launcherUi!!.appDisplay)["io.element.android.x"],
+            com.kidslauncher.mdm.appdisplay.AppDisplayEntry("Chat", null),
+            com.kidslauncher.mdm.appdisplay.appDisplayMap(unknownIcon.launcherUi!!.appDisplay)["io.element.android.x"],
         )
         // An older server: no app_display.
         assertNull((decodeCached(withDisplay("[]").replace(", \"app_display\": []", "")) as CachedPolicy.Ok).policy.launcherUi!!.appDisplay)
@@ -415,15 +415,13 @@ class PolicyResponseCompatTest {
             lockReason = "NONE", kioskEngaged = true,
             lockState = com.kidslauncher.mdm.server.dto.LockStateReport(
                 active = true, inactive = null, locked = true, failures = 5, backoffUntilMs = 1L, exemptYields = 2,
-                voipFsiDenied = emptyList(),
             ),
         )
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
         assertEquals(
-            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields", "voip_fsi_denied"),
+            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields"),
             json["lock_state"]!!.jsonObject.keys,
         )
-        assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
         val failed = CallState(
             state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, defaultDialer = null, systemDialer = null,
             smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,

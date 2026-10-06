@@ -115,7 +115,8 @@ green at `4c8015db` (588 unit tests, 20 new). Not run on a device or the emulato
 | Part | Commit | What |
 |---|---|---|
 | S + L | `4c8015db` | S: migration `0043_app_downloads.sql`; `device_api::scoped_apps` (list and download), `ServeFile` download with `X-Release-Tag` (`release_tag_header`); `latest_release_sha256` from `stream_to_file`/upload, `backfill_release_hashes` at startup; `src/app_downloads.rs` (status sanitizing, the device page's labels); the Apps card switch (`POST /devices/{id}/app-updates`). L: `setMetered(false)` (`VpnMeteredInvariantTest`); pure `server/AppDownloadPlan.kt` (`AppDownloadPlanTest`); `server/AppDownloads.kt` (runner, `AppDownloadStore`); the sync lists and queues; `installMutex`; DTOs (`appUpdatesWifiOnly`, `TrackedAppUpdate.sha256`, `AppDownloadsReport`); `PolicyResponseCompatTest`, `policy_json_keys_snapshot` |
-| docs | (this commit) | this section, `launcher/CLAUDE.md`, `server/CLAUDE.md`, `docs/setup/google-account.md` §4 and §10 |
+| docs | `b4c673a1` | this section, `launcher/CLAUDE.md`, `server/CLAUDE.md`, `docs/setup/google-account.md` §4 and §10 |
+| L | (this commit) | the code review's findings (`qa-13-code.md`, all six fixed - see its "Fixes") |
 
 How the design, the QA findings and the decisions were met:
 - **§1** `KidVpnService`'s builder calls `setMetered(false)`; nothing sets the underlying networks. The gate reads

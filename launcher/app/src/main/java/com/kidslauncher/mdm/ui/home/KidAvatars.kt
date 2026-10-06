@@ -21,11 +21,11 @@ import androidx.palette.graphics.Palette
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractAppInfo
-import com.kidslauncher.mdm.apps.AppDisplay
-import com.kidslauncher.mdm.apps.AppDisplayEntry
-import com.kidslauncher.mdm.apps.AppGlyphs
+import com.kidslauncher.mdm.appdisplay.AppDisplay
+import com.kidslauncher.mdm.appdisplay.AppDisplayEntry
+import com.kidslauncher.mdm.appdisplay.AppGlyphs
 import com.kidslauncher.mdm.apps.AppInfo
-import com.kidslauncher.mdm.apps.appIconKey
+import com.kidslauncher.mdm.appdisplay.appIconKey
 import com.kidslauncher.mdm.calls.ContactPhotos
 import com.kidslauncher.mdm.calls.MissedSummary
 import com.kidslauncher.mdm.calls.RuleContact
