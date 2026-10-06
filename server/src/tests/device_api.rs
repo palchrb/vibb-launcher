@@ -416,6 +416,58 @@ async fn create_device_inserts_policy_row() {
     assert_eq!((devices, policies), (1, 1));
 }
 
+/// Kid Settings (Quick Controls): a new device starts with Wi-Fi, Bluetooth and brightness on,
+/// and its policy says so; a device that existed before keeps what it had.
+#[tokio::test]
+async fn a_new_device_starts_with_all_kid_settings_on() {
+    let app = TestApp::new().await;
+    let (existing, _) = app.create_device("old").await;
+    let response = crate::handlers::devices::create_device(
+        axum::extract::State(app.state.clone()),
+        axum::Form(crate::handlers::devices::CreateDeviceForm {
+            name: "new".to_string(),
+        }),
+    )
+    .await;
+    assert!(response.status().is_redirection());
+    let (id, code): (i64, String) =
+        sqlx::query_as("SELECT id, enrollment_code FROM devices WHERE name = 'new'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let mask = |device: i64| {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT quick_controls_mask FROM device_policy WHERE device_id = ?",
+        )
+        .bind(device)
+        .fetch_one(&app.db)
+    };
+    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4);
+    assert_eq!(
+        crate::handlers::devices::DEFAULT_QUICK_CONTROLS,
+        1 | 2 | 4,
+        "Wi-Fi, Bluetooth, brightness"
+    );
+    assert_eq!(mask(existing).await.unwrap(), 0);
+
+    let enrolled = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(serde_json::json!({ "enrollment_code": code })),
+        )
+        .await;
+    let token = enrolled.json()["device_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await;
+    assert_eq!(policy.json()["quick_controls_mask"], 7);
+}
+
 #[tokio::test]
 async fn failed_create_device_leaves_no_device_row() {
     let app = TestApp::new().await;

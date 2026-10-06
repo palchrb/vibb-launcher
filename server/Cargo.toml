@@ -21,6 +21,8 @@ hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 pbkdf2 = "0.12"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# Tracked apps (handlers/tracked_apps.rs): an asset filter starting with "^" is a regular expression.
+regex = "1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json"] }
 ring = "0.17.14"
 # Not used directly (dns_engine.rs no longer runs a live TLS/DoT listener) - still a direct
@@ -46,6 +48,9 @@ tower-http = { version = "0.7.0", features = ["fs", "set-header"] }
 tower-sessions = "0.14"
 tower-sessions-sqlx-store = { version = "0.15.0", features = ["sqlite"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+# The device API streams a cached APK from disk (ReaderStream) instead of reading it into memory.
+# Already in the tree through tower-http's "fs" feature.
+tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

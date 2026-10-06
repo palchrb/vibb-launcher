@@ -323,6 +323,22 @@ pub struct TrackedApp {
     /// is the launcher itself, which can't be deleted or deselected on any
     /// device.
     pub is_launcher: bool,
+    /// The cached release's file: the asset's name and size in bytes (migration 0042). `None` on
+    /// a row last synced before that migration.
+    pub latest_release_asset_name: Option<String>,
+    pub latest_release_asset_size: Option<i64>,
+}
+
+impl TrackedApp {
+    /// "202609040.apk (326.0 MB)" for the status card, or `None` before the first sync that
+    /// recorded it.
+    pub fn asset_label(&self) -> Option<String> {
+        let name = self.latest_release_asset_name.as_deref()?;
+        Some(match self.latest_release_asset_size {
+            Some(bytes) => format!("{name} ({:.1} MB)", bytes as f64 / 1_000_000.0),
+            None => name.to_string(),
+        })
+    }
 }
 
 /// Singleton row (id always 1) - see migrations/0009_dns_filter.sql.

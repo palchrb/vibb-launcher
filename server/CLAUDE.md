@@ -295,6 +295,26 @@ overwritten. So is the MollySocket installer (`deploy/install_mollysocket.sh`) a
 distributor it relied on (DEPLOY.md has the removal steps for an existing MollySocket). Principle: collect only what's
 needed to manage the phone, delete on a schedule, never store notification or message content.
 
+## Catalog downloads (2026-10-06, `handlers/tracked_apps.rs`, migration `0042_tracked_app_asset.sql`)
+
+- **Asset filter**: blank = first `.apk`; a pattern starting with `^` is a regular expression on the asset name
+  (`regex` crate, `AssetFilter`), e.g. `^\d+\.apk$` for Element X's universal APK (named after its versionCode); any
+  other pattern is a substring, as before. The add and edit forms refuse an invalid regex (400, nothing written, the
+  entered values kept, the error by the field and that field `autofocus`ed; the add form posts to its own path).
+- **Status card** shows the cached file, "202609040.apk (326.1 MB)" (`tracked_apps.latest_release_asset_name`/`_size`,
+  set by a sync or an upload; rows synced earlier show nothing until the next sync).
+- **Sync download** is streamed to `<file>.<random>.part` in the app's dir and renamed when complete (ZIP header and
+  GitHub's size checked as it streams); the temp file goes on any failure, also when the future is dropped
+  (`TempDownload`'s `Drop`), and `.part` files untouched for 2 h (a crash) after the next successful sync. Limits: an
+  asset GitHub lists over 1 GB is refused before downloading (also a larger Content-Length, or once the stream passes
+  1 GB), 60 s without data fails, 30 min overall. "Check now" runs the sync in its own task, so a download finishes
+  even when the browser gives up.
+- **Device API** `GET /api/devices/apps/{id}/download` streams the file from disk (64 KiB chunks) with
+  `Content-Type` and `Content-Length` as before (the launcher's progress needs the length); no Range support.
+- New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth and brightness on
+  (`devices::DEFAULT_QUICK_CONTROLS`, mask 7, set in `insert_device_with_policy`); existing devices keep theirs.
+- Tests: `tracked_apps::tests`, `src/tests/tracked_apps.rs`, `a_new_device_starts_with_all_kid_settings_on`.
+
 ## Current status (2026-08-08, `v0.13.0`)
 
 Feature-complete relative to the original build plan and confirmed working end-to-end on both physical test phones (Pixel 4a 5G GrapheneOS, Moto G Play), not just built-and-reviewed: enrollment (now defaulting a new device to kiosk mode on, see below), allowlist, kiosk mode + full lock-task feature set, schedule (with working clear), WiFi/Bluetooth restrictions, offline override PIN, Settings PIN-gate, pause-all-restrictions kill-switch, mandatory 2FA admin login, scheduled backups + external-drive support, self-update, on-device DNS/content filtering (the old live-DNS-server/DoT-to-Pi approach fully retired - see the Phase A-E writeup above), Find My Device (locate/ring/lock/wipe/stop_ring + SSE instant push), and the Apps catalog with per-device install scoping.

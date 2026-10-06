@@ -13,6 +13,7 @@ mod step10;
 mod step11;
 mod step9;
 mod time_rules;
+mod tracked_apps;
 mod wallpapers;
 
 use axum::Router;

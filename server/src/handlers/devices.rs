@@ -119,11 +119,15 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
 
     // Kiosk mode on, with the full always-on feature set, for every device - see
     // `update_policy` and this repo's CLAUDE.md (`kiosk_desired` is no longer admin-configurable).
+    // Kid Settings (the Quick Controls screen) starts with Wi-Fi, Bluetooth and brightness on;
+    // devices created before 2026-10-06 keep the column default (none).
     sqlx::query(
-        "INSERT INTO device_policy (device_id, kiosk_desired, lock_task_features) VALUES (?, 1, ?)",
+        "INSERT INTO device_policy (device_id, kiosk_desired, lock_task_features, \
+         quick_controls_mask) VALUES (?, 1, ?, ?)",
     )
     .bind(id)
     .bind(DEFAULT_LOCK_TASK_FEATURES)
+    .bind(DEFAULT_QUICK_CONTROLS)
     .execute(&mut *tx)
     .await?;
 
@@ -214,6 +218,9 @@ const DEFAULT_LOCK_TASK_FEATURES: i64 = LOCK_FEATURE_SYSTEM_INFO
 const QUICK_CONTROL_WIFI: i64 = 1;
 const QUICK_CONTROL_BLUETOOTH: i64 = 2;
 const QUICK_CONTROL_BRIGHTNESS: i64 = 4;
+/// A new device's `quick_controls_mask`: all three switches on (`insert_device_with_policy`).
+pub(crate) const DEFAULT_QUICK_CONTROLS: i64 =
+    QUICK_CONTROL_WIFI | QUICK_CONTROL_BLUETOOTH | QUICK_CONTROL_BRIGHTNESS;
 
 #[derive(Template)]
 #[template(path = "device_detail.html")]

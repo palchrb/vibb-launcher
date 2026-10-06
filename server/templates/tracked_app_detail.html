@@ -22,15 +22,19 @@
         <h2>Details</h2>
         <form method="post" action="/apps/tracked/{{ app.id }}/edit">
             <label for="name">Name</label>
-            <input type="text" id="name" name="name" value="{{ app.name }}" required>
+            <input type="text" id="name" name="name" value="{{ details.name }}" required>
 
             {% if app.source_type == "github" %}
             <label for="github_repo">GitHub repo</label>
-            <input type="text" id="github_repo" name="github_repo" value="{{ app.github_repo }}" placeholder="e.g. tailscale/tailscale-android">
+            <input type="text" id="github_repo" name="github_repo" value="{{ details.github_repo }}" placeholder="e.g. tailscale/tailscale-android">
             <p class="hint">Paste the repo URL, its Releases page, or just "owner/repo" - any of those work.</p>
 
             <label for="asset_pattern">Asset filename filter (optional)</label>
-            <input type="text" id="asset_pattern" name="asset_pattern" value="{% if let Some(p) = app.asset_pattern %}{{ p }}{% endif %}" placeholder="Leave blank to use the first .apk found">
+            {% if let Some(e) = details.error %}
+            <div class="error">{{ e }}</div>
+            {% endif %}
+            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ details.asset_pattern }}" placeholder="Leave blank to use the first .apk found"{% if details.error.is_some() %} autofocus{% endif %}>
+            <p class="hint">Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$)</p>
             {% endif %}
 
             <button type="submit">Save</button>
@@ -46,6 +50,9 @@
         {% endif %}
         {% if let Some(tag) = app.latest_release_tag %}
         <p>Current synced release: <strong>{{ tag }}</strong></p>
+        {% if let Some(file) = app.asset_label() %}
+        <p>File: <strong>{{ file }}</strong></p>
+        {% endif %}
         {% else %}
         <p class="subtitle">No release synced yet.</p>
         {% endif %}

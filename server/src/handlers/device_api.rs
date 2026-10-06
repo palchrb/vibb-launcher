@@ -1037,17 +1037,30 @@ pub async fn tracked_app_download(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    match tokio::fs::read(&file_path).await {
-        Ok(bytes) => (
-            [(
+    // Streamed from disk in 64 KiB chunks, never read into memory whole (a catalog APK can be
+    // hundreds of MB). The open handle keeps serving this file even if a sync replaces it
+    // meanwhile. Content-Length is set from the file, as before: the launcher's progress reports
+    // need it. No Range support (the launcher never sends one), so always the whole file.
+    let Ok(file) = tokio::fs::File::open(&file_path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(metadata) = file.metadata().await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    (
+        [
+            (
                 header::CONTENT_TYPE,
-                "application/vnd.android.package-archive",
-            )],
-            bytes,
-        )
-            .into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
+                header::HeaderValue::from_static("application/vnd.android.package-archive"),
+            ),
+            (
+                header::CONTENT_LENGTH,
+                header::HeaderValue::from(metadata.len()),
+            ),
+        ],
+        axum::body::Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file, 64 * 1024)),
+    )
+        .into_response()
 }
 
 /// A contact photo by its hash (`call_policy.contacts[].photo`). Only for a contact on the
