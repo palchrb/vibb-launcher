@@ -15,7 +15,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   `kid-phone-server` = `server/`, `L` = `kids-launcher-mdm` = `launcher/`, "branch `handy`" = what is
   now `master` here. `docs/testing/emulator.md` - the emulator test loop.
 - `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
-  `push-all.sh` (push the current branch).
+  `push-all.sh` (push the current branch), `smoke-test.sh` (adb/emulator-console smoke test of lock and
+  calls, remote-capable; `docs/testing/emulator.md` §5b).
 - `PLAN.md` - the plan and status.
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.

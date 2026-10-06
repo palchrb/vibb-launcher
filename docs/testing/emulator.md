@@ -92,6 +92,43 @@ SMS (emulator console): `adb emu sms send <number> <text>`, e.g.
 Step 9 keeps SMS **on/off only** (the SMS allowlist, part A, is postponed): with SMS off on the
 calls page nothing arrives (`DISALLOW_SMS`); with SMS on Messages shows every message.
 
+## 5b. Smoke-test script
+
+`scripts/smoke-test.sh` runs the call and lock basics below in about two minutes - after every change and
+before allowing an Android update. It needs adb and the emulator console (for `gsm call`/`gsm cancel`), and
+works against a remote adb server:
+
+```sh
+# On the VM itself (adb and the console are local; the console token is read from ~/.emulator_console_auth_token):
+KID_PIN=1234 ./scripts/smoke-test.sh
+# From another machine, with the adb server and the emulator on host "vm" (adb server listening: `adb -a nodaemon server`
+# on the VM, or an SSH tunnel for ports 5037 and 5554):
+ADB="adb -H vm -P 5037" CONSOLE_HOST=vm CONSOLE_PORT=5554 \
+  CONSOLE_TOKEN="$(ssh vm cat .emulator_console_auth_token)" KID_PIN=1234 ./scripts/smoke-test.sh
+```
+
+Setup in the PWA first: phone enrolled, calls managed and on, `ALLOWED_NUMBER` (default `+4791234567`) a contact
+allowed in and out, `UNKNOWN_NUMBER` (default `+4799999999`) no contact, a kid PIN (`KID_PIN`). Other variables:
+`PKG` (default `me.vibb.launcher.debug`), `ALLOWED_DIAL` (the contact in national form, default the number without
+`+47`), `OUT_DIR` (screenshots, default `./smoke-<date>`), `EXPECT_KIOSK=0` for a phone with the kiosk off,
+`STRICT=1` to fail on skipped checks.
+
+What it checks, each a PASS/FAIL line (SKIP without a PIN or console), summary at the end, exit 1 on a FAIL:
+- adb reaches the phone, the package is installed and device owner, lock task is engaged (kiosk);
+- screen off/on (`KEYCODE_SLEEP`/`KEYCODE_WAKEUP`) shows the PIN lock;
+- an incoming call from the allowed contact rings over the lock (Telecom's `FILTERING_COMPLETED` not a reject, our
+  call screen in front), is answered (`KEYCODE_CALL`, else the Answer button), and after `gsm cancel` the call
+  notification (id 1005) is gone and the PIN lock is back;
+- an unknown number is screened out (`FILTERING_COMPLETED ... Reject` or our "Rejecting an incoming call"), no call
+  screen;
+- the PIN unlocks (keypad keys tapped through `uiautomator dump`);
+- an outgoing call to the unknown number is stopped (never reaches the modem, `gsm list`); one to the contact typed
+  in national form is placed as the stored E.164 number (redirection); a second call meanwhile is cancelled (one
+  call at a time); after hang-up the notification and the call screen are gone.
+
+Screenshots of every step go into `OUT_DIR` (the lock screen may be black if it is secure). **It never places an
+emergency call** - it prints that manual step at the end.
+
 ## 6. What to check first (smoke)
 
 1. Phone boots to our Home; reboot → no lockout, Home comes back after unlock.
@@ -272,9 +309,9 @@ Camera lock follow-ups (qa-11b-code #5, after the fixes of #1-#4):
 - [ ] **Lock switched off while LOCKED**: with the screen off, remove the kid PIN on the device page (sync), or set
   an Android PIN (`adb shell locksettings set-pin 1234`) -> the camera is unsuspended without an unlock (logcat
   `CameraLock` "Unlocked: camera apps unsuspended"); `locksettings clear --old 1234` afterwards.
-- [ ] **Sync during the unlock**: type the PIN while a sync runs (`adb shell am broadcast` nothing needed - press
-  "Sync now"/send a nudge from the device page right before) -> the camera stays usable after the unlock (no
-  "app paused" dialog when opened; `suspended=false`).
+- [ ] **Sync during the unlock**: save something on the device page (it nudges the phone) and type the PIN right
+  away, while that sync runs -> the camera stays usable after the unlock (no "app paused" dialog when opened;
+  `suspended=false`).
 - [ ] **Home keeps the camera tile**: camera allowlisted, note the grid; screen off/on and unlock 5x -> the camera
   tile never disappears or moves and the grid doesn't reload (logcat: no "loadApps" burst at screen-off/unlock).
 - [ ] **What shows instead of the camera**: kiosk on and off, LOCKED, double-press power and `adb shell am start -a
