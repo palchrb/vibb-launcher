@@ -13,9 +13,9 @@
 # from an allowed contact (rings, answerable over the lock) vs an unknown number (screened out by
 # our screening service: Telecom's FILTERING_COMPLETED or our log, after the step started);
 # outgoing calls to an unknown number (cancelled - Telecom's "Canceled from Call Redirection
-# Service" or our log line) vs the contact typed in national form (redirected to the stored E.164
-# number); one call at a time (our "second call" log line); the call notification and call screen
-# gone after hang-up. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
+# Service" or our log line) vs the contact typed in national form (redirected - our log line - and
+# dialled); one call at a time (our "second call" log line, during the answered incoming call); the
+# call notification and call screen gone after hang-up. Call state comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
 # end (exit 1 on any FAIL, also on SKIP with STRICT=1).
 #
 # Setup (the PWA): the phone enrolled and managed, calls managed and on, ALLOWED_NUMBER a contact
@@ -176,7 +176,7 @@ console() {
         status=$?
     fi
     [ "$status" -eq 0 ] || return 1
-    if printf '%s\n' "$reply" | grep -q -i -e '^KO' -e '^error'; then
+    if grep -q -i -e '^KO' -e '^error' <<<"$reply"; then
         printf '%s\n' "$reply" | grep -i -e '^KO' -e '^error' >&2
         return 1
     fi
@@ -185,10 +185,31 @@ console() {
     printf '%s\n' "$reply" | grep -v -e '^OK' -e '^Android Console' -e '^Documentation' -e "^'" -e '^[[:space:]]*$' || true
 }
 
-gsm_list() { console gsm list; }
-has_call() { gsm_list | grep -q -- "${1#+}"; }
-no_call() { ! has_call "$1"; }
-call_state_is() { gsm_list | grep -- "${1#+}" | grep -q "$2"; }
+# Calls as Telecom sees them (`dumpsys telecom`, mCalls) - the console's `gsm list` stays empty on
+# the Android 16 emulator's modem simulator, so it is never used. Telecom redacts the numbers; the
+# ringing caller's number comes from telephony.registry.
+LIVE_STATES='NEW|CONNECTING|SELECT_PHONE_ACCOUNT|DIALING|RINGING|ACTIVE|ON_HOLD|ANSWERED|AUDIO_PROCESSING|SIMULATED_RINGING|PULLING'
+#
+# With pipefail, a reader that stops early (`grep -q`, `grep -m1`, awk's exit) can fail the whole
+# pipeline through the writer's SIGPIPE although it matched - so every check below greps a captured
+# string (here-string), never a live `adb shell` stream.
+call_states() {
+    local dump
+    dump="$(sh_ dumpsys telecom)"
+    awk '/^  mCalls:/ { f = 1; next } f && /^    \[Call id=/ { print; next } { f = 0 }' <<<"$dump" |
+        grep -o 'state=[A-Z_]*' | cut -d= -f2
+    return 0
+}
+calls_summary() { call_states | tr '\n' ' '; }
+live_calls() { grep -c -E "^($LIVE_STATES)$" <<<"$(call_states)" || true; }
+any_call() { [ "$(live_calls)" -gt 0 ]; }
+no_call() { ! any_call; }
+call_state_is() { grep -q -x -- "$1" <<<"$(call_states)"; }
+# ringing_from <E.164>: a call rings and Telephony names that number as the caller.
+ringing_from() {
+    call_state_is RINGING &&
+        grep -q -E -- "mCallIncomingNumber=\+?${1#+}([^0-9]|$)" <<<"$(sh_ dumpsys telephony.registry)"
+}
 
 # gsm_call / dial: start a call and remember it for the hang-up on exit.
 gsm_call() { PLACED+=("$1"); console gsm call "$1" >/dev/null; }
@@ -198,10 +219,10 @@ hang_up() { console gsm cancel "$1" >/dev/null 2>&1 || true; }
 # The EXIT trap: hang up everything this script started, then end whatever is left on the phone.
 hang_up_all() {
     [ "${#PLACED[@]}" -gt 0 ] || return 0
-    local number left
+    local number
     for number in "${PLACED[@]}"; do hang_up "$number"; done
-    left="$(gsm_list 2>/dev/null)" || left="unknown"
-    if [ -n "$left" ]; then
+    sleep 1
+    if any_call; then
         sh_ input keyevent KEYCODE_ENDCALL >/dev/null 2>&1 || true
         for number in "${PLACED[@]}"; do hang_up "$number"; done
     fi
@@ -215,17 +236,17 @@ top_activity() {
     sh_ dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' || true
 }
 # top_is <package/class>: exactly that component is the resumed activity.
-top_is() { top_activity | grep -q -F -- " $1 "; }
+top_is() { grep -q -F -- " $1 " <<<"$(top_activity)"; }
 top_is_not() { ! top_is "$1"; }
 lock_task_state() { sh_ dumpsys activity activities | grep -m1 -o 'mLockTaskModeState=[A-Z]*' | cut -d= -f2; }
 call_notification_shown() {
-    sh_ dumpsys notification --noredact | grep -q -E "key=[0-9]+\|$PKG\|$CALL_NOTIFICATION_ID\|"
+    grep -q -E "key=[0-9]+\|$PKG\|$CALL_NOTIFICATION_ID\|" <<<"$(sh_ dumpsys notification --noredact)"
 }
 call_notification_gone() { ! call_notification_shown; }
 # Logcat is cleared at the start of each call step, so everything below happened after it.
 logcat_clear() { adb_ logcat -c >/dev/null 2>&1 || true; }
 logcat_dump() { adb_ logcat -d -v brief 2>/dev/null | tr -d '\r'; }
-logcat_has() { logcat_dump | grep -q -E -- "$1"; }
+logcat_has() { grep -q -E -- "$1" <<<"$(logcat_dump)"; }
 
 # The last FILTERING_COMPLETED Telecom logged since the step's logcat_clear (no older history).
 filtering_result() { logcat_dump | grep 'FILTERING_COMPLETED' | tail -1; }
@@ -258,10 +279,10 @@ enter_pin() {
 
 answer() {
     sh_ input keyevent KEYCODE_CALL >/dev/null
-    if wait_for 4 call_state_is "$1" active; then return 0; fi
+    if wait_for 4 call_state_is ACTIVE; then return 0; fi
     ui_dump
     tap_node "resource-id=\"$PKG:id/in_call_answer\"" || return 1
-    wait_for 4 call_state_is "$1" active
+    wait_for 4 call_state_is ACTIVE
 }
 
 # ---- run --------------------------------------------------------------------------------------
@@ -293,7 +314,7 @@ if [ -n "$device_avd" ] && [ "$device_avd" != "$avd" ]; then
 fi
 pass "target is an emulator with a working console ($avd)"
 
-if sh_ pm list packages "$PKG" | grep -qx "package:$PKG"; then
+if grep -qx "package:$PKG" <<<"$(sh_ pm list packages "$PKG")"; then
     pass "$PKG is installed"
 else
     fail "$PKG is installed"
@@ -302,7 +323,7 @@ owner="$(sh_ dpm list-owners | grep -i 'DeviceOwner' | head -1)"
 if [ -z "$owner" ]; then
     owner="$(sh_ dumpsys device_policy | grep -A3 -i 'Device Owner' | grep -o 'ComponentInfo{[^}]*}' | head -1)"
 fi
-if printf '%s' "$owner" | grep -q -e "=$PKG/" -e "{$PKG/" -e " $PKG/"; then
+if grep -q -e "=$PKG/" -e "{$PKG/" -e " $PKG/" <<<"$owner"; then
     pass "device owner is $PKG"
 else
     fail "device owner is $PKG" "found '${owner:-none}'"
@@ -342,25 +363,41 @@ step "Incoming calls"
 # Allowed contact: Telecom's filter lets it ring, our call screen comes up (over the lock).
 logcat_clear
 gsm_call "$ALLOWED_NUMBER"
-if wait_for 8 call_state_is "$ALLOWED_NUMBER" incoming && wait_for 5 top_is "$CALL_ACTIVITY"; then
+if wait_for 8 ringing_from "$ALLOWED_NUMBER" && wait_for 5 top_is "$CALL_ACTIVITY"; then
     result="$(filtering_result)"
-    if printf '%s' "$result" | grep -q -E 'Reject|shouldReject *= *true'; then
+    if grep -q -E 'Reject|shouldReject *= *true' <<<"$result"; then
         fail "allowed contact rings on our call screen" "screened out: $result"
     else
         pass "allowed contact rings on our call screen${result:+ ($(printf '%s' "$result" | grep -o 'FILTERING_COMPLETED.*' | cut -c1-80))}"
     fi
 else
-    fail "allowed contact rings on our call screen" "calls: $(gsm_list | tr '\n' ' ') top: $(top_activity)"
+    fail "allowed contact rings on our call screen" "calls: $(calls_summary) top: $(top_activity)"
 fi
 shot incoming-allowed
-if answer "$ALLOWED_NUMBER"; then
+if answer; then
     pass "the call is answered"
+    shot in-call
+    # One call at a time: while this call is on, a second (otherwise allowed) outgoing call is
+    # cancelled - our log line is the evidence, and Telecom must still have one live call. (Tested
+    # on an incoming call: the emulator's modem simulator hangs up outgoing calls at once.)
+    logcat_clear
+    dial "$ALLOWED_NUMBER"
+    if wait_for 8 logcat_has 'second (outgoing )?call'; then
+        if [ "$(live_calls)" -le 1 ]; then
+            pass "one call at a time ($(logcat_dump | grep -m1 -o -E '(Cancelling|Disconnecting) a second.*'))"
+        else
+            fail "one call at a time" "logged, but Telecom has: $(calls_summary)"
+        fi
+    else
+        fail "one call at a time" "no 'second call' line logged; calls: $(calls_summary)"
+    fi
+    shot one-call
 else
-    fail "the call is answered" "calls: $(gsm_list | tr '\n' ' ')"
+    fail "the call is answered" "calls: $(calls_summary)"
+    skip "one call at a time" "the call wasn't answered"
 fi
-shot in-call
 hang_up "$ALLOWED_NUMBER"
-if wait_for 6 no_call "$ALLOWED_NUMBER" && wait_for 6 call_notification_gone; then
+if wait_for 6 no_call && wait_for 6 call_notification_gone; then
     pass "call notification cleared after hang-up"
 else
     fail "call notification cleared after hang-up"
@@ -382,12 +419,12 @@ wait_for 6 logcat_has 'FILTERING_COMPLETED|KidCallScreening.*Rejecting|KidInCall
 sleep 1
 result="$(filtering_result)"
 screening="$(logcat_dump | grep -m1 -E 'KidCallScreening.*Rejecting an incoming call')"
-if { printf '%s' "$result" | grep -q -E 'Reject|shouldReject *= *true'; } || [ -n "$screening" ]; then
+if grep -q -E 'Reject|shouldReject *= *true' <<<"$result" || [ -n "$screening" ]; then
     pass "unknown number screened out (${result:-$screening})"
 elif logcat_has 'KidInCallService.*Rejecting an incoming call'; then
     fail "unknown number screened out" "our screening didn't reject it (failed open?) - only the in-call service did"
 else
-    fail "unknown number screened out" "no reject logged; FILTERING_COMPLETED: ${result:-none}; calls: $(gsm_list | tr '\n' ' ')"
+    fail "unknown number screened out" "no reject logged; FILTERING_COMPLETED: ${result:-none}; calls: $(calls_summary)"
 fi
 if top_is "$CALL_ACTIVITY"; then
     fail "no call screen for the unknown number" "top: $(top_activity)"
@@ -413,61 +450,54 @@ BLOCKED_OUT='Canceled from Call Redirection Service|KidCallRedirection.*Cancelli
 logcat_clear
 dial "$UNKNOWN_NUMBER"
 if wait_for 8 logcat_has "$BLOCKED_OUT"; then
-    if has_call "$UNKNOWN_NUMBER"; then
-        fail "outgoing call to an unknown number is stopped" "logged as stopped but on the modem: $(gsm_list | tr '\n' ' ')"
-    else
+    if wait_for 3 no_call; then
         pass "outgoing call to an unknown number is stopped ($(logcat_dump | grep -m1 -o -E "$BLOCKED_OUT"))"
+    else
+        fail "outgoing call to an unknown number is stopped" "logged as stopped but Telecom has: $(calls_summary)"
     fi
 else
-    fail "outgoing call to an unknown number is stopped" "no cancel logged (call redirection didn't run?); calls: $(gsm_list | tr '\n' ' ')"
+    fail "outgoing call to an unknown number is stopped" "no cancel logged (call redirection didn't run?); calls: $(calls_summary)"
 fi
 hang_up "$UNKNOWN_NUMBER"
 shot outgoing-blocked
 sh_ input keyevent KEYCODE_HOME >/dev/null
 
-# Allowed contact typed in national form: redirected to the stored E.164 number.
+# Allowed contact typed in national form: redirected to the stored E.164 number (our log line - the
+# number itself is never logged; outgoingDialTarget is unit-tested) and dialled by Telecom. The
+# emulator's modem simulator hangs up outgoing calls at once (DisconnectCause REMOTE), so Telecom's
+# SET_DIALING in the log is the evidence that it was placed.
+if [ "$ALLOWED_DIAL" = "$ALLOWED_NUMBER" ]; then
+    PLACED_OUT='KidCallRedirection.*(Redirecting|Placing) an allowed outgoing call'
+else
+    PLACED_OUT='KidCallRedirection.*Redirecting an allowed outgoing call'
+fi
 logcat_clear
 dial "$ALLOWED_DIAL"
 PLACED+=("$ALLOWED_NUMBER")
-if wait_for 8 has_call "$ALLOWED_NUMBER"; then
-    pass "outgoing call to the contact ($ALLOWED_DIAL) is placed as $ALLOWED_NUMBER"
-    console gsm accept "$ALLOWED_NUMBER" >/dev/null 2>&1 || true
-    wait_for 4 call_state_is "$ALLOWED_NUMBER" active || true
-    shot outgoing-allowed
-
-    # One call at a time: a second call is cancelled while this one is on - our log line is the
-    # evidence, and the modem must still have one call.
-    logcat_clear
-    before="$(gsm_list | grep -c -E 'inbound|outbound')"
-    dial "$ALLOWED_NUMBER"
-    if wait_for 8 logcat_has 'second (outgoing )?call'; then
-        after="$(gsm_list | grep -c -E 'inbound|outbound')"
-        if [ "$after" -le "$before" ]; then
-            pass "one call at a time ($(logcat_dump | grep -m1 -o -E '(Cancelling|Disconnecting) a second.*'))"
-        else
-            fail "one call at a time" "logged, but the modem has: $(gsm_list | tr '\n' ' ')"
-        fi
+if wait_for 8 logcat_has "$PLACED_OUT" && wait_for 6 logcat_has 'SET_DIALING|SET_ACTIVE'; then
+    if logcat_has "$BLOCKED_OUT"; then
+        fail "outgoing call to the contact ($ALLOWED_DIAL) is redirected and dialled" "also cancelled: $(logcat_dump | grep -m1 -o -E "$BLOCKED_OUT")"
     else
-        fail "one call at a time" "no 'second call' line logged; calls: $(gsm_list | tr '\n' ' ')"
+        pass "outgoing call to the contact ($ALLOWED_DIAL) is redirected and dialled"
     fi
-    shot one-call
-    hang_up "$ALLOWED_NUMBER"
-    if wait_for 6 no_call "$ALLOWED_NUMBER" && wait_for 6 call_notification_gone; then
-        pass "call notification cleared after an outgoing call"
-    else
-        fail "call notification cleared after an outgoing call"
-    fi
-    if wait_for 6 top_is_not "$CALL_ACTIVITY"; then
-        pass "no call screen left after the call"
-    else
-        fail "no call screen left after the call" "top: $(top_activity)"
-    fi
-    shot after-outgoing
 else
-    fail "outgoing call to the contact ($ALLOWED_DIAL) is placed as $ALLOWED_NUMBER" \
-        "calls: $(gsm_list | tr '\n' ' ') log: $(logcat_dump | grep -m1 -E 'KidCallRedirection|KidInCallService')"
-    shot outgoing-allowed
+    fail "outgoing call to the contact ($ALLOWED_DIAL) is redirected and dialled" \
+        "calls: $(calls_summary) log: $(logcat_dump | grep -m1 -E 'KidCallRedirection|KidInCallService')"
 fi
+shot outgoing-allowed
+hang_up "$ALLOWED_NUMBER"
+if any_call; then sh_ input keyevent KEYCODE_ENDCALL >/dev/null; fi
+if wait_for 6 no_call && wait_for 6 call_notification_gone; then
+    pass "call notification cleared after an outgoing call"
+else
+    fail "call notification cleared after an outgoing call" "calls: $(calls_summary)"
+fi
+if wait_for 6 top_is_not "$CALL_ACTIVITY"; then
+    pass "no call screen left after the call"
+else
+    fail "no call screen left after the call" "top: $(top_activity)"
+fi
+shot after-outgoing
 
 echo
 echo "== Manual step (never automated): emergency call"

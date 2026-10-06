@@ -137,11 +137,17 @@ logged after the step started counts (logcat is cleared per step); silence is a 
   `KidCallScreening` "Rejecting an incoming call"; a reject only by the in-call service means screening failed
   open and is a FAIL), no call screen;
 - the PIN unlocks (keypad keys tapped through `uiautomator dump`);
+- while the answered call is on, a second (allowed) outgoing call logs our "second call" line and Telecom keeps one
+  live call (one call at a time - tested on the incoming call, since the emulator's modem simulator hangs up
+  outgoing calls at once with DisconnectCause REMOTE);
 - an outgoing call to the unknown number is stopped - Telecom's "Canceled from Call Redirection Service" or our
-  "Cancelling a not-allowed outgoing call" / "Disconnecting a not-allowed outgoing call", and nothing on the modem
-  (`gsm list`); one to the contact typed in national form is placed as the stored E.164 number (redirection); a
-  second call meanwhile logs our "second call" line and stays off the modem (one call at a time); after hang-up
-  the notification and the call screen are gone.
+  "Cancelling a not-allowed outgoing call" / "Disconnecting a not-allowed outgoing call", and no live call left;
+  one to the contact typed in national form logs our "Redirecting an allowed outgoing call" and Telecom's
+  `SET_DIALING` (the number is never logged; `outgoingDialTarget` is unit-tested); after hang-up the notification
+  and the call screen are gone.
+
+Call state comes from `dumpsys telecom` (mCalls) and the ringing number from `dumpsys telephony.registry`: the
+console's `gsm list` stays empty on the Android 16 emulator (modem simulator), and `gsm accept` finds no call.
 
 Screenshots of every step go into `OUT_DIR` (the lock screen may be black if it is secure). **It never places an
 emergency call** - it prints that manual step at the end.

@@ -46,13 +46,15 @@ class KidCallRedirectionService : CallRedirectionService() {
             if (state is CallPolicyState.Unmanaged) Verdict.ALLOW else Verdict.BLOCK
         }
         val redirectTo = target
+        // The log lines are evidence for the smoke test (scripts/smoke-test.sh) - no number in them.
         if (verdict == Verdict.ALLOW && redirectTo != null) {
             // Dial the number we checked, not the string typed (QA step 2 #6).
+            Log.i(LOG_TAG, "Redirecting an allowed outgoing call to the checked number")
             redirectCall(Uri.fromParts("tel", redirectTo, null), initialPhoneAccount, false)
         } else if (verdict == Verdict.ALLOW) {
+            Log.i(LOG_TAG, "Placing an allowed outgoing call unmodified")
             placeCallUnmodified()
         } else {
-            // Evidence for the smoke test (scripts/smoke-test.sh) - no number in the log.
             if (!busy) Log.i(LOG_TAG, "Cancelling a not-allowed outgoing call")
             cancelCall()
             Toast.makeText(applicationContext, if (busy) R.string.calls_busy else R.string.calls_not_allowed, Toast.LENGTH_LONG).show()
