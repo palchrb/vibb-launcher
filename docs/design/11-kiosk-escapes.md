@@ -118,3 +118,18 @@ Safety Center via the pinned PermissionController (needed for permission dialogs
   `BlockedAppActivity`. B4 PIN lock LOCKED: `cmd statusbar expand-notifications` does nothing. B5 after the listener rule: B2's
   notification gone ≤ 1 s, B1's nags gone, an allowed call / missed call / alarm notification stays.
 Questions: 1. Self-update only after ≥ 30 s screen-off (or only at night)? 2. Generic cancel rule (recommended) or a fixed list?
+
+## Decisions after QA review (qa-11-design.md), 2026-10-06
+
+All QA H/M findings are binding: the fence is recorded before it acts and released by one
+pure, idempotent check run at every process start, boot, install result, apply() and an alarm
+(our package replaced / session finished or gone / new boot), versioned so later builds can
+always release older fences; the fence is an input to LockTaskChrome (no cached status-bar
+state that skips re-enable); release as soon as our Home or lock is in front; apply() must not
+unsuspend fenced packages while the fence is active; the downloaded APK is kept (not re-fetched
+every sync). Notification auto-cancel: generic rule for non-allowlisted packages with an
+essential-exemption resolved at runtime (emergency/cell broadcast incl. GMS earthquake alerts,
+calls, alarms, battery/system, our own; never full-screen alerts), re-post budget then snooze,
+privacy-safe logging (channel ids, capped counts only). adb installs are unfenced (dev only).
+Product defaults (proposed, pending user confirmation): self-update window at night 02–05
+with screen off and no call; if an update has waited >24 h, any 30 s screen-off with no call.
