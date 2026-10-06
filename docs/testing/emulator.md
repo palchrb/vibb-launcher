@@ -57,9 +57,13 @@ server URL `http://10.0.2.2:3100`, enrollment code from step 2. Take a snapshot 
 
 ## 5. Simulated calls (emulator console via adb)
 
+Always give numbers in international form with `+` (e.g. `+4781549300`): without it the
+emulator presents `4781549300` as a national number, which the launcher normalizes to
+`+474781549300` and doesn't match the contact.
+
 ```sh
-adb emu gsm call 4791234567      # incoming call from that number
-adb emu gsm cancel 4791234567    # caller hangs up
+adb emu gsm call +4791234567     # incoming call from that number
+adb emu gsm cancel +4791234567   # caller hangs up
 adb shell am start -a android.intent.action.CALL -d tel:112   # (emergency; the emulator fakes it)
 ```
 
