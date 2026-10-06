@@ -110,7 +110,10 @@ ADB="adb -H 127.0.0.1 -P 5038" CONSOLE_TOKEN="$(ssh vm cat .emulator_console_aut
 ```
 
 Never start the adb server with `-a` (anyone on the network gets an unauthenticated shell on the emulator), and
-keep the console on loopback: the script refuses a non-loopback `CONSOLE_HOST` (the token would go in cleartext),
+keep the console on loopback: the script refuses a `CONSOLE_HOST` that is neither loopback nor a Tailscale IP
+(100.64.0.0/10, encrypted by WireGuard; the token goes in cleartext). Over the tailnet, forward the VM's adb server
+and console on its tailnet IP only (e.g. `socat TCP-LISTEN:5555,bind=100.64.0.17,fork TCP:127.0.0.1:5554`), never
+on 0.0.0.0,
 and with a remote adb server (`-H`/`-P` in `ADB`) it talks to the console over TCP with `CONSOLE_TOKEN` - `adb emu`
 would reach this machine's loopback, not the VM.
 

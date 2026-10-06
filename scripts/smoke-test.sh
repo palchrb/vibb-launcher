@@ -26,8 +26,8 @@
 #                   and point at loopback, e.g. ssh -N -L 5038:127.0.0.1:5037 -L 5554:127.0.0.1:5554 vm
 #                   then ADB="adb -H 127.0.0.1 -P 5038" (never expose an adb server with `adb -a`)
 #   PKG             launcher package (default me.vibb.launcher.debug)
-#   CONSOLE_HOST    emulator console host - loopback only (default 127.0.0.1; the token would cross
-#                   the network in cleartext otherwise - use the ssh tunnel)
+#   CONSOLE_HOST    emulator console host - loopback or a Tailscale 100.64.0.0/10 IP (default
+#                   127.0.0.1; the token is sent in cleartext, so nothing else - use the ssh tunnel)
 #   CONSOLE_PORT    emulator console port (default 5554)
 #   CONSOLE_TOKEN   console auth token (default: ~/.emulator_console_auth_token). Required when ADB
 #                   has -H/-P (a remote adb server: `adb emu` would talk to this machine's loopback);
@@ -114,12 +114,19 @@ wait_for() {
 
 # ---- configuration checks ---------------------------------------------------------------------
 
+# Loopback, or a Tailscale address (100.64.0.0/10: WireGuard encrypts the tailnet hop).
+tailnet_ip() {
+    [[ "$1" =~ ^100\.([0-9]{1,3})\.[0-9]{1,3}\.[0-9]{1,3}$ ]] &&
+        [ "${BASH_REMATCH[1]}" -ge 64 ] && [ "${BASH_REMATCH[1]}" -le 127 ]
+}
 case "$CONSOLE_HOST" in
     127.0.0.1 | localhost | ::1) ;;
     *)
-        echo "CONSOLE_HOST=$CONSOLE_HOST: the console must be reached on loopback (the auth token is sent" >&2
-        echo "in cleartext) - tunnel it: ssh -N -L 5554:127.0.0.1:5554 <vm>" >&2
-        exit 2
+        if ! tailnet_ip "$CONSOLE_HOST"; then
+            echo "CONSOLE_HOST=$CONSOLE_HOST: the console must be reached on loopback or a tailnet IP (the" >&2
+            echo "auth token is sent in cleartext) - tunnel it: ssh -N -L 5554:127.0.0.1:5554 <vm>" >&2
+            exit 2
+        fi
         ;;
 esac
 
