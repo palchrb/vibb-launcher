@@ -15,7 +15,12 @@ cd "$root/launcher"
 ./gradlew assembleDebug
 ./gradlew --stop >/dev/null || true
 pkill -f KotlinCompileDaemon || true
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+if adb get-state >/dev/null 2>&1; then
+    adb install -r app/build/outputs/apk/debug/app-debug.apk
+else
+    echo "WARNING: no emulator/device connected - skipped install. Start the emulator and run:" >&2
+    echo "  adb install -r $root/launcher/app/build/outputs/apk/debug/app-debug.apk" >&2
+fi
 
 cd "$root/server"
 cargo build
