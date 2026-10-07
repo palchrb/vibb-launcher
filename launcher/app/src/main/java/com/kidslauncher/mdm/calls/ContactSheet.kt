@@ -25,7 +25,8 @@ import com.kidslauncher.mdm.ui.home.KidAvatars
  */
 object ContactSheet {
 
-    fun show(activity: Activity, contact: RuleContact, missed: MissedSummary?, onDone: () -> Unit) {
+    /** Returns the sheet (Home dismisses it when the lock engages - design 16c). */
+    fun show(activity: Activity, contact: RuleContact, missed: MissedSummary?, onDone: () -> Unit): Dialog {
         MissedCallsRepo.markSeen(activity, contact.number)
         // Any contact sheet deals with the missed-call notification (design 12, QA #3).
         MissedCallNotifier.dismiss(activity)
@@ -91,6 +92,7 @@ object ContactSheet {
         }
         view.findViewById<View>(R.id.sheet_close).setOnClickListener { dialog.dismiss() }
         dialog.show()
+        return dialog
     }
 
     /** "Message opens in Chat": the parent's name, else the kid's, else the app's own (design 14). */

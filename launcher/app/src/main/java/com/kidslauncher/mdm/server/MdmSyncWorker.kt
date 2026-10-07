@@ -784,12 +784,23 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
  * never "no restrictions".
  */
 fun cachedPolicy(): CachedPolicy {
-    val cached = decodeCached(LauncherPreferences.mdm().kidModePolicy())
+    val raw = LauncherPreferences.mdm().kidModePolicy()
+    // One decode per cached string (design 16c): the start-up path - the time-rule re-check, the
+    // screen-time timer, the boundary alarm, Home - decoded the same JSON several times on the main
+    // thread before the lock was up. The DTOs are immutable, so the copy is shared.
+    cachedPolicyMemo?.let { memo -> if (memo.raw == raw) return memo.decoded }
+    val cached = decodeCached(raw)
     if (cached is CachedPolicy.Corrupt) {
         Log.w(LOG_TAG, "Cached policy doesn't decode: ${cached.error}")
     }
+    cachedPolicyMemo = CachedPolicyMemo(raw, cached)
     return cached
 }
+
+private class CachedPolicyMemo(val raw: String?, val decoded: CachedPolicy)
+
+@Volatile
+private var cachedPolicyMemo: CachedPolicyMemo? = null
 
 /** The [LastEnforcedPlan] stored with the last accepted policy, or `null` if missing/unreadable. */
 fun lastEnforcedPlan(): LastEnforcedPlan? = LastEnforcedPlan.decode(LauncherPreferences.mdm().lastEnforcedPlan())

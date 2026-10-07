@@ -32,6 +32,7 @@ sealed interface LockEvent {
      * This process started (boot, a crash, an update): LOCKED if the lock was active. [homeFirst]:
      * the boot start brings our Home to the front first (design 16, A with QA #2/#6) - Home's resume
      * roots lock task with the kiosk on and shows the lock, so the lock itself is only a fallback.
+     * Not when our Home already came up in this process (16c, [bootHomeAction]): the lock now.
      */
     data class ProcessStart(
         val active: Boolean,

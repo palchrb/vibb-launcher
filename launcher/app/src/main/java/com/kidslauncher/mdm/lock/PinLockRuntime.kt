@@ -68,7 +68,35 @@ object PinLockRuntime {
     var lockResumed = false
         private set
 
+    /** This process's lock mode is decided ([decide], design 16c) - before that Home treats the
+     * state as unknown ([homeShowsContent]). */
+    @Volatile
+    var decided = false
+        private set
+
+    /** The lock was active when this process started ([decide]). */
+    private var startActive = false
+
+    /** HomeActivity has resumed in this process (16c): our Home is up, the boot's start of it
+     * isn't needed ([bootHomeAction]). */
+    @Volatile
+    var homeShown = false
+        private set
+
     private val modeListeners = mutableListOf<() -> Unit>()
+    /** Told on the main thread after a chrome pass ([refreshChrome]) - the lock enters lock task
+     * once its package is pinned (kiosk off). */
+    private val chromeListeners = mutableListOf<() -> Unit>()
+
+    /**
+     * The runtime's lock-task/status-bar chrome passes ([LockTaskChrome.refresh]), off the main
+     * thread (16c): each is ~8 DPM binder calls that persist the policy file, and it waits for any
+     * apply() pass holding [LockTaskChrome] - at process start the time-rule re-check and the
+     * anchor's first sync each start one. One at a time, in order; each reads the mode when it runs.
+     */
+    private val chromeExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "lock-chrome").apply { isDaemon = true }
+    }
     private var refrontAttempt = 0
     private var yielding: String? = null
     @Volatile
@@ -81,8 +109,41 @@ object PinLockRuntime {
 
     fun addModeListener(listener: () -> Unit) { modeListeners += listener }
     fun removeModeListener(listener: () -> Unit) { modeListeners -= listener }
+    fun addChromeListener(listener: () -> Unit) { chromeListeners += listener }
+    fun removeChromeListener(listener: () -> Unit) { chromeListeners -= listener }
 
     // ---- start-up -------------------------------------------------------------------------
+
+    /**
+     * Design 16c: this process's lock mode, decided first thing in the unlocked setup (one small
+     * preferences file) - before any activity of ours exists. The stock launcher's hand-over at
+     * boot queues our Home's start ahead of [init]'s posted ProcessStart, and that Home saw the
+     * lock DISABLED and showed the contacts and apps. Fail closed: LOCKED when the last apply left
+     * the lock active. [init]'s ProcessStart does the rest (show, chrome, camera). Main thread.
+     */
+    fun decide(context: Context) {
+        if (decided) return
+        val app = context.applicationContext
+        startActive = PinLockStore.active(app) && PinLockStore.guard(app).trippedAtMs == null
+        mode = step(LockMode.DISABLED, LockEvent.ProcessStart(startActive, interactive = false)).mode
+        decided = true
+        Log.i(LOG_TAG, "Process start: $mode (decided before any screen)")
+    }
+
+    /** For Home while [decided] is false (16c): the stored lock state or the cached policy says a
+     * kid PIN is set. Unreadable counts as set. */
+    fun pinSetStored(context: Context): Boolean = try {
+        val app = context.applicationContext
+        PinLockStore.active(app) || PinLockStore.config(app) != null ||
+            (com.kidslauncher.mdm.server.cachedPolicy() as? com.kidslauncher.mdm.server.CachedPolicy.Ok)?.policy?.kidLock != null
+    } catch (e: Exception) {
+        true
+    }
+
+    /** HomeActivity resumed (16c, [homeShown]). */
+    fun onHomeResumed() {
+        homeShown = true
+    }
 
     /**
      * From `Application.initRest` (CE storage is unlocked). Starts LOCKED when the last apply left
@@ -94,8 +155,9 @@ object PinLockRuntime {
         initialized = true
         val app = context.applicationContext
         appContext = app
+        decide(app)
         config = PinLockStore.config(app)
-        val active = PinLockStore.active(app) && PinLockStore.guard(app).trippedAtMs == null
+        val active = startActive
         inactive = PinLockStore.inactive(app)?.let { wire -> LockInactive.entries.firstOrNull { it.wire == wire } }
         ContextCompat.registerReceiver(
             app,
@@ -135,30 +197,40 @@ object PinLockRuntime {
             // Design 16 (A, QA #2/#6): the first start of a boot brings our Home to the front -
             // before the CE unlock a direct-boot-aware stock launcher was Home. Home roots lock
             // task (kiosk on) and shows the lock; the lock's own start is then a 1 s fallback.
+            // 16c: when the system already brought our Home up in this process, the lock goes up
+            // now, in this pass (a second Home start gave no resume, so it waited for the fallback).
             val homeFirst = try {
-                BootHome.startIfDue(app, lockActive = active)
+                BootHome.startIfDue(app, lockActive = active, homeShown = homeShown)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Boot Home check failed", e)
                 false
             }
-            dispatch(app, LockEvent.ProcessStart(active, interactive(app), ourCall(), systemCall(app), homeFirst = homeFirst, voip = VoipCalls.phase))
+            // Counted from DISABLED, the process's real start ([decide] only set the mode early),
+            // so a LOCKED start refreshes the chrome and the camera lock once, as before.
+            dispatch(
+                app,
+                LockEvent.ProcessStart(active, interactive(app), ourCall(), systemCall(app), homeFirst = homeFirst, voip = VoipCalls.phase),
+                from = LockMode.DISABLED,
+            )
             // The chrome of a lock that was LOCKED when the process died is still set; an inactive
-            // lock must not leave it behind either. Same for the camera lock: engaged again when
-            // LOCKED, released (idempotently) otherwise.
-            LockTaskChrome.refresh(app)
-            CameraLock.onLockChanged(app)
+            // lock must not leave it behind either. Same for the camera lock: released
+            // (idempotently). LOCKED did both in the dispatch.
+            if (!chromeLocked) {
+                refreshChrome(app)
+                CameraLock.onLockChanged(app)
+            }
         }
     }
 
     // ---- events ---------------------------------------------------------------------------
 
-    private fun dispatch(context: Context, event: LockEvent) {
-        val before = mode
-        val result = step(before, event)
+    /** [from]: the mode the change effects count from - the current one, except for ProcessStart. */
+    private fun dispatch(context: Context, event: LockEvent, from: LockMode = mode) {
+        val before = from
+        val result = step(mode, event)
         mode = result.mode
-        // The lock first: the chrome below may do binder calls (and, the first time with the kiosk
-        // off, PackageManager work) - the lock screen's start must not wait for them (qa-10-code
-        // #7). It only resumes after this returns, by when its lock-task packages are set.
+        // The lock first: nothing slow runs on the main thread before it (16c) - the chrome below
+        // runs on its own thread ([refreshChrome]); the lock enters lock task when it has landed.
         if (result.showLock) show(context, wake = result.wake)
         // Home was started first (design 16): the re-front check shows the lock if Home didn't.
         if (result.showLockLater) {
@@ -169,11 +241,7 @@ object PinLockRuntime {
         if (before != result.mode) {
             Log.i(LOG_TAG, "$before -> ${result.mode} on $event")
             if ((before == LockMode.LOCKED) != (result.mode == LockMode.LOCKED)) {
-                try {
-                    LockTaskChrome.refresh(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Lock chrome change failed", e)
-                }
+                refreshChrome(context)
                 // The camera gesture must not open a camera over the lock (background thread).
                 CameraLock.onLockChanged(context)
                 if (result.mode != LockMode.LOCKED && !LockTaskChrome.hasPlan) requestApply(context)
@@ -199,6 +267,22 @@ object PinLockRuntime {
             handler.postDelayed(refrontCheck, refrontDelayMs(0))
         }
         if (result.recheckTimeRules) afterUnlock(context)
+    }
+
+    /**
+     * A chrome pass for the current mode on [chromeExecutor] (16c - never on the main thread),
+     * then the [chromeListeners] on the main thread.
+     */
+    private fun refreshChrome(context: Context) {
+        val app = context.applicationContext
+        chromeExecutor.execute {
+            try {
+                LockTaskChrome.refresh(app)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Lock chrome change failed", e)
+            }
+            handler.post { chromeListeners.toList().forEach { it() } }
+        }
     }
 
     /** Our call screen in front of the lock (inside the lock task - our package is pinned). */

@@ -203,6 +203,14 @@ class Application : android.app.Application() {
         unlockedInitDone = true
         unlockReceiver?.let { runCatching { unregisterReceiver(it) } }
         unlockReceiver = null
+        // First, on its own (design 16c): the PIN lock's mode for this process, before anything
+        // else can fail and before any activity of ours exists - Home renders nothing while it
+        // says LOCKED. One small preferences file; showing the lock comes later (PinLockRuntime.init).
+        try {
+            com.kidslauncher.mdm.lock.PinLockRuntime.decide(this)
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "PIN lock state unreadable - Home stays dark while a PIN may be set", e)
+        }
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)
             initRest()

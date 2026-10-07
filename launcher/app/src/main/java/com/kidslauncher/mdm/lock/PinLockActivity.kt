@@ -69,6 +69,15 @@ class PinLockActivity : AppCompatActivity() {
         if (PinLockRuntime.mode != LockMode.LOCKED && !isFinishing) leave()
     }
 
+    /** The last [ensureLockTask] found our package not pinned (kiosk off, the chrome not yet set). */
+    private var waitingForPin = false
+
+    /** A chrome pass landed (it runs off the main thread since 16c): with the kiosk off it pins our
+     * package for the lock - enter lock task now if the resume found it not permitted. */
+    private val chromeListener: () -> Unit = {
+        if (waitingForPin && resumed && PinLockRuntime.mode == LockMode.LOCKED) ensureLockTask(fallbackDue = false)
+    }
+
     private lateinit var voipRing: ViewVoipRingBinding
     /** The package the ring screen was filled for. */
     private var voipShownFor: String? = null
@@ -132,6 +141,7 @@ class PinLockActivity : AppCompatActivity() {
         }
         binding.pinParentCode.setOnClickListener { showParentCodeDialog() }
         PinLockRuntime.addModeListener(modeListener)
+        PinLockRuntime.addChromeListener(chromeListener)
         VoipCalls.addListener(voipListener)
         render()
     }
@@ -223,6 +233,7 @@ class PinLockActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         PinLockRuntime.removeModeListener(modeListener)
+        PinLockRuntime.removeChromeListener(chromeListener)
         VoipCalls.removeListener(voipListener)
         handler.removeCallbacksAndMessages(null)
         instances--
@@ -246,6 +257,7 @@ class PinLockActivity : AppCompatActivity() {
         // Design 17 (QA #10, qa-16-17-code #6): kiosk off, the lock starts no lock task while a VoIP
         // call rings or lives (not while merely pinned).
         voipHeldLockTask = VoipCalls.phase != VoipPhase.NONE
+        waitingForPin = !running && !permitted
         when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipCall = voipHeldLockTask)) {
             LockTaskEntry.NONE -> if (!running && !permitted) Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
             LockTaskEntry.START_SELF -> try {

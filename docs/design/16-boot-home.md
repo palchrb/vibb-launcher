@@ -239,3 +239,40 @@ Decision:
    - a pure `homeShowsContent(lockMode, pinActive, known)`;
    - Home's touchables are gone while locked;
    - `smoke-test.sh` after reboot: no Home content node (uiautomator) before the PIN unlock.
+
+### 16c implementation status (2026-10-07)
+
+- **Gate**: pure `homeShowsContent(lockMode, pinActive, known)` (`lock/HomeGate.kt`). `PinLockRuntime.decide` sets the
+  process's mode first thing in `Application.initUnlocked` (before `LauncherPreferences`, before any activity);
+  undecided, `pinSetStored` asks the stored lock state, the stored PIN and the cached policy's `kid_lock` (unreadable =
+  set).
+- **Home**: `onCreate` builds nothing of the content. Locked, it is `ui/home/NightGround` (`activity_home_night.xml`:
+  `kid_ground`, `splash_vibb_breathe` centred, breathing while resumed, light bar icons). The content is inflated on
+  the first UNLOCKED edge (`showContent`, from the mode listener or a resume), taken off the window again on the
+  LOCKED edge (`showNight`, which also closes Home's contact sheet); every render checks `contentShown`, the swipes
+  run only with content. Lock task unchanged (`reconcileKioskMode` also never stops it while undecided with a PIN).
+- **What was slow (point 2, from the code - the run has no trace)**: (1) the system had already resumed our Home
+  (its launch is queued ahead of `init`'s posted ProcessStart), so the boot's typed HOME start gave no new resume and
+  the lock waited for the 1 s fallback; (2) after the LOCKED dispatch the main thread ran `LockTaskChrome.refresh`
+  twice, each waiting on the monitor for an `apply()` pass (initRest's time-rule re-check and the anchor's first sync
+  both start one) and each ~8 DPM calls that persist the policy file, plus PackageManager queries for the kiosk-off
+  helpers without a plan; (3) Home's resume rendered everything (a TelephonyManager call per contact, RoleManager,
+  locale, wallpaper) and decoded the cached policy, BootHome decoded it again and committed synchronously, and each
+  time-rule re-check decoded it 3-5 times.
+- **Fixes**: early `decide`; `bootHomeAction` = MARK_DONE when Home is already up, so ProcessStart shows the lock at
+  once; the runtime's chrome on its own thread (`lock-chrome`), once per transition, and the lock enters lock task
+  when it lands (kiosk off, `chromeListener`); `applyFallback` reuses the prefetched helpers; Home's locked resume is
+  lock task, fence, the time-rule redirect from the stored reason, the lock - no render, no decode; BootHome reads the
+  policy only when neither the kiosk nor the lock decides, boot count with `apply()`; `cachedPolicy()` keeps one
+  decode per cached string. The rest of `initRest` still runs before any activity (the platform waits for
+  `Application.onCreate`); the night ground covers it.
+- Tests: `HomeGateTest` (gate, boot action, the night layout has no touch target, Home's content only from the
+  UNLOCKED edge, the locked resume, `decide` before the rest, the chrome never on the main thread);
+  `smoke-test.sh` `REBOOT=1` greps captured UI dumps for Home's content until the lock is in front.
+
+Open device checks (emulator, then the Jelly Star):
+- [ ] `REBOOT=1` (`adb reboot`) and a power-menu restart: no content in any dump, the night ground until the lock;
+  logcat from `Process start: LOCKED` to `Displayed ... PinLockActivity` well under 1 s on an idle emulator.
+- [ ] Kiosk off: the lock is in lock task within ~1 s of a LOCKED process start and of a screen-off.
+- [ ] Unlock: the content comes with the lock leaving; screen-off over Home: the night ground before the lock.
+- [ ] A time rule at boot (the time-rule screen under the PIN lock) and a call over the lock: unchanged.

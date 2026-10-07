@@ -122,7 +122,7 @@ allowed in and out, `UNKNOWN_NUMBER` (default `+4799999999`) no contact, a kid P
 be full E.164 numbers (8-15 digits; short or emergency numbers are refused). Other variables: `PKG` (default
 `me.vibb.launcher.debug`), `ALLOWED_DIAL` (the contact in national form, default the number without `+47`),
 `OUT_DIR` (screenshots, default `./smoke-<date>`, gitignored), `EXPECT_KIOSK=0` for a phone with the kiosk off,
-`STRICT=1` to fail on skipped checks. Optional (design 15): `ELEMENT_SESSION` (the kid's Element X MXID) and
+`STRICT=1` to fail on skipped checks, `REBOOT=1` to start with a reboot (design 16c, below). Optional (design 15): `ELEMENT_SESSION` (the kid's Element X MXID) and
 `ELEMENT_ROOM` (a DM's room ID) start Element X's `elementx://open/<session>/<room>` link (each segment fully
 percent-encoded) and check Element X comes up; that it shows the DM is checked on the screenshot. The Message
 button itself is a printed manual step (it needs a room learned from a real DM notification).
@@ -131,6 +131,11 @@ What it checks, each a PASS/FAIL line (SKIP without a PIN), summary at the end, 
 logged after the step started counts (logcat is cleared per step); silence is a FAIL:
 - adb reaches an emulator with a working console, the package is installed and device owner, lock task is
   engaged (kiosk);
+- with `REBOOT=1` (and `KID_PIN`): `adb reboot`, then a `uiautomator dump` every ~0.3 s (plus the dump's own
+  time) from adb's return until the PIN lock is in front (3 min at most) - no captured dump may hold a node of
+  Home's content (`<package>:id/home_contacts`, `home_contacts_scroll`, `home_grid`, `home_call_card`; design 16c: a
+  locked Home is the night ground `home_night`). A dump that shows it is saved as `boot-home-content-<n>.xml`
+  next to its screenshot;
 - screen off/on (`KEYCODE_SLEEP`/`KEYCODE_WAKEUP`) shows `$PKG/com.kidslauncher.mdm.lock.PinLockActivity`;
 - an incoming call from the allowed contact rings on our call screen
   (`$PKG/com.kidslauncher.mdm.calls.InCallActivity`, not the system dialer's) over the lock, Telecom's

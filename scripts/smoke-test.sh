@@ -18,7 +18,9 @@
 # Service" or our log line) vs the contact typed in national form (redirected - our log line - and
 # dialled); one call at a time (our "second call" log line, during the answered incoming call); the
 # call notification and call screen gone after hang-up; never the system's "App is not available"
-# screen (BlockedAppActivity) after the unlock, on Recents or on a gesture swipe-up (design 16). Call state comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
+# screen (BlockedAppActivity) after the unlock, on Recents or on a gesture swipe-up (design 16); with
+# REBOOT=1, after a reboot no UI dump shows Home's content (contacts, grid, call card) before the PIN
+# unlock (design 16c). Call state comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
 # end (exit 1 on any FAIL, also on SKIP with STRICT=1).
 #
 # Setup (the PWA): the phone enrolled and managed, calls managed and on, ALLOWED_NUMBER a contact
@@ -42,6 +44,8 @@
 #   KID_PIN         the kid's PIN (lock checks are skipped without it)
 #   OUT_DIR         screenshot folder (default ./smoke-<date>, gitignored)
 #   EXPECT_KIOSK=0  a phone whose kiosk is off on purpose (lock task isn't required then)
+#   REBOOT=1        first reboot the emulator (`adb reboot`) and dump the UI until the PIN lock is in
+#                   front: no dump may show Home's content (design 16c). Needs KID_PIN. Unset: SKIP.
 #   STRICT=1        count SKIP as a failure
 #   ELEMENT_SESSION, ELEMENT_ROOM  optional (design 15): the kid's own Element X MXID and a DM's room
 #                   ID (as the launcher learns them from Element X's DM notification); with both set,
@@ -64,6 +68,7 @@ KID_PIN="${KID_PIN:-}"
 OUT_DIR="${OUT_DIR:-./smoke-$(date +%Y%m%d-%H%M%S)}"
 STRICT="${STRICT:-0}"
 EXPECT_KIOSK="${EXPECT_KIOSK:-1}"
+REBOOT="${REBOOT:-0}"
 ELEMENT_SESSION="${ELEMENT_SESSION:-}"
 ELEMENT_ROOM="${ELEMENT_ROOM:-}"
 ELEMENT_PKG=io.element.android.x
@@ -326,6 +331,15 @@ tap_node() {
     sh_ input tap $((($1 + $3) / 2)) $((($2 + $4) / 2)) >/dev/null
 }
 
+# Home's content (design 16c): its containers exist on the window only while the lock allows it;
+# Home's night ground (home_night) is what a locked Home shows instead. Any package prefix: the
+# resource package may be the namespace or the application id, and only Home has these ids.
+HOME_CONTENT_IDS='home_contacts_scroll|home_contacts|home_grid|home_call_card'
+# home_content_in <ui dump>: a node of Home's content is in the captured dump.
+home_content_in() { grep -q -E "resource-id=\"[^\"]*:id/($HOME_CONTENT_IDS)\"" <<<"$1"; }
+home_night_in() { grep -q -E "resource-id=\"[^\"]*:id/home_night\"" <<<"$1"; }
+boot_completed() { [ "$(sh_ getprop sys.boot_completed)" = "1" ]; }
+
 enter_pin() {
     local digit i
     ui_dump
@@ -399,6 +413,50 @@ else
     pass "kiosk not required (EXPECT_KIOSK=0): mLockTaskModeState=${kiosk:-unknown}"
 fi
 shot device
+
+step "Boot: Home shows no content while locked (design 16c)"
+if [ "$REBOOT" != "1" ]; then
+    skip "no Home content before the PIN unlock after a reboot" "REBOOT=1 not set"
+elif [ -z "$KID_PIN" ]; then
+    skip "no Home content before the PIN unlock after a reboot" "KID_PIN not set"
+else
+    adb_ reboot >/dev/null 2>&1 || true
+    sleep 5
+    adb_ wait-for-device >/dev/null 2>&1 || true
+    # From adb's return on: a UI dump every ~0.3 s plus the dump's own time, until the PIN lock is
+    # in front (3 min at most). Each dump is captured, then grepped; failed dumps (boot) are skipped.
+    dumps=0
+    leaks=0
+    night_seen=0
+    lock_seen=0
+    deadline=$((SECONDS + 180))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if boot_completed; then sh_ input keyevent KEYCODE_WAKEUP >/dev/null; fi
+        ui_dump
+        if grep -q '<node ' <<<"$UI_XML"; then
+            dumps=$((dumps + 1))
+            if home_content_in "$UI_XML"; then
+                leaks=$((leaks + 1))
+                printf '%s\n' "$UI_XML" >"$OUT_DIR/boot-home-content-$leaks.xml"
+                shot "boot-home-content-$leaks"
+            fi
+            if home_night_in "$UI_XML"; then night_seen=1; fi
+        fi
+        if top_is "$LOCK_ACTIVITY"; then
+            lock_seen=1
+            break
+        fi
+        sleep 0.3
+    done
+    if [ "$lock_seen" -ne 1 ]; then
+        fail "no Home content before the PIN unlock after a reboot" "the PIN lock never came to the front ($dumps UI dumps); top: $(top_activity)"
+    elif [ "$leaks" -gt 0 ]; then
+        fail "no Home content before the PIN unlock after a reboot" "$leaks of $dumps UI dumps showed Home's content (boot-home-content-*.xml)"
+    else
+        pass "no Home content before the PIN unlock after a reboot ($dumps UI dumps$([ "$night_seen" -eq 1 ] && echo ", the night ground seen"))"
+    fi
+    shot boot-lock
+fi
 
 step "PIN lock"
 locked=0

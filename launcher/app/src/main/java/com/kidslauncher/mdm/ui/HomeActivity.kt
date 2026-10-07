@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.ui
 
 import android.app.ActivityManager
+import android.app.Dialog
 import android.content.Intent
 import android.content.SharedPreferences
 import android.database.ContentObserver
@@ -28,6 +29,7 @@ import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.lock.LockMode
 import com.kidslauncher.mdm.lock.PinLockRuntime
+import com.kidslauncher.mdm.lock.homeShowsContent
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.apps.AppFilter
 import com.kidslauncher.mdm.apps.AppInfo
@@ -62,6 +64,7 @@ import com.kidslauncher.mdm.ui.home.contactRow
 import com.kidslauncher.mdm.ui.home.gridMetrics
 import com.kidslauncher.mdm.ui.home.HomeGridAdapter
 import com.kidslauncher.mdm.ui.home.KidAvatars
+import com.kidslauncher.mdm.ui.home.NightGround
 import com.kidslauncher.mdm.ui.home.gridColumns
 import com.kidslauncher.mdm.ui.home.homeGrid
 import com.kidslauncher.mdm.ui.home.showPhoneBookTile
@@ -92,13 +95,38 @@ private const val BADGE_DEBOUNCE_MS = 300L
  * badges, and the kid's Settings. Swiping up still opens the drawer (nothing more than the grid,
  * plus the PIN-gated Settings); swiping left opens the kid's Settings. The lock screen, kiosk and
  * role checks in [onResume] run exactly as before the redesign.
+ *
+ * Design 16c: none of that exists while the PIN lock is LOCKED, or not decided yet with a kid PIN
+ * set ([homeShowsContent]) - Home is then the night ground with the breathing Vibb mark
+ * ([NightGround]), with nothing to touch, and its resume roots lock task and shows the lock. The
+ * content is inflated and bound only on the UNLOCKED edge ([showContent]) and taken off the window
+ * again on the LOCKED one ([showNight]).
  */
 class HomeActivity : UIObjectActivity() {
 
+    /** Home's content - inflated on the first UNLOCKED edge only ([showContent], 16c). */
     private lateinit var binding: ActivityHomeBinding
     private lateinit var gridAdapter: HomeGridAdapter
     private lateinit var gridLayout: GridLayoutManager
     private lateinit var gestureDetector: GestureDetector
+
+    /** The night ground while locked (16c). */
+    private var night: NightGround? = null
+    /** The content is on the window (contacts, grid, call card, gestures); every render checks it. */
+    private var contentShown = false
+    private var nightShown = false
+    private var resumedNow = false
+    /** The contact sheet Home opened: closed when the lock engages. */
+    private var contactSheet: Dialog? = null
+
+    /** LOCKED/UNLOCKED edges (16c): the night ground or the content, on the main thread. */
+    private val modeListener: () -> Unit = {
+        val before = contentShown
+        if (gate() && !before) {
+            if (started) renderCallCard()
+            if (resumedNow) resumeContent()
+        }
+    }
 
     private val apps by lazy { (applicationContext as Application).apps }
     private val appsObserver = Observer<List<AbstractDetailedAppInfo>> { render() }
@@ -167,9 +195,62 @@ class HomeActivity : UIObjectActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialise layout
-        binding = ActivityHomeBinding.inflate(layoutInflater)
+        // Back does nothing on the home screen, same as stock Android launchers.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {}
+        })
+        apps.observeForever(appsObserver)
+        // Design 16c: the content only when the lock allows it - the night ground otherwise; the
+        // lock's edges swap them.
+        PinLockRuntime.addModeListener(modeListener)
+        gate()
+    }
+
+    /** The lock allows the content now ([homeShowsContent]); a kid PIN is looked up only while the
+     * runtime hasn't decided. */
+    private fun contentAllowed(): Boolean {
+        val known = PinLockRuntime.decided
+        return homeShowsContent(PinLockRuntime.mode, pinActive = !known && PinLockRuntime.pinSetStored(this), known = known)
+    }
+
+    /** The content or the night ground, as the lock allows; whether the content is shown. */
+    private fun gate(): Boolean {
+        if (contentAllowed()) showContent() else showNight()
+        return contentShown
+    }
+
+    /** The UNLOCKED edge (or no PIN lock): the content - inflated and wired the first time. */
+    private fun showContent() {
+        if (contentShown) return
+        if (!::binding.isInitialized) bindContent()
+        night?.stop()
         setContentView(binding.root)
+        binding.root.requestApplyInsets()
+        nightShown = false
+        contentShown = true
+    }
+
+    /** LOCKED, or not decided with a kid PIN: the night ground - the content leaves the window, so
+     * nothing of it can be seen or touched; an open contact sheet closes. */
+    private fun showNight() {
+        contactSheet?.dismiss()
+        contactSheet = null
+        contentShown = false
+        appsJob?.cancel()
+        refreshHandler.removeCallbacks(badgeRender)
+        refreshHandler.removeCallbacks(callTicker)
+        val ground = night ?: NightGround(this).also { night = it }
+        if (!nightShown) {
+            setContentView(ground.root)
+            nightShown = true
+        }
+        ground.applyBars()
+        if (resumedNow) ground.start()
+    }
+
+    /** Home's content, created on the first UNLOCKED edge (16c) - never while locked. */
+    private fun bindContent() {
+        binding = ActivityHomeBinding.inflate(layoutInflater)
         // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
 
@@ -184,7 +265,6 @@ class HomeActivity : UIObjectActivity() {
                 KidAvatars.dp(this, GRID_ROW_GAP_DP.toFloat()),
             ) { gridLayout.spanCount }
         )
-        apps.observeForever(appsObserver)
         // Back to our call screen from the ongoing-call card.
         binding.homeCallCard.setOnClickListener {
             try {
@@ -193,11 +273,6 @@ class HomeActivity : UIObjectActivity() {
                 android.util.Log.w("HomeActivity", "Couldn't bring the call screen back", e)
             }
         }
-
-        // Back does nothing on the home screen, same as stock Android launchers.
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {}
-        })
 
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(
@@ -273,7 +348,8 @@ class HomeActivity : UIObjectActivity() {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        gestureDetector.onTouchEvent(event)
+        // No drawer or kid Settings swipe on the night ground (16c).
+        if (contentShown) gestureDetector.onTouchEvent(event)
         return true
     }
 
@@ -305,6 +381,8 @@ class HomeActivity : UIObjectActivity() {
 
     override fun onResume() {
         super.onResume()
+        resumedNow = true
+        PinLockRuntime.onHomeResumed()
         // Deliberately triggered here, not from Application.onCreate() - see TsnetClient's own
         // doc comment on the GrapheneOS hardened_malloc / native-crash risk this sidesteps by
         // waiting until the launcher has actually rendered instead of racing the very first UI
@@ -313,6 +391,19 @@ class HomeActivity : UIObjectActivity() {
         // wasteful; MdmSyncWorker's regular sync cycle is the retry-until-connected backstop
         // either way.
         CoroutineScope(Dispatchers.IO).launch { TsnetClient.connectFromPreferences(this@HomeActivity) }
+        if (!gate()) {
+            // Design 16c: locked (or not decided with a kid PIN) - the night ground, and the lock
+            // in this same pass with nothing slow before it (no render, no policy decode; the
+            // time rules are re-checked at the unlock). Lock task first: with the kiosk on Home
+            // roots it, never the lock (design 16).
+            reconcileKioskMode()
+            com.kidslauncher.mdm.server.UpdateFence.onFront(this)
+            // The time-rule screen from the stored reason: it brings the PIN lock back on top.
+            if (redirectToLockScreenIfLocked()) return
+            // Handy's PIN lock (step 10): Home in front while LOCKED means the lock lost the front.
+            if (PinLockRuntime.mode == LockMode.LOCKED) PinLockRuntime.show(this)
+            return
+        }
         // Fresh check against the clock every time the home screen comes to the foreground, on
         // top of the boundary alarm - cheap, and covers an alarm that was late or refused.
         reevaluateLockReasonFromCache(this@HomeActivity)
@@ -326,11 +417,18 @@ class HomeActivity : UIObjectActivity() {
         // Checked here (not just via the preference listener) so pressing Home while the lock
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return
-        // Handy's PIN lock (step 10): Home in front while LOCKED means the lock lost the front.
-        if (PinLockRuntime.mode == LockMode.LOCKED) {
-            PinLockRuntime.show(this)
-            return
-        }
+        resumeContent()
+    }
+
+    override fun onPause() {
+        resumedNow = false
+        night?.stop()
+        super.onPause()
+    }
+
+    /** The content's part of a resume (and of an UNLOCKED edge while resumed). */
+    private fun resumeContent() {
+        if (!contentShown) return
         // The parent's language choice, now that Home is in front (no call screen or dialog).
         LauncherLocales.applyIfSafe(this)
         // Also refreshes whether the system wallpaper is still ours (in the background).
@@ -398,9 +496,9 @@ class HomeActivity : UIObjectActivity() {
         try {
             if (shouldBeLocked && !currentlyLocked) {
                 startLockTask()
-            } else if (!shouldBeLocked && currentlyLocked && PinLockRuntime.mode != LockMode.LOCKED) {
+            } else if (!shouldBeLocked && currentlyLocked && contentAllowed()) {
                 // With the kiosk off, a running lock task while LOCKED is the PIN lock's own (step
-                // 10) - never stopped from here.
+                // 10) - never stopped from here; nor while not decided with a kid PIN (16c).
                 stopLockTask()
             }
         } catch (e: Exception) {
@@ -424,15 +522,20 @@ class HomeActivity : UIObjectActivity() {
         LauncherPreferences.getSharedPreferences()
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)
         apps.removeObserver(appsObserver)
+        PinLockRuntime.removeModeListener(modeListener)
+        night?.stop()
+        contactSheet?.dismiss()
+        contactSheet = null
         super.onDestroy()
     }
 
     /** Missed calls per contact, from the call log on a background thread. */
     private fun loadMissedCalls() {
+        if (!contentShown) return
         val state = CallPolicyStore.state
         CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.IO) { MissedCallsRepo.summaries(this@HomeActivity, state) }
-            if (result != missed && !isDestroyed) {
+            if (result != missed && !isDestroyed && contentShown) {
                 missed = result
                 renderCallParts()
             }
@@ -441,14 +544,14 @@ class HomeActivity : UIObjectActivity() {
 
     /** Everything: the call parts now, the apps filtered again in the background. */
     private fun render() {
-        if (!::gridAdapter.isInitialized) return
+        if (!contentShown) return
         renderCallParts()
         refreshApps()
     }
 
     /** Contacts row and phone-book tile from the call rules, missed calls and photos (cheap). */
     private fun renderCallParts() {
-        if (!::gridAdapter.isInitialized) return
+        if (!contentShown) return
         val state = CallPolicyStore.state
         val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
         renderContacts(view.home)
@@ -466,6 +569,7 @@ class HomeActivity : UIObjectActivity() {
      * the newest run wins. `onBind` only reads the finished bitmaps (QA 08 #5).
      */
     private fun refreshApps() {
+        if (!contentShown) return
         val all = apps.value ?: return
         val context = applicationContext
         val width = contentWidthDp()
@@ -492,7 +596,7 @@ class HomeActivity : UIObjectActivity() {
                 }
                 GridData(list, infos, icons, metrics, columns)
             }
-            if (isDestroyed) return@launch
+            if (isDestroyed || !contentShown) return@launch
             gridData = result
             if (gridLayout.spanCount != result.columns) {
                 gridLayout.spanCount = result.columns
@@ -508,7 +612,7 @@ class HomeActivity : UIObjectActivity() {
      * decoded everything in the background.
      */
     private fun renderWallpaper() {
-        if (!::gridAdapter.isInitialized) return
+        if (!contentShown) return
         val state = WallpaperGround.apply(this, binding.root)
         if (state.ink != shownInk) {
             shownInk = state.ink
@@ -520,7 +624,7 @@ class HomeActivity : UIObjectActivity() {
 
     /** The grid from the last filtered apps and the current badge counts (cheap). */
     private fun renderGrid() {
-        if (!::gridAdapter.isInitialized) return
+        if (!contentShown) return
         val data = gridData
         gridAdapter.submit(
             homeGrid(data.apps, showPhoneBook, BadgeStore.counts),
@@ -538,8 +642,7 @@ class HomeActivity : UIObjectActivity() {
      * back. Gone when the call ends ([ongoingCallCard]).
      */
     private fun renderCallCard() {
-        if (!::binding.isInitialized) return
-        if (!started) {
+        if (!contentShown || !started) {
             refreshHandler.removeCallbacks(callTicker)
             return
         }
@@ -624,11 +727,9 @@ class HomeActivity : UIObjectActivity() {
             // Tap and long-press open the contact sheet (Call / Message / Close) - user decision in
             // the fix round 2026-10-06, replacing "tap calls straight away" (02/05 docs): a stray
             // tap on Home no longer starts a call.
-            item.setOnClickListener {
-                ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
-            }
+            item.setOnClickListener { showContactSheet(contact) }
             item.setOnLongClickListener {
-                ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
+                showContactSheet(contact)
                 true
             }
             // Each item is one avatar plus one gap wide, so avatars are a gap apart.
@@ -637,6 +738,10 @@ class HomeActivity : UIObjectActivity() {
             )
             row.addView(item)
         }
+    }
+
+    private fun showContactSheet(contact: RuleContact) {
+        contactSheet = ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
     }
 
     override fun isHomeScreen(): Boolean {

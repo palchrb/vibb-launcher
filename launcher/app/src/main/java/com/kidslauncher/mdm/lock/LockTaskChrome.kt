@@ -76,7 +76,8 @@ object LockTaskChrome {
         return setOf(pkg) + extra
     }
 
-    /** After a LOCKED/not-LOCKED change. Main thread; a few binder calls. */
+    /** After a LOCKED/not-LOCKED change: from the runtime's chrome thread (design 16c - it must not
+     * hold up the lock on the main thread), or a VoIP pin change. A few binder calls. */
     @Synchronized
     fun refresh(context: Context) {
         val current = plan
@@ -135,8 +136,11 @@ object LockTaskChrome {
         } catch (e: Exception) {
             0
         }
+        // The prefetched helpers when there are any (16c: this pass ran twice at every LOCKED
+        // process start, each time with its own PackageManager queries).
         val lockHelpers = if (locked && !kiosk) {
-            runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolvePinLockHelpers(context) }.getOrDefault(emptySet())
+            helpers ?: runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolvePinLockHelpers(context) }
+                .getOrDefault(emptySet()).also { helpers = it }
         } else {
             emptySet()
         }

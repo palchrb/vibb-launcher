@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home while the PIN lock is LOCKED, or not decided yet with a kid PIN (design 16c): the night
+     ground with the breathing Vibb mark, centred - the boot cover's look. Nothing here takes a
+     touch or focus (HomeGateTest): the contacts, apps, call card and Settings exist only from the
+     UNLOCKED edge on (HomeActivity.showContent). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/home_night"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground">
+
+    <ImageView
+        android:id="@+id/home_night_mark"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:importantForAccessibility="no"
+        android:scaleType="center"
+        android:src="@drawable/splash_vibb_breathe" />
+
+</FrameLayout>
