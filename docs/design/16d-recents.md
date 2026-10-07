@@ -85,3 +85,65 @@ set-device-owner` or the QR flow, then rerun `smoke-test.sh REBOOT=1` with the R
 - Next: test pinning the recents package (stock launcher) in the kiosk with OVERVIEW restored, using the debug hook
   from 9cdb8c2f, and evaluate the escape surface. The assistant corner gesture is asked about separately, because the
   assistant can open apps and the web.
+
+## Experiment 2 - recents package pinned
+
+Emulator only, no code changed (2026-10-07, 14:48-15:31). Same AVD, gesture nav, kiosk on, PIN lock; the build with the
+9cdb8c2f hook. Recents provider (`config_recentsComponentName`): `com.google.android.apps.nexuslauncher`.
+**A** = `--ei add_features 8 --es extra_lock_task_packages com.google.android.apps.nexuslauncher` (unlocked 127; LOCKED
+stays 113). **B** = the package only (unlocked 119). Use 8, not §6e's 12: 12 also adds HOME to LOCKED. Quick switch and
+the assistant corner were dropped from scope by the user mid-run; not tested.
+
+1. **Back, home swipe, shade: no dialog in any pinned boot.** Tested in A over 3 `adb reboot`s (B1-B3), the install
+   boot and an `am force-stop` of nexuslauncher, and in B over 3 reboots (F1-F3). Fast and slow swipe, hold, the key,
+   and swipe/back/hold from Clock: never BlockedAppActivity in a captured dump. The preload now leaves a real
+   RecentsActivity inside lock task, never the `type=recents A=1000:android` task. Baseline (override reset, R1-R3): R3
+   had the stale task and the first home swipe gave the dialog, as in 16d. Hold in B: nothing (Home stays, an app snaps
+   back). The shade opened unlocked in every pinned boot. In the install boot it didn't open at all, even via `cmd
+   statusbar expand-notifications` with the override reset; fine after the next reboot (cause unknown).
+2. **New: SystemUI misses the LOCKED disable at boot.** In 3 of 6 pinned boots (B3, F1, F3; 0 of 3 baseline; all after
+   an UNLOCKED shutdown), `dumpsys statusbar` had `mDisabled1=0x7260000 mDisabled2=0x15` but SystemUI's `TaskbarDelegate
+   mDisabledFlags=0`. Over the PIN lock, the hold then opened the real Overview and the shade opened **with Quick
+   Settings** (Internet, Bluetooth, Flashlight, Modes). With the override reset in that boot the shade still opened and
+   the hold gave BlockedAppActivity, so the pin isn't required for it, though it may make it likelier [inferred]. It
+   lasts until the next disable change: the unlock, or `cmd statusbar send-disable-flag clock` then `none` (tested).
+   This is design 16's open check "pull the shade ... right as the lock comes up", failing.
+3. **Overview (A)** shows only standard lock-task tasks (Clock, Element X, Camera), never our Home task or the phone
+   book (which lives in it). Swipe-away works. Clear all removed Element and Clock, killed Element's process, kept Home
+   and LOCKED lock task, and showed our Home. Over the lock (via the key) it shows the lock card. Swiping that card away
+   brought the lock straight back as a new task. Empty space starts the typed HOME (ours). Actions:
+   - The task icon menu has App info, Pause app, Screenshot, Select and Close (no split, freeform or pin at 480x854).
+   - App info: `APPLICATION_DETAILS_SETTINGS` -91, nothing (Settings hidden).
+   - **Pause app**: BlockedAppActivity "Digital Wellbeing is not available right now"; the app is not paused.
+   - Screenshot: its Edit opens **Markup**, which gives BlockedAppActivity (same as today's power+volume screenshot).
+   - Select: text offers Copy, Share and Search (WEB_SEARCH -91, nothing). An image offers Copy, Share, Save and a
+     direct share to an Element contact; More opens the share sheet, whose Edit opens Markup (BlockedAppActivity).
+   - Nothing opened Settings, the wallpaper picker or the stock home.
+4. **Escape surface (A and B alike; lock task allows by package).** `am start -n` opens NexusLauncherActivity,
+   launcher3 `SettingsActivity` ("Home settings"), `GestureSandboxActivity` and `SecondaryDisplayLauncher` (all
+   exported). In the stock home, the drawer lists only non-hidden apps (Camera, Clock, Element X, Kids Launcher, Phone,
+   Play Store); Play Store gives the dialog. Its search offers Google, YouTube, Maps, Play Store, Settings and Contacts:
+   Google and Settings did nothing, Play Store gave the dialog. I found no kid-reachable path to any of these: HOME
+   always resolved to ours (persistent preferred). [from code, untested] `fencePlan` never suspends a lock-task package,
+   so with `update_fence` on, a pinned nexuslauncher is the unfenced fallback HOME during our self-update.
+5. **Recents key** (not on the phone): A opens Overview, also over the lock. B opened an empty Overview from Home once
+   (F2), because the key ignores OVERVIEW off.
+
+**Conclusion.** Pinning the provider removes the home-swipe dialog: 0 dialogs in 6 pinned boots and a force-stop,
+against 1 in 3 baseline boots. Choose:
+- **B (pin, OVERVIEW off)** while Overview is undecided: the same fix, no Overview UI, and all the required gestures.
+- **A** if the user wants to close apps from Overview. Closing works and never removes Home or ends lock task. It adds
+  three dialog paths inside Overview (Pause app; Markup via Screenshot or image Edit). [untested] Hiding
+  `com.google.android.markup` and `com.google.android.apps.wellbeing` would make those a silent -91.
+
+Guards needed in either case:
+1. Heal the boot desync (needed even without the pin): after the boot's first lock/Home resume, and again a few seconds
+   later, force a disable change (for example `setStatusBarDisabled` off then on while LOCKED). Smoke-test it: compare
+   `TaskbarDelegate mDisabledFlags` with `dumpsys statusbar` after 3 reboots from UNLOCKED, and pull the shade over the
+   lock.
+2. The update fence still suspends the pinned recents package, or unpins it before the commit.
+3. Pin the resolved provider package, never a fixed name; keep the persistent preferred HOME.
+
+**Jelly Star:** run `cmd overlay lookup android android:string/config_recentsComponentName` to find the provider
+(likely `com.android.launcher3` or a vendor launcher). Then check that package's exported activities and its Overview
+actions (split screen, pin, freeform, wallpaper), the desync check above, and the stale task with and without the pin.
