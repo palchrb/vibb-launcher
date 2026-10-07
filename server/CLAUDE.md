@@ -321,8 +321,13 @@ needed to manage the phone, delete on a schedule, never store notification or me
   app removes its whole directory. A manual upload follows the same order and redirects back to the page.
 - **Device API** `GET /api/devices/apps/{id}/download`: since design 13 scoped and resumable - see "App downloads"
   below.
-- New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth and brightness on
-  (`devices::DEFAULT_QUICK_CONTROLS`, mask 7, set in `insert_device_with_policy`); existing devices keep theirs.
+- New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth, brightness and (design 18) sound on
+  (`devices::DEFAULT_QUICK_CONTROLS`, mask 15, set in `insert_device_with_policy`); existing devices keep theirs.
+- **Sound mode** (design 18, `src/sound_mode.rs`, migration `0047_sound_mode.sql`): `QUICK_CONTROL_SOUND` = 8, a box on the
+  Quick Controls card (it only shows the kid's Sound / Silent (vibrate) row; the volume keys still work). Status
+  `ringer_mode` / `interruption_filter` (`#[serde(default)] Option<String>`, only known values stored, else NULL) ->
+  `device_status`, shown in the Status card "at the last sync" (DND only while on). Policy shape unchanged. Tests:
+  `sound_mode::tests`, `src/tests/sound_mode.rs`.
 - **Package-name backfill** (`device_api::status`): after allowlisting the backfilled app it nudges the phone
   (`command_notify`, so SSE and FCM), which otherwise kept the app hidden and suspended until its next backstop sync
   (found on the emulator). It compares with the previous report read before this one is stored (the same `previous`

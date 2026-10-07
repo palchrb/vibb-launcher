@@ -63,3 +63,25 @@ User wish (2026-10-07): the kid can switch the phone between sound and silent fr
   RING/NOTIFICATION changes, keep the first ring's saved values), the status fields `ringer_mode` + interruption
   filter shown on the device page "ved siste synk", `QUICK_CONTROL_SOUND = 8`, new devices 15, and the device-page
   text that the box only shows the row (volume keys still work).
+
+## Implementation status (2026-10-07)
+
+Built as decided (launcher `server/SoundMode.kt`, `QuickControls.soundState`/`setSound`, the row in
+`KidSettingsActivity`; `FindMyDeviceRing.kt` + `LocateCommands.ring`; server `src/sound_mode.rs`, migration 0047,
+`QUICK_CONTROL_SOUND`, new devices 15, the device-page box and Status lines). Unit tests as listed under "Checks",
+plus a source scan (no DND/interruption-filter/policy setters; the ringer mode is set only by the sound row) and
+Find My Device's alarm-only ring. The row label is "Lyd på telefonen" (en "Phone sound"); the section heading is now
+"Tilkobling, skjerm og lyd".
+
+Open device checks (emulator and Jelly Star):
+- Lyd <-> Lydløs (vibrerer) both ways; the row follows the volume keys and the volume panel while shown
+  (`RINGER_MODE_CHANGED_ACTION`), shows nothing selected and "helt lydløs" after the panel's Silent, and leaving
+  Silent from the row works (device-owner policy access) without turning DND on.
+- DND on (Quick Settings tile, a bedtime/schedule rule): the row is read-only with "Ikke forstyrr er på", a tap
+  changes nothing and the rule stays active; Vibrate never turns DND on.
+- A phone call and an Element X call in each mode, unlocked and on the PIN lock.
+- The device page shows the mode and DND after the next sync.
+- Find My Device ring from Vibrate, Silent and DND: loud on the alarm stream; afterwards the ringer mode, DND and
+  the ring/notification volumes are unchanged, and a second ring during the first restores the original alarm
+  volume.
+- A phone without a vibrator (emulator AVD without one, if available): no row.
