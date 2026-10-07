@@ -271,8 +271,21 @@ jobs:
       run: |
         set -euo pipefail
         BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+        echo "build-tools: $BT ($("$BT/apksigner" --version))"
         "$BT/apksigner" verify --print-certs kids-launcher-mdm.apk | tee certs.txt
-        actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' certs.txt | tr 'A-F' 'a-f')"
+        # Any signer line with a SHA-256 digest (newer apksigners label signers differently, e.g. per
+        # scheme or "Signer (minSdkVersion=...)"); all signers must be the same certificate anyway.
+        digests="$(grep -oE 'certificate SHA-256 digest: *[0-9a-fA-F]{64}' certs.txt \
+          | grep -oE '[0-9a-fA-F]{64}' | tr 'A-F' 'a-f' | sort -u)"
+        if [ -z "$digests" ]; then
+          echo "No certificate SHA-256 digest in apksigner's output (above)" >&2
+          exit 1
+        fi
+        if [ "$(printf '%s\n' "$digests" | wc -l)" -ne 1 ]; then
+          echo "More than one signing certificate: $digests" >&2
+          exit 1
+        fi
+        actual="$digests"
         expected="$(echo "$EXPECTED_SHA256" | tr -d ' :' | tr 'A-F' 'a-f')"
         if [ -z "$expected" ]; then
           echo "Repo variable RELEASE_CERT_SHA256 is not set" >&2
