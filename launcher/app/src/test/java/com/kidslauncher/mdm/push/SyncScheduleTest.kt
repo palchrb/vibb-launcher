@@ -15,13 +15,45 @@ import org.junit.Test
 /** When the phone syncs on its own (SyncSchedule.kt) - was PushTransportTest until design 19. */
 class SyncScheduleTest {
 
+    /** Design 19 QA #3: one rule for every reconnect, on two clocks. */
     @Test
-    fun `a quick SSE reconnect doesn't sync, a long gap does`() {
-        assertFalse(syncOnSseReopen(5_000))
-        assertFalse(syncOnSseReopen(SSE_GAP_SYNC_MS - 1))
-        assertTrue(syncOnSseReopen(SSE_GAP_SYNC_MS))
-        assertTrue(syncOnSseReopen(null))
-        assertTrue(syncOnSseReopen(-1))
+    fun `a quick SSE reconnect of a live stream doesn't sync, a gap or a deaf stream does`() {
+        // A live stream (last keepalive at most 240 s before the drop) reconnecting quickly.
+        assertFalse(syncOnSseReopen(5_000, 245_000))
+        assertFalse(syncOnSseReopen(SSE_GAP_SYNC_MS - 1, SSE_READ_TIMEOUT_MS - 1))
+        // Down long enough to have missed a nudge.
+        assertTrue(syncOnSseReopen(SSE_GAP_SYNC_MS, 10_000))
+        // A read timeout: noticed late, reconnected at once - the stream was deaf >= 300 s.
+        assertTrue(syncOnSseReopen(5_000, SSE_READ_TIMEOUT_MS))
+        // A staleness reconnect (>= 480 s silent) always syncs.
+        assertTrue(syncOnSseReopen(5_000, SSE_STALE_MS))
+        // Unknown: sync.
+        assertTrue(syncOnSseReopen(null, 1_000))
+        assertTrue(syncOnSseReopen(5_000, null))
+        assertTrue(syncOnSseReopen(-1, 1_000))
+        assertTrue(syncOnSseReopen(5_000, -1))
+    }
+
+    @Test
+    fun `a stream is stale after about two of the longest keepalives`() {
+        assertFalse(sseStale(240_000))
+        assertFalse(sseStale(SSE_READ_TIMEOUT_MS))
+        assertFalse(sseStale(SSE_STALE_MS - 1))
+        assertTrue(sseStale(SSE_STALE_MS))
+        assertTrue(SSE_STALE_MS >= 2 * 240_000L)
+        // Every staleness reconnect meets the reopen rule's read-timeout clock.
+        assertTrue(SSE_STALE_MS >= SSE_READ_TIMEOUT_MS)
+    }
+
+    @Test
+    fun `the drop wake lock is taken at most every 10 minutes`() {
+        assertTrue(sseDropWakeLockDue(null, 1_000))
+        assertFalse(sseDropWakeLockDue(1_000, 1_000 + SSE_DROP_WAKELOCK_EVERY_MS - 1))
+        assertTrue(sseDropWakeLockDue(1_000, 1_000 + SSE_DROP_WAKELOCK_EVERY_MS))
+        // Elapsed realtime never goes back in a process; if it seems to, take it.
+        assertTrue(sseDropWakeLockDue(5_000, 1_000))
+        // Long enough for the 5 s and 10 s retries (5 + 10 s after the drop, plus the connects).
+        assertTrue(SSE_DROP_WAKELOCK_MS >= 20_000L && SSE_DROP_WAKELOCK_MS <= 60_000L)
     }
 
     @Test

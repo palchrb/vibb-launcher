@@ -7,6 +7,8 @@ import android.content.Intent
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -15,11 +17,16 @@ import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_LISTENER
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.BackstopAlarm
+import com.kidslauncher.mdm.push.LastByteInterceptor
 import com.kidslauncher.mdm.push.PushState
+import com.kidslauncher.mdm.push.SSE_DROP_WAKELOCK_MS
 import com.kidslauncher.mdm.push.SSE_READ_TIMEOUT_MS
 import com.kidslauncher.mdm.push.SyncRunner
+import com.kidslauncher.mdm.push.sseDropWakeLockDue
+import com.kidslauncher.mdm.push.sseStale
 import com.kidslauncher.mdm.push.syncOnSseReopen
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -44,9 +51,18 @@ private const val EXTRA_SYNC_REASON = "reason"
  * Sync nudges arrive over the SSE stream only (design 19 removed FCM): a long-lived connection to
  * `/api/devices/commands/stream` through the embedded tailnet's SOCKS proxy, held whenever this
  * service runs. Every event is a content-free nudge. The server's keepalive comes every 240 s by
- * default, so a 300 s read timeout notices a silently dead stream. The reconnect loop runs on a
- * Handler, which stalls in deep sleep; the backstop alarm (15 min while the stream is down)
- * reconnects too (QA #8).
+ * default, so a 300 s read timeout notices a silently dead stream while the phone is awake. Deep
+ * sleep stops both that watchdog and the Handler that runs the reconnect backoff, so (design 19,
+ * SSE hardening):
+ * - every body read is stamped ([LastByteInterceptor], elapsed realtime); [checkStream] - on every
+ *   sync request (the backstop alarm's included) and at screen-on/unlock - reconnects a stream
+ *   that is down, and one that has been silent for [com.kidslauncher.mdm.push.SSE_STALE_MS]
+ *   (marked down first, like any drop);
+ * - the up -> down edge takes a ~30 s wake lock (at most every 10 min, released at the next open),
+ *   so the 5 s and 10 s retries run even in deep sleep - after every server restart;
+ * - a reopen syncs by one rule ([syncOnSseReopen]): down >= 150 s, or the old stream's last byte
+ *   >= 300 s ago (a read timeout or a stale stream always is).
+ * The backstop alarm (15 min while the stream is down) remains the last resort (QA #8).
  *
  * The periodic backstop is [BackstopAlarm] (a while-idle alarm on elapsed realtime), not a timer
  * here: `Handler` time stops in deep sleep. One sync also runs whenever this service starts
@@ -64,12 +80,22 @@ class CommandListenerService : Service() {
     private var firstStart = true
     /** Elapsed realtime when the stream went down (`null`: never up in this process). */
     private var sseDownSince: Long? = null
+    /** Elapsed realtime of the current stream's last bytes (headers or body), stamped by its
+     * [LastByteInterceptor] - one per connect, so a cancelled stream can't stamp the next one. */
+    private var lastByte: AtomicLong? = null
+    /** The dropped stream's last bytes, for the reopen's sync rule (`null`: none recorded). */
+    private var lastByteBeforeDrop: Long? = null
+    private var dropWakeLock: PowerManager.WakeLock? = null
+    /** When the drop wake lock was last taken (elapsed realtime). */
+    private var dropWakeLockAt: Long? = null
 
-    private fun buildClient(): OkHttpClient {
+    private fun buildClient(stamp: AtomicLong): OkHttpClient {
         val builder = OkHttpClient.Builder()
             // The server sends a keepalive comment every SSE_KEEPALIVE_SECS (240 s by default,
             // never more); five minutes of silence means the stream is dead - reconnect.
             .readTimeout(SSE_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            // The keepalives never reach the listener: stamp every read here (design 19 hole 1).
+            .addNetworkInterceptor(LastByteInterceptor { stamp.set(SystemClock.elapsedRealtime()) })
         // Fresh per connect: the server is only reachable through the embedded tailnet's proxy,
         // which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
         TsnetClient.proxy()?.let { builder.proxy(it) }
@@ -82,6 +108,7 @@ class CommandListenerService : Service() {
         super.onCreate()
         // First, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise).
         startForeground(COMMAND_LISTENER_NOTIFICATION_ID, buildNotification())
+        running = this
         // The screen on/off/unlock signals (screen time, time rules, the Play window, handy's PIN
         // lock) live in PinLockRuntime since step 10 - registered for the whole process from
         // Application, not for this service's lifetime (QA 10 #4).
@@ -106,20 +133,18 @@ class CommandListenerService : Service() {
             val reason = intent.getStringExtra(EXTRA_SYNC_REASON) ?: "request"
             SyncRunner.runInService(applicationContext, reason, fromRequest = true)
             // The backstop also restarts a stalled SSE reconnect loop (Handler time stops in
-            // deep sleep).
-            if (!PushState.sseConnected) {
-                handler.removeCallbacks(connectRunnable)
-                reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
-                connect()
-            }
+            // deep sleep), and a stream that went silent while it slept.
+            checkStream(reason, restartAttempt = true)
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
         stopped = true
+        if (running === this) running = null
         handler.removeCallbacksAndMessages(null)
         stopSse()
+        releaseDropWakeLock()
         super.onDestroy()
     }
 
@@ -141,6 +166,33 @@ class CommandListenerService : Service() {
         PushState.sseConnected = false
     }
 
+    /**
+     * Main thread. A stream that is down is reconnected now (with [restartAttempt] also one whose
+     * connect attempt is still in flight - the backstop, as before); one that is up but silent for
+     * [com.kidslauncher.mdm.push.SSE_STALE_MS] is marked down first ([markDown]: the reopen then
+     * syncs, the wake lock and the earlier backstop apply) and reconnected.
+     */
+    private fun checkStream(reason: String, restartAttempt: Boolean) {
+        if (stopped) return
+        if (!PushState.sseConnected) {
+            if (eventSource != null && !restartAttempt) return
+            handler.removeCallbacks(connectRunnable)
+            reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+            connect()
+            return
+        }
+        val since = SystemClock.elapsedRealtime() - (lastByte?.get() ?: return)
+        if (!sseStale(since)) return
+        Log.w(LOG_TAG, "Command stream silent for ${since / 1000} s ($reason) - reconnecting")
+        val stale = eventSource
+        eventSource = null
+        stale?.cancel()
+        markDown()
+        handler.removeCallbacks(connectRunnable)
+        reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+        connect()
+    }
+
     private fun connect() {
         if (stopped) return
         eventSource?.cancel()
@@ -160,7 +212,9 @@ class CommandListenerService : Service() {
             .header("Authorization", "Bearer $deviceToken")
             .build()
 
-        eventSource = EventSources.createFactory(buildClient()).newEventSource(
+        val stamp = AtomicLong(SystemClock.elapsedRealtime())
+        lastByte = stamp
+        eventSource = EventSources.createFactory(buildClient(stamp)).newEventSource(
             request,
             object : EventSourceListener() {
                 override fun onOpen(eventSource: EventSource, response: Response) {
@@ -170,11 +224,15 @@ class CommandListenerService : Service() {
                         reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
                         val wasDown = !PushState.sseConnected
                         PushState.sseConnected = true
-                        // Catch nudges missed while the stream was down - only if it was down long
-                        // enough to miss one (QA step 7 #5); the sync re-arms the backstop.
-                        val downFor = sseDownSince?.let { android.os.SystemClock.elapsedRealtime() - it }
-                        if (wasDown && syncOnSseReopen(downFor)) SyncRunner.request(applicationContext, "sse_open")
+                        releaseDropWakeLock()
+                        // Catch nudges missed while the stream was down or deaf (design 19 QA #3);
+                        // the sync re-arms the backstop.
+                        val now = SystemClock.elapsedRealtime()
+                        val downFor = sseDownSince?.let { now - it }
+                        val sinceLastByte = lastByteBeforeDrop?.let { now - it }
+                        if (wasDown && syncOnSseReopen(downFor, sinceLastByte)) SyncRunner.request(applicationContext, "sse_open")
                         sseDownSince = null
+                        lastByteBeforeDrop = null
                     }
                 }
 
@@ -200,13 +258,47 @@ class CommandListenerService : Service() {
     private fun streamDown(source: EventSource) {
         if (source !== eventSource) return
         eventSource = null
+        markDown()
+        scheduleReconnect()
+    }
+
+    /**
+     * Main thread. The bookkeeping of a drop, on the up -> down edge only: down since now, the old
+     * stream's last bytes kept for the reopen's sync rule, the wake lock for the first retries
+     * (hole 3), and the backstop moved earlier - only ever earlier (15 min): a flapping stream must
+     * not keep pushing it out until it never fires.
+     */
+    private fun markDown() {
         val wasUp = PushState.sseConnected
         PushState.sseConnected = false
-        if (wasUp) sseDownSince = android.os.SystemClock.elapsedRealtime()
-        // Only on the up -> down edge, and only ever earlier (15 min): a flapping stream must not
-        // keep pushing the backstop out until it never fires.
-        if (wasUp) BackstopAlarm.schedule(applicationContext, afterSync = false)
-        scheduleReconnect()
+        if (!wasUp) return
+        sseDownSince = SystemClock.elapsedRealtime()
+        lastByteBeforeDrop = lastByte?.get()
+        takeDropWakeLock()
+        BackstopAlarm.schedule(applicationContext, afterSync = false)
+    }
+
+    private fun takeDropWakeLock() {
+        val now = SystemClock.elapsedRealtime()
+        if (!sseDropWakeLockDue(dropWakeLockAt, now)) return
+        try {
+            val lock = dropWakeLock ?: getSystemService(PowerManager::class.java)
+                ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "kidslauncher:sse_reconnect")
+                ?.apply { setReferenceCounted(false) }
+                ?.also { dropWakeLock = it }
+            lock?.acquire(SSE_DROP_WAKELOCK_MS)
+            dropWakeLockAt = now
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't take the reconnect wake lock", e)
+        }
+    }
+
+    private fun releaseDropWakeLock() {
+        try {
+            dropWakeLock?.takeIf { it.isHeld }?.release()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't release the reconnect wake lock", e)
+        }
     }
 
     private fun scheduleReconnect() {
@@ -220,6 +312,21 @@ class CommandListenerService : Service() {
     companion object {
         const val ACTION_SYNC = "com.kidslauncher.mdm.action.SYNC"
         const val ACTION_DOWNLOADS = "com.kidslauncher.mdm.action.DOWNLOADS"
+
+        /** The live instance, for [checkStream]. Same process only. */
+        @Volatile
+        private var running: CommandListenerService? = null
+
+        /**
+         * At screen-on/unlock (`PinLockRuntime`'s process-wide receiver, design 19 QA #2d): costs
+         * nothing, and that is when a lift or a lock matters - reconnects a stream that is down
+         * (unless a connect attempt is in flight) or silent too long. A no-op while the anchor
+         * isn't running.
+         */
+        fun checkStream(reason: String) {
+            val service = running ?: return
+            service.handler.post { service.checkStream(reason, restartAttempt = false) }
+        }
 
         /** Starts the anchor (a no-op if it runs). Safe to call repeatedly. */
         fun start(context: Context) {

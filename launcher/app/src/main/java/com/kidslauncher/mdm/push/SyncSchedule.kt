@@ -49,12 +49,49 @@ fun backstopDelayMs(
 const val SSE_READ_TIMEOUT_MS = 300_000L
 
 /**
- * Whether reopening the SSE stream must sync: only when it was down long enough to have missed a
- * nudge (QA step 7 #5). A stream that drops and reconnects quickly costs no sync.
+ * A stream down this long (from noticing the drop to the reopen) may have missed a nudge (QA step
+ * 7 #5); a quicker reconnect costs no sync.
  */
 const val SSE_GAP_SYNC_MS = 150_000L
 
-fun syncOnSseReopen(downForMs: Long?): Boolean = downForMs == null || downForMs < 0 || downForMs >= SSE_GAP_SYNC_MS
+/**
+ * Whether reopening the SSE stream must sync (design 19 QA #3, one rule for every reconnect):
+ * when it was down >= [SSE_GAP_SYNC_MS] ([downForMs], from noticing the drop), or when the old
+ * stream's last byte is >= [SSE_READ_TIMEOUT_MS] ago ([sinceLastByteMs], elapsed realtime - it
+ * counts deep sleep). A read timeout always meets the second (Okio's watchdog and SO_TIMEOUT
+ * count awake time only, so the stream was deaf at least that long), and so does a staleness
+ * reconnect ([SSE_STALE_MS]); a quick reconnect of a live stream meets neither (its last byte is
+ * at most one keepalive, 240 s, plus the backoff ago). Unknown (`null`, negative) = sync.
+ */
+fun syncOnSseReopen(downForMs: Long?, sinceLastByteMs: Long?): Boolean =
+    downForMs == null || downForMs < 0 || downForMs >= SSE_GAP_SYNC_MS ||
+        sinceLastByteMs == null || sinceLastByteMs < 0 || sinceLastByteMs >= SSE_READ_TIMEOUT_MS
+
+/**
+ * An open stream with nothing received for this long (elapsed realtime) is dead, whatever the
+ * read timeout says (design 19 hole 1): about two of the server's longest keepalives (QA #2c), so a
+ * keepalive that woke the phone but wasn't read before it slept again forces no reconnect. The
+ * read timeout's watchdog stops in deep sleep, so a silently dead stream (a Pi restart without a
+ * FIN reaching us) would otherwise count as up for hours, and the backstop reconnects only a
+ * stream that is down. Checked by the backstop's sync request and at screen-on/unlock.
+ */
+const val SSE_STALE_MS = 480_000L
+
+fun sseStale(sinceLastByteMs: Long): Boolean = sinceLastByteMs >= SSE_STALE_MS
+
+/**
+ * Design 19 hole 3: the reconnect backoff runs on a Handler (uptime only), so after a drop in deep
+ * sleep - every server restart - the 5 s and 10 s retries would wait for the next backstop (15
+ * min). The up->down edge takes a partial wake lock this long, released when the stream opens...
+ */
+const val SSE_DROP_WAKELOCK_MS = 30_000L
+
+/** ...at most once per this long, so a flapping stream can't keep the phone awake. */
+const val SSE_DROP_WAKELOCK_EVERY_MS = 10 * 60_000L
+
+/** [lastAtMs]: when the drop wake lock was last taken (elapsed realtime, `null` = never). */
+fun sseDropWakeLockDue(lastAtMs: Long?, nowMs: Long): Boolean =
+    lastAtMs == null || nowMs < lastAtMs || nowMs - lastAtMs >= SSE_DROP_WAKELOCK_EVERY_MS
 
 /** Hard limits for one sync run (policy, status, the app list - since design 13 the APK downloads
  * run outside the sync, in `AppDownloads`). The wake lock is released when the run ends, at the

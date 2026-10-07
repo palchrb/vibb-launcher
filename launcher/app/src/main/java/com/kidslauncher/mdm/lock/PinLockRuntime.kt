@@ -558,6 +558,9 @@ object PinLockRuntime {
                     // No self-update commit while someone uses the phone (step 11).
                     com.kidslauncher.mdm.server.SelfUpdate.onScreenOn(app)
                 }
+                // Design 19: a command stream that is down or went silent while the phone slept
+                // reconnects now - a lift or a lock matters most while the phone is in use.
+                com.kidslauncher.mdm.server.CommandListenerService.checkStream("screen")
                 // May start the time-rule screen - the PIN lock then goes above it.
                 TimeRulesRuntime.recheck(app)
                 dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase))
