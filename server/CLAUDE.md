@@ -162,7 +162,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   controls) per path in sessionStorage for 20 s, and restores it on the page that comes back; a
   redirect with a `#fragment` (e.g. `#screen-lock` with a notice) keeps its anchor instead. A new
   page template must include the head partial (`pages_restore_scroll_after_auto_save` checks
-  every template and runs `node --test jstest/`, the script's behaviour tests, when node is
+  every template and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
   installed - CI always runs them); a new form needs nothing else as long as it redirects back to
   its own page. External file, so a future CSP needs no inline-script exception.
 - **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of

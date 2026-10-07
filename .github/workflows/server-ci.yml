@@ -65,7 +65,7 @@ jobs:
       # launcher's copy in ../launcher.
       - run: cargo test --locked
       # static/scroll-restore.js (no POST may make a page jump to the top); node is on the runner.
-      - run: node --test jstest/
+      - run: node --test jstest/*.test.js
       # Reports warnings without failing the build; the existing ones predate the test harness.
       - run: cargo clippy --all-targets --locked
 
