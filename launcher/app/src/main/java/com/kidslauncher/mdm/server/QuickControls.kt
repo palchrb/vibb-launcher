@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import android.app.NotificationManager
 import android.app.admin.DevicePolicyManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -9,8 +10,10 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
 
@@ -26,6 +29,10 @@ object QuickControlFeature {
     const val WIFI: Long = 1
     const val BLUETOOTH: Long = 2
     const val BRIGHTNESS: Long = 4
+
+    /** The sound row (design 18): Sound / Silent (vibrate). Only shows the row - the volume keys
+     * and the volume panel still change the ringer, so this is no lock (QA #4). */
+    const val SOUND: Long = 8
 }
 
 /**
@@ -193,6 +200,71 @@ object QuickControls {
             Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
         } catch (e: Exception) {
             128
+        }
+    }
+
+    /**
+     * The kid's sound row as the phone is now ([soundRowState], design 18): ringer mode,
+     * interruption filter (DND), vibrator and notification-policy access, each read defensively -
+     * an unreadable value makes the row read-only, never a guess that could end a DND.
+     */
+    fun soundState(context: Context): SoundRowState? {
+        val app = context.applicationContext
+        val hasVibrator = try {
+            app.getSystemService(VibratorManager::class.java)?.defaultVibrator?.hasVibrator() == true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to read the vibrator", e)
+            false
+        }
+        val access = try {
+            app.getSystemService(NotificationManager::class.java)?.isNotificationPolicyAccessGranted == true
+        } catch (e: Exception) {
+            false
+        }
+        val state = soundRowState(ringerMode(app), interruptionFilter(app), hasVibrator, access)
+        if (!access && state?.note == SoundNote.USE_VOLUME_KEYS) {
+            // Defensive (QA #3): the device owner has policy access on Android 14-16, so this
+            // should never be logged on a provisioned phone.
+            Log.w(LOG_TAG, "No notification-policy access: the sound row can't leave Silent")
+        }
+        return state
+    }
+
+    /** `AudioManager.getRingerMode()`, -1 when unreadable. */
+    fun ringerMode(context: Context): Int = try {
+        context.applicationContext.getSystemService(AudioManager::class.java)?.ringerMode ?: -1
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Failed to read the ringer mode", e)
+        -1
+    }
+
+    /** `NotificationManager.getCurrentInterruptionFilter()`, 0 (unknown) when unreadable. */
+    fun interruptionFilter(context: Context): Int = try {
+        context.applicationContext.getSystemService(NotificationManager::class.java)?.currentInterruptionFilter
+            ?: NotificationManager.INTERRUPTION_FILTER_UNKNOWN
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Failed to read the interruption filter", e)
+        NotificationManager.INTERRUPTION_FILTER_UNKNOWN
+    }
+
+    /**
+     * A tap on the sound row: re-reads the state ([soundTapMode] on a fresh [soundState], so a
+     * DND that began after the render is never ended) and sets Normal or Vibrate - never Silent,
+     * never DND or an interruption filter. Returns whether the ringer mode was set; a
+     * SecurityException (policy access needed to leave Silent) is caught per tap.
+     */
+    fun setSound(context: Context, choice: SoundChoice): Boolean {
+        val mode = soundTapMode(soundState(context), choice) ?: return false
+        return try {
+            val audio = context.applicationContext.getSystemService(AudioManager::class.java) ?: return false
+            audio.ringerMode = mode
+            true
+        } catch (e: SecurityException) {
+            Log.w(LOG_TAG, "Setting the ringer mode to $mode was refused", e)
+            false
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the ringer mode to $mode", e)
+            false
         }
     }
 

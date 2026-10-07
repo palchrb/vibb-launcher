@@ -33,6 +33,9 @@
         {% if let Some(v) = status.app_version %}
         <p>App version: {{ v }}</p>
         {% endif %}
+        {% for line in sound_lines %}
+        <p>{{ line }}</p>
+        {% endfor %}
         <p class="subtitle">Last reported {{ status.reported_at }}</p>
         {% if let Some(problem) = policy_problem %}
         <div class="error">{{ problem }}</div>
@@ -403,6 +406,10 @@
         <label class="checkbox-row">
             <input type="checkbox" name="quick_control_brightness" value="on" {% if quick_control_brightness %}checked{% endif %}>
             Screen brightness
+        </label>
+        <label class="checkbox-row">
+            <input type="checkbox" name="quick_control_sound" value="on" {% if quick_control_sound %}checked{% endif %}>
+            Sound: "Sound" or "Silent (vibrate)" for calls and notifications. This box only shows the choice on the kid's screen - the phone's volume buttons work either way. Android's full silent isn't offered (it is Do Not Disturb), and while Do Not Disturb is on the kid can't change it there.
         </label>
 
         <h2>Ad/content filtering (VPN)</h2>

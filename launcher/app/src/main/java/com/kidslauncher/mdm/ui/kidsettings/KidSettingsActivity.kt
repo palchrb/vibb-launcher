@@ -1,10 +1,16 @@
 package com.kidslauncher.mdm.ui.kidsettings
 
+import android.app.NotificationManager
 import android.app.admin.DevicePolicyManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.res.ColorStateList
+import android.graphics.drawable.StateListDrawable
+import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -16,15 +22,21 @@ import android.widget.CompoundButton
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.RadioButton
 import android.widget.SeekBar
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityKidSettingsBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.server.SoundChoice
+import com.kidslauncher.mdm.server.SoundNote
+import com.kidslauncher.mdm.server.SoundRowState
 import com.kidslauncher.mdm.server.cachedPolicy
+import com.kidslauncher.mdm.server.describeSoundRow
 import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import com.kidslauncher.mdm.ui.quickcontrols.BluetoothDevicesActivity
@@ -48,12 +60,24 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
  * changes a rule; the parent's Settings stay in the drawer behind the PIN.
  *
  * The screen re-renders when a sync stores a new policy (the mask can change while it is open).
+ * The sound row (design 18) re-reads the phone on every ringer-mode or Do Not Disturb change
+ * while the screen is shown - the volume keys change it underneath.
  */
 class KidSettingsActivity : UIObjectActivity() {
     private lateinit var binding: ActivityKidSettingsBinding
     private lateinit var dpm: DevicePolicyManager
     private lateinit var admin: ComponentName
     private var lastLogged: String? = null
+    private var lastSoundLogged: String? = null
+    private var section: ControlsSection? = null
+    private var ink: InkChoice? = null
+
+    /** Volume keys, the volume panel or a DND schedule changed the ringer: show what is true now. */
+    private val soundReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            section?.let { renderControls(it) }
+        }
+    }
 
     private val wallpaperListener: () -> Unit = { render() }
     /** A thumbnail arrived: only the picker is drawn again (qa-08-code.md #4). */
@@ -101,6 +125,13 @@ class KidSettingsActivity : UIObjectActivity() {
         binding.kidSettingsBluetoothManage.setOnClickListener {
             if (it.isEnabled) startActivity(Intent(this, BluetoothDevicesActivity::class.java))
         }
+        for ((button, choice) in soundButtons()) {
+            // The click has already checked the button; the render puts back what the phone has.
+            button.setOnClickListener {
+                QuickControls.setSound(this, choice)
+                section?.let { renderControls(it) }
+            }
+        }
         binding.kidSettingsBrightnessSeekbar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) QuickControls.setBrightness(dpm, admin, progress)
@@ -116,6 +147,11 @@ class KidSettingsActivity : UIObjectActivity() {
         LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefsListener)
         WallpaperStore.addListener(wallpaperListener)
         WallpaperStore.addThumbnailListener(thumbnailListener)
+        val soundChanges = IntentFilter().apply {
+            addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
+            addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
+        }
+        ContextCompat.registerReceiver(this, soundReceiver, soundChanges, ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     override fun onResume() {
@@ -130,6 +166,7 @@ class KidSettingsActivity : UIObjectActivity() {
         LauncherPreferences.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(prefsListener)
         WallpaperStore.removeListener(wallpaperListener)
         WallpaperStore.removeThumbnailListener(thumbnailListener)
+        runCatching { unregisterReceiver(soundReceiver) }
         super.onStop()
     }
 
@@ -156,6 +193,7 @@ class KidSettingsActivity : UIObjectActivity() {
             Log.i(TAG, "Connection and screen: $described")
             lastLogged = described
         }
+        this.section = section
         renderControls(section)
     }
 
@@ -168,12 +206,15 @@ class KidSettingsActivity : UIObjectActivity() {
             is ControlsSection.Rows -> null
         }
         val rows = section as? ControlsSection.Rows
-        // Mask 0: no card and no heading - there is simply nothing to show.
+        val soundShown = renderSound(rows?.sound == true)
+        // Mask 0 (or only the sound bit on a phone without a vibrator): no card and no heading -
+        // there is simply nothing to show.
+        val anyRow = rows != null && (rows.wifi || rows.bluetooth || rows.brightness || soundShown)
         binding.kidSettingsControlsHeading.visibility =
-            if (section == ControlsSection.NoneEnabled) View.GONE else View.VISIBLE
+            if (section == ControlsSection.NoneEnabled || (rows != null && !anyRow)) View.GONE else View.VISIBLE
         binding.kidSettingsControlsMessage.visibility = if (message != null) View.VISIBLE else View.GONE
         message?.let { binding.kidSettingsControlsMessage.setText(it) }
-        binding.kidSettingsCard.visibility = if (rows != null) View.VISIBLE else View.GONE
+        binding.kidSettingsCard.visibility = if (anyRow) View.VISIBLE else View.GONE
 
         binding.kidSettingsWifiRow.visibility = if (rows?.wifi == true) View.VISIBLE else View.GONE
         if (rows?.wifi == true) {
@@ -198,13 +239,82 @@ class KidSettingsActivity : UIObjectActivity() {
         }
     }
 
+    /**
+     * The sound row (design 18) when the parent's bit is on: hidden without a vibrator, read-only
+     * with a note while Do Not Disturb is on ([com.kidslauncher.mdm.server.soundRowState]).
+     * Returns whether it shows.
+     */
+    private fun renderSound(wanted: Boolean): Boolean {
+        val state: SoundRowState? = if (wanted) QuickControls.soundState(this) else null
+        if (wanted) {
+            val described = state.describeSoundRow()
+            if (described != lastSoundLogged) {
+                Log.i(TAG, "Sound row: $described")
+                lastSoundLogged = described
+            }
+        }
+        binding.kidSettingsSoundRow.visibility = if (state != null) View.VISIBLE else View.GONE
+        if (state == null) return false
+        when (state.selected) {
+            SoundChoice.SOUND -> binding.kidSettingsSoundGroup.check(R.id.kid_settings_sound_on)
+            SoundChoice.SILENT_VIBRATE -> binding.kidSettingsSoundGroup.check(R.id.kid_settings_sound_vibrate)
+            null -> binding.kidSettingsSoundGroup.clearCheck()
+        }
+        for ((button, _) in soundButtons()) {
+            button.isEnabled = state.enabled
+            button.alpha = if (state.enabled) 1.0f else 0.5f
+        }
+        val note = when (state.note) {
+            SoundNote.DND_ON -> R.string.kid_settings_sound_dnd
+            SoundNote.FULLY_SILENT -> R.string.kid_settings_sound_fully_silent
+            SoundNote.USE_VOLUME_KEYS -> R.string.kid_settings_sound_volume_keys
+            null -> null
+        }
+        binding.kidSettingsSoundNote.visibility = if (note != null) View.VISIBLE else View.GONE
+        note?.let { binding.kidSettingsSoundNote.setText(it) }
+        return true
+    }
+
+    private fun soundButtons(): List<Pair<RadioButton, SoundChoice>> = listOf(
+        binding.kidSettingsSoundOn to SoundChoice.SOUND,
+        binding.kidSettingsSoundVibrate to SoundChoice.SILENT_VIBRATE,
+    )
+
     private fun renderInk(ink: InkChoice) {
         for (view in listOf(
             binding.kidSettingsHeader.kidHeaderTitle, binding.kidSettingsWallpaperHeading, binding.kidSettingsWallpaperCaption,
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
-            binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel,
+            binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
+            binding.kidSettingsSoundNote,
         )) {
             KidInk.label(view, ink)
+        }
+        if (ink != this.ink) {
+            this.ink = ink
+            for ((button, _) in soundButtons()) styleSegment(button, ink)
+        }
+    }
+
+    /**
+     * One choice of the sound row: the chosen one filled with the accent and night text (9.9:1),
+     * the other a thin ring in the ink with ink text - like the wallpaper tiles.
+     */
+    private fun styleSegment(button: RadioButton, ink: InkChoice) {
+        KidInk.label(button, ink)
+        val checked = intArrayOf(android.R.attr.state_checked)
+        button.setTextColor(
+            ColorStateList(arrayOf(checked, intArrayOf()), intArrayOf(getColor(R.color.kid_ground), ink.ink)),
+        )
+        val radius = KidAvatars.dp(this, 12f).toFloat()
+        button.background = StateListDrawable().apply {
+            addState(checked, GradientDrawable().apply {
+                cornerRadius = radius
+                setColor(getColor(R.color.kid_accent))
+            })
+            addState(intArrayOf(), GradientDrawable().apply {
+                cornerRadius = radius
+                setStroke(KidAvatars.dp(this@KidSettingsActivity, 1f), (0x66 shl 24) or (ink.ink and 0xFFFFFF))
+            })
         }
     }
 

@@ -26,7 +26,9 @@ sealed interface ControlsSection {
     /** A policy is there, and the parent turned on no switch (mask 0): no card at all. */
     data object NoneEnabled : ControlsSection
 
-    data class Rows(val wifi: Boolean, val bluetooth: Boolean, val brightness: Boolean) : ControlsSection
+    /** [sound]: the parent's bit for the sound row (design 18); whether the row really shows is
+     * also up to the phone ([com.kidslauncher.mdm.server.soundRowState]: no vibrator, no row). */
+    data class Rows(val wifi: Boolean, val bluetooth: Boolean, val brightness: Boolean, val sound: Boolean) : ControlsSection
 }
 
 /** For the log: which case the kid is looking at, and the mask when there is one. */
@@ -35,7 +37,7 @@ fun ControlsSection.describe(): String = when (this) {
     ControlsSection.NoPolicyYet -> "no accepted policy cached"
     ControlsSection.Unreadable -> "cached policy unreadable"
     ControlsSection.NoneEnabled -> "quick_controls_mask 0"
-    is ControlsSection.Rows -> "wifi=$wifi bluetooth=$bluetooth brightness=$brightness"
+    is ControlsSection.Rows -> "wifi=$wifi bluetooth=$bluetooth brightness=$brightness sound=$sound"
 }
 
 /**
@@ -54,8 +56,9 @@ fun controlsSection(isDeviceOwner: Boolean, cached: CachedPolicy): ControlsSecti
         wifi = mask and QuickControlFeature.WIFI != 0L,
         bluetooth = mask and QuickControlFeature.BLUETOOTH != 0L,
         brightness = mask and QuickControlFeature.BRIGHTNESS != 0L,
+        sound = mask and QuickControlFeature.SOUND != 0L,
     )
-    return if (rows.wifi || rows.bluetooth || rows.brightness) rows else ControlsSection.NoneEnabled
+    return if (rows.wifi || rows.bluetooth || rows.brightness || rows.sound) rows else ControlsSection.NoneEnabled
 }
 
 /** One wallpaper in the picker. */

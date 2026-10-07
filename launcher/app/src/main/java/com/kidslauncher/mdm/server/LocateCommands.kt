@@ -229,55 +229,39 @@ object LocateCommands {
     @Volatile
     private var ringPlayer: MediaPlayer? = null
 
-    private var originalRingerMode: Int? = null
+    /** The volumes the first ring of a run saved ([ringVolumesToRestore]); cleared on restore. */
     private val restoredStreams = mutableMapOf<Int, Int>()
     private val ringHandler = Handler(Looper.getMainLooper())
     private var ringTimeoutRunnable: Runnable? = null
 
     /**
-     * Forces every stream that could plausibly gate audible output to max volume and loops the
-     * device's own configured alarm sound for [RING_DURATION_MS] (or until [stopRingAndRestore] is
-     * called first - via the notification's "Stop Ringing" action, or a `stop_ring` command from
-     * the server). The alarm stream alone is *supposed* to be enough - it's specifically designed
-     * by the platform to bypass silent/DND mode, the same reason a real alarm clock still rings
-     * then - but confirmed live that it wasn't loud enough on its own, so this also explicitly
-     * forces the ringer mode off silent (belt-and-suspenders against any OEM/ROM-level interaction
-     * between ringer mode and perceived alarm loudness) and raises RING/NOTIFICATION/MUSIC
-     * alongside ALARM in case actual playback ends up routed differently than
-     * `AudioAttributes.USAGE_ALARM` alone implies on this hardware. No special permission needed
-     * for any of this, unlike most other "override the user's settings" asks in this app. Uses
-     * whatever alarm sound the phone already has configured rather than bundling a new audio asset.
+     * Raises the alarm stream to its maximum and loops the device's own configured alarm sound for
+     * [RING_DURATION_MS] (or until [stopRingAndRestore] is called first - via the notification's
+     * "Stop Ringing" action, or a `stop_ring` command from the server). The alarm stream plays
+     * through silent and Do Not Disturb by design, the same reason a real alarm clock still rings
+     * then. Never the ringer mode or the ringer-affected streams (RING/NOTIFICATION): as the device
+     * owner a ringer-mode change works and ends any DND or bedtime mode, restoring Silent turns on
+     * a manual DND, and those streams set the ringer mode themselves - restoring 0 left the phone
+     * on Vibrate (design 18, QA #2; [RING_RAISED_STREAMS]). A second `ring` while one plays keeps
+     * the first one's saved volumes. Uses whatever alarm sound the phone already has configured
+     * rather than bundling a new audio asset.
      */
     fun ring(context: Context) {
         try {
+            // A second ring starts its own full duration.
+            ringTimeoutRunnable?.let { ringHandler.removeCallbacks(it) }
+            ringTimeoutRunnable = null
             stopRingPlayback()
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-            // Best-effort - changing ringer mode needs Do-Not-Disturb/notification-policy access,
-            // which isn't something Device Owner can silently grant itself the way runtime
-            // permissions are elsewhere in this app. Its own try/catch so a failure here (no DND
-            // access) can't take down the alarm-stream playback below, which needs no permission
-            // at all and is the part that actually matters.
-            try {
-                originalRingerMode = audioManager.ringerMode
-                audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Failed to set ringer mode (likely missing DND access)", e)
-            }
-
+            val current = RING_RAISED_STREAMS.associateWith { audioManager.getStreamVolume(it) }
+            val toRestore = ringVolumesToRestore(restoredStreams.toMap(), current)
             restoredStreams.clear()
-            listOf(
-                AudioManager.STREAM_ALARM,
-                AudioManager.STREAM_RING,
-                AudioManager.STREAM_NOTIFICATION,
-                AudioManager.STREAM_MUSIC,
-            ).forEach { stream ->
-                restoredStreams[stream] = audioManager.getStreamVolume(stream)
+            restoredStreams.putAll(toRestore)
+            RING_RAISED_STREAMS.forEach { stream ->
                 try {
                     audioManager.setStreamVolume(stream, audioManager.getStreamMaxVolume(stream), 0)
                 } catch (e: Exception) {
-                    // Some streams (e.g. STREAM_RING on a device with no telephony) can reject
-                    // this - never let one failing stream block the others.
                     Log.w(LOG_TAG, "Failed to raise stream $stream", e)
                 }
             }
@@ -310,7 +294,7 @@ object LocateCommands {
     }
 
     /**
-     * Stops playback, restores every volume/ringer-mode change [ring] made, and cancels the
+     * Stops playback, restores the volumes [ring] raised, and cancels the
      * notification - called either by [RING_DURATION_MS] naturally elapsing, the notification's
      * "Stop Ringing" action ([StopRingReceiver]), or a `stop_ring` command from the server
      * ([MdmSyncWorker]'s dispatch). Safe to call more than once (e.g. both the timeout and a manual
@@ -330,12 +314,6 @@ object LocateCommands {
             }
         }
         restoredStreams.clear()
-        try {
-            originalRingerMode?.let { audioManager.ringerMode = it }
-        } catch (e: Exception) {
-            // Best-effort restore - harmless if it fails.
-        }
-        originalRingerMode = null
 
         cancelStopRingNotification(context)
     }

@@ -83,11 +83,17 @@
     <!-- Quick Controls -->
     <string name="kid_settings_background">Bakgrunn</string>
     <string name="kid_settings_background_caption">Bildene er valgt ut av mamma og pappa</string>
-    <string name="kid_settings_connection">Tilkobling og skjerm</string>
+    <string name="kid_settings_connection">Tilkobling, skjerm og lyd</string>
     <string name="kid_settings_not_owner">Bryterne virker når mamma og pappa har satt opp telefonen.</string>
     <string name="kid_settings_no_policy">Bryterne kommer med neste oppdatering fra mamma og pappa.</string>
     <string name="kid_settings_unreadable">Bryterne kan ikke leses akkurat nå. Spør mamma eller pappa.</string>
     <string name="kid_settings_wallpaper_selected">%1$s, valgt</string>
+    <string name="kid_settings_sound">Lyd på telefonen</string>
+    <string name="kid_settings_sound_on">Lyd</string>
+    <string name="kid_settings_sound_vibrate">Lydløs (vibrerer)</string>
+    <string name="kid_settings_sound_dnd">Ikke forstyrr er på.</string>
+    <string name="kid_settings_sound_fully_silent">Telefonen er helt lydløs nå, uten vibrering.</string>
+    <string name="kid_settings_sound_volume_keys">Lyden kan ikke endres her akkurat nå. Volumknappene virker.</string>
     <string name="wallpaper_navy">Mørk blå</string>
     <string name="wallpaper_vibb_night">Natt</string>
     <string name="wallpaper_forest">Skog</string>

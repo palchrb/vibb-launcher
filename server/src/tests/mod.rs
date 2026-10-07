@@ -10,6 +10,7 @@ mod hardening;
 mod launcher_ui;
 mod provisioning;
 mod push;
+mod sound_mode;
 mod step10;
 mod step11;
 mod step9;

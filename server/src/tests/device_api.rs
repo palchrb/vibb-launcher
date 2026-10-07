@@ -450,11 +450,11 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
         .bind(device)
         .fetch_one(&app.db)
     };
-    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4);
+    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8);
     assert_eq!(
         crate::handlers::devices::DEFAULT_QUICK_CONTROLS,
-        1 | 2 | 4,
-        "Wi-Fi, Bluetooth, brightness"
+        1 | 2 | 4 | 8,
+        "Wi-Fi, Bluetooth, brightness, sound (design 18)"
     );
     assert_eq!(mask(existing).await.unwrap(), 0);
 
@@ -473,7 +473,7 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
-    assert_eq!(policy.json()["quick_controls_mask"], 7);
+    assert_eq!(policy.json()["quick_controls_mask"], 15);
 }
 
 #[tokio::test]

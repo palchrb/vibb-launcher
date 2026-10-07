@@ -15,6 +15,7 @@ mod play;
 mod push;
 mod retention;
 mod security;
+mod sound_mode;
 #[cfg(test)]
 mod tests;
 mod time_rules;

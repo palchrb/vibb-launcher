@@ -107,11 +107,17 @@
       -->
     <string name="kid_settings_background">Background</string>
     <string name="kid_settings_background_caption">Picked by mum and dad</string>
-    <string name="kid_settings_connection">Connection and screen</string>
+    <string name="kid_settings_connection">Connection, screen and sound</string>
     <string name="kid_settings_not_owner">These switches work once mum and dad have set up the phone.</string>
     <string name="kid_settings_no_policy">These switches come with the next update from mum and dad.</string>
     <string name="kid_settings_unreadable">The switches can\'t be read right now. Ask mum or dad.</string>
     <string name="kid_settings_wallpaper_selected">%1$s, chosen</string>
+    <string name="kid_settings_sound">Phone sound</string>
+    <string name="kid_settings_sound_on">Sound</string>
+    <string name="kid_settings_sound_vibrate">Silent (vibrate)</string>
+    <string name="kid_settings_sound_dnd">Do Not Disturb is on.</string>
+    <string name="kid_settings_sound_fully_silent">The phone is fully silent now, without vibration.</string>
+    <string name="kid_settings_sound_volume_keys">The sound can\'t be changed here right now. The volume buttons work.</string>
     <string name="wallpaper_navy">Dark blue</string>
     <string name="wallpaper_vibb_night">Night</string>
     <string name="wallpaper_forest">Forest</string>

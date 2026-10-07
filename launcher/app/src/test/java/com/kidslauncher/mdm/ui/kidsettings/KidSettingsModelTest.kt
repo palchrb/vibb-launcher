@@ -14,12 +14,15 @@ class KidSettingsModelTest {
 
     @Test
     fun `switches follow the mask of an accepted policy`() {
-        assertEquals(ControlsSection.Rows(wifi = true, bluetooth = true, brightness = true), controlsSection(true, ok(7)))
-        assertEquals(ControlsSection.Rows(wifi = true, bluetooth = false, brightness = false), controlsSection(true, ok(1)))
-        assertEquals(ControlsSection.Rows(wifi = false, bluetooth = true, brightness = false), controlsSection(true, ok(2)))
-        assertEquals(ControlsSection.Rows(wifi = false, bluetooth = false, brightness = true), controlsSection(true, ok(4)))
+        assertEquals(ControlsSection.Rows(wifi = true, bluetooth = true, brightness = true, sound = true), controlsSection(true, ok(15)))
+        assertEquals(ControlsSection.Rows(wifi = true, bluetooth = true, brightness = true, sound = false), controlsSection(true, ok(7)))
+        assertEquals(ControlsSection.Rows(wifi = true, bluetooth = false, brightness = false, sound = false), controlsSection(true, ok(1)))
+        assertEquals(ControlsSection.Rows(wifi = false, bluetooth = true, brightness = false, sound = false), controlsSection(true, ok(2)))
+        assertEquals(ControlsSection.Rows(wifi = false, bluetooth = false, brightness = true, sound = false), controlsSection(true, ok(4)))
+        // The sound bit (design 18) alone is a card, not NoneEnabled (QA #6).
+        assertEquals(ControlsSection.Rows(wifi = false, bluetooth = false, brightness = false, sound = true), controlsSection(true, ok(8)))
         // Unknown bits alone are nothing.
-        assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(8)))
+        assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(16)))
         assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(0)))
     }
 
@@ -35,7 +38,7 @@ class KidSettingsModelTest {
         // Each case says what it is in the log.
         val all = listOf(
             ControlsSection.NotOwner, ControlsSection.NoPolicyYet, ControlsSection.Unreadable,
-            ControlsSection.NoneEnabled, ControlsSection.Rows(true, false, true),
+            ControlsSection.NoneEnabled, ControlsSection.Rows(true, false, true, false),
         )
         assertEquals(all.size, all.map { it.describe() }.toSet().size)
     }
@@ -48,7 +51,7 @@ class KidSettingsModelTest {
         assertEquals(emptyList<WallpaperTile>(), wallpaperTiles(listOf(NAVY), NAVY))
         assertEquals(emptyList<WallpaperTile>(), wallpaperTiles(emptyList(), NAVY))
         val model = kidSettingsModel(true, ok(1), listOf(NAVY, forest), NAVY)
-        assertEquals(ControlsSection.Rows(wifi = true, bluetooth = false, brightness = false), model.controls)
+        assertEquals(ControlsSection.Rows(wifi = true, bluetooth = false, brightness = false, sound = false), model.controls)
         assertEquals(2, model.wallpapers.size)
     }
 }
