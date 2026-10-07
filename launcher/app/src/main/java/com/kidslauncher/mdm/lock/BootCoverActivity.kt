@@ -6,7 +6,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.PackageManager
 import android.graphics.drawable.Animatable2
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.Drawable
@@ -15,13 +14,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.os.UserManager
-import android.provider.Settings
-import android.util.Log
 import android.widget.FrameLayout
 import android.widget.ImageView
 import com.kidslauncher.mdm.R
-
-private const val LOG_TAG = "BootCover"
 
 /**
  * The boot cover (design 16b, QA #7-#11): a direct-boot-aware HOME that shows the breathing Vibb
@@ -31,11 +26,14 @@ private const val LOG_TAG = "BootCover"
  *   path, enforcement, kiosk, services or tsnet runs in it;
  * - a plain [Activity] with a framework theme, APK resources only: no credential-encrypted storage,
  *   no native code, no lock task, no service, no AppCompat;
- * - a crash counter in device-protected storage: the [COVER_MAX_CRASHES]th crash in a boot
- *   disables the component, so the next HOME resolution picks another one;
+ * - a crash counter in device-protected storage ([BootCoverGuard], installed by the process's
+ *   `Application.onCreate`): the [COVER_MAX_CRASHES]th crash in a boot disables the component and
+ *   trips the guard for good, until the server switch goes off and on (qa-16b-code #2);
  * - it is enabled only from shutdown to the next unlock ([bootCoverEnabled], main process), and
- *   once unlocked and shown for [COVER_MIN_SHOWN_MS] it disables itself (DONT_KILL_APP): the system
- *   finishes it and resolves HOME again - to HomeActivity, HOME-typed (QA #8).
+ *   once unlocked and shown for [COVER_MIN_SHOWN_MS] it disables itself (DONT_KILL_APP) and finishes
+ *   as soon as the disable reads back - like AOSP's FallbackHome - so the system resolves HOME again
+ *   at once, to HomeActivity, HOME-typed (QA #8, qa-16b-code #1: AMS alone removes it only with the
+ *   PACKAGE_CHANGED broadcast, deferred up to 10 s right after boot).
  */
 class BootCoverActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -43,19 +41,22 @@ class BootCoverActivity : Activity() {
     private var logo: AnimatedVectorDrawable? = null
     private var unlockReceiver: BroadcastReceiver? = null
 
+    private var resumed = false
+    private var shownMarked = false
+
     private val loop = object : Animatable2.AnimationCallback() {
         override fun onAnimationEnd(drawable: Drawable?) {
-            handler.postDelayed({ logo?.start() }, BREATH_PAUSE_MS)
+            // Not while paused or under Home (qa-16b-code #4).
+            if (resumed) handler.postDelayed({ if (resumed) logo?.start() }, BREATH_PAUSE_MS)
         }
     }
 
-    private val handOver = Runnable { disableSelf(this, "unlocked") }
+    private val handOver = Runnable { handOverNow() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        installCrashCounter(applicationContext)
-        if (coverGuardTripped(readCrashes(this), bootCount(this))) {
-            disableSelf(this, "crash guard")
+        if (coverGuardTripped(BootCoverGuard.read(this))) {
+            BootCoverGuard.disable(this, "crash guard")
             finish()
             return
         }
@@ -76,15 +77,34 @@ class BootCoverActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumed = true
         if (shownAtElapsed < 0) shownAtElapsed = SystemClock.elapsedRealtime()
+        if (!shownMarked) {
+            shownMarked = true
+            BootCoverGuard.markShown(this)
+        }
         logo?.start()
         scheduleHandOver()
     }
 
     override fun onPause() {
-        handler.removeCallbacksAndMessages(null)
+        resumed = false
+        // Stop first: its end callback would post the next breath (qa-16b-code #4).
         logo?.stop()
+        handler.removeCallbacksAndMessages(null)
         super.onPause()
+    }
+
+    /** Disable, then finish once the disable reads back - the system re-resolves HOME at once
+     * (qa-16b-code #1). Not disabled yet: look again shortly. */
+    private fun handOverNow() {
+        BootCoverGuard.disable(this, "unlocked")
+        if (BootCoverGuard.isDisabled(this)) {
+            BootCoverGuard.markHandedOver(this)
+            finish()
+        } else {
+            handler.postDelayed(handOver, HAND_OVER_RETRY_MS)
+        }
     }
 
     override fun onDestroy() {
@@ -107,61 +127,8 @@ class BootCoverActivity : Activity() {
         /** A pause between breaths (the generated animation is one breath, < 1 s). */
         private const val BREATH_PAUSE_MS = 700L
 
-        private const val GUARD_PREFS = "boot_cover_guard"
-        private const val KEY_BOOT = "boot"
-        private const val KEY_CRASHES = "crashes"
-
-        @Volatile
-        private var counterInstalled = false
+        private const val HAND_OVER_RETRY_MS = 200L
 
         fun component(context: Context) = ComponentName(context, BootCoverActivity::class.java)
-
-        /** Disables the cover (DONT_KILL_APP). Never throws. */
-        fun disableSelf(context: Context, why: String) {
-            try {
-                context.packageManager.setComponentEnabledSetting(
-                    component(context), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP,
-                )
-                Log.i(LOG_TAG, "Boot cover disabled: $why")
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't disable the boot cover ($why)", e)
-            }
-        }
-
-        private fun guardPrefs(context: Context) =
-            context.createDeviceProtectedStorageContext().getSharedPreferences(GUARD_PREFS, Context.MODE_PRIVATE)
-
-        private fun bootCount(context: Context): Int = try {
-            Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT)
-        } catch (e: Exception) {
-            -1
-        }
-
-        fun readCrashes(context: Context): CoverCrashes? = try {
-            val prefs = guardPrefs(context)
-            if (prefs.contains(KEY_BOOT)) CoverCrashes(prefs.getInt(KEY_BOOT, -1), prefs.getInt(KEY_CRASHES, 0)) else null
-        } catch (e: Exception) {
-            null
-        }
-
-        /** In the cover's own process only (Application.onCreate installs nothing there): counts
-         * the crash in device-protected storage (commit) and disables the cover at the
-         * [COVER_MAX_CRASHES]th of this boot, then lets the crash go on. */
-        private fun installCrashCounter(app: Context) {
-            if (counterInstalled) return
-            counterInstalled = true
-            val previous = Thread.getDefaultUncaughtExceptionHandler()
-            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-                try {
-                    val boot = bootCount(app)
-                    val next = coverCrashed(readCrashes(app), boot)
-                    guardPrefs(app).edit().putInt(KEY_BOOT, next.bootCount).putInt(KEY_CRASHES, next.crashes).commit()
-                    if (coverGuardTripped(next, boot)) disableSelf(app, "crash guard (${next.crashes} crashes)")
-                } catch (t: Throwable) {
-                    // Never in the way of the crash itself.
-                }
-                previous?.uncaughtException(thread, throwable)
-            }
-        }
     }
 }

@@ -26,23 +26,42 @@ class BootCoverPlanTest {
         for (event in CoverEvent.entries) {
             assertEquals("switch off: $event", false, bootCoverEnabled(event, wanted = false))
         }
+        // A tripped guard keeps the cover off at every shutdown until the switch goes off and on
+        // (qa-16b-code #2).
+        assertEquals(false, bootCoverEnabled(CoverEvent.SHUTDOWN, wanted = true, guardTripped = true))
+        assertEquals(false, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted = true, guardTripped = true))
     }
 
     @Test
-    fun `the second crash in a boot trips the guard, a new boot starts over`() {
+    fun `the second crash in a boot trips the guard, and the trip stays (qa-16b-code 2)`() {
         val first = coverCrashed(null, bootNow = 41)
-        assertEquals(CoverCrashes(41, 1), first)
-        assertFalse(coverGuardTripped(first, 41))
+        assertEquals(CoverRecord(41, 1, tripped = false), first)
+        assertFalse(coverGuardTripped(first))
+        // One crash per boot never trips: a new boot counts from one.
+        assertEquals(CoverRecord(42, 1, tripped = false), coverCrashed(first, 42))
         val second = coverCrashed(first, 41)
-        assertEquals(CoverCrashes(41, 2), second)
-        assertTrue(coverGuardTripped(second, 41))
+        assertEquals(CoverRecord(41, 2, tripped = true), second)
+        assertTrue(coverGuardTripped(second))
         assertEquals(2, COVER_MAX_CRASHES)
-        // The next boot: the old count doesn't hold, a crash there counts from one.
-        assertFalse(coverGuardTripped(second, 42))
-        assertEquals(CoverCrashes(42, 1), coverCrashed(second, 42))
-        assertFalse(coverGuardTripped(null, 42))
-        // An unreadable boot count is one boot: the cover stays off (fail safe, A+B).
-        assertTrue(coverGuardTripped(coverCrashed(coverCrashed(null, -1), -1), -1))
+        // Sticky: the next boot keeps it (only the switch off clears the record).
+        assertTrue(coverGuardTripped(coverCrashed(second, 42)))
+        assertFalse(coverGuardTripped(null))
+        // The shown/handed-over times survive a crash count.
+        val shown = CoverRecord(41, 0, shownAtMs = 5L, handedOverAtMs = 6L)
+        assertEquals(CoverRecord(41, 1, false, 5L, 6L), coverCrashed(shown, 41))
+        // An unreadable boot count is one boot.
+        assertTrue(coverGuardTripped(coverCrashed(coverCrashed(null, -1), -1)))
+    }
+
+    @Test
+    fun `the record round-trips, and an unreadable one keeps the cover off`() {
+        for (record in listOf(CoverRecord(), CoverRecord(41, 2, true, 1_700L, 1_800L), CoverRecord(7, 1, false, shownAtMs = 3L))) {
+            assertEquals(record, decodeCoverRecord(encodeCoverRecord(record)))
+        }
+        assertNull("no file", decodeCoverRecord(null))
+        for (bad in listOf("", "garbage", "v=2\nboot=1\ncrashes=0\ntripped=false", "v=1\nboot=x\ncrashes=0\ntripped=false", "v=1\nboot=1\ncrashes=0\ntripped=maybe")) {
+            assertTrue(bad, coverGuardTripped(decodeCoverRecord(bad)))
+        }
     }
 
     @Test

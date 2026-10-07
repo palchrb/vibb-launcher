@@ -43,6 +43,12 @@ data class StatusReportRequest(
      * unreadable (left out of the JSON, like an older launcher). Kept off while managed - see
      * [com.kidslauncher.mdm.server.BackupService]. */
     val backupServiceEnabled: Boolean? = null,
+    /** The ringer mode (design 18): `normal`/`vibrate`/`silent`; `null` = unreadable (left out).
+     * Shown on the device page so the parent sees why a call wasn't heard. */
+    val ringerMode: String? = null,
+    /** Do Not Disturb (design 18): the interruption filter `all`/`priority`/`none`/`alarms`;
+     * `null` = unknown (left out). */
+    val interruptionFilter: String? = null,
     /** The update fence and the pending self-update (handy step 11) - see [UpdateFenceReport]. */
     val updateFence: UpdateFenceReport? = null,
     /** What the notification rule removed since the last report (handy step 11) - see
@@ -50,6 +56,24 @@ data class StatusReportRequest(
     val notificationCancels: NotificationCancelsReport? = null,
     /** Catalog downloads (design 13) - see [AppDownloadsReport]. */
     val appDownloads: AppDownloadsReport? = null,
+    /** The boot cover (design 16b) - see [BootCoverReport]. */
+    val bootCover: BootCoverReport? = null,
+)
+
+/**
+ * `StatusReportRequest.bootCover` (design 16b, qa-16b-code #5; no defaults: every field is always
+ * sent): whether the phone takes the server switch ([wanted]), whether the cover's crash guard
+ * tripped (sticky until the switch goes off and on), when it was last armed at a shutdown, last
+ * shown at a start, and who handed over after the unlock ("cover" or "launcher").
+ */
+@Serializable
+data class BootCoverReport(
+    val wanted: Boolean,
+    val tripped: Boolean,
+    val lastArmedAtMs: Long?,
+    val lastShownAtMs: Long?,
+    val lastHandover: String?,
+    val lastHandoverAtMs: Long?,
 )
 
 /**

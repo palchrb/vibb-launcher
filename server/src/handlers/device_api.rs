@@ -611,6 +611,15 @@ pub async fn status(
         .notification_cancels
         .as_ref()
         .and_then(crate::kiosk_escapes::sanitize_notification_cancels);
+    // The boot cover (design 16b): known fields only.
+    let boot_cover_json = report
+        .boot_cover
+        .as_ref()
+        .and_then(crate::kiosk_escapes::sanitize_boot_cover);
+    // Sound mode (design 18): known values only.
+    let ringer_mode = crate::sound_mode::sanitize_ringer_mode(report.ringer_mode.as_deref());
+    let interruption_filter =
+        crate::sound_mode::sanitize_interruption_filter(report.interruption_filter.as_deref());
     // Catalog downloads (design 13): known fields only, capped.
     let app_downloads_json = report
         .app_downloads
@@ -636,9 +645,10 @@ pub async fn status(
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
           call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
           install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json, \
-          screen_timeout_seconds, update_fence_json, notification_cancels_json, \
-          backup_service_enabled, app_downloads_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          screen_timeout_seconds, ringer_mode, interruption_filter, update_fence_json, \
+          notification_cancels_json, \
+          backup_service_enabled, app_downloads_json, boot_cover_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -664,10 +674,13 @@ pub async fn status(
             .screen_timeout_seconds
             .filter(|s| (1..=86_400).contains(s)),
     )
+    .bind(ringer_mode)
+    .bind(interruption_filter)
     .bind(&update_fence_json)
     .bind(&notification_cancels_json)
     .bind(report.backup_service_enabled)
     .bind(&app_downloads_json)
+    .bind(&boot_cover_json)
     .execute(&state.db)
     .await
     .ok();

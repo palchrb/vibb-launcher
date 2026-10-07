@@ -13,8 +13,10 @@ private const val LOG_TAG = "HomeFront"
  * HOME-typed only for system, recents or resolver callers, so it made a STANDARD Home task and a
  * later Home key or the stock launcher's hand-over a second, HOME-typed one (singleTask doesn't
  * match across activity types). A MAIN + HOME intent restricted to our package, with no
- * component and HOME as its only category, is resolved by the platform to our single HOME
- * activity and typed HOME. `HomeFrontTest` keeps every start on this path.
+ * component and HOME as its only category, is resolved by the platform to HomeActivity and typed
+ * HOME - our other HOME, the boot cover (16b), is disabled whenever our process runs unlocked,
+ * except after `ACTION_SHUTDOWN`, when no Home is started at all ([BootCover.shuttingDown]).
+ * `HomeFrontTest` keeps every start on this path.
  */
 object HomeFront {
 
@@ -26,7 +28,10 @@ object HomeFront {
 
     /** Starts our Home; `false` if the platform refused. Any thread (device owner + HOME may start
      * activities from the background). */
-    fun bring(context: Context, why: String): Boolean = try {
+    fun bring(context: Context, why: String): Boolean = if (BootCover.shuttingDown) {
+        Log.i(LOG_TAG, "Not bringing Home to the front during shutdown: $why")
+        false
+    } else try {
         context.startActivity(intent(context))
         Log.i(LOG_TAG, "Home brought to the front: $why")
         true

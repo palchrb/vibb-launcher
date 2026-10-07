@@ -316,6 +316,104 @@ pub fn release_text(reason: &str) -> Option<String> {
     })
 }
 
+/// Status-report capability: the launcher has the boot cover and reads `boot_cover` (design 16b).
+pub const BOOT_COVER_CAPABILITY: &str = "boot_cover_v1";
+
+/// The phone's `boot_cover` (design 16b, qa-16b-code #5).
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct BootCoverState {
+    /// The phone takes the switch (on, managed, device owner).
+    pub wanted: bool,
+    /// The cover crashed twice during one start and stays off until the switch goes off and on.
+    pub tripped: bool,
+    pub last_armed_at_ms: Option<i64>,
+    pub last_shown_at_ms: Option<i64>,
+    /// "cover" | "launcher" - who disabled it after the unlock.
+    pub last_handover: Option<String>,
+    pub last_handover_at_ms: Option<i64>,
+}
+
+/// `StatusReportRequest.boot_cover` as stored: only the known fields, times clamped, the
+/// hand-over only "cover" or "launcher"; `None` for anything that isn't such an object.
+pub fn sanitize_boot_cover(value: &serde_json::Value) -> Option<String> {
+    if !value.is_object() {
+        return None;
+    }
+    let mut state: BootCoverState = serde_json::from_value(value.clone()).ok()?;
+    // A time is a positive wall-clock instant or nothing.
+    let time = |ms: Option<i64>| clamp_ms(ms).filter(|&t| t > 0);
+    state.last_armed_at_ms = time(state.last_armed_at_ms);
+    state.last_shown_at_ms = time(state.last_shown_at_ms);
+    state.last_handover_at_ms = time(state.last_handover_at_ms);
+    state.last_handover = state
+        .last_handover
+        .filter(|h| h == "cover" || h == "launcher");
+    serde_json::to_string(&state).ok()
+}
+
+pub fn parse_boot_cover(json: Option<&str>) -> Option<BootCoverState> {
+    json.and_then(|j| serde_json::from_str(j).ok())
+}
+
+/// What the device page says about the boot cover (lines, warnings): nothing while the switch is
+/// off; "update the launcher" when the reporting launcher hasn't got it; the phone's state
+/// otherwise - a tripped guard is a warning, so "test it on this phone first" can be checked here.
+pub fn boot_cover_notes(
+    switch_on: bool,
+    capable: bool,
+    reported: bool,
+    state: Option<&BootCoverState>,
+) -> (Vec<String>, Vec<String>) {
+    let (mut lines, mut warnings) = (Vec::new(), Vec::new());
+    if !switch_on {
+        return (lines, warnings);
+    }
+    if reported && !capable {
+        warnings.push(
+            "This phone's launcher doesn't have the boot cover yet - update the launcher. Until \
+             then the switch does nothing."
+                .to_string(),
+        );
+        return (lines, warnings);
+    }
+    let Some(state) = state else {
+        return (lines, warnings);
+    };
+    if state.tripped {
+        warnings.push(
+            "The boot cover crashed twice during one start and switched itself off on this phone. \
+             Turn the switch off and on again to try once more (after a launcher update)."
+                .to_string(),
+        );
+        return (lines, warnings);
+    }
+    match (state.last_armed_at_ms, state.last_shown_at_ms) {
+        (None, _) => lines.push(
+            "Boot cover: armed at the phone's next shutdown or restart from its power menu (a \
+             crash or a forced restart skips it)."
+                .to_string(),
+        ),
+        (Some(armed), Some(shown)) if shown >= armed => {
+            let by = match state.last_handover.as_deref() {
+                Some("cover") => " and handed over to the launcher by itself",
+                Some("launcher") => " and handed over when the launcher started",
+                _ => "",
+            };
+            lines.push(format!(
+                "Boot cover: shown at the last start ({}){by}.",
+                utc_time(shown)
+            ));
+        }
+        (Some(armed), _) => warnings.push(format!(
+            "The boot cover was armed at the shutdown at {} but not shown at the start after it - \
+             Android picked another home screen on this phone. Switch it off here.",
+            utc_time(armed)
+        )),
+    }
+    (lines, warnings)
+}
+
 fn utc_time(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
@@ -337,6 +435,53 @@ fn wait_text(reason: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn boot_cover_state_is_sanitized_and_explained() {
+        let stored = sanitize_boot_cover(&serde_json::json!({
+            "wanted": true, "tripped": false, "last_armed_at_ms": 1_000, "last_shown_at_ms": 2_000,
+            "last_handover": "rm -rf", "last_handover_at_ms": -5, "extra": "x",
+        }))
+        .unwrap();
+        let state = parse_boot_cover(Some(&stored)).unwrap();
+        assert_eq!(state.last_handover, None);
+        assert_eq!(state.last_handover_at_ms, None);
+        assert!(!stored.contains("extra"));
+        assert!(sanitize_boot_cover(&serde_json::json!("on")).is_none());
+
+        // Switch off: nothing; an older launcher: update it.
+        assert_eq!(
+            boot_cover_notes(false, true, true, Some(&state)),
+            (vec![], vec![])
+        );
+        let (_, w) = boot_cover_notes(true, false, true, None);
+        assert!(w[0].contains("update the launcher"));
+        // Shown after the arm: a line.
+        let shown = BootCoverState {
+            last_handover: Some("cover".into()),
+            ..state.clone()
+        };
+        let (l, w) = boot_cover_notes(true, true, true, Some(&shown));
+        assert!(w.is_empty());
+        assert!(l[0].contains("shown at the last start") && l[0].contains("by itself"));
+        // Armed but never shown: a warning.
+        let missed = BootCoverState {
+            last_shown_at_ms: None,
+            ..state.clone()
+        };
+        let (_, w) = boot_cover_notes(true, true, true, Some(&missed));
+        assert!(w[0].contains("not shown"));
+        // Tripped: a warning, nothing else.
+        let tripped = BootCoverState {
+            tripped: true,
+            ..state.clone()
+        };
+        let (l, w) = boot_cover_notes(true, true, true, Some(&tripped));
+        assert!(l.is_empty() && w[0].contains("crashed twice"));
+        // Not armed yet.
+        let (l, _) = boot_cover_notes(true, true, true, Some(&BootCoverState::default()));
+        assert!(l[0].contains("power menu"));
+    }
 
     #[test]
     fn update_fence_keeps_only_known_fields_capped() {

@@ -179,22 +179,34 @@ updates and notifications": "Boot cover ... Test it on this phone first"). A+B s
   runtime receiver in the main process, which the anchor keeps alive; the broadcast goes to registered receivers only)
   -> enabled; an apply never enables it, and disables it when not wanted; the hand-over and the crash guard disable it.
 - **Hand-over** (QA #8): the cover disables itself (DONT_KILL_APP) once unlocked (`USER_UNLOCKED` receiver or the
-  check at resume) and shown >= 1 s (`coverHandOverDelayMs`); AMS finishes it and the system resolves HOME again -
-  to HomeActivity, HOME-typed. Our main process does the same at its first start after the unlock
+  check at resume) and shown >= 1 s (`coverHandOverDelayMs`), then finishes as soon as the disable reads back (like
+  FallbackHome - AMS alone removes it only with the PACKAGE_CHANGED broadcast, deferred up to 10 s after boot,
+  qa-16b-code #1); the system resolves HOME again - to HomeActivity, HOME-typed. Our main process does the same at its first start after the unlock
   (`BootCover.init`, in `PinLockRuntime.init` before Home is brought to the front), so A's typed HOME start resolves
   to HomeActivity only (`HomeFrontTest`).
-- **Crash guard** (QA #10): in the cover's process its own uncaught-exception handler counts crashes in
-  device-protected prefs `boot_cover_guard` (boot count + crashes, `commit()`); the 2nd in a boot disables the
-  component (pure `coverCrashed`/`coverGuardTripped`), `onCreate` checks it too. A native crash or an ANR isn't counted.
+- **Crash guard** (QA #10, qa-16b-code #2): `lock/BootCoverGuard.install` runs first in the cover process's
+  `Application.onCreate` (its only work there), so every crash in that process counts, in one device-protected
+  AtomicFile (`CoverRecord`: boot, crashes, sticky `tripped`, shown/handed-over times; unreadable = tripped). The
+  2nd crash in a boot disables the component and trips the guard for good: the shutdown no longer arms it until the
+  switch goes off (which deletes the record) and on again. A native crash or an ANR isn't counted.
+- **Status** (qa-16b-code #5): capability `boot_cover_v1`, `boot_cover` {wanted, tripped, last armed/shown/hand-over
+  and by whom}; the card warns about an older launcher, a tripped guard, or an arm not shown at the next start.
+  After `ACTION_SHUTDOWN` the arm is written synchronously and `HomeFront` starts no Home (qa-16b-code #3).
 - Tests: `BootCoverPlanTest`, `BootCoverManifestTest`, `HomeFrontTest`, `PlayInvariantsTest`,
   `PolicyResponseCompatTest`; server `policy_json_keys_snapshot`, `step11`.
 
-Open device checks for 16b (emulator first, then the Jelly Star; switch on, then shut down cleanly):
+Open device checks for 16b (emulator first, then the Jelly Star; switch on, then shut down cleanly - from the power
+menu or `adb shell svc power reboot`: `adb reboot` goes through init's `sys.powerctl`, not ShutdownThread, so it sends
+no `ACTION_SHUTDOWN` and the cover isn't armed; `ACTION_SHUTDOWN` is protected, `am broadcast` can't fake it):
 - [ ] BFU resolution: after a clean restart the cover (not Pixel's launcher, not the Jelly Star's) is Home from the
   end of the boot animation, with no chooser (`dumpsys activity activities`, `cmd package resolve-activity` for HOME).
 - [ ] The self-disable at the unlock hands over to HomeActivity HOME-typed (one HOME task of ours), kiosk on: Home
-  roots lock task, the PIN lock on top; no flash of the stock launcher.
+  roots lock task, the PIN lock on top; no flash of the stock launcher. Time it with a phone whose A starts no Home
+  (calls-only managed): the mark goes ~1 s after the unlock, not ~11 s.
+- [ ] The device page shows the last start (shown, handed over by whom); an older launcher shows "update the
+  launcher".
 - [ ] The re-enable written at `ACTION_SHUTDOWN` persists over the restart (`dumpsys package` component state) - a
   crash/forced reboot leaves it off (A+B).
-- [ ] The crash guard: a cover that crashes twice in a boot disables itself and the next HOME is another one.
+- [ ] The crash guard: a cover that crashes twice in a boot disables itself, the next HOME is another one, the next
+  shutdown doesn't arm it, the card warns; switch off and on re-arms it.
 - [ ] The look: night background, the breathing mark centred, status/navigation bars night, no white frame.

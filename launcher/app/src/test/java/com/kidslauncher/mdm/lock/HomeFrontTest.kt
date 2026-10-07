@@ -43,6 +43,8 @@ class HomeFrontTest {
     @Test
     fun `HomeFront starts MAIN plus HOME only, restricted to our package, no component`() {
         val text = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
+        // No Home start once ACTION_SHUTDOWN armed the boot cover (qa-16b-code #3).
+        assertTrue(text.substringAfter("fun bring(").contains("if (BootCover.shuttingDown)"))
         for (needed in listOf("Intent.ACTION_MAIN", "Intent.CATEGORY_HOME", "setPackage(context.packageName)", "FLAG_ACTIVITY_NEW_TASK")) {
             assertTrue(needed, text.contains(needed))
         }

@@ -177,6 +177,9 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
 ## 6. What to check first (smoke)
 
 1. Phone boots to our Home; reboot → no lockout, Home comes back after unlock.
+   With the boot cover switched on (design 16b) restart from the power menu or with `adb shell svc power reboot`:
+   `adb reboot` goes through init (`sys.powerctl`), sends no `ACTION_SHUTDOWN`, so the cover isn't armed and the
+   boot is A+B only; `ACTION_SHUTDOWN` is protected, so `am broadcast` can't fake it either.
 2. Allowed contact calls in → rings; unknown number → rejected; withheld → rejected.
 3. Call out from the phone book to an allowed contact works; dialling another number
    (`am start -a android.intent.action.CALL -d tel:12345678`) is stopped.

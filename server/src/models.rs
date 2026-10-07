@@ -279,6 +279,10 @@ pub struct DeviceStatus {
     /// The screen timeout the phone applied, seconds (migrations/0032). `None` from older
     /// launchers.
     pub screen_timeout_seconds: Option<i64>,
+    /// The phone's ringer mode and Do Not Disturb filter (design 18, migrations/0047), see
+    /// `sound_mode`. `None` from older launchers or when unreadable.
+    pub ringer_mode: Option<String>,
+    pub interruption_filter: Option<String>,
     /// Android's backup service (backup to the Google account) is on (migrations/0041). `None`
     /// from older launchers, or when the phone couldn't read it.
     pub backup_service_enabled: Option<bool>,
@@ -288,6 +292,8 @@ pub struct DeviceStatus {
     /// The phone's `notification_cancels` (handy step 11), see
     /// `kiosk_escapes::NotificationCancels`.
     pub notification_cancels_json: Option<String>,
+    /// The phone's `boot_cover` (design 16b, migrations/0046), see `kiosk_escapes::BootCoverState`.
+    pub boot_cover_json: Option<String>,
     /// The phone's `app_downloads` (design 13, migrations/0043), see
     /// `app_downloads::AppDownloads`.
     pub app_downloads_json: Option<String>,
@@ -682,6 +688,13 @@ pub struct StatusReportRequest {
     /// The screen timeout the phone has now (read back after applying the policy's), seconds.
     #[serde(default)]
     pub screen_timeout_seconds: Option<i64>,
+    /// The ringer mode (design 18): "normal", "vibrate" or "silent". Absent from older launchers
+    /// and when unreadable; anything else is stored as NULL (`sound_mode::sanitize_ringer_mode`).
+    #[serde(default)]
+    pub ringer_mode: Option<String>,
+    /// Do Not Disturb (design 18): the interruption filter "all", "priority", "none" or "alarms".
+    #[serde(default)]
+    pub interruption_filter: Option<String>,
     /// Android's backup service (backup to the Google account) is on, read by the launcher as
     /// device owner; it keeps it off while the phone is managed. Absent from older launchers and
     /// when the phone couldn't read it.
@@ -695,6 +708,10 @@ pub struct StatusReportRequest {
     /// channel ids with counts, stored capped (`kiosk_escapes::sanitize_notification_cancels`).
     #[serde(default)]
     pub notification_cancels: Option<serde_json::Value>,
+    /// The boot cover (design 16b) - opaque, stored re-serialized through the known fields
+    /// (`kiosk_escapes::sanitize_boot_cover`).
+    #[serde(default)]
+    pub boot_cover: Option<serde_json::Value>,
     /// The phone's catalog downloads (design 13): a full snapshot - opaque, stored re-serialized
     /// and capped (`app_downloads::sanitize`).
     #[serde(default)]

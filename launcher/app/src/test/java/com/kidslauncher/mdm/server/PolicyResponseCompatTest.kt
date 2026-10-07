@@ -94,6 +94,27 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `ringer_mode and interruption_filter are reported under the server's keys and left out when unknown (18)`() {
+        val report = StatusReportRequest(
+            lockReason = "NONE", kioskEngaged = true,
+            ringerMode = ringerModeName(1), interruptionFilter = interruptionFilterName(2),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals("\"vibrate\"", json["ringer_mode"].toString())
+        assertEquals("\"priority\"", json["interruption_filter"].toString())
+        // Unreadable: absent, like a report from an older launcher (the server stores NULL).
+        val unknown = StatusReportRequest(
+            lockReason = "NONE", kioskEngaged = true,
+            ringerMode = ringerModeName(-1), interruptionFilter = interruptionFilterName(0),
+        )
+        val unknownJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), unknown)).jsonObject
+        assertTrue("ringer_mode" !in unknownJson)
+        assertTrue("interruption_filter" !in unknownJson)
+        // The policy shape is unchanged: the sound bit is just one more bit of the mask.
+        assertEquals(15L, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"quick_controls_mask":15}""").quickControlsMask)
+    }
+
+    @Test
     fun `step 11 switches - missing means off, and the fallback never carries them`() {
         val none = ServerJson.decodeFromString(PolicyResponse.serializer(), "{}")
         assertEquals(false, none.updateFence)
@@ -113,6 +134,22 @@ class PolicyResponseCompatTest {
         val on = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"boot_cover":true}""")
         assertEquals(true, on.bootCover)
         assertEquals(false, LastEnforcedPlan.of(on).toPolicy().bootCover)
+    }
+
+    @Test
+    fun `status report boot_cover uses the server's keys, always sent (16b)`() {
+        val report = StatusReportRequest(
+            lockReason = "NONE", kioskEngaged = true,
+            bootCover = com.kidslauncher.mdm.server.dto.BootCoverReport(
+                wanted = true, tripped = false, lastArmedAtMs = null, lastShownAtMs = 5L, lastHandover = "cover", lastHandoverAtMs = 6L,
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(
+            setOf("wanted", "tripped", "last_armed_at_ms", "last_shown_at_ms", "last_handover", "last_handover_at_ms"),
+            json["boot_cover"]!!.jsonObject.keys,
+        )
+        assertEquals("boot_cover_v1", com.kidslauncher.mdm.lock.BOOT_COVER_CAPABILITY)
     }
 
     @Test

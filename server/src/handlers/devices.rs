@@ -211,16 +211,18 @@ const DEFAULT_LOCK_TASK_FEATURES: i64 = LOCK_FEATURE_SYSTEM_INFO
     | LOCK_FEATURE_NOTIFICATIONS
     | LOCK_FEATURE_GLOBAL_ACTIONS;
 
-/// Bits for `quick_controls_mask` - which switches show up on the launcher's
-/// swipe-left-from-home "Quick Controls" screen (see kids-launcher-mdm's
-/// `ui/quickcontrols/QuickControlsActivity`), the kid-facing replacement for
-/// Android's native Quick Settings shade.
+/// Bits for `quick_controls_mask` - which switches show up on the launcher's kid Settings page
+/// (swipe left from Home; the launcher's `ui/kidsettings/KidSettingsActivity`, its
+/// `QuickControlFeature`), the kid-facing replacement for Android's native Quick Settings shade.
 const QUICK_CONTROL_WIFI: i64 = 1;
 const QUICK_CONTROL_BLUETOOTH: i64 = 2;
 const QUICK_CONTROL_BRIGHTNESS: i64 = 4;
-/// A new device's `quick_controls_mask`: all three switches on (`insert_device_with_policy`).
+/// The sound row (design 18): Sound / Silent (vibrate). It only shows the row - the volume keys
+/// still change the sound. A launcher before design 18 ignores the bit.
+const QUICK_CONTROL_SOUND: i64 = 8;
+/// A new device's `quick_controls_mask`: every switch on (`insert_device_with_policy`).
 pub(crate) const DEFAULT_QUICK_CONTROLS: i64 =
-    QUICK_CONTROL_WIFI | QUICK_CONTROL_BLUETOOTH | QUICK_CONTROL_BRIGHTNESS;
+    QUICK_CONTROL_WIFI | QUICK_CONTROL_BLUETOOTH | QUICK_CONTROL_BRIGHTNESS | QUICK_CONTROL_SOUND;
 
 #[derive(Template)]
 #[template(path = "device_detail.html")]
@@ -242,6 +244,9 @@ struct DeviceDetailTemplate {
     quick_control_wifi: bool,
     quick_control_bluetooth: bool,
     quick_control_brightness: bool,
+    quick_control_sound: bool,
+    /// Status card (design 18): the phone's sound and Do Not Disturb at the last sync.
+    sound_lines: Vec<String>,
     latest_status: Option<DeviceStatus>,
     /// One line for the "Calls & SMS" card, e.g. "Managed - 4 contacts".
     calls_summary: String,
@@ -1261,6 +1266,29 @@ async fn render_device(
             chrono::Utc::now().timestamp_millis(),
         );
         card.boot_cover = policy.boot_cover;
+        // Design 16b (qa-16b-code #5): what the phone says about the boot cover.
+        let cover_capable = latest_status
+            .as_ref()
+            .and_then(|s| s.capabilities_json.as_deref())
+            .is_some_and(|caps| {
+                caps.contains(&format!(
+                    "\"{}\"",
+                    crate::kiosk_escapes::BOOT_COVER_CAPABILITY
+                ))
+            });
+        let cover_state = crate::kiosk_escapes::parse_boot_cover(
+            latest_status
+                .as_ref()
+                .and_then(|s| s.boot_cover_json.as_deref()),
+        );
+        let (lines, warnings) = crate::kiosk_escapes::boot_cover_notes(
+            policy.boot_cover,
+            cover_capable,
+            latest_status.is_some(),
+            cover_state.as_ref(),
+        );
+        card.lines.extend(lines);
+        card.warnings.extend(warnings);
         card
     };
     let notice = query
@@ -1319,6 +1347,16 @@ async fn render_device(
             quick_control_wifi: policy.quick_controls_mask & QUICK_CONTROL_WIFI != 0,
             quick_control_bluetooth: policy.quick_controls_mask & QUICK_CONTROL_BLUETOOTH != 0,
             quick_control_brightness: policy.quick_controls_mask & QUICK_CONTROL_BRIGHTNESS != 0,
+            quick_control_sound: policy.quick_controls_mask & QUICK_CONTROL_SOUND != 0,
+            sound_lines: latest_status
+                .as_ref()
+                .map(|s| {
+                    crate::sound_mode::status_lines(
+                        s.ringer_mode.as_deref(),
+                        s.interruption_filter.as_deref(),
+                    )
+                })
+                .unwrap_or_default(),
             device,
             apps,
             latest_status,
@@ -1695,6 +1733,9 @@ pub async fn update_policy(
     }
     if fields.contains_key("quick_control_brightness") {
         quick_controls_mask |= QUICK_CONTROL_BRIGHTNESS;
+    }
+    if fields.contains_key("quick_control_sound") {
+        quick_controls_mask |= QUICK_CONTROL_SOUND;
     }
 
     let vpn_filter_enabled = fields.contains_key("vpn_filter_enabled");

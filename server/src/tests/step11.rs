@@ -85,6 +85,38 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     );
     assert!(page.contains("Test it on this phone first"));
 
+    // The phone's state (qa-16b-code #5): a launcher without the boot cover is told to update; one
+    // with it reports a tripped guard, which the card shows as a warning.
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["kiosk_escapes_v1"] }),
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains("doesn&#39;t have the boot cover yet"),
+        "{page}"
+    );
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["kiosk_escapes_v1", "boot_cover_v1"],
+                "boot_cover": { "wanted": true, "tripped": true, "last_handover": "nope" } }),
+    )
+    .await;
+    let stored_cover = stored(&app, "boot_cover_json", id).await.unwrap();
+    assert!(stored_cover.contains("\"tripped\":true"), "{stored_cover}");
+    assert!(!stored_cover.contains("nope"));
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("crashed twice during one start"), "{page}");
+
     // One auto-saving form: a missing checkbox is off.
     app.request_form(
         Method::POST,

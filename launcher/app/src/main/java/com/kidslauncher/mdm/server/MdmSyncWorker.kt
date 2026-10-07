@@ -217,6 +217,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 capabilities = listOf(
                     CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY, FCM_PUSH_CAPABILITY, PLAY_POLICY_CAPABILITY,
                     com.kidslauncher.mdm.lock.PIN_LOCK_CAPABILITY, KIOSK_ESCAPES_CAPABILITY,
+                    com.kidslauncher.mdm.lock.BOOT_COVER_CAPABILITY,
                 ),
                 callState = CallStateReport.build(context),
                 notificationListenerEnabled = BadgeStore.accessGranted(context),
@@ -228,12 +229,20 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
                 screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
                 backupServiceEnabled = BackupService.reportedState(context),
+                ringerMode = ringerModeName(QuickControls.ringerMode(context)),
+                interruptionFilter = interruptionFilterName(QuickControls.interruptionFilter(context)),
                 updateFence = UpdateFence.report(context, decision.policy),
                 notificationCancels = com.kidslauncher.mdm.badges.NotificationRuleRuntime.report(),
                 appDownloads = try {
                     AppDownloads.report(context)
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Download report failed", e)
+                    null
+                },
+                bootCover = try {
+                    com.kidslauncher.mdm.lock.BootCover.report(context)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Boot cover report failed", e)
                     null
                 },
             )

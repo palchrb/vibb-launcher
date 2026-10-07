@@ -10,6 +10,9 @@ package com.kidslauncher.mdm.lock
  * Pure, tested in BootCoverPlanTest.
  */
 
+/** Status-report capability: this launcher has the boot cover and reads `boot_cover`. */
+const val BOOT_COVER_CAPABILITY = "boot_cover_v1"
+
 /** The cover's process (`android:process=":bootcover"`): Application.onCreate does nothing there. */
 const val BOOT_COVER_PROCESS_SUFFIX = ":bootcover"
 
@@ -52,24 +55,67 @@ enum class CoverEvent {
  * hand-over and by the crash guard. A crash reboot sends no shutdown: the cover stays off and the
  * boot falls back to A+B (Home at boot, Home roots lock task).
  */
-fun bootCoverEnabled(event: CoverEvent, wanted: Boolean): Boolean? = when {
+fun bootCoverEnabled(event: CoverEvent, wanted: Boolean, guardTripped: Boolean = false): Boolean? = when {
     !wanted -> false
-    event == CoverEvent.SHUTDOWN -> true
+    // A tripped guard holds until the switch goes off (which clears it) and on again
+    // (qa-16b-code #2): no more crashing starts at every boot.
+    event == CoverEvent.SHUTDOWN -> !guardTripped
     event == CoverEvent.POLICY -> null
     else -> false
 }
 
-/** The cover's crash counter, in device-protected storage (it runs before the first unlock). */
-data class CoverCrashes(val bootCount: Int, val crashes: Int)
+/**
+ * What the cover's process keeps in device-protected storage (it runs before the first unlock),
+ * one small file read fresh by both processes: its crashes in [bootCount], whether the guard
+ * [tripped] (sticky), and when it was last shown and handed over (status report).
+ */
+data class CoverRecord(
+    val bootCount: Int = -1,
+    val crashes: Int = 0,
+    val tripped: Boolean = false,
+    val shownAtMs: Long? = null,
+    val handedOverAtMs: Long? = null,
+)
 
-/** One more crash of the cover; a new boot (or an unknown count changing) starts at one. */
-fun coverCrashed(record: CoverCrashes?, bootNow: Int): CoverCrashes =
-    if (record != null && record.bootCount == bootNow) record.copy(crashes = record.crashes + 1) else CoverCrashes(bootNow, 1)
+/** One more crash of the cover; a new boot (or an unknown count changing) counts from one. The
+ * [COVER_MAX_CRASHES]th in a boot trips the guard, and a trip stays (qa-16b-code #2). An
+ * unreadable boot count (-1) counts as one boot. */
+fun coverCrashed(record: CoverRecord?, bootNow: Int): CoverRecord {
+    val crashes = if (record != null && record.bootCount == bootNow) record.crashes + 1 else 1
+    return (record ?: CoverRecord()).copy(
+        bootCount = bootNow,
+        crashes = crashes,
+        tripped = record?.tripped == true || crashes >= COVER_MAX_CRASHES,
+    )
+}
 
-/** The cover must not run again this boot. An unreadable boot count (-1) counts as one boot:
- * the cover then stays off (fail safe - A+B). */
-fun coverGuardTripped(record: CoverCrashes?, bootNow: Int): Boolean =
-    record != null && record.bootCount == bootNow && record.crashes >= COVER_MAX_CRASHES
+/** The cover must not run again (until the switch is turned off and on). */
+fun coverGuardTripped(record: CoverRecord?): Boolean = record?.tripped == true
+
+/** The record as stored (`key=value` lines, version 1). */
+fun encodeCoverRecord(record: CoverRecord): String = buildString {
+    append("v=1\n")
+    append("boot=").append(record.bootCount).append('\n')
+    append("crashes=").append(record.crashes).append('\n')
+    append("tripped=").append(record.tripped).append('\n')
+    record.shownAtMs?.let { append("shown=").append(it).append('\n') }
+    record.handedOverAtMs?.let { append("handed=").append(it).append('\n') }
+}
+
+/** `null` = no record. A file that exists but can't be read counts as tripped: the cover stays
+ * off (fail safe - A+B). */
+fun decodeCoverRecord(text: String?): CoverRecord? {
+    if (text == null) return null
+    val fields = text.lines().mapNotNull { line -> line.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+    if (fields["v"] != "1") return CoverRecord(tripped = true)
+    return CoverRecord(
+        bootCount = fields["boot"]?.toIntOrNull() ?: return CoverRecord(tripped = true),
+        crashes = fields["crashes"]?.toIntOrNull() ?: return CoverRecord(tripped = true),
+        tripped = fields["tripped"]?.toBooleanStrictOrNull() ?: return CoverRecord(tripped = true),
+        shownAtMs = fields["shown"]?.toLongOrNull(),
+        handedOverAtMs = fields["handed"]?.toLongOrNull(),
+    )
+}
 
 /** How long until the cover hands over (disables itself): `null` while locked (BFU), else what is
  * left of [COVER_MIN_SHOWN_MS] since its first frame ([shownForMs] < 0 = not shown yet: the

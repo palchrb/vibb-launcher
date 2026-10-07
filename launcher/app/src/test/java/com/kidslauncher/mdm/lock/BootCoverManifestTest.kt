@@ -69,18 +69,28 @@ class BootCoverManifestTest {
         )) {
             assertFalse(banned, activity.contains(banned))
         }
-        // Its own state is device-protected only; the AVD starts in onResume.
-        assertTrue(activity.contains("createDeviceProtectedStorageContext()"))
+        // The AVD starts in onResume and stops before the pause drops the callbacks (qa-16b-code #4).
         assertTrue(activity.substringAfter("override fun onResume()").substringBefore("\n    }").contains("logo?.start()"))
-        // Every SharedPreferences the cover touches comes from the device-protected context.
-        assertEquals(1, Regex("getSharedPreferences\\(").findAll(activity).count())
+        val pause = activity.substringAfter("override fun onPause()").substringBefore("\n    }")
+        assertTrue(pause.indexOf("logo?.stop()") in 0 until pause.indexOf("removeCallbacksAndMessages"))
+        // The hand-over finishes once the disable reads back (qa-16b-code #1).
+        val handOver = activity.substringAfter("private fun handOverNow()").substringBefore("\n    }")
+        assertTrue(handOver.indexOf("BootCoverGuard.disable") in 0 until handOver.indexOf("finish()"))
+        assertTrue(handOver.contains("BootCoverGuard.isDisabled(this)"))
+        // Its own state is one device-protected file, no SharedPreferences at all.
+        val guard = code("java/com/kidslauncher/mdm/lock/BootCoverGuard.kt")
+        assertTrue(guard.contains("createDeviceProtectedStorageContext()"))
+        for (source in listOf(activity, guard)) assertFalse(source.contains("getSharedPreferences"))
     }
 
     @Test
     fun `Application onCreate does nothing in the cover's process (QA 10)`() {
         val app = code("java/com/kidslauncher/mdm/Application.kt")
         val onCreate = app.substringAfter("override fun onCreate()")
-        val guard = onCreate.indexOf("isBootCoverProcess(getProcessName())) return")
+        val branch = onCreate.substringAfter("isBootCoverProcess(getProcessName())) {").substringBefore("}")
+        assertEquals("only the crash counter, then return (qa-16b-code 2)", listOf("com.kidslauncher.mdm.lock.BootCoverGuard.install(this)", "return"),
+            branch.lines().map { it.trim() }.filter { it.isNotEmpty() })
+        val guard = onCreate.indexOf("isBootCoverProcess(getProcessName()))")
         assertTrue(guard > 0)
         for (later in listOf("instance = this", "CallPolicyStore.refresh", "setDefaultUncaughtExceptionHandler", "BootClock.init")) {
             assertTrue(later, onCreate.indexOf(later) > guard)
