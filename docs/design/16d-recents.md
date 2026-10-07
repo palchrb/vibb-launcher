@@ -75,3 +75,13 @@ Jelly Star (not checked): run `cmd overlay lookup android android:string/config_
 secure navigation_mode`, `cmd overlay list | grep navbar`. If quickstep lives in its stock launcher (the 11 doc
 guesses `com.android.launcher3`), it's the same issue whenever Home is ours: set 3-button before `dpm
 set-device-owner` or the QR flow, then rerun `smoke-test.sh REBOOT=1` with the Recents-key check adjusted.
+
+## User decision (2026-10-07)
+
+- **Keep gesture navigation; every stock gesture must keep working in the kiosk.** That means back, home (swipe up),
+  recents (swipe up and hold), quick switch (swipe along the bottom) and the notification shade.
+- **Never remove a stock gesture without asking the user concretely.** Design 16's dropping of OVERVIEW was such a
+  removal, so it is to be reverted once the dialog is solved another way.
+- Next: test pinning the recents package (stock launcher) in the kiosk with OVERVIEW restored, using the debug hook
+  from 9cdb8c2f, and evaluate the escape surface. The assistant corner gesture is asked about separately, because the
+  assistant can open apps and the web.
