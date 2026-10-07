@@ -60,8 +60,9 @@ private const val EXTRA_SYNC_REASON = "reason"
  *   (marked down first, like any drop);
  * - the up -> down edge takes a ~30 s wake lock (at most every 10 min, released at the next open),
  *   so the 5 s and 10 s retries run even in deep sleep - after every server restart;
- * - a reopen syncs by one rule ([syncOnSseReopen]): down >= 150 s, or the old stream's last byte
- *   >= 300 s ago (a read timeout or a stale stream always is).
+ * - every reopen after a drop syncs ([syncOnSseReopen]): a nudge sent while no stream was
+ *   subscribed is lost - at most once per 10 min, except after a deaf stream (last byte >= 300 s
+ *   ago: a read timeout or a stale stream), which always syncs.
  * The backstop alarm (15 min while the stream is down) remains the last resort (QA #8).
  *
  * The periodic backstop is [BackstopAlarm] (a while-idle alarm on elapsed realtime), not a timer
@@ -78,8 +79,8 @@ class CommandListenerService : Service() {
     private var stopped = false
     private val connectRunnable = Runnable { connect() }
     private var firstStart = true
-    /** Elapsed realtime when the stream went down (`null`: never up in this process). */
-    private var sseDownSince: Long? = null
+    /** Elapsed realtime of the last reopen's sync (`null`: none in this process). */
+    private var lastReopenSyncAt: Long? = null
     /** Elapsed realtime of the current stream's last bytes (headers or body), stamped by its
      * [LastByteInterceptor] - one per connect, so a cancelled stream can't stamp the next one. */
     private var lastByte: AtomicLong? = null
@@ -225,13 +226,15 @@ class CommandListenerService : Service() {
                         val wasDown = !PushState.sseConnected
                         PushState.sseConnected = true
                         releaseDropWakeLock()
-                        // Catch nudges missed while the stream was down or deaf (design 19 QA #3);
-                        // the sync re-arms the backstop.
+                        // Catch nudges missed while the stream was down or deaf (design 19,
+                        // qa-19-code #2); the sync re-arms the backstop.
                         val now = SystemClock.elapsedRealtime()
-                        val downFor = sseDownSince?.let { now - it }
+                        val sinceSync = lastReopenSyncAt?.let { now - it }
                         val sinceLastByte = lastByteBeforeDrop?.let { now - it }
-                        if (wasDown && syncOnSseReopen(downFor, sinceLastByte)) SyncRunner.request(applicationContext, "sse_open")
-                        sseDownSince = null
+                        if (wasDown && syncOnSseReopen(sinceSync, sinceLastByte)) {
+                            SyncRunner.request(applicationContext, "sse_open")
+                            lastReopenSyncAt = now
+                        }
                         lastByteBeforeDrop = null
                     }
                 }
@@ -263,8 +266,8 @@ class CommandListenerService : Service() {
     }
 
     /**
-     * Main thread. The bookkeeping of a drop, on the up -> down edge only: down since now, the old
-     * stream's last bytes kept for the reopen's sync rule, the wake lock for the first retries
+     * Main thread. The bookkeeping of a drop, on the up -> down edge only: the old stream's last
+     * bytes kept for the reopen's sync rule, the wake lock for the first retries
      * (hole 3), and the backstop moved earlier - only ever earlier (15 min): a flapping stream must
      * not keep pushing it out until it never fires.
      */
@@ -272,7 +275,6 @@ class CommandListenerService : Service() {
         val wasUp = PushState.sseConnected
         PushState.sseConnected = false
         if (!wasUp) return
-        sseDownSince = SystemClock.elapsedRealtime()
         lastByteBeforeDrop = lastByte?.get()
         takeDropWakeLock()
         BackstopAlarm.schedule(applicationContext, afterSync = false)

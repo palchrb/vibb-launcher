@@ -177,6 +177,11 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
         )
         .await;
     assert!(res.status.is_redirection());
+    // Back to the card, not the top of the page (qa-19-code #4).
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}#play-kiosk").as_str())
+    );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         policy(&app, &token).await["block_activity_start"],

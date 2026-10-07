@@ -132,7 +132,10 @@ and release builds with `-PwarningsAsErrors=true`, the release without any `HAND
 4. **SSE hardening**: last-byte stamps (network interceptor, `contentType()` kept - tested through okhttp-sse's own
    EventSource), `checkStream` on every sync request and at screen-on/unlock (down: reconnect; silent >= 480 s: mark
    down, reconnect), the 30 s drop wake lock (at most every 10 min, released at the open), and
-   `syncOnSseReopen(downForMs, sinceLastByteMs)`.
+   `syncOnSseReopen` - since qa-19-code #2 every reopen syncs, at most once per 10 min, always after a deaf stream
+   (the 150 s gap rule lost a nudge sent during a short gap until the backstop). qa-19-code's Lows and Nit are fixed
+   in the follow-up commit (heartbeat DataStore file in the cleanup, the reopen rule, a stale doc line, the kiosk
+   switch's `#play-kiosk` redirect).
 5. **Docs**: both `CLAUDE.md`s, `DEPLOY.md` ("Removing FCM", proxy read timeout >= 300 s), `PLAN.md`, `README.md`,
    `emulator.md` (§5b `kill -STOP` check, §6 item 8, §6b), `google-account.md`, the note atop design 07.
 

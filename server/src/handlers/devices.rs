@@ -320,7 +320,8 @@ pub async fn update_kiosk_block(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            // Back to the card (qa-19-code #4), like the escapes card.
+            Redirect::to(&format!("/devices/{id}#play-kiosk")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");

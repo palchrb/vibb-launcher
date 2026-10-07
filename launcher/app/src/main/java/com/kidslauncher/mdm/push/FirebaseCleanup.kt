@@ -33,10 +33,12 @@ object FirebaseCleanup {
         var ok = true
         val prefsDir = File(context.dataDir, "shared_prefs")
         val dirs = listOf(context.filesDir, context.noBackupFilesDir)
+        val datastoreDir = File(context.filesDir, "datastore")
         val leftovers = firebaseLeftovers(
             prefsFiles = prefsDir.list()?.toList().orEmpty(),
             files = dirs.flatMap { it.list()?.toList().orEmpty() },
             databases = context.databaseList()?.toList().orEmpty(),
+            datastoreFiles = datastoreDir.list()?.toList().orEmpty(),
         )
         for (name in leftovers.prefs) {
             if (!context.deleteSharedPreferences(name)) ok = false
@@ -47,6 +49,11 @@ object FirebaseCleanup {
                 if (file.exists() && !file.deleteRecursively()) ok = false
             }
         }
+        for (name in leftovers.datastore) {
+            if (!File(datastoreDir, name).delete()) ok = false
+        }
+        // Only Firebase used DataStore here: an emptied directory goes too.
+        if (leftovers.datastore.isNotEmpty() && datastoreDir.list()?.isEmpty() == true) datastoreDir.delete()
         for (name in leftovers.databases) {
             if (!context.deleteDatabase(name)) ok = false
         }
@@ -63,7 +70,7 @@ object FirebaseCleanup {
             ok = false
         }
         if (!leftovers.isEmpty || jobs > 0) {
-            Log.i(LOG_TAG, "Deleted FCM leftovers: ${leftovers.prefs.size} preferences files, ${leftovers.files.size} files, ${leftovers.databases.size} databases, $jobs jobs${if (ok) "" else " (some failed)"}")
+            Log.i(LOG_TAG, "Deleted FCM leftovers: ${leftovers.prefs.size} preferences files, ${leftovers.files.size + leftovers.datastore.size} files, ${leftovers.databases.size} databases, $jobs jobs${if (ok) "" else " (some failed)"}")
         }
         if (ok) marker.edit().putBoolean(DONE, true).commit()
     }

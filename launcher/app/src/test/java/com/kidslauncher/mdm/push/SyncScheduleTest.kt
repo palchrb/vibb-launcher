@@ -15,23 +15,24 @@ import org.junit.Test
 /** When the phone syncs on its own (SyncSchedule.kt) - was PushTransportTest until design 19. */
 class SyncScheduleTest {
 
-    /** Design 19 QA #3: one rule for every reconnect, on two clocks. */
+    /** Design 19, qa-19-code #2: every reopen syncs (a nudge sent in a short gap is lost), at
+     * most once per 10 min - except after a deaf stream. */
     @Test
-    fun `a quick SSE reconnect of a live stream doesn't sync, a gap or a deaf stream does`() {
-        // A live stream (last keepalive at most 240 s before the drop) reconnecting quickly.
-        assertFalse(syncOnSseReopen(5_000, 245_000))
-        assertFalse(syncOnSseReopen(SSE_GAP_SYNC_MS - 1, SSE_READ_TIMEOUT_MS - 1))
-        // Down long enough to have missed a nudge.
-        assertTrue(syncOnSseReopen(SSE_GAP_SYNC_MS, 10_000))
-        // A read timeout: noticed late, reconnected at once - the stream was deaf >= 300 s.
-        assertTrue(syncOnSseReopen(5_000, SSE_READ_TIMEOUT_MS))
-        // A staleness reconnect (>= 480 s silent) always syncs.
-        assertTrue(syncOnSseReopen(5_000, SSE_STALE_MS))
+    fun `every SSE reopen syncs, at most once per 10 minutes unless the stream was deaf`() {
+        // The first reopen in a process, and a quick reconnect of a live stream 10+ min after the
+        // last reopen sync (a ring right after a server restart is not lost).
+        assertTrue(syncOnSseReopen(null, 5_000))
+        assertTrue(syncOnSseReopen(SSE_REOPEN_SYNC_EVERY_MS, 245_000))
+        // A flapping stream: within 10 min of the last reopen sync, a live stream's reopen doesn't.
+        assertFalse(syncOnSseReopen(SSE_REOPEN_SYNC_EVERY_MS - 1, 5_000))
+        assertFalse(syncOnSseReopen(30_000, SSE_READ_TIMEOUT_MS - 1))
+        // A read timeout (the stream was deaf >= 300 s) or a staleness reconnect always syncs.
+        assertTrue(syncOnSseReopen(30_000, SSE_READ_TIMEOUT_MS))
+        assertTrue(syncOnSseReopen(30_000, SSE_STALE_MS))
         // Unknown: sync.
-        assertTrue(syncOnSseReopen(null, 1_000))
-        assertTrue(syncOnSseReopen(5_000, null))
-        assertTrue(syncOnSseReopen(-1, 1_000))
-        assertTrue(syncOnSseReopen(5_000, -1))
+        assertTrue(syncOnSseReopen(30_000, null))
+        assertTrue(syncOnSseReopen(-1, 5_000))
+        assertTrue(syncOnSseReopen(30_000, -1))
     }
 
     @Test

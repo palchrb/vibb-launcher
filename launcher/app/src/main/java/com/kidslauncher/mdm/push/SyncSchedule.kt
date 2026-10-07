@@ -48,23 +48,21 @@ fun backstopDelayMs(
  * reconnect. Launchers already shipped use the same 300 s. */
 const val SSE_READ_TIMEOUT_MS = 300_000L
 
-/**
- * A stream down this long (from noticing the drop to the reopen) may have missed a nudge (QA step
- * 7 #5); a quicker reconnect costs no sync.
- */
-const val SSE_GAP_SYNC_MS = 150_000L
+/** A reopen after a drop syncs at most this often, so a flapping stream can't become a sync loop. */
+const val SSE_REOPEN_SYNC_EVERY_MS = 10 * 60_000L
 
 /**
- * Whether reopening the SSE stream must sync (design 19 QA #3, one rule for every reconnect):
- * when it was down >= [SSE_GAP_SYNC_MS] ([downForMs], from noticing the drop), or when the old
- * stream's last byte is >= [SSE_READ_TIMEOUT_MS] ago ([sinceLastByteMs], elapsed realtime - it
- * counts deep sleep). A read timeout always meets the second (Okio's watchdog and SO_TIMEOUT
- * count awake time only, so the stream was deaf at least that long), and so does a staleness
- * reconnect ([SSE_STALE_MS]); a quick reconnect of a live stream meets neither (its last byte is
- * at most one keepalive, 240 s, plus the backoff ago). Unknown (`null`, negative) = sync.
+ * Whether reopening the SSE stream after a drop must sync (design 19, qa-19-code #2): a nudge sent
+ * while no stream was subscribed is lost - a ring right after a server restart, before the 5-15 s
+ * reconnect, or one written into a connection that then reset - so every reopen syncs, at most
+ * once per [SSE_REOPEN_SYNC_EVERY_MS] ([sinceLastReopenSyncMs], `null` = none yet in this
+ * process). A stream that was deaf - its last byte >= [SSE_READ_TIMEOUT_MS] ago
+ * ([sinceLastByteMs], elapsed realtime, counts deep sleep): every read timeout and staleness
+ * reconnect ([SSE_STALE_MS]) - always syncs; that can't happen more than once per 300 s.
+ * Unknown (`null`, negative) = sync.
  */
-fun syncOnSseReopen(downForMs: Long?, sinceLastByteMs: Long?): Boolean =
-    downForMs == null || downForMs < 0 || downForMs >= SSE_GAP_SYNC_MS ||
+fun syncOnSseReopen(sinceLastReopenSyncMs: Long?, sinceLastByteMs: Long?): Boolean =
+    sinceLastReopenSyncMs == null || sinceLastReopenSyncMs < 0 || sinceLastReopenSyncMs >= SSE_REOPEN_SYNC_EVERY_MS ||
         sinceLastByteMs == null || sinceLastByteMs < 0 || sinceLastByteMs >= SSE_READ_TIMEOUT_MS
 
 /**

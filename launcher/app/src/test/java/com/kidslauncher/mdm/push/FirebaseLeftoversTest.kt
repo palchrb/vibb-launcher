@@ -50,7 +50,26 @@ class FirebaseLeftoversTest {
             found.files,
         )
         assertEquals(listOf("com.google.android.datatransport.events"), found.databases)
+        assertEquals(emptyList<String>(), found.datastore)
         assertFalse(found.isEmpty)
+    }
+
+    /** qa-19-code #1: firebase-common 22 keeps heartbeats in `files/datastore`. */
+    @Test
+    fun `Firebase's heartbeat DataStore file is picked`() {
+        val found = firebaseLeftovers(
+            prefsFiles = emptyList(),
+            files = listOf("datastore"),
+            databases = emptyList(),
+            datastoreFiles = listOf(
+                "FirebaseHeartBeatW0RFRkFVTFRd+MToxMjM0NTY3ODkwOmFuZHJvaWQ6YWJj.preferences_pb",
+                "settings.preferences_pb",
+            ),
+        )
+        assertEquals(listOf("FirebaseHeartBeatW0RFRkFVTFRd+MToxMjM0NTY3ODkwOmFuZHJvaWQ6YWJj.preferences_pb"), found.datastore)
+        assertEquals(emptyList<String>(), found.files)
+        assertFalse(found.isEmpty)
+        assertTrue(firebaseLeftovers(emptyList(), emptyList(), emptyList(), listOf("settings.preferences_pb")).isEmpty)
     }
 
     @Test

@@ -26,6 +26,10 @@ private val FIREBASE_PREFS_PREFIXES = listOf(
 private val FIREBASE_FILE_PREFIXES = listOf("PersistedInstallation.", "com.google.android.gms.appid")
 private const val FIREBASE_FID_LOCK = "generatefid.lock"
 
+/** firebase-common 22 keeps its heartbeats in DataStore: `files/datastore/FirebaseHeartBeat<key>.preferences_pb`
+ * (qa-19-code #1). The launcher has no DataStore of its own. */
+private const val FIREBASE_DATASTORE_PREFIX = "FirebaseHeartBeat"
+
 /** Google's data transport (FCM delivery metrics) kept its events in a database. */
 private const val DATATRANSPORT_PREFIX = "com.google.android.datatransport"
 
@@ -36,18 +40,25 @@ data class FirebaseLeftovers(
     val prefs: List<String>,
     /** File names to delete, in the directory they were listed from. */
     val files: List<String>,
+    /** File names to delete in `filesDir/datastore`. */
+    val datastore: List<String>,
     /** Database names for `deleteDatabase` (which takes the journal files with it). */
     val databases: List<String>,
 ) {
-    val isEmpty: Boolean get() = prefs.isEmpty() && files.isEmpty() && databases.isEmpty()
+    val isEmpty: Boolean get() = prefs.isEmpty() && files.isEmpty() && datastore.isEmpty() && databases.isEmpty()
 }
 
 /**
  * Picks the leftovers from directory listings: [prefsFiles] = the file names in `shared_prefs`
- * (with or without `.xml`), [files] = the names in `filesDir` or `noBackupFilesDir`, [databases]
- * = `databaseList()`.
+ * (with or without `.xml`), [files] = the names in `filesDir` or `noBackupFilesDir`,
+ * [datastoreFiles] = the names in `filesDir/datastore`, [databases] = `databaseList()`.
  */
-fun firebaseLeftovers(prefsFiles: Collection<String>, files: Collection<String>, databases: Collection<String>): FirebaseLeftovers {
+fun firebaseLeftovers(
+    prefsFiles: Collection<String>,
+    files: Collection<String>,
+    databases: Collection<String>,
+    datastoreFiles: Collection<String> = emptyList(),
+): FirebaseLeftovers {
     val prefs = prefsFiles.map { it.removeSuffix(".bak").removeSuffix(".xml") }
         .filter { name -> name == LEGACY_PUSH_PREFS || FIREBASE_PREFS_PREFIXES.any { name.startsWith(it) } }
         .distinct().sorted()
@@ -57,7 +68,8 @@ fun firebaseLeftovers(prefsFiles: Collection<String>, files: Collection<String>,
     val dbs = databases.filter { it.startsWith(DATATRANSPORT_PREFIX) }
         .map { name -> DB_AUX_SUFFIXES.firstOrNull { name.endsWith(it) }?.let { name.removeSuffix(it) } ?: name }
         .distinct().sorted()
-    return FirebaseLeftovers(prefs, leftoverFiles, dbs)
+    val datastore = datastoreFiles.filter { it.startsWith(FIREBASE_DATASTORE_PREFIX) }.distinct().sorted()
+    return FirebaseLeftovers(prefs, leftoverFiles, datastore, dbs)
 }
 
 /** A job scheduled by Google's data transport (its JobInfoSchedulerService), whose class is gone. */
