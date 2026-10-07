@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug build only: the design 16d lock-task override hook (docs/testing/emulator.md §6e). Merged
+     into the debug manifest; the release build never sees this file (checkReleaseHasNoDebugHook,
+     DebugHookAbsentTest). Exported for `adb shell am broadcast -n`, guarded by DUMP (shell holds it,
+     apps don't). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name="com.kidslauncher.mdm.lock.LockTaskOverrideReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

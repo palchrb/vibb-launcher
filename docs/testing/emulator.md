@@ -378,6 +378,39 @@ Camera lock follow-ups (qa-11b-code #5, after the fixes of #1-#4):
 - [ ] **Call card after Home stops**: during a call press Home, then open an allowed app -> no 1 s ticker keeps
   running (logcat quiet, `dumpsys activity` shows Home stopped); back on Home the card counts on.
 
+## 6e. Debug build only: lock-task override (design 16d experiments)
+
+To test the gesture-navigation "App is not available" problem (`docs/design/16d-recents.md`), for example HOME and
+OVERVIEW off in kiosk, or the recents package pinned, the **debug** build has a receiver that changes the lock-task
+chrome without a server change. It lives only in `src/debug`. `assembleRelease` fails if it reaches a release APK
+(`checkReleaseHasNoDebugHook`, `DebugHookAbsentTest`). `LockTaskChrome` stays the only writer: the receiver stores
+an override in the debug prefs file `lock_task_debug_override`, and every chrome pass applies it on top of the
+computed plan, unlocked and LOCKED, until it is reset. The override survives restarts.
+
+```
+P=me.vibb.launcher.debug
+R=$P/com.kidslauncher.mdm.lock.LockTaskOverrideReceiver
+# Gesture nav with HOME + OVERVIEW off (16d table row 2). NOTIFICATIONS needs HOME, so it goes too:
+adb shell am broadcast -n $R --ei clear_features 14
+# Pin the recents package (16d option H) and put OVERVIEW back:
+adb shell am broadcast -n $R --ei add_features 12 --es extra_lock_task_packages com.google.android.apps.nexuslauncher
+# Back to the computed plan:
+adb shell am broadcast -n $R --ez reset true
+adb logcat -s LockTaskDebug LockTaskChrome
+```
+- Bits: SYSTEM_INFO 1, NOTIFICATIONS 2, HOME 4, OVERVIEW 8, GLOBAL_ACTIONS 16, KEYGUARD 32, BLOCK_ACTIVITY_START_IN_TASK
+  64. Each broadcast sets the **whole** override (a missing extra means nothing). Features = computed - clear + add.
+  KEYGUARD is never cleared. OVERVIEW and NOTIFICATIONS are dropped without HOME, because AOSP refuses them.
+- The extra packages only join an existing list (kiosk on, or LOCKED). With the kiosk off and unlocked, nothing is
+  pinned.
+- The broadcast re-applies the chrome at once. Its result data, and logcat `LockTaskDebug`, show the features and
+  packages read back from DPM (`dumpsys activity activities | grep -A10 LockTaskController` shows the mode). Every
+  later pass logs `Override ...: features A -> B` while the override is set.
+- After `reset`, the next pass writes the computed plan. Without an `apply()` in this process (only the fallback),
+  the extra packages stay until the next sync.
+- Only shell can send it: the receiver needs `android.permission.DUMP`. Never on a kid's phone: release builds don't
+  have it.
+
 ## 6b. Step 7: FCM and Play (optional)
 
 The default debug build has no Firebase config: the phone uses the SSE stream (device page

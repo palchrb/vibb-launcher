@@ -25,6 +25,9 @@ private const val LOG_TAG = "LockTaskChrome"
  * input too ([UpdateFence.fenced], [fenceChanged]): the status bar is off while LOCKED or fenced.
  * Since design 17 a VoIP call's pinned package ([VoipCalls.pinnedPackage]) is one more input of the
  * kiosk-off lock list; [VoipCalls] calls [refresh] whenever it changes.
+ * Debug builds only: `LockTaskDebug.adjust` puts the design 16d emulator override on top of the
+ * computed setting right before the writes (src/debug, docs/testing/emulator.md §6e); in release it
+ * returns the setting unchanged (src/release) - this object stays the only writer either way.
  */
 object LockTaskChrome {
 
@@ -185,7 +188,8 @@ object LockTaskChrome {
     }
 
     /** The writes in [chromeWriteOrder]: a LOCKED pass blocks the shade and overlays first. */
-    private fun apply(context: Context, dpm: DevicePolicyManager, setting: LockTaskSetting, kioskOn: Boolean, locked: Boolean) {
+    private fun apply(context: Context, dpm: DevicePolicyManager, computed: LockTaskSetting, kioskOn: Boolean, locked: Boolean) {
+        val setting = LockTaskDebug.adjust(context, computed)
         val admin = admin(context)
         for (write in chromeWriteOrder(locked)) {
             when (write) {

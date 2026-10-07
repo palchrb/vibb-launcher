@@ -1,5 +1,7 @@
+import com.android.build.api.artifact.SingleArtifact
 import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
+import java.util.zip.ZipFile
 
 plugins {
     alias(libs.plugins.android.application)
@@ -217,6 +219,65 @@ android {
 
     lint {
         abortOnError = false
+    }
+}
+
+/**
+ * The design 16d lock-task override hook lives in src/debug only (docs/testing/emulator.md §6e).
+ * This scans a variant's merged manifest and its APKs' dex for the hook's names: a release build
+ * fails if any is there ([expectPresent] false, a dependency of assembleRelease), and the debug
+ * build checks they are there (a positive control: the scan really finds them).
+ */
+abstract class CheckDebugHook : DefaultTask() {
+    @get:InputFile
+    abstract val manifest: RegularFileProperty
+
+    @get:InputDirectory
+    abstract val apkDir: DirectoryProperty
+
+    @get:Input
+    abstract val names: ListProperty<String>
+
+    @get:Input
+    abstract val expectPresent: Property<Boolean>
+
+    @TaskAction
+    fun check() {
+        val found = mutableSetOf<String>()
+        val manifestText = manifest.get().asFile.readText()
+        names.get().filterTo(found) { manifestText.contains(it) }
+        val apks = apkDir.get().asFile.listFiles { f -> f.name.endsWith(".apk") }.orEmpty()
+        if (apks.isEmpty()) throw GradleException("No APK in ${apkDir.get().asFile}")
+        for (apk in apks) {
+            ZipFile(apk).use { zip ->
+                for (entry in zip.entries().asSequence().filter { it.name.endsWith(".dex") }) {
+                    // Dex strings (class descriptors, Kotlin metadata, literals) are MUTF-8: ASCII names match as bytes.
+                    val dex = String(zip.getInputStream(entry).readBytes(), Charsets.ISO_8859_1)
+                    names.get().filterTo(found) { dex.contains(it) }
+                }
+            }
+        }
+        if (expectPresent.get()) {
+            val missing = names.get() - found
+            if (missing.isNotEmpty()) throw GradleException("Debug build lacks the 16d hook ($missing) - the release check would prove nothing")
+        } else if (found.isNotEmpty()) {
+            throw GradleException("The debug-only lock-task hook is in a release build: $found (keep it in src/debug)")
+        }
+        logger.lifecycle("${name}: ${if (expectPresent.get()) "hook present" else "no debug hook"} in ${apks.map { it.name }}")
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val cap = variant.name.replaceFirstChar { it.uppercase() }
+        val release = variant.buildType == "release"
+        val check = tasks.register<CheckDebugHook>(if (release) "check${cap}HasNoDebugHook" else "check${cap}HasDebugHook") {
+            manifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
+            apkDir.set(variant.artifacts.get(SingleArtifact.APK))
+            names.set(listOf("LockTaskOverride", "lock_task_debug_override"))
+            expectPresent.set(!release)
+        }
+        tasks.matching { it.name == "assemble$cap" }.configureEach { dependsOn(check) }
     }
 }
 

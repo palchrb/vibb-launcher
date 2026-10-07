@@ -17,6 +17,8 @@ out/
 #  Uncomment the following line in case you need and you don't have the release build type files in your app
 release/
 app/release/
+# ...but the release build type's own sources are tracked (the no-op LockTaskDebug, design 16d hook).
+!/app/src/release/
 .kotlin/
 
 # Gradle files
