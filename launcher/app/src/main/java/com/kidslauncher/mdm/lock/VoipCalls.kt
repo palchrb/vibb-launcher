@@ -32,9 +32,12 @@ class VoipNotice(
     val decline: PendingIntent? = null,
     val content: PendingIntent? = null,
     val answer: PendingIntent? = null,
+    /** An incoming CallStyle (`EXTRA_CALL_TYPE`, qa-17b-code #2). */
+    val incoming: Boolean = false,
 ) {
-    /** Rings over the lock ([voipRings]): with its full-screen intent, or answerable without it. */
-    val rings: Boolean get() = voipRings(kind, answer != null)
+    /** Rings over the lock ([voipRings]): with its full-screen intent, or an answerable incoming
+     * CallStyle without it. */
+    val rings: Boolean get() = voipRings(kind, answer != null, incoming)
 }
 
 /**
@@ -294,14 +297,35 @@ object VoipCalls {
      * lock itself once per ring ([voipFsiDue]). */
     fun showRingScreen(context: Context): Boolean {
         val intent = ringingNotice()?.fullScreen ?: return false
-        return send(context, intent)
+        return sendRing(context, intent)
     }
 
     /** Answer on the card (17b): the CallStyle answer action ([pickAnswerIntent]) - one tap answers;
-     * without one the full-screen intent (the app's ring screen). */
-    fun answer(context: Context): Boolean {
-        val notice = ringingNotice() ?: return false
-        val intent = notice.answer ?: notice.fullScreen ?: return false
+     * without one the full-screen intent (the app's ring screen). Says which went out
+     * (qa-17b-code #1: only the answer action silences the ring). */
+    fun answer(context: Context): VoipAnswerSent {
+        val notice = ringingNotice() ?: return VoipAnswerSent.NOTHING
+        notice.answer?.let { answer ->
+            return if (sendRing(context, answer)) VoipAnswerSent.ANSWER_ACTION else VoipAnswerSent.NOTHING
+        }
+        val ringScreen = notice.fullScreen ?: return VoipAnswerSent.NOTHING
+        return if (sendRing(context, ringScreen)) VoipAnswerSent.RING_SCREEN else VoipAnswerSent.NOTHING
+    }
+
+    /**
+     * A ring's call-starting intent (its ring screen or answer): the calls gate again at the send
+     * (qa-17b-code #4) - [evaluate] runs only per notification and on the 2 s poll, so calls just
+     * switched off or a no-calls rule that just began would still let one through. A refusal
+     * re-evaluates at once (the ring goes). The decline is never gated: it only ends the ring.
+     */
+    private fun sendRing(context: Context, intent: PendingIntent): Boolean {
+        val app = context.applicationContext
+        val pkg = ringingPackage
+        if (pkg == null || pkg !in eligible(app)) {
+            Log.i(LOG_TAG, "Calls of ${pkg ?: "-"} aren't allowed now: nothing sent")
+            handler.post { evaluate(app) }
+            return false
+        }
         return send(context, intent)
     }
 

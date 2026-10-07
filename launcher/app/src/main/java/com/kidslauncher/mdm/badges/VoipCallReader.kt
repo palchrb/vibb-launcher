@@ -33,31 +33,37 @@ object VoipCallReader {
     fun read(context: Context, sbn: StatusBarNotification): VoipNotice? {
         if (sbn.packageName == context.packageName) return null
         val n = sbn.notification ?: return null
+        // An int, not text (qa-16-17-code #8): an incoming CallStyle is never "the call", and only
+        // an incoming one may be answered from its actions or ring without an FSI (qa-17b-code #2).
+        val incoming = n.extras?.getInt(Notification.EXTRA_CALL_TYPE, 0) == CALL_TYPE_INCOMING
         val kind = voipNoticeKind(
             category = n.category,
             channelId = n.channelId,
             foregroundService = n.flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
             hasFullScreenIntent = n.fullScreenIntent != null,
             fsiDenied = n.flags and FLAG_FSI_REQUESTED_BUT_DENIED != 0,
-            // An int, not text (qa-16-17-code #8): an incoming CallStyle is never "the call".
-            incomingCallStyle = n.extras?.getInt(Notification.EXTRA_CALL_TYPE, 0) == CALL_TYPE_INCOMING,
+            incomingCallStyle = incoming,
         )
         return when (kind) {
             VoipNoticeKind.NONE -> null
-            VoipNoticeKind.RINGING, VoipNoticeKind.FSI_DENIED -> ring(sbn, n, kind)
+            VoipNoticeKind.RINGING, VoipNoticeKind.FSI_DENIED -> ring(sbn, n, kind, incoming)
             VoipNoticeKind.IN_CALL -> VoipNotice(sbn.key, sbn.packageName, kind, content = n.contentIntent)
         }
     }
 
     /** A ring: its full-screen intent (none when Android dropped it) and the CallStyle actions. */
-    private fun ring(sbn: StatusBarNotification, n: Notification, kind: VoipNoticeKind): VoipNotice {
+    private fun ring(sbn: StatusBarNotification, n: Notification, kind: VoipNoticeKind, incoming: Boolean): VoipNotice {
         val decline = n.extras?.getParcelable(Notification.EXTRA_DECLINE_INTENT, PendingIntent::class.java)
         val answer = pickAnswerIntent(
             answerExtra = n.extras?.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java),
             decline = decline,
             actions = n.actions.orEmpty().map { CallAction(it.actionIntent, it.extras?.getBoolean(KEY_CALL_STYLE_ACTION) == true) },
+            incoming = incoming,
         )
-        return VoipNotice(sbn.key, sbn.packageName, kind, fullScreen = n.fullScreenIntent, decline = decline, answer = answer)
+        return VoipNotice(
+            sbn.key, sbn.packageName, kind,
+            fullScreen = n.fullScreenIntent, decline = decline, answer = answer, incoming = incoming,
+        )
     }
 
     private fun readOrNull(context: Context, sbn: StatusBarNotification): VoipNotice? = try {

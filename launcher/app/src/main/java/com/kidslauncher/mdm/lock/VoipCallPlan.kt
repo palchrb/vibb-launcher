@@ -80,11 +80,12 @@ fun voipNoticeKind(
 const val CALL_TYPE_INCOMING = 1
 
 /**
- * Whether a notice rings over the lock: a ring with its full-screen intent, or (17b QA #4) one
- * whose full-screen intent Android dropped but that can be answered - the card answers it.
+ * Whether a notice rings over the lock: a ring with its full-screen intent, or (17b QA #4) an
+ * incoming CallStyle ([incoming], `EXTRA_CALL_TYPE`, qa-17b-code #2) whose full-screen intent
+ * Android dropped but that can be answered - the card answers it.
  */
-fun voipRings(kind: VoipNoticeKind, hasAnswer: Boolean): Boolean =
-    kind == VoipNoticeKind.RINGING || (kind == VoipNoticeKind.FSI_DENIED && hasAnswer)
+fun voipRings(kind: VoipNoticeKind, hasAnswer: Boolean, incoming: Boolean): Boolean =
+    kind == VoipNoticeKind.RINGING || (kind == VoipNoticeKind.FSI_DENIED && hasAnswer && incoming)
 
 /**
  * The extra NotificationCompat's CallStyle puts on the Decline and Answer actions it adds to
@@ -98,15 +99,31 @@ data class CallAction<T>(val intent: T?, val callStyle: Boolean)
 /**
  * The ring's answer intent (design 17b, QA #1), never by title or semantic action (CallStyle sets
  * none; `SEMANTIC_ACTION_CALL` means "call back"): the CallStyle's `EXTRA_ANSWER_INTENT` (platform
- * style on 31+ and NotificationCompat both set it), else the one action CallStyle added
- * ([KEY_CALL_STYLE_ACTION]) that isn't the decline intent. The content intent is no input - Element's
- * *is* its answer intent, but only this pick decides. `null`: Answer sends the full-screen intent.
+ * style on 31+ and NotificationCompat both set it), else - only for an [incoming] CallStyle with a
+ * decline intent (qa-17b-code #2: an ongoing call's only marked action is its hang-up) - the one
+ * action CallStyle added ([KEY_CALL_STYLE_ACTION]) that isn't the decline intent. The content
+ * intent is no input - Element's *is* its answer intent, but only this pick decides. `null`:
+ * Answer sends the full-screen intent.
  */
-fun <T> pickAnswerIntent(answerExtra: T?, decline: T?, actions: List<CallAction<T>>): T? {
+fun <T> pickAnswerIntent(answerExtra: T?, decline: T?, actions: List<CallAction<T>>, incoming: Boolean): T? {
     if (answerExtra != null && answerExtra != decline) return answerExtra
+    if (!incoming || decline == null) return null
     val added = actions.mapNotNull { action -> action.intent?.takeIf { action.callStyle && it != decline } }.distinct()
     return added.singleOrNull()
 }
+
+/** What the card's Svar sent (17b): the answer action, the app's ring screen (no answer action),
+ * or nothing. */
+enum class VoipAnswerSent { NOTHING, ANSWER_ACTION, RING_SCREEN }
+
+/** Svar silences this ring only once the answer action went out (qa-17b-code #1): the app's own
+ * ring screen still rings (its sound is muted while LOCKED). */
+fun answerSilences(sent: VoipAnswerSent): Boolean = sent == VoipAnswerSent.ANSWER_ACTION
+
+/** Svar's start was refused (the lock never left the front, qa-17b-code #1): the ring's silence goes
+ * back to what it was before Svar - a power-button silence of the same ring stays. */
+fun silenceAfterRefusedAnswer(silencedRing: Long?, answeredRing: Long?, silencedBeforeAnswer: Long?): Long? =
+    if (answeredRing != null && silencedRing == answeredRing) silencedBeforeAnswer else silencedRing
 
 /** The lock has been resumed this long before it sends the ring's full-screen intent (17b QA #2):
  * the wake activity goes on top of it right after its first resume. */
@@ -120,11 +137,45 @@ const val VOIP_FSI_CHECK_MS = 1_500L
 data class VoipFsiTry(
     val ringId: Long,
     val sentAtElapsedMs: Long,
-    /** The send went out (no exception). */
+    /** The send went out (no exception); `false` also when the app's screen came up without us
+     * ([voipTryAfterPause], qa-17b-code #5). */
     val sent: Boolean,
     /** The lock left the front after the send: the app's screen came up (or the screen went off). */
     val left: Boolean = false,
 )
+
+/** The wake activity counts as ours this long after the lock asked for it (qa-17b-code #5). */
+const val VOIP_WAKE_WINDOW_MS = 2_000L
+
+/**
+ * A pause that means the app's ring screen came up without our send (qa-17b-code #5): the lock
+ * paused while its send was still settling ([sendPending]), or the wake activity was covered before
+ * it finished itself ([wakeCovered]) - SystemUI launching the full-screen intent itself, or the
+ * screen going off. Never our own wake activity going over the lock: asked for less than
+ * [VOIP_WAKE_WINDOW_MS] ago and not gone yet.
+ */
+fun pauseIsTry(
+    sendPending: Boolean,
+    wakeCovered: Boolean,
+    wakeAskedAtElapsedMs: Long?,
+    wakeGone: Boolean,
+    nowElapsedMs: Long,
+): Boolean {
+    if (wakeCovered) return true
+    if (!sendPending) return false
+    val wakeComing = wakeAskedAtElapsedMs != null && !wakeGone && nowElapsedMs - wakeAskedAtElapsedMs in 0 until VOIP_WAKE_WINDOW_MS
+    return !wakeComing
+}
+
+/** The try after the lock (or the wake) left the front: this ring's try is marked left; with none
+ * yet, a pause that [pauseIsTry] is one that came up by itself - nothing sent, the card from then on,
+ * never our send of the same screen again (qa-17b-code #5). */
+fun voipTryAfterPause(last: VoipFsiTry?, ringId: Long?, pauseIsTry: Boolean, nowElapsedMs: Long): VoipFsiTry? = when {
+    ringId == null -> last
+    last != null && last.ringId == ringId -> if (last.left) last else last.copy(left = true)
+    pauseIsTry -> VoipFsiTry(ringId, nowElapsedMs, sent = false, left = true)
+    else -> last
+}
 
 /** What the lock shows for a ring: nothing, the plain lock while its try at the app's screen is
  * open ([WAIT]), or the ring card. */

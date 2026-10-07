@@ -23,7 +23,8 @@ object EmergencyCall {
     /** An emergency number on every GSM phone, also the ones without a SIM. */
     const val NUMBER = "112"
 
-    fun confirm(activity: Activity, onCalling: () -> Unit = {}) {
+    /** Returns the shown dialog (the PIN lock sends no VoIP ring screen over it, qa-17b-code #3). */
+    fun confirm(activity: Activity, onCalling: () -> Unit = {}): AlertDialog =
         AlertDialog.Builder(activity, R.style.AlertDialogCustom)
             .setTitle(activity.getString(R.string.calls_confirm_title, NUMBER))
             .setPositiveButton(R.string.calls_call) { _, _ ->
@@ -32,7 +33,6 @@ object EmergencyCall {
             }
             .setNegativeButton(R.string.calls_cancel, null)
             .show()
-    }
 
     fun call(activity: Activity) {
         val dpm = activity.getSystemService(DevicePolicyManager::class.java)

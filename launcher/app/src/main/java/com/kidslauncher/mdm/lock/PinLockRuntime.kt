@@ -418,10 +418,26 @@ object PinLockRuntime {
         syncVoipRinger(context)
     }
 
-    /** Svar on the card went out (17b QA #6): this ring is silent - the app cancels its ring only
-     * once the call is joined, seconds later. */
-    fun answeredVoipRing(context: Context) {
-        silencedRing = VoipCalls.ringId
+    /** The ring Svar silenced, and this ring's silence before it (qa-17b-code #1). */
+    private var answeredRing: Long? = null
+    private var silencedBeforeAnswer: Long? = null
+
+    /** Svar on the card went out (17b QA #6): after the answer action this ring is silent - the app
+     * cancels its ring only once the call is joined, seconds later; after the app's own ring screen
+     * it rings on ([answerSilences], qa-17b-code #1). */
+    fun answeredVoipRing(context: Context, sent: VoipAnswerSent) {
+        if (!answerSilences(sent)) return
+        val ring = VoipCalls.ringId ?: return
+        answeredRing = ring
+        silencedBeforeAnswer = silencedRing
+        silencedRing = ring
+        syncVoipRinger(context)
+    }
+
+    /** Svar's start was refused (the lock never left the front): the ring is as before Svar. */
+    fun voipAnswerRefused(context: Context) {
+        silencedRing = silenceAfterRefusedAnswer(silencedRing, answeredRing, silencedBeforeAnswer)
+        answeredRing = null
         syncVoipRinger(context)
     }
 
@@ -471,11 +487,29 @@ object PinLockRuntime {
         return if (sent) VOIP_FSI_CHECK_MS else null
     }
 
-    /** The lock left the front: the app's ring screen came up (17b) - a later resume in the same
-     * ring shows the card, never a second try. */
-    fun voipLockLeft() {
-        val last = voipFsiTry ?: return
-        if (last.ringId == VoipCalls.ringId && !last.left) voipFsiTry = last.copy(left = true)
+    /** When the lock last asked for [VoipWakeActivity] (elapsed), and whether it is gone since. */
+    private var voipWakeAskedAt: Long? = null
+    private var voipWakeGone = true
+
+    /** The lock left the front ([sendPending]: its ring-screen send was still settling): the app's
+     * ring screen came up (17b) - a later resume in the same ring shows the card, never a second
+     * try; a pause that isn't our wake activity counts even before our send ([pauseIsTry],
+     * qa-17b-code #5). */
+    fun voipLockLeft(sendPending: Boolean) = notePause(sendPending = sendPending, wakeCovered = false)
+
+    /** [VoipWakeActivity] paused: [covered] = before it finished itself (something came over it -
+     * SystemUI's own launch of the app's full-screen intent, qa-17b-code #5). */
+    fun voipWakePaused(covered: Boolean) {
+        notePause(sendPending = false, wakeCovered = covered)
+        voipWakeGone = true
+    }
+
+    private fun notePause(sendPending: Boolean, wakeCovered: Boolean) {
+        val now = SystemClock.elapsedRealtime()
+        val isTry = pauseIsTry(sendPending, wakeCovered, voipWakeAskedAt, voipWakeGone, now)
+        val next = voipTryAfterPause(voipFsiTry, VoipCalls.ringId, isTry, now)
+        if (next != null && next.ringId != voipFsiTry?.ringId) Log.i(LOG_TAG, "The VoIP ring screen came up without our send")
+        voipFsiTry = next
     }
 
     /** The lock's own ring on or off ([voipRingWanted]); on every VoIP evaluation (also the 2 s
@@ -601,7 +635,11 @@ object PinLockRuntime {
                 Intent(context, PinLockActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
             )
-            if (wake) context.startActivity(VoipWakeActivity.intent(context))
+            if (wake) {
+                voipWakeAskedAt = SystemClock.elapsedRealtime()
+                voipWakeGone = false
+                context.startActivity(VoipWakeActivity.intent(context))
+            }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't start the lock screen", e)
         }

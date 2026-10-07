@@ -26,6 +26,9 @@ class VoipWakeActivity : Activity() {
 
     override fun onPause() {
         handler.removeCallbacksAndMessages(null)
+        // Not finishing yet: something came over it - possibly the app's own ring screen, launched
+        // by SystemUI (qa-17b-code #5): then the lock never sends it again for this ring.
+        PinLockRuntime.voipWakePaused(covered = !isFinishing)
         if (!isFinishing) finish()
         super.onPause()
     }

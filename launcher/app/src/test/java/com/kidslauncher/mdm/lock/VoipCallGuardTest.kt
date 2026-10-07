@@ -49,7 +49,7 @@ class VoipCallGuardTest {
         assertEquals(1, Regex("contentIntent").findAll(reader).count())
         val inCallBranch = reader.substringAfter("VoipNoticeKind.IN_CALL ->").substringBefore("\n")
         assertTrue(inCallBranch, inCallBranch.contains("content = n.contentIntent"))
-        assertTrue(reader.contains("VoipNoticeKind.RINGING, VoipNoticeKind.FSI_DENIED -> ring(sbn, n, kind)"))
+        assertTrue(reader.contains("VoipNoticeKind.RINGING, VoipNoticeKind.FSI_DENIED -> ring(sbn, n, kind, incoming)"))
         val ring = reader.substringAfter("private fun ring(").substringBefore("\n    }")
         assertTrue(ring, ring.contains("pickAnswerIntent("))
         assertFalse(ring, ring.contains("content"))
@@ -59,11 +59,15 @@ class VoipCallGuardTest {
     fun `the lock sends the ring's full-screen intent, Answer the CallStyle answer (else the FSI) - never a content intent`() {
         val calls = code(file("lock/VoipCalls.kt"))
         val ringScreen = calls.substringAfter("fun showRingScreen(").substringBefore("\n    }")
-        assertTrue(ringScreen, ringScreen.contains("?.fullScreen"))
+        assertTrue(ringScreen, ringScreen.contains("?.fullScreen") && ringScreen.contains("sendRing(context, intent)"))
         assertFalse(ringScreen, ringScreen.contains("answer") || ringScreen.contains("content"))
         val answer = calls.substringAfter("fun answer(").substringBefore("\n    }")
-        assertTrue(answer, answer.contains("notice.answer ?: notice.fullScreen"))
-        assertFalse(answer, answer.contains("content"))
+        assertTrue(answer, answer.contains("notice.answer") && answer.contains("notice.fullScreen"))
+        assertEquals(answer, 2, Regex("sendRing\\(context, ").findAll(answer).count())
+        assertFalse(answer, answer.contains("content") || Regex("\\bsend\\(").containsMatchIn(answer))
+        // qa-17b-code #4: a ring's call-starting intents pass the calls gate again at the send.
+        val sendRing = calls.substringAfter("private fun sendRing(").substringBefore("\n    }")
+        assertTrue(sendRing, sendRing.indexOf("eligible(app)") in 0 until sendRing.indexOf("send(context, intent)"))
         // 17b QA #5: one way out, behind the other-call guard.
         assertEquals(1, Regex("\\.send\\(context, 0,").findAll(calls).count())
         val send = calls.substringAfter("private fun send(").substringBefore("\n    }")

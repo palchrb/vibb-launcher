@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.lock
 
 import android.animation.ObjectAnimator
 import android.app.ActivityManager
+import android.app.Dialog
 import android.app.admin.DevicePolicyManager
 import android.os.Bundle
 import android.os.Handler
@@ -89,16 +90,34 @@ class PinLockActivity : AppCompatActivity() {
     private var voipFsiPending = false
     private val voipFsiSend = Runnable {
         voipFsiPending = false
-        if (resumed) {
+        if (resumed && openDialogs.isEmpty()) {
             PinLockRuntime.sendVoipRingScreen(this)?.let { recheck -> handler.postDelayed(voipRender, recheck) }
             renderVoip()
         }
     }
     private val voipRender = Runnable { renderVoip() }
 
-    /** Svar went out but the lock never left the front: the start was refused (17b QA #3). */
+    /** Svar went out but the lock never left the front: the start was refused (17b QA #3) - the card
+     * says so, and the ring is as before Svar (qa-17b-code #1). */
     private val voipAnswerCheck = Runnable {
-        if (resumed && voipRing.root.visibility == View.VISIBLE) voipRing.voipRingError.visibility = View.VISIBLE
+        if (resumed && voipRing.root.visibility == View.VISIBLE) {
+            voipRing.voipRingError.visibility = View.VISIBLE
+            PinLockRuntime.voipAnswerRefused(this)
+        }
+    }
+
+    /** The lock's own dialogs (Nødsamtale's confirm, Foreldrekode) while open: the app's ring
+     * screen is never sent over them (qa-17b-code #3); it goes when the last one closes. */
+    private val openDialogs = mutableSetOf<Dialog>()
+
+    private fun trackDialog(dialog: Dialog) {
+        openDialogs += dialog
+        handler.removeCallbacks(voipFsiSend)
+        voipFsiPending = false
+        dialog.setOnDismissListener {
+            openDialogs -= dialog
+            renderVoip()
+        }
     }
 
     private val waitTicker: Runnable = object : Runnable {
@@ -139,7 +158,7 @@ class PinLockActivity : AppCompatActivity() {
         voipRing.voipRingDecline.setOnClickListener { onVoipDecline() }
         // Emergency call and Parent code stay reachable during a ring (qa-16-17-code #3).
         voipRing.voipRingEmergency.setOnClickListener {
-            EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() }
+            trackDialog(EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() })
         }
         voipRing.voipRingParentCode.setOnClickListener { showParentCodeDialog() }
         entered = savedInstanceState?.getString(STATE_ENTERED).orEmpty()
@@ -155,7 +174,7 @@ class PinLockActivity : AppCompatActivity() {
         buildKeypad()
         binding.pinKeypad.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ -> sizeKeys(bottom - top) }
         binding.pinEmergency.setOnClickListener {
-            EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() }
+            trackDialog(EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() })
         }
         binding.pinParentCode.setOnClickListener { showParentCodeDialog() }
         PinLockRuntime.addModeListener(modeListener)
@@ -183,7 +202,7 @@ class PinLockActivity : AppCompatActivity() {
      */
     private fun renderVoip() {
         if (!::voipRing.isInitialized) return
-        if (resumed && !voipFsiPending && PinLockRuntime.voipFsiDueNow(this)) {
+        if (resumed && openDialogs.isEmpty() && !voipFsiPending && PinLockRuntime.voipFsiDueNow(this)) {
             voipFsiPending = true
             handler.postDelayed(voipFsiSend, VOIP_FSI_SETTLE_MS)
         }
@@ -216,12 +235,13 @@ class PinLockActivity : AppCompatActivity() {
      * start was refused: the card says so. */
     private fun onVoipAnswer() {
         handler.removeCallbacks(voipAnswerCheck)
-        if (!VoipCalls.answer(this)) {
+        val sent = VoipCalls.answer(this)
+        if (sent == VoipAnswerSent.NOTHING) {
             voipRing.voipRingError.visibility = View.VISIBLE
             return
         }
         voipRing.voipRingError.visibility = View.GONE
-        PinLockRuntime.answeredVoipRing(this)
+        PinLockRuntime.answeredVoipRing(this, sent)
         handler.postDelayed(voipAnswerCheck, VOIP_FSI_CHECK_MS)
     }
 
@@ -256,11 +276,13 @@ class PinLockActivity : AppCompatActivity() {
     override fun onPause() {
         resumed = false
         handler.removeCallbacks(waitTicker)
-        // 17b: a pending try waits for the next resume; a sent one (or Svar) came up.
+        // 17b: a sent try (or Svar) came up; a pause while one was settling (not our wake
+        // activity's) is the app's screen coming up by itself (qa-17b-code #5).
+        val sendPending = voipFsiPending
         handler.removeCallbacks(voipFsiSend)
         handler.removeCallbacks(voipAnswerCheck)
         voipFsiPending = false
-        PinLockRuntime.voipLockLeft()
+        PinLockRuntime.voipLockLeft(sendPending)
         PinLockRuntime.onLockPaused()
         super.onPause()
     }
@@ -499,6 +521,7 @@ class PinLockActivity : AppCompatActivity() {
             .setPositiveButton(android.R.string.ok, null)
             .create()
         dialog.show()
+        trackDialog(dialog)
         if (!OfflineOverride.isConfigured()) showError(R.string.pin_lock_parent_not_set)
         // Overridden after show() so a wrong code keeps the dialog open.
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { button ->

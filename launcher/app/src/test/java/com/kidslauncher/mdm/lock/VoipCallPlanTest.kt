@@ -236,12 +236,13 @@ class VoipCallPlanTest {
     // ---- 17b: the app's own ring screen first, the card as the fallback -------------------------
 
     @Test
-    fun `17b - a ring whose full-screen intent was denied rings when it can be answered`() {
-        assertTrue(voipRings(VoipNoticeKind.RINGING, hasAnswer = false))
-        assertTrue(voipRings(VoipNoticeKind.FSI_DENIED, hasAnswer = true))
-        assertFalse("nothing to answer it with: reported only", voipRings(VoipNoticeKind.FSI_DENIED, hasAnswer = false))
-        assertFalse(voipRings(VoipNoticeKind.IN_CALL, hasAnswer = true))
-        assertFalse(voipRings(VoipNoticeKind.NONE, hasAnswer = true))
+    fun `17b - a ring whose full-screen intent was denied rings when it is an answerable incoming CallStyle`() {
+        assertTrue(voipRings(VoipNoticeKind.RINGING, hasAnswer = false, incoming = false))
+        assertTrue(voipRings(VoipNoticeKind.FSI_DENIED, hasAnswer = true, incoming = true))
+        assertFalse("nothing to answer it with: reported only", voipRings(VoipNoticeKind.FSI_DENIED, hasAnswer = false, incoming = true))
+        assertFalse("not an incoming CallStyle (qa-17b-code 2)", voipRings(VoipNoticeKind.FSI_DENIED, hasAnswer = true, incoming = false))
+        assertFalse(voipRings(VoipNoticeKind.IN_CALL, hasAnswer = true, incoming = true))
+        assertFalse(voipRings(VoipNoticeKind.NONE, hasAnswer = true, incoming = true))
     }
 
     private fun cs(intent: String) = CallAction(intent, callStyle = true)
@@ -251,23 +252,73 @@ class VoipCallPlanTest {
     fun `17b - the answer intent - EXTRA_ANSWER_INTENT, else the one CallStyle action that isn't the decline`() {
         // Element X (androidx core 1.17): extras carry both, actions = [decline, answer] marked by CallStyle,
         // and the content intent *is* the answer intent.
-        assertEquals("answer", pickAnswerIntent("answer", "decline", listOf(cs("decline"), cs("answer"))))
-        assertEquals("no extra: the marked action", "answer", pickAnswerIntent(null, "decline", listOf(cs("decline"), cs("answer"))))
+        assertEquals("answer", pickAnswerIntent("answer", "decline", listOf(cs("decline"), cs("answer")), incoming = true))
+        assertEquals("no extra: the marked action", "answer", pickAnswerIntent(null, "decline", listOf(cs("decline"), cs("answer")), incoming = true))
         assertEquals("the app's own actions don't count", "answer",
-            pickAnswerIntent(null, "decline", listOf(plain("mute"), cs("decline"), cs("answer"), plain("reply"))))
-        assertEquals("an extra equal to the decline is no answer", "answer", pickAnswerIntent("decline", "decline", listOf(cs("decline"), cs("answer"))))
-        assertEquals("the same intent twice is one", "answer", pickAnswerIntent(null, "decline", listOf(cs("answer"), cs("answer"))))
+            pickAnswerIntent(null, "decline", listOf(plain("mute"), cs("decline"), cs("answer"), plain("reply")), incoming = true))
+        assertEquals("an extra equal to the decline is no answer", "answer",
+            pickAnswerIntent("decline", "decline", listOf(cs("decline"), cs("answer")), incoming = true))
+        assertEquals("the same intent twice is one", "answer", pickAnswerIntent(null, "decline", listOf(cs("answer"), cs("answer")), incoming = true))
+        assertEquals("the extra needs no call type", "answer", pickAnswerIntent("answer", null, emptyList(), incoming = false))
     }
 
     @Test
-    fun `17b - never a guess - ambiguous, decline-only or unmarked actions give none (Answer sends the FSI)`() {
-        assertNull("two marked candidates", pickAnswerIntent(null, "decline", listOf(cs("a"), cs("b"))))
-        assertNull("only the decline", pickAnswerIntent(null, "decline", listOf(cs("decline"))))
+    fun `17b - never a guess - ambiguous, decline-only, unmarked actions or an ongoing call's hang-up give none (Answer sends the FSI)`() {
+        assertNull("two marked candidates", pickAnswerIntent(null, "decline", listOf(cs("a"), cs("b")), incoming = true))
+        assertNull("only the decline", pickAnswerIntent(null, "decline", listOf(cs("decline")), incoming = true))
         // An unmarked action - e.g. one with the content intent - is never picked: no title, no semantic.
-        assertNull(pickAnswerIntent(null, "decline", listOf(plain("content"), cs("decline"))))
-        assertNull(pickAnswerIntent<String>(null, null, emptyList()))
-        assertNull("an action without an intent", pickAnswerIntent(null, "decline", listOf(CallAction<String>(null, true), cs("decline"))))
+        assertNull(pickAnswerIntent(null, "decline", listOf(plain("content"), cs("decline")), incoming = true))
+        assertNull(pickAnswerIntent<String>(null, null, emptyList(), incoming = true))
+        assertNull("an action without an intent", pickAnswerIntent(null, "decline", listOf(CallAction<String>(null, true), cs("decline")), incoming = true))
+        // qa-17b-code #2: an ongoing CallStyle (no decline) has only its hang-up marked.
+        assertNull("hang-up, incoming claimed", pickAnswerIntent(null, null, listOf(cs("hangUp")), incoming = true))
+        assertNull("hang-up of an ongoing call", pickAnswerIntent(null, null, listOf(cs("hangUp")), incoming = false))
+        assertNull("not incoming: no action fallback", pickAnswerIntent(null, "decline", listOf(cs("decline"), cs("answer")), incoming = false))
         assertEquals("key_action_priority", KEY_CALL_STYLE_ACTION)
+    }
+
+    @Test
+    fun `qa-17b-code 1 - Svar silences only after the answer action, a refused start un-silences`() {
+        assertTrue(answerSilences(VoipAnswerSent.ANSWER_ACTION))
+        assertFalse("the app's ring screen still rings", answerSilences(VoipAnswerSent.RING_SCREEN))
+        assertFalse(answerSilences(VoipAnswerSent.NOTHING))
+        assertNull("rings again", silenceAfterRefusedAnswer(silencedRing = 7L, answeredRing = 7L, silencedBeforeAnswer = null))
+        assertEquals("a power-button silence of the same ring stays", 7L,
+            silenceAfterRefusedAnswer(silencedRing = 7L, answeredRing = 7L, silencedBeforeAnswer = 7L))
+        assertEquals("a new ring since: untouched", 9L, silenceAfterRefusedAnswer(silencedRing = 9L, answeredRing = 7L, silencedBeforeAnswer = null))
+        assertEquals("no Svar silence on record: untouched", 7L, silenceAfterRefusedAnswer(silencedRing = 7L, answeredRing = null, silencedBeforeAnswer = null))
+    }
+
+    @Test
+    fun `qa-17b-code 5 - which pauses count as the app's screen having come up`() {
+        val now = 100_000L
+        assertFalse("our wake activity going over the settling lock",
+            pauseIsTry(sendPending = true, wakeCovered = false, wakeAskedAtElapsedMs = now - 50, wakeGone = false, nowElapsedMs = now))
+        assertTrue("SystemUI's launch (or power) while the send settles - the wake is long gone",
+            pauseIsTry(sendPending = true, wakeCovered = false, wakeAskedAtElapsedMs = now - 900, wakeGone = true, nowElapsedMs = now))
+        assertTrue("no wake asked for", pauseIsTry(true, false, null, wakeGone = true, nowElapsedMs = now))
+        assertTrue("a wake that never came, past the window",
+            pauseIsTry(true, false, now - VOIP_WAKE_WINDOW_MS, wakeGone = false, nowElapsedMs = now))
+        assertTrue("the wake was covered before it finished itself", pauseIsTry(false, wakeCovered = true, wakeAskedAtElapsedMs = now - 50, wakeGone = false, nowElapsedMs = now))
+        assertFalse("no send settling, the wake not covered", pauseIsTry(false, false, null, true, now))
+    }
+
+    @Test
+    fun `qa-17b-code 5 - the try after a pause`() {
+        val now = 5_000L
+        val sent = VoipFsiTry(1L, 4_000L, sent = true)
+        assertEquals("our try came up", sent.copy(left = true), voipTryAfterPause(sent, 1L, pauseIsTry = false, nowElapsedMs = now))
+        assertEquals(sent.copy(left = true), voipTryAfterPause(sent.copy(left = true), 1L, pauseIsTry = true, nowElapsedMs = now))
+        assertEquals("came up by itself: a try, nothing sent", VoipFsiTry(1L, now, sent = false, left = true),
+            voipTryAfterPause(null, 1L, pauseIsTry = true, nowElapsedMs = now))
+        assertEquals("an old ring's try is replaced", VoipFsiTry(2L, now, sent = false, left = true),
+            voipTryAfterPause(sent, 2L, pauseIsTry = true, nowElapsedMs = now))
+        assertNull("the wake's own pause: still no try", voipTryAfterPause(null, 1L, pauseIsTry = false, nowElapsedMs = now))
+        assertEquals("no ring", sent, voipTryAfterPause(sent, null, pauseIsTry = true, nowElapsedMs = now))
+        // Then: never our send again for that ring, the card on the next resume.
+        val byItself = voipTryAfterPause(null, 1L, pauseIsTry = true, nowElapsedMs = now)
+        assertFalse(voipFsiDue(1L, locked = true, dismissed = false, otherScreen = false, hasFullScreen = true, last = byItself))
+        assertEquals(VoipRingUi.CARD, voipRingUi(1L, true, false, false, true, byItself, now))
     }
 
     private fun due(ringId: Long? = 1L, locked: Boolean = true, dismissed: Boolean = false, other: Boolean = false, fsi: Boolean = true, last: VoipFsiTry? = null) =

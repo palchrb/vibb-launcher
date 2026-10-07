@@ -232,6 +232,9 @@ Built: 17b with QA #1-#6 (launcher paths under `launcher/app/src/main/java/com/k
   (Svar silences the ring); `PinLockActivity` sends 300 ms after a resume with the screen on (cancelled in `onPause`),
   re-renders at 1.5 s, and shows "Klarte ikke å åpne samtalen" when Svar's start didn't take the lock off the front.
 - Not built: #7 needs nothing; #8 is a device check.
+- Code review `qa-17b-code.md`: findings 1-5 fixed, 6 accepted (see its "Resolution"). Svar silences only after the
+  answer action. The action fallback needs an incoming CallStyle. No send over the lock's dialogs. The calls gate is
+  checked again at the send. If the app's screen came up without our send, this ring gets no send from us.
 
 Open device checks (emulator, then the Jelly Star; Element X from another account; logcat `VoipCalls`/`PinLockRuntime`/`BAL`):
 - [ ] Screen off + LOCKED, kiosk on and off: the screen wakes, Element's own ring screen comes up (no card in between),
@@ -248,3 +251,7 @@ Open device checks (emulator, then the Jelly Star; Element X from another accoun
   ring screen or ringtone; after them the ring (if still on) shows Element's screen once.
 - [ ] Power button on Element's ring screen silences our ringtone; the next screen-on shows Element's screen or the card.
 - [ ] Kiosk off: what Recents and Home reach from Element's ring screen during the ring (QA #8).
+- [ ] A ring while the Nødsamtale or Foreldrekode dialog is open: the dialog stays on top. Element's screen comes
+  after it closes.
+- [ ] If SystemUI launches the FSI itself, Back from it shows the card, not Element's screen again
+  (`The VoIP ring screen came up without our send`).
