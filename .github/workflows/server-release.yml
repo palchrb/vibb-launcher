@@ -34,7 +34,10 @@ jobs:
 
       - name: Refuse tags whose commit is not on master/main
         run: |
-          git fetch --no-tags origin master main 2>/dev/null || git fetch --no-tags origin master
+          # Fetch whichever of the two exists (a fetch naming a missing branch fails as a whole).
+          for b in main master; do
+            git fetch --no-tags origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null || true
+          done
           for branch in master main; do
             if git rev-parse --verify -q "origin/$branch" >/dev/null &&
                git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
