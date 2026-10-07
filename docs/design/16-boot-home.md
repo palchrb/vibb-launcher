@@ -292,3 +292,22 @@ Open device checks (emulator, then the Jelly Star):
   `am crash` while LOCKED), kiosk on and off: neither opens over the lock (qa-16c-code #1).
 - [ ] Unlock: the content comes with the lock leaving; screen-off over Home: the night ground before the lock.
 - [ ] A time rule at boot (the time-rule screen under the PIN lock) and a call over the lock: unchanged.
+
+## 16e - the breathing logo for 3 s at boot (user, 2026-10-07)
+
+On a boot, the locked Home's breathing Vibb mark (16c) shows only for a blink before the PIN lock, and the user wants
+about 3 s. Decision:
+1. **Only at the first process start after a boot** (boot count changed): the PIN lock's first showing waits until
+   the mark has been on screen for 3 s from Home's first frame. On a crash restart without a reboot, nothing waits.
+   Screen-off locks, remote locks and every later lock show at once, as today.
+2. **Nothing else waits:**
+   - the LOCKED chrome (status bar blocked, lock-task features, the 16d heal) applies at process start, before or
+     with the mark;
+   - Home shows no content and takes no touches (16c);
+   - our call screen, a Telecom or emergency call, a ringing system alarm and a VoIP ring (17/17b) skip the wait at
+     once;
+   - an unreadable state shows the lock immediately (16c #3).
+3. **The boot cover (16b):** its minimum before handing over becomes 3 s from its first frame. The later Home mark
+   counts toward the same 3 s, measured from the first of the two frames, so the user doesn't get 3 s twice.
+4. **Tests:** the pure wait decision (boot vs restart, exemptions, the timing source). A smoke-test REBOOT=1 check that
+   the lock appears within about 5 s and that nothing but the mark is visible before it.
