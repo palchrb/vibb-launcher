@@ -106,6 +106,8 @@ object PinLockRuntime {
     private var emergencyCallSeen = false
     private var rememberedAlarmMs: Long? = null
     private var callsSeen = false
+    /** This process healed the status bar at a screen-on ([HealTrigger.FIRST_SCREEN_ON]). Main thread. */
+    private var screenOnHealed = false
 
     fun addModeListener(listener: () -> Unit) { modeListeners += listener }
     fun removeModeListener(listener: () -> Unit) { modeListeners -= listener }
@@ -182,6 +184,14 @@ object PinLockRuntime {
             },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        // Design 16d decision 1: one more status-bar heal when the boot is complete (a protected
+        // broadcast; it reaches a registered receiver started before it is sent).
+        ContextCompat.registerReceiver(
+            app,
+            bootCompletedReceiver,
+            IntentFilter(Intent.ACTION_BOOT_COMPLETED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         OngoingCalls.addListener(callsListener)
         // Design 17: a VoIP call's stored exemption keeps its package pinned from the first chrome
         // refresh on, until the notification listener reports again (QA #4).
@@ -231,6 +241,12 @@ object PinLockRuntime {
             if (!chromeLocked) {
                 refreshChrome(app)
                 CameraLock.onLockChanged(app)
+            }
+            // Design 16d decision 1: SystemUI can lose lock task's status-bar flags at boot (the
+            // shade and Quick Settings opened over the lock) - heal them several times after the
+            // start, past quickstep's start-up.
+            for (delay in STATUS_BAR_HEALS_AFTER_START_MS) {
+                handler.postDelayed({ healStatusBar(app, HealTrigger.PROCESS_START) }, delay)
             }
         }
     }
@@ -319,6 +335,32 @@ object PinLockRuntime {
         }
     }
 
+    /**
+     * Design 16d decision 1: a status-bar heal on the chrome thread, after any pass queued before it -
+     * [LockTaskChrome.healStatusBar] flips SYSTEM_INFO, then [STATUS_BAR_HEAL_FLIP_MS] outside the
+     * monitor (a LOCKED edge's pass may run meanwhile and write the features itself), then
+     * [LockTaskChrome.endStatusBarHeal] writes the computed features back.
+     */
+    private fun healStatusBar(context: Context, trigger: HealTrigger) {
+        val app = context.applicationContext
+        chromeExecutor.execute {
+            try {
+                if (LockTaskChrome.healStatusBar(app, trigger)) {
+                    Thread.sleep(STATUS_BAR_HEAL_FLIP_MS)
+                    LockTaskChrome.endStatusBarHeal(app)
+                }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Status bar heal (${trigger.label}) failed", e)
+            }
+        }
+    }
+
+    private val bootCompletedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_BOOT_COMPLETED) healStatusBar(context, HealTrigger.BOOT_COMPLETED)
+        }
+    }
+
     /** Our call screen in front of the lock (inside the lock task - our package is pinned). */
     private fun showCall(context: Context) {
         try {
@@ -356,6 +398,9 @@ object PinLockRuntime {
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Re-check at screen off failed", e)
                 }
+                // Design 16d decision 1: lock task's status-bar flags sent to SystemUI again while
+                // the screen is off - a SystemUI or quickstep restart isn't visible to an app.
+                healStatusBar(app, HealTrigger.SCREEN_OFF)
             } else {
                 // First, synchronously: end the Play update window before anything else (QA
                 // step 7 #8); the full re-apply follows in the background.
@@ -367,6 +412,11 @@ object PinLockRuntime {
                 // May start the time-rule screen - the PIN lock then goes above it.
                 TimeRulesRuntime.recheck(app)
                 dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase))
+                // Design 16d decision 1: the boot's first screen-on heals the status bar once more.
+                if (intent.action == Intent.ACTION_SCREEN_ON && !screenOnHealed) {
+                    screenOnHealed = true
+                    healStatusBar(app, HealTrigger.FIRST_SCREEN_ON)
+                }
                 // Backstop for the migration (QA 10 #15): the Android credential is gone but no
                 // onPasswordChanged arrived - check now rather than at the next sync.
                 if (intent.action == Intent.ACTION_USER_PRESENT && inactive == LockInactive.ANDROID_CREDENTIAL && !deviceSecure(app)) {

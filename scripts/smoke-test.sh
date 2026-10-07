@@ -20,7 +20,9 @@
 # call notification and call screen gone after hang-up; never the system's "App is not available"
 # screen (BlockedAppActivity) after the unlock, on Recents or on a gesture swipe-up (design 16); with
 # REBOOT=1, after a reboot no UI dump shows Home's content (contacts, grid, call card) before the PIN
-# unlock (design 16c). Call state comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
+# unlock (design 16c), and for 45 s after the lock is up neither the shade nor Quick Settings opens
+# over it and SystemUI's TaskbarDelegate has the status bar's disable flags (design 16d). Call state
+# comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
 # end (exit 1 on any FAIL, also on SKIP with STRICT=1).
 #
 # Setup (the PWA): the phone enrolled and managed, calls managed and on, ALLOWED_NUMBER a contact
@@ -45,7 +47,8 @@
 #   OUT_DIR         screenshot folder (default ./smoke-<date>, gitignored)
 #   EXPECT_KIOSK=0  a phone whose kiosk is off on purpose (lock task isn't required then)
 #   REBOOT=1        first reboot the emulator (`adb reboot`) and dump the UI until the PIN lock is in
-#                   front: no dump may show Home's content (design 16c). Needs KID_PIN. Unset: SKIP.
+#                   front: no dump may show Home's content (design 16c); then pull the shade over the
+#                   lock for 45 s (design 16d). Needs KID_PIN. Unset: SKIP.
 #   STRICT=1        count SKIP as a failure
 #   ELEMENT_SESSION, ELEMENT_ROOM  optional (design 15): the kid's own Element X MXID and a DM's room
 #                   ID (as the launcher learns them from Element X's DM notification); with both set,
@@ -340,6 +343,24 @@ home_content_in() { grep -q -E "resource-id=\"[^\"]*:id/($HOME_CONTENT_IDS)\"" <
 home_night_in() { grep -q -E "resource-id=\"[^\"]*:id/home_night\"" <<<"$1"; }
 boot_completed() { [ "$(sh_ getprop sys.boot_completed)" = "1" ]; }
 
+# The notification shade or Quick Settings is expanded (design 16d): SystemUI's shade window has the
+# focus, or a UI dump (the active window) shows its panels.
+shade_open() {
+    local focus
+    focus="$(sh_ dumpsys window | grep -E 'mCurrentFocus|mFocusedWindow' || true)"
+    if grep -q 'NotificationShade' <<<"$focus"; then return 0; fi
+    ui_dump
+    grep -q -E 'resource-id="com\.android\.systemui:id/(quick_settings_panel|quick_qs_panel|qs_frame|notification_stack_scroller)"' <<<"$UI_XML"
+}
+# StatusBarManagerService's disable1 and SystemUI's TaskbarDelegate copy of it (gesture navigation).
+# 16d experiment 2: after some boots the service had the LOCKED flags (0x7260000), TaskbarDelegate 0.
+statusbar_disable1() { grep -m1 -o 'mDisabled1=0x[0-9a-fA-F]*' <<<"$(sh_ dumpsys statusbar)" | cut -d= -f2; }
+taskbar_disable1() {
+    awk '/TaskbarDelegate/ { seen = 1 }
+        seen && /mDisabledFlags=/ { sub(/.*mDisabledFlags=/, ""); sub(/[^0-9a-fA-Fx].*$/, ""); print; exit }' \
+        <<<"$(sh_ dumpsys activity service com.android.systemui)"
+}
+
 enter_pin() {
     local digit i
     ui_dump
@@ -473,6 +494,63 @@ else
         pass "no Home content before the PIN unlock after a reboot ($dumps UI dumps$([ "$night_seen" -eq 1 ] && echo ", the night ground seen"))"
     fi
     shot boot-lock
+fi
+
+step "Boot: no shade over the lock (design 16d)"
+# SystemUI could lose lock task's status-bar flags at boot: the shade with Quick Settings opened over
+# the lock (16d experiment 2). Probed for 45 s from the lock's first appearance - past the launcher's
+# heals 1-40 s after its start - then SystemUI's copy of the flags is compared with the service's.
+if [ "$REBOOT" != "1" ] || [ -z "$KID_PIN" ]; then
+    skip "the shade can't be opened over the lock after a reboot" "REBOOT=1 and KID_PIN needed"
+    skip "SystemUI has the status bar's disable flags after a reboot" "REBOOT=1 and KID_PIN needed"
+elif [ "${lock_seen:-0}" -ne 1 ]; then
+    skip "the shade can't be opened over the lock after a reboot" "the PIN lock wasn't in front after the reboot"
+    skip "SystemUI has the status bar's disable flags after a reboot" "the PIN lock wasn't in front after the reboot"
+else
+    dims="$(grep -o '[0-9][0-9]*x[0-9][0-9]*' <<<"$(sh_ wm size)" | tail -1 || true)"
+    width="${dims%x*}"
+    height="${dims#*x}"
+    opened=""
+    probes=0
+    started=$SECONDS
+    while [ $((SECONDS - started)) -lt 45 ]; do
+        # A screen-off would heal the flags itself (and hide a desync): keep the screen on.
+        sh_ input keyevent KEYCODE_WAKEUP >/dev/null
+        for probe in expand-notifications expand-settings swipe; do
+            if [ "$probe" = "swipe" ]; then
+                [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || continue
+                sh_ input swipe $((width / 2)) 2 $((width / 2)) $((height * 2 / 3)) 300 >/dev/null
+            else
+                sh_ cmd statusbar "$probe" >/dev/null
+            fi
+            sleep 0.7
+            probes=$((probes + 1))
+            if shade_open; then
+                opened="${opened:+$opened, }$probe at +$((SECONDS - started)) s"
+                shot "boot-shade-open-$probes"
+            fi
+            sh_ cmd statusbar collapse >/dev/null
+        done
+        sleep 1
+    done
+    if ! top_is "$LOCK_ACTIVITY"; then
+        fail "the shade can't be opened over the lock after a reboot" "the lock left the front during the probes; top: $(top_activity)${opened:+; opened: $opened}"
+    elif [ -n "$opened" ]; then
+        fail "the shade can't be opened over the lock after a reboot" "opened: $opened (screenshots boot-shade-open-*)"
+    else
+        pass "the shade can't be opened over the lock after a reboot ($probes probes in 45 s)"
+    fi
+    sb="$(statusbar_disable1)"
+    tb="$(taskbar_disable1)"
+    if [ -z "$sb" ] || [ -z "$tb" ]; then
+        skip "SystemUI has the status bar's disable flags after a reboot" \
+            "not in the dumps: statusbar mDisabled1='${sb}', TaskbarDelegate mDisabledFlags='${tb}' (3-button navigation?)"
+    elif [ "$((sb))" -eq "$((tb))" ]; then
+        pass "SystemUI has the status bar's disable flags after a reboot (mDisabled1=$sb, TaskbarDelegate $tb)"
+    else
+        fail "SystemUI has the status bar's disable flags after a reboot" "dumpsys statusbar mDisabled1=$sb, SystemUI TaskbarDelegate mDisabledFlags=$tb"
+    fi
+    shot boot-shade-probed
 fi
 
 step "PIN lock"

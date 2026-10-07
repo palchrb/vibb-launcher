@@ -28,6 +28,9 @@ private const val LOG_TAG = "LockTaskChrome"
  * Debug builds only: `LockTaskDebug.adjust` puts the design 16d emulator override on top of the
  * computed setting right before the writes (src/debug, docs/testing/emulator.md §6e); in release it
  * returns the setting unchanged (src/release) - this object stays the only writer either way.
+ * Design 16d decision 1: [healStatusBar] flips SYSTEM_INFO for a moment and [endStatusBarHeal]
+ * writes the computed features back, so SystemUI gets lock task's status-bar flags again
+ * ([statusBarHealFeatures]) - the same pass, only its lock-task features write differs.
  */
 object LockTaskChrome {
 
@@ -42,6 +45,10 @@ object LockTaskChrome {
     @Volatile
     private var voipHelpers: Set<String>? = null
     private val statusBar = StatusBarLatch()
+
+    /** A status-bar heal's flip is up ([healStatusBar]) until a pass writes the computed features. */
+    @Volatile
+    private var healFlip: HealFlip? = null
 
     /** [applyPlan]'s helper lookups are numbered: resolved outside the monitor, only the newest is
      * kept (qa-16c-code #1). */
@@ -119,6 +126,21 @@ object LockTaskChrome {
         }
     }
 
+    /**
+     * Design 16d decision 1: a status-bar heal's first write - this pass's lock-task features with
+     * SYSTEM_INFO flipped ([statusBarHealFeatures]), only while something is pinned. The caller
+     * waits [STATUS_BAR_HEAL_FLIP_MS] outside the monitor and then calls [endStatusBarHeal].
+     * Returns whether the flip is up. Background thread.
+     */
+    fun healStatusBar(context: Context, trigger: HealTrigger): Boolean = synchronized(this) {
+        if (plan == null) applyFallback(context, trigger) else applyNow(context, trigger)
+    }
+
+    /** The heal's second write: a normal pass, unless one has written the features since. */
+    fun endStatusBarHeal(context: Context) {
+        if (healFlip != null) refresh(context)
+    }
+
     /** The update fence went up or was released (qa-11-design.md #4): the next pass writes the
      * status bar whatever the latch remembers. Any thread. */
     fun fenceChanged(context: Context) {
@@ -139,9 +161,10 @@ object LockTaskChrome {
         return if (wanted) cached.orEmpty() else emptySet()
     }
 
-    private fun applyNow(context: Context) {
-        val dpm = dpm(context) ?: return
-        val current = plan ?: return
+    /** A pass from the plan; with [heal] only a heal's flip ([healStatusBar]) - whether it is up. */
+    private fun applyNow(context: Context, heal: HealTrigger? = null): Boolean {
+        val dpm = dpm(context) ?: return false
+        val current = plan ?: return false
         val locked = PinLockRuntime.chromeLocked
         val kioskOn = current.kioskPackages != null
         val setting = lockTaskWhileLocked(
@@ -150,11 +173,12 @@ object LockTaskChrome {
             fenced = UpdateFence.fenced,
             voipPackages = if (locked && !kioskOn) voipPackages() else emptySet(),
         )
-        apply(context, dpm, setting, kioskOn = kioskOn, locked = locked)
+        return apply(context, dpm, setting, heal, kioskOn = kioskOn, locked = locked)
     }
 
-    private fun applyFallback(context: Context) {
-        val dpm = dpm(context) ?: return
+    /** A pass without a plan, from the platform's state ([healBase]: a heal's flip reads as its original). */
+    private fun applyFallback(context: Context, heal: HealTrigger? = null): Boolean {
+        val dpm = dpm(context) ?: return false
         val admin = admin(context)
         val locked = PinLockRuntime.chromeLocked
         val kiosk = LauncherPreferences.mdm().kioskEnabled()
@@ -164,7 +188,7 @@ object LockTaskChrome {
             emptySet()
         }
         val features = try {
-            dpm.getLockTaskFeatures(admin)
+            healBase(dpm.getLockTaskFeatures(admin), healFlip)
         } catch (e: Exception) {
             0
         }
@@ -184,23 +208,30 @@ object LockTaskChrome {
             fenced = UpdateFence.fenced,
             voipPackages = if (locked && !kiosk) voipPackages() else emptySet(),
         )
-        apply(context, dpm, setting, kioskOn = kiosk, locked = locked)
+        return apply(context, dpm, setting, heal, kioskOn = kiosk, locked = locked)
     }
 
-    /** The writes in [chromeWriteOrder]: a LOCKED pass blocks the shade and overlays first. */
-    private fun apply(context: Context, dpm: DevicePolicyManager, computed: LockTaskSetting, kioskOn: Boolean, locked: Boolean) {
+    /**
+     * The writes in [chromeWriteOrder]: a LOCKED pass blocks the shade and overlays first. With
+     * [heal], only the heal's flip of the lock-task features ([writeHealFlip]); returns whether it
+     * is up (`false` for every other pass).
+     */
+    private fun apply(context: Context, dpm: DevicePolicyManager, computed: LockTaskSetting, heal: HealTrigger?, kioskOn: Boolean, locked: Boolean): Boolean {
         val setting = LockTaskDebug.adjust(context, computed)
         val admin = admin(context)
+        if (heal != null) return writeHealFlip(dpm, admin, setting, heal)
         for (write in chromeWriteOrder(locked)) {
             when (write) {
                 ChromeWrite.STATUS_BAR -> writeStatusBar(dpm, admin, setting.statusBarDisabled)
                 ChromeWrite.CREATE_WINDOWS -> writeCreateWindows(dpm, admin, setting.createWindowsBlocked)
-                ChromeWrite.LOCK_TASK -> writeLockTask(dpm, admin, setting, kioskOn)
+                ChromeWrite.LOCK_TASK -> if (writeLockTask(dpm, admin, setting, kioskOn)) healFlip = null
             }
         }
+        return false
     }
 
-    private fun writeLockTask(dpm: DevicePolicyManager, admin: ComponentName, setting: LockTaskSetting, kioskOn: Boolean) {
+    /** Whether the features were written and verified (a heal's flip is gone then). */
+    private fun writeLockTask(dpm: DevicePolicyManager, admin: ComponentName, setting: LockTaskSetting, kioskOn: Boolean): Boolean {
         val mdm = LauncherPreferences.mdm()
         val packages = setting.packages
         if (packages == null) {
@@ -224,6 +255,26 @@ object LockTaskChrome {
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Failed to pin lock-task packages", e)
             }
+            return true
+        }
+        return false
+    }
+
+    /**
+     * The heal's flip: only setLockTaskFeatures - the packages, the status bar and
+     * `DISALLOW_CREATE_WINDOWS` stay as the last pass left them, and KEYGUARD stays set (only
+     * SYSTEM_INFO changes). Nothing pinned: no heal.
+     */
+    private fun writeHealFlip(dpm: DevicePolicyManager, admin: ComponentName, setting: LockTaskSetting, trigger: HealTrigger): Boolean {
+        val flipped = statusBarHealFeatures(setting) ?: return false
+        return try {
+            dpm.setLockTaskFeatures(admin, flipped)
+            healFlip = HealFlip(setting.features, flipped)
+            Log.i(LOG_TAG, "Status bar heal (${trigger.label}): lock-task features ${setting.features} -> $flipped for $STATUS_BAR_HEAL_FLIP_MS ms")
+            true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Status bar heal (${trigger.label}) failed", e)
+            false
         }
     }
 

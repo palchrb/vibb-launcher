@@ -137,6 +137,12 @@ logged after the step started counts (logcat is cleared per step); silence is a 
   Home's content (`<package>:id/home_contacts`, `home_contacts_scroll`, `home_grid`, `home_call_card`; design 16c: a
   locked Home is the night ground `home_night`). A dump that shows it is saved as `boot-home-content-<n>.xml`
   next to its screenshot;
+- then (design 16d) for 45 s from the lock's first appearance - past the launcher's status-bar heals 1-40 s after
+  its start - `cmd statusbar expand-notifications`, `expand-settings` and a swipe down from the top, each followed
+  by `cmd statusbar collapse`: the shade or Quick Settings open (`mCurrentFocus` NotificationShade, or SystemUI's
+  QS/notification panels in a UI dump) is a FAIL (screenshot `boot-shade-open-<n>`). Then `dumpsys statusbar`'s
+  `mDisabled1` must equal SystemUI's `TaskbarDelegate mDisabledFlags` (`dumpsys activity service
+  com.android.systemui`; SKIP when either is missing, e.g. 3-button navigation);
 - screen off/on (`KEYCODE_SLEEP`/`KEYCODE_WAKEUP`) shows `$PKG/com.kidslauncher.mdm.lock.PinLockActivity`;
 - an incoming call from the allowed contact rings on our call screen
   (`$PKG/com.kidslauncher.mdm.calls.InCallActivity`, not the system dialer's) over the lock, Telecom's
