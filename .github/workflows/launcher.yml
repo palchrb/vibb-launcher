@@ -45,11 +45,11 @@ env:
 jobs:
   launcher-changes:
     if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       changed: ${{ steps.diff.outputs.changed }}
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       with:
         fetch-depth: 0
     - name: Did launcher files change?
@@ -78,14 +78,14 @@ jobs:
   launcher-build:
     needs: launcher-changes
     if: ${{ !startsWith(github.ref, 'refs/tags/') && needs.launcher-changes.outputs.changed == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: launcher
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
     - name: set up JDK 17
-      uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
       with:
         java-version: '17'
         distribution: 'temurin'
@@ -101,7 +101,7 @@ jobs:
       # Kotlin warnings fail this build (app/build.gradle.kts, warningsAsErrors).
       run: ./gradlew build -PrequireTsnet=true -PwarningsAsErrors=true
     - name: Upload APK
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: launcher-debug-${{ github.sha }}.apk
         path: launcher/app/build/outputs/apk/debug/app-debug.apk
@@ -111,7 +111,7 @@ jobs:
   launcher-ci:
     if: ${{ always() && !startsWith(github.ref, 'refs/tags/') }}
     needs: [ launcher-changes, launcher-build ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Check launcher-build
       env:
@@ -125,7 +125,7 @@ jobs:
 
   launcher-release-build:
     if: ${{ startsWith(github.ref, 'refs/tags/launcher-v') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: launcher
@@ -133,7 +133,7 @@ jobs:
       version-name: ${{ steps.version.outputs.name }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       with:
         fetch-depth: 0
     - name: Refuse tags whose commit is not on master/main
@@ -184,7 +184,7 @@ jobs:
         echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
         echo "versionName $name, versionCode $code, prerelease $prerelease"
     - name: set up JDK 17
-      uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
       with:
         java-version: '17'
         distribution: 'temurin'
@@ -209,7 +209,7 @@ jobs:
         ./gradlew assembleRelease testReleaseUnitTest -PrequireTsnet=true -PrequireFcm=true \
           -PversionName="${{ steps.version.outputs.name }}" -PversionCode="${{ steps.version.outputs.code }}"
     - name: Upload unsigned APK
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: release-unsigned
         path: launcher/app/build/outputs/apk/release/app-release-unsigned.apk
@@ -218,13 +218,13 @@ jobs:
 
   launcher-release-sign:
     needs: launcher-release-build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Holds the signing secrets. Configure it with a required reviewer and a tags-only
     # (launcher-v*) deployment rule, so neither a branch push nor a workflow_dispatch from a branch can use them.
     environment: release
     steps:
     - name: Download unsigned APK
-      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
       with:
         name: release-unsigned
     - name: Sign
@@ -274,7 +274,7 @@ jobs:
           || { echo "Unexpected package: $(cat badging.txt)" >&2; exit 1; }
         sha256sum kids-launcher-mdm.apk > kids-launcher-mdm.apk.sha256
     - name: Upload signed APK
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: release-signed
         path: |
@@ -284,12 +284,12 @@ jobs:
 
   launcher-release-publish:
     needs: [ launcher-release-build, launcher-release-sign ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
     - name: Download signed APK
-      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
       with:
         name: release-signed
     - name: Create GitHub Release
