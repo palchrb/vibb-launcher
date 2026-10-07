@@ -13,7 +13,7 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md`.
 - `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
   `kid-phone-server` = `server/`, `L` = `kids-launcher-mdm` = `launcher/`, "branch `handy`" = what is
-  now `master` here. `docs/testing/emulator.md` - the emulator test loop. `docs/setup/` - setup
+  now `main` here. `docs/testing/emulator.md` - the emulator test loop. `docs/setup/` - setup
   runbooks (`google-account.md`: the phone's Google account for Play, backup to Google off).
 - `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
   `push-all.sh` (push the current branch), `smoke-test.sh` (adb/emulator-console smoke test of lock and
@@ -43,11 +43,11 @@ directories in the same commit.
   (`launcher-build`, `server-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/`). Require the always-running gate jobs
   `launcher-ci` and `server-ci` in branch protection, not the build jobs.
-- `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a master commit -> signed APK
+- `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
   release (`kids-launcher-mdm.apk`), versionCode `X*1_000_000 + Y*1_000 + Z` (RC: minus 1). Only
   stable launcher releases become GitHub's "latest", so
   `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL.
-- `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a master commit -> fmt + tests,
+- `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
   then the aarch64 tarball and its `.sha256`, never "latest". The server's update check and `install.sh`/`update.sh` find it by tag.
 
 ## Licensing
