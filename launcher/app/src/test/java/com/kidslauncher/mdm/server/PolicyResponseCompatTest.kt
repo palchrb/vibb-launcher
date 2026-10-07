@@ -291,6 +291,39 @@ class PolicyResponseCompatTest {
         assertNull((decodeCached(withNull) as CachedPolicy.Ok).policy.kidLock)
     }
 
+    /**
+     * Design 19: a 0.19 server (FCM) still sends `push`, and a launcher before the removal cached
+     * it (encoded without defaults, as [storeAcceptedPolicy] writes it). Both keep decoding to the
+     * same policy as without the key - after the removal it is simply an unknown key.
+     */
+    @Test
+    fun `a 0_19 response and a cached blob that carry push decode (19)`() {
+        val push = """"push": {"fcm_enabled": true, "fcm_ok": true, "fcm_token_hash": "0123456789abcdef"}"""
+        val response019 = serverResponse.replaceFirst("{", "{$push,")
+        val fresh = decodeFresh(response019)
+        assertTrue(fresh is FreshDecode.Ok)
+        val plain = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
+        fun withoutPush(policy: PolicyResponse) =
+            ServerJson.encodeToJsonElement(PolicyResponse.serializer(), policy).jsonObject - "push"
+        assertEquals(withoutPush(plain), withoutPush((fresh as FreshDecode.Ok).policy))
+        assertTrue(decodeCached(response019) is CachedPolicy.Ok)
+
+        val cached019 = """{"allowlist":["org.example.music"],"kiosk_desired":true,"lock_task_features":63,""" +
+            """"push":{"fcm_enabled":true,"fcm_ok":true,"fcm_token_hash":"0123456789abcdef"},""" +
+            """"block_activity_start":true,"screen_timeout_seconds":60}"""
+        val cached = decodeCached(cached019)
+        assertTrue(cached is CachedPolicy.Ok)
+        val policy = (cached as CachedPolicy.Ok).policy
+        assertEquals(listOf("org.example.music"), policy.allowlist)
+        assertEquals(true, policy.kioskDesired)
+        assertEquals(63L, policy.lockTaskFeatures)
+        assertEquals(true, policy.blockActivityStart)
+        assertEquals(60, policy.screenTimeoutSeconds)
+        // An old server without FCM sent `fcm_enabled: false` - the same as no key at all.
+        val off = serverResponse.replaceFirst("{", """{"push":{"fcm_enabled":false,"fcm_ok":false,"fcm_token_hash":null},""")
+        assertEquals(withoutPush(plain), withoutPush((decodeFresh(off) as FreshDecode.Ok).policy))
+    }
+
     @Test
     fun `unknown keys are ignored`() {
         val withExtra = serverResponse.replace(

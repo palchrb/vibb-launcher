@@ -8,8 +8,8 @@ mod cleanup;
 mod device_api;
 mod hardening;
 mod launcher_ui;
+mod play;
 mod provisioning;
-mod push;
 mod sound_mode;
 mod step10;
 mod step11;
@@ -90,11 +90,10 @@ impl TestResponse {
 
 impl TestApp {
     pub async fn new() -> Self {
-        Self::with_fcm(None).await
-    }
-
-    /// Like [TestApp::new], with an FCM sender in the state (usually a `fcm::testing::FakeSender`).
-    pub async fn with_fcm(fcm: Option<crate::fcm::SharedSender>) -> Self {
+        // As `main` does before anything opens a connection: handlers that build a reqwest
+        // client (the DNS upstream switch refreshes the blocklists) need the process-wide rustls
+        // provider. The FCM tests used to install it as a side effect (design 19).
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let dir = tempfile::tempdir().expect("failed to create temp dir");
         let url = format!("sqlite://{}", dir.path().join("test.db").display());
         let db = connect_db(&url).await;
@@ -115,7 +114,7 @@ impl TestApp {
             config: std::sync::Arc::new(ForkConfig::for_tests()),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
-            fcm,
+            command_streams: Default::default(),
             app_syncs: Default::default(),
             tracked_apps_dir: std::sync::Arc::new(dir.path().join("tracked_apps")),
         };

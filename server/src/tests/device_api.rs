@@ -287,7 +287,8 @@ async fn empty_allowlist_is_served_as_empty_not_null() {
 /// Contract test against the launcher's `PolicyResponse` DTO
 /// (kids-launcher-mdm `server/dto/PolicyResponse.kt`): the exact key set, and no `null` for a
 /// field the launcher declares non-nullable (it has no `coerceInputValues`, so a null there
-/// fails the whole decode).
+/// fails the whole decode). No `push` since design 19: every shipped launcher treats a missing
+/// `push` like `fcm_enabled: false` (SSE), so no stub is sent.
 #[tokio::test]
 async fn policy_json_keys_snapshot() {
     let app = TestApp::new().await;
@@ -324,7 +325,6 @@ async fn policy_json_keys_snapshot() {
             "override_pin_salt",
             "packages_to_uninstall",
             "pending_command",
-            "push",
             "quick_controls_mask",
             "screen_timeout_seconds",
             "time_policy",
@@ -351,7 +351,6 @@ async fn policy_json_keys_snapshot() {
         "lock_task_features",
         "notification_auto_cancel",
         "packages_to_uninstall",
-        "push",
         "quick_controls_mask",
         "screen_timeout_seconds",
         "time_policy",

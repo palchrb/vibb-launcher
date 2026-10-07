@@ -271,8 +271,8 @@ struct DeviceDetailTemplate {
     badges_without_access: bool,
     /// "Time rules" card (handy step 6).
     time: TimeCard,
-    /// "Push and Play" card (handy step 7).
-    push: PushCard,
+    /// "Play and kiosk" card (handy step 7; "Push and Play" until design 19).
+    play: PlayCard,
     /// "Screen lock" card (handy step 10): the kid's PIN, the phone's lock state, warnings.
     lock: crate::kid_lock::LockCard,
     /// "Launcher updates and notifications" card (handy step 11): the update fence and the
@@ -298,7 +298,7 @@ struct DeviceDetailTemplate {
     display_forms: Vec<crate::app_display::AppDisplayForm>,
 }
 
-/// The kiosk app block switch on the "Push and Play" card (handy step 9): with it on, kiosk mode
+/// The kiosk app block switch on the "Play and kiosk" card (handy step 9): with it on, kiosk mode
 /// stops every screen of an app that isn't allowed - also ones other apps open (Play, Google
 /// sign-in sheets). The off switch exists for a phone where it breaks something it shouldn't.
 pub async fn update_kiosk_block(
@@ -585,119 +585,26 @@ pub async fn update_kiosk_escapes(
     }
 }
 
-/// The device page's "Push and Play" card: how changes reach the phone, and Play's state.
-pub(crate) struct PushCard {
+/// The device page's "Play and kiosk" card: whether the phone holds the command stream (instant
+/// changes), Play's state and the kiosk app block switch.
+pub(crate) struct PlayCard {
     pub lines: Vec<String>,
     pub warnings: Vec<String>,
     /// `device_policy.block_activity_start` (handy step 9).
     pub block_activity_start: bool,
 }
 
-/// Builds [PushCard] from the server's FCM state, the phone's `device_push` row and its latest
-/// status report.
-pub(crate) async fn push_card(
+/// Builds [PlayCard] from the in-memory stream count (design 19 Q1) and the phone's latest status
+/// report.
+pub(crate) async fn play_card(
     state: &AppState,
     device_id: i64,
     latest: Option<&DeviceStatus>,
-) -> PushCard {
-    let mut lines = Vec::new();
+) -> PlayCard {
+    let mut lines = vec![crate::streams::instant_changes_line(
+        state.command_streams.state(device_id),
+    )];
     let mut warnings = Vec::new();
-    let row = crate::push::load(&state.db, device_id)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::error!(device_id, %err, "can't read device_push");
-            None
-        });
-    let report: Option<crate::push::PushReport> = latest
-        .and_then(|s| s.push_state_json.as_deref())
-        .and_then(|j| serde_json::from_str(j).ok());
-
-    match &state.fcm {
-        None => lines.push(
-            "FCM isn't set up on this server, so the phone keeps its own connection to this server open for instant changes (uses more battery)."
-                .to_string(),
-        ),
-        Some(sender) => {
-            if let Some(problem) = sender.server_problem() {
-                warnings.push(format!("Push: this server can't reach FCM ({problem})."));
-            }
-        }
-    }
-    match &report {
-        None => lines.push(
-            match row.as_ref().and_then(|r| r.push_transport.as_deref()) {
-                Some(t) => format!("The phone last reported using {t}."),
-                None => "The phone hasn't reported how it gets changes yet.".to_string(),
-            },
-        ),
-        Some(r) => {
-            let transport = match r.transport.as_deref() {
-                Some("fcm") => "FCM nudges (low battery use)".to_string(),
-                _ => {
-                    let why = match r.reason.as_deref() {
-                        Some("no_config") => " - this launcher build has no FCM config",
-                        Some("no_gms") => " - Google Play services missing or disabled",
-                        Some("no_token") => " - no FCM registration yet",
-                        Some("server_off") => " - FCM is off on this server",
-                        Some("not_proven") => " - waiting for FCM to be confirmed",
-                        Some("play_hidden") => " - the Play Store is missing",
-                        Some("token_unknown") => {
-                            " - this server doesn't have the phone's FCM token yet"
-                        }
-                        _ => "",
-                    };
-                    format!("its own connection to this server (SSE){why}")
-                }
-            };
-            lines.push(format!("The phone gets changes via {transport}."));
-            if !r.fcm_configured {
-                lines.push("This launcher build has no FCM config.".to_string());
-            } else if !r.gms_available {
-                warnings.push(
-                    "Google Play services is missing or disabled on the phone, so FCM can't work."
-                        .to_string(),
-                );
-            }
-            if let Some(priority) = r.last_priority.as_deref() {
-                let original = r.last_original_priority.as_deref().unwrap_or("unknown");
-                if priority != original {
-                    warnings.push(format!(
-                        "FCM delivered the last nudge with {priority} priority instead of {original} - Android may delay nudges while the phone sleeps."
-                    ));
-                }
-            }
-        }
-    }
-    if let Some(row) = &row {
-        if row.fcm_token.is_some() && state.fcm.is_some() {
-            if row.fcm_ok {
-                lines.push("FCM confirmed working for this phone.".to_string());
-            } else if row.unacked_sends >= crate::push::MAX_UNACKED {
-                warnings.push(
-                    "FCM nudges stopped reaching the phone, so it was told to use its own connection again. This server keeps testing FCM every hour."
-                        .to_string(),
-                );
-            } else {
-                lines.push(
-                    "FCM isn't confirmed for this phone yet - it stays on its own connection until a test nudge comes back."
-                        .to_string(),
-                );
-            }
-        }
-        if let (Some(since), Some(seen)) = (&row.fcm_token_updated_at, &row.fcm_token_seen_at)
-            && row.fcm_token.is_some()
-        {
-            lines.push(format!(
-                "FCM registration from {since} UTC, last reported {seen} UTC."
-            ));
-        }
-        if let Some(at) = &row.last_nudge_at {
-            lines.push(format!("Last FCM nudge received: {at} UTC."));
-        }
-        if let (Some(err), Some(at)) = (&row.last_fcm_error, &row.last_fcm_error_at) {
-            warnings.push(format!("Last FCM error ({at} UTC): {err}."));
-        }
-    }
     let now_ms = chrono::Utc::now().timestamp_millis();
     if let Some(until) = latest
         .and_then(|s| s.install_mode_until_ms)
@@ -734,7 +641,7 @@ pub(crate) async fn push_card(
                 .to_string()
         });
     }
-    PushCard {
+    PlayCard {
         lines,
         warnings,
         block_activity_start,
@@ -1212,7 +1119,7 @@ async fn render_device(
         });
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
-    let push = push_card(&state, id, latest_status.as_ref()).await;
+    let play = play_card(&state, id, latest_status.as_ref()).await;
     let lock = {
         let capable = latest_status
             .as_ref()
@@ -1310,7 +1217,7 @@ async fn render_device(
             app_downloads_line,
             display_forms,
             time,
-            push,
+            play,
             lock,
             escapes,
             notice,

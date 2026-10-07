@@ -267,8 +267,6 @@ pub struct DeviceStatus {
     pub capabilities_json: Option<String>,
     /// The launcher's `time_state` (active rule, screen time used/budget) - migrations/0025.
     pub time_state_json: Option<String>,
-    /// The launcher's `push` object (migrations/0026).
-    pub push_state_json: Option<String>,
     /// Play install mode end (wall-clock ms) while active (migrations/0026).
     pub install_mode_until_ms: Option<i64>,
     pub play_window_active: bool,
@@ -552,9 +550,6 @@ pub struct PolicyResponse {
     pub time_policy: crate::time_rules::TimePolicy,
     /// When the phone takes a location fix - always present.
     pub location_policy: crate::time_rules::LocationPolicy,
-    /// Whether the phone may rely on FCM nudges instead of the SSE stream (handy step 7) - always
-    /// present. See `push::push_policy`.
-    pub push: crate::push::PushPolicy,
     /// `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` while kiosk is on (handy step 9): the
     /// launcher ORs it in itself, together with the system helpers it pins for emergency calls,
     /// permission dialogs and pickers. A separate key (never a `lock_task_features` bit) so an
@@ -667,10 +662,6 @@ pub struct StatusReportRequest {
     /// opaque like `call_state`.
     #[serde(default)]
     pub time_state: Option<serde_json::Value>,
-    /// FCM token, transport, last nudge (handy step 7) - see `push::PushReport`. Kept raw so the
-    /// whole object can be stored capped, like `time_state`.
-    #[serde(default)]
-    pub push: Option<serde_json::Value>,
     /// Play install mode: `{until_ms}` while active.
     #[serde(default)]
     pub install_mode: Option<InstallModeReport>,

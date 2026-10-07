@@ -193,7 +193,6 @@ pub(crate) async fn build_policy(
     .await?;
 
     let call_policy = build_call_policy(state, &policy).await?;
-    let push = crate::push::push_policy(state, device_id).await?;
 
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
     // consumes a command, and two concurrent polls can't both get the same one. Delivery is
@@ -273,7 +272,6 @@ pub(crate) async fn build_policy(
         },
         time_policy,
         location_policy,
-        push,
     })
 }
 
@@ -588,12 +586,6 @@ pub async fn status(
         .map(|state| state.to_string())
         .filter(|json| json.len() <= 4096);
 
-    let push_state_json = report
-        .push
-        .as_ref()
-        .filter(|push| push.is_object())
-        .map(|push| push.to_string())
-        .filter(|json| json.len() <= 8192);
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
     // no unlock times or PIN material can be stored whatever a launcher sends.
@@ -643,12 +635,12 @@ pub async fn status(
         "INSERT INTO device_status \
          (device_id, lock_reason, kiosk_engaged, installed_apps_json, app_version, app_version_code, \
           offline_override_used, policy_state, restrictions_paused, capabilities_json, \
-          call_state_json, notification_listener_enabled, time_state_json, push_state_json, \
+          call_state_json, notification_listener_enabled, time_state_json, \
           install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json, \
           screen_timeout_seconds, ringer_mode, interruption_filter, update_fence_json, \
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -663,7 +655,6 @@ pub async fn status(
     .bind(&call_state_json)
     .bind(report.notification_listener_enabled)
     .bind(&time_state_json)
-    .bind(&push_state_json)
     .bind(install_mode_until_ms)
     .bind(report.play_window_active)
     .bind(report.play_store_suspendable)
@@ -689,15 +680,6 @@ pub async fn status(
     // this one was stored, so a failed INSERT or two reports in one second can't confuse it).
     let previous_apps_json: Option<String> = previous.as_ref().and_then(|(apps, _)| apps.clone());
     log_play_events(&state, device.id, &report, previous).await;
-
-    if let Some(push) = report
-        .push
-        .as_ref()
-        .and_then(|p| serde_json::from_value::<crate::push::PushReport>(p.clone()).ok())
-        && let Err(err) = crate::push::record_report(&state, device.id, &push).await
-    {
-        tracing::error!(device_id = device.id, %err, "failed to record push state");
-    }
 
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now') WHERE id = ?")
         .bind(device.id)
@@ -827,8 +809,8 @@ pub async fn status(
                 .await
                 {
                     // The phone keeps the new app hidden and suspended until it re-fetches the
-                    // policy - nudged now (SSE, and FCM through the push dispatcher), not at the
-                    // next backstop sync up to 30 min later.
+                    // policy - nudged now over the SSE stream, not at the next backstop sync up to
+                    // 30 min later.
                     Ok(()) => {
                         let _ = state.command_notify.send(device.id);
                     }
@@ -986,28 +968,34 @@ pub async fn install_progress(
     StatusCode::NO_CONTENT
 }
 
-/// Held open by the client's foreground service (see kids-launcher-mdm's `CommandListenerService`)
-/// for near-instant ring/lock/stop-ring/wipe delivery - a supplement to, not a replacement for,
-/// the regular 2-minute policy poll (which is still the actual delivery mechanism; this only tells
-/// the device *when* to poll early). Every event is a content-free "something changed, go check"
+/// Held open by the launcher's anchor service (`CommandListenerService`) - since design 19 the
+/// only way this server nudges a phone; the phone's own backstop sync (every 30 min) covers
+/// whatever a dropped stream missed. Every event is a content-free "something changed, go check"
 /// nudge, not the command payload itself - the client always re-fetches `GET /api/devices/policy`
 /// to get the real `pending_command`, reusing the exact same dispatch path as a normal scheduled
-/// sync. `KeepAlive` pings keep the connection alive through idle proxies/NATs and let the client
-/// detect a silently-dead connection and reconnect.
+/// sync. `KeepAlive` comments (every `SSE_KEEPALIVE_SECS`) let the client detect a silently-dead
+/// connection and reconnect; a proxy in front of this server needs a read timeout above it.
+/// While the response lives, `AppState.command_streams` counts it (the device page's "Instant
+/// changes" line).
 pub async fn commands_stream(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let device_id = device.id;
     let rx = state.command_notify.subscribe();
+    // Moved into the stream: dropped (stream counted closed) when the connection ends.
+    let guard = state.command_streams.open(device_id);
     // A lagged receiver lost ids - possibly this device's - so it nudges (QA 07 #16): one extra
     // sync is harmless, a lost ring isn't.
-    let stream = BroadcastStream::new(rx).filter_map(move |msg| match msg {
-        Ok(id) if id == device_id => Some(Ok(Event::default().data("command"))),
-        Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
-            Some(Ok(Event::default().data("command")))
+    let stream = BroadcastStream::new(rx).filter_map(move |msg| {
+        let _open: &crate::streams::StreamGuard = &guard;
+        match msg {
+            Ok(id) if id == device_id => Some(Ok(Event::default().data("command"))),
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
+                Some(Ok(Event::default().data("command")))
+            }
+            _ => None,
         }
-        _ => None,
     });
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(state.config.sse_keepalive_secs)))

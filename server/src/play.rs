@@ -1,9 +1,10 @@
-//! Play as an app source and FCM's network needs (handy step 7).
+//! Play as an app source, and the network other apps' FCM needs (handy step 7). Our own nudges
+//! no longer use FCM (design 19); Element X and other Play apps still do.
 
 /// The Play Store, Play services and Google Services Framework. The launcher never hides them
-/// (FCM needs Play services and the Play Store installed) and never lets them be launched outside
-/// its install mode, so they are not the parent's to allow: the device page doesn't list them and
-/// the allowlist never contains them.
+/// (other apps' FCM - Element X - needs Play services and the Play Store installed) and never lets
+/// them be launched outside its install mode, so they are not the parent's to allow: the device
+/// page doesn't list them and the allowlist never contains them.
 pub const PLAY_CORE: [&str; 3] = [
     "com.android.vending",
     "com.google.android.gms",
@@ -17,8 +18,9 @@ pub fn is_play_core(package: &str) -> bool {
     PLAY_CORE.contains(&package)
 }
 
-/// Hosts FCM delivery needs (QA 07 #10). The phone's DNS filter walks label suffixes, so a list
-/// that blocks one of these - or a parent like `googleapis.com` - would silently break FCM.
+/// Hosts FCM delivery needs (QA 07 #10) - for other apps' FCM (Element X) since design 19. The
+/// phone's DNS filter walks label suffixes, so a list that blocks one of these - or a parent like
+/// `googleapis.com` - would silently break their notifications.
 const FCM_HOSTS: [&str; 8] = [
     "mtalk.google.com",
     "fcm.googleapis.com",

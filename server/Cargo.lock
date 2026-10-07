@@ -1113,12 +1113,11 @@ dependencies = [
 
 [[package]]
 name = "kid_phone_server"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "argon2",
  "askama",
  "axum",
- "base64",
  "chrono",
  "dotenvy",
  "form_urlencoded",
@@ -1129,7 +1128,6 @@ dependencies = [
  "qrcode",
  "regex",
  "reqwest",
- "ring",
  "rustls",
  "serde",
  "serde_json",

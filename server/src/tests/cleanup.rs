@@ -4,7 +4,7 @@
 use sqlx::SqlitePool;
 
 /// A database migrated up to (not including) `version`; [`finish`] runs the rest.
-async fn migrated_before(version: i64) -> (SqlitePool, tempfile::TempDir) {
+pub(super) async fn migrated_before(version: i64) -> (SqlitePool, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(dir.path().join("old.db"))
@@ -24,7 +24,7 @@ async fn migrated_before(version: i64) -> (SqlitePool, tempfile::TempDir) {
     (db, dir)
 }
 
-async fn finish(db: &SqlitePool) {
+pub(super) async fn finish(db: &SqlitePool) {
     sqlx::migrate!("./migrations").run(db).await.unwrap();
 }
 

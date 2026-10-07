@@ -1,15 +1,12 @@
 [package]
 name = "kid_phone_server"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]
 argon2 = "0.5.3"
 askama = "0.16.0"
-# FCM (src/fcm.rs): base64 for the JWT and the PEM key, ring for RS256 - both were already in
-# Cargo.lock (rustls/ring), now direct dependencies. No Google SDK.
-base64 = "0.22.1"
 axum = { version = "0.8.9", features = ["multipart"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
@@ -24,7 +21,6 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # Tracked apps (handlers/tracked_apps.rs): an asset filter starting with "^" is a regular expression.
 regex = "1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json"] }
-ring = "0.17.14"
 # Not used directly (dns_engine.rs no longer runs a live TLS/DoT listener) - still a direct
 # dependency purely so main.rs can install a process-wide default CryptoProvider before anything
 # opens a connection. reqwest's own rustls backend needs one installed somewhere, and there's no
@@ -58,6 +54,4 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
-# Paused-time tests for the nudge dispatcher's debounce (src/push.rs).
-tokio = { version = "1.52.3", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

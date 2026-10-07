@@ -4,7 +4,6 @@ mod app_icons;
 mod config;
 mod crashes;
 mod dns_engine;
-mod fcm;
 mod handlers;
 mod kid_lock;
 mod kiosk_escapes;
@@ -12,10 +11,10 @@ mod models;
 mod phone;
 mod photos;
 mod play;
-mod push;
 mod retention;
 mod security;
 mod sound_mode;
+mod streams;
 #[cfg(test)]
 mod tests;
 mod time_rules;
@@ -59,9 +58,9 @@ pub struct AppState {
     /// Where wallpaper images are stored (`data/wallpapers`; a temp dir in tests) - its own
     /// directory, because `photos::prune` deletes every file there no contact references.
     pub wallpaper_dir: std::sync::Arc<std::path::PathBuf>,
-    /// The FCM sender (handy step 7), `None` when `FCM_SERVICE_ACCOUNT_FILE` isn't set or the key
-    /// isn't usable - then every phone uses the SSE stream. See `fcm` and `push`.
-    pub fcm: Option<fcm::SharedSender>,
+    /// Which phones hold the SSE command stream open right now, in memory only (design 19 Q1):
+    /// the device page's "Instant changes" line. See `streams`.
+    pub command_streams: std::sync::Arc<streams::CommandStreams>,
     /// Which catalog apps are syncing and how each one's last sync ended - one sync per app at a
     /// time (`handlers::tracked_apps::AppSyncs`).
     pub app_syncs: std::sync::Arc<handlers::tracked_apps::AppSyncs>,
@@ -131,21 +130,15 @@ async fn main() {
         );
     }
 
-    let fcm: Option<fcm::SharedSender> =
-        match fcm::HttpFcmSender::from_env(std::path::Path::new("data")) {
-            Ok(Some(sender)) => {
-                tracing::info!("FCM nudges on");
-                Some(std::sync::Arc::new(sender))
-            }
-            Ok(None) => {
-                tracing::info!("FCM_SERVICE_ACCOUNT_FILE not set - FCM off, phones use SSE");
-                None
-            }
-            Err(err) => {
-                tracing::error!(%err, "FCM off - phones use SSE");
-                None
-            }
-        };
+    // FCM is gone (design 19): the SSE stream is the only nudge. A key left configured is
+    // ignored - say so once, so it gets removed and revoked (DEPLOY.md, "Removing FCM").
+    if std::env::var("FCM_SERVICE_ACCOUNT_FILE").is_ok_and(|v| !v.trim().is_empty()) {
+        tracing::warn!(
+            "FCM_SERVICE_ACCOUNT_FILE is set but FCM was removed in 0.20.0 - it is ignored. \
+             Remove it from .env, delete the key file and revoke the key (DEPLOY.md, \
+             \"Removing FCM\")"
+        );
+    }
 
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
     let state = AppState {
@@ -155,7 +148,7 @@ async fn main() {
         config: std::sync::Arc::new(fork_config),
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
         wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
-        fcm,
+        command_streams: Default::default(),
         app_syncs: Default::default(),
         tracked_apps_dir: std::sync::Arc::new(std::path::PathBuf::from(
             handlers::tracked_apps::TRACKED_APPS_DIR,
@@ -185,7 +178,6 @@ async fn main() {
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
     // Blocked domains, location history and status history (src/retention.rs).
     tokio::task::spawn(retention::run_pruning(state.clone()));
-    push::spawn(state.clone());
 
     let app = build_router(state, session_layer);
 

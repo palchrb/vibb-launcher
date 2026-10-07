@@ -63,9 +63,10 @@ pub struct ForkConfig {
     /// the module doc comment and DEPLOY.md for how to compute it.
     pub launcher_signature_checksum: Option<String>,
     /// `SSE_KEEPALIVE_SECS` (5-240, default 120): how often the command stream sends a keepalive
-    /// comment. Only phones without working FCM hold the stream; their client read timeout is
-    /// 300 s (launcher `SSE_READ_TIMEOUT_MS`), so the cap keeps a 60 s margin - a value at or
-    /// above it would make every SSE phone drop and reopen the stream every 5 minutes.
+    /// comment. Every phone holds the stream (design 19: no FCM); its read timeout is 300 s
+    /// (launcher `SSE_READ_TIMEOUT_MS`, also in launchers already shipped), so the cap keeps a
+    /// 60 s margin - a value at or above it would make every phone drop and reopen the stream
+    /// every 5 minutes.
     pub sse_keepalive_secs: u64,
 }
 
