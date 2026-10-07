@@ -173,40 +173,59 @@ actions (split screen, pin, freeform, wallpaper), the desync check above, and th
 
    Residual risk, accepted by default unless the user vetoes: an allowed app could explicitly start the stock home,
    settings or search of that package. No kid-reachable path was found.
+   - Not while the PIN lock is LOCKED (qa-16d-code #1): the provider leaves the lock-task list while LOCKED and comes
+     back on the UNLOCKED edge, so no Recents start over the lock (a keyboard's Recents key, an accessibility action,
+     a desynced SystemUI) shows the Overview's snapshots of the kid's tasks.
 3. **Jelly Star checks:** its recents provider package and its nav mode; the dialog over 5 reboots; the shade over the
    lock after reboots.
 
 ## Implementation status (2026-10-07)
 
 Code with unit tests, **not device-tested** (no emulator in this pass). Commits `0cb8b0a7` (decision 1), `0104eff0`
-(decision 2) and the follow-up after it (the fence suspends the provider again; never-restrict); `launcher/CLAUDE.md`
-design 16 section.
+(decision 2), `e6a44756` (the fence suspends the provider again; never-restrict) and the qa-16d-code fix round after
+it; `launcher/CLAUDE.md` design 16 section.
 
 **Decision 1 - status-bar heal (security).** `setStatusBarDisabled` off/on can't do it: in lock task DPMS only records
 it (LockTaskController owns the status bar; AOSP `notifyLockTaskModeChanged`), and a same-value call is a no-op. So
 `LockTaskChrome.healStatusBar` writes the current pass's lock-task features with **SYSTEM_INFO flipped** (pure
-`statusBarHealFeatures`, `lock/StatusBarHealPlan.kt`), waits 250 ms outside its monitor (LockTaskController reads the
-features when its posted update runs), then `endStatusBarHeal` runs a normal pass. The flip changes only
+`statusBarHealFeatures`, `lock/StatusBarHealPlan.kt`), waits outside its monitor (LockTaskController reads the
+features when its posted update runs: 250 ms with the screen on, 1 s at screen-off where nobody sees the clock blink -
+qa-16d-code #2), then `endStatusBarHeal` runs a normal pass. The flip changes only
 DISABLE_CLOCK/DISABLE2_SYSTEM_ICONS - never the shade, QS, Home, Recents, power menu, KEYGUARD or the block bit - so
 the net flags change twice and SystemUI is sent the whole set (as `cmd statusbar send-disable-flag clock`/`none` did
 in §2 of experiment 2). Only while something is pinned; `LockTaskChrome` stays the only writer (tested over all
 source sets).
 - Triggers (`PinLockRuntime`, on the `lock-chrome` thread): 1, 3, 6, 10, 20 and 40 s after every process start (our
   init is the boot's user unlock; also our restart after an update), `BOOT_COMPLETED`, the process's first screen-on,
-  and every screen-off. A SystemUI or quickstep restart can't be seen by an app, so the screen-off heal (invisible)
-  stands in for it. Each heal logs `Status bar heal (<trigger>): lock-task features A -> B for 250 ms`; while the
-  screen is on the clock and status icons blink once.
+  every screen-off, and the lock's resume at most once a minute (qa-16d-code #2: a desync that starts with the screen
+  on - a quickstep restart, the lock back after a call, an alarm, a VoIP yield or a re-front). A SystemUI restart heals
+  itself (`registerStatusBar` returns the combined flags); a quickstep restart can't be seen by an app. Each heal logs
+  `Status bar heal (<trigger>): lock-task features A -> B written, back in N ms` (written, not proof SystemUI got
+  it); while the screen is on the clock and status icons blink once.
 - Verification: impossible in-app (SystemUI's copy is only in its dumpsys; `StatusBarManager.getDisableInfo` is a
   system API). `smoke-test.sh REBOOT=1` now probes for 45 s from the lock's first appearance
   (`expand-notifications`, `expand-settings`, a swipe from the top) and compares `TaskbarDelegate mDisabledFlags`
-  with `dumpsys statusbar` `mDisabled1` (`docs/testing/emulator.md` §5b).
+  with `dumpsys statusbar` `mDisabled1` (`docs/testing/emulator.md` §5b) - SKIP where SystemUI uses NavigationBar or
+  TaskbarDelegate was never initialised (`mNavigationMode=-1`; qa-16d-code #3).
 - Residual: a desync that happens between two heals (from about 1 s to 40 s after the start) is open until the next
   heal - the 45 s probe shows whether that window is real.
 
 **Decision 2 - recents provider pinned, OVERVIEW back.** `HelperKind.RECENTS`: the package of
-`config_recentsComponentName` (`Resources.getSystem()`, null-safe) goes through `lockTaskHelpers` like every kiosk-block
-helper - system app only, never Settings/the camera/Play - so the plan pins it whenever the kiosk is on with the block
-bit (also in a time-rule lock and while LOCKED; LOCKED features stay 113). Design 16's `kioskFeatures` is removed:
+`config_recentsComponentName` (`Resources.getSystem()`, null-safe), trusted only as a system app with a HOME activity
+or that recents activity and never SystemUI, the platform or Play (`trustedRecentsProvider`, qa-16d-code #5 - a legacy
+config naming SystemUI would have pinned all of SystemUI), goes through `lockTaskHelpers` like every kiosk-block helper
+- never Settings/the camera/Play - so the plan pins it whenever the kiosk is on with the block bit (also in a
+time-rule lock).
+- **Out of the list while the PIN lock is LOCKED** (qa-16d-code #1): `lockTaskWhileLocked(..., recentsPin)` drops the
+  plan's `recentsPin` from the kiosk list on the LOCKED edge and the unlocked pass pins it again, all through
+  `LockTaskChrome` (before the first apply: `prefetchRecentsPin` and `fallbackKioskPackages`, which re-adds it while
+  the block bit is on). The unpin clears quickstep's RecentsActivity task (LTC `updateLockTaskPackages`), which is
+  not the kid's; after the unlock quickstep starts it again, pinned. LOCKED features stay 113.
+- Residual: a Recents start while LOCKED (a keyboard's Recents key, an accessibility action, a desynced SystemUI)
+  now gets BlockedAppActivity over the lock - the lock re-fronts - and can leave a stale `type=recents` task. The
+  lock always leaves through Home with the kiosk on (`lockLeave`: Home started before `finishAndRemoveTask`), so it
+  doesn't surface at the unlock; the first swipe-up after the unlock can still resume it and show "App is not
+  available" once (as in §2.2). No DO API removes another app's task. Emulator check below. Design 16's `kioskFeatures` is removed:
 the server's features are set as sent (OVERVIEW back). An unresolvable or non-system provider is not pinned and
 OVERVIEW still stays (the dialog returns there rather than a gesture going). Each apply with the bit logs
 `Recents provider (config_recentsComponentName): <pkg>, system <bool>, pinned|not pinned`.
@@ -234,7 +253,10 @@ OVERVIEW still stays (the dialog returns there rather than a gesture going). Eac
 - [ ] Recents key and slow/fast swipe and hold over the lock and unlocked: never BlockedAppActivity; Overview opens
   unlocked (OVERVIEW back) and not from the swipes over the lock (113).
 - [ ] The `Recents provider` log line names `com.google.android.apps.nexuslauncher`, system true, pinned; and
-  `dumpsys device_policy` lists it in the lock-task packages with the block bit.
+  `dumpsys device_policy` lists it in the lock-task packages with the block bit - and not while LOCKED.
+- [ ] qa-16d-code #1: lock, unlock, then a fast and a slow swipe at once: clean. Then while LOCKED send
+  `KEYCODE_APP_SWITCH` (BlockedAppActivity, the lock comes back), unlock, swipe: record whether the stale task shows
+  the dialog (the residual above).
 
 **Jelly Star checks (decision 3):**
 - [ ] Recents provider: `cmd overlay lookup android android:string/config_recentsComponentName` and the launcher's

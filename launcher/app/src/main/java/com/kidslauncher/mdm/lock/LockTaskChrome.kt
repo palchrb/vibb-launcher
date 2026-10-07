@@ -12,6 +12,7 @@ import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.StatusBarLatch
 import com.kidslauncher.mdm.server.UpdateFence
 import com.kidslauncher.mdm.server.chromeWriteOrder
+import com.kidslauncher.mdm.server.fallbackKioskPackages
 import com.kidslauncher.mdm.server.lockTaskWhileLocked
 
 private const val LOG_TAG = "LockTaskChrome"
@@ -34,7 +35,7 @@ private const val LOG_TAG = "LockTaskChrome"
  */
 object LockTaskChrome {
 
-    private data class Plan(val kioskPackages: Set<String>?, val features: Int, val restrictCreateWindows: Boolean)
+    private data class Plan(val kioskPackages: Set<String>?, val features: Int, val restrictCreateWindows: Boolean, val recentsPin: String?)
 
     /** The last plan from apply() in this process (`null` until the first apply). */
     private var plan: Plan? = null
@@ -61,6 +62,16 @@ object LockTaskChrome {
     var helpersMissing = false
         private set
 
+    /**
+     * The recents provider the kiosk pins (qa-16d-code #1): out of the list while LOCKED, back in on
+     * the UNLOCKED edge. From the plan; before the first apply in this process from
+     * [prefetchRecentsPin] (never resolved under the monitor). `null` = none or not known yet.
+     */
+    @Volatile
+    private var recentsPin: String? = null
+    @Volatile
+    private var recentsPinKnown = false
+
     /** Whether the kiosk is on as far as we know (the plan, else the last pinned state). */
     val kioskOn: Boolean
         get() = plan?.let { it.kioskPackages != null } ?: LauncherPreferences.mdm().kioskEnabled()
@@ -70,6 +81,7 @@ object LockTaskChrome {
         kioskPackages: Set<String>?,
         features: Int,
         restrictCreateWindows: Boolean,
+        recentsPin: String?,
         pinLockHelpers: () -> Set<String>,
     ) {
         // Resolved on apply's background thread whenever the kiosk is off, so the screen-off fast
@@ -78,7 +90,9 @@ object LockTaskChrome {
         val ticket = helperTickets.incrementAndGet()
         val resolved = if (kioskPackages == null) runCatching(pinLockHelpers).getOrNull() else null
         synchronized(this) {
-            plan = Plan(kioskPackages, features, restrictCreateWindows)
+            plan = Plan(kioskPackages, features, restrictCreateWindows, recentsPin)
+            this.recentsPin = recentsPin
+            recentsPinKnown = true
             if (resolved != null && ticket > helpersTicket) {
                 helpers = resolved
                 helpersTicket = ticket
@@ -96,6 +110,18 @@ object LockTaskChrome {
         if (helpers != null) return
         val resolved = runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolvePinLockHelpers(context) }.getOrNull() ?: return
         synchronized(this) { if (helpers == null) helpers = resolved }
+    }
+
+    /** The kiosk's recents pin for the passes before the first apply in this process (background thread). */
+    fun prefetchRecentsPin(context: Context) {
+        if (recentsPinKnown) return
+        val resolved = runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolveRecentsPin(context) }.getOrNull() ?: return
+        synchronized(this) {
+            if (!recentsPinKnown) {
+                recentsPin = resolved
+                recentsPinKnown = true
+            }
+        }
     }
 
     /** A VoIP call's package to keep pinned while LOCKED with the kiosk off, plus its helpers
@@ -129,7 +155,7 @@ object LockTaskChrome {
     /**
      * Design 16d decision 1: a status-bar heal's first write - this pass's lock-task features with
      * SYSTEM_INFO flipped ([statusBarHealFeatures]), only while something is pinned. The caller
-     * waits [STATUS_BAR_HEAL_FLIP_MS] outside the monitor and then calls [endStatusBarHeal].
+     * waits [HealTrigger.flipMs] outside the monitor and then calls [endStatusBarHeal].
      * Returns whether the flip is up. Background thread.
      */
     fun healStatusBar(context: Context, trigger: HealTrigger): Boolean = synchronized(this) {
@@ -172,6 +198,7 @@ object LockTaskChrome {
             lockHelpers(locked, kioskOn),
             fenced = UpdateFence.fenced,
             voipPackages = if (locked && !kioskOn) voipPackages() else emptySet(),
+            recentsPin = current.recentsPin,
         )
         return apply(context, dpm, setting, heal, kioskOn = kioskOn, locked = locked)
     }
@@ -197,8 +224,10 @@ object LockTaskChrome {
         } catch (e: Exception) {
             false
         }
+        // A LOCKED pass took the recents pin out; unlocked it goes back in (qa-16d-code #1).
+        val pin = recentsPin
         val setting = lockTaskWhileLocked(
-            if (kiosk) packages else null,
+            if (kiosk) fallbackKioskPackages(packages, pin, features) else null,
             features,
             // Unlocking without a plan keeps whatever is set; the apply that follows corrects it.
             restrictCreateWindows = createWindows,
@@ -207,6 +236,7 @@ object LockTaskChrome {
             lockHelpers = lockHelpers(locked, kiosk),
             fenced = UpdateFence.fenced,
             voipPackages = if (locked && !kiosk) voipPackages() else emptySet(),
+            recentsPin = pin,
         )
         return apply(context, dpm, setting, heal, kioskOn = kiosk, locked = locked)
     }
@@ -270,7 +300,7 @@ object LockTaskChrome {
         return try {
             dpm.setLockTaskFeatures(admin, flipped)
             healFlip = HealFlip(setting.features, flipped)
-            Log.i(LOG_TAG, "Status bar heal (${trigger.label}): lock-task features ${setting.features} -> $flipped for $STATUS_BAR_HEAL_FLIP_MS ms")
+            Log.i(LOG_TAG, "Status bar heal (${trigger.label}): lock-task features ${setting.features} -> $flipped written, back in ${trigger.flipMs} ms")
             true
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Status bar heal (${trigger.label}) failed", e)

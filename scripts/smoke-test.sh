@@ -346,8 +346,9 @@ boot_completed() { [ "$(sh_ getprop sys.boot_completed)" = "1" ]; }
 # The notification shade or Quick Settings is expanded (design 16d): SystemUI's shade window has the
 # focus, or a UI dump (the active window) shows its panels.
 shade_open() {
-    local focus
-    focus="$(sh_ dumpsys window | grep -E 'mCurrentFocus|mFocusedWindow' || true)"
+    local windows focus
+    windows="$(sh_ dumpsys window)"
+    focus="$(grep -E 'mCurrentFocus|mFocusedWindow' <<<"$windows" || true)"
     if grep -q 'NotificationShade' <<<"$focus"; then return 0; fi
     ui_dump
     grep -q -E 'resource-id="com\.android\.systemui:id/(quick_settings_panel|quick_qs_panel|qs_frame|notification_stack_scroller)"' <<<"$UI_XML"
@@ -355,10 +356,17 @@ shade_open() {
 # StatusBarManagerService's disable1 and SystemUI's TaskbarDelegate copy of it (gesture navigation).
 # 16d experiment 2: after some boots the service had the LOCKED flags (0x7260000), TaskbarDelegate 0.
 statusbar_disable1() { grep -m1 -o 'mDisabled1=0x[0-9a-fA-F]*' <<<"$(sh_ dumpsys statusbar)" | cut -d= -f2; }
-taskbar_disable1() {
-    awk '/TaskbarDelegate/ { seen = 1 }
-        seen && /mDisabledFlags=/ { sub(/.*mDisabledFlags=/, ""); sub(/[^0-9a-fA-Fx].*$/, ""); print; exit }' \
-        <<<"$(sh_ dumpsys activity service com.android.systemui)"
+# taskbar_field <name> <SystemUI dump>: the first <name>= value after the TaskbarDelegate header.
+taskbar_field() {
+    awk -v name="$1=" '/TaskbarDelegate/ { seen = 1 }
+        seen && index($0, name) { sub(".*" name, ""); sub(/[^-0-9a-fA-Fx].*$/, ""); print; exit }' <<<"$2"
+}
+# Why SystemUI's TaskbarDelegate isn't the one in use (qa-16d-code #3) - it registers its dump in its
+# constructor and prints mDisabledFlags=0 even when never initialised - or nothing when it is.
+taskbar_unused() {
+    if grep -q 'NavigationBar (displayId=' <<<"$1"; then echo "SystemUI uses NavigationBar"; return; fi
+    if [ -z "$(taskbar_field mDisabledFlags "$1")" ]; then echo "no TaskbarDelegate in SystemUI's dump"; return; fi
+    if [ "$(taskbar_field mNavigationMode "$1")" = "-1" ]; then echo "TaskbarDelegate never initialised (mNavigationMode=-1)"; fi
 }
 
 enter_pin() {
@@ -541,10 +549,13 @@ else
         pass "the shade can't be opened over the lock after a reboot ($probes probes in 45 s)"
     fi
     sb="$(statusbar_disable1)"
-    tb="$(taskbar_disable1)"
-    if [ -z "$sb" ] || [ -z "$tb" ]; then
-        skip "SystemUI has the status bar's disable flags after a reboot" \
-            "not in the dumps: statusbar mDisabled1='${sb}', TaskbarDelegate mDisabledFlags='${tb}' (3-button navigation?)"
+    sysui="$(sh_ dumpsys activity service com.android.systemui)"
+    unused="$(taskbar_unused "$sysui")"
+    tb="$(taskbar_field mDisabledFlags "$sysui")"
+    if [ -n "$unused" ]; then
+        skip "SystemUI has the status bar's disable flags after a reboot" "$unused"
+    elif [ -z "$sb" ]; then
+        skip "SystemUI has the status bar's disable flags after a reboot" "no mDisabled1 in dumpsys statusbar"
     elif [ "$((sb))" -eq "$((tb))" ]; then
         pass "SystemUI has the status bar's disable flags after a reboot (mDisabled1=$sb, TaskbarDelegate $tb)"
     else

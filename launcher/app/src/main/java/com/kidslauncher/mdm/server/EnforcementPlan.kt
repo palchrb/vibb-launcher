@@ -31,6 +31,9 @@ data class EnforcementPlan(
     val kioskPackages: Set<String>?,
     /** Lock-task features to set before pinning; only meaningful when [kioskPackages] is set. */
     val lockTaskFeatures: Int,
+    /** The recents provider when it is in [kioskPackages] - taken out while the PIN lock is LOCKED
+     * ([lockTaskWhileLocked], qa-16d-code #1). */
+    val recentsPin: String? = null,
     /** Packages that must be unsuspended and unhidden whatever their current state, every cycle. */
     val neverRestrict: Set<String>,
     /**
@@ -205,6 +208,7 @@ fun computeEnforcementPlan(
         suspend = suspend,
         hide = hide,
         kioskPackages = kiosk,
+        recentsPin = recentsPackage?.takeIf { kiosk != null && it in kiosk },
         // As the server sent them: OVERVIEW stays (design 16d; Recents is pinned with the helpers).
         lockTaskFeatures = features,
         neverRestrict = neverRestrict,

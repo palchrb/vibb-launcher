@@ -21,11 +21,19 @@ import com.kidslauncher.mdm.server.LockTaskSetting
  */
 
 /**
- * How long the flipped features stay before a normal pass writes them back. LockTaskController
- * posts its status-bar update and reads the features when it runs: two writes before it runs would
- * leave the net flags unchanged and send SystemUI nothing.
+ * How long the flipped features stay before a normal pass writes them back, with the screen on (the
+ * clock and status icons blink for this long). LockTaskController posts its status-bar update and
+ * reads the features when it runs: two writes before it runs would leave the net flags unchanged
+ * and send SystemUI nothing.
  */
 const val STATUS_BAR_HEAL_FLIP_MS = 250L
+
+/** The flip at screen-off, which nobody sees: long enough for a posted update delayed by load
+ * (qa-16d-code #2). */
+const val STATUS_BAR_HEAL_FLIP_SCREEN_OFF_MS = 1_000L
+
+/** At most one [HealTrigger.LOCK_RESUMED] heal per this long (the lock resumes at every screen-on). */
+const val STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS = 60_000L
 
 /**
  * The heals after each process start, in ms after `PinLockRuntime.init` (the boot's user unlock,
@@ -34,17 +42,25 @@ const val STATUS_BAR_HEAL_FLIP_MS = 250L
  */
 val STATUS_BAR_HEALS_AFTER_START_MS: List<Long> = listOf(1_000L, 3_000L, 6_000L, 10_000L, 20_000L, 40_000L)
 
-/** Why a heal runs (logged). */
-enum class HealTrigger(val label: String) {
+/** Why a heal runs (logged), and how long its flip stays ([flipMs]). */
+enum class HealTrigger(val label: String, val flipMs: Long = STATUS_BAR_HEAL_FLIP_MS) {
     /** One of [STATUS_BAR_HEALS_AFTER_START_MS] after the process start. */
     PROCESS_START("process start"),
     BOOT_COMPLETED("boot completed"),
     /** The first screen-on of this process. */
     FIRST_SCREEN_ON("first screen-on"),
-    /** Every screen-off (invisible): a SystemUI or quickstep restart can't be detected by an app,
-     * so this puts the flags back before the next screen-on. */
-    SCREEN_OFF("screen off"),
+    /** Every screen-off (invisible): a quickstep restart (or anything else that desyncs SystemUI)
+     * can't be detected by an app, so this puts the flags back before the next screen-on. */
+    SCREEN_OFF("screen off", STATUS_BAR_HEAL_FLIP_SCREEN_OFF_MS),
+    /** The lock resumed (qa-16d-code #2): a desync that began with the screen on - a quickstep
+     * restart, the lock back after a call, an alarm, a yield or a re-front - at most once a minute
+     * ([lockResumedHealDue]). */
+    LOCK_RESUMED("lock resumed"),
 }
+
+/** Whether the lock's resume heals now: never before, or the last one [STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS] ago. */
+fun lockResumedHealDue(lastHealElapsedMs: Long?, nowElapsedMs: Long): Boolean =
+    lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS
 
 /**
  * The lock-task features of a heal's first write: [setting]'s with SYSTEM_INFO flipped. `null` when

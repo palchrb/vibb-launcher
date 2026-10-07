@@ -122,19 +122,25 @@ internal fun systemDialerPackage(context: Context): String? =
     }
 
 /**
- * The package of the system's Recents activity (`config_recentsComponentName` read through
- * `Resources.getSystem()`, e.g. Pixel's quickstep inside the stock launcher) - design 16d: pinned
- * with the kiosk's app block ([HelperKind.RECENTS], system only) and never fenced
- * ([systemRecentsPackage]). `null` when the platform doesn't say (then nothing is pinned or excluded).
+ * The system's Recents activity (`config_recentsComponentName` read through `Resources.getSystem()`,
+ * e.g. Pixel's quickstep RecentsActivity inside the stock launcher). `null` when the platform
+ * doesn't say. Design 16d trusts its package only through [AppEnforcer.systemRecentsPackage].
  */
-internal fun recentsPackage(): String? = try {
+internal fun recentsComponent(): ComponentName? = try {
     val res = android.content.res.Resources.getSystem()
     val id = res.getIdentifier("config_recentsComponentName", "string", "android")
-    if (id == 0) null else ComponentName.unflattenFromString(res.getString(id))?.packageName
+    if (id == 0) null else ComponentName.unflattenFromString(res.getString(id))
 } catch (e: Exception) {
     Log.w(LOG_TAG, "Couldn't read the recents component", e)
     null
 }
+
+/**
+ * The package of [recentsComponent], untrusted - only AppFilter uses it, to keep whatever it names
+ * off Home and the drawer (leaving out more is safe). Everything else takes
+ * [AppEnforcer.systemRecentsPackage].
+ */
+internal fun recentsPackage(): String? = recentsComponent()?.packageName
 
 /**
  * The default alarm/clock app: the one holding the next alarm, else the resolver of
@@ -380,6 +386,7 @@ object AppEnforcer {
         // (budget, or the PIN lock) - one place shared with the lock's fast path.
         com.kidslauncher.mdm.lock.LockTaskChrome.applyPlan(
             context, plan.kioskPackages, plan.lockTaskFeatures, plan.restrictCreateWindows,
+            recentsPin = plan.recentsPin,
             pinLockHelpers = { resolvePinLockHelpers(context) },
         )
 
@@ -729,13 +736,40 @@ object AppEnforcer {
     }
 
     /**
-     * Design 16d: the recents provider's package when it is a system app (else `null`) - never
-     * hidden or suspended by enforcement ([computeEnforcementPlan]'s never-restrict set,
-     * [shouldSuspendNewPackage], the camera lock); the update fence is the only thing that
-     * suspends it, for the minute of our self-update.
+     * Design 16d: the recents provider - [recentsComponent]'s package when [trustedRecentsProvider]
+     * accepts it (a system app with a HOME activity or that recents activity, never SystemUI;
+     * qa-16d-code #5), else `null`. Pinned with the kiosk block (and out of the list while LOCKED),
+     * never hidden or suspended by enforcement ([computeEnforcementPlan]'s never-restrict set,
+     * [shouldSuspendNewPackage], the camera lock); the update fence is the only thing that suspends
+     * it, for the minute of our self-update.
      */
-    internal fun systemRecentsPackage(context: Context): String? =
-        helperInfo(context, recentsPackage())?.takeIf { it.system }?.packageName
+    internal fun systemRecentsPackage(context: Context): String? {
+        val component = recentsComponent() ?: return null
+        val pkg = component.packageName
+        val pm = context.packageManager
+        val hasHome = try {
+            pm.queryIntentActivities(
+                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(pkg),
+                PackageManager.ResolveInfoFlags.of(0),
+            ).isNotEmpty()
+        } catch (e: Exception) {
+            false
+        }
+        val hasRecents = try {
+            pm.getActivityInfo(component, PackageManager.ComponentInfoFlags.of(0))
+            true
+        } catch (e: Exception) {
+            false
+        }
+        return trustedRecentsProvider(pkg, helperInfo(context, pkg)?.system == true, hasHome, hasRecents)
+    }
+
+    /** The recents provider the kiosk pins with the app block, as the plan would ([HelperKind.RECENTS]
+     * through [lockTaskHelpers]) - for LockTaskChrome's passes before the first apply. */
+    internal fun resolveRecentsPin(context: Context): String? {
+        val (resolved, forbidden) = resolveHelpers(context)
+        return lockTaskHelpers(mapOf(HelperKind.RECENTS to resolved[HelperKind.RECENTS]), forbidden).firstOrNull()
+    }
 
     /**
      * The system packages handy's PIN lock pins while LOCKED with the kiosk off (step 10,
@@ -827,9 +861,9 @@ object AppEnforcer {
             HelperKind.PHOTO_PICKER to activity(Intent(android.provider.MediaStore.ACTION_PICK_IMAGES)),
             HelperKind.CELL_BROADCAST to cellBroadcast,
             HelperKind.RESOLVER to firstHelper(listOfNotNull(info(resolver)), forbidden),
-            // Design 16d: the framework's Recents provider, never a fixed name; `lockTaskHelpers`
-            // keeps it only when it is a system app and not forbidden or Play.
-            HelperKind.RECENTS to info(recentsPackage()),
+            // Design 16d: the framework's Recents provider, never a fixed name, only when trusted
+            // (systemRecentsPackage); `lockTaskHelpers` also drops it when forbidden or Play.
+            HelperKind.RECENTS to systemRecentsPackage(context)?.let { ResolvedHelper(it, system = true) },
         )
         return resolved to forbidden
     }
@@ -1036,7 +1070,10 @@ object AppEnforcer {
         }
         if (!suspend) return false
         // Hidden only if not allowed at all - the schedule lock alone just suspends.
-        val hide = shouldSuspendNewPackage(packageName, decision, overrideActive, context.packageName, systemDialerPackage(context))
+        val hide = shouldSuspendNewPackage(
+            packageName, decision, overrideActive, context.packageName, systemDialerPackage(context),
+            recentsPackage = systemRecentsPackage(context),
+        )
 
         try {
             val notSuspended = dpm.setPackagesSuspended(admin, arrayOf(packageName), true)

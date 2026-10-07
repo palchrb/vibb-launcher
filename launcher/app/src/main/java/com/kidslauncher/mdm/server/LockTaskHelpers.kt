@@ -128,7 +128,11 @@ data class LockTaskSetting(
  * and the PIN lock state:
  * - unlocked (or no lock): the plan as it is;
  * - LOCKED, kiosk on: the kiosk list is **never** touched (removing a package would clear its
- *   locked task - the kid's app would lose its state at every screen-off), only the features;
+ *   locked task - the kid's app would lose its state at every screen-off), only the features -
+ *   except the recents provider ([recentsPin], qa-16d-code #1): it leaves the list while LOCKED,
+ *   so no Recents start (a keyboard's Recents key, an accessibility action, a desynced SystemUI)
+ *   can show the Overview's snapshots over the lock. That clears its RecentsActivity task, which
+ *   isn't the kid's; the unlocked list pins it again and quickstep starts it anew;
  * - LOCKED, kiosk off: our package plus [lockHelpers] (emergency dialer, Telecom, the system
  *   dialer, the system clock app - no third-party app) with [PIN_LOCK_FEATURES_KIOSK_OFF]; the
  *   lock screen starts lock task itself and stops it on unlock.
@@ -149,10 +153,11 @@ fun lockTaskWhileLocked(
     lockHelpers: Set<String>,
     fenced: Boolean = false,
     voipPackages: Set<String> = emptySet(),
+    recentsPin: String? = null,
 ): LockTaskSetting = when {
     !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
     kioskPackages != null -> LockTaskSetting(
-        kioskPackages, featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
+        kioskPackages - setOfNotNull(recentsPin), featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
     )
     else -> {
         val voip = voipPackages - PLAY_CORE
@@ -164,6 +169,27 @@ fun lockTaskWhileLocked(
         )
     }
 }
+
+/**
+ * The kiosk list of a pass without a plan (LockTaskChrome's fallback), from the platform's
+ * [platformPackages]: a LOCKED pass took the [recentsPin] out (qa-16d-code #1), so an unlocked one
+ * puts it back whenever the app block is on ([features]) - the plan pins it then too. `null` pin
+ * (unknown, or not pinnable): the platform's list as it is.
+ */
+fun fallbackKioskPackages(platformPackages: Set<String>, recentsPin: String?, features: Int): Set<String> =
+    if (recentsPin != null && features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0) platformPackages + recentsPin else platformPackages
+
+/**
+ * Whether `config_recentsComponentName`'s [packageName] may be trusted as the recents provider
+ * (design 16d, qa-16d-code #5): a system app with a HOME activity ([hasHome] - quickstep lives in
+ * the stock launcher) or the configured recents activity itself ([hasRecentsActivity]), never
+ * SystemUI (legacy recents: pinning it would open every exported SystemUI activity in the kiosk),
+ * the platform or Play core. `null` = no provider: nothing pinned, exempted or fenced as one.
+ */
+fun trustedRecentsProvider(packageName: String?, system: Boolean, hasHome: Boolean, hasRecentsActivity: Boolean): String? =
+    packageName?.takeIf {
+        system && (hasHome || hasRecentsActivity) && it != "com.android.systemui" && it != "android" && it !in PLAY_CORE
+    }
 
 /**
  * LockTaskChrome's memory of the status-bar state it set, so it doesn't call

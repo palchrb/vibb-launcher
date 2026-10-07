@@ -108,6 +108,8 @@ object PinLockRuntime {
     private var callsSeen = false
     /** This process healed the status bar at a screen-on ([HealTrigger.FIRST_SCREEN_ON]). Main thread. */
     private var screenOnHealed = false
+    /** The last [HealTrigger.LOCK_RESUMED] heal (elapsed ms). Main thread. */
+    private var lockResumedHealAt: Long? = null
 
     fun addModeListener(listener: () -> Unit) { modeListeners += listener }
     fun removeModeListener(listener: () -> Unit) { modeListeners -= listener }
@@ -207,6 +209,7 @@ object PinLockRuntime {
                 null
             }
             LockTaskChrome.prefetchHelpers(app)
+            LockTaskChrome.prefetchRecentsPin(app)
         }
         // After Application.onCreate returns (an activity start from inside it is too early).
         handler.post {
@@ -337,7 +340,7 @@ object PinLockRuntime {
 
     /**
      * Design 16d decision 1: a status-bar heal on the chrome thread, after any pass queued before it -
-     * [LockTaskChrome.healStatusBar] flips SYSTEM_INFO, then [STATUS_BAR_HEAL_FLIP_MS] outside the
+     * [LockTaskChrome.healStatusBar] flips SYSTEM_INFO, then [HealTrigger.flipMs] outside the
      * monitor (a LOCKED edge's pass may run meanwhile and write the features itself), then
      * [LockTaskChrome.endStatusBarHeal] writes the computed features back.
      */
@@ -346,7 +349,7 @@ object PinLockRuntime {
         chromeExecutor.execute {
             try {
                 if (LockTaskChrome.healStatusBar(app, trigger)) {
-                    Thread.sleep(STATUS_BAR_HEAL_FLIP_MS)
+                    Thread.sleep(trigger.flipMs)
                     LockTaskChrome.endStatusBarHeal(app)
                 }
             } catch (e: Exception) {
@@ -706,6 +709,13 @@ object PinLockRuntime {
         handler.removeCallbacks(refrontCheck)
         // During our call, the call screen goes back on top (qa-10-code #1).
         dispatch(context.applicationContext, LockEvent.LockResumed(ourCall(), VoipCalls.phase))
+        // qa-16d-code #2: a desync that begins with the screen on (a quickstep restart, the lock back
+        // after a call, an alarm or a yield) is healed when the lock resumes - at most once a minute.
+        val now = SystemClock.elapsedRealtime()
+        if (lockResumedHealDue(lockResumedHealAt, now)) {
+            lockResumedHealAt = now
+            healStatusBar(context, HealTrigger.LOCK_RESUMED)
+        }
     }
 
     fun onLockPaused() {

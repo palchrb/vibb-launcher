@@ -65,6 +65,20 @@ class LockTaskHelpersTest {
     private val recents = "com.google.android.apps.nexuslauncher"
 
     @Test
+    fun `the provider is trusted only as a system app with a HOME or the recents activity - never SystemUI (qa-16d-code 5)`() {
+        assertEquals(recents, trustedRecentsProvider(recents, system = true, hasHome = true, hasRecentsActivity = true))
+        assertEquals(recents, trustedRecentsProvider(recents, system = true, hasHome = true, hasRecentsActivity = false))
+        assertEquals(recents, trustedRecentsProvider(recents, system = true, hasHome = false, hasRecentsActivity = true))
+        assertEquals(null, trustedRecentsProvider(recents, system = true, hasHome = false, hasRecentsActivity = false))
+        assertEquals(null, trustedRecentsProvider(recents, system = false, hasHome = true, hasRecentsActivity = true))
+        assertEquals(null, trustedRecentsProvider(null, system = true, hasHome = true, hasRecentsActivity = true))
+        // Legacy recents in SystemUI: pinning it would open every exported SystemUI activity.
+        for (never in listOf("com.android.systemui", "android", "com.android.vending", "com.google.android.gms")) {
+            assertEquals(never, null, trustedRecentsProvider(never, system = true, hasHome = true, hasRecentsActivity = true))
+        }
+    }
+
+    @Test
     fun `the recents provider is a helper - resolved, system only, never forbidden or Play (design 16d)`() {
         val withRecents = resolved + (HelperKind.RECENTS to ResolvedHelper(recents, system = true))
         assertTrue(recents in lockTaskHelpers(withRecents, forbidden))
@@ -101,12 +115,32 @@ class LockTaskHelpersTest {
     }
 
     @Test
-    fun `LOCKED keeps the recents provider pinned but drops Home, Recents and the shade (experiment 2 - 113)`() {
+    fun `LOCKED takes the recents provider out of the kiosk list, unlocked puts it back (qa-16d-code 1)`() {
         val kiosk = setOf("me.vibb.launcher", "org.example.game", recents)
         val unlocked = 127
-        val locked = lockTaskWhileLocked(kiosk, unlocked, false, locked = true, ownPackage = "me.vibb.launcher", lockHelpers = emptySet())
-        assertEquals(kiosk, locked.packages)
+        val locked = lockTaskWhileLocked(kiosk, unlocked, false, locked = true, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), recentsPin = recents)
+        // Every other package stays (their locked tasks keep their state); Home, Recents and the shade go (113).
+        assertEquals(kiosk - recents, locked.packages)
         assertEquals(113, locked.features)
+        assertEquals(kiosk, lockTaskWhileLocked(kiosk, unlocked, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), recentsPin = recents).packages)
+        // No pin known: the list as it is.
+        assertEquals(kiosk, lockTaskWhileLocked(kiosk, unlocked, false, true, "me.vibb.launcher", emptySet()).packages)
+        // The plan names its pin only when the provider is in the kiosk list.
+        val withRecents = lockTaskHelpers(resolved + (HelperKind.RECENTS to ResolvedHelper(recents, system = true)), forbidden)
+        fun plan(block: Boolean, kioskOn: Boolean = true) = computeEnforcementPlan(
+            listOf("org.example.game"), kioskOn, 127, false, controllable, "me.vibb.launcher", dialer,
+            blockActivityStart = block, lockTaskHelpers = if (block) withRecents else emptySet(), recentsPackage = recents,
+        )
+        assertEquals(recents, plan(block = true).recentsPin)
+        assertEquals(null, plan(block = false).recentsPin)
+        assertEquals(null, plan(block = true, kioskOn = false).recentsPin)
+        // Without a plan: the platform's list after a LOCKED pass lacks it - unlocked it goes back in
+        // whenever the app block is on.
+        val blocked = 63 or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK
+        assertEquals(kiosk, fallbackKioskPackages(kiosk - recents, recents, blocked))
+        assertEquals(kiosk - recents, fallbackKioskPackages(kiosk - recents, recents, 63))
+        assertEquals(kiosk - recents, fallbackKioskPackages(kiosk - recents, null, blocked))
+        assertEquals(kiosk - recents, lockTaskWhileLocked(fallbackKioskPackages(kiosk - recents, recents, blocked), blocked, false, true, "me.vibb.launcher", emptySet(), recentsPin = recents).packages)
         // Kiosk off: the lock pins only our package and the PIN-lock helpers - never the recents
         // provider (no block bit there, so no dialog; pinning it would open its stock home to a call app).
         val kioskOff = lockTaskWhileLocked(null, unlocked, false, true, "me.vibb.launcher", setOf("com.android.phone"))
@@ -117,7 +151,7 @@ class LockTaskHelpersTest {
     fun `the recents provider is resolved for the kiosk block only - never a PIN-lock or VoIP helper`() {
         val enforcer = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/server/AppEnforcer.kt") }
             .first { it.exists() }.readText()
-        assertEquals(1, Regex("HelperKind\\.RECENTS to ").findAll(enforcer).count())
+        assertEquals(1, Regex("HelperKind\\.RECENTS to systemRecentsPackage\\(context\\)").findAll(enforcer).count())
         for (fn in listOf("resolvePinLockHelpers", "resolveVoipHelpers")) {
             val body = enforcer.substringAfter("fun $fn(").substringBefore("\n    }")
             assertFalse(fn, body.contains("RECENTS"))

@@ -138,6 +138,17 @@ class StatusBarHealTest {
         assertTrue(STATUS_BAR_HEALS_AFTER_START_MS.any { it in 5_500L..8_000L })
         assertTrue(STATUS_BAR_HEALS_AFTER_START_MS.last() >= 30_000L)
         assertTrue(STATUS_BAR_HEAL_FLIP_MS in 100L..500L)
+        // qa-16d-code #2: the unseen screen-off flip waits longer for a delayed update; the visible ones stay short.
+        assertEquals(1_000L, HealTrigger.SCREEN_OFF.flipMs)
+        for (trigger in HealTrigger.entries - HealTrigger.SCREEN_OFF) assertEquals(trigger.name, STATUS_BAR_HEAL_FLIP_MS, trigger.flipMs)
+    }
+
+    @Test
+    fun `the lock's resume heals at most once a minute (qa-16d-code 2)`() {
+        assertTrue(lockResumedHealDue(null, 5_000L))
+        assertFalse(lockResumedHealDue(5_000L, 5_000L))
+        assertFalse(lockResumedHealDue(5_000L, 64_999L))
+        assertTrue(lockResumedHealDue(5_000L, 65_000L))
     }
 
     // ---- the glue --------------------------------------------------------------------------------
@@ -186,7 +197,7 @@ class StatusBarHealTest {
         val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
         val heal = body(runtime, "healStatusBar")
         val flip = heal.indexOf("LockTaskChrome.healStatusBar(app, trigger)")
-        val sleep = heal.indexOf("Thread.sleep(STATUS_BAR_HEAL_FLIP_MS)")
+        val sleep = heal.indexOf("Thread.sleep(trigger.flipMs)")
         val end = heal.indexOf("LockTaskChrome.endStatusBarHeal(app)")
         assertTrue(heal.contains("chromeExecutor.execute"))
         assertTrue(flip in 0 until sleep)
@@ -199,6 +210,9 @@ class StatusBarHealTest {
         }
         val screenOff = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("} else {")
         assertTrue(screenOff.contains("healStatusBar(app, HealTrigger.SCREEN_OFF)"))
+        val resumed = body(runtime, "onLockResumed")
+        assertTrue(resumed.contains("if (lockResumedHealDue(lockResumedHealAt, now))"))
+        assertTrue(resumed.contains("healStatusBar(context, HealTrigger.LOCK_RESUMED)"))
         // The LOCKED edge's pass stays on the main thread before the lock resumes (qa-16c-code #1):
         // the heal never replaces it.
         assertTrue(body(runtime, "dispatch").contains("if (lockedEdge) refreshChromeNow(context)"))
