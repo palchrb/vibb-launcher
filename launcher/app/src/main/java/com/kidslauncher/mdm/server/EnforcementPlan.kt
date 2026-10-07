@@ -110,10 +110,10 @@ data class EnforcementPlan(
  *   The call restrictions don't change: allowed calls and emergency calls keep working
  *   (qa-security P0 #3 - the overlay alone could be escaped through Recents or a notification).
  * - Play (handy step 7, [com.kidslauncher.mdm.play]): Play services and GSF are in
- *   [EnforcementPlan.neverRestrict] (FCM); the Play Store is never hidden but suspended while apps
- *   are managed or a lock is on, except in install mode ([playState], not during a lock) and the
- *   nightly update window (also during a lock - the screen is off). None of them is pinned in
- *   kiosk, whatever the allowlist - except the Play Store in install mode.
+ *   [EnforcementPlan.neverRestrict] (other apps' FCM - Element X); the Play Store is never hidden
+ *   but suspended while apps are managed or a lock is on, except in install mode ([playState], not
+ *   during a lock) and the nightly update window (also during a lock - the screen is off). None
+ *   of them is pinned in kiosk, whatever the allowlist - except the Play Store in install mode.
  * - The lock-task features are the server's (plus KEYGUARD and the block bit): design 16's drop of
  *   OVERVIEW with the block bit is reverted (16d, the user's rule: never remove a stock gesture
  *   without asking) - the recents provider is pinned with the other helpers instead
@@ -166,7 +166,8 @@ fun computeEnforcementPlan(
     }
 
     val hide = mutableSetOf<String>()
-    // The Play Store is never hidden: FCM needs it installed, and hiding broadcasts a removal.
+    // The Play Store is never hidden: other apps' FCM (Element X) needs it installed, and hiding
+    // broadcasts a removal.
     if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict && it != PLAY_STORE }
     if (restrictSms) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
     val suspend = hide.toMutableSet()

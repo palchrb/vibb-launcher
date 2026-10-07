@@ -4,11 +4,11 @@ import com.kidslauncher.mdm.server.MIN_LOCATION_INTERVAL_MINUTES
 import com.kidslauncher.mdm.server.dto.LocationPolicy
 
 /*
- * When the phone syncs on its own (handy step 7, design 07 §2/§3). Pure, unit-tested in
- * SyncScheduleTest.
+ * When the phone syncs on its own (handy step 7, design 07 §2/§3; design 19: the SSE stream is
+ * the only nudge). Pure, unit-tested in SyncScheduleTest.
  *
- * Nudges (FCM or SSE) bring changes within seconds; the backstop alarm only catches what a
- * nudge missed. It is a while-idle alarm on elapsed realtime (`BackstopAlarm`), not a Handler
+ * Nudges over the SSE stream bring changes within seconds; the backstop alarm only catches what
+ * a nudge missed. It is a while-idle alarm on elapsed realtime (`BackstopAlarm`), not a Handler
  * timer: uptime stops in deep sleep, which is why the old 5-minute timer only ran because the
  * 15 s SSE keepalive kept waking the phone.
  */
@@ -16,7 +16,7 @@ import com.kidslauncher.mdm.server.dto.LocationPolicy
 /** The normal backstop period. */
 const val BACKSTOP_INTERVAL_MS = 30 * 60 * 1000L
 
-/** While the transport is SSE but the stream is down, nothing else would bring a change. */
+/** While the stream is down, nothing else would bring a change. */
 const val BACKSTOP_SSE_DOWN_INTERVAL_MS = 15 * 60 * 1000L
 
 /** Android lets an app's while-idle alarms fire about once per 9 minutes in Doze; asking for
@@ -24,18 +24,17 @@ const val BACKSTOP_SSE_DOWN_INTERVAL_MS = 15 * 60 * 1000L
 const val MIN_BACKSTOP_MS = 9 * 60 * 1000L
 
 /**
- * Delay until the next backstop sync: 30 minutes; 15 while on SSE with the stream down; never
- * later than the next location fix the parent's "interval" policy wants
- * ([sinceLastFreshLocationMs] = wall time since the last active fix, negative = the clock went
- * back - counts as due). Never below [MIN_BACKSTOP_MS].
+ * Delay until the next backstop sync: 30 minutes; 15 while the stream is down; never later than
+ * the next location fix the parent's "interval" policy wants ([sinceLastFreshLocationMs] = wall
+ * time since the last active fix, negative = the clock went back - counts as due). Never below
+ * [MIN_BACKSTOP_MS].
  */
 fun backstopDelayMs(
-    transport: PushTransport,
     sseConnected: Boolean,
     locationPolicy: LocationPolicy?,
     sinceLastFreshLocationMs: Long,
 ): Long {
-    var delay = if (transport == PushTransport.SSE && !sseConnected) BACKSTOP_SSE_DOWN_INTERVAL_MS else BACKSTOP_INTERVAL_MS
+    var delay = if (!sseConnected) BACKSTOP_SSE_DOWN_INTERVAL_MS else BACKSTOP_INTERVAL_MS
     if (locationPolicy?.mode == "interval") {
         val intervalMs = locationPolicy.intervalMinutes.coerceAtLeast(MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
         val untilDue = if (sinceLastFreshLocationMs < 0) 0L else intervalMs - sinceLastFreshLocationMs
@@ -44,14 +43,14 @@ fun backstopDelayMs(
     return delay.coerceAtLeast(MIN_BACKSTOP_MS)
 }
 
-/** The SSE stream's read timeout: the server sends a keepalive comment every 120 s
- * (`SSE_KEEPALIVE_SECS`), so 300 s of silence means the stream is dead - reconnect. */
+/** The SSE stream's read timeout: the server sends a keepalive comment every `SSE_KEEPALIVE_SECS`
+ * (240 s by default since design 19, never more), so 300 s of silence means the stream is dead -
+ * reconnect. Launchers already shipped use the same 300 s. */
 const val SSE_READ_TIMEOUT_MS = 300_000L
 
 /**
  * Whether reopening the SSE stream must sync: only when it was down long enough to have missed a
- * nudge (QA step 7 #5) - longer than one server keepalive (120 s by default, at most 240 s) plus
- * a margin. A stream that drops and reconnects quickly costs no sync.
+ * nudge (QA step 7 #5). A stream that drops and reconnects quickly costs no sync.
  */
 const val SSE_GAP_SYNC_MS = 150_000L
 

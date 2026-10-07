@@ -1,15 +1,14 @@
 package com.kidslauncher.mdm.push
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.w3c.dom.Element
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 
-/** The manifest parts of handy step 7 that keep Firebase away from the direct-boot call path
- * and other apps (QA #5/#6/#7). */
+/** The anchor and Play parts of handy step 7's manifest, and design 19: no Firebase left in it
+ * (the Gradle guard `checkReleaseHasNoGoogleServices` keeps the SDK off the release classpath). */
 class PushManifestTest {
     private val android = "http://schemas.android.com/apk/res/android"
     private val tools = "http://schemas.android.com/tools"
@@ -25,18 +24,22 @@ class PushManifestTest {
     }
 
     @Test
-    fun `our FCM service is not exported and not direct-boot-aware`() {
-        val service = component("service", ".push.KidFcmService")
-        assertNotNull(service)
-        assertEquals("false", service!!.getAttributeNS(android, "exported"))
-        assertTrue(service.getAttributeNS(android, "directBootAware").let { it.isEmpty() || it == "false" })
-        assertEquals("\${fcmEnabled}", service.getAttributeNS(android, "enabled"))
-    }
-
-    @Test
-    fun `the SDK's init provider and direct-boot-aware fallback service are removed`() {
-        assertEquals("remove", component("provider", "com.google.firebase.provider.FirebaseInitProvider")!!.getAttributeNS(tools, "node"))
-        assertEquals("remove", component("service", "com.google.firebase.messaging.FirebaseMessagingService")!!.getAttributeNS(tools, "node"))
+    fun `no Firebase in the manifest (19)`() {
+        val all = doc.getElementsByTagName("*")
+        val names = (0 until all.length).map { (all.item(it) as Element).getAttributeNS(android, "name") }
+        val firebase = names.filter { name ->
+            name.startsWith("com.google.firebase") || name.startsWith("firebase_") || "Fcm" in name ||
+                name.startsWith("delivery_metrics") || name == "com.google.android.c2dm.permission.RECEIVE"
+        }
+        assertEquals(emptyList<String>(), firebase)
+        val placeholders = (0 until all.length).flatMap { i ->
+            val attrs = (all.item(i) as Element).attributes
+            (0 until attrs.length).map { attrs.item(it).nodeValue }
+        }.filter { "fcm" in it.lowercase() }
+        assertEquals(emptyList<String>(), placeholders)
+        // The tools: namespace stays for other entries, but nothing is removed from a library any more.
+        val removed = (0 until all.length).map { all.item(it) as Element }.filter { it.getAttributeNS(tools, "node") == "remove" }
+        assertEquals(emptyList<Element>(), removed)
     }
 
     @Test

@@ -107,7 +107,7 @@ object DnsFilterEngine {
     fun classify(domainRaw: String): String? {
         val domain = domainRaw.trimEnd('.').lowercase()
         // FCM's own hosts are never blocked (handy step 7, QA #10): a blocklist entry for them or
-        // a parent (google.com, googleapis.com) would silently stop every sync nudge.
+        // a parent (google.com, googleapis.com) would silently stop other apps' FCM (Element X).
         if (com.kidslauncher.mdm.push.isFcmHost(domain)) return null
         var start = 0
         while (start < domain.length) {

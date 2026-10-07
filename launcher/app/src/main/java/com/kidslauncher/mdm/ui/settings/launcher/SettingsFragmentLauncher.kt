@@ -453,7 +453,6 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         CoroutineScope(Dispatchers.IO).launch {
             val reachedServer = try {
                 performMdmSync(context).also {
-                    com.kidslauncher.mdm.server.CommandListenerService.onSyncFinished(context)
                     com.kidslauncher.mdm.push.BackstopAlarm.schedule(context, afterSync = true)
                 }
             } catch (e: Exception) {

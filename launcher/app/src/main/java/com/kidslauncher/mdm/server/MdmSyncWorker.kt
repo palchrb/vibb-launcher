@@ -11,7 +11,6 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.BuildConfig
-import com.kidslauncher.mdm.calls.CALL_POLICY_CAPABILITY
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.CallStateReport
 import com.kidslauncher.mdm.calls.callPrefsUpdate
@@ -32,11 +31,7 @@ import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.timerules.key
 import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.play.PlayRuntime
-import com.kidslauncher.mdm.play.PLAY_POLICY_CAPABILITY
 import com.kidslauncher.mdm.play.catalogUpdateBlockedByPlay
-import com.kidslauncher.mdm.push.FCM_PUSH_CAPABILITY
-import com.kidslauncher.mdm.push.FcmSupport
-import com.kidslauncher.mdm.push.PushState
 import android.os.Handler
 import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
@@ -192,15 +187,6 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     AppDownloads.wifiOnly = decision.policy?.appUpdatesWifiOnly == true
     checkForTrackedAppUpdates(context, api)
 
-    // FCM (handy step 7): get or renew the token so this report carries it, and decide the
-    // transport from the enforced policy's `push` (the anchor service follows it after the sync).
-    try {
-        FcmSupport.maintainToken(context, decision.policy?.push)
-        FcmSupport.decide(context, decision.policy?.push)
-    } catch (e: Exception) {
-        Log.w(LOG_TAG, "Push upkeep failed", e)
-    }
-
     // Best-effort - a failed report must never affect the lock decision above.
     try {
         api.sendStatus(
@@ -214,15 +200,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 location = location.report,
                 policyState = policyState(freshOutcome, cached, policyEverApplied),
                 restrictionsPaused = RestrictionsPause.isActive(),
-                capabilities = listOf(
-                    CALL_POLICY_CAPABILITY, TIME_RULES_CAPABILITY, FCM_PUSH_CAPABILITY, PLAY_POLICY_CAPABILITY,
-                    com.kidslauncher.mdm.lock.PIN_LOCK_CAPABILITY, KIOSK_ESCAPES_CAPABILITY,
-                    com.kidslauncher.mdm.lock.BOOT_COVER_CAPABILITY,
-                ),
+                capabilities = STATUS_CAPABILITIES,
                 callState = CallStateReport.build(context),
                 notificationListenerEnabled = BadgeStore.accessGranted(context),
                 timeState = TimeRulesRuntime.report(context, decision.policy, reason),
-                push = PushState.report(context, FcmSupport.configured, FcmSupport.gmsAvailable(context)),
                 installMode = PlayRuntime.installModeReport(context),
                 playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
                 playStoreSuspendable = PlayRuntime.storeSuspendable(context),

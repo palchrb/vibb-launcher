@@ -15,9 +15,7 @@ import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_LISTENER
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.BackstopAlarm
-import com.kidslauncher.mdm.push.FcmSupport
 import com.kidslauncher.mdm.push.PushState
-import com.kidslauncher.mdm.push.PushTransport
 import com.kidslauncher.mdm.push.SSE_READ_TIMEOUT_MS
 import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.push.syncOnSseReopen
@@ -43,15 +41,12 @@ private const val EXTRA_SYNC_REASON = "reason"
  * `lock/PinLockRuntime` in step 10), and every background sync runs inside it
  * ([SyncRunner], with a wake lock and timeouts).
  *
- * Sync nudges arrive one of two ways ([com.kidslauncher.mdm.push.decidePushTransport]):
- * - **FCM** (Play services' one shared connection): [com.kidslauncher.mdm.push.KidFcmService];
- *   this service then holds no network connection and sets no timers - an idle FGS costs no
- *   wakeups.
- * - **SSE** (fallback whenever FCM isn't proven to work): a long-lived connection to
- *   `/api/devices/commands/stream` through the embedded tailnet's SOCKS proxy. Every event is a
- *   content-free nudge. The server's keepalive comes every 120 s, so a 300 s read timeout notices
- *   a silently dead stream. The reconnect loop runs on a Handler, which stalls in deep sleep; the
- *   backstop alarm (15 min while the stream is down) reconnects too (QA #8).
+ * Sync nudges arrive over the SSE stream only (design 19 removed FCM): a long-lived connection to
+ * `/api/devices/commands/stream` through the embedded tailnet's SOCKS proxy, held whenever this
+ * service runs. Every event is a content-free nudge. The server's keepalive comes every 240 s by
+ * default, so a 300 s read timeout notices a silently dead stream. The reconnect loop runs on a
+ * Handler, which stalls in deep sleep; the backstop alarm (15 min while the stream is down)
+ * reconnects too (QA #8).
  *
  * The periodic backstop is [BackstopAlarm] (a while-idle alarm on elapsed realtime), not a timer
  * here: `Handler` time stops in deep sleep. One sync also runs whenever this service starts
@@ -65,7 +60,6 @@ class CommandListenerService : Service() {
     private var eventSource: EventSource? = null
     private var reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
     private var stopped = false
-    private var sseWanted = false
     private val connectRunnable = Runnable { connect() }
     private var firstStart = true
     /** Elapsed realtime when the stream went down (`null`: never up in this process). */
@@ -73,8 +67,8 @@ class CommandListenerService : Service() {
 
     private fun buildClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            // The server sends a keepalive comment every SSE_KEEPALIVE_SECS (120 s by default);
-            // five minutes of silence means the stream is dead - reconnect.
+            // The server sends a keepalive comment every SSE_KEEPALIVE_SECS (240 s by default,
+            // never more); five minutes of silence means the stream is dead - reconnect.
             .readTimeout(SSE_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         // Fresh per connect: the server is only reachable through the embedded tailnet's proxy,
         // which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
@@ -88,14 +82,10 @@ class CommandListenerService : Service() {
         super.onCreate()
         // First, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise).
         startForeground(COMMAND_LISTENER_NOTIFICATION_ID, buildNotification())
-        running = this
         // The screen on/off/unlock signals (screen time, time rules, the Play window, handy's PIN
         // lock) live in PinLockRuntime since step 10 - registered for the whole process from
         // Application, not for this service's lifetime (QA 10 #4).
-        // Firebase is initialised when the anchor starts (decision after QA review) - never before
-        // the first unlock: this service isn't direct-boot-aware.
-        FcmSupport.ensureInitialized(applicationContext)
-        reevaluateTransport()
+        connect()
         BackstopAlarm.schedule(applicationContext)
         // The sync at start runs from onStartCommand (always delivered after onCreate), so a cold
         // start through requestSync runs one sync, not two.
@@ -117,7 +107,7 @@ class CommandListenerService : Service() {
             SyncRunner.runInService(applicationContext, reason, fromRequest = true)
             // The backstop also restarts a stalled SSE reconnect loop (Handler time stops in
             // deep sleep).
-            if (sseWanted && !PushState.sseConnected) {
+            if (!PushState.sseConnected) {
                 handler.removeCallbacks(connectRunnable)
                 reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
                 connect()
@@ -128,7 +118,6 @@ class CommandListenerService : Service() {
 
     override fun onDestroy() {
         stopped = true
-        if (running === this) running = null
         handler.removeCallbacksAndMessages(null)
         stopSse()
         super.onDestroy()
@@ -145,27 +134,6 @@ class CommandListenerService : Service() {
             .build()
     }
 
-    /** Main thread. Starts or stops the SSE stream to match the transport decision. */
-    private fun reevaluateTransport() {
-        if (stopped) return
-        val decision = try {
-            FcmSupport.decide(applicationContext, currentPolicyDecision().policy?.push)
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Transport decision failed - using SSE", e)
-            null
-        }
-        val wantSse = decision == null || decision.transport == PushTransport.SSE
-        if (wantSse == sseWanted) return
-        sseWanted = wantSse
-        if (wantSse) {
-            reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
-            connect()
-        } else {
-            Log.i(LOG_TAG, "FCM works for this phone - closing the command stream")
-            stopSse()
-        }
-    }
-
     private fun stopSse() {
         handler.removeCallbacks(connectRunnable)
         eventSource?.cancel()
@@ -174,7 +142,7 @@ class CommandListenerService : Service() {
     }
 
     private fun connect() {
-        if (stopped || !sseWanted) return
+        if (stopped) return
         eventSource?.cancel()
         eventSource = null
 
@@ -198,7 +166,7 @@ class CommandListenerService : Service() {
                 override fun onOpen(eventSource: EventSource, response: Response) {
                     Log.i(LOG_TAG, "Command stream connected")
                     handler.post {
-                        if (eventSource !== this@CommandListenerService.eventSource || !sseWanted) return@post
+                        if (eventSource !== this@CommandListenerService.eventSource || stopped) return@post
                         reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
                         val wasDown = !PushState.sseConnected
                         PushState.sseConnected = true
@@ -242,7 +210,7 @@ class CommandListenerService : Service() {
     }
 
     private fun scheduleReconnect() {
-        if (stopped || !sseWanted) return
+        if (stopped) return
         handler.removeCallbacks(connectRunnable)
         handler.postDelayed(connectRunnable, reconnectDelayMs)
         // Exponential backoff so a server that's genuinely down isn't hammered.
@@ -252,10 +220,6 @@ class CommandListenerService : Service() {
     companion object {
         const val ACTION_SYNC = "com.kidslauncher.mdm.action.SYNC"
         const val ACTION_DOWNLOADS = "com.kidslauncher.mdm.action.DOWNLOADS"
-
-        /** The live instance, for [onSyncFinished]. Same process only. */
-        @Volatile
-        private var running: CommandListenerService? = null
 
         /** Starts the anchor (a no-op if it runs). Safe to call repeatedly. */
         fun start(context: Context) {
@@ -286,12 +250,6 @@ class CommandListenerService : Service() {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't start the anchor service for the downloads", e)
             false
-        }
-
-        /** After every sync: the policy's `push` may have changed the transport. */
-        fun onSyncFinished(context: Context) {
-            val service = running ?: return
-            service.handler.post { service.reevaluateTransport() }
         }
     }
 }

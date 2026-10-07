@@ -1,10 +1,12 @@
 package com.kidslauncher.mdm.push
 
 /*
- * Hosts Play services needs for FCM (handy step 7, QA #10). The on-device DNS filter
+ * Hosts Play services needs for FCM (handy step 7, QA #10) - for other apps' FCM (Element X)
+ * since design 19; our own nudges come over the SSE stream. The on-device DNS filter
  * (KidVpnService/DnsFilterEngine) never blocks them, whatever a blocklist says - ad lists often
- * carry Firebase hosts, and a blocked mtalk connection silently stops every nudge. The server
- * drops them (and their parents) from the delivered blocklist too; this is the second gate.
+ * carry Firebase hosts, and a blocked mtalk connection silently stops every push of every app.
+ * The server drops them (and their parents) from the delivered blocklist too; this is the second
+ * gate.
  * Telemetry is blocked by exact host only, never by these names. Pure, tested in FcmHostsTest.
  */
 

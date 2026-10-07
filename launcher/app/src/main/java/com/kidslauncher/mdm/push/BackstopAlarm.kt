@@ -19,7 +19,7 @@ private const val REQUEST_CODE = 7
 
 /**
  * The backstop sync (handy step 7, design 07 §2): one inexact while-idle alarm on elapsed
- * realtime, [backstopDelayMs] ahead (30 min; 15 while on SSE with the stream down; sooner when
+ * realtime, [backstopDelayMs] ahead (30 min; 15 while the SSE stream is down; sooner when
  * the parent's interval location policy wants a fix). While-idle alarms fire in Doze (about once
  * per 9 minutes per app at most), unlike JobScheduler/WorkManager, which only run in maintenance
  * windows - WorkManager was removed for hours-long overnight gaps (v0.8.0). Re-armed after every
@@ -48,7 +48,7 @@ object BackstopAlarm {
             val policy = currentPolicyDecision().policy
             val locationPolicy = policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
             val sinceLastFix = System.currentTimeMillis() - LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
-            val delay = backstopDelayMs(PushState.lastDecision.transport, PushState.sseConnected, locationPolicy, sinceLastFix)
+            val delay = backstopDelayMs(PushState.sseConnected, locationPolicy, sinceLastFix)
             val target = SystemClock.elapsedRealtime() + delay
             val armed = armedAt
             if (!afterSync && armed > SystemClock.elapsedRealtime() && armed <= target) return

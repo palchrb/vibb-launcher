@@ -76,38 +76,6 @@ if (releaseStoreFile == null && providers.gradleProperty("requireReleaseSigning"
     )
 }
 
-// Firebase Cloud Messaging (handy step 7, sync nudges). No google-services plugin and no
-// google-services.json: the four values come from env vars (CI: repository variables) or Gradle
-// properties (~/.gradle/gradle.properties, never this repo) and become BuildConfig fields. They
-// are not secrets (they end up in the APK), but they are per project, so they stay out of the
-// repo. Any value missing -> FCM is off in that build and the launcher uses the SSE stream only
-// (upstream and local builds are unchanged). The debug variant (.debug package) is its own
-// Firebase app, so it has its own application id; without one, debug builds have FCM off.
-// -PrequireFcm=true (the tag release job) fails the build if the release config is incomplete.
-val fcmProjectId = releaseSecret("HANDY_FCM_PROJECT_ID", "handy.fcm.projectId")
-val fcmApplicationId = releaseSecret("HANDY_FCM_APPLICATION_ID", "handy.fcm.applicationId")
-val fcmDebugApplicationId = releaseSecret("HANDY_FCM_DEBUG_APPLICATION_ID", "handy.fcm.debugApplicationId")
-val fcmApiKey = releaseSecret("HANDY_FCM_API_KEY", "handy.fcm.apiKey")
-val fcmSenderId = releaseSecret("HANDY_FCM_SENDER_ID", "handy.fcm.senderId")
-val fcmBase = listOf(fcmProjectId, fcmApiKey, fcmSenderId).all { it != null }
-val fcmRelease = fcmBase && fcmApplicationId != null
-val fcmDebug = fcmBase && fcmDebugApplicationId != null
-if (!fcmRelease && providers.gradleProperty("requireFcm").orNull == "true") {
-    throw GradleException(
-        "-PrequireFcm=true, but the FCM config is incomplete: set HANDY_FCM_PROJECT_ID, " +
-            "HANDY_FCM_APPLICATION_ID, HANDY_FCM_API_KEY and HANDY_FCM_SENDER_ID " +
-            "(or the handy.fcm.* Gradle properties)"
-    )
-}
-if (!fcmRelease) logger.warn("No FCM config for release builds - push uses the SSE stream only")
-
-/** A Kotlin/Java string literal for a BuildConfig field; the values are plain ids and keys. */
-fun buildConfigString(value: String?): String {
-    val v = value.orEmpty()
-    require(v.all { it.isLetterOrDigit() || it in "-_:.@" }) { "Unexpected character in an FCM config value" }
-    return "\"$v\""
-}
-
 // Release CI passes the version derived from the git tag (vMAJOR.MINOR.PATCH -> MAJOR*1_000_000 +
 // MINOR*1_000 + PATCH, see .github/workflows/android.yml). Local and debug builds use the
 // literals below - never bump those by hand for a release.
@@ -153,8 +121,6 @@ android {
         release {
             // No isDebuggable line: release is non-debuggable, which also blocks `adb shell run-as`.
             signingConfig = signingConfigs.findByName("release")
-            buildConfigField("String", "FCM_APPLICATION_ID", buildConfigString(fcmApplicationId.takeIf { fcmRelease }))
-            manifestPlaceholders["fcmEnabled"] = fcmRelease.toString()
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -165,17 +131,12 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             isDebuggable = true
-            buildConfigField("String", "FCM_APPLICATION_ID", buildConfigString(fcmDebugApplicationId.takeIf { fcmDebug }))
-            manifestPlaceholders["fcmEnabled"] = fcmDebug.toString()
         }
     }
 
     defaultConfig {
         buildConfigField("String", "GIT_COMMIT", "\"${gitCommit}\"")
         buildConfigField("long", "GIT_COMMIT_TIME_MS", "${gitCommitTimeMs}L")
-        buildConfigField("String", "FCM_PROJECT_ID", buildConfigString(fcmProjectId))
-        buildConfigField("String", "FCM_API_KEY", buildConfigString(fcmApiKey))
-        buildConfigField("String", "FCM_SENDER_ID", buildConfigString(fcmSenderId))
     }
 
     // libs/tsnet.aar is built by CI (Go + NDK, x86_64 only). Without it, compile a stub of its
@@ -267,10 +228,55 @@ abstract class CheckDebugHook : DefaultTask() {
     }
 }
 
+/**
+ * Design 19: FCM is gone, and nothing of Firebase, Play services or Google's data transport may
+ * come back into the release APK through a dependency (one APK works with anyone's server, and no
+ * nudge metadata goes to Google). Walks the release runtime classpath's resolved graph and fails
+ * on any module in [bannedGroups] (the group itself or a subgroup). A dependency of
+ * assembleRelease.
+ */
+abstract class CheckNoGoogleServices : DefaultTask() {
+    @get:Input
+    abstract val rootComponent: Property<ResolvedComponentResult>
+
+    @get:Input
+    abstract val bannedGroups: ListProperty<String>
+
+    @TaskAction
+    fun check() {
+        val seen = mutableSetOf<ComponentIdentifier>()
+        val modules = sortedSetOf<String>()
+        val queue = mutableListOf<ResolvedComponentResult>(rootComponent.get())
+        while (queue.isNotEmpty()) {
+            val component = queue.removeAt(queue.lastIndex)
+            if (!seen.add(component.id)) continue
+            (component.id as? ModuleComponentIdentifier)?.let { modules.add("${it.group}:${it.module}") }
+            for (dependency in component.dependencies) {
+                if (dependency is ResolvedDependencyResult) queue.add(dependency.selected)
+            }
+        }
+        val banned = modules.filter { module ->
+            val group = module.substringBefore(':')
+            bannedGroups.get().any { group == it || group.startsWith("$it.") }
+        }
+        if (banned.isNotEmpty()) {
+            throw GradleException("Firebase/Play services on the release classpath (design 19 removed FCM): $banned")
+        }
+        logger.lifecycle("${name}: none of ${bannedGroups.get()} in ${modules.size} release modules")
+    }
+}
+
 androidComponents {
     onVariants { variant ->
         val cap = variant.name.replaceFirstChar { it.uppercase() }
         val release = variant.buildType == "release"
+        if (release) {
+            val guard = tasks.register<CheckNoGoogleServices>("check${cap}HasNoGoogleServices") {
+                rootComponent.set(variant.runtimeConfiguration.incoming.resolutionResult.rootComponent)
+                bannedGroups.set(listOf("com.google.firebase", "com.google.android.gms", "com.google.android.datatransport"))
+            }
+            tasks.matching { it.name == "assemble$cap" }.configureEach { dependsOn(guard) }
+        }
         val check = tasks.register<CheckDebugHook>(if (release) "check${cap}HasNoDebugHook" else "check${cap}HasDebugHook") {
             manifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
             apkDir.set(variant.artifacts.get(SingleArtifact.APK))
@@ -302,10 +308,8 @@ dependencies {
     // match this project's existing avoid-Google/Play-Services-dependencies pattern (embedded
     // tsnet over the standalone Tailscale app, etc.). Zero GMS footprint.
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
-    // Sync nudges over FCM (handy step 7, design 07-battery-fcm-play.md). Messaging only - no
-    // analytics, no google-services plugin; initialised by hand (FcmSupport) and only when the
-    // build has a config. Without one, nothing of it runs and the SSE stream is the transport.
-    implementation("com.google.firebase:firebase-messaging:25.1.3")
+    // No Firebase or Play services (design 19 removed FCM: the SSE stream is the only nudge) -
+    // checkReleaseHasNoGoogleServices fails assembleRelease if one comes back transitively.
     implementation(libs.androidx.activity)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.appcompat)

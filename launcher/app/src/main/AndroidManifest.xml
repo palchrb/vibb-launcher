@@ -46,8 +46,8 @@
          logging around it. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- CommandListenerService is the always-on process anchor (handy step 7): screen signals for
-         screen time, every background sync, and the SSE stream when FCM isn't in use. Type
+    <!-- CommandListenerService is the always-on process anchor (handy step 7): every background
+         sync and the SSE stream, the only way the server nudges the phone (design 19). Type
          "specialUse" (parental control enforcement): "dataSync" is capped at 6 h a day on
          Android 15+ and may not start from BOOT_COMPLETED there. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -404,50 +404,6 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Parental control enforcement (device owner): screen-time and time-rule signals, policy sync" />
         </service>
-
-        <!-- Sync nudges over FCM (handy step 7, push/KidFcmService). exported="false" as Firebase
-             declares it: messages come in through the SDK's FirebaseInstanceIdReceiver, which only
-             Play services can call (c2dm.permission.SEND). Enabled only in builds with a Firebase
-             config (fcmEnabled placeholder, app/build.gradle.kts). Not direct-boot-aware. -->
-        <service
-            android:name=".push.KidFcmService"
-            android:enabled="${fcmEnabled}"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
-        <!-- The SDK's own fallback service is direct-boot-aware and would touch Firebase before the
-             first unlock (and before our init) - it must never run. -->
-        <service
-            android:name="com.google.firebase.messaging.FirebaseMessagingService"
-            tools:node="remove" />
-        <!-- Firebase is initialised by hand after the unlock (push/FcmSupport), never by this
-             provider - it would run before the first unlock, and Firebase keeps state in CE. -->
-        <provider
-            android:name="com.google.firebase.provider.FirebaseInitProvider"
-            android:authorities="${applicationId}.firebaseinitprovider"
-            tools:node="remove" />
-        <!-- Only holds registrar metadata; never started. Not direct-boot-aware, like everything
-             outside the call path (DirectBootComponents). -->
-        <service
-            android:name="com.google.firebase.components.ComponentDiscoveryService"
-            android:directBootAware="false"
-            tools:replace="android:directBootAware" />
-        <meta-data
-            android:name="firebase_messaging_auto_init_enabled"
-            android:value="false" />
-        <!-- FCM registration by Firebase installation ID (firebase-messaging 25.1+, replacing the
-             deprecated getToken/onNewToken): push/FcmSupport.register, KidFcmService.onRegistered. -->
-        <meta-data
-            android:name="firebase_messaging_installation_id_enabled"
-            android:value="true" />
-        <meta-data
-            android:name="firebase_analytics_collection_deactivated"
-            android:value="true" />
-        <meta-data
-            android:name="delivery_metrics_exported_to_big_query_enabled"
-            android:value="false" />
 
         <!-- The backstop sync alarm (push/BackstopAlarm) - our own explicit PendingIntent only. -->
         <receiver

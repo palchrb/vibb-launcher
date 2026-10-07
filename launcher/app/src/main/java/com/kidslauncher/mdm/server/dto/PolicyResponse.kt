@@ -40,7 +40,7 @@ import kotlinx.serialization.Serializable
  * Once a phone has had one, a response without it is rejected ([com.kidslauncher.mdm.server.judgeFresh]).
  * The fixed windows are still sent (frozen) for older launchers. [locationPolicy]: when location
  * goes into the status report; `null` (older server) keeps the old every-sync behaviour.
- * [push]: FCM on the server and whether it works for this phone (handy step 7).
+ * A 0.19 server's `push` (FCM, removed in design 19) is an unknown key and ignored.
  * [kidLock]: the kid's PIN for handy's own lock screen (step 10).
  */
 @Serializable
@@ -67,9 +67,6 @@ data class PolicyResponse(
     val launcherUi: LauncherUi? = null,
     val timePolicy: TimePolicy? = null,
     val locationPolicy: LocationPolicy? = null,
-    /** How sync nudges reach this phone (handy step 7) - see [PushPolicy]; `null` from a server
-     * without FCM support, which means the SSE stream. */
-    val push: PushPolicy? = null,
     /** `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` in kiosk (handy step 9) - our server
      * always sends it; the per-device off switch is the remote kill switch (QA 09 #4). Missing
      * (a server without migration 0029) = **off** (qa-09-code #7): such a server has no off
@@ -113,19 +110,6 @@ data class KidLock(
     val pinHash: String = "",
     val pinSalt: String = "",
     val pinLength: Int = 4,
-)
-
-/**
- * `PolicyResponse.push`: [fcmEnabled] the server has an FCM service account; [fcmOk] its test
- * nudges to [fcmTokenHash]'s token were acknowledged by our syncs (FCM health, decided on the
- * server); [fcmTokenHash] the first 16 hex chars of SHA-256 over the token it stores (`null` = it
- * knows none). See [com.kidslauncher.mdm.push.decidePushTransport].
- */
-@Serializable
-data class PushPolicy(
-    val fcmEnabled: Boolean = false,
-    val fcmOk: Boolean = false,
-    val fcmTokenHash: String? = null,
 )
 
 /** `PolicyResponse.locationPolicy`: [mode] "off", "on_request" or "interval" (every

@@ -7,12 +7,13 @@ import com.kidslauncher.mdm.server.timedWindowActive
  * Play as an app source (handy step 7, design 07 §4 and the binding decisions after QA review).
  * Pure, no Android imports, unit-tested in PlayPolicyTest.
  *
- * - Play services and Google Services Framework are never suspended or hidden: FCM runs in them.
- * - The Play Store is never hidden (FCM requires it installed) but SUSPENDED whenever apps are
- *   managed, except during the parent's install mode and the nightly update window. Suspension,
- *   not only kiosk, because Play opened with an explicit intent from inside an allowed app's
- *   task (rate-us buttons, ad SDKs) would otherwise give the kid the whole store (QA #1); a
- *   suspended package's activities don't start anywhere.
+ * - Play services and Google Services Framework are never suspended or hidden: other apps' FCM
+ *   (Element X) runs in them - our own nudges don't use FCM since design 19.
+ * - The Play Store is never hidden (other apps' FCM requires it installed) but SUSPENDED whenever
+ *   apps are managed, except during the parent's install mode and the nightly update window.
+ *   Suspension, not only kiosk, because Play opened with an explicit intent from inside an
+ *   allowed app's task (rate-us buttons, ad SDKs) would otherwise give the kid the whole store
+ *   (QA #1); a suspended package's activities don't start anywhere.
  * - None of them is ever launchable from Home or pinned in kiosk - except the Play Store during
  *   install mode.
  * - Anything Play installs is caught by the usual new-package path: hidden and suspended until
@@ -29,7 +30,7 @@ const val GOOGLE_SERVICES_FRAMEWORK = "com.google.android.gsf"
 /** Never shown, never pinned (outside install mode), never hidden. */
 val PLAY_CORE = setOf(PLAY_STORE, PLAY_SERVICES, GOOGLE_SERVICES_FRAMEWORK)
 
-/** Never suspended or hidden, managed or not, locked or not: FCM. */
+/** Never suspended or hidden, managed or not, locked or not: other apps' FCM (Element X). */
 val PLAY_NEVER_RESTRICT = setOf(PLAY_SERVICES, GOOGLE_SERVICES_FRAMEWORK)
 
 /**

@@ -315,9 +315,12 @@ class Application : android.app.Application() {
         // rules and the Play window use it too.
         com.kidslauncher.mdm.lock.PinLockRuntime.init(this)
 
-        // The anchor service: screen signals, every background sync, the SSE stream when FCM isn't
-        // in use; it arms the backstop alarm and syncs once at start - see its doc comment.
+        // The anchor service: every background sync and the SSE stream (the only nudge since
+        // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.
         CommandListenerService.start(this)
+        // Design 19: what the FCM era left (push_state with the Firebase installation ID, the
+        // SDK's files and jobs) is deleted once, in the background.
+        com.kidslauncher.mdm.push.FirebaseCleanup.runOnceInBackground(this)
 
         // The on-device DNS filter is the device's baseline network path now, not an
         // admin-configurable feature - see CLAUDE.md's on-device-filtering migration writeup.

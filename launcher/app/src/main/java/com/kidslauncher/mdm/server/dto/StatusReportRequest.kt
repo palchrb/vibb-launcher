@@ -26,8 +26,6 @@ data class StatusReportRequest(
     val notificationListenerEnabled: Boolean? = null,
     /** Time rules and screen time right now (handy step 6) - see [TimeState]. */
     val timeState: TimeState? = null,
-    /** How nudges reach the phone (handy step 7) - see [PushReport]. */
-    val push: PushReport? = null,
     /** Play install mode is on (handy step 7) - the parent opened Play with the PIN. */
     val installMode: InstallModeReport? = null,
     /** The nightly Play update window is in force (Play Store unsuspended, screen off). */
@@ -170,29 +168,6 @@ data class LockStateReport(
      * dropped it (no USE_FULL_SCREEN_INTENT), so their calls can't ring over the lock. Package
      * names only; always sent. */
     val voipFsiDenied: List<String>,
-)
-
-/**
- * `StatusReportRequest.push`. [fcmToken] is the current FCM registration token (`null`: none, or
- * no FCM in this build); [transport] "fcm" or "sse" and, for SSE, [reason] (see
- * [com.kidslauncher.mdm.push.SseReason]). [lastNudgeId] is the `n` of the last FCM message we
- * got - the acknowledgement the server's health check waits for. [lastPriority]/
- * [lastOriginalPriority] ("high"/"normal"/"unknown") show FCM deprioritising our nudges.
- */
-@Serializable
-data class PushReport(
-    val fcmToken: String?,
-    /** "fid" (Firebase installation ID, what we register since firebase-messaging 25.1) or
-     * "token" (a legacy registration token) - see [com.kidslauncher.mdm.push.fcmTokenKind]. */
-    val fcmTokenKind: String? = null,
-    val transport: String,
-    val fcmConfigured: Boolean,
-    val gmsAvailable: Boolean,
-    val lastNudgeMs: Long?,
-    val lastNudgeId: String?,
-    val lastPriority: String?,
-    val lastOriginalPriority: String?,
-    val reason: String?,
 )
 
 /** `StatusReportRequest.installMode`: wall-clock end of the Play install mode window. */

@@ -15,12 +15,12 @@ private const val LOG_TAG = "SyncRunner"
 
 /**
  * Runs the background sync (policy + status + app updates) for every
- * trigger - an FCM or SSE nudge, the backstop alarm, process start - inside the anchor
+ * trigger - an SSE nudge, the backstop alarm, process start - inside the anchor
  * foreground service (decision after QA review: no separate dataSync service; a dataSync FGS has
  * a 6 h daily budget and may not start from BOOT_COMPLETED on Android 15).
  *
  * [request] takes a timed partial wake lock at once (QA #7: neither an FGS nor
- * `onReceive`/`onMessageReceived` keeps the CPU up), then starts the anchor with
+ * `onReceive` keeps the CPU up), then starts the anchor with
  * [CommandListenerService.ACTION_SYNC] - which also brings the anchor back if it died (QA #8:
  * screen time only counts while it runs). The service calls [runInService]. Requests during a run
  * collapse into one more run ([SyncCoalescer]); each part has a timeout, and the wake lock ends
@@ -74,7 +74,6 @@ object SyncRunner {
                 Log.w(LOG_TAG, "Sync failed", e)
             }
             try {
-                CommandListenerService.onSyncFinished(context)
                 BackstopAlarm.schedule(context)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "After-sync work failed", e)

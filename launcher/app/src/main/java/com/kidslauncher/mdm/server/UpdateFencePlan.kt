@@ -30,7 +30,7 @@ data class HomeCandidate(
 /**
  * Never fenced, whatever this phone resolves (qa-11-design.md #6): the platform, SystemUI, the
  * phone process, Telecom, Settings (FallbackHome on AOSP - the resolved FallbackHome package comes
- * in through `protected` too) and Play core (FCM, the verifier).
+ * in through `protected` too) and Play core (other apps' FCM - Element X -, the verifier).
  */
 val FENCE_NEVER: Set<String> = setOf(
     "android",

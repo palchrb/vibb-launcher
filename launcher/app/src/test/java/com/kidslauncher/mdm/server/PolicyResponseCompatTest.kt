@@ -11,6 +11,7 @@ import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -319,6 +320,8 @@ class PolicyResponseCompatTest {
         assertEquals(63L, policy.lockTaskFeatures)
         assertEquals(true, policy.blockActivityStart)
         assertEquals(60, policy.screenTimeoutSeconds)
+        // The next accepted policy is cached without it (storeAcceptedPolicy re-encodes the DTO).
+        assertFalse("push" in ServerJson.encodeToJsonElement(PolicyResponse.serializer(), policy).jsonObject)
         // An old server without FCM sent `fcm_enabled: false` - the same as no key at all.
         val off = serverResponse.replaceFirst("{", """{"push":{"fcm_enabled":false,"fcm_ok":false,"fcm_token_hash":null},""")
         assertEquals(withoutPush(plain), withoutPush((decodeFresh(off) as FreshDecode.Ok).policy))
