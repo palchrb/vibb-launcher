@@ -47,7 +47,7 @@ fun ownPackageFamily(ownPackage: String): Set<String> {
 }
 
 /** Why a HOME candidate was left out of the fence (logged, tested). */
-enum class FenceSkip { OWN, NEVER, PERSISTENT, FALLBACK_HOME, RECENTS, PROTECTED, CONTROLLABLE, ALREADY_SUSPENDED }
+enum class FenceSkip { OWN, NEVER, PERSISTENT, FALLBACK_HOME, PROTECTED, CONTROLLABLE, ALREADY_SUSPENDED }
 
 data class FencePlan(
     /** Packages to suspend for the update window - none of them suspended before. */
@@ -59,10 +59,6 @@ data class FencePlan(
  * Which HOME-capable packages to suspend while our package is replaced:
  * - never ours (also `.debug`), [FENCE_NEVER], persistent apps, a HOME with a negative priority
  *   (FallbackHome - it must still show "the real Home isn't ready" during a boot);
- * - never the system's recents provider ([recentsPackage], design 16d decision 2): suspended, the
- *   gestures' RecentsActivity would show the "App is not available"/suspended dialog during our
- *   self-update. On a phone whose provider is the stock launcher (Pixel) that launcher is then the
- *   fallback HOME while we are replaced - the fence still blocks the status bar and other HOMEs;
  * - never a [protected] package - the glue resolves it on the phone: the FallbackHome and Settings
  *   packages, SystemUI, the system and default dialer, Telecom, the emergency dialer, the IMEs,
  *   the kiosk-block and PIN-lock helpers, every lock-task package (removing one clears its locked
@@ -71,6 +67,12 @@ data class FencePlan(
  *   suspended+hidden by `apply()`, which would otherwise unsuspend it mid-window or have it
  *   released into a bedtime lock - qa-11-design.md #5);
  * - never an [alreadySuspended] one: a release only ever unsuspends what the fence suspended.
+ * The system's recents provider ([recentsPackage], design 16d guard 2) is fenced like any other
+ * HOME although it is pinned in the kiosk (a lock-task package and kiosk-block helper, so in
+ * [protected]) and although enforcement never restricts it (with a launcher icon it is in
+ * [controllable] without being enforcement's): on Pixel it is the stock launcher - the fallback
+ * Home the fence exists to stop. The update runs at night with the screen off, so a minute without
+ * Recents doesn't matter. Ours, never, persistent, FallbackHome and already suspended still skip it.
  */
 fun fencePlan(
     homeCandidates: Collection<HomeCandidate>,
@@ -90,9 +92,8 @@ fun fencePlan(
             pkg in FENCE_NEVER -> FenceSkip.NEVER
             candidate.persistent -> FenceSkip.PERSISTENT
             candidate.priority < 0 -> FenceSkip.FALLBACK_HOME
-            pkg == recentsPackage -> FenceSkip.RECENTS
-            pkg in protected -> FenceSkip.PROTECTED
-            pkg in controllable -> FenceSkip.CONTROLLABLE
+            pkg in protected && pkg != recentsPackage -> FenceSkip.PROTECTED
+            pkg in controllable && pkg != recentsPackage -> FenceSkip.CONTROLLABLE
             pkg in alreadySuspended -> FenceSkip.ALREADY_SUSPENDED
             else -> null
         }
@@ -277,8 +278,9 @@ data class ReleaseOutcome(
  * idempotent). A throw from the unsuspend call counts as "all refused"; the record is cleared
  * anyway, so a phone that is no longer device owner can't loop on it.
  */
-fun runRelease(platform: FencePlatform, record: FenceRecord, controllableNow: Set<String>): ReleaseOutcome {
-    val leftToApply = record.toRelease intersect controllableNow
+fun runRelease(platform: FencePlatform, record: FenceRecord, controllableNow: Set<String>, recentsPackage: String? = null): ReleaseOutcome {
+    // The recents provider is the fence's own even with a launcher icon (enforcement never restricts it).
+    val leftToApply = record.toRelease intersect (controllableNow - setOfNotNull(recentsPackage))
     val target = record.toRelease - leftToApply
     val refused = if (target.isEmpty()) {
         emptySet()
@@ -442,9 +444,7 @@ fun suspendTarget(packageName: String, planSuspend: Set<String>, fenceHeld: Set<
  * controllable) that is suspended now is unsuspended. Safe: nothing else in the launcher suspends
  * such a package (`apply()` only touches controllable ones, Play's rule only the Play Store), and
  * `setPackagesSuspended(false)` removes only our own suspension.
- * Design 16d: the [recentsPackage] is never fenced now, but an older build's fence may have
- * suspended it - and pinned in the kiosk it is a lock-task package, protected only for fencing - so
- * the sweep plans as such a build did (no recents exclusion, not protected) and releases it too.
+ * Design 16d: the [recentsPackage] is fenced although pinned or listed - so it is swept too.
  */
 fun orphanFenceTargets(
     homeCandidates: Collection<HomeCandidate>,
@@ -454,7 +454,7 @@ fun orphanFenceTargets(
     suspendedNow: Set<String>,
     recentsPackage: String? = null,
 ): Set<String> =
-    fencePlan(homeCandidates, ownPackage, protected - setOfNotNull(recentsPackage), controllable, alreadySuspended = emptySet())
+    fencePlan(homeCandidates, ownPackage, protected, controllable, alreadySuspended = emptySet(), recentsPackage = recentsPackage)
         .suspend intersect suspendedNow
 
 // ---- the last fence, for the status report (qa-11-code #5) -------------------------------------

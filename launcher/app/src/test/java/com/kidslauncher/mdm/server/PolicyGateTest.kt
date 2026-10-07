@@ -207,6 +207,15 @@ class PolicyGateTest {
     ) = shouldSuspendNewPackage(pkg, decision, overrideActive, OWN, DIALER, scheduleLocked = locked, lockUsableApps = usable)
 
     @Test
+    fun `an installed or updated recents provider is never suspended (16d)`() {
+        val recents = "com.google.android.apps.nexuslauncher"
+        for (locked in listOf(false, true)) {
+            assertFalse(shouldSuspendNewPackage(recents, PolicyToApply.Apply(managed), false, OWN, DIALER, scheduleLocked = locked, recentsPackage = recents))
+        }
+        assertTrue(suspendNew(recents, PolicyToApply.Apply(managed)))
+    }
+
+    @Test
     fun `new package during the lock is left usable only if the lock and the allowlist allow it`() {
         assertFalse(suspendNew("org.example.music", PolicyToApply.Apply(managed), locked = true, usable = setOf("org.example.music")))
         assertTrue(suspendNew("org.example.game", PolicyToApply.Apply(managed), locked = true, usable = setOf("org.example.game")))

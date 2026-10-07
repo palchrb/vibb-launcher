@@ -254,7 +254,7 @@ object UpdateFence {
             protected = protectedPackages(app, dpm, admin),
             controllable = controllablePackages(pm).toSet(),
             alreadySuspended = candidates.map { it.packageName }.filterTo(mutableSetOf()) { suspended(pm, it) },
-            // Design 16d: never the recents provider - the gestures keep working during the update.
+            // Design 16d guard 2: the recents provider is fenced too, although pinned in the kiosk.
             recentsPackage = AppEnforcer.systemRecentsPackage(app),
         )
         val planned = FenceRecord(
@@ -336,7 +336,7 @@ object UpdateFence {
         } catch (e: Exception) {
             emptySet()
         }
-        val outcome = runRelease(platform(app, dpm, admin), record, controllableNow)
+        val outcome = runRelease(platform(app, dpm, admin), record, controllableNow, recentsPackage = AppEnforcer.systemRecentsPackage(app))
         fenced = false
         committingSession = null
         val before = lastSummary(app)

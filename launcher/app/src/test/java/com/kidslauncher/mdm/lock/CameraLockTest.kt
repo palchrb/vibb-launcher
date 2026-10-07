@@ -22,6 +22,8 @@ class CameraLockTest {
         )
         // A headless system camera component (no launcher icon) is never touched (the boot-loop class).
         assertEquals(emptySet<String>(), cameraLockTargets(setOf("com.oem.headlesscam"), emptySet(), own, emptySet()))
+        // Design 16d: never the recents provider, even if it answers a camera intent.
+        assertEquals(setOf(camera), cameraLockTargets(setOf(camera, "com.oem.launcher"), setOf(camera, "com.oem.launcher"), own, emptySet(), recentsPackage = "com.oem.launcher"))
     }
 
     @Test

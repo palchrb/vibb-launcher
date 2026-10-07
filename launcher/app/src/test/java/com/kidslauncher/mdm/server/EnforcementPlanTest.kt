@@ -35,6 +35,27 @@ class EnforcementPlanTest {
         lockUsableApps = usable, ruleBlocksCalls = noCalls, timeRulesSet = rules, budgetSet = budget,
     )
 
+    @Test
+    fun `the recents provider is never hidden or suspended - allowlist, SMS off, time-rule lock, kiosk (16d)`() {
+        val recents = "com.oem.launcher"
+        val withIcon = controllable + recents
+        for (locked in listOf(false, true)) {
+            for (calls in listOf(CallPolicyState.Unmanaged, CallPolicyState.UnknownFailClosed)) {
+                val plan = computeEnforcementPlan(
+                    listOf("org.example.game"), true, 0, false, withIcon, OWN, DIALER,
+                    callState = calls, smsPackages = setOf(SMS, recents), scheduleLocked = locked, recentsPackage = recents,
+                )
+                assertTrue(recents in plan.neverRestrict)
+                assertFalse("locked $locked, $calls", recents in plan.suspend)
+                assertFalse("locked $locked, $calls", recents in plan.hide)
+                // Everything else not allowed still is.
+                assertTrue("org.example.music" in plan.hide)
+            }
+        }
+        // Not named: an ordinary controllable app - hidden when not allowed.
+        assertTrue(recents in computeEnforcementPlan(listOf("org.example.game"), true, 0, false, withIcon, OWN, DIALER).hide)
+    }
+
     private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = true))
     private val callsOff = CallPolicyState.Managed(CallRules(callsEnabled = false, smsEnabled = true))
     private val smsOff = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = false))

@@ -209,7 +209,7 @@ object CameraLock {
         val protected = setOfNotNull(systemDialerPackage(app), defaultDialer) + inputMethodPackages(app) +
             runCatching { AppEnforcer.resolvePinLockHelpers(app) }.getOrDefault(emptySet()) +
             runCatching { AppEnforcer.resolveLockTaskHelpers(app) }.getOrDefault(emptySet())
-        return cameraLockTargets(cameras, controllable, app.packageName, protected)
+        return cameraLockTargets(cameras, controllable, app.packageName, protected, AppEnforcer.systemRecentsPackage(app))
     }
 
     /** On its own coroutine, never the camera thread (`apply()` waits for AppEnforcer's lock). */

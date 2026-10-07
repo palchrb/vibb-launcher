@@ -163,7 +163,13 @@ actions (split screen, pin, freeform, wallpaper), the desync check above, and th
    - add it to the kiosk lock-task packages whenever the kiosk is on and the block bit is set, and to the PIN-lock
      helpers when that is needed for the same race;
    - restore OVERVIEW: revert design 16's `kioskFeatures` drop, per the user's gesture rule;
-   - the update fence never suspends or holds it, so recents keeps working during our self-update.
+   - the update fence keeps suspending it during our self-update commit, like any other HOME candidate (experiment
+     2's guard 2): on a Pixel it is the stock launcher, the fallback Home the fence exists to stop. The update runs at
+     night with the screen off, so a minute without Recents doesn't matter. (Corrected the same day: the first text
+     said "never suspends or holds it", a mistake.)
+   - enforcement never hides or suspends it (the allowlist, SMS off, a new or updated package, the time-rule lock, the
+     camera lock): it is in the never-restrict set. Home and the drawer still leave it out even if it has a launcher
+     icon, like the Play Store outside install mode. The fence is the only thing that suspends it.
 
    Residual risk, accepted by default unless the user vetoes: an allowed app could explicitly start the stock home,
    settings or search of that package. No kid-reachable path was found.
@@ -172,8 +178,9 @@ actions (split screen, pin, freeform, wallpaper), the desync check above, and th
 
 ## Implementation status (2026-10-07)
 
-Code with unit tests, **not device-tested** (no emulator in this pass). Commits `0cb8b0a7` (decision 1) and
-`0104eff0` (decision 2); `launcher/CLAUDE.md` design 16 section.
+Code with unit tests, **not device-tested** (no emulator in this pass). Commits `0cb8b0a7` (decision 1), `0104eff0`
+(decision 2) and the follow-up after it (the fence suspends the provider again; never-restrict); `launcher/CLAUDE.md`
+design 16 section.
 
 **Decision 1 - status-bar heal (security).** `setStatusBarDisabled` off/on can't do it: in lock task DPMS only records
 it (LockTaskController owns the status bar; AOSP `notifyLockTaskModeChanged`), and a same-value call is a no-op. So
@@ -206,11 +213,20 @@ OVERVIEW still stays (the dialog returns there rather than a gesture going). Eac
 - PIN-lock helpers (kiosk off): **not added.** The kiosk-off lock has no block bit (a violating start is just
   aborted - no BlockedAppActivity, so no stale task), except during a VoIP call over the lock (design 17), where
   pinning would let the call app start the stock home over the lock.
-- Update fence: `fencePlan` never suspends it (`FenceSkip.RECENTS`, whether or not it is pinned), and the orphan sweep
-  still releases it if an older build's fence suspended it. **Trade-off to confirm with the user:** this follows the
-  decision ("never suspends or holds it") and not experiment 2's guard 2 ("still suspends ... or unpins"): on a phone
-  whose provider is the stock launcher (Pixel), that launcher stays the fallback HOME for the ~1 min of our update when
-  `update_fence` is on (default off); the fence still blocks the status bar and every other HOME.
+- Update fence (guard 2): `fencePlan(..., recentsPackage)` suspends it like any HOME candidate although it is pinned
+  (a lock-task package and kiosk-block helper, so in the fence's protected set) and although enforcement never
+  restricts it (with a launcher icon it is "controllable" without being enforcement's); ours, never, persistent,
+  FallbackHome and already suspended still skip it. The release unsuspends it itself (`runRelease(...,
+  recentsPackage)`), and the orphan sweep takes it too. The first implementation (`0104eff0`) excluded it, following
+  the decision's first text - reverted.
+- Never restricted by enforcement: `AppEnforcer.systemRecentsPackage` (system app only) is in
+  `computeEnforcementPlan`'s never-restrict set (allowlist, SMS off, time-rule lock - so `apply()` unsuspends and
+  unhides it whenever no fence holds it), `shouldSuspendNewPackage` (an install or update of it) and
+  `cameraLockTargets` exclude it. The notification rule never suspends or hides anything; its notifications are still
+  cancelled like any non-allowed app's (keeping them would let a tap open the pinned stock launcher). Home and the
+  drawer leave it out (`AppFilter.kidListable`, from `recentsPackage()`), even with a launcher icon and whatever the
+  allowlist says. So a stock launcher with a launcher icon (possibly the Jelly Star's) no longer loses quickstep to
+  `apply()`.
 
 **Emulator checks (Pixel AVD, gesture nav, kiosk + PIN lock):**
 - [ ] `smoke-test.sh REBOOT=1` three times, each from UNLOCKED (unlock, then reboot): the new shade check PASSes and
@@ -224,10 +240,10 @@ OVERVIEW still stays (the dialog returns there rather than a gesture going). Eac
 - [ ] Recents provider: `cmd overlay lookup android android:string/config_recentsComponentName` and the launcher's
   `Recents provider` log line agree; it is a system app and pinned. Nav mode: `settings get secure navigation_mode`,
   `cmd overlay list | grep navbar`.
-- [ ] That package is **not controllable** (no LAUNCHER activity: `cmd package query-activities -a
-  android.intent.action.MAIN -c android.intent.category.LAUNCHER | grep <pkg>`). If it is, `apply()` hides and
-  suspends it unless allowlisted and quickstep is gone (§4: no handle, no Home/Recents gesture) - then it needs a
-  `neverRestrict` exemption first.
+- [ ] Whether that package has a launcher icon (`cmd package query-activities -a android.intent.action.MAIN -c
+  android.intent.category.LAUNCHER | grep <pkg>`): if so, it is never hidden or suspended (`pm list packages -s -u`
+  / `dumpsys package <pkg> | grep -E 'hidden|suspended'` after an apply and a time-rule lock) and still not on Home
+  or in the drawer.
 - [ ] Its exported activities (`dumpsys package <pkg>`, `am start -n` each) and Overview's actions (split screen,
   pin, freeform, wallpaper, Pause app, Screenshot/Select): what opens, what gives the dialog, whether anything reaches
   Settings or the stock home with a kid's input.
@@ -235,4 +251,5 @@ OVERVIEW still stays (the dialog returns there rather than a gesture going). Eac
   right after each unlock.
 - [ ] The shade over the lock after those reboots: the smoke test's 16d checks, and a manual pull of the shade (and
   QS) right as the lock comes up.
-- [ ] With `update_fence` on (11 doc A3): the gestures during the update tail with the provider left unsuspended.
+- [ ] With `update_fence` on (11 doc A3): the provider is suspended during the commit (the fence log line's
+  `suspended`), unsuspended at the release, and the gestures work again right after it.

@@ -288,6 +288,7 @@ object AppEnforcer {
             playState = playState,
             blockActivityStart = policy?.blockActivityStart == true,
             lockTaskHelpers = if (policy?.blockActivityStart == true) resolveLockTaskHelpers(context) else emptySet(),
+            recentsPackage = systemRecentsPackage(context),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -728,8 +729,10 @@ object AppEnforcer {
     }
 
     /**
-     * Design 16d: the recents provider's package when it is a system app (else `null`) - the update
-     * fence never suspends it, so the gestures keep working during our self-update.
+     * Design 16d: the recents provider's package when it is a system app (else `null`) - never
+     * hidden or suspended by enforcement ([computeEnforcementPlan]'s never-restrict set,
+     * [shouldSuspendNewPackage], the camera lock); the update fence is the only thing that
+     * suspends it, for the minute of our self-update.
      */
     internal fun systemRecentsPackage(context: Context): String? =
         helperInfo(context, recentsPackage())?.takeIf { it.system }?.packageName
@@ -1013,6 +1016,7 @@ object AppEnforcer {
             systemDialer = systemDialerPackage(context),
             scheduleLocked = lock.locked,
             lockUsableApps = lock.usableApps,
+            recentsPackage = systemRecentsPackage(context),
         )
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         // A newly installed app can't sneak in its own calls while calls are managed.

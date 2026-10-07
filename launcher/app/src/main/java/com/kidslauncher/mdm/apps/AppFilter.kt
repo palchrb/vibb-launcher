@@ -7,6 +7,7 @@ import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.play.playPackageLaunchable
+import com.kidslauncher.mdm.server.recentsPackage
 import com.kidslauncher.mdm.server.systemDialerPackage
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import java.util.Locale
@@ -25,6 +26,8 @@ class AppFilter(
         val pinned = LauncherPreferences.minimalist().apps() ?: setOf()
 
         val blockedDialer = blockedSystemDialer()
+        // Design 16d: enforcement never hides or suspends the recents provider - kept off here.
+        val recentsProvider = recentsPackage()
         // Play services/GSF/the Play Store are never on Home or in the drawer - the store only
         // during the parent's install mode (handy step 7).
         val installMode = try {
@@ -37,8 +40,7 @@ class AppFilter(
             hiddenVisibility.predicate(hidden, info)
                     && pinnedVisibility.predicate(pinned, info)
                     && !isMdmSuspended(info)
-                    && packageName != blockedDialer
-                    && (packageName == null || playPackageLaunchable(packageName, installMode))
+                    && kidListable(packageName, blockedDialer, recentsProvider, installMode)
         }
 
         return apps
@@ -81,6 +83,17 @@ class AppFilter(
     }
 
     companion object {
+        /**
+         * Whether an app may be on Home and in the drawer: never the system dialer while it is
+         * blocked ([blockedDialer]); never the system's recents provider ([recentsProvider],
+         * design 16d - enforcement never hides or suspends it, so its launcher icon, if the stock
+         * launcher has one, must not show); Play core only as [playPackageLaunchable] allows (the
+         * Play Store in install mode).
+         */
+        fun kidListable(packageName: String?, blockedDialer: String?, recentsProvider: String?, installMode: Boolean): Boolean =
+            packageName != blockedDialer &&
+                (packageName == null || (packageName != recentsProvider && playPackageLaunchable(packageName, installMode)))
+
         enum class AppSetVisibility(
             val predicate: (set: Set<AbstractAppInfo>, AbstractDetailedAppInfo) -> Boolean
         ) {

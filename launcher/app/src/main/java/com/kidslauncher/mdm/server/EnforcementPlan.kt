@@ -115,6 +115,11 @@ data class EnforcementPlan(
  *   OVERVIEW with the block bit is reverted (16d, the user's rule: never remove a stock gesture
  *   without asking) - the recents provider is pinned with the other helpers instead
  *   ([HelperKind.RECENTS]).
+ * - [recentsPackage]: the system's recents provider, a system app ([AppEnforcer.systemRecentsPackage]);
+ *   in [EnforcementPlan.neverRestrict] (design 16d): never hidden or suspended by enforcement -
+ *   not by the allowlist, SMS off or a time-rule lock - so quickstep and the gestures keep
+ *   working on any phone, also one whose stock launcher has a launcher icon. AppFilter keeps it off
+ *   Home and the drawer; only the update fence suspends it.
  */
 fun computeEnforcementPlan(
     allowlist: List<String>?,
@@ -137,8 +142,9 @@ fun computeEnforcementPlan(
     playState: PlayState = PlayState(),
     blockActivityStart: Boolean = false,
     lockTaskHelpers: Set<String> = emptySet(),
+    recentsPackage: String? = null,
 ): EnforcementPlan {
-    val neverRestrict = setOfNotNull(ownPackage, systemDialer) + inputMethods + PLAY_NEVER_RESTRICT
+    val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
     val appsManaged = allowlist != null && !overrideActive
     val locked = scheduleLocked && !overrideActive

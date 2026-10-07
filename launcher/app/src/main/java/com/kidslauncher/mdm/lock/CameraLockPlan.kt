@@ -31,14 +31,17 @@ const val CAMERA_LOCK_V1 = 1
  * `ACTION_IMAGE_CAPTURE`) that enforcement owns ([controllable]: an app with a launcher icon or
  * a third-party one - never a headless system component, the boot-loop class), minus ours, the
  * [protected] packages (dialers, emergency dialer, Telecom, keyboards, the lock's and the kiosk
- * block's helpers) and Play core.
+ * block's helpers), the system's recents provider ([recentsPackage], design 16d: never suspended
+ * by enforcement) and Play core.
  */
 fun cameraLockTargets(
     cameraHandlers: Set<String>,
     controllable: Set<String>,
     ownPackage: String,
     protected: Set<String>,
-): Set<String> = (cameraHandlers intersect controllable) - ownPackageFamily(ownPackage) - protected - PLAY_CORE
+    recentsPackage: String? = null,
+): Set<String> =
+    (cameraHandlers intersect controllable) - ownPackageFamily(ownPackage) - protected - setOfNotNull(recentsPackage) - PLAY_CORE
 
 sealed interface CameraLockStep {
     /** Write [record] first (it already holds [packages]), then suspend [packages]. */

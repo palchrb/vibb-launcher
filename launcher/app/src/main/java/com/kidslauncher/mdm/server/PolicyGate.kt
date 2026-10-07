@@ -240,7 +240,8 @@ fun policyState(outcome: FreshOutcome, cached: CachedPolicy, policyEverApplied: 
 /**
  * The pure core of [AppEnforcer.enforceOnNewPackage]: should a just-installed [packageName] be
  * suspended and hidden right away? Same rules as [computeEnforcementPlan] (never our own package
- * or the system dialer; everything else while [scheduleLocked] except the lock's [lockUsableApps]);
+ * or the system dialer or the system's [recentsPackage] (design 16d); everything else while
+ * [scheduleLocked] except the lock's [lockUsableApps]);
  * with no usable policy on a phone that has had one, the [PolicyToApply.Fallback] plan decides
  * (nothing allowed if even that is unreadable).
  */
@@ -252,9 +253,10 @@ fun shouldSuspendNewPackage(
     systemDialer: String?,
     scheduleLocked: Boolean = false,
     lockUsableApps: Set<String> = emptySet(),
+    recentsPackage: String? = null,
 ): Boolean {
     if (overrideActive) return false
-    if (packageName == ownPackage || packageName == systemDialer) return false
+    if (packageName == ownPackage || packageName == systemDialer || packageName == recentsPackage) return false
     // Play services/GSF are never restricted (FCM); the Play Store is suspended by the next
     // apply() according to install mode and the update window - an update of it lands here too.
     if (packageName in com.kidslauncher.mdm.play.PLAY_CORE) return false
