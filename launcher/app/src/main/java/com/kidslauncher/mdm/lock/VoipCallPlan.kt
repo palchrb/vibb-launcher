@@ -79,6 +79,99 @@ fun voipNoticeKind(
 /** `Notification.CallStyle.CALL_TYPE_INCOMING` (the `EXTRA_CALL_TYPE` int). */
 const val CALL_TYPE_INCOMING = 1
 
+/**
+ * Whether a notice rings over the lock: a ring with its full-screen intent, or (17b QA #4) one
+ * whose full-screen intent Android dropped but that can be answered - the card answers it.
+ */
+fun voipRings(kind: VoipNoticeKind, hasAnswer: Boolean): Boolean =
+    kind == VoipNoticeKind.RINGING || (kind == VoipNoticeKind.FSI_DENIED && hasAnswer)
+
+/**
+ * The extra NotificationCompat's CallStyle puts on the Decline and Answer actions it adds to
+ * `Notification.actions` (androidx core `NotificationCompat.CallStyle.makeAction`, checked 1.17).
+ */
+const val KEY_CALL_STYLE_ACTION = "key_action_priority"
+
+/** One `Notification.Action` as the answer pick sees it: its intent and whether CallStyle added it. */
+data class CallAction<T>(val intent: T?, val callStyle: Boolean)
+
+/**
+ * The ring's answer intent (design 17b, QA #1), never by title or semantic action (CallStyle sets
+ * none; `SEMANTIC_ACTION_CALL` means "call back"): the CallStyle's `EXTRA_ANSWER_INTENT` (platform
+ * style on 31+ and NotificationCompat both set it), else the one action CallStyle added
+ * ([KEY_CALL_STYLE_ACTION]) that isn't the decline intent. The content intent is no input - Element's
+ * *is* its answer intent, but only this pick decides. `null`: Answer sends the full-screen intent.
+ */
+fun <T> pickAnswerIntent(answerExtra: T?, decline: T?, actions: List<CallAction<T>>): T? {
+    if (answerExtra != null && answerExtra != decline) return answerExtra
+    val added = actions.mapNotNull { action -> action.intent?.takeIf { action.callStyle && it != decline } }.distinct()
+    return added.singleOrNull()
+}
+
+/** The lock has been resumed this long before it sends the ring's full-screen intent (17b QA #2):
+ * the wake activity goes on top of it right after its first resume. */
+const val VOIP_FSI_SETTLE_MS = 300L
+
+/** A send from the lock "came up" if the lock left the front within this (17b): a refused
+ * background start is silent. */
+const val VOIP_FSI_CHECK_MS = 1_500L
+
+/** The lock's try at the app's own ring screen for one ring ([ringId] = `VoipCalls.ringId`). */
+data class VoipFsiTry(
+    val ringId: Long,
+    val sentAtElapsedMs: Long,
+    /** The send went out (no exception). */
+    val sent: Boolean,
+    /** The lock left the front after the send: the app's screen came up (or the screen went off). */
+    val left: Boolean = false,
+)
+
+/** What the lock shows for a ring: nothing, the plain lock while its try at the app's screen is
+ * open ([WAIT]), or the ring card. */
+enum class VoipRingUi { NONE, WAIT, CARD }
+
+/** After a send from the resumed lock: the app's screen is overdue - the lock never left the front
+ * within [VOIP_FSI_CHECK_MS]. */
+fun voipStartOverdue(sentAtElapsedMs: Long, lockLeft: Boolean, nowElapsedMs: Long): Boolean =
+    !lockLeft && nowElapsedMs - sentAtElapsedMs !in 0 until VOIP_FSI_CHECK_MS
+
+/**
+ * Design 17b: a ring over the LOCKED lock shows the app's own ring screen first - the resumed lock
+ * sends its full-screen intent once per ring - and our card only as the fallback. Never over
+ * another call (ours or Telecom's, emergency included), the emergency flow or an alarm
+ * ([otherScreen], 17b QA #5), never after Avvis ([dismissed]).
+ */
+fun voipFsiDue(
+    ringId: Long?,
+    locked: Boolean,
+    dismissed: Boolean,
+    otherScreen: Boolean,
+    hasFullScreen: Boolean,
+    last: VoipFsiTry?,
+): Boolean = ringId != null && locked && !dismissed && !otherScreen && hasFullScreen && last?.ringId != ringId
+
+/**
+ * The card is the fallback (17b): at once without a full-screen intent (Android dropped it), else
+ * after the try - it threw, the lock came back during the same ring (Back or power on the app's
+ * screen; never a second try), or nothing came up within [VOIP_FSI_CHECK_MS]. Until then the plain
+ * lock (no card flash under the app's screen).
+ */
+fun voipRingUi(
+    ringId: Long?,
+    locked: Boolean,
+    dismissed: Boolean,
+    otherScreen: Boolean,
+    hasFullScreen: Boolean,
+    last: VoipFsiTry?,
+    nowElapsedMs: Long,
+): VoipRingUi = when {
+    ringId == null || !locked || dismissed || otherScreen -> VoipRingUi.NONE
+    !hasFullScreen -> VoipRingUi.CARD
+    last == null || last.ringId != ringId -> VoipRingUi.WAIT
+    !last.sent || last.left || voipStartOverdue(last.sentAtElapsedMs, last.left, nowElapsedMs) -> VoipRingUi.CARD
+    else -> VoipRingUi.WAIT
+}
+
 /** The exemption in force (CE prefs `voip_call`): one package at a time. */
 data class VoipRecord(
     val packageName: String,
@@ -207,7 +300,9 @@ fun voipRingWanted(
     otherCall: Boolean,
     emergencyFlow: Boolean,
     alarmRinging: Boolean,
-): Boolean = ringing && locked && !silenced && !otherCall && !emergencyFlow && !alarmRinging
+    /** The ringing app's call foreground service is up: answered (17b QA #6). */
+    callService: Boolean = false,
+): Boolean = ringing && locked && !silenced && !otherCall && !emergencyFlow && !alarmRinging && !callService
 
 /** A screen-off silences the ring only when it finds the lock already LOCKED and ringing - a
  * ring that began unlocked starts ringing at that screen-off instead (qa-16-17-code #5). */

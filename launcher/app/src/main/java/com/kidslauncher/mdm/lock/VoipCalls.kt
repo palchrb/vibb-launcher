@@ -20,8 +20,9 @@ private const val LOG_TAG = "VoipCalls"
 /**
  * One call-shaped notification of another app (design 17), in memory only: its [kind] from
  * category, channel and flags, and the intents the lock may send - the ringing notification's
- * full-screen intent and CallStyle decline action, the call service notification's content intent.
- * Never text; the key and the intents are never logged or reported.
+ * full-screen intent and CallStyle answer and decline actions ([pickAnswerIntent], 17b), the call
+ * service notification's content intent. Never text; the key and the intents are never logged or
+ * reported.
  */
 class VoipNotice(
     val key: String,
@@ -30,7 +31,11 @@ class VoipNotice(
     val fullScreen: PendingIntent? = null,
     val decline: PendingIntent? = null,
     val content: PendingIntent? = null,
-)
+    val answer: PendingIntent? = null,
+) {
+    /** Rings over the lock ([voipRings]): with its full-screen intent, or answerable without it. */
+    val rings: Boolean get() = voipRings(kind, answer != null)
+}
 
 /**
  * VoIP calls over the PIN lock (design 17, QA #12 with #1-#11): the glue around the pure
@@ -38,9 +43,10 @@ class VoipNotice(
  * notifications from the notification listener; it keeps the exemption ([phase], [pinnedPackage]),
  * stores it (CE prefs `voip_call`, so a new process keeps the package pinned until the listener
  * reports again - QA #4), tells [LockTaskChrome] and [PinLockRuntime] about changes, rings
- * ([VoipRinger]) and sends the ring's intents from the visible lock: Answer = the full-screen
- * intent (Element's ring screen), Decline = the CallStyle decline action - never the ring's content
- * intent, which is Element's answer intent. Main thread.
+ * ([VoipRinger]) and sends the ring's intents from the visible lock: the full-screen intent (the
+ * app's own ring screen, sent by the lock itself once per ring - design 17b), and on the card's taps
+ * the CallStyle answer action (else the full-screen intent) and decline action. Never over another
+ * call or the emergency flow ([send]). Main thread.
  */
 object VoipCalls {
     private const val PREFS = "voip_call"
@@ -161,9 +167,11 @@ object VoipCalls {
         appContext = app
         handler.removeCallbacks(poll)
         val allowed = if (notices.values.any { it.kind == VoipNoticeKind.RINGING || it.kind == VoipNoticeKind.FSI_DENIED }) eligible(app) else emptySet()
-        val ringing = notices.values.filter { it.kind == VoipNoticeKind.RINGING && it.packageName in allowed }.mapTo(sortedSetOf()) { it.packageName }
+        // 17b QA #4: a ring whose full-screen intent Android dropped rings too when it can be answered.
+        val ringing = notices.values.filter { it.rings && it.packageName in allowed }.mapTo(sortedSetOf()) { it.packageName }
         val inCall = notices.values.filter { it.kind == VoipNoticeKind.IN_CALL }.mapTo(mutableSetOf()) { it.packageName }
-        updateFsiDenied(app, ringing, notices.values.filter { it.kind == VoipNoticeKind.FSI_DENIED && it.packageName in allowed }.map { it.packageName })
+        val withFullScreen = notices.values.filter { it.kind == VoipNoticeKind.RINGING && it.packageName in allowed }.mapTo(mutableSetOf()) { it.packageName }
+        updateFsiDenied(app, withFullScreen, notices.values.filter { it.kind == VoipNoticeKind.FSI_DENIED && it.packageName in allowed }.map { it.packageName })
         val verdict = voipExemption(
             record,
             VoipInputs(
@@ -258,8 +266,18 @@ object VoipCalls {
 
     private fun ringingNotice(): VoipNotice? {
         val pkg = ringingPackage ?: return null
-        return notices.values.lastOrNull { it.kind == VoipNoticeKind.RINGING && it.packageName == pkg }
+        return notices.values.lastOrNull { it.rings && it.packageName == pkg }
     }
+
+    /** The ring has the app's own ring screen (its full-screen intent); without it the card answers. */
+    val ringHasFullScreen: Boolean get() = ringingNotice()?.fullScreen != null
+
+    /** The ringing app's call foreground service is up: answered, the lock's ring stops (17b QA #6). */
+    val ringCallServiceUp: Boolean
+        get() {
+            val pkg = ringingPackage ?: return false
+            return notices.values.any { it.kind == VoipNoticeKind.IN_CALL && it.packageName == pkg }
+        }
 
     /** The card's app label (the app's own; design 14's override goes here once built). */
     fun ringingLabel(context: Context): String? {
@@ -272,9 +290,18 @@ object VoipCalls {
         }
     }
 
-    /** Answer on the card: the ring's full-screen intent (the app's ring screen) - only ever that. */
-    fun answer(context: Context): Boolean {
+    /** Design 17b: the app's own ring screen (the ring's full-screen intent), sent by the resumed
+     * lock itself once per ring ([voipFsiDue]). */
+    fun showRingScreen(context: Context): Boolean {
         val intent = ringingNotice()?.fullScreen ?: return false
+        return send(context, intent)
+    }
+
+    /** Answer on the card (17b): the CallStyle answer action ([pickAnswerIntent]) - one tap answers;
+     * without one the full-screen intent (the app's ring screen). */
+    fun answer(context: Context): Boolean {
+        val notice = ringingNotice() ?: return false
+        val intent = notice.answer ?: notice.fullScreen ?: return false
         return send(context, intent)
     }
 
@@ -296,13 +323,19 @@ object VoipCalls {
     /**
      * From our visible, resumed lock (QA #3): a PendingIntent's *sender* may start an activity in
      * the background only with a visible window and its opt-in - the device-owner and HOME
-     * exemptions are the caller's, not the sender's. A refused start is silent; a re-posted
-     * notification's cancelled intent throws (then `false`: the card says so, the next post brings
-     * the new one).
+     * exemptions are the caller's, not the sender's. A refused start is silent (17b: the lock checks
+     * that it left the front, [VOIP_FSI_CHECK_MS]); a re-posted notification's cancelled intent
+     * throws (then `false`: the card says so, the next post brings the new one). Never while another
+     * call (emergency included) or the emergency flow is on (17b QA #5).
      */
     private fun send(context: Context, intent: PendingIntent): Boolean = try {
-        intent.send(context, 0, null, null, null, null, visibleSenderOptions())
-        true
+        if (PinLockRuntime.voipCallOrEmergency(context)) {
+            Log.i(LOG_TAG, "Another call or the emergency flow is on: nothing sent")
+            false
+        } else {
+            intent.send(context, 0, null, null, null, null, visibleSenderOptions())
+            true
+        }
     } catch (e: PendingIntent.CanceledException) {
         Log.w(LOG_TAG, "The call app's intent was cancelled")
         false

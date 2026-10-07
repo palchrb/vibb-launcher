@@ -204,3 +204,47 @@ Decision:
    - the fallback timing.
    - Emulator: locked, screen off, ring, then Element's ring screen with our ringtone; answering once gives the
      call.
+
+## 17b QA review (2026-10-07)
+Checked against `lock/Voip*`, `PinLockActivity`, `PinLockRuntime`, `badges/VoipCallReader`, AOSP 16 BASC, androidx core 1.17 (`NotificationCompatBuilder`, `NotificationCompat$CallStyle`, javap) and Element X develop (`RingingCallNotificationCreator`, `IncomingCallActivity`, `ActiveCallManager`).
+1. **High - picking the answer.** NotificationCompat puts CallStyle's `getActionsListWithSystemActions()` = [decline, answer] into `Notification.actions`, each marked with the extra `key_action_priority`; **no semantic action** (`SEMANTIC_ACTION_NONE`; `SEMANTIC_ACTION_CALL` means "call back", wrong to match), localized titles. Platform (31+) and compat both set `EXTRA_ANSWER_INTENT`. Element: `contentIntent` **is** answerIntent, `deleteIntent` is the decline. Pick `EXTRA_ANSWER_INTENT`, else the one marked action that isn't `EXTRA_DECLINE_INTENT`; never by title/semantic, never the content intent as such; none -> Svar sends the FSI (two taps).
+2. **High - "came up within 1.5 s".** "The exemption holds" is no signal (RINGING holds it whatever happens); only the lock leaving the front after the send is. The lock's first resume races `VoipWakeActivity` (over it for 500 ms; a pause from it would read as "came up"): send only after 300 ms resumed (cancelled on pause), with the screen on, once per ring (`ringId`); the plain lock until 1.5 s after the send (no card flash); any later resume in the same ring (Back/power on Element's screen) shows the card, never a second send.
+3. **Medium - a BAL block hits the card too.** The answer action is the same activity from the same sender under the same rules (BASC `checkBackgroundActivityStartAllowedByRealCaller`: visible window + `ALLOW_IF_VISIBLE`, Home exempt from the app-switch state; Element as creator (target 35+) gives nothing). The card fixes a cancelled/missing/denied FSI and a screen that closed itself, not a block: give Svar the same 1.5 s check ("Klarte ikke å åpne samtalen"). Device check: logcat `BAL`.
+4. **Medium - "or the FSI was denied" is unreachable.** `voipNoticeKind` makes it FSI_DENIED, which never rings (no wake, ringtone or card). Let an FSI-denied CALL notification with an answer intent ring, card at once (still reported).
+5. **High - intents over a phone/emergency call.** The card (`renderVoip`) ignores what the ringer honours (our call, Telecom call, emergency flow, alarm): the lock resumes during our call (under InCallActivity) and over the system dialer via Home, so card + Svar could start Element's call; `showVoipCall` checks only `ourCall`; the new auto-send would fire there too. One guard for the card, the send and every intent (answer, decline, reopen).
+6. **Medium - the ringtone.** Stops on ring gone, ring limit/cap, Avvis, power button, unlock, another call/emergency/alarm (<= 2 s poll), process death. Missing: the call FGS appearing while the ring still exists (the decision's stop; not in `voipRingWanted`), and Svar - Element cancels the ring only in `joinedCall`, seconds of call-UI loading later: Svar silences this ring. Answered on Element's own screen it rings until the join, as Element itself does (accepted).
+7. **Low - re-posts and double launch.** All three intents are FLAG_CANCEL_CURRENT (codes 1-3): a re-post cancels the kept ones, the send throws -> card at once, the reader keeps the latest post. If SystemUI also launches the FSI (open 17 check), IncomingCallActivity is singleTask: our send only re-delivers.
+8. **Low - kiosk off, no lock task while ringing.** Element's screen now comes up without a tap, so its Recents gesture reaches other apps for the ring (<= 2 min) where 17 needed Svar first; same exposure, bounded by the ring limit. Device-check.
+
+## 17b implementation status (2026-10-07)
+
+Built: 17b with QA #1-#6 (launcher paths under `launcher/app/src/main/java/com/kidslauncher/mdm/`).
+- **Pure** (`lock/VoipCallPlan.kt`, `VoipCallPlanTest`): `pickAnswerIntent` (#1, `CallAction` = intent + CallStyle
+  marker `KEY_CALL_STYLE_ACTION`), `voipRings` (#4), `voipFsiDue` (once per ring; LOCKED, not after Avvis, not over
+  another call/emergency flow/alarm, only with an FSI), `voipRingUi` (NONE / WAIT = the plain lock / CARD: no FSI, the
+  send threw, the lock came back, or `voipStartOverdue` - 1.5 s `VOIP_FSI_CHECK_MS` after the send), `VOIP_FSI_SETTLE_MS`
+  300 ms, `voipRingWanted(callService)` (#6).
+- **Reader**: rings (with or without FSI) keep `EXTRA_ANSWER_INTENT` / the marked actions' intents - never a title,
+  semantic action or the ring's content intent (`VoipCallGuardTest`).
+- **Runtime**: `VoipCalls.showRingScreen` (FSI), `answer` (answer action, else FSI), every send (also decline and the
+  in-call reopen) behind `PinLockRuntime.voipCallOrEmergency`, the card/FSI decisions also behind an alarm
+  (`voipOtherScreen`) (#5); `PinLockRuntime.sendVoipRingScreen`/`voipLockLeft`/`answeredVoipRing`
+  (Svar silences the ring); `PinLockActivity` sends 300 ms after a resume with the screen on (cancelled in `onPause`),
+  re-renders at 1.5 s, and shows "Klarte ikke å åpne samtalen" when Svar's start didn't take the lock off the front.
+- Not built: #7 needs nothing; #8 is a device check.
+
+Open device checks (emulator, then the Jelly Star; Element X from another account; logcat `VoipCalls`/`PinLockRuntime`/`BAL`):
+- [ ] Screen off + LOCKED, kiosk on and off: the screen wakes, Element's own ring screen comes up (no card in between),
+  our ringtone plays; answering once there gives the call; hang-up brings the PIN lock back.
+- [ ] Same with the screen on and the lock in front (the wake activity's pause doesn't count as "came up").
+- [ ] Decline on Element's screen, and a timed-out ring: back to the lock, ringtone stops.
+- [ ] Back on Element's ring screen: the lock with the card; Svar answers with one tap (call UI opens, ring stops at
+  once), Avvis declines.
+- [ ] A failed send (Element force-stopped mid-ring cancels its intents): the card at once. A BAL-blocked start (logcat
+  `BAL`, if one is ever seen): the card at 1.5 s, and Svar then shows "Klarte ikke å åpne samtalen".
+- [ ] Element X without USE_FULL_SCREEN_INTENT (`appops set io.element.android.x USE_FULL_SCREEN_INTENT deny`): wake,
+  ringtone and the card at once, Svar answers, the device page still warns.
+- [ ] A VoIP ring during a phone call (our call and an emergency call), the emergency flow and an alarm: no wake, card,
+  ring screen or ringtone; after them the ring (if still on) shows Element's screen once.
+- [ ] Power button on Element's ring screen silences our ringtone; the next screen-on shows Element's screen or the card.
+- [ ] Kiosk off: what Recents and Home reach from Element's ring screen during the ring (QA #8).

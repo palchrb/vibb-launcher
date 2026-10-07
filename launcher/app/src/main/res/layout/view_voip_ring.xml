@@ -2,8 +2,9 @@
 <!-- lock.PinLockActivity's ring screen for a VoIP call (design 17, QA #12): shown over the keypad
      while an allowed app's call rings and the phone is LOCKED - the app's icon and name (never the
      caller: the notification doesn't say who it is), Decline and Answer as on our call screen.
-     Answer opens the app's own ring screen. Emergency call and Parent code stay reachable as on
-     the lock (qa-16-17-code #3); nothing else leads anywhere. -->
+     Since design 17b only the fallback when the app's own ring screen didn't come up; Answer sends
+     the CallStyle answer action (one tap answers). Emergency call and Parent code stay reachable as
+     on the lock (qa-16-17-code #3); nothing else leads anywhere. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/voip_ring_root"
     android:layout_width="match_parent"

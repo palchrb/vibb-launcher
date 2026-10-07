@@ -213,6 +213,7 @@ class VoipCallPlanTest {
         assertFalse("silenced for this ring", voipRingWanted(true, true, silenced = true, otherCall = false, emergencyFlow = false, alarmRinging = false))
         assertFalse("unlocked: the app's own notification rings", voipRingWanted(true, locked = false, silenced = false, otherCall = false, emergencyFlow = false, alarmRinging = false))
         assertFalse(voipRingWanted(ringing = false, locked = true, silenced = false, otherCall = false, emergencyFlow = false, alarmRinging = false))
+        assertFalse("17b: the app's call service is up - answered", voipRingWanted(true, true, false, false, false, false, callService = true))
         // The power button silences a ringing lock; a ring that began unlocked starts at that screen-off.
         assertTrue(screenOffSilencesRing(lockedBefore = true, ringing = true))
         assertFalse(screenOffSilencesRing(lockedBefore = false, ringing = true))
@@ -230,5 +231,94 @@ class VoipCallPlanTest {
         assertEquals("DND with contacts only: the caller is no contact", RingPlan(sound = false, vibrate = false),
             ringPlan(RINGER_MODE_NORMAL, INTERRUPTION_FILTER_PRIORITY, false))
         assertEquals("unknown filter: the ringer mode", RingPlan(sound = true, vibrate = true), ringPlan(RINGER_MODE_NORMAL, 0, false))
+    }
+
+    // ---- 17b: the app's own ring screen first, the card as the fallback -------------------------
+
+    @Test
+    fun `17b - a ring whose full-screen intent was denied rings when it can be answered`() {
+        assertTrue(voipRings(VoipNoticeKind.RINGING, hasAnswer = false))
+        assertTrue(voipRings(VoipNoticeKind.FSI_DENIED, hasAnswer = true))
+        assertFalse("nothing to answer it with: reported only", voipRings(VoipNoticeKind.FSI_DENIED, hasAnswer = false))
+        assertFalse(voipRings(VoipNoticeKind.IN_CALL, hasAnswer = true))
+        assertFalse(voipRings(VoipNoticeKind.NONE, hasAnswer = true))
+    }
+
+    private fun cs(intent: String) = CallAction(intent, callStyle = true)
+    private fun plain(intent: String) = CallAction(intent, callStyle = false)
+
+    @Test
+    fun `17b - the answer intent - EXTRA_ANSWER_INTENT, else the one CallStyle action that isn't the decline`() {
+        // Element X (androidx core 1.17): extras carry both, actions = [decline, answer] marked by CallStyle,
+        // and the content intent *is* the answer intent.
+        assertEquals("answer", pickAnswerIntent("answer", "decline", listOf(cs("decline"), cs("answer"))))
+        assertEquals("no extra: the marked action", "answer", pickAnswerIntent(null, "decline", listOf(cs("decline"), cs("answer"))))
+        assertEquals("the app's own actions don't count", "answer",
+            pickAnswerIntent(null, "decline", listOf(plain("mute"), cs("decline"), cs("answer"), plain("reply"))))
+        assertEquals("an extra equal to the decline is no answer", "answer", pickAnswerIntent("decline", "decline", listOf(cs("decline"), cs("answer"))))
+        assertEquals("the same intent twice is one", "answer", pickAnswerIntent(null, "decline", listOf(cs("answer"), cs("answer"))))
+    }
+
+    @Test
+    fun `17b - never a guess - ambiguous, decline-only or unmarked actions give none (Answer sends the FSI)`() {
+        assertNull("two marked candidates", pickAnswerIntent(null, "decline", listOf(cs("a"), cs("b"))))
+        assertNull("only the decline", pickAnswerIntent(null, "decline", listOf(cs("decline"))))
+        // An unmarked action - e.g. one with the content intent - is never picked: no title, no semantic.
+        assertNull(pickAnswerIntent(null, "decline", listOf(plain("content"), cs("decline"))))
+        assertNull(pickAnswerIntent<String>(null, null, emptyList()))
+        assertNull("an action without an intent", pickAnswerIntent(null, "decline", listOf(CallAction<String>(null, true), cs("decline"))))
+        assertEquals("key_action_priority", KEY_CALL_STYLE_ACTION)
+    }
+
+    private fun due(ringId: Long? = 1L, locked: Boolean = true, dismissed: Boolean = false, other: Boolean = false, fsi: Boolean = true, last: VoipFsiTry? = null) =
+        voipFsiDue(ringId, locked, dismissed, other, fsi, last)
+
+    @Test
+    fun `17b - the lock sends the app's ring screen once per ring, never over another call, the emergency flow or an alarm`() {
+        assertTrue(due())
+        assertFalse("no ring", due(ringId = null))
+        assertFalse("unlocked: the app's own notification", due(locked = false))
+        assertFalse("after Avvis", due(dismissed = true))
+        assertFalse("a phone call, emergency, the emergency flow or an alarm is on (QA 5)", due(other = true))
+        assertFalse("no full-screen intent: the card", due(fsi = false))
+        assertFalse("tried for this ring - never a second time", due(last = VoipFsiTry(1L, 0L, sent = true)))
+        assertFalse(due(last = VoipFsiTry(1L, 0L, sent = false)))
+        assertTrue("a new ring tries again", due(ringId = 2L, last = VoipFsiTry(1L, 0L, sent = true, left = true)))
+    }
+
+    private fun ui(now: Long, last: VoipFsiTry?, ringId: Long? = 1L, locked: Boolean = true, dismissed: Boolean = false, other: Boolean = false, fsi: Boolean = true) =
+        voipRingUi(ringId, locked, dismissed, other, fsi, last, now)
+
+    @Test
+    fun `17b - the card only as the fallback, after the 1,5 s check`() {
+        val sentAt = 50_000L
+        val sent = VoipFsiTry(1L, sentAt, sent = true)
+        assertEquals("before the try: the plain lock", VoipRingUi.WAIT, ui(sentAt, last = null))
+        assertEquals("an old ring's try doesn't count", VoipRingUi.WAIT, ui(sentAt, last = VoipFsiTry(0L, 0L, true, left = true)))
+        assertEquals("within 1.5 s: no card flash under the app's screen", VoipRingUi.WAIT, ui(sentAt + VOIP_FSI_CHECK_MS - 1, sent))
+        assertEquals("nothing came up (a refused start is silent)", VoipRingUi.CARD, ui(sentAt + VOIP_FSI_CHECK_MS, sent))
+        assertEquals("the send threw", VoipRingUi.CARD, ui(sentAt, VoipFsiTry(1L, sentAt, sent = false)))
+        assertEquals("the lock is back during the same ring (Back, power)", VoipRingUi.CARD, ui(sentAt + 10, sent.copy(left = true)))
+        assertEquals("no full-screen intent (denied): the card at once", VoipRingUi.CARD, ui(sentAt, last = null, fsi = false))
+        for ((why, view) in listOf(
+            "no ring" to ui(sentAt, sent, ringId = null),
+            "unlocked" to ui(sentAt + VOIP_FSI_CHECK_MS, sent, locked = false),
+            "after Avvis" to ui(sentAt + VOIP_FSI_CHECK_MS, sent, dismissed = true),
+            "another call, the emergency flow or an alarm" to ui(sentAt + VOIP_FSI_CHECK_MS, sent, other = true),
+            "denied FSI over a call" to ui(sentAt, last = null, fsi = false, other = true),
+        )) {
+            assertEquals(why, VoipRingUi.NONE, view)
+        }
+    }
+
+    @Test
+    fun `17b - the came-up check's timing`() {
+        assertFalse(voipStartOverdue(sentAtElapsedMs = 1_000L, lockLeft = false, nowElapsedMs = 1_000L))
+        assertFalse(voipStartOverdue(1_000L, false, 1_000L + VOIP_FSI_CHECK_MS - 1))
+        assertTrue(voipStartOverdue(1_000L, false, 1_000L + VOIP_FSI_CHECK_MS))
+        assertFalse("the lock left the front: it came up", voipStartOverdue(1_000L, lockLeft = true, nowElapsedMs = 60_000L))
+        assertTrue("a clock going backwards never hides the card", voipStartOverdue(1_000L, false, 999L))
+        assertEquals(1_500L, VOIP_FSI_CHECK_MS)
+        assertTrue("the settle is well inside the check", VOIP_FSI_SETTLE_MS in 1 until VOIP_FSI_CHECK_MS)
     }
 }

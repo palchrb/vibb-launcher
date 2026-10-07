@@ -84,6 +84,23 @@ class PinLockActivity : AppCompatActivity() {
     /** A VoIP call held lock task off at the last check (qa-16-17-code #6). */
     private var voipHeldLockTask = false
 
+    /** Design 17b: the app's own ring screen, sent once the lock has been resumed
+     * [VOIP_FSI_SETTLE_MS] (the wake activity comes over it right after its first resume). */
+    private var voipFsiPending = false
+    private val voipFsiSend = Runnable {
+        voipFsiPending = false
+        if (resumed) {
+            PinLockRuntime.sendVoipRingScreen(this)?.let { recheck -> handler.postDelayed(voipRender, recheck) }
+            renderVoip()
+        }
+    }
+    private val voipRender = Runnable { renderVoip() }
+
+    /** Svar went out but the lock never left the front: the start was refused (17b QA #3). */
+    private val voipAnswerCheck = Runnable {
+        if (resumed && voipRing.root.visibility == View.VISIBLE) voipRing.voipRingError.visibility = View.VISIBLE
+    }
+
     private val waitTicker: Runnable = object : Runnable {
         override fun run() {
             val ticker = this
@@ -157,19 +174,26 @@ class PinLockActivity : AppCompatActivity() {
         }
     }
 
-    /** The ring screen: while an allowed app's call rings and the phone is LOCKED - not after
-     * Avvis for this ring (qa-16-17-code #3). */
+    /**
+     * A ring while LOCKED (design 17b, [voipRingUi]): first the app's own ring screen, sent by this
+     * lock once it is resumed and settled; the ring card only as the fallback - no full-screen
+     * intent, the send threw, nothing came up within [VOIP_FSI_CHECK_MS], or the lock is back during
+     * the same ring. Never after Avvis for this ring (qa-16-17-code #3), never over another call,
+     * the emergency flow or an alarm (17b QA #5).
+     */
     private fun renderVoip() {
         if (!::voipRing.isInitialized) return
-        val ringing = PinLockRuntime.mode == LockMode.LOCKED && VoipCalls.phase == VoipPhase.RINGING &&
-            VoipCalls.ringingPackage != null && !PinLockRuntime.voipRingDismissed
-        if (!ringing) {
+        if (resumed && !voipFsiPending && PinLockRuntime.voipFsiDueNow(this)) {
+            voipFsiPending = true
+            handler.postDelayed(voipFsiSend, VOIP_FSI_SETTLE_MS)
+        }
+        val pkg = VoipCalls.ringingPackage
+        if (PinLockRuntime.voipRingUiNow(this) != VoipRingUi.CARD || pkg == null) {
             voipRing.root.visibility = View.GONE
             voipRing.voipRingError.visibility = View.GONE
             voipShownFor = null
             return
         }
-        val pkg = VoipCalls.ringingPackage
         if (pkg != voipShownFor) {
             voipShownFor = pkg
             val label = VoipCalls.ringingLabel(this).orEmpty()
@@ -177,7 +201,7 @@ class PinLockActivity : AppCompatActivity() {
             voipRing.voipRingStatus.text = getString(R.string.voip_ring_via, label)
             voipRing.voipRingIcon.setImageDrawable(
                 try {
-                    pkg?.let { packageManager.getApplicationIcon(it) }
+                    packageManager.getApplicationIcon(pkg)
                 } catch (e: Exception) {
                     null
                 },
@@ -187,9 +211,18 @@ class PinLockActivity : AppCompatActivity() {
         voipRing.root.visibility = View.VISIBLE
     }
 
-    /** Answer: the app's own ring screen (its full-screen intent), sent from this visible lock. */
+    /** Answer (17b): the CallStyle answer action - one tap answers - sent from this visible lock;
+     * this ring goes silent. The lock not leaving the front within [VOIP_FSI_CHECK_MS] means the
+     * start was refused: the card says so. */
     private fun onVoipAnswer() {
-        if (!VoipCalls.answer(this)) voipRing.voipRingError.visibility = View.VISIBLE
+        handler.removeCallbacks(voipAnswerCheck)
+        if (!VoipCalls.answer(this)) {
+            voipRing.voipRingError.visibility = View.VISIBLE
+            return
+        }
+        voipRing.voipRingError.visibility = View.GONE
+        PinLockRuntime.answeredVoipRing(this)
+        handler.postDelayed(voipAnswerCheck, VOIP_FSI_CHECK_MS)
     }
 
     /** Avvis always hides the card and silences this ring, whatever the decline action did. */
@@ -223,6 +256,11 @@ class PinLockActivity : AppCompatActivity() {
     override fun onPause() {
         resumed = false
         handler.removeCallbacks(waitTicker)
+        // 17b: a pending try waits for the next resume; a sent one (or Svar) came up.
+        handler.removeCallbacks(voipFsiSend)
+        handler.removeCallbacks(voipAnswerCheck)
+        voipFsiPending = false
+        PinLockRuntime.voipLockLeft()
         PinLockRuntime.onLockPaused()
         super.onPause()
     }

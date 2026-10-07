@@ -418,6 +418,66 @@ object PinLockRuntime {
         syncVoipRinger(context)
     }
 
+    /** Svar on the card went out (17b QA #6): this ring is silent - the app cancels its ring only
+     * once the call is joined, seconds later. */
+    fun answeredVoipRing(context: Context) {
+        silencedRing = VoipCalls.ringId
+        syncVoipRinger(context)
+    }
+
+    /** The lock's try at the app's own ring screen (design 17b), one per ring. */
+    private var voipFsiTry: VoipFsiTry? = null
+
+    /** Another call (ours or Telecom's, emergency included) or the emergency dialer flow is on: no
+     * VoIP intent is ever sent ([VoipCalls] checks it at every send, 17b QA #5). */
+    fun voipCallOrEmergency(context: Context): Boolean {
+        val telecom = telecomInCall(context.applicationContext)
+        return ourCall() || telecom || emergencyFlowNow(telecom)
+    }
+
+    /** ... or a ringing alarm: no card, no ring screen and no ring (qa-16-17-code #1, 17b QA #5). */
+    fun voipOtherScreen(context: Context): Boolean = voipCallOrEmergency(context) || alarmNow(context.applicationContext)
+
+    /** What the lock shows for the current ring ([voipRingUi]). Main thread. */
+    fun voipRingUiNow(context: Context): VoipRingUi {
+        val ringId = VoipCalls.ringId ?: return VoipRingUi.NONE
+        return voipRingUi(
+            ringId = ringId,
+            locked = mode == LockMode.LOCKED,
+            dismissed = voipRingDismissed,
+            otherScreen = voipOtherScreen(context),
+            hasFullScreen = VoipCalls.ringHasFullScreen,
+            last = voipFsiTry,
+            nowElapsedMs = SystemClock.elapsedRealtime(),
+        )
+    }
+
+    /** The resumed lock sends the app's own ring screen now ([voipFsiDue]) - never with the screen
+     * off (a sleeping lock is no visible sender). Main thread. */
+    fun voipFsiDueNow(context: Context): Boolean {
+        val ringId = VoipCalls.ringId ?: return false
+        if (!interactive(context.applicationContext)) return false
+        return voipFsiDue(ringId, mode == LockMode.LOCKED, voipRingDismissed, voipOtherScreen(context), VoipCalls.ringHasFullScreen, voipFsiTry)
+    }
+
+    /** Design 17b: the resumed, settled lock sends the ring's full-screen intent - once per ring,
+     * whatever comes of it. Returns when the lock should look again (`null`: no try open). */
+    fun sendVoipRingScreen(context: Context): Long? {
+        if (!voipFsiDueNow(context)) return null
+        val ringId = VoipCalls.ringId ?: return null
+        val sent = VoipCalls.showRingScreen(context)
+        voipFsiTry = VoipFsiTry(ringId, SystemClock.elapsedRealtime(), sent)
+        Log.i(LOG_TAG, if (sent) "VoIP ring screen sent" else "VoIP ring screen couldn't be sent: the card")
+        return if (sent) VOIP_FSI_CHECK_MS else null
+    }
+
+    /** The lock left the front: the app's ring screen came up (17b) - a later resume in the same
+     * ring shows the card, never a second try. */
+    fun voipLockLeft() {
+        val last = voipFsiTry ?: return
+        if (last.ringId == VoipCalls.ringId && !last.left) voipFsiTry = last.copy(left = true)
+    }
+
     /** The lock's own ring on or off ([voipRingWanted]); on every VoIP evaluation (also the 2 s
      * poll while it rings) and every lock-mode change. Main thread. */
     fun syncVoipRinger(context: Context) {
@@ -430,6 +490,7 @@ object PinLockRuntime {
             otherCall = ourCall() || telecomInCall(app),
             emergencyFlow = emergencyFlowNow(telecomInCall(app)),
             alarmRinging = alarmNow(app),
+            callService = VoipCalls.ringCallServiceUp,
         )
         if (wanted) VoipRinger.start(app) else if (VoipRinger.active) VoipRinger.stop(app)
     }

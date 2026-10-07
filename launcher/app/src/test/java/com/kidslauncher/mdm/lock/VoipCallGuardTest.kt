@@ -8,8 +8,10 @@ import java.io.File
 
 /**
  * Design 17 source guards: the VoIP reader reads no text (privacy, like ElementDmReader), the
- * lock never sends the ring's content intent (Element's answer intent - QA #3), and the lock's
- * "system call" yield never uses `isInCall` (self-managed calls held the lock open - QA #7).
+ * lock never sends the ring's content intent (Element's answer intent - QA #3; since 17b the answer
+ * comes only from the CallStyle answer extra/actions, picked without titles), every send passes
+ * the other-call guard (17b QA #5), and the lock's "system call" yield never uses `isInCall`
+ * (self-managed calls held the lock open - QA #7).
  */
 class VoipCallGuardTest {
     private fun file(path: String) =
@@ -27,15 +29,18 @@ class VoipCallGuardTest {
             "EXTRA_TITLE", "EXTRA_TEXT", "EXTRA_BIG_TEXT", "EXTRA_SUB_TEXT", "EXTRA_INFO_TEXT", "EXTRA_SUMMARY_TEXT",
             "EXTRA_MESSAGES", "EXTRA_CONVERSATION_TITLE", "EXTRA_CALL_PERSON", "EXTRA_PEOPLE", "MessagingStyle",
             "tickerText", "getCharSequence", "getString", "Log.",
+            // 17b: an action is read by its intent and CallStyle's marker only - never its title.
+            "title", "semanticAction", "remoteInputs",
         )) {
             assertFalse(banned, reader.contains(banned))
         }
-        // The only extras it reads: the decline action and the call type (an int, qa-16-17 #8).
+        // The only extras it reads: the decline and answer actions and the call type (an int, qa-16-17 #8).
         assertEquals(
-            setOf("EXTRA_DECLINE_INTENT", "EXTRA_CALL_TYPE"),
+            setOf("EXTRA_DECLINE_INTENT", "EXTRA_ANSWER_INTENT", "EXTRA_CALL_TYPE"),
             Regex("Notification\\.(EXTRA_[A-Z_]+)").findAll(reader).map { it.groupValues[1] }.toSet(),
         )
         assertTrue(reader.contains("getInt(Notification.EXTRA_CALL_TYPE"))
+        assertTrue(reader.contains("CallAction(it.actionIntent, it.extras?.getBoolean(KEY_CALL_STYLE_ACTION) == true)"))
     }
 
     @Test
@@ -44,16 +49,25 @@ class VoipCallGuardTest {
         assertEquals(1, Regex("contentIntent").findAll(reader).count())
         val inCallBranch = reader.substringAfter("VoipNoticeKind.IN_CALL ->").substringBefore("\n")
         assertTrue(inCallBranch, inCallBranch.contains("content = n.contentIntent"))
-        val ringBranch = reader.substringAfter("VoipNoticeKind.RINGING ->").substringBefore("VoipNoticeKind.IN_CALL ->")
-        assertFalse(ringBranch.contains("content"))
+        assertTrue(reader.contains("VoipNoticeKind.RINGING, VoipNoticeKind.FSI_DENIED -> ring(sbn, n, kind)"))
+        val ring = reader.substringAfter("private fun ring(").substringBefore("\n    }")
+        assertTrue(ring, ring.contains("pickAnswerIntent("))
+        assertFalse(ring, ring.contains("content"))
     }
 
     @Test
-    fun `Answer sends the ring's full-screen intent only`() {
+    fun `the lock sends the ring's full-screen intent, Answer the CallStyle answer (else the FSI) - never a content intent`() {
         val calls = code(file("lock/VoipCalls.kt"))
+        val ringScreen = calls.substringAfter("fun showRingScreen(").substringBefore("\n    }")
+        assertTrue(ringScreen, ringScreen.contains("?.fullScreen"))
+        assertFalse(ringScreen, ringScreen.contains("answer") || ringScreen.contains("content"))
         val answer = calls.substringAfter("fun answer(").substringBefore("\n    }")
-        assertTrue(answer, answer.contains(".fullScreen"))
+        assertTrue(answer, answer.contains("notice.answer ?: notice.fullScreen"))
         assertFalse(answer, answer.contains("content"))
+        // 17b QA #5: one way out, behind the other-call guard.
+        assertEquals(1, Regex("\\.send\\(context, 0,").findAll(calls).count())
+        val send = calls.substringAfter("private fun send(").substringBefore("\n    }")
+        assertTrue(send, send.indexOf("voipCallOrEmergency(context)") in 0 until send.indexOf(".send(context, 0,"))
         // No key, intent or notice in any log line.
         for (line in calls.lines().filter { it.contains("Log.") }) {
             assertFalse(line, line.contains("key") || line.contains("notice") || line.contains("intent ="))
