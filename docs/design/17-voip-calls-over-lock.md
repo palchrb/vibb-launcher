@@ -171,3 +171,36 @@ Open device checks (emulator, then the Jelly Star; Element X from another accoun
 - [ ] A sideloaded Element without USE_FULL_SCREEN_INTENT: `FLAG_FSI_REQUESTED_BUT_DENIED` (0x4000) is set, the device
   page warns.
 - [ ] A self-managed call (WhatsApp/Signal) no longer holds the lock open (`isInManagedCall`).
+
+## 17b - Element's own ring screen first (user, 2026-10-07)
+
+Live: the ring card's "Svar" sends Element's full-screen intent (`IncomingCallActivity` without
+`EXTRA_ANSWER_IMMEDIATELY`), which is Element's own ring screen, so the kid has to answer a second time. User wish:
+when locked, only Element's original call screen should appear; failing that, our card must really answer.
+
+Decision:
+1. **Primary:**
+   - When a ring starts while LOCKED, wake the screen (VoipWakeActivity) as now.
+   - As soon as the lock is visible, send the notification's `fullScreenIntent` from it with `ALLOW_IF_VISIBLE`.
+     The user decided this: showing the app's own ring screen is the expected behaviour; the earlier "user-initiated
+     only" concern is lifted for this case.
+   - The lock yields as today (exemption), and our card is not shown.
+   - Our ringtone keeps playing, because Element's sound is suppressed while LOCKED. It stops when the ring
+     notification goes, the call FGS appears, or the cap hits.
+   - The phone-call, emergency and alarm precedence from qa-16-17 #1 is unchanged: none of this happens over them.
+2. **Fallback**, when the send throws, BAL-blocks or the FSI was denied:
+   - Show our card as now.
+   - "Svar" sends the CallStyle **answer** action (`Notification.actions` with the answer semantic / CallStyle
+     answer intent = `IncomingCallActivity` + `EXTRA_ANSWER_IMMEDIATELY`), so a single tap answers and opens the
+     call.
+   - "Avvis" sends decline, as now.
+   - Never send any intent without the kid's tap in the fallback.
+3. Detect a blocked start: verify that the app's activity comes up within ~1.5 s (lock pauses or the exemption
+   holds); if it doesn't, show the card.
+4. Tests:
+   - a pure choice between FSI-first and the card;
+   - the answer action picked from the notification's actions (semantic or title-independent), never the content
+     intent unless it is the answer action;
+   - the fallback timing.
+   - Emulator: locked, screen off, ring, then Element's ring screen with our ringtone; answering once gives the
+     call.
