@@ -147,3 +147,25 @@ Guards needed in either case:
 **Jelly Star:** run `cmd overlay lookup android android:string/config_recentsComponentName` to find the provider
 (likely `com.android.launcher3` or a vendor launcher). Then check that package's exported activities and its Overview
 actions (split screen, pin, freeform, wallpaper), the desync check above, and the stale task with and without the pin.
+
+## Decisions after experiment 2 (2026-10-07)
+
+1. **Security fix first (independent of the rest):** after a boot, SystemUI can ignore the PIN lock's status-bar block
+   (the shade and Quick Settings opened over the lock in 3 of 6 boots, once with no override at all). Re-apply the block
+   at every point where it can have been lost:
+   - after boot (BOOT_COMPLETED / USER_UNLOCKED and the first screen-on), by toggling it through `LockTaskChrome`;
+   - whenever SystemUI restarts, if detectable;
+   - verify it by reading `StatusBarManager`/`dumpsys statusbar` disable flags where possible.
+
+   Add a smoke-test check after `REBOOT=1`: the shade can't be expanded over the lock.
+2. **Pin the system's recents provider in the kiosk** (variant A of experiment 2):
+   - resolve the package from `config_recentsComponentName`, a system package only;
+   - add it to the kiosk lock-task packages whenever the kiosk is on and the block bit is set, and to the PIN-lock
+     helpers when that is needed for the same race;
+   - restore OVERVIEW: revert design 16's `kioskFeatures` drop, per the user's gesture rule;
+   - the update fence never suspends or holds it, so recents keeps working during our self-update.
+
+   Residual risk, accepted by default unless the user vetoes: an allowed app could explicitly start the stock home,
+   settings or search of that package. No kid-reachable path was found.
+3. **Jelly Star checks:** its recents provider package and its nav mode; the dialog over 5 reboots; the shade over the
+   lock after reboots.
