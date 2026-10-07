@@ -397,17 +397,24 @@ fn sse_keepalive_defaults_and_validates() {
     let vars = |v: &str| {
         std::collections::HashMap::from([("SSE_KEEPALIVE_SECS".to_string(), v.to_string())])
     };
+    // Design 19: 240 by default - the cap, 60 s under the launcher's 300 s read timeout.
     assert_eq!(
         ForkConfig::from_vars(&Default::default()).sse_keepalive_secs,
-        120
+        240
+    );
+    assert_eq!(
+        crate::config::DEFAULT_SSE_KEEPALIVE_SECS,
+        crate::config::MAX_SSE_KEEPALIVE_SECS
     );
     assert_eq!(ForkConfig::from_vars(&vars("30")).sse_keepalive_secs, 30);
-    assert_eq!(ForkConfig::from_vars(&vars("1")).sse_keepalive_secs, 120);
+    // The old default still works as an explicit revert.
+    assert_eq!(ForkConfig::from_vars(&vars("120")).sse_keepalive_secs, 120);
+    assert_eq!(ForkConfig::from_vars(&vars("1")).sse_keepalive_secs, 240);
     // Must stay well under the launcher's 300 s read timeout (QA step 7 #4).
     assert_eq!(ForkConfig::from_vars(&vars("240")).sse_keepalive_secs, 240);
-    assert_eq!(ForkConfig::from_vars(&vars("300")).sse_keepalive_secs, 120);
-    assert_eq!(ForkConfig::from_vars(&vars("3600")).sse_keepalive_secs, 120);
-    assert_eq!(ForkConfig::from_vars(&vars("abc")).sse_keepalive_secs, 120);
+    assert_eq!(ForkConfig::from_vars(&vars("300")).sse_keepalive_secs, 240);
+    assert_eq!(ForkConfig::from_vars(&vars("3600")).sse_keepalive_secs, 240);
+    assert_eq!(ForkConfig::from_vars(&vars("abc")).sse_keepalive_secs, 240);
 }
 
 /// Other apps' FCM (Element X) needs these hosts; our own nudges no longer do (design 19).

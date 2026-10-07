@@ -62,15 +62,16 @@ pub struct ForkConfig {
     /// certificate, base64url without padding (43 characters). `None` until configured - see
     /// the module doc comment and DEPLOY.md for how to compute it.
     pub launcher_signature_checksum: Option<String>,
-    /// `SSE_KEEPALIVE_SECS` (5-240, default 120): how often the command stream sends a keepalive
-    /// comment. Every phone holds the stream (design 19: no FCM); its read timeout is 300 s
-    /// (launcher `SSE_READ_TIMEOUT_MS`, also in launchers already shipped), so the cap keeps a
-    /// 60 s margin - a value at or above it would make every phone drop and reopen the stream
-    /// every 5 minutes.
+    /// `SSE_KEEPALIVE_SECS` (5-240, default 240 since design 19, 120 before): how often the
+    /// command stream sends a keepalive comment. Every phone holds the stream (no FCM); its read
+    /// timeout is 300 s (launcher `SSE_READ_TIMEOUT_MS`, also in launchers already shipped), so
+    /// the cap keeps a 60 s margin - a value at or above it would make every phone drop and
+    /// reopen the stream every 5 minutes. Each keepalive wakes the phone's radio, so the longest
+    /// safe interval is the default; `SSE_KEEPALIVE_SECS=120` in `.env` reverts it.
     pub sse_keepalive_secs: u64,
 }
 
-pub const DEFAULT_SSE_KEEPALIVE_SECS: u64 = 120;
+pub const DEFAULT_SSE_KEEPALIVE_SECS: u64 = 240;
 /// 60 s under the launcher's 300 s SSE read timeout.
 pub const MAX_SSE_KEEPALIVE_SECS: u64 = 240;
 
