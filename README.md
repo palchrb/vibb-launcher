@@ -6,8 +6,9 @@ A parent-curated phone for a child, on stock Android. Parents manage it from hom
   a kiosk with an app allowlist, call allowlists in both directions, its own PIN lock, school and bedtime rules,
   screen time, contacts with photos, missed calls, Element X chat links, and silent app installs and updates.
 - **`server/`** - the self-hosted admin server (Rust, Axum, SQLite) with the parents' web app (PWA). It is reached
-  over Tailscale/Headscale; the phone never serves anything. Changes reach the phone through Firebase Cloud Messaging
-  nudges, with a server-sent-events fallback.
+  over Tailscale/Headscale; the phone never serves anything. Changes reach the phone at once over a server-sent-events
+  stream the phone holds to its own server (no Firebase or Google push service), and the phone checks in by itself
+  every 30 minutes.
 
 ## Status
 

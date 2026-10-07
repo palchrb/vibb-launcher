@@ -1,5 +1,9 @@
 # Step 7: FCM nudges, battery hygiene, Play as an app source
 
+> **Superseded by 19** (`19-remove-fcm.md`, 2026-10-07) for the FCM half: FCM was removed, the SSE stream is the
+> only nudge (keepalive 240 s, hardened for deep sleep). The Play half (Play services/GSF never restricted, the
+> Play Store suspended not hidden, install mode, the FCM-host DNS exemption for other apps) still holds.
+
 PLAN "Battery" (FCM decision, PLAN.md:202-212) and Play (PLAN.md:146-155). S = kid-phone-server, L = kids-launcher-mdm,
 branch `handy`. Steps 1-6 guarantees unchanged; nothing here lifts a restriction (a nudge only triggers a sync; Play
 installs stay suspended/hidden until allowlisted). Claims: [verified: source] or [needs device test].

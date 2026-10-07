@@ -123,8 +123,8 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 
 - **Home server** (`server/`, fork of kid-phone-server): defines all rules, serves the
   parent PWA, reachable over Tailscale. Runs on a Pi or similar.
-- **Phone** (`launcher/`, fork of kids-launcher-mdm): subscribes to the server (SSE nudge
-  today, FCM since step 7) and fetches policy on a nudge or on
+- **Phone** (`launcher/`, fork of kids-launcher-mdm): subscribes to the server (SSE nudge;
+  FCM from step 7 was removed again in design 19) and fetches policy on a nudge or on
   the periodic sync. The phone does not serve anything.
 - **Principles**:
   - Local enforcement: cached rules apply when the server or network is down;
@@ -139,7 +139,8 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
   phone. Upstream needs Android 14+ (minSdk 34).
 - Later option: a Pixel with GrapheneOS if Unihertz updates dry up.
 - Upstream installs apps itself and has zero GMS footprint, so no Google
-  account is needed for updates. Element X from Play uses FCM; the F-Droid
+  account is needed for updates. Element X from Play uses FCM (Play services stays
+  installed and unrestricted for it - our own nudges don't use FCM); the F-Droid
   build would need UnifiedPush via the ntfy app (the launcher's own distributor
   was removed in the 2026-10-06 cleanup).
 
@@ -219,7 +220,13 @@ launchable.
   fix only on request or after significant movement; "update location now"
   button in the PWA. Measure first on the Jelly Star (`dumpsys batterystats`,
   idle drain per day) before and after.
-  **Decided 2026-10-05: FCM for the "something to sync" nudges** (works without a
+  **Decided 2026-10-05: FCM for the "something to sync" nudges - reversed 2026-10-07,
+  design 19** (`docs/design/19-remove-fcm.md`): the SSE stream is the only nudge again, its
+  keepalive 240 s by default, hardened for deep sleep (stale-stream reconnect, a wake lock for
+  the first retries); one APK works with anyone's server, no Firebase setup, no nudge metadata
+  to Google. Device run on the Jelly Star still to do: time a ring in Doze, after a server
+  restart and after a Wi-Fi/mobile switch, and battery at keepalive 120 s vs 240 s. The
+  original decision, as history: FCM (works without a
   Google account; Play services stay installed and are never suspended).
   Content-free high-priority data message, so a forged or replayed push can only
   trigger a sync; the phone still fetches everything over the authenticated
@@ -258,10 +265,16 @@ launchable.
   one idempotent check), Home comes back after the update, and other apps' nags are cancelled by
   the notification listener. Both server switches default off until A3 (Jelly Star) and B5 pass
   (`docs/testing/emulator.md` §6d).
-- **Build hygiene (user 2026-10-06) - done**: FID-based FCM registration, BluetoothManager,
-  WifiConfiguration confined to suppressed DO-only code, kapt, R8 dnsjava warning; Kotlin
+- **Build hygiene (user 2026-10-06) - done**: FID-based FCM registration (gone with design 19),
+  BluetoothManager, WifiConfiguration confined to suppressed DO-only code, kapt, R8 dnsjava warning; Kotlin
   warnings fail CI (`-PwarningsAsErrors=true`). Left: kapt's javac "RELEASE_11" note from the
-  PreferenceProcessor. Device tests: FCM after the FID switch, Wi-Fi/Bluetooth toggles.
+  PreferenceProcessor. Device tests: Wi-Fi/Bluetooth toggles.
+- **Remove FCM (design 19, user 2026-10-07) - done, needs the Jelly Star run**: server 0.20.0
+  (no FCM, migration 0048, keepalive 240 s, "Instant changes" line on the device page), the
+  launcher without Firebase (release guard on the classpath, one-shot cleanup of FCM leftovers)
+  and with the SSE hardening (stale-stream reconnect, drop wake lock, one reopen sync rule).
+  Release: server first, update the Pi, then the launcher; delete the `HANDY_FCM_*` repository
+  variables only after a launcher tag on these commits; revoke the service-account key.
 - **Provisioning (2026-10-06)**: QR carries locale/time zone (`nb_NO`/`Europe/Oslo`), the
   launcher has the Android 12+ provisioning-mode/compliance activities, system language locked
   while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
@@ -311,10 +324,11 @@ launchable.
   the step-4 hardening switches (server-only, by design). Keep an override PIN
   set and written down, server backups on, and a "Recovery" runbook section.
 - **Rest mode during bedtime/school** (idea, 2026-10-05; after battery is measured):
-  no or rarer location fixes, backstop sync every ~2 h (FCM still delivers),
-  optional Wi-Fi/Bluetooth off at night (mobile stays for calls/FCM), skip
-  non-essential jobs; maybe pause tsnet/DNS VPN. Not possible: airplane mode,
-  battery saver, mobile data off (device owner can't).
+  no or rarer location fixes, backstop sync every ~2 h (the SSE stream still delivers -
+  since design 19 it is the only nudge, so tsnet must stay up: pausing it would stop every
+  ring, lock and lift until the next sync), optional Wi-Fi/Bluetooth off at night (mobile
+  stays for calls and the stream), skip non-essential jobs; maybe pause the DNS VPN. Not
+  possible: airplane mode, battery saver, mobile data off (device owner can't).
 - **i18n from the start**: Norwegian (nb) and English. Launcher: all strings in
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with

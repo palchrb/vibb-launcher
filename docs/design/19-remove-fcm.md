@@ -113,3 +113,31 @@ once each on Wi-Fi. Read %/h, radio active time and count, wakeup reasons, our a
   launcher-removal commit or later. The workflow's check step and `-PrequireFcm` go in that commit.
 - Device run on the Jelly Star (QA #8): time a ring in Doze, after a server restart and after a Wi-Fi/mobile switch,
   and measure battery at 120 s vs 240 s.
+
+## Implementation status (2026-10-07)
+
+Done in the doc's commit order, each commit green alone (server `cargo test`/fmt/clippy, launcher unit tests + debug
+and release builds with `-PwarningsAsErrors=true`, the release without any `HANDY_FCM_*` value):
+
+1. **Server 0.20.0 + contract**: FCM code, `push` (policy and status), `device_push` (migration `0048`) and the card's
+   FCM lines are gone; an old launcher's `push` is accepted and stored nowhere; `FCM_SERVICE_ACCOUNT_FILE` = one
+   startup warning. Card "Play and kiosk" with the in-memory "Instant changes: connected since ... / not connected"
+   line (Q1, `src/streams.rs`, a drop guard on the SSE response). Tests in `src/tests/play.rs`; the snapshot drops
+   `push`; `PolicyResponseCompatTest` decodes a 0.19 response and a cached blob with `push`.
+2. **Keepalive default 240 s** (`.env` `SSE_KEEPALIVE_SECS=120` reverts).
+3. **Launcher + CI**: Firebase, the transport decision and the token upkeep are gone; the stream is always on;
+   `checkReleaseHasNoGoogleServices` guards `releaseRuntimeClasspath`; the one-shot cleanup deletes `push_state` and
+   Firebase's files, prefs, database and jobs; `launcher.yml` has no Firebase-variables check, `HANDY_FCM_*` or
+   `-PrequireFcm`.
+4. **SSE hardening**: last-byte stamps (network interceptor, `contentType()` kept - tested through okhttp-sse's own
+   EventSource), `checkStream` on every sync request and at screen-on/unlock (down: reconnect; silent >= 480 s: mark
+   down, reconnect), the 30 s drop wake lock (at most every 10 min, released at the open), and
+   `syncOnSseReopen(downForMs, sinceLastByteMs)`.
+5. **Docs**: both `CLAUDE.md`s, `DEPLOY.md` ("Removing FCM", proxy read timeout >= 300 s), `PLAN.md`, `README.md`,
+   `emulator.md` (§5b `kill -STOP` check, §6 item 8, §6b), `google-account.md`, the note atop design 07.
+
+Left for the user: release the server, update the Pi, then the launcher; remove `FCM_SERVICE_ACCOUNT_FILE` from
+`.env`, delete the key file, revoke the key and delete the Firebase project; delete the four `HANDY_FCM_*` repository
+variables after the first `launcher-v*` tag on commit 3 or later. Not device-tested: the Jelly Star run above (ring
+latency in Doze, after a server restart, after a Wi-Fi/mobile switch; battery at 120 s vs 240 s) and the emulator's
+`kill -STOP` check.

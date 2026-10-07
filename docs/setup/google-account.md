@@ -109,7 +109,7 @@ from a launcher that doesn't report it yet). By hand, with adb allowed:
 
 Play may hand over to Play services (`com.google.android.gms`) during an install: Play Protect
 prompts, terms of service, the purchase/authentication sheet, an account check. With the **"Kiosk
-app block"** on ("Push and Play" card), those screens may be stopped and end on Android's
+app block"** on ("Play and kiosk" card), those screens may be stopped and end on Android's
 `BlockedAppActivity`, because install mode pins only the Play Store (`com.android.vending`).
 
 How to see it (adb needs "Block USB debugging" off, or use the emulator, §6b):

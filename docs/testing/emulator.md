@@ -182,6 +182,22 @@ console's `gsm list` stays empty on the Android 16 emulator (modem simulator), a
 Screenshots of every step go into `OUT_DIR` (the lock screen may be black if it is secure). **It never places an
 emergency call** - it prints that manual step at the end.
 
+The command stream by hand (design 19, QA #8 - the SSE stream is the only nudge): with the phone
+enrolled and the device page saying "Instant changes: connected", freeze the server for more than
+300 s, then let it go on:
+
+```sh
+kill -STOP $(pgrep -f kid_phone_server); sleep 330; kill -CONT $(pgrep -f kid_phone_server)
+adb logcat -d | grep -E "CommandListenerService|SyncRunner" | tail -20
+```
+
+Expect the read timeout ("Command stream connection failed, reconnecting"), one reconnect ("Command
+stream connected") and one `Sync for [sse_open]` - not a sync per retry. A ring or lock queued in the
+PWA right after `-CONT` arrives within seconds. On a phone, the same after a server restart (`update.sh`)
+while the screen is off: the reconnect comes within about 30 s (the drop's wake lock), not at the next
+15-minute backstop; and a stream that went silent while the phone slept is reconnected at screen-on
+("silent for ... s (screen) - reconnecting").
+
 Missed calls by hand after the run (design 12), unlocked: tap the missed-call notification - the contact's sheet
 opens (calls from several contacts: the phone book); close it - the notification is gone and the call log's
 missed row is read:
@@ -210,7 +226,7 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
    reloads itself until the next report, then shows the real state (never "waiting" for more
    than 5 minutes). `adb logcat -b events | grep -E "am_kill|wm_create_activity"` shows no
    `am_kill` of our package when calls go ON -> OFF -> ON.
-8. Step 9 kiosk app block (device page "Push and Play", on by default), kiosk on: from an
+8. Step 9 kiosk app block (device page "Play and kiosk", on by default), kiosk on: from an
    allowed app, `adb shell am start -n com.android.vending/.AssetBrowserActivity` and
    `adb shell am start -a android.settings.SETTINGS` end on the system's "app blocked" screen;
    share sheet, photo picker and a runtime permission dialog of an allowed app still work.
@@ -424,15 +440,12 @@ adb logcat -s LockTaskDebug LockTaskChrome
 - Only shell can send it: the receiver needs `android.permission.DUMP`. Never on a kid's phone: release builds don't
   have it.
 
-## 6b. Step 7: FCM and Play (optional)
+## 6b. Step 7: Play (optional)
 
-The default debug build has no Firebase config: the phone uses the SSE stream (device page
-"Push and Play": `no_config`) - everything above works as before. For FCM/Play tests:
+FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and
+kiosk" card says "Instant changes: connected since ..." while the phone holds it. For Play tests:
 
 - Use an AVD with a **Google Play** system image (Play Store + Play services).
-- Build with the debug Firebase app's values (07 doc, "FCM setup"):
-  `./gradlew assembleDebug -Phandy.fcm.projectId=... -Phandy.fcm.debugApplicationId=... -Phandy.fcm.apiKey=... -Phandy.fcm.senderId=...`
-  and start the server with `FCM_SERVICE_ACCOUNT_FILE=<key outside data/, chmod 600>`.
 - Provisioning order changes when a Google account is wanted: wipe -> `dpm set-device-owner`
   (no account may exist at that moment) -> add the Google account and the Play settings in the
   normal Settings/Play UI -> only then enroll (the first policy blocks account changes and
@@ -450,7 +463,7 @@ The default debug build has no Firebase config: the phone uses the SSE stream (d
 For anything odd, paste into the chat:
 
 ```sh
-adb logcat -d -t 2000 | grep -iE "kidslauncher|vibb|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|Fcm|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock|UpdateFence|SelfUpdate|NotificationRule|CameraLock" > log.txt
+adb logcat -d -t 2000 | grep -iE "kidslauncher|vibb|Telecom|InCall|CallScreen|AndroidRuntime|SyncRunner|CommandListener|PlayRuntime|Backstop|AppEnforcer|EmergencyDialer|LockTask|PinLock|UpdateFence|SelfUpdate|NotificationRule|CameraLock" > log.txt
 ```
 
 plus what you did and what you saw (a screenshot helps: `adb exec-out screencap -p > s.png`).

@@ -27,6 +27,12 @@ sudo tailscale serve --bg --https=443 http://127.0.0.1:3100
 
 This gives you `https://<hostname>.<tailnet>.ts.net`, reachable only from your own tailnet. If this Pi already serves something else on port 443 (e.g. `board-game-tracker`), use a different port instead, e.g. `--https=8443`.
 
+The phones hold a long-lived connection to `/api/devices/commands/stream` (server-sent events, the only way the server
+nudges a phone) that is quiet except for a keepalive every `SSE_KEEPALIVE_SECS` (240 s by default). `tailscale serve`
+passes it through unbuffered. **Any other proxy in front of the server needs a read timeout of at least 300 s** and no
+response buffering on that path - nginx's default 60 s `proxy_read_timeout` cuts every stream, so changes would only
+reach the phones at their 30-minute check-in.
+
 ## Updating
 
 ```
@@ -133,21 +139,33 @@ the old launcher as a second app. And once this server is updated, the provision
 A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is
 broken, fix it forward by releasing the old (or fixed) code under a higher `launcher-v*` tag.
 
-## FCM (optional)
+## Removing FCM (server 0.20.0, launcher design 19)
 
-Without FCM every phone keeps its own connection to this server open (SSE) so changes arrive at once - that costs battery. With FCM, Google's push service wakes the phone instead; the phone still checks in by itself every 30 minutes and falls back to SSE whenever FCM isn't confirmed working (the device page's "Push and Play" card shows which one it uses). The launcher build must have the matching Firebase config (see the launcher repo).
+FCM is gone: the phones' own connection to this server (the SSE stream) is the only way changes reach them at once, and
+every phone also checks in by itself every 30 minutes (15 while its connection is down). One launcher APK now works the
+same with anyone's server, and no nudge goes through Google. Other apps' notifications (Element X) still use Google's
+push service: Play services stays installed and is never restricted. The device page's "Play and kiosk" card says
+whether the phone is connected right now.
 
-1. In the Firebase console, a project used for nothing else, with the Android app(s) of the launcher (package `me.vibb.launcher`, and `me.vibb.launcher.debug` for debug builds - an app registered for the old `com.kidslauncher.mdm` doesn't match).
-2. In Google Cloud IAM for that project: a new service account with **only** the role "Firebase Cloud Messaging API Admin" (`roles/firebasecloudmessaging.admin`) - not the default Admin SDK account. Create a JSON key for it.
-3. Copy the key to the Pi outside the data directory (backups zip and mirror `data/`, the key must never be in a backup):
-   ```
-   sudo install -d -m 750 -o kidphone -g kidphone /etc/kid-phone-server
-   sudo install -m 600 -o kidphone -g kidphone key.json /etc/kid-phone-server/fcm-service-account.json
-   ```
-   then delete every other copy of it.
-4. In `/opt/kid-phone-server/.env`: `FCM_SERVICE_ACCOUNT_FILE=/etc/kid-phone-server/fcm-service-account.json`, then `sudo systemctl restart kid-phone-server`. The log says "FCM nudges on", or why FCM is off (a key readable by others or inside `data/` is refused).
+Order, if this server ever had FCM configured:
 
-**Rotating the key**: create a new key for the same service account in the console, install it over the old file as in step 3, restart, check the log says "FCM nudges on" and a phone's card still says "FCM confirmed working" after its next check-in, then delete the old key in the console. If the key ever leaks: delete it in the console first (phones fall back to SSE), then install a new one.
+1. Release and install the server first (`server-v0.20.0` or later, `update.sh`). Migration 0048 drops the stored FCM
+   installation IDs. A phone that was using FCM gets no nudges from this update until its next check-in (at most
+   30 minutes), then switches to the stream by itself; "Sync now" in its Settings or a reboot shortens that.
+2. Remove `FCM_SERVICE_ACCOUNT_FILE` from `/opt/kid-phone-server/.env` (while it is set, the server logs one warning at
+   startup and ignores it), delete the key file (`sudo rm /etc/kid-phone-server/fcm-service-account.json`) and every
+   other copy, and **revoke the key**: delete the service account (or its key) in Google Cloud IAM - that is what makes
+   the stored IDs and any old backup useless. Then delete the Firebase project.
+3. Then the launcher (a `launcher-v*` tag on design 19's launcher commits or later). Only after that tag's release
+   build has run, delete the repository variables `HANDY_FCM_PROJECT_ID`, `HANDY_FCM_APPLICATION_ID`,
+   `HANDY_FCM_API_KEY` and `HANDY_FCM_SENDER_ID` (Settings > Secrets and variables > Actions > Variables): a tag on an
+   older commit still checks them.
+
+Rolling back to 0.19 means restoring the `update.sh` backup ("Rolling back the server" above): 0.19 refuses to start
+on a database with migration 0048.
+
+`SSE_KEEPALIVE_SECS` (5-240, default 240 since 0.20.0, 120 before): each keepalive wakes the phone's radio, and the
+launcher reconnects after 300 s of silence. `SSE_KEEPALIVE_SECS=120` in `.env` reverts to the old default.
 
 ## Useful commands on the Pi
 

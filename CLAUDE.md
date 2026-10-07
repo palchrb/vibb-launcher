@@ -29,7 +29,9 @@ Server (from `server/`): `cargo test`, `cargo fmt --check`, `cargo clippy --all-
 
 Launcher (from `launcher/`, JDK 17, `local.properties` with `sdk.dir=...`):
 `./gradlew assembleDebug assembleRelease testDebugUnitTest`. Without `-PrequireTsnet=true` a missing
-`app/libs/tsnet.aar` falls back to a stub.
+`app/libs/tsnet.aar` falls back to a stub. No Firebase config is needed: FCM was removed in design 19 (the
+SSE stream is the only nudge), and `assembleRelease` fails if Firebase or Play services comes back on the
+release classpath.
 
 Shared between the two and checked by tests on both sides: `server/testdata/phone_vectors.json` and
 `launcher/app/src/test/resources/phone_vectors.json` must be identical (server `phone::tests`,
@@ -46,7 +48,9 @@ directories in the same commit.
 - `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
   release (`kids-launcher-mdm.apk`), versionCode `X*1_000_000 + Y*1_000 + Z` (RC: minus 1). Only
   stable launcher releases become GitHub's "latest", so
-  `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL.
+  `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL. The release build no
+  longer reads the `HANDY_FCM_*` repository variables (design 19); they can go once a `launcher-v*` tag on
+  design 19's launcher commit or later has been built (an older tag would still check them).
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
   then the aarch64 tarball and its `.sha256`, never "latest". The server's update check and `install.sh`/`update.sh` find it by tag.
 
