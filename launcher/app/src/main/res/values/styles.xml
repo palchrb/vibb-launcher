@@ -43,6 +43,17 @@
 
     <!-- Handy's PIN lock (step 10): navy everywhere, and the window preview on, so the first frame
          after a screen-on is navy rather than whatever was under the lock. -->
+    <!-- Design 16b (QA #11): the boot cover - a framework theme (no AppCompat, nothing from
+         launcherBaseTheme), Vibb night, readable before the first unlock (APK resources only). -->
+    <style name="BootCoverTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/kid_ground</item>
+        <item name="android:statusBarColor">@color/kid_ground</item>
+        <item name="android:navigationBarColor">@color/kid_ground</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
     <style name="PinLockTheme" parent="launcherBaseTheme">
         <item name="android:windowBackground">@color/kid_ground</item>
         <item name="android:statusBarColor">@color/kid_ground</item>

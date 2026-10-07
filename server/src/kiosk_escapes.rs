@@ -136,6 +136,8 @@ pub struct EscapesCard {
     pub update_fence: bool,
     /// `device_policy.notification_auto_cancel`.
     pub notification_auto_cancel: bool,
+    /// `device_policy.boot_cover` (design 16b).
+    pub boot_cover: bool,
     pub lines: Vec<String>,
     pub warnings: Vec<String>,
 }

@@ -125,6 +125,13 @@ object PinLockRuntime {
         }
         // After Application.onCreate returns (an activity start from inside it is too early).
         handler.post {
+            // Design 16b: a boot cover still enabled hands over first (so the typed HOME start
+            // below resolves to HomeActivity only), and the shutdown receiver re-arms it.
+            try {
+                BootCover.init(app)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Boot cover init failed", e)
+            }
             // Design 16 (A, QA #2/#6): the first start of a boot brings our Home to the front -
             // before the CE unlock a direct-boot-aware stock launcher was Home. Home roots lock
             // task (kiosk on) and shows the lock; the lock's own start is then a 1 s fallback.

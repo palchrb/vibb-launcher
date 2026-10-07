@@ -543,19 +543,21 @@ pub async fn update_app_updates(
 }
 
 /// The "Launcher updates and notifications" card (handy step 11): the update fence (other Home
-/// apps paused while the launcher installs its own update) and the notification auto-cancel rule.
-/// One auto-saving form, so a missing checkbox is off; 404 for an unknown device; nudges.
+/// apps paused while the launcher installs its own update), the notification auto-cancel rule and
+/// the boot cover (design 16b). One auto-saving form, so a missing checkbox is off; 404 for an
+/// unknown device; nudges; back to the card.
 pub async fn update_kiosk_escapes(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
     let result = sqlx::query(
-        "UPDATE device_policy SET update_fence = ?, notification_auto_cancel = ?, \
+        "UPDATE device_policy SET update_fence = ?, notification_auto_cancel = ?, boot_cover = ?, \
          updated_at = datetime('now') WHERE device_id = ?",
     )
     .bind(form.contains_key("update_fence"))
     .bind(form.contains_key("notification_auto_cancel"))
+    .bind(form.contains_key("boot_cover"))
     .bind(id)
     .execute(&state.db)
     .await;
@@ -565,7 +567,7 @@ pub async fn update_kiosk_escapes(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            Redirect::to(&format!("/devices/{id}#kiosk-escapes")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk escape switches");
@@ -1246,7 +1248,7 @@ async fn render_device(
                 .as_ref()
                 .and_then(|s| s.notification_cancels_json.as_deref()),
         );
-        crate::kiosk_escapes::escapes_card(
+        let mut card = crate::kiosk_escapes::escapes_card(
             policy.update_fence,
             policy.notification_auto_cancel,
             capable,
@@ -1257,7 +1259,9 @@ async fn render_device(
                 .as_ref()
                 .and_then(|s| s.notification_listener_enabled),
             chrono::Utc::now().timestamp_millis(),
-        )
+        );
+        card.boot_cover = policy.boot_cover;
+        card
     };
     let notice = query
         .get("notice")

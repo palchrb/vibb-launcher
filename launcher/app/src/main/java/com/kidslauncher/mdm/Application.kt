@@ -122,6 +122,11 @@ class Application : android.app.Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // The boot cover's own process (design 16b, QA #10): nothing at all runs there - no call
+        // path, no preferences, no enforcement, no crash handler of ours (the cover counts its own
+        // crashes in device-protected storage). `instance` stays null, so KidAppComponentFactory
+        // runs no unlocked setup there either.
+        if (com.kidslauncher.mdm.lock.isBootCoverProcess(getProcessName())) return
         instance = this
         // First, and on its own: the call services (screening, redirection, in-call) run in this
         // process and read the rules from memory. If anything below throws, they must still have

@@ -32,6 +32,23 @@ class PlayInvariantsTest {
         assertTrue("enforcePlayLinkBlocker(dpm, admin, context)" in enforcer)
     }
 
+    /** Design 16b (QA #7/#9): the boot cover's PPA is added next to HomeActivity's with its own
+     * category (a distinct filter - the DPM policy engine keys PPAs by filter, so it never
+     * replaces the HOME pin), and HomeActivity's stays as it was. */
+    @Test
+    fun `the boot cover adds its own PPA and never touches HomeActivity's`() {
+        val enforcer = sources.walkTopDown().first { it.name == "AppEnforcer.kt" }.readText()
+        val home = enforcer.substringAfter("private fun enforceDefaultHome(").substringBefore("\n    }\n")
+        assertTrue("HomeActivity::class.java" in home)
+        assertTrue("BOOT_COVER" !in home)
+        assertTrue("BootCover.applyPolicy(" in enforcer)
+        val cover = sources.walkTopDown().first { it.name == "BootCover.kt" }.readText()
+        val apply = cover.substringAfter("fun applyPolicy(").substringBefore("\n    }\n")
+        for (needed in listOf("addCategory(BOOT_COVER_CATEGORY)", "Intent.CATEGORY_HOME", "addPersistentPreferredActivity(admin, filter, component(app))")) {
+            assertTrue(needed, needed in apply)
+        }
+    }
+
     /** Design 12 (QA #6): the call log goes to the phone book, set next to the Play link blocker on
      * every apply() - before anything in apply() that can throw - and never lifted. */
     @Test

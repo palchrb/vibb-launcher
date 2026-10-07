@@ -231,6 +231,7 @@ pub(crate) async fn build_policy(
         ),
         update_fence: policy.update_fence,
         notification_auto_cancel: policy.notification_auto_cancel,
+        boot_cover: policy.boot_cover,
         dns_log_enabled: policy.dns_log_enabled,
         app_updates_wifi_only: policy.app_updates_wifi_only,
         override_pin_hash: policy.override_pin_hash,

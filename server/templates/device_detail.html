@@ -88,6 +88,10 @@
                 <input type="checkbox" name="notification_auto_cancel" value="on" {% if escapes.notification_auto_cancel %}checked{% endif %} onchange="this.form.submit()">
                 Notification filter: remove other apps' notifications (setup reminders, "set a screen lock", tips) whose tap would open a screen outside the allowed apps. Allowed apps, calls, alarms and public-safety alerts (cell broadcast, earthquake) always stay.
             </label>
+            <label class="checkbox-row">
+                <input type="checkbox" name="boot_cover" value="on" {% if escapes.boot_cover %}checked{% endif %} onchange="this.form.submit()">
+                Boot cover: while the phone starts, show the Vibb logo instead of the phone's own home screen until the launcher is ready (a few seconds after switching on). Takes effect from the next shutdown or restart. Test it on this phone first: restart it twice and check that the launcher comes up both times.
+            </label>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
         </form>
         <p class="subtitle">Launcher updates are downloaded at once and installed at night (02:00-05:00) when the screen has been off for 30 seconds and no call is on - or, once one has waited a day, at any such quiet moment. The notification filter uses the launcher's notification listener ("App badges" in Android's notification access): it reads only which app and channel a notification comes from and its type, never its title or text, and reports only those names and how many it removed.</p>

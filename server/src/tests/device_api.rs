@@ -308,6 +308,7 @@ async fn policy_json_keys_snapshot() {
             "bedtime_end_minutes",
             "bedtime_start_minutes",
             "block_activity_start",
+            "boot_cover",
             "call_policy",
             "dns_filter_version",
             "dns_log_enabled",

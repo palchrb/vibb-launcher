@@ -112,7 +112,7 @@ Checked against `lock/`, `ui/HomeActivity`, `server/SelfUpdate.kt`, `LockTaskHel
 
 ## Implementation status (2026-10-06)
 
-Built: A+B with QA #1-#6. D/16b (boot cover) is not built.
+Built: A+B with QA #1-#6, and since 2026-10-07 D as step 16b (below).
 - **#1 typed HOME**: `lock/HomeFront` starts `MAIN` + `HOME` restricted to our package (no component, no other
   category) for every "bring Home" path: boot (A), the lock leaving (B) and asking Home to root lock task, the
   update (`SelfUpdate.bringHomeToFront`), a dialer-role change (`AppEnforcer`) and the end of Play's install
@@ -158,3 +158,43 @@ Open device checks (emulator first, then the Jelly Star):
   priority > 0; does it hand over by itself).
 - [ ] Calls-managed + PIN lock only (kiosk off, no allowlist): the stock launcher is no longer Home under the lock
   after boot or an update.
+
+### 16b: the boot cover (D+A+B, QA #7-#11, 2026-10-07)
+
+Behind the server switch `boot_cover` (migration 0045, **default off**, always sent; device page card "Launcher
+updates and notifications": "Boot cover ... Test it on this phone first"). A+B stay as they are - a crash reboot sends no
+`ACTION_SHUTDOWN`, so the cover stays off and that boot is A+B only.
+- **Cover** `lock/BootCoverActivity`: direct-boot-aware (in `DirectBootComponents`), own process `:bootcover` (where
+  `Application.onCreate` returns at once - no call path, preferences, enforcement or crash handler of ours), a plain
+  `android.app.Activity`, framework theme `BootCoverTheme` (`Theme.Material.NoActionBar`, `windowBackground`
+  `kid_ground` #0C0C14), `splash_vibb_breathe.xml` started in `onResume` and repeated (0.7 s pause). No CE storage, no
+  native code, no lock task, no services, no AppCompat (`BootCoverManifestTest` scans the source). Own taskAffinity
+  `.bootcover`, `singleTask`, out of Recents, `exported="true"` like every HOME.
+- **Resolution** (QA #7): manifest HOME filter at priority 0; its own PPA (`MAIN` + `HOME` + `DEFAULT` +
+  `com.kidslauncher.mdm.category.BOOT_COVER` - a distinct filter, so it sits next to HomeActivity's, which is never cleared
+  or replaced; `PlayInvariantsTest`) added by every apply while wanted (`lock/BootCover.applyPolicy`). In BFU only the
+  cover's PPA resolves, so it beats a direct-boot-aware stock launcher without a chooser [device check].
+- **Switch = the component's enabled state** (`android:enabled="false"`; a single PPA can't be removed without
+  clearing them all): pure `bootCoverEnabled` - wanted (switch on, managed, device owner) and `ACTION_SHUTDOWN` (a
+  runtime receiver in the main process, which the anchor keeps alive; the broadcast goes to registered receivers only)
+  -> enabled; an apply never enables it, and disables it when not wanted; the hand-over and the crash guard disable it.
+- **Hand-over** (QA #8): the cover disables itself (DONT_KILL_APP) once unlocked (`USER_UNLOCKED` receiver or the
+  check at resume) and shown >= 1 s (`coverHandOverDelayMs`); AMS finishes it and the system resolves HOME again -
+  to HomeActivity, HOME-typed. Our main process does the same at its first start after the unlock
+  (`BootCover.init`, in `PinLockRuntime.init` before Home is brought to the front), so A's typed HOME start resolves
+  to HomeActivity only (`HomeFrontTest`).
+- **Crash guard** (QA #10): in the cover's process its own uncaught-exception handler counts crashes in
+  device-protected prefs `boot_cover_guard` (boot count + crashes, `commit()`); the 2nd in a boot disables the
+  component (pure `coverCrashed`/`coverGuardTripped`), `onCreate` checks it too. A native crash or an ANR isn't counted.
+- Tests: `BootCoverPlanTest`, `BootCoverManifestTest`, `HomeFrontTest`, `PlayInvariantsTest`,
+  `PolicyResponseCompatTest`; server `policy_json_keys_snapshot`, `step11`.
+
+Open device checks for 16b (emulator first, then the Jelly Star; switch on, then shut down cleanly):
+- [ ] BFU resolution: after a clean restart the cover (not Pixel's launcher, not the Jelly Star's) is Home from the
+  end of the boot animation, with no chooser (`dumpsys activity activities`, `cmd package resolve-activity` for HOME).
+- [ ] The self-disable at the unlock hands over to HomeActivity HOME-typed (one HOME task of ours), kiosk on: Home
+  roots lock task, the PIN lock on top; no flash of the stock launcher.
+- [ ] The re-enable written at `ACTION_SHUTDOWN` persists over the restart (`dumpsys package` component state) - a
+  crash/forced reboot leaves it off (A+B).
+- [ ] The crash guard: a cover that crashes twice in a boot disables itself and the next HOME is another one.
+- [ ] The look: night background, the breathing mark centred, status/navigation bars night, no white frame.

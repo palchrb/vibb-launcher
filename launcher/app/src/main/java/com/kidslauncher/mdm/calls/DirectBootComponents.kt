@@ -14,6 +14,8 @@ object DirectBootComponents {
         "com.kidslauncher.mdm.calls.KidCallRedirectionService",
         "com.kidslauncher.mdm.calls.CallActionReceiver",
         "com.kidslauncher.mdm.calls.BootCallReceiver",
+        // Design 16b: the boot cover - own process `:bootcover`, no CE, no lock task, no services.
+        "com.kidslauncher.mdm.lock.BootCoverActivity",
     )
 
     /** Whether instantiating [className] proves CE storage is readable. */

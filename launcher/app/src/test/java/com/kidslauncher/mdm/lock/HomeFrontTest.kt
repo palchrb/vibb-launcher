@@ -53,7 +53,7 @@ class HomeFrontTest {
     }
 
     @Test
-    fun `our package has exactly one HOME activity, so the typed start resolves to HomeActivity`() {
+    fun `our HOME activities are HomeActivity and the boot cover, which is off unless armed for a boot (16b)`() {
         val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder().parse(file("AndroidManifest.xml"))
         val activities = doc.getElementsByTagName("activity").let { nodes -> (0 until nodes.length).map { nodes.item(it) as Element } } +
             doc.getElementsByTagName("activity-alias").let { nodes -> (0 until nodes.length).map { nodes.item(it) as Element } }
@@ -61,7 +61,14 @@ class HomeFrontTest {
             val categories = activity.getElementsByTagName("category")
             (0 until categories.length).any { (categories.item(it) as Element).getAttributeNS(ns, "name") == "android.intent.category.HOME" }
         }.map { it.getAttributeNS(ns, "name") }
-        assertEquals(listOf(".ui.HomeActivity"), home)
+        assertEquals(listOf(".ui.HomeActivity", ".lock.BootCoverActivity"), home)
+        // The cover is disabled in the manifest and handed over (disabled) when our process starts
+        // after the unlock, before the boot's typed Home start - so that resolves to HomeActivity.
+        val cover = activities.first { it.getAttributeNS(ns, "name") == ".lock.BootCoverActivity" }
+        assertEquals("false", cover.getAttributeNS(ns, "enabled"))
+        val runtime = code(file("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"))
+        val init = runtime.substringAfter("handler.post {")
+        assertTrue(init.indexOf("BootCover.init(app)") in 0 until init.indexOf("BootHome.startIfDue"))
     }
 
     @Test

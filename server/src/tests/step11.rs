@@ -49,6 +49,7 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     let p = policy(&app, &token).await;
     assert_eq!(p["update_fence"], json!(false));
     assert_eq!(p["notification_auto_cancel"], json!(false));
+    assert_eq!(p["boot_cover"], json!(false), "design 16b: off by default");
 
     let mut nudges = app.state.command_notify.subscribe();
     let res = app
@@ -56,14 +57,33 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
             Method::POST,
             &format!("/devices/{id}/kiosk-escapes"),
             Some(&cookie),
-            &[("update_fence", "on"), ("notification_auto_cancel", "on")],
+            &[
+                ("update_fence", "on"),
+                ("notification_auto_cancel", "on"),
+                ("boot_cover", "on"),
+            ],
         )
         .await;
     assert!(res.status.is_redirection());
+    // Back to the card, never the top of the page.
+    assert_eq!(
+        res.headers.get("location").and_then(|v| v.to_str().ok()),
+        Some(format!("/devices/{id}#kiosk-escapes").as_str())
+    );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let p = policy(&app, &token).await;
     assert_eq!(p["update_fence"], json!(true));
     assert_eq!(p["notification_auto_cancel"], json!(true));
+    assert_eq!(p["boot_cover"], json!(true));
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains("name=\"boot_cover\" value=\"on\" checked"),
+        "{page}"
+    );
+    assert!(page.contains("Test it on this phone first"));
 
     // One auto-saving form: a missing checkbox is off.
     app.request_form(
@@ -76,6 +96,7 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     let p = policy(&app, &token).await;
     assert_eq!(p["update_fence"], json!(false));
     assert_eq!(p["notification_auto_cancel"], json!(true));
+    assert_eq!(p["boot_cover"], json!(false));
 
     let res = app
         .request_form(

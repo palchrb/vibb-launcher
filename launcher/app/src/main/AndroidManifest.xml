@@ -149,6 +149,30 @@
             android:showWhenLocked="true"
             android:taskAffinity="${applicationId}.pinlock"
             android:theme="@style/PinLockTheme" />
+        <!-- Design 16b: the boot cover - a direct-boot-aware HOME with the breathing Vibb mark from
+             the boot animation to the unlock, instead of the stock launcher. Own process (nothing
+             of Application.onCreate runs there), framework theme, no CE storage, no lock task.
+             Disabled in the manifest: the main process enables it only at ACTION_SHUTDOWN while
+             the server switch boot_cover is on, and it disables itself once unlocked
+             (lock.BootCover, lock.BootCoverPlan). Priority 0 - a non-privileged app can't go
+             higher, and lower loses to a stock launcher before any preference is read. -->
+        <activity
+            android:name=".lock.BootCoverActivity"
+            android:directBootAware="true"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:process=":bootcover"
+            android:taskAffinity="${applicationId}.bootcover"
+            android:theme="@style/BootCoverTheme">
+            <intent-filter android:priority="0">
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
         <!-- Design 17 (qa-16-17-code #2): wakes the screen for a VoIP ring - turnScreenOn is known
              at the start; it sits on the PIN lock in its task and finishes itself. -->
         <activity

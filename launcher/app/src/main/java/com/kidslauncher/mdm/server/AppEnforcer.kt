@@ -368,6 +368,13 @@ object AppEnforcer {
         // below (featuresWhileLocked / lockTaskWhileLocked), so a sync can't undo the lock.
         val managed = policy?.allowlist != null || callState.managed
         com.kidslauncher.mdm.lock.PinLockRuntime.configure(context, dpm, admin, policy, managed)
+        // The boot cover (design 16b, switch off by default): its PPA next to HomeActivity's while
+        // wanted, the component off when not - enabled only at shutdown.
+        try {
+            com.kidslauncher.mdm.lock.BootCover.applyPolicy(context, dpm, admin, policy?.bootCover == true, managed)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover policy failed", e)
+        }
         // Kiosk pinning, lock-task features, the status bar backstop and DISALLOW_CREATE_WINDOWS
         // (budget, or the PIN lock) - one place shared with the lock's fast path.
         com.kidslauncher.mdm.lock.LockTaskChrome.applyPlan(
