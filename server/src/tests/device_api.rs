@@ -767,13 +767,23 @@ async fn pages_restore_scroll_after_auto_save() {
     assert!(script.contains("handy-scroll") && script.contains("proto.submit = function"));
     // Its behaviour (path match, 20 s expiry, #fragment skip, the form.submit() hook) is tested
     // with node in jstest/ - run here when node is installed, always in CI.
+    // The test files are named explicitly: Node 22's `--test <dir>` loads the directory as a
+    // module instead of searching it (Node 20 searched it), and globs need Node 21+.
+    let mut js_tests: Vec<String> = std::fs::read_dir("jstest")
+        .unwrap()
+        .map(|e| e.unwrap().path().to_string_lossy().into_owned())
+        .filter(|p| p.ends_with(".test.js"))
+        .collect();
+    js_tests.sort();
+    assert!(!js_tests.is_empty(), "no jstest/*.test.js files");
     match std::process::Command::new("node")
-        .args(["--test", "jstest/"])
+        .arg("--test")
+        .args(&js_tests)
         .output()
     {
         Ok(out) => assert!(
             out.status.success(),
-            "node --test jstest/ failed:\n{}",
+            "node --test {js_tests:?} failed:\n{}",
             String::from_utf8_lossy(&out.stdout)
         ),
         Err(_) => eprintln!("node not installed - jstest/ skipped here (CI runs it)"),
