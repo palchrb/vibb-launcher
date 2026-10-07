@@ -30,7 +30,8 @@ import com.kidslauncher.mdm.R
  *   `Application.onCreate`): the [COVER_MAX_CRASHES]th crash in a boot disables the component and
  *   trips the guard for good, until the server switch goes off and on (qa-16b-code #2);
  * - it is enabled only from shutdown to the next unlock ([bootCoverEnabled], main process), and
- *   once unlocked and shown for [COVER_MIN_SHOWN_MS] it disables itself (DONT_KILL_APP) and finishes
+ *   once unlocked and shown for [COVER_MIN_SHOWN_MS] (the boot mark's 3 s, design 16e - the main
+ *   process's Home finishes them when it takes over earlier) it disables itself (DONT_KILL_APP) and finishes
  *   as soon as the disable reads back - like AOSP's FallbackHome - so the system resolves HOME again
  *   at once, to HomeActivity, HOME-typed (QA #8, qa-16b-code #1: AMS alone removes it only with the
  *   PACKAGE_CHANGED broadcast, deferred up to 10 s right after boot).
@@ -81,7 +82,8 @@ class BootCoverActivity : Activity() {
         if (shownAtElapsed < 0) shownAtElapsed = SystemClock.elapsedRealtime()
         if (!shownMarked) {
             shownMarked = true
-            BootCoverGuard.markShown(this)
+            // Design 16e: the 3 s count from the cover's first frame in this boot.
+            BootCoverGuard.markShown(this, shownAtElapsed)?.let { shownAtElapsed = minOf(shownAtElapsed, it) }
         }
         logo?.start()
         scheduleHandOver()

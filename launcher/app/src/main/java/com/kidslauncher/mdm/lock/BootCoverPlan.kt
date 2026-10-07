@@ -24,8 +24,9 @@ fun isBootCoverProcess(processName: String?): Boolean = processName?.endsWith(BO
  * filter, not the other way round). */
 const val BOOT_COVER_CATEGORY = "com.kidslauncher.mdm.category.BOOT_COVER"
 
-/** After the unlock the cover stays at least this long from its first frame, then hands over. */
-const val COVER_MIN_SHOWN_MS = 1_000L
+/** After the unlock the cover stays at least this long from its first frame, then hands over - the
+ * boot mark's 3 s (16e), which Home's mark finishes when the main process takes over earlier. */
+const val COVER_MIN_SHOWN_MS = BOOT_MARK_MS
 
 /** The cover's crash in a boot that disables it for the rest of that boot (QA #10). */
 const val COVER_MAX_CRASHES = 2
@@ -67,7 +68,9 @@ fun bootCoverEnabled(event: CoverEvent, wanted: Boolean, guardTripped: Boolean =
 /**
  * What the cover's process keeps in device-protected storage (it runs before the first unlock),
  * one small file read fresh by both processes: its crashes in [bootCount], whether the guard
- * [tripped] (sticky), and when it was last shown and handed over (status report).
+ * [tripped] (sticky), and when it was last shown and handed over (status report). 16e: its first
+ * frame in boot [shownBootCount] as elapsed realtime ([shownElapsedMs]) - Home's mark counts on from
+ * it ([coverFrameThisBoot]).
  */
 data class CoverRecord(
     val bootCount: Int = -1,
@@ -75,7 +78,20 @@ data class CoverRecord(
     val tripped: Boolean = false,
     val shownAtMs: Long? = null,
     val handedOverAtMs: Long? = null,
+    val shownBootCount: Int? = null,
+    val shownElapsedMs: Long? = null,
 )
+
+/** The cover was shown at [wallMs]/[elapsedMs] in boot [bootNow]: the last-shown time for the
+ * report, and the boot's first frame - kept over a recreation in the same boot, new in a new one. */
+fun coverShown(record: CoverRecord, bootNow: Int, wallMs: Long, elapsedMs: Long): CoverRecord {
+    val earlier = coverFrameThisBoot(record, bootNow)
+    return record.copy(
+        shownAtMs = wallMs,
+        shownBootCount = bootNow,
+        shownElapsedMs = if (earlier != null) minOf(earlier, elapsedMs) else elapsedMs,
+    )
+}
 
 /** One more crash of the cover; a new boot (or an unknown count changing) counts from one. The
  * [COVER_MAX_CRASHES]th in a boot trips the guard, and a trip stays (qa-16b-code #2). An
@@ -100,6 +116,8 @@ fun encodeCoverRecord(record: CoverRecord): String = buildString {
     append("tripped=").append(record.tripped).append('\n')
     record.shownAtMs?.let { append("shown=").append(it).append('\n') }
     record.handedOverAtMs?.let { append("handed=").append(it).append('\n') }
+    record.shownBootCount?.let { append("shown_boot=").append(it).append('\n') }
+    record.shownElapsedMs?.let { append("shown_elapsed=").append(it).append('\n') }
 }
 
 /** `null` = no record. A file that exists but can't be read counts as tripped: the cover stays
@@ -114,6 +132,8 @@ fun decodeCoverRecord(text: String?): CoverRecord? {
         tripped = fields["tripped"]?.toBooleanStrictOrNull() ?: return CoverRecord(tripped = true),
         shownAtMs = fields["shown"]?.toLongOrNull(),
         handedOverAtMs = fields["handed"]?.toLongOrNull(),
+        shownBootCount = fields["shown_boot"]?.toIntOrNull(),
+        shownElapsedMs = fields["shown_elapsed"]?.toLongOrNull(),
     )
 }
 

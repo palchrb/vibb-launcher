@@ -50,16 +50,22 @@ object BootCoverGuard {
         }
     }
 
-    private fun update(context: Context, change: (CoverRecord) -> CoverRecord) {
-        val current = read(context) ?: CoverRecord(bootCount = bootCount(context))
-        write(context, change(current))
+    private fun update(context: Context, change: (CoverRecord) -> CoverRecord): CoverRecord {
+        val next = change(read(context) ?: CoverRecord(bootCount = bootCount(context)))
+        write(context, next)
+        return next
     }
 
-    /** The cover's first frame of this start (status report). */
-    fun markShown(context: Context) = update(context) { it.copy(shownAtMs = System.currentTimeMillis()) }
+    /** The cover's first frame of this start (status report) at [elapsedMs]; returns the boot's
+     * first frame (elapsed) - a recreated cover doesn't start the 3 s again, and the main process's
+     * Home counts on from it (design 16e, [coverFrameThisBoot]). */
+    fun markShown(context: Context, elapsedMs: Long): Long? =
+        update(context) { coverShown(it, bootCount(context), System.currentTimeMillis(), elapsedMs) }.shownElapsedMs
 
     /** The cover handed over (disabled itself) after the unlock. */
-    fun markHandedOver(context: Context) = update(context) { it.copy(handedOverAtMs = System.currentTimeMillis()) }
+    fun markHandedOver(context: Context) {
+        update(context) { it.copy(handedOverAtMs = System.currentTimeMillis()) }
+    }
 
     /** The switch is off: a trip and the old times go (main process; the cover isn't running). */
     fun clear(context: Context) {

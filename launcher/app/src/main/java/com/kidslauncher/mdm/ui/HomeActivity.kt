@@ -27,6 +27,7 @@ import androidx.recyclerview.widget.RecyclerView
 import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.lock.LockAsk
 import com.kidslauncher.mdm.lock.LockMode
 import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.lock.homeShowsContent
@@ -402,7 +403,8 @@ class HomeActivity : UIObjectActivity() {
             // The time-rule screen from the stored reason: it brings the PIN lock back on top.
             if (redirectToLockScreenIfLocked()) return
             // Handy's PIN lock (step 10): Home in front while LOCKED means the lock lost the front.
-            if (PinLockRuntime.mode == LockMode.LOCKED) PinLockRuntime.show(this)
+            // At the first start of a boot it waits while the mark shows for 3 s (design 16e).
+            if (PinLockRuntime.mode == LockMode.LOCKED) PinLockRuntime.show(this, ask = LockAsk.BOOT)
             return
         }
         // Fresh check against the clock every time the home screen comes to the foreground, on
@@ -508,6 +510,8 @@ class HomeActivity : UIObjectActivity() {
     }
 
     override fun onStop() {
+        // Design 16e: something covers the mark - the boot's wait for it ends.
+        PinLockRuntime.onHomeStopped(this, isChangingConfigurations)
         started = false
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)

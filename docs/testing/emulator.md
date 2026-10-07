@@ -136,7 +136,11 @@ logged after the step started counts (logcat is cleared per step); silence is a 
   without a new boot, without one successful dump, or without the lock) - no captured dump may hold a node of
   Home's content (`<package>:id/home_contacts`, `home_contacts_scroll`, `home_grid`, `home_call_card`; design 16c: a
   locked Home is the night ground `home_night`). A dump that shows it is saved as `boot-home-content-<n>.xml`
-  next to its screenshot;
+  next to its screenshot. Design 16e on the same dumps: once one showed the night ground, every later dump before
+  the lock may hold only `$PKG`'s windows (another package is a FAIL, saved as `boot-not-mark-<n>.xml`), and the lock
+  must be in front within about 5 s of the mark - measured from the end of that first dump to the last top-activity
+  check without the lock, a lower bound, so slow dumps never fail it (FAIL above 5 s, or when no dump showed the
+  night ground). `adb reboot` never arms the boot cover, so the mark is Home's;
 - then (design 16d) for 45 s from the lock's first appearance - past the launcher's status-bar heals 1-40 s after
   its start - `cmd statusbar expand-notifications`, `expand-settings` and a swipe down from the top, each followed
   by `cmd statusbar collapse`: the shade or Quick Settings open (`mCurrentFocus` NotificationShade, or SystemUI's

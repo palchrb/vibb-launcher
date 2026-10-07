@@ -9,7 +9,7 @@ import java.security.MessageDigest
  * protected storage: the kid PIN's hash must not be readable before the first unlock, QA 10 #12;
  * excluded from backup and device transfer - `allowBackup="false"` plus the backup rules). Every
  * write is a synchronous `commit()`: a wrong PIN counted just before a kill or reboot must stay
- * counted (QA 10 #3).
+ * counted (QA 10 #3) - except the boot mark's boot count ([swapMarkBoot]).
  *
  * No unlock time and no "unlocked" flag is ever stored: a new process starts LOCKED.
  */
@@ -29,6 +29,7 @@ object PinLockStore {
     private const val BO_DURATION = "backoff_duration"
     private const val GUARD_CRASHES_KEY = "guard_crashes"
     private const val GUARD_TRIPPED = "guard_tripped_at"
+    private const val MARK_BOOT = "boot_mark_boot_count"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -88,6 +89,18 @@ object PinLockStore {
     /** From the uncaught-exception handler while the lock screen exists (synchronous). */
     fun recordCrash(context: Context) {
         saveGuard(context, guardOnCrash(guard(context), System.currentTimeMillis()))
+    }
+
+    /**
+     * Design 16e: the boot count the last process start saw ([bootMarkDue]); [boot] is stored in its
+     * place when known and new. `apply()`, not `commit()` - no disk wait before the first screen
+     * (`PinLockRuntime.init`); a crash before the write only means one more 3 s wait.
+     */
+    fun swapMarkBoot(context: Context, boot: Int): Int? {
+        val p = prefs(context)
+        val stored = p.getInt(MARK_BOOT, -1).takeIf { it >= 0 }
+        if (boot >= 0 && boot != stored) p.edit().putInt(MARK_BOOT, boot).apply()
+        return stored
     }
 
     fun saveGuard(context: Context, guard: CrashGuard): Boolean = prefs(context).edit()

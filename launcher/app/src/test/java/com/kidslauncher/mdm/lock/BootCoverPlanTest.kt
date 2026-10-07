@@ -55,7 +55,10 @@ class BootCoverPlanTest {
 
     @Test
     fun `the record round-trips, and an unreadable one keeps the cover off`() {
-        for (record in listOf(CoverRecord(), CoverRecord(41, 2, true, 1_700L, 1_800L), CoverRecord(7, 1, false, shownAtMs = 3L))) {
+        for (record in listOf(
+            CoverRecord(), CoverRecord(41, 2, true, 1_700L, 1_800L), CoverRecord(7, 1, false, shownAtMs = 3L),
+            CoverRecord(7, 0, false, shownAtMs = 3L, shownBootCount = 7, shownElapsedMs = 9_500L),
+        )) {
             assertEquals(record, decodeCoverRecord(encodeCoverRecord(record)))
         }
         assertNull("no file", decodeCoverRecord(null))
@@ -65,12 +68,13 @@ class BootCoverPlanTest {
     }
 
     @Test
-    fun `hands over once unlocked and shown for 1 s, never before the unlock`() {
+    fun `hands over once unlocked and shown for 3 s (16e), never before the unlock`() {
         assertNull("BFU: stays", coverHandOverDelayMs(unlocked = false, shownForMs = 60_000))
         assertEquals(0L, coverHandOverDelayMs(unlocked = true, shownForMs = 5_000))
-        assertEquals(700L, coverHandOverDelayMs(unlocked = true, shownForMs = 300))
+        assertEquals(2_700L, coverHandOverDelayMs(unlocked = true, shownForMs = 300))
         assertEquals("not drawn yet: the whole minimum", COVER_MIN_SHOWN_MS, coverHandOverDelayMs(unlocked = true, shownForMs = -1))
-        assertEquals(1_000L, COVER_MIN_SHOWN_MS)
+        assertEquals("the boot mark's 3 s, shared with Home's mark", BOOT_MARK_MS, COVER_MIN_SHOWN_MS)
+        assertEquals(3_000L, COVER_MIN_SHOWN_MS)
     }
 
     @Test

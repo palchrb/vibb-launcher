@@ -125,8 +125,9 @@ class HomeGateTest {
         // While locked the resume shows the lock: no render and no policy decode before it.
         val resume = body(home, "onResume")
         val locked = resume.substringAfter("if (!gate()) {").substringBefore("\n            return\n        }")
-        assertTrue(locked.contains("PinLockRuntime.show(this)"))
-        assertTrue(locked.indexOf("reconcileKioskMode()") in 0 until locked.indexOf("PinLockRuntime.show(this)"))
+        // (16e: as a boot ask - at the first start of a boot it waits while the mark shows.)
+        assertTrue(locked.contains("PinLockRuntime.show(this, ask = LockAsk.BOOT)"))
+        assertTrue(locked.indexOf("reconcileKioskMode()") in 0 until locked.indexOf("PinLockRuntime.show(this, ask = LockAsk.BOOT)"))
         for (slow in listOf("reevaluateLockReasonFromCache", "render", "resumeContent", "loadMissedCalls", "promptForCallRoleIfNeeded")) {
             assertFalse("locked resume: $slow", locked.contains(slow))
         }
@@ -181,7 +182,7 @@ class HomeGateTest {
         // resumes only after dispatch returns. Every other change runs on the chrome thread.
         val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
         val dispatch = body(runtime, "dispatch")
-        val show = dispatch.indexOf("if (result.showLock) show(context, wake = result.wake)")
+        val show = dispatch.indexOf("if (result.showLock) show(context, wake = result.wake, ask = lockAsk(event))")
         val now = dispatch.indexOf("if (lockedEdge) refreshChromeNow(context)")
         assertTrue(show in 0 until now)
         assertTrue(now < dispatch.indexOf("modeListeners"))
