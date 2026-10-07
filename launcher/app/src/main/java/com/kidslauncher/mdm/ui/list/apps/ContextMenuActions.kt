@@ -78,7 +78,8 @@ fun AbstractAppInfo.toggleHidden(view: View) {
     LauncherPreferences.apps().hidden(hidden)
 }
 
-fun AbstractDetailedAppInfo.showRenameDialog(context: Context) {
+/** Returns the dialog (Home closes it when the lock engages - design 16c). */
+fun AbstractDetailedAppInfo.showRenameDialog(context: Context): AlertDialog =
     AlertDialog.Builder(context, R.style.AlertDialogCustom).apply {
         setTitle(context.getString(R.string.dialog_rename_title, getLabel()))
         setView(R.layout.dialog_rename_app)
@@ -95,13 +96,18 @@ fun AbstractDetailedAppInfo.showRenameDialog(context: Context) {
         input?.setText(getCustomLabel(context))
         input?.hint = getLabel()
     }
-}
 
 /**
  * The long-press context menu shown for an app row, shared by the app drawer and the
- * home screen's minimal list.
+ * home screen's minimal list. [onOverlay] gets a way to close the menu and, once opened, the
+ * rename dialog: Home closes both when the PIN lock engages (design 16c, qa-16c-code #2).
  */
-fun showAppContextMenu(activity: Activity, anchor: View, appInfo: AbstractDetailedAppInfo) {
+fun showAppContextMenu(
+    activity: Activity,
+    anchor: View,
+    appInfo: AbstractDetailedAppInfo,
+    onOverlay: (close: () -> Unit) -> Unit = {},
+) {
     val popup = PopupMenu(activity, anchor)
     popup.inflate(R.menu.menu_app)
     // Home's grid shows every app (design 05), so "add to/remove from home screen" means nothing.
@@ -131,7 +137,9 @@ fun showAppContextMenu(activity: Activity, anchor: View, appInfo: AbstractDetail
             }
 
             R.id.app_menu_rename -> {
-                appInfo.showRenameDialog(activity); true
+                val dialog = appInfo.showRenameDialog(activity)
+                onOverlay { dialog.dismiss() }
+                true
             }
 
             else -> false
@@ -139,5 +147,6 @@ fun showAppContextMenu(activity: Activity, anchor: View, appInfo: AbstractDetail
     }
 
     popup.show()
+    onOverlay { popup.dismiss() }
 }
 

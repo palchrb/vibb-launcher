@@ -213,3 +213,19 @@ fun pinLockHelpers(
 ): Set<String> = listOfNotNull(emergencyDialer, telecom, systemDialer.takeIf { !ourDialerHeld }, alarmApp)
     .filter { it.system && it.packageName !in forbidden && it.packageName !in PLAY_CORE }
     .mapTo(mutableSetOf()) { it.packageName }
+
+/** One of the chrome's writes ([chromeWriteOrder]). */
+enum class ChromeWrite { STATUS_BAR, CREATE_WINDOWS, LOCK_TASK }
+
+/**
+ * The order of a chrome pass's writes (qa-16c-code #1): a LOCKED pass blocks the shade and
+ * overlays first (two single DPM calls) and then sets the lock-task features and packages; any
+ * other pass sets lock task first and lifts the status bar and `DISALLOW_CREATE_WINDOWS` last - so
+ * the protections are the first thing on and the last thing off.
+ */
+fun chromeWriteOrder(locked: Boolean): List<ChromeWrite> =
+    if (locked) {
+        listOf(ChromeWrite.STATUS_BAR, ChromeWrite.CREATE_WINDOWS, ChromeWrite.LOCK_TASK)
+    } else {
+        listOf(ChromeWrite.LOCK_TASK, ChromeWrite.STATUS_BAR, ChromeWrite.CREATE_WINDOWS)
+    }

@@ -89,10 +89,10 @@ object PinLockRuntime {
     private val chromeListeners = mutableListOf<() -> Unit>()
 
     /**
-     * The runtime's lock-task/status-bar chrome passes ([LockTaskChrome.refresh]), off the main
-     * thread (16c): each is ~8 DPM binder calls that persist the policy file, and it waits for any
-     * apply() pass holding [LockTaskChrome] - at process start the time-rule re-check and the
-     * anchor's first sync each start one. One at a time, in order; each reads the mode when it runs.
+     * The runtime's chrome passes ([LockTaskChrome.refresh]) other than the LOCKED edge's
+     * ([refreshChromeNow]), off the main thread (16c): each is ~8 DPM binder calls that persist
+     * the policy file, and it waits for any apply() pass holding [LockTaskChrome]. One at a time,
+     * in order; each reads the mode under the monitor when it runs, so the newest state wins.
      */
     private val chromeExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r, "lock-chrome").apply { isDaemon = true }
@@ -124,7 +124,9 @@ object PinLockRuntime {
     fun decide(context: Context) {
         if (decided) return
         val app = context.applicationContext
-        startActive = PinLockStore.active(app) && PinLockStore.guard(app).trippedAtMs == null
+        startActive = lockActiveAtStart({ Log.e(LOG_TAG, "Lock state unreadable - starting LOCKED", it) }) {
+            PinLockStore.active(app) && PinLockStore.guard(app).trippedAtMs == null
+        }
         mode = step(LockMode.DISABLED, LockEvent.ProcessStart(startActive, interactive = false)).mode
         decided = true
         Log.i(LOG_TAG, "Process start: $mode (decided before any screen)")
@@ -156,9 +158,20 @@ object PinLockRuntime {
         val app = context.applicationContext
         appContext = app
         decide(app)
-        config = PinLockStore.config(app)
+        // Unreadable (qa-16c-code #3): no kid PIN known - the lock still comes up, and the parent
+        // code opens it; the receiver and ProcessStart below must run whatever happens here.
+        config = try {
+            PinLockStore.config(app)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Kid PIN unreadable", e)
+            null
+        }
         val active = startActive
-        inactive = PinLockStore.inactive(app)?.let { wire -> LockInactive.entries.firstOrNull { it.wire == wire } }
+        inactive = try {
+            PinLockStore.inactive(app)?.let { wire -> LockInactive.entries.firstOrNull { it.wire == wire } }
+        } catch (e: Exception) {
+            null
+        }
         ContextCompat.registerReceiver(
             app,
             screenReceiver,
@@ -229,9 +242,14 @@ object PinLockRuntime {
         val before = from
         val result = step(mode, event)
         mode = result.mode
-        // The lock first: nothing slow runs on the main thread before it (16c) - the chrome below
-        // runs on its own thread ([refreshChrome]); the lock enters lock task when it has landed.
+        val lockedEdge = before != LockMode.LOCKED && result.mode == LockMode.LOCKED
+        // The lock's start first, so its window covers the screen at once; then, on the LOCKED
+        // edge, the chrome on this thread before anything else - the lock resumes only after this
+        // returns, so the shade, overlays and Overview are blocked no later than the lock is up
+        // (qa-16c-code #1; status bar first, no PackageManager work). Every other chrome change
+        // runs on its own thread ([refreshChrome]).
         if (result.showLock) show(context, wake = result.wake)
+        if (lockedEdge) refreshChromeNow(context)
         // Home was started first (design 16): the re-front check shows the lock if Home didn't.
         if (result.showLockLater) {
             refrontAttempt = 0
@@ -241,7 +259,7 @@ object PinLockRuntime {
         if (before != result.mode) {
             Log.i(LOG_TAG, "$before -> ${result.mode} on $event")
             if ((before == LockMode.LOCKED) != (result.mode == LockMode.LOCKED)) {
-                refreshChrome(context)
+                if (!lockedEdge) refreshChrome(context)
                 // The camera gesture must not open a camera over the lock (background thread).
                 CameraLock.onLockChanged(context)
                 if (result.mode != LockMode.LOCKED && !LockTaskChrome.hasPlan) requestApply(context)
@@ -270,8 +288,24 @@ object PinLockRuntime {
     }
 
     /**
-     * A chrome pass for the current mode on [chromeExecutor] (16c - never on the main thread),
-     * then the [chromeListeners] on the main thread.
+     * The LOCKED edge's chrome pass, here on the main thread before the lock resumes
+     * (qa-16c-code #1): cached helpers only - when none were cached yet (a process start with the
+     * kiosk off, before the prefetch), our package is pinned alone and a pass on the chrome thread
+     * adds them.
+     */
+    private fun refreshChromeNow(context: Context) {
+        val app = context.applicationContext
+        try {
+            LockTaskChrome.refresh(app, resolveMissing = false)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Lock chrome change failed", e)
+        }
+        if (LockTaskChrome.helpersMissing) refreshChrome(app)
+    }
+
+    /**
+     * A chrome pass for the current mode on [chromeExecutor] (16c - the unlock, a DISABLED start,
+     * the helpers' follow-up), then the [chromeListeners] on the main thread.
      */
     private fun refreshChrome(context: Context) {
         val app = context.applicationContext
@@ -616,13 +650,16 @@ object PinLockRuntime {
 
     /** The time left of the wrong-PIN wait (0 = none). Background thread (commit). */
     @Synchronized
-    fun waitRemaining(context: Context): Long {
+    fun waitRemaining(context: Context): Long = try {
         val app = context.applicationContext
         val now = clocks()
         val stored = PinLockStore.backoff(app)
         val state = refreshBackoff(stored, now)
         if (state != stored) PinLockStore.saveBackoff(app, state)
-        return backoffRemaining(state, now)
+        backoffRemaining(state, now)
+    } catch (e: Exception) {
+        // Unreadable: no wait shown - checkPin then refuses the kid PIN (qa-16c-code #3).
+        0L
     }
 
     /**
@@ -632,20 +669,26 @@ object PinLockRuntime {
     @Synchronized
     fun checkPin(context: Context, pin: String): PinResult {
         val app = context.applicationContext
-        val cfg = config ?: PinLockStore.config(app)
+        val cfg = config ?: runCatching { PinLockStore.config(app) }.getOrNull()
         if (cfg == null || !cfg.usable) return PinResult.Unusable
         val now = clocks()
-        val stored = backoffForHash(PinLockStore.backoff(app), cfg.fingerprint)
-        val state = refreshBackoff(stored, now)
-        val wait = backoffRemaining(state, now)
-        if (wait > 0L) {
-            if (state != stored) PinLockStore.saveBackoff(app, state)
-            return PinResult.Waiting(wait)
+        val counted = try {
+            val stored = backoffForHash(PinLockStore.backoff(app), cfg.fingerprint)
+            val state = refreshBackoff(stored, now)
+            val wait = backoffRemaining(state, now)
+            if (wait > 0L) {
+                if (state != stored) PinLockStore.saveBackoff(app, state)
+                return PinResult.Waiting(wait)
+            }
+            beginAttempt(state, now).also { PinLockStore.saveBackoff(app, it) }
+        } catch (e: Exception) {
+            // The failure can't be counted first (QA 10 #3): only the parent code opens the lock
+            // then (qa-16c-code #3).
+            Log.e(LOG_TAG, "Wrong-PIN count unreadable - parent code only", e)
+            return PinResult.Unusable
         }
-        val counted = beginAttempt(state, now)
-        PinLockStore.saveBackoff(app, counted)
         return if (PinHash.verify(pin, cfg.hashHex, cfg.saltHex)) {
-            PinLockStore.saveBackoff(app, attemptSucceeded(counted))
+            runCatching { PinLockStore.saveBackoff(app, attemptSucceeded(counted)) }
             PinResult.Ok
         } else {
             PinResult.Wrong(counted.failures, backoffRemaining(counted, clocks()))
@@ -658,7 +701,12 @@ object PinLockRuntime {
         if (!OfflineOverride.verifyPin(code)) return false
         synchronized(this) {
             val app = context.applicationContext
-            PinLockStore.saveBackoff(app, attemptSucceeded(PinLockStore.backoff(app)))
+            // An unreadable store never keeps the parent out (qa-16c-code #3).
+            try {
+                PinLockStore.saveBackoff(app, attemptSucceeded(PinLockStore.backoff(app)))
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Backoff reset failed", e)
+            }
         }
         return true
     }

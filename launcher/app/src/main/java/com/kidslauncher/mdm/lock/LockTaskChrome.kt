@@ -6,10 +6,12 @@ import android.content.Context
 import android.os.UserManager
 import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.ChromeWrite
 import com.kidslauncher.mdm.server.LockTaskSetting
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.StatusBarLatch
 import com.kidslauncher.mdm.server.UpdateFence
+import com.kidslauncher.mdm.server.chromeWriteOrder
 import com.kidslauncher.mdm.server.lockTaskWhileLocked
 
 private const val LOG_TAG = "LockTaskChrome"
@@ -38,11 +40,21 @@ object LockTaskChrome {
     private var voipHelpers: Set<String>? = null
     private val statusBar = StatusBarLatch()
 
+    /** [applyPlan]'s helper lookups are numbered: resolved outside the monitor, only the newest is
+     * kept (qa-16c-code #1). */
+    private val helperTickets = java.util.concurrent.atomic.AtomicLong()
+    private var helpersTicket = 0L
+
+    /** The last LOCKED pass with the kiosk off had no kiosk-off helpers cached (it pinned our
+     * package alone): a pass that may resolve them should follow ([PinLockRuntime]). */
+    @Volatile
+    var helpersMissing = false
+        private set
+
     /** Whether the kiosk is on as far as we know (the plan, else the last pinned state). */
     val kioskOn: Boolean
         get() = plan?.let { it.kioskPackages != null } ?: LauncherPreferences.mdm().kioskEnabled()
 
-    @Synchronized
     fun applyPlan(
         context: Context,
         kioskPackages: Set<String>?,
@@ -50,11 +62,19 @@ object LockTaskChrome {
         restrictCreateWindows: Boolean,
         pinLockHelpers: () -> Set<String>,
     ) {
-        plan = Plan(kioskPackages, features, restrictCreateWindows)
         // Resolved on apply's background thread whenever the kiosk is off, so the screen-off fast
-        // path never has to query PackageManager.
-        if (kioskPackages == null) helpers = runCatching(pinLockHelpers).getOrNull() ?: helpers
-        applyNow(context)
+        // path never has to query PackageManager - and before taking the monitor (qa-16c-code #1):
+        // a LOCKED pass the lock waits for must never wait for PackageManager work.
+        val ticket = helperTickets.incrementAndGet()
+        val resolved = if (kioskPackages == null) runCatching(pinLockHelpers).getOrNull() else null
+        synchronized(this) {
+            plan = Plan(kioskPackages, features, restrictCreateWindows)
+            if (resolved != null && ticket > helpersTicket) {
+                helpers = resolved
+                helpersTicket = ticket
+            }
+            applyNow(context)
+        }
     }
 
     /** Resolves the kiosk-off lock helpers ahead of the first screen-off (background thread). */
@@ -68,31 +88,36 @@ object LockTaskChrome {
         synchronized(this) { if (helpers == null) helpers = resolved }
     }
 
-    /** A VoIP call's package to keep pinned while LOCKED with the kiosk off, plus its helpers. */
-    private fun voipPackages(context: Context): Set<String> {
+    /** A VoIP call's package to keep pinned while LOCKED with the kiosk off, plus its helpers
+     * (cached - resolved outside the monitor, [prefetchHelpers]/[refresh]). */
+    private fun voipPackages(): Set<String> {
         val pkg = VoipCalls.pinnedPackage ?: return emptySet()
-        val extra = voipHelpers ?: runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolveVoipHelpers(context) }
-            .getOrDefault(emptySet()).also { voipHelpers = it }
-        return setOf(pkg) + extra
+        return setOf(pkg) + voipHelpers.orEmpty()
     }
 
-    /** After a LOCKED/not-LOCKED change: from the runtime's chrome thread (design 16c - it must not
-     * hold up the lock on the main thread), or a VoIP pin change. A few binder calls. */
-    @Synchronized
-    fun refresh(context: Context) {
-        val current = plan
-        if (current == null) {
-            // No apply in this process yet: the platform state is the base. The features are
-            // only ever reduced from it while locked; an unlock asks for an apply to restore them.
-            applyFallback(context)
-            return
+    /**
+     * After a LOCKED/not-LOCKED change, or a VoIP pin change. A LOCKED pass runs on the main thread
+     * right after the lock's start, so the lock resumes only once the chrome is in place
+     * (qa-16c-code #1) - then [resolveMissing] is false: no PackageManager work, a missing helper
+     * set is left out ([helpersMissing]). Any other caller may resolve them first - outside the
+     * monitor. Every pass reads the lock state under the monitor, so the newest one wins.
+     */
+    fun refresh(context: Context, resolveMissing: Boolean = true) {
+        // Only what a LOCKED kiosk-off pass pins (the helpers, a VoIP call's permission controller).
+        if (resolveMissing && PinLockRuntime.chromeLocked && !kioskOn) prefetchHelpers(context)
+        synchronized(this) {
+            if (plan == null) {
+                // No apply in this process yet: the platform state is the base. The features are
+                // only ever reduced from it while locked; an unlock asks for an apply to restore them.
+                applyFallback(context)
+            } else {
+                applyNow(context)
+            }
         }
-        applyNow(context)
     }
 
     /** The update fence went up or was released (qa-11-design.md #4): the next pass writes the
      * status bar whatever the latch remembers. Any thread. */
-    @Synchronized
     fun fenceChanged(context: Context) {
         statusBar.invalidate()
         refresh(context)
@@ -103,22 +128,26 @@ object LockTaskChrome {
     private fun dpm(context: Context): DevicePolicyManager? =
         context.getSystemService(DevicePolicyManager::class.java)?.takeIf { it.isDeviceOwnerApp(context.packageName) }
 
+    /** The kiosk-off helpers for a LOCKED pass - the cache only, never resolved under the monitor. */
+    private fun lockHelpers(locked: Boolean, kioskOn: Boolean): Set<String> {
+        val wanted = locked && !kioskOn
+        val cached = helpers
+        helpersMissing = wanted && cached == null
+        return if (wanted) cached.orEmpty() else emptySet()
+    }
+
     private fun applyNow(context: Context) {
         val dpm = dpm(context) ?: return
         val current = plan ?: return
         val locked = PinLockRuntime.chromeLocked
-        val lockHelpers = if (locked && current.kioskPackages == null) {
-            helpers ?: runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolvePinLockHelpers(context) }
-                .getOrDefault(emptySet()).also { helpers = it }
-        } else {
-            emptySet()
-        }
+        val kioskOn = current.kioskPackages != null
         val setting = lockTaskWhileLocked(
-            current.kioskPackages, current.features, current.restrictCreateWindows, locked, context.packageName, lockHelpers,
+            current.kioskPackages, current.features, current.restrictCreateWindows, locked, context.packageName,
+            lockHelpers(locked, kioskOn),
             fenced = UpdateFence.fenced,
-            voipPackages = if (locked && current.kioskPackages == null) voipPackages(context) else emptySet(),
+            voipPackages = if (locked && !kioskOn) voipPackages() else emptySet(),
         )
-        apply(context, dpm, setting, kioskOn = current.kioskPackages != null)
+        apply(context, dpm, setting, kioskOn = kioskOn, locked = locked)
     }
 
     private fun applyFallback(context: Context) {
@@ -136,14 +165,6 @@ object LockTaskChrome {
         } catch (e: Exception) {
             0
         }
-        // The prefetched helpers when there are any (16c: this pass ran twice at every LOCKED
-        // process start, each time with its own PackageManager queries).
-        val lockHelpers = if (locked && !kiosk) {
-            helpers ?: runCatching { com.kidslauncher.mdm.server.AppEnforcer.resolvePinLockHelpers(context) }
-                .getOrDefault(emptySet()).also { helpers = it }
-        } else {
-            emptySet()
-        }
         val createWindows = try {
             dpm.getUserRestrictions(admin).getBoolean(UserManager.DISALLOW_CREATE_WINDOWS)
         } catch (e: Exception) {
@@ -156,15 +177,26 @@ object LockTaskChrome {
             restrictCreateWindows = createWindows,
             locked = locked,
             ownPackage = context.packageName,
-            lockHelpers = lockHelpers,
+            lockHelpers = lockHelpers(locked, kiosk),
             fenced = UpdateFence.fenced,
-            voipPackages = if (locked && !kiosk) voipPackages(context) else emptySet(),
+            voipPackages = if (locked && !kiosk) voipPackages() else emptySet(),
         )
-        apply(context, dpm, setting, kioskOn = kiosk)
+        apply(context, dpm, setting, kioskOn = kiosk, locked = locked)
     }
 
-    private fun apply(context: Context, dpm: DevicePolicyManager, setting: LockTaskSetting, kioskOn: Boolean) {
+    /** The writes in [chromeWriteOrder]: a LOCKED pass blocks the shade and overlays first. */
+    private fun apply(context: Context, dpm: DevicePolicyManager, setting: LockTaskSetting, kioskOn: Boolean, locked: Boolean) {
         val admin = admin(context)
+        for (write in chromeWriteOrder(locked)) {
+            when (write) {
+                ChromeWrite.STATUS_BAR -> writeStatusBar(dpm, admin, setting.statusBarDisabled)
+                ChromeWrite.CREATE_WINDOWS -> writeCreateWindows(dpm, admin, setting.createWindowsBlocked)
+                ChromeWrite.LOCK_TASK -> writeLockTask(dpm, admin, setting, kioskOn)
+            }
+        }
+    }
+
+    private fun writeLockTask(dpm: DevicePolicyManager, admin: ComponentName, setting: LockTaskSetting, kioskOn: Boolean) {
         val mdm = LauncherPreferences.mdm()
         val packages = setting.packages
         if (packages == null) {
@@ -189,7 +221,10 @@ object LockTaskChrome {
                 Log.w(LOG_TAG, "Failed to pin lock-task packages", e)
             }
         }
-        statusBar.toWrite(setting.statusBarDisabled)?.let { wanted ->
+    }
+
+    private fun writeStatusBar(dpm: DevicePolicyManager, admin: ComponentName, disabled: Boolean) {
+        statusBar.toWrite(disabled)?.let { wanted ->
             try {
                 // Blocks the shade and quick settings outside lock task: the lock's backstop and
                 // the update fence's shade block.
@@ -202,8 +237,11 @@ object LockTaskChrome {
                 Log.w(LOG_TAG, "Failed to set the status bar state", e)
             }
         }
+    }
+
+    private fun writeCreateWindows(dpm: DevicePolicyManager, admin: ComponentName, blocked: Boolean) {
         try {
-            if (setting.createWindowsBlocked) {
+            if (blocked) {
                 dpm.addUserRestriction(admin, UserManager.DISALLOW_CREATE_WINDOWS)
             } else {
                 dpm.clearUserRestriction(admin, UserManager.DISALLOW_CREATE_WINDOWS)

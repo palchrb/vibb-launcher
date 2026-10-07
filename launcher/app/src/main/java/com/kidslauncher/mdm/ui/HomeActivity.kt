@@ -86,6 +86,7 @@ private const val SWIPE_UP_MIN_VELOCITY = 100
 private const val SWIPE_LEFT_MIN_DISTANCE = 100
 private const val SWIPE_LEFT_MIN_VELOCITY = 100
 private const val BADGE_DEBOUNCE_MS = 300L
+private const val MAX_OVERLAYS = 8
 
 /**
  * [HomeActivity] is the actual application launcher (design 05-ui-photos-i18n.md, mockup
@@ -116,8 +117,9 @@ class HomeActivity : UIObjectActivity() {
     private var contentShown = false
     private var nightShown = false
     private var resumedNow = false
-    /** The contact sheet Home opened: closed when the lock engages. */
-    private var contactSheet: Dialog? = null
+    /** What Home opened over its content - the contact sheet, an app's long-press menu and its
+     * rename dialog: closed when the lock engages (16c, qa-16c-code #2). */
+    private val overlays = ArrayDeque<() -> Unit>()
 
     /** LOCKED/UNLOCKED edges (16c): the night ground or the content, on the main thread. */
     private val modeListener: () -> Unit = {
@@ -233,8 +235,7 @@ class HomeActivity : UIObjectActivity() {
     /** LOCKED, or not decided with a kid PIN: the night ground - the content leaves the window, so
      * nothing of it can be seen or touched; an open contact sheet closes. */
     private fun showNight() {
-        contactSheet?.dismiss()
-        contactSheet = null
+        closeOverlays()
         contentShown = false
         appsJob?.cancel()
         refreshHandler.removeCallbacks(badgeRender)
@@ -255,7 +256,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
 
         // No clock or date any more (design 08): the status bar shows the time.
-        gridAdapter = HomeGridAdapter(this)
+        gridAdapter = HomeGridAdapter(this, ::trackOverlay)
         gridLayout = GridLayoutManager(this, gridColumns(null))
         binding.homeGrid.layoutManager = gridLayout
         binding.homeGrid.adapter = gridAdapter
@@ -524,8 +525,7 @@ class HomeActivity : UIObjectActivity() {
         apps.removeObserver(appsObserver)
         PinLockRuntime.removeModeListener(modeListener)
         night?.stop()
-        contactSheet?.dismiss()
-        contactSheet = null
+        closeOverlays()
         super.onDestroy()
     }
 
@@ -741,7 +741,25 @@ class HomeActivity : UIObjectActivity() {
     }
 
     private fun showContactSheet(contact: RuleContact) {
-        contactSheet = ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
+        val sheet: Dialog = ContactSheet.show(this, contact, missed[contact.number]) { loadMissedCalls() }
+        trackOverlay { sheet.dismiss() }
+    }
+
+    /** Only the last few can still be open (a menu and its dialog); closing a closed one is a no-op. */
+    private fun trackOverlay(close: () -> Unit) {
+        overlays.addLast(close)
+        while (overlays.size > MAX_OVERLAYS) overlays.removeFirst()
+    }
+
+    private fun closeOverlays() {
+        while (overlays.isNotEmpty()) {
+            val close = overlays.removeFirst()
+            try {
+                close()
+            } catch (e: Exception) {
+                android.util.Log.w("HomeActivity", "Couldn't close an overlay", e)
+            }
+        }
     }
 
     override fun isHomeScreen(): Boolean {

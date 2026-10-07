@@ -211,6 +211,18 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
     LockEvent.TimeRuleShown -> LockStep(mode, showLock = mode == LockMode.LOCKED)
 }
 
+/**
+ * Whether the lock is active in a new process ([read] = the stored state). Unreadable fails closed
+ * but usable (design 16c, qa-16c-code #3): active - LOCKED with the lock shown, which the parent
+ * code always opens - never a dark Home with no lock.
+ */
+fun lockActiveAtStart(onError: (Exception) -> Unit = {}, read: () -> Boolean): Boolean = try {
+    read()
+} catch (e: Exception) {
+    onError(e)
+    true
+}
+
 /** Why the lock is off (status report `lock_state.inactive`). */
 enum class LockInactive(val wire: String) {
     NO_PIN("no_pin"),

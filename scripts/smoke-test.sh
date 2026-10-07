@@ -420,17 +420,30 @@ if [ "$REBOOT" != "1" ]; then
 elif [ -z "$KID_PIN" ]; then
     skip "no Home content before the PIN unlock after a reboot" "KID_PIN not set"
 else
-    adb_ reboot >/dev/null 2>&1 || true
-    sleep 5
-    adb_ wait-for-device >/dev/null 2>&1 || true
-    # From adb's return on: a UI dump every ~0.3 s plus the dump's own time, until the PIN lock is
+    # Sampling starts only once the device runs a new boot (its boot_id changed), so a dump or a
+    # lock seen before the reboot took effect can't pass the check (qa-16c-code #4).
+    boot_id() { sh_ cat /proc/sys/kernel/random/boot_id; }
+    old_boot="$(boot_id)"
+    rebooted=0
+    # An unreadable boot_id proves nothing: no reboot, FAIL below.
+    if [ -n "$old_boot" ]; then adb_ reboot >/dev/null 2>&1 || true; fi
+    deadline=$((SECONDS + 180))
+    while [ -n "$old_boot" ] && [ "$SECONDS" -lt "$deadline" ]; do
+        new_boot="$(boot_id)"
+        if [ -n "$new_boot" ] && [ "$new_boot" != "$old_boot" ]; then
+            rebooted=1
+            break
+        fi
+        sleep 1
+    done
+    # From the new boot on: a UI dump every ~0.3 s plus the dump's own time, until the PIN lock is
     # in front (3 min at most). Each dump is captured, then grepped; failed dumps (boot) are skipped.
     dumps=0
     leaks=0
     night_seen=0
     lock_seen=0
     deadline=$((SECONDS + 180))
-    while [ "$SECONDS" -lt "$deadline" ]; do
+    while [ "$rebooted" -eq 1 ] && [ "$SECONDS" -lt "$deadline" ]; do
         if boot_completed; then sh_ input keyevent KEYCODE_WAKEUP >/dev/null; fi
         ui_dump
         if grep -q '<node ' <<<"$UI_XML"; then
@@ -448,7 +461,11 @@ else
         fi
         sleep 0.3
     done
-    if [ "$lock_seen" -ne 1 ]; then
+    if [ "$rebooted" -ne 1 ]; then
+        fail "no Home content before the PIN unlock after a reboot" "no new boot_id within 3 min (was ${old_boot:-unreadable})"
+    elif [ "$dumps" -eq 0 ]; then
+        fail "no Home content before the PIN unlock after a reboot" "no UI dump succeeded before the lock - no evidence"
+    elif [ "$lock_seen" -ne 1 ]; then
         fail "no Home content before the PIN unlock after a reboot" "the PIN lock never came to the front ($dumps UI dumps); top: $(top_activity)"
     elif [ "$leaks" -gt 0 ]; then
         fail "no Home content before the PIN unlock after a reboot" "$leaks of $dumps UI dumps showed Home's content (boot-home-content-*.xml)"

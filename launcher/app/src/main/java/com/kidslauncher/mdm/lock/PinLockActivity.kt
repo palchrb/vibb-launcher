@@ -100,9 +100,10 @@ class PinLockActivity : AppCompatActivity() {
         instances++
         // The crash guard, before any other work (QA 10 #14, qa-10-code #6): crashes recorded by
         // the uncaught-exception handler while this screen existed - not recreations or kills.
-        val stored = PinLockStore.guard(this)
+        // Unreadable (qa-16c-code #3): an armed guard - the lock must come up.
+        val stored = runCatching { PinLockStore.guard(this) }.getOrDefault(CrashGuard())
         val guard = guardOnCreate(stored, System.currentTimeMillis())
-        if (guard != stored) PinLockStore.saveGuard(this, guard)
+        if (guard != stored) runCatching { PinLockStore.saveGuard(this, guard) }
         if (guard.trippedAtMs != null) {
             PinLockRuntime.guardTripped(this)
             finish()

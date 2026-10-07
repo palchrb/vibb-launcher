@@ -31,7 +31,11 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
  * runs its normal launch action; long-press (apps only) shows the drawer's menu (hide/rename).
  */
 @SuppressLint("NotifyDataSetChanged")
-class HomeGridAdapter(private val activity: Activity) : RecyclerView.Adapter<HomeGridAdapter.ViewHolder>() {
+class HomeGridAdapter(
+    private val activity: Activity,
+    /** Home keeps a way to close the long-press menu and its rename dialog (design 16c). */
+    private val onOverlay: (close: () -> Unit) -> Unit = {},
+) : RecyclerView.Adapter<HomeGridAdapter.ViewHolder>() {
 
     private var tiles: List<GridTile> = emptyList()
     private var infos: Map<String, AbstractDetailedAppInfo> = emptyMap()
@@ -76,7 +80,7 @@ class HomeGridAdapter(private val activity: Activity) : RecyclerView.Adapter<Hom
             view.setOnLongClickListener { v ->
                 val tile = tiles.getOrNull(bindingAdapterPosition) as? GridTile.App ?: return@setOnLongClickListener false
                 val info = infos[tile.app.key] ?: return@setOnLongClickListener false
-                showAppContextMenu(activity, v, info)
+                showAppContextMenu(activity, v, info, onOverlay)
                 true
             }
         }

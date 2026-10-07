@@ -260,19 +260,32 @@ Decision:
   locale, wallpaper) and decoded the cached policy, BootHome decoded it again and committed synchronously, and each
   time-rule re-check decoded it 3-5 times.
 - **Fixes**: early `decide`; `bootHomeAction` = MARK_DONE when Home is already up, so ProcessStart shows the lock at
-  once; the runtime's chrome on its own thread (`lock-chrome`), once per transition, and the lock enters lock task
-  when it lands (kiosk off, `chromeListener`); `applyFallback` reuses the prefetched helpers; Home's locked resume is
+  once; the runtime's chrome once per transition (on its own thread, `lock-chrome` - the LOCKED edge since QA #1
+  on the main thread, below), and the lock enters lock task when a later pass lands (kiosk off, `chromeListener`); `applyFallback` reuses the prefetched helpers; Home's locked resume is
   lock task, fence, the time-rule redirect from the stored reason, the lock - no render, no decode; BootHome reads the
   policy only when neither the kiosk nor the lock decides, boot count with `apply()`; `cachedPolicy()` keeps one
   decode per cached string. The rest of `initRest` still runs before any activity (the platform waits for
   `Application.onCreate`); the night ground covers it.
 - Tests: `HomeGateTest` (gate, boot action, the night layout has no touch target, Home's content only from the
-  UNLOCKED edge, the locked resume, `decide` before the rest, the chrome never on the main thread);
-  `smoke-test.sh` `REBOOT=1` greps captured UI dumps for Home's content until the lock is in front.
+  UNLOCKED edge, the locked resume, `decide` before the rest); `smoke-test.sh` `REBOOT=1` greps captured UI dumps
+  for Home's content until the lock is in front.
+- **QA fixes (qa-16c-code.md, 2026-10-07)**: #1 the LOCKED edge's chrome pass runs on the main thread again, right
+  after the lock's start (`refreshChromeNow`), so the lock resumes only once it is in place. The pass writes the
+  status bar and `DISALLOW_CREATE_WINDOWS` before lock task (`chromeWriteOrder`) and does no PackageManager work:
+  `applyPlan` resolves the helpers before the monitor, and the main-thread pass takes cached ones only. A missing
+  set pins our package alone, and a chrome-thread pass adds the helpers. Unlock and DISABLED passes stay on the
+  chrome thread. The cost on the main thread is one pass of DPM calls plus at most one `apply()` pass's DPM calls
+  (the monitor), and it falls between the lock's start and its resume. **Remaining window**: the lock's starting
+  window is up during that pass. Before 16c the shade was open during that pass too. #2 Home also closes its
+  long-press menu and rename dialog on the LOCKED edge. #3 an unreadable lock state starts LOCKED with the lock shown
+  (`lockActiveAtStart`); `init` and the lock's own reads survive the store. #4 `REBOOT=1` samples only after
+  `boot_id` changed and FAILs without a successful dump.
 
 Open device checks (emulator, then the Jelly Star):
 - [ ] `REBOOT=1` (`adb reboot`) and a power-menu restart: no content in any dump, the night ground until the lock;
   logcat from `Process start: LOCKED` to `Displayed ... PinLockActivity` well under 1 s on an idle emulator.
-- [ ] Kiosk off: the lock is in lock task within ~1 s of a LOCKED process start and of a screen-off.
+- [ ] Kiosk off: the lock is in lock task when it resumes at a LOCKED process start and at a screen-off.
+- [ ] Pull the shade and swipe to Overview right as the lock comes up at a LOCKED process start (`adb reboot`, and
+  `am crash` while LOCKED), kiosk on and off: neither opens over the lock (qa-16c-code #1).
 - [ ] Unlock: the content comes with the lock leaving; screen-off over Home: the night ground before the lock.
 - [ ] A time rule at boot (the time-rule screen under the PIN lock) and a call over the lock: unchanged.
