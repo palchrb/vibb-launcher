@@ -91,6 +91,18 @@ class UpdateFenceTest {
     }
 
     @Test
+    fun `never the recents provider - the gestures keep working during our update (16d)`() {
+        val result = fencePlan(listOf(pixelHome, launcher3), own, emptySet(), emptySet(), emptySet(), recentsPackage = pixelHome.packageName)
+        assertEquals(setOf(launcher3.packageName), result.suspend)
+        assertEquals(FenceSkip.RECENTS, result.skipped[pixelHome.packageName])
+        // Pinned in the kiosk it is protected too: still logged as the recents provider.
+        val pinned = fencePlan(listOf(pixelHome), own, setOf(pixelHome.packageName), emptySet(), emptySet(), recentsPackage = pixelHome.packageName)
+        assertEquals(FenceSkip.RECENTS, pinned.skipped[pixelHome.packageName])
+        // Unknown provider: as before.
+        assertEquals(setOf(pixelHome.packageName, launcher3.packageName), fencePlan(listOf(pixelHome, launcher3), own, emptySet(), emptySet(), emptySet(), null).suspend)
+    }
+
+    @Test
     fun `never an already suspended package - a release only undoes the fence`() {
         val result = plan(pixelHome, launcher3, suspended = setOf(launcher3.packageName))
         assertEquals(setOf(pixelHome.packageName), result.suspend)
@@ -413,6 +425,20 @@ class UpdateFenceTest {
         // Not suspended: nothing to do.
         assertEquals(emptySet<String>(), orphanFenceTargets(all, own, emptySet(), emptySet(), suspendedNow = emptySet()))
         assertEquals(setOf(launcher3.packageName), orphanFenceTargets(all, own, emptySet(), emptySet(), suspendedNow = setOf(launcher3.packageName)))
+    }
+
+    @Test
+    fun `the sweep still releases a recents provider an older build's fence suspended (16d)`() {
+        val recents = pixelHome.packageName
+        val suspendedNow = setOf(recents, launcher3.packageName)
+        // Pinned now (a lock-task package, so protected) and excluded from fencing: swept anyway.
+        assertEquals(
+            suspendedNow,
+            orphanFenceTargets(listOf(pixelHome, launcher3), own, protected = setOf(recents), controllable = emptySet(), suspendedNow = suspendedNow, recentsPackage = recents),
+        )
+        // Controllable: enforcement owns it, not the sweep. Other protected packages stay out.
+        assertEquals(setOf(launcher3.packageName), orphanFenceTargets(listOf(pixelHome, launcher3), own, emptySet(), setOf(recents), suspendedNow, recents))
+        assertEquals(setOf(recents), orphanFenceTargets(listOf(pixelHome, launcher3), own, setOf(launcher3.packageName), emptySet(), suspendedNow, recents))
     }
 
     @Test

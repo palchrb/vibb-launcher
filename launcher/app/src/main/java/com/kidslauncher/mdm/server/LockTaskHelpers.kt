@@ -34,6 +34,16 @@ enum class HelperKind {
     /** The "open with" disambiguation screen (ResolverActivity, package `android` on AOSP) for an
      * implicit intent with several handlers and no default (qa-09-code #5). */
     RESOLVER,
+    /**
+     * The system's Recents provider - the package of `config_recentsComponentName` (Pixel:
+     * quickstep in the stock launcher). With the block bit its RecentsActivity, which quickstep
+     * starts for every swipe-up, hold and the Recents key while our Home is Home, became
+     * BlockedAppActivity ("App is not available"); pinned, the gestures work (design 16d,
+     * experiment 2 variant A). Resolved from the framework resource, never a fixed name; system
+     * only, like every helper. Residual risk (accepted, 16d decisions): an allowed app could start
+     * that package's stock home, settings or search explicitly - no kid-reachable path was found.
+     */
+    RECENTS,
 }
 
 /** What an intent resolved to: the package and whether it is a system app (FLAG_SYSTEM). */
@@ -67,21 +77,6 @@ fun firstHelper(matches: List<ResolvedHelper>, forbidden: Set<String>): Resolved
 fun lockTaskFeatures(serverFeatures: Long, blockActivityStart: Boolean): Int {
     val base = (serverFeatures.toInt() and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK.inv()) or LOCK_TASK_FEATURE_KEYGUARD
     return if (blockActivityStart) base or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK else base
-}
-
-/**
- * The kiosk's features as set (design 16, QA #4/#5(b)): with the app-block bit on, a Recents start
- * whose package isn't lock-task permitted becomes BlockedAppActivity ("App is not available" -
- * AOSP's `isActivityAllowed` ignores OVERVIEW), so OVERVIEW is dropped unless the system's recents
- * package ([recentsPackage], `config_recentsComponentName`; `null` = unknown, dropped too) is one of
- * the [kioskPackages]. Kiosk off ([kioskPackages] `null`) or without the bit: unchanged. Whether the
- * gesture swipe-up with HOME on still starts the fallback Recents is a device check (16 doc).
- */
-fun kioskFeatures(features: Int, recentsPackage: String?, kioskPackages: Set<String>?): Int = when {
-    kioskPackages == null -> features
-    features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK == 0 -> features
-    recentsPackage != null && recentsPackage in kioskPackages -> features
-    else -> features and LOCK_TASK_FEATURE_OVERVIEW.inv()
 }
 
 /*

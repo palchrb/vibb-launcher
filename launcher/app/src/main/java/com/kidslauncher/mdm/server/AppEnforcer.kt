@@ -122,9 +122,10 @@ internal fun systemDialerPackage(context: Context): String? =
     }
 
 /**
- * The package of the system's Recents activity (`config_recentsComponentName`, e.g. Pixel's
- * quickstep inside the stock launcher), for [kioskFeatures] (design 16, QA #5(b)). `null` when the
- * platform doesn't say - then OVERVIEW is dropped with the app block.
+ * The package of the system's Recents activity (`config_recentsComponentName` read through
+ * `Resources.getSystem()`, e.g. Pixel's quickstep inside the stock launcher) - design 16d: pinned
+ * with the kiosk's app block ([HelperKind.RECENTS], system only) and never fenced
+ * ([systemRecentsPackage]). `null` when the platform doesn't say (then nothing is pinned or excluded).
  */
 internal fun recentsPackage(): String? = try {
     val res = android.content.res.Resources.getSystem()
@@ -287,7 +288,6 @@ object AppEnforcer {
             playState = playState,
             blockActivityStart = policy?.blockActivityStart == true,
             lockTaskHelpers = if (policy?.blockActivityStart == true) resolveLockTaskHelpers(context) else emptySet(),
-            recentsPackage = recentsPackage(),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -717,8 +717,22 @@ object AppEnforcer {
         val (resolved, forbidden) = resolveHelpers(context)
         val helpers = lockTaskHelpers(resolved, forbidden)
         Log.i(LOG_TAG, "Kiosk app block helpers: $resolved -> $helpers (forbidden $forbidden)")
+        // Design 16d: the recents provider on its own line for the device checks (Jelly Star).
+        val recents = resolved[HelperKind.RECENTS]
+        Log.i(
+            LOG_TAG,
+            "Recents provider (config_recentsComponentName): ${recents?.packageName ?: "unknown"}" +
+                (recents?.let { ", system ${it.system}, ${if (it.packageName in helpers) "pinned" else "not pinned"}" } ?: ""),
+        )
         return helpers
     }
+
+    /**
+     * Design 16d: the recents provider's package when it is a system app (else `null`) - the update
+     * fence never suspends it, so the gestures keep working during our self-update.
+     */
+    internal fun systemRecentsPackage(context: Context): String? =
+        helperInfo(context, recentsPackage())?.takeIf { it.system }?.packageName
 
     /**
      * The system packages handy's PIN lock pins while LOCKED with the kiosk off (step 10,
@@ -810,6 +824,9 @@ object AppEnforcer {
             HelperKind.PHOTO_PICKER to activity(Intent(android.provider.MediaStore.ACTION_PICK_IMAGES)),
             HelperKind.CELL_BROADCAST to cellBroadcast,
             HelperKind.RESOLVER to firstHelper(listOfNotNull(info(resolver)), forbidden),
+            // Design 16d: the framework's Recents provider, never a fixed name; `lockTaskHelpers`
+            // keeps it only when it is a system app and not forbidden or Play.
+            HelperKind.RECENTS to info(recentsPackage()),
         )
         return resolved to forbidden
     }

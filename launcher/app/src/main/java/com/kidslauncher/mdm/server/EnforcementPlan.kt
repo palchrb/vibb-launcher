@@ -111,8 +111,10 @@ data class EnforcementPlan(
  *   are managed or a lock is on, except in install mode ([playState], not during a lock) and the
  *   nightly update window (also during a lock - the screen is off). None of them is pinned in
  *   kiosk, whatever the allowlist - except the Play Store in install mode.
- * - [recentsPackage]: the system's Recents package (`config_recentsComponentName`); with the
- *   app-block bit OVERVIEW is dropped unless it is pinned ([kioskFeatures], design 16).
+ * - The lock-task features are the server's (plus KEYGUARD and the block bit): design 16's drop of
+ *   OVERVIEW with the block bit is reverted (16d, the user's rule: never remove a stock gesture
+ *   without asking) - the recents provider is pinned with the other helpers instead
+ *   ([HelperKind.RECENTS]).
  */
 fun computeEnforcementPlan(
     allowlist: List<String>?,
@@ -135,7 +137,6 @@ fun computeEnforcementPlan(
     playState: PlayState = PlayState(),
     blockActivityStart: Boolean = false,
     lockTaskHelpers: Set<String> = emptySet(),
-    recentsPackage: String? = null,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
@@ -188,6 +189,7 @@ fun computeEnforcementPlan(
         // let the dialer's package start in kiosk anyway (KEYGUARD is always set), so this adds
         // no reach; its calls stay screened by our redirection/in-call services or
         // DISALLOW_OUTGOING_CALLS ([restrictOutgoingCalls], unchanged). Never Settings or Play.
+        // The recents provider is one of the helpers (design 16d): the gestures' RecentsActivity.
         val helpers = if (blockActivityStart) lockTaskHelpers + setOfNotNull(systemDialer) - PLAY_CORE else emptySet()
         (withoutDialer - PLAY_CORE) + helpers + setOfNotNull(PLAY_STORE.takeIf { installModePin })
     } else {
@@ -197,8 +199,8 @@ fun computeEnforcementPlan(
         suspend = suspend,
         hide = hide,
         kioskPackages = kiosk,
-        // Design 16 (QA #5(b)): no OVERVIEW when Recents would be the "App is not available" screen.
-        lockTaskFeatures = kioskFeatures(features, recentsPackage, kiosk),
+        // As the server sent them: OVERVIEW stays (design 16d; Recents is pinned with the helpers).
+        lockTaskFeatures = features,
         neverRestrict = neverRestrict,
         restrictOutgoingCalls = restrictOutgoingCalls,
         // Also while calls are managed: the callback window compares call-log times with the wall

@@ -254,6 +254,8 @@ object UpdateFence {
             protected = protectedPackages(app, dpm, admin),
             controllable = controllablePackages(pm).toSet(),
             alreadySuspended = candidates.map { it.packageName }.filterTo(mutableSetOf()) { suspended(pm, it) },
+            // Design 16d: never the recents provider - the gestures keep working during the update.
+            recentsPackage = AppEnforcer.systemRecentsPackage(app),
         )
         val planned = FenceRecord(
             version = UPDATE_FENCE_V1,
@@ -386,7 +388,10 @@ object UpdateFence {
         val controllable = controllablePackages(pm).toSet()
         if ((suspendedHomes - controllable).isEmpty()) return
         val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
-        val targets = orphanFenceTargets(candidates, app.packageName, protectedPackages(app, dpm, admin), controllable, suspendedHomes)
+        val targets = orphanFenceTargets(
+            candidates, app.packageName, protectedPackages(app, dpm, admin), controllable, suspendedHomes,
+            recentsPackage = AppEnforcer.systemRecentsPackage(app),
+        )
         if (targets.isEmpty()) return
         val refused = try {
             dpm.setPackagesSuspended(admin, targets.toTypedArray(), false).orEmpty().toSet()
