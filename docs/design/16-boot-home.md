@@ -132,6 +132,8 @@ Built: A+B with QA #1-#6, and since 2026-10-07 D as step 16b (below).
 - **#5(b)**: pure `kioskFeatures` (`server/LockTaskHelpers.kt`) drops OVERVIEW from the kiosk's features while the
   app-block bit is on and the package of `config_recentsComponentName` (`AppEnforcer.recentsPackage`, `null` =
   dropped too) isn't pinned; HOME stays. No server change (the server still sends OVERVIEW; the launcher drops it).
+  **Superseded by 16d (2026-10-07, `16d-recents.md` "Implementation status"):** `kioskFeatures` is reverted (the
+  user's gesture rule) and the recents provider is pinned with the kiosk-block helpers instead.
 - **#6**: `bringHomeAfterUpdate(..., pinLockActive)`; `bringHomeAtBoot(bootCount, stored, ...)` = first start of a
   boot (BOOT_COUNT, CE prefs `boot_home`, stored only after Home was started; unknown count = never) and the same
   gate. It runs in `PinLockRuntime.init`'s posted ProcessStart (after the lock's state is loaded, before the
@@ -153,7 +155,8 @@ Open device checks (emulator first, then the Jelly Star):
   stuck after unlock.
 - [ ] Recents and swipe-up in kiosk with the block on (both nav modes, Pixel and Jelly Star): with OVERVIEW
   dropped, does the swipe-up with HOME on still start quickstep's fallback Recents (BlockedAppActivity)? If so,
-  decide per device: HOME off in kiosk (Back only), pin only the recents package (H) or C.
+  decide per device: HOME off in kiosk (Back only), pin only the recents package (H) or C. Answered on the emulator
+  by 16d (yes; H chosen - variant A); the Jelly Star checks are in the 16d doc.
 - [ ] Checks 1-3 and 7 on the Jelly Star (is its stock launcher direct-boot-aware; quickstep's package; a HOME with
   priority > 0; does it hand over by itself).
 - [ ] Calls-managed + PIN lock only (kiosk off, no allowlist): the stock launcher is no longer Home under the lock

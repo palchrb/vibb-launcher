@@ -169,3 +169,70 @@ actions (split screen, pin, freeform, wallpaper), the desync check above, and th
    settings or search of that package. No kid-reachable path was found.
 3. **Jelly Star checks:** its recents provider package and its nav mode; the dialog over 5 reboots; the shade over the
    lock after reboots.
+
+## Implementation status (2026-10-07)
+
+Code with unit tests, **not device-tested** (no emulator in this pass). Commits `0cb8b0a7` (decision 1) and
+`0104eff0` (decision 2); `launcher/CLAUDE.md` design 16 section.
+
+**Decision 1 - status-bar heal (security).** `setStatusBarDisabled` off/on can't do it: in lock task DPMS only records
+it (LockTaskController owns the status bar; AOSP `notifyLockTaskModeChanged`), and a same-value call is a no-op. So
+`LockTaskChrome.healStatusBar` writes the current pass's lock-task features with **SYSTEM_INFO flipped** (pure
+`statusBarHealFeatures`, `lock/StatusBarHealPlan.kt`), waits 250 ms outside its monitor (LockTaskController reads the
+features when its posted update runs), then `endStatusBarHeal` runs a normal pass. The flip changes only
+DISABLE_CLOCK/DISABLE2_SYSTEM_ICONS - never the shade, QS, Home, Recents, power menu, KEYGUARD or the block bit - so
+the net flags change twice and SystemUI is sent the whole set (as `cmd statusbar send-disable-flag clock`/`none` did
+in §2 of experiment 2). Only while something is pinned; `LockTaskChrome` stays the only writer (tested over all
+source sets).
+- Triggers (`PinLockRuntime`, on the `lock-chrome` thread): 1, 3, 6, 10, 20 and 40 s after every process start (our
+  init is the boot's user unlock; also our restart after an update), `BOOT_COMPLETED`, the process's first screen-on,
+  and every screen-off. A SystemUI or quickstep restart can't be seen by an app, so the screen-off heal (invisible)
+  stands in for it. Each heal logs `Status bar heal (<trigger>): lock-task features A -> B for 250 ms`; while the
+  screen is on the clock and status icons blink once.
+- Verification: impossible in-app (SystemUI's copy is only in its dumpsys; `StatusBarManager.getDisableInfo` is a
+  system API). `smoke-test.sh REBOOT=1` now probes for 45 s from the lock's first appearance
+  (`expand-notifications`, `expand-settings`, a swipe from the top) and compares `TaskbarDelegate mDisabledFlags`
+  with `dumpsys statusbar` `mDisabled1` (`docs/testing/emulator.md` §5b).
+- Residual: a desync that happens between two heals (from about 1 s to 40 s after the start) is open until the next
+  heal - the 45 s probe shows whether that window is real.
+
+**Decision 2 - recents provider pinned, OVERVIEW back.** `HelperKind.RECENTS`: the package of
+`config_recentsComponentName` (`Resources.getSystem()`, null-safe) goes through `lockTaskHelpers` like every kiosk-block
+helper - system app only, never Settings/the camera/Play - so the plan pins it whenever the kiosk is on with the block
+bit (also in a time-rule lock and while LOCKED; LOCKED features stay 113). Design 16's `kioskFeatures` is removed:
+the server's features are set as sent (OVERVIEW back). An unresolvable or non-system provider is not pinned and
+OVERVIEW still stays (the dialog returns there rather than a gesture going). Each apply with the bit logs
+`Recents provider (config_recentsComponentName): <pkg>, system <bool>, pinned|not pinned`.
+- PIN-lock helpers (kiosk off): **not added.** The kiosk-off lock has no block bit (a violating start is just
+  aborted - no BlockedAppActivity, so no stale task), except during a VoIP call over the lock (design 17), where
+  pinning would let the call app start the stock home over the lock.
+- Update fence: `fencePlan` never suspends it (`FenceSkip.RECENTS`, whether or not it is pinned), and the orphan sweep
+  still releases it if an older build's fence suspended it. **Trade-off to confirm with the user:** this follows the
+  decision ("never suspends or holds it") and not experiment 2's guard 2 ("still suspends ... or unpins"): on a phone
+  whose provider is the stock launcher (Pixel), that launcher stays the fallback HOME for the ~1 min of our update when
+  `update_fence` is on (default off); the fence still blocks the status bar and every other HOME.
+
+**Emulator checks (Pixel AVD, gesture nav, kiosk + PIN lock):**
+- [ ] `smoke-test.sh REBOOT=1` three times, each from UNLOCKED (unlock, then reboot): the new shade check PASSes and
+  `TaskbarDelegate` equals `dumpsys statusbar`; logcat shows the `Status bar heal` lines 1-40 s after the start.
+- [ ] Recents key and slow/fast swipe and hold over the lock and unlocked: never BlockedAppActivity; Overview opens
+  unlocked (OVERVIEW back) and not from the swipes over the lock (113).
+- [ ] The `Recents provider` log line names `com.google.android.apps.nexuslauncher`, system true, pinned; and
+  `dumpsys device_policy` lists it in the lock-task packages with the block bit.
+
+**Jelly Star checks (decision 3):**
+- [ ] Recents provider: `cmd overlay lookup android android:string/config_recentsComponentName` and the launcher's
+  `Recents provider` log line agree; it is a system app and pinned. Nav mode: `settings get secure navigation_mode`,
+  `cmd overlay list | grep navbar`.
+- [ ] That package is **not controllable** (no LAUNCHER activity: `cmd package query-activities -a
+  android.intent.action.MAIN -c android.intent.category.LAUNCHER | grep <pkg>`). If it is, `apply()` hides and
+  suspends it unless allowlisted and quickstep is gone (§4: no handle, no Home/Recents gesture) - then it needs a
+  `neverRestrict` exemption first.
+- [ ] Its exported activities (`dumpsys package <pkg>`, `am start -n` each) and Overview's actions (split screen,
+  pin, freeform, wallpaper, Pause app, Screenshot/Select): what opens, what gives the dialog, whether anything reaches
+  Settings or the stock home with a kid's input.
+- [ ] The dialog over 5 reboots: `smoke-test.sh REBOOT=1` five times (Recents and swipe-up checks), plus a home swipe
+  right after each unlock.
+- [ ] The shade over the lock after those reboots: the smoke test's 16d checks, and a manual pull of the shade (and
+  QS) right as the lock comes up.
+- [ ] With `update_fence` on (11 doc A3): the gestures during the update tail with the provider left unsuspended.
