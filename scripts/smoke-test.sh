@@ -21,9 +21,9 @@
 # screen (BlockedAppActivity) after the unlock, on Recents or on a gesture swipe-up (design 16); with
 # REBOOT=1, after a reboot no UI dump shows Home's content (contacts, grid, call card) before the PIN
 # unlock (design 16c), once Home's breathing mark is up nothing else is shown before the lock and the
-# lock comes within about 5 s of it (design 16e), and for 45 s after the lock is up neither the shade
-# nor Quick Settings opens over it and SystemUI's TaskbarDelegate has the status bar's disable flags
-# (design 16d). Call state
+# lock comes within about 5 s of it and logcat shows the lock waited for it (design 16e), and for 45 s
+# after the lock is up neither the shade nor Quick Settings opens over it and SystemUI's
+# TaskbarDelegate has the status bar's disable flags (design 16d). Call state
 # comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
 # end (exit 1 on any FAIL, also on SKIP with STRICT=1).
 #
@@ -543,24 +543,43 @@ else
     fi
     # Design 16e: the first lock of a boot waits 3 s for the mark - nothing but the mark (then the
     # lock) once it is up, and the lock within about 5 s. FAIL only on proof: the lock was still not
-    # in front more than 5 s after a dump had shown the mark. (`adb reboot` never arms the boot
-    # cover, so the mark here is Home's night ground.)
+    # in front more than 5 s after a dump had shown the mark. A dump plus the top check take 1-3 s
+    # and the mark is up for under 3 s, so no dump with the mark proves nothing: SKIP
+    # (qa-16e-code #5) - the wait itself is proven from the captured logcat below. (`adb reboot`
+    # never arms the boot cover, so the mark here is Home's night ground.)
     if [ "$rebooted" -ne 1 ] || [ "$lock_seen" -ne 1 ]; then
         skip "the lock within ~5 s of the boot mark (design 16e)" "no reboot or no lock (above)"
         skip "nothing but the mark before the lock after a reboot (design 16e)" "no reboot or no lock (above)"
-    elif [ -z "$mark_ms" ]; then
-        fail "the lock within ~5 s of the boot mark (design 16e)" "Home's night ground was in none of $dumps UI dumps before the lock"
-        skip "nothing but the mark before the lock after a reboot (design 16e)" "the mark was never seen"
+        skip "the boot's lock waited for the mark (design 16e)" "no reboot or no lock (above)"
     else
-        if [ $((waited_ms - CLOCK_SLACK_MS)) -gt "$BOOT_MARK_LIMIT_MS" ]; then
-            fail "the lock within ~5 s of the boot mark (design 16e)" "no lock in front ${waited_ms} ms after a dump showed the mark"
+        if [ -z "$mark_ms" ]; then
+            skip "the lock within ~5 s of the boot mark (design 16e)" "no UI dump caught the night ground ($dumps dumps)"
+            skip "nothing but the mark before the lock after a reboot (design 16e)" "no UI dump caught the night ground"
         else
-            pass "the lock within ~5 s of the boot mark (design 16e): not in front ${waited_ms} ms after the mark, in front at ${seen_ms} ms"
+            if [ $((waited_ms - CLOCK_SLACK_MS)) -gt "$BOOT_MARK_LIMIT_MS" ]; then
+                fail "the lock within ~5 s of the boot mark (design 16e)" "no lock in front ${waited_ms} ms after a dump showed the mark"
+            else
+                pass "the lock within ~5 s of the boot mark (design 16e): not in front ${waited_ms} ms after the mark, in front at ${seen_ms} ms"
+            fi
+            if [ "$others" -gt 0 ]; then
+                fail "nothing but the mark before the lock after a reboot (design 16e)" "$others UI dumps after the mark showed another package (boot-not-mark-*.xml)"
+            else
+                pass "nothing but the mark before the lock after a reboot (design 16e)"
+            fi
         fi
-        if [ "$others" -gt 0 ]; then
-            fail "nothing but the mark before the lock after a reboot (design 16e)" "$others UI dumps after the mark showed another package (boot-not-mark-*.xml)"
+        # The wait from the launcher's own log, captured once, then grepped: the boot's process
+        # start, `Boot mark: the lock waits N ms` and `Boot mark over: <why>`.
+        pinlog="$(adb_ logcat -d -v brief -s PinLock 2>/dev/null | tr -d '\r')"
+        mark_wait="$(grep -m1 -o 'Boot mark: the lock waits -\{0,1\}[0-9]* ms' <<<"$pinlog" || true)"
+        mark_over="$(grep -m1 -o 'Boot mark over: .*' <<<"$pinlog" || true)"
+        if ! grep -q 'Process start:' <<<"$pinlog"; then
+            skip "the boot's lock waited for the mark (design 16e)" "no PinLock 'Process start' in logcat (buffer rolled over?)"
+        elif [ -z "$mark_wait" ]; then
+            fail "the boot's lock waited for the mark (design 16e)" "no 'Boot mark: the lock waits' in logcat - the lock didn't wait (Home's mark not up, an exemption, or not the boot's first start)"
+        elif [ -z "$mark_over" ]; then
+            fail "the boot's lock waited for the mark (design 16e)" "'$mark_wait' but no 'Boot mark over:' although the lock is in front"
         else
-            pass "nothing but the mark before the lock after a reboot (design 16e)"
+            pass "the boot's lock waited for the mark (design 16e): ${mark_wait#Boot mark: }; ${mark_over#Boot mark }"
         fi
     fi
     shot boot-lock

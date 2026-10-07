@@ -8,9 +8,10 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Design 16e: the breathing mark for 3 s at boot - only the first lock showing of a boot waits,
- * the LOCKED chrome never does, calls, alarms and VoIP skip it at once, and the lock comes when the
- * 3 s are up whether Home drew or not; the boot cover's minimum is the same 3 s.
+ * Design 16e: the breathing mark for 3 s at boot - only the first lock showing of a boot's first
+ * process start waits, only while Home's mark is up, the LOCKED chrome never does, calls, alarms
+ * and VoIP skip it at once, and the lock comes when the 3 s are up whether Home drew or not; the
+ * boot cover's minimum is the same 3 s. With the qa-16e-code fixes.
  */
 class BootMarkPlanTest {
     private fun file(path: String) = listOf("src/main/$path", "app/src/main/$path").map(::File).first { it.exists() }
@@ -30,32 +31,99 @@ class BootMarkPlanTest {
     }
 
     private val never: () -> Boolean = { error("exemptions read when nothing can wait") }
-    private val noCover: () -> Long? = { null }
+    private val shown = BootMarkStep(BootMarkState.Over, show = true)
+    private val runtime by lazy { code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt") }
+    private val home by lazy { code("java/com/kidslauncher/mdm/ui/HomeActivity.kt") }
 
     @Test
-    fun `keyed on the boot count - only the first process start of a boot waits`() {
-        assertTrue("a new boot", bootMarkDue(bootCount = 12, storedBootCount = 11, lockActive = true, stateReadable = true))
-        assertTrue("nothing stored yet", bootMarkDue(12, null, lockActive = true, stateReadable = true))
-        assertFalse("a crash restart in the same boot", bootMarkDue(12, 12, lockActive = true, stateReadable = true))
-        assertFalse("unknown boot count", bootMarkDue(-1, 11, lockActive = true, stateReadable = true))
-        assertFalse("unknown boot count, nothing stored", bootMarkDue(-1, null, lockActive = true, stateReadable = true))
-        assertFalse("no lock", bootMarkDue(12, 11, lockActive = false, stateReadable = true))
-        assertFalse("unreadable state: the lock at once (qa-16c-code #3)", bootMarkDue(12, 11, lockActive = true, stateReadable = false))
+    fun `keyed on the boot count and the boot's first process start`() {
+        assertTrue("a new boot", bootMarkDue(bootCount = 12, storedBootCount = 11, lockActive = true, stateReadable = true, sinceBootMs = 40_000L))
+        assertTrue("nothing stored yet, right after a boot", bootMarkDue(12, null, lockActive = true, stateReadable = true, sinceBootMs = 40_000L))
+        assertFalse("a crash restart in the same boot", bootMarkDue(12, 12, lockActive = true, stateReadable = true, sinceBootMs = 40_000L))
+        assertFalse("unknown boot count", bootMarkDue(-1, 11, lockActive = true, stateReadable = true, sinceBootMs = 40_000L))
+        assertFalse("unknown boot count, nothing stored", bootMarkDue(-1, null, lockActive = true, stateReadable = true, sinceBootMs = 40_000L))
+        assertFalse("no lock", bootMarkDue(12, 11, lockActive = false, stateReadable = true, sinceBootMs = 40_000L))
+        assertFalse("unreadable state: the lock at once (qa-16c-code #3)", bootMarkDue(12, 11, lockActive = true, stateReadable = false, sinceBootMs = 40_000L))
+        // qa-16e-code #4: the first start of this build after its update (no key yet), a restart
+        // after a lost write - both long after the boot - never wait.
+        assertFalse("the update to this build", bootMarkDue(12, null, lockActive = true, stateReadable = true, sinceBootMs = 3 * 3_600_000L))
+        assertFalse("at the window", bootMarkDue(12, 11, lockActive = true, stateReadable = true, sinceBootMs = BOOT_MARK_WINDOW_MS))
+        assertTrue("just inside", bootMarkDue(12, 11, lockActive = true, stateReadable = true, sinceBootMs = BOOT_MARK_WINDOW_MS - 1))
+        assertFalse("a clock that makes no sense", bootMarkDue(12, 11, lockActive = true, stateReadable = true, sinceBootMs = -1L))
+        assertEquals(5 * 60_000L, BOOT_MARK_WINDOW_MS)
+        // The boot count is stored synchronously (no restart finds it missing), once per process,
+        // before any screen, with the time since the boot.
+        val atStart = body(runtime, "bootMarkAtStart")
+        assertTrue(atStart.contains("PinLockStore.swapMarkBoot(context, boot)"))
+        assertTrue(atStart.contains("bootMarkDue(boot, stored, startActive, startReadable, SystemClock.elapsedRealtime())"))
+        assertTrue(atStart.contains("BootMarkState.Over\n    }"))
+        val swap = body(code("java/com/kidslauncher/mdm/lock/PinLockStore.kt"), "swapMarkBoot")
+        assertTrue(swap.contains(".commit()"))
+        assertFalse(swap.contains(".apply()"))
+        val init = body(runtime, "init")
+        assertTrue(init.indexOf("decide(app)") in 0 until init.indexOf("bootMark = bootMarkAtStart(app)"))
+        assertTrue(init.indexOf("bootMark = bootMarkAtStart(app)") < init.indexOf("handler.post {"))
+        assertTrue(body(runtime, "decide").contains("startReadable = false"))
+        assertTrue(runtime.contains("private var bootMark: BootMarkState = BootMarkState.Over"))
     }
 
     @Test
     fun `only the first lock showing of a boot waits - 3 s from the first ask`() {
-        val first = bootMarkStep(BootMarkState.Due, LockAsk.BOOT, 10_000L, exempt = { false }, coverFrameMs = noCover)
+        val first = bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = 10_000L, coverFrameMs = null) { false }
         assertEquals(BootMarkStep(BootMarkState.Holding(13_000L), show = false), first)
         // Later boot asks (the process start after Home's resume, a screen-on, the re-front loop) keep
-        // the same end - never later - and the cover isn't read again.
-        val again = bootMarkStep(first.state, LockAsk.BOOT, 12_999L, exempt = { false }) { error("cover read twice") }
+        // the same end - never later, whatever the cover says by then.
+        val again = bootMarkStep(first.state, LockAsk.BOOT, markUp = true, nowMs = 12_999L, coverFrameMs = 1L) { false }
         assertEquals(BootMarkStep(BootMarkState.Holding(13_000L), show = false), again)
-        assertEquals(BootMarkStep(BootMarkState.Over, show = true), bootMarkStep(again.state, LockAsk.BOOT, 13_000L, { false }, noCover))
+        assertEquals(shown, bootMarkStep(again.state, LockAsk.BOOT, markUp = true, nowMs = 13_000L, coverFrameMs = null, exempt = never))
         // Over: every ask shows at once and nothing is read.
         for (ask in LockAsk.entries) {
-            assertEquals(BootMarkStep(BootMarkState.Over, show = true), bootMarkStep(BootMarkState.Over, ask, 13_001L, never) { error("cover") })
+            for (up in listOf(true, false)) assertEquals(shown, bootMarkStep(BootMarkState.Over, ask, up, 13_001L, null, never))
         }
+        // A first ask after the window never waits (qa-16e-code #4: a first screen-on hours later).
+        assertEquals(shown, bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = BOOT_MARK_WINDOW_MS, coverFrameMs = null, exempt = never))
+        assertEquals(
+            BootMarkState.Holding(BOOT_MARK_WINDOW_MS - 1 + BOOT_MARK_MS),
+            bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = BOOT_MARK_WINDOW_MS - 1, coverFrameMs = null) { false }.state,
+        )
+    }
+
+    @Test
+    fun `waits only while Home's mark is up - else the lock at once, as before 16e`() {
+        // qa-16e-code #1: Home's start failed or it never resumed (the stock launcher or FallbackHome
+        // in front), or it was covered since - a boot ask shows at once, exemptions unread.
+        assertEquals(shown, bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = false, nowMs = 10_000L, coverFrameMs = null, exempt = never))
+        assertEquals(shown, bootMarkStep(BootMarkState.Holding(13_000L), LockAsk.BOOT, markUp = false, nowMs = 11_000L, coverFrameMs = null, exempt = never))
+        // Home started first: the clock starts at the process start, nothing is held there; the 1 s
+        // fallback holds only with Home's mark up, else shows - never later than before 16e.
+        val clock = bootMarkClock(BootMarkState.Due, nowMs = 10_000L, coverFrameMs = null)
+        assertEquals(BootMarkState.Holding(13_000L), clock)
+        assertEquals(shown, bootMarkStep(clock, LockAsk.BOOT, markUp = false, nowMs = 10_000L + LOCK_FALLBACK_MS, coverFrameMs = null, exempt = never))
+        assertEquals(
+            BootMarkStep(BootMarkState.Holding(13_000L), show = false),
+            bootMarkStep(clock, LockAsk.BOOT, markUp = true, nowMs = 10_300L, coverFrameMs = null) { false },
+        )
+        // The clock only starts from Due, inside the window, and not after a cover's full 3 s.
+        assertEquals(BootMarkState.Over, bootMarkClock(BootMarkState.Over, 10_000L, null))
+        assertEquals(BootMarkState.Holding(12_000L), bootMarkClock(BootMarkState.Holding(12_000L), 11_000L, null))
+        assertEquals(BootMarkState.Over, bootMarkClock(BootMarkState.Due, BOOT_MARK_WINDOW_MS, null))
+        assertEquals(BootMarkState.Over, bootMarkClock(BootMarkState.Due, 10_000L, coverFrameMs = 7_000L))
+        assertEquals(BootMarkState.Holding(11_000L), bootMarkClock(BootMarkState.Due, 10_000L, coverFrameMs = 8_000L))
+
+        // The runtime: only Home's locked resume says the mark is up, and anything over it - pause,
+        // stop, lost focus (not a recreation) - takes it down and ends the wait (qa-16e-code #2).
+        val resume = body(home, "onResume")
+        val locked = resume.substringAfter("if (!gate()) {").substringBefore("\n            return\n        }")
+        assertTrue(locked.indexOf("PinLockRuntime.onHomeMarkUp()") in 0 until locked.indexOf("PinLockRuntime.show(this, ask = LockAsk.BOOT)"))
+        assertEquals(1, Regex("onHomeMarkUp\\(\\)").findAll(home).count())
+        assertTrue(body(home, "onPause").contains("PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "))
+        assertTrue(body(home, "onStop").contains("PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "))
+        assertTrue(body(home, "onWindowFocusChanged").contains("if (!hasFocus) PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "))
+        val covered = body(runtime, "onHomeCovered")
+        assertTrue(covered.indexOf("if (changingConfigurations) return") in 0 until covered.indexOf("homeMarkUp = false"))
+        assertTrue(covered.contains("endBootMark(context.applicationContext, why)"))
+        assertTrue(body(runtime, "bootMarkHolds").contains("bootMarkStep(before, ask, homeMarkUp, now, coverFrameMs)"))
+        assertTrue(body(runtime, "dispatch").substringAfter("if (result.showLockLater) {").substringBefore("}").contains("startBootMarkClock()"))
     }
 
     @Test
@@ -71,12 +139,13 @@ class BootMarkPlanTest {
         for (event in boot) assertEquals("$event", LockAsk.BOOT, lockAsk(event))
         for (event in atOnce) assertEquals("$event", LockAsk.AT_ONCE, lockAsk(event))
         for (state in listOf(BootMarkState.Due, BootMarkState.Holding(13_000L))) {
-            assertEquals(BootMarkStep(BootMarkState.Over, show = true), bootMarkStep(state, LockAsk.AT_ONCE, 11_000L, never, noCover))
+            assertEquals(shown, bootMarkStep(state, LockAsk.AT_ONCE, markUp = true, nowMs = 11_000L, coverFrameMs = null, exempt = never))
         }
         // A screen-off, the remote lock and a VoIP ring still lock and show as before (the step is unchanged).
         assertTrue(step(LockMode.LOCKED, LockEvent.ScreenOff()).showLock)
         assertTrue(step(LockMode.UNLOCKED, LockEvent.RemoteLock()).showLock)
         assertTrue(step(LockMode.LOCKED, LockEvent.VoipRinging()).showLock)
+        assertTrue(body(runtime, "show").contains("bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)"))
     }
 
     @Test
@@ -92,12 +161,12 @@ class BootMarkPlanTest {
         )
         assertTrue(exempt.all { it })
         for (state in listOf(BootMarkState.Due, BootMarkState.Holding(13_000L))) {
-            assertEquals(BootMarkStep(BootMarkState.Over, show = true), bootMarkStep(state, LockAsk.BOOT, 11_000L, { true }, noCover))
+            assertEquals(shown, bootMarkStep(state, LockAsk.BOOT, markUp = true, nowMs = 11_000L, coverFrameMs = null) { true })
         }
 
-        // The runtime: every ask while something may wait reads all of them; a call starting, the
-        // re-front loop yielding (system dialer, emergency, alarm, VoIP) and a VoIP ring's wake end it.
-        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        // The runtime: every ask that would hold reads all of them; a call starting, the re-front loop
+        // yielding (system dialer, emergency, alarm, VoIP), the lock coming up and a VoIP ring's wake
+        // end it.
         val holds = body(runtime, "bootMarkHolds")
         assertTrue(holds.contains("val telecom = telecomInCall(app)"))
         for (input in listOf("ourCall()", "telecom,", "emergencyFlowNow(telecom)", "alarmNow(app)", "VoipCalls.phase")) {
@@ -106,19 +175,16 @@ class BootMarkPlanTest {
         assertTrue(runtime.contains("if (ctx != null && !callsSeen && any) endBootMark(ctx, "))
         val refront = body(runtime, "runRefrontCheck")
         assertTrue(refront.substringAfter("is RefrontAction.Yield -> {").substringBefore("}").contains("skipBootMark("))
-        assertTrue(body(runtime, "show").contains("bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)"))
-        // Home covered by anything (an app, Recents, a call or alarm screen) ends it too.
-        val home = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt")
-        assertTrue(body(home, "onStop").contains("PinLockRuntime.onHomeStopped(this, isChangingConfigurations)"))
-        assertTrue(body(runtime, "onHomeStopped").contains("if (!changingConfigurations) endBootMark("))
         assertTrue(body(runtime, "onLockResumed").contains("skipBootMark("))
     }
 
     @Test
     fun `never without a lock after the 3 s - also when Home never draws`() {
-        // The end is fixed by the first ask: never more than 3 s after it, whatever the cover says.
+        // The end is fixed by the first ask or the clock: never more than 3 s after it, whatever the cover says.
         for (cover in listOf(null, 9_000L, 10_000L, 11_000L, 50_000L)) {
             assertTrue("cover $cover", bootMarkUntilMs(10_000L, cover) <= 10_000L + BOOT_MARK_MS)
+            val clock = bootMarkClock(BootMarkState.Due, 10_000L, cover)
+            assertTrue("clock, cover $cover", clock == BootMarkState.Over || (clock as BootMarkState.Holding).untilMs <= 10_000L + BOOT_MARK_MS)
         }
         assertEquals(3_000L, BOOT_MARK_MS)
         // When the 3 s are up without an ask (the backstop, Home covered, a call): the lock comes.
@@ -135,22 +201,18 @@ class BootMarkPlanTest {
         )
         assertTrue(refrontAction(inputs, 0) is RefrontAction.Refront)
 
-        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
-        // Entering Holding posts the backstop for the end; it runs endBootMark.
-        val holds = body(runtime, "bootMarkHolds")
-        assertTrue(holds.contains("if (state is BootMarkState.Holding && before !is BootMarkState.Holding) {"))
-        assertTrue(holds.contains("handler.postDelayed(bootMarkBackstop, state.untilMs - now)"))
+        // Entering Holding (an ask or the clock) posts the backstop for the end; it runs endBootMark.
+        val move = body(runtime, "moveBootMark")
+        assertTrue(move.contains("if (state is BootMarkState.Holding && before !is BootMarkState.Holding) {"))
+        assertTrue(move.contains("handler.postDelayed(bootMarkBackstop, state.untilMs - now)"))
+        assertEquals(2, Regex("handler\\.removeCallbacks\\(bootMarkBackstop\\)").findAll(move).count())
+        assertTrue(body(runtime, "bootMarkHolds").contains("moveBootMark(before, next.state, now, "))
+        assertTrue(body(runtime, "startBootMarkClock").contains("moveBootMark(before, bootMarkClock(before, now, coverFrameMs), now, "))
         assertTrue(runtime.contains("private val bootMarkBackstop = Runnable { appContext?.let { endBootMark(it, "))
         val end = body(runtime, "endBootMark")
         assertTrue(end.contains("BootMarkEnd.SHOW -> show(context)"))
         assertTrue(end.contains("runRefrontCheck()"))
-        // The backstop is only taken away when nothing waits any more.
-        assertEquals(2, Regex("handler\\.removeCallbacks\\(bootMarkBackstop\\)").findAll(holds).count())
         assertTrue(body(runtime, "skipBootMark").contains("bootMark = BootMarkState.Over"))
-        // Home started first: the 3 s run from the process start, not from a Home frame that may never come.
-        val dispatch = body(runtime, "dispatch")
-        val later = dispatch.substringAfter("if (result.showLockLater) {").substringBefore("}")
-        assertTrue(later.contains("bootMarkHolds(context, LockAsk.BOOT)"))
         // A held ask starts nothing; the re-front loop asks as the boot and keeps going.
         val show = body(runtime, "show")
         assertTrue(show.indexOf("return false") in 0 until show.indexOf("startActivity"))
@@ -158,33 +220,47 @@ class BootMarkPlanTest {
     }
 
     @Test
-    fun `the LOCKED chrome never waits`() {
+    fun `the LOCKED chrome never waits - not on the hold's binder or file reads`() {
         // The mode is LOCKED at the process start, and the chrome follows the mode, not the showing.
         assertEquals(LockMode.LOCKED, step(LockMode.DISABLED, LockEvent.ProcessStart(active = true, interactive = true)).mode)
         assertEquals(LockMode.LOCKED, step(LockMode.DISABLED, LockEvent.ProcessStart(active = true, interactive = true, homeFirst = true)).mode)
-        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
         val dispatch = body(runtime, "dispatch")
-        assertTrue(dispatch.contains("if (result.showLock) show(context, wake = result.wake, ask = lockAsk(event))\n        if (lockedEdge) refreshChromeNow(context)"))
+        // qa-16e-code #3: while the mark may hold, the chrome goes before show (and its reads).
+        assertTrue(
+            dispatch.contains(
+                "val chromeFirst = lockedEdge && bootMark != BootMarkState.Over\n" +
+                    "        if (chromeFirst) refreshChromeNow(context)\n" +
+                    "        if (result.showLock) show(context, wake = result.wake, ask = lockAsk(event))\n" +
+                    "        if (lockedEdge && !chromeFirst) refreshChromeNow(context)",
+            ),
+        )
         assertTrue(dispatch.contains("if (!lockedEdge) refreshChrome(context)"))
-        // Only show holds (and the Home-first start begins the clock); the wait touches no chrome.
-        assertEquals(3, Regex("bootMarkHolds\\(").findAll(runtime).count())
-        for (name in listOf("bootMarkHolds", "skipBootMark", "endBootMark", "bootMarkAtStart")) {
+        // Only show holds; the wait touches no chrome.
+        assertEquals(2, Regex("bootMarkHolds\\(").findAll(runtime).count())
+        for (name in listOf("bootMarkHolds", "startBootMarkClock", "moveBootMark", "skipBootMark", "endBootMark", "bootMarkAtStart", "onHomeCovered")) {
             val fn = body(runtime, name)
             for (chrome in listOf("LockTaskChrome", "refreshChrome", "healStatusBar", "CameraLock")) {
                 assertFalse("$name: $chrome", fn.contains(chrome))
             }
         }
+        // No file read on an ask: the cover's frame is read once, on an IO thread at init.
+        for (name in listOf("bootMarkHolds", "startBootMarkClock", "moveBootMark")) {
+            for (read in listOf("BootCoverGuard", "BootClock")) assertFalse("$name: $read", body(runtime, name).contains(read))
+        }
+        val init = body(runtime, "init")
+        val io = init.substringAfter("if (readCoverFrame) {")
+        assertTrue(io.indexOf("CoroutineScope(Dispatchers.IO).launch {") in 0 until io.indexOf("coverFrameThisBoot(BootCoverGuard.read(app), markBoot)"))
         // The 16d heal triggers at the process start are untouched.
-        assertTrue(body(runtime, "init").contains("healStatusBar(app, HealTrigger.PROCESS_START)"))
+        assertTrue(init.contains("healStatusBar(app, HealTrigger.PROCESS_START)"))
     }
 
     @Test
     fun `the boot cover's minimum is the same 3 s, counted with Home's mark`() {
         assertEquals(BOOT_MARK_MS, COVER_MIN_SHOWN_MS)
         // The cover was up 1 s before the first ask: 2 s more.
-        assertEquals(BootMarkState.Holding(12_000L), bootMarkStep(BootMarkState.Due, LockAsk.BOOT, 10_000L, { false }) { 9_000L }.state)
+        assertEquals(BootMarkState.Holding(12_000L), bootMarkStep(BootMarkState.Due, LockAsk.BOOT, true, 10_000L, coverFrameMs = 9_000L) { false }.state)
         // The cover had its 3 s already: the lock at once - not 3 s twice.
-        assertEquals(BootMarkStep(BootMarkState.Over, show = true), bootMarkStep(BootMarkState.Due, LockAsk.BOOT, 10_000L, { false }) { 6_000L })
+        assertEquals(shown, bootMarkStep(BootMarkState.Due, LockAsk.BOOT, true, 10_000L, coverFrameMs = 6_000L) { false })
         // A cover frame "after" the ask can't push the end later.
         assertEquals(13_000L, bootMarkUntilMs(10_000L, 11_000L))
 
@@ -203,26 +279,8 @@ class BootMarkPlanTest {
         // An older record (no frame fields) still reads, with no frame.
         assertEquals(CoverRecord(41, 0, false, 5L), decodeCoverRecord("v=1\nboot=41\ncrashes=0\ntripped=false\nshown=5\n"))
 
-        // The cover counts from the boot's first frame; the runtime reads it only for the first ask.
+        // The cover counts from the boot's first frame.
         val cover = code("java/com/kidslauncher/mdm/lock/BootCoverActivity.kt")
         assertTrue(cover.contains("BootCoverGuard.markShown(this, shownAtElapsed)?.let { shownAtElapsed = minOf(shownAtElapsed, it) }"))
-        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
-        assertTrue(body(runtime, "bootMarkHolds").contains("coverFrameMs = { coverFrameThisBoot(BootCoverGuard.read(app), BootClock.bootCount()) }"))
-    }
-
-    @Test
-    fun `the boot count is checked and stored once per process, before any screen`() {
-        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
-        val init = body(runtime, "init")
-        assertTrue(init.indexOf("decide(app)") in 0 until init.indexOf("bootMark = bootMarkAtStart(app)"))
-        assertTrue(init.indexOf("bootMark = bootMarkAtStart(app)") < init.indexOf("handler.post {"))
-        val atStart = body(runtime, "bootMarkAtStart")
-        assertTrue(atStart.contains("PinLockStore.swapMarkBoot(context, boot)"))
-        assertTrue(atStart.contains("bootMarkDue(boot, stored, startActive, startReadable)"))
-        assertTrue(atStart.contains("BootMarkState.Over\n    }"))
-        // Unreadable lock state: no wait.
-        assertTrue(body(runtime, "decide").contains("startReadable = false"))
-        // Starts with nothing waiting (a process that never ran init holds nothing).
-        assertTrue(runtime.contains("private var bootMark: BootMarkState = BootMarkState.Over"))
     }
 }

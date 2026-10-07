@@ -182,8 +182,10 @@ class HomeGateTest {
         // resumes only after dispatch returns. Every other change runs on the chrome thread.
         val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
         val dispatch = body(runtime, "dispatch")
+        // (16e, qa-16e-code #3: while the boot's mark may hold the lock the chrome goes first -
+        // BootMarkPlanTest; otherwise the lock's start first, then the chrome.)
         val show = dispatch.indexOf("if (result.showLock) show(context, wake = result.wake, ask = lockAsk(event))")
-        val now = dispatch.indexOf("if (lockedEdge) refreshChromeNow(context)")
+        val now = dispatch.indexOf("if (lockedEdge && !chromeFirst) refreshChromeNow(context)")
         assertTrue(show in 0 until now)
         assertTrue(now < dispatch.indexOf("modeListeners"))
         assertTrue(dispatch.contains("if (!lockedEdge) refreshChrome(context)"))

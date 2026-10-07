@@ -9,7 +9,7 @@ import java.security.MessageDigest
  * protected storage: the kid PIN's hash must not be readable before the first unlock, QA 10 #12;
  * excluded from backup and device transfer - `allowBackup="false"` plus the backup rules). Every
  * write is a synchronous `commit()`: a wrong PIN counted just before a kill or reboot must stay
- * counted (QA 10 #3) - except the boot mark's boot count ([swapMarkBoot]).
+ * counted (QA 10 #3).
  *
  * No unlock time and no "unlocked" flag is ever stored: a new process starts LOCKED.
  */
@@ -93,13 +93,13 @@ object PinLockStore {
 
     /**
      * Design 16e: the boot count the last process start saw ([bootMarkDue]); [boot] is stored in its
-     * place when known and new. `apply()`, not `commit()` - no disk wait before the first screen
-     * (`PinLockRuntime.init`); a crash before the write only means one more 3 s wait.
+     * place when known and new - with `commit()` like every write here, once per boot, so no restart
+     * in the same boot ever finds it missing (qa-16e-code #4).
      */
     fun swapMarkBoot(context: Context, boot: Int): Int? {
         val p = prefs(context)
         val stored = p.getInt(MARK_BOOT, -1).takeIf { it >= 0 }
-        if (boot >= 0 && boot != stored) p.edit().putInt(MARK_BOOT, boot).apply()
+        if (boot >= 0 && boot != stored) p.edit().putInt(MARK_BOOT, boot).commit()
         return stored
     }
 

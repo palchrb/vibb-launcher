@@ -403,8 +403,12 @@ class HomeActivity : UIObjectActivity() {
             // The time-rule screen from the stored reason: it brings the PIN lock back on top.
             if (redirectToLockScreenIfLocked()) return
             // Handy's PIN lock (step 10): Home in front while LOCKED means the lock lost the front.
-            // At the first start of a boot it waits while the mark shows for 3 s (design 16e).
-            if (PinLockRuntime.mode == LockMode.LOCKED) PinLockRuntime.show(this, ask = LockAsk.BOOT)
+            // At the first start of a boot it waits while the mark shows for 3 s (design 16e) -
+            // only from here on, with the night ground resumed, does the mark count as up.
+            if (PinLockRuntime.mode == LockMode.LOCKED) {
+                PinLockRuntime.onHomeMarkUp()
+                PinLockRuntime.show(this, ask = LockAsk.BOOT)
+            }
             return
         }
         // Fresh check against the clock every time the home screen comes to the foreground, on
@@ -424,6 +428,8 @@ class HomeActivity : UIObjectActivity() {
     }
 
     override fun onPause() {
+        // Design 16e (qa-16e-code #2): anything over the mark - even translucent - ends the boot's wait.
+        PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home paused")
         resumedNow = false
         night?.stop()
         super.onPause()
@@ -509,9 +515,16 @@ class HomeActivity : UIObjectActivity() {
         }
     }
 
+    /** Design 16e (qa-16e-code #2): the assistant, the power menu or a dialog over the mark takes the
+     * focus without pausing Home - the boot's wait ends too. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home lost focus")
+    }
+
     override fun onStop() {
         // Design 16e: something covers the mark - the boot's wait for it ends.
-        PinLockRuntime.onHomeStopped(this, isChangingConfigurations)
+        PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)

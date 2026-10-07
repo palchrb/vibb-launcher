@@ -314,45 +314,60 @@ about 3 s. Decision:
 
 ### 16e implementation status (2026-10-07)
 
-Code with unit tests, **not device-tested** (no emulator in this pass).
+Code with unit tests, **not device-tested** (no emulator in this pass). Commit `1ee2298e`, then the qa-16e-code fix
+round (`qa-16e-code.md`, all five fixed).
 - **Pure decision** (`lock/BootMarkPlan.kt`, `BootMarkPlanTest`): `bootMarkDue(bootCount, stored, lockActive,
-  readable)` - the first process start of a boot: `Settings.Global.BOOT_COUNT` known and not the one stored by the
-  last start (CE `pin_lock_state` key `boot_mark_boot_count`, swapped in `PinLockRuntime.init` with `apply()`), the
-  lock active and its state readable (unreadable: no wait, qa-16c-code #3). A crash restart in the same boot never
-  waits. `bootMarkStep(state, ask, now, exempt, coverFrame)`: `Due` -> `Holding(until)` -> `Over`; only the first
-  showing waits, and `until` is fixed by the first ask, never moved later.
-- **Who waits** (`LockAsk`): `BOOT` asks - the process start (`showLock`, and `showLockLater` when Home is started
-  first: the 3 s run from the process start then), Home's locked resume, a screen-on backstop and the re-front loop.
-  Every other ask (`AT_ONCE`: screen-off, remote lock, calls ending, VoIP ring/end, the time-rule screen, the update's
-  `showIfLocked`) shows at once and ends the wait; so does a VoIP wake.
+  readable, sinceBoot)` - the first process start of a boot: `Settings.Global.BOOT_COUNT` known and not the one stored
+  by the last start (CE `pin_lock_state` key `boot_mark_boot_count`, swapped in `PinLockRuntime.init` with `commit()`),
+  the process started within `BOOT_MARK_WINDOW_MS` (5 min) of the boot, the lock active and its state readable
+  (unreadable: no wait, qa-16c-code #3). A crash restart in the same boot, the first start of a new build after its
+  update and a restart after a lost write never wait. `bootMarkStep(state, ask, markUp, now, coverFrame, exempt)`:
+  `Due` -> `Holding(until)` -> `Over`; only the first showing waits, `until` is fixed by the first held ask (or
+  `bootMarkClock`), never moved later, and a first ask after the window doesn't wait (a first screen-on hours later).
+- **Only while Home's mark is up** (qa-16e-code #1): `markUp` is set by Home's locked resume (`onHomeMarkUp`, right
+  before its `show`) and cleared by Home's `onPause`, `onStop` and `onWindowFocusChanged(false)` (not for a
+  recreation). A boot ask without it shows the lock at once, as before 16e: Home's start failed or threw, Home never
+  resumed (the stock launcher or FallbackHome in front), or Home was covered. When Home is started first
+  (`showLockLater`), `bootMarkClock` only starts the 3 s at the process start; the 1 s fallback then holds only with
+  Home's mark up - never later than before 16e when Home doesn't come.
+- **Who waits** (`LockAsk`): `BOOT` asks - the process start (`showLock`), Home's locked resume, a screen-on backstop
+  and the re-front loop. Every other ask (`AT_ONCE`: screen-off, remote lock, calls ending, VoIP ring/end, the
+  time-rule screen, the update's `showIfLocked`) shows at once and ends the wait; so does a VoIP wake.
 - **Nothing else waits**: the wait lives only in `PinLockRuntime.show`, which starts nothing while held. The mode is
-  LOCKED at the process start as before, so the LOCKED edge's chrome (`refreshChromeNow` right after the `show` call,
-  status bar and `DISALLOW_CREATE_WINDOWS` first), the camera lock and the 16d heals are unchanged; Home stays the night
-  ground (16c); the kiosk's Home still roots lock task at its resume.
+  LOCKED at the process start as before; while the mark may hold (`bootMark != Over`) the LOCKED edge's chrome pass
+  (`refreshChromeNow`, status bar and `DISALLOW_CREATE_WINDOWS` first) runs **before** `show`, so it never waits on the
+  hold's reads (qa-16e-code #3); otherwise the order is 16c's (the lock's start, then the chrome). The hold reads
+  `markUp` and the clock first and the exemptions (Telecom, Audio, AlarmManager) last, only when it would hold; the
+  cover's frame is read once on an IO thread at `init` (not read yet = 3 s from the ask). The camera lock and the 16d
+  heals are unchanged; Home stays the night ground (16c); the kiosk's Home still roots lock task at its resume.
 - **Exemptions, at once** (`bootMarkExempt`): our call, a Telecom call (emergency included), the emergency flow, a
-  ringing system alarm, a VoIP ring or call - read at every ask while something may wait; a call starting
-  (`callsListener`), the re-front loop yielding to any of them, the lock coming up for any reason and Home's `onStop`
-  (an app, Recents, a call or alarm screen covers the mark; not a recreation) end the wait.
+  ringing system alarm, a VoIP ring or call; a call starting (`callsListener`), the re-front loop yielding to any of
+  them, the lock coming up for any reason and anything over Home's mark (pause, stop, lost focus: an app, Recents, the
+  assistant, the power menu, a translucent activity - qa-16e-code #2) end the wait.
 - **Never without a lock after the 3 s**: entering `Holding` posts a backstop for `until`; it, like the other early
   ends, runs `bootMarkEnd` - our call: the lock now (the call screen comes over it, as at a process start in a call);
   otherwise the re-front check (yields to the system dialer, emergency, alarm or VoIP; screen off: the screen-on shows
-  it; else the lock). The 3 s count from the first ask - Home's locked resume, a frame before its first frame, or the
-  process start that brings Home up - so the lock comes whether Home draws or not. Logcat: `Boot mark: the lock waits
-  N ms`, `Boot mark over: <why>`.
+  it; else the lock). The 3 s count from the first held ask or the Home-first process start, so the lock comes
+  whether Home draws or not. Logcat: `Boot mark: the lock waits N ms`, `Boot mark over: <why>`.
 - **Boot cover**: `COVER_MIN_SHOWN_MS = BOOT_MARK_MS` (3 s from its first frame). The cover's record keeps its first
   frame of the boot (`shown_boot`, `shown_elapsed` - elapsed realtime; older records read without them, older readers
-  ignore them; a recreated cover keeps the boot's first frame), and the first ask's `until` is 3 s from the earlier of
-  that frame and the ask - so a cover that had its 3 s means no wait, not 3 s twice.
+  ignore them; a recreated cover keeps the boot's first frame), and `until` is 3 s from the earlier of that frame and
+  the ask - so a cover that had its 3 s means no wait, not 3 s twice.
 - **Smoke test** (`REBOOT=1`, `docs/testing/emulator.md` §5b): on the same captured UI dumps, after the first one with
   the night ground no dump may hold another package's window (`boot-not-mark-<n>.xml`), and the lock must be in front
-  within about 5 s of the mark (a lower bound from the dumps; FAIL only on proof).
+  within about 5 s of the mark (a lower bound; FAIL only on proof, SKIP when no dump caught the mark -
+  qa-16e-code #5); the wait itself from the captured `logcat -d -s PinLock` (`Boot mark: the lock waits`, `Boot mark
+  over:`).
 
 Open device checks (emulator, then the Jelly Star):
-- [ ] `REBOOT=1` (`adb reboot`), kiosk on and off: the night ground ~3 s, then the lock; both 16e checks PASS; logcat
-  `Boot mark: the lock waits` ~3000 ms then `Boot mark over: the mark's 3 s are up`; the 16d shade probe still PASSes.
-- [ ] `am crash` while LOCKED after the boot: no `Boot mark` line, the lock at once.
+- [ ] `REBOOT=1` (`adb reboot`), kiosk on and off: the night ground ~3 s, then the lock; the three 16e checks PASS
+  (logcat `Boot mark: the lock waits` ~3000 ms then `Boot mark over: the mark's 3 s are up`); the 16d shade probe
+  still PASSes.
+- [ ] `am crash` while LOCKED after the boot: no `Boot mark` line, the lock at once. The update to a new build (debug:
+  `adb install -r` then the self-update path): no wait.
 - [ ] Screen-off during the 3 s (power button): the lock at once. A call to the emulator (`gsm call`) during the 3 s:
   our call screen at once over the lock. An alarm set for the boot minute: the alarm, then the lock.
-- [ ] Kiosk off, swipe up to Recents during the 3 s: `Boot mark over: Home covered`, the lock over Recents at once.
+- [ ] Kiosk off, during the 3 s: swipe up to Recents, hold for the assistant, open the power menu - each
+  `Boot mark over: Home paused`/`Home lost focus`, the lock at once.
 - [ ] With the boot cover on (power-menu restart): the cover ~3 s from its first frame; Home's mark only for what is
   left of them (none when the cover handed over after its 3 s).
