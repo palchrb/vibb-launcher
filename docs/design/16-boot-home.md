@@ -210,3 +210,32 @@ no `ACTION_SHUTDOWN` and the cover isn't armed; `ACTION_SHUTDOWN` is protected, 
 - [ ] The crash guard: a cover that crashes twice in a boot disables itself, the next HOME is another one, the next
   shutdown doesn't arm it, the card warns; switch off and on re-arms it.
 - [ ] The look: night background, the breathing mark centred, status/navigation bars night, no white frame.
+
+## 16c - Home never shows content while locked (emulator run 2026-10-07)
+
+Live (`adb reboot`, boot cover off, loaded emulator):
+- 05:35:44.8: the system starts Nexus as HOME in BFU.
+- 05:35:53.6: USER_UNLOCKED.
+- 05:35:58.4: the system starts our HomeActivity.
+- 05:36:10.9: our `PinLock DISABLED -> LOCKED on ProcessStart(homeFirst=true)`, 12 s of process start.
+- 05:36:15.2: our typed HOME start.
+- 05:36:16.2: PinLockActivity start; "Displayed ... PinLockActivity +21s".
+
+**Home showed contacts and apps unlocked for about 20 s.** The A+B order (Home first, then the lock) widens this
+window.
+
+Decision:
+1. HomeActivity renders **no content** (no contacts, apps, call card or settings tile, and no touch targets) unless
+   `PinLockRuntime` says UNLOCKED or the PIN lock is inactive (no kid PIN, Android credential, unmanaged).
+   - This holds from `onCreate`, before the runtime has decided: an unknown state counts as locked whenever the
+     stored lock state or the cached policy says a kid PIN is set.
+   - Instead, Home shows the night ground with the breathing Vibb mark (`splash_vibb_breathe.xml`), centred. This is
+     also the user's wished-for splash on every boot, cover or not.
+   - The content is inflated and bound only on the UNLOCKED edge.
+   - The kiosk/lock-task logic is unchanged.
+2. Find and remove the delay between `ProcessStart` LOCKED and the lock in front (4-5 s here): show the lock in the
+   same pass that brings Home forward, and keep anything slow off that path.
+3. Tests:
+   - a pure `homeShowsContent(lockMode, pinActive, known)`;
+   - Home's touchables are gone while locked;
+   - `smoke-test.sh` after reboot: no Home content node (uiautomator) before the PIN unlock.
