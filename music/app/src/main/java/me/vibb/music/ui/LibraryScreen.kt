@@ -245,7 +245,8 @@ private fun CoverBadges(e: EntryUi) {
 /** Alle + the categories with entries here; single choice; more than four scroll. */
 @Composable
 private fun CategoryTiles(tiles: List<Category>, selected: Long?, onCategory: (Long?) -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val label = stringResource(R.string.categories)
+    BoxWithConstraints(Modifier.fillMaxWidth().semantics { contentDescription = label }) {
         val tileWidth = (maxWidth - 16.dp) / 5
         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             item { CategoryTile(null, selected == null, tileWidth) { onCategory(null) } }

@@ -25,11 +25,12 @@ import java.io.File
  *   debug-feed/covers/<hash>          cover JPEGs (checked against their hash)
  *   debug-feed/config.json            optional: {"mobile_data": true}
  *
+ *   adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver  (creates the folder)
  *   adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
  *   adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
  *
  * It goes through the same checks the bridge will (Inbox) and then runs the sync at once.
- * docs/testing/emulator.md has the steps.
+ * docs/testing/emulator.md §6f has the steps.
  */
 class DebugFeedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

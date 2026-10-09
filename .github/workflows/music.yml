@@ -1,0 +1,287 @@
+name: Music
+
+# The Vibb music app in music/ (design 21 §5). Two flows, like launcher.yml:
+# - Every push to master/main and every PR: music-build (debug, unsigned release, lint, unit tests)
+#   runs when music/, this workflow or the music files shared with the server changed, and uploads
+#   the debug APK as a workflow artifact. Nothing is published, no secrets.
+# - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
+#   master/main: music-release-build builds the unsigned release APK (no secrets),
+#   music-release-sign signs and verifies it in the protected "release" environment with the
+#   launcher's key (the bridge's signature permission needs one signer; design 21 §2), and
+#   music-release-publish creates the GitHub Release with vibb-music.apk and its .sha256. A music
+#   release never becomes "latest": releases/latest/download/kids-launcher-mdm.apk must keep serving
+#   the launcher (the provisioning QR). The server's catalog row finds it by its music-v prefix.
+#
+# One-time setup (repo settings, not code): the "release" environment's deployment rule must also
+# allow tags matching music-v* (it holds the launcher's signing secrets); RELEASE_CERT_SHA256 is the
+# same repo variable as for the launcher.
+#
+# Third-party actions are pinned by commit SHA (the same as launcher.yml). Never add a
+# pull_request_target trigger.
+
+# No `paths:` filter on the triggers: a skipped workflow leaves a required check pending forever.
+# music-changes decides, music-build runs only when music files changed, and music-ci (always
+# runs) is the check to require in branch protection.
+
+on:
+  push:
+    branches: [ "master", "main" ]
+    tags: [ "music-v*" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  music-changes:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-24.04
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      with:
+        fetch-depth: 0
+    - name: Did music files change?
+      id: diff
+      env:
+        EVENT: ${{ github.event_name }}
+        BEFORE: ${{ github.event.before }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+      run: |
+        case "$EVENT" in
+          pull_request) base="$PR_BASE" ;;
+          push) base="$BEFORE" ;;
+          *) base="" ;;  # workflow_dispatch: always build
+        esac
+        # No usable base (manual run, new branch, force push): build.
+        if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+          changed=true
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/music_(library|listing|icons)\.json$)'; then
+          changed=true
+        else
+          changed=false
+        fi
+        echo "changed=$changed" >> "$GITHUB_OUTPUT"
+        echo "music changed: $changed (base ${base:-none})"
+
+  music-build:
+    needs: music-changes
+    if: ${{ !startsWith(github.ref, 'refs/tags/') && needs.music-changes.outputs.changed == 'true' }}
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: music
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+    - name: set up JDK 17
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+    - name: Build with Gradle
+      # Debug, unsigned release, lint and unit tests (the shared files are compared with
+      # ../server/testdata). Kotlin warnings fail the build. assembleRelease fails if the debug
+      # feed or Google services reach the release APK.
+      run: ./gradlew build -PwarningsAsErrors=true
+    - name: Upload APK
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      with:
+        name: music-debug-${{ github.sha }}.apk
+        path: music/app/build/outputs/apk/debug/app-debug.apk
+
+  # The one check to mark as required in branch protection: it always runs and passes when the
+  # build passed, or was skipped because nothing of music's changed.
+  music-ci:
+    if: ${{ always() && !startsWith(github.ref, 'refs/tags/') }}
+    needs: [ music-changes, music-build ]
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Check music-build
+      env:
+        CHANGES: ${{ needs.music-changes.result }}
+        CHANGED: ${{ needs.music-changes.outputs.changed }}
+        BUILD: ${{ needs.music-build.result }}
+      run: |
+        echo "changes: $CHANGES, changed: $CHANGED, build: $BUILD"
+        [ "$CHANGES" = success ] || exit 1
+        if [ "$CHANGED" = true ]; then [ "$BUILD" = success ]; else [ "$BUILD" = skipped ]; fi
+
+  music-release-build:
+    if: ${{ startsWith(github.ref, 'refs/tags/music-v') }}
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: music
+    outputs:
+      version-name: ${{ steps.version.outputs.name }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      with:
+        fetch-depth: 0
+    - name: Refuse tags whose commit is not on master/main
+      run: |
+        for b in main master; do
+          git fetch --no-tags origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null || true
+        done
+        for branch in master main; do
+          if git rev-parse --verify -q "origin/$branch" >/dev/null &&
+             git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
+            echo "$GITHUB_REF_NAME ($GITHUB_SHA) is on $branch"
+            exit 0
+          fi
+        done
+        echo "Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on master or main" >&2
+        exit 1
+    - name: Derive version from tag
+      id: version
+      # music-vMAJOR.MINOR.PATCH -> versionName MAJOR.MINOR.PATCH, versionCode
+      # MAJOR*1_000_000 + MINOR*1_000 + PATCH; music-vX.Y.Z-rc.N -> the same code minus 1 and a
+      # prerelease (an RC installs over the previous release, the final release over the RC).
+      run: |
+        tag="$GITHUB_REF_NAME"
+        if [[ "$tag" =~ ^music-v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          prerelease=false
+        elif [[ "$tag" =~ ^music-v([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$ ]]; then
+          prerelease=true
+        else
+          echo "Tag '$tag' is neither music-vMAJOR.MINOR.PATCH nor music-vMAJOR.MINOR.PATCH-rc.N" >&2
+          exit 1
+        fi
+        major=$((10#${BASH_REMATCH[1]})); minor=$((10#${BASH_REMATCH[2]})); patch=$((10#${BASH_REMATCH[3]}))
+        if (( minor > 999 || patch > 999 || major > 2000 )); then
+          echo "Tag '$tag' is out of range (MINOR and PATCH <= 999, MAJOR <= 2000)" >&2
+          exit 1
+        fi
+        code=$(( major * 1000000 + minor * 1000 + patch ))
+        if [ "$prerelease" = true ]; then code=$(( code - 1 )); fi
+        if (( code < 1 )); then echo "versionCode would be $code" >&2; exit 1; fi
+        name="${tag#music-v}"
+        echo "name=$name" >> "$GITHUB_OUTPUT"
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+        echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+        echo "versionName $name, versionCode $code, prerelease $prerelease"
+    - name: set up JDK 17
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - name: Build unsigned release APK
+      # No keystore in this job: it runs Gradle plugins and downloads dependencies, so it never
+      # gets the signing secrets. Signing happens in music-release-sign.
+      run: |
+        chmod +x gradlew
+        ./gradlew assembleRelease testReleaseUnitTest \
+          -PversionName="${{ steps.version.outputs.name }}" -PversionCode="${{ steps.version.outputs.code }}"
+    - name: Upload unsigned APK
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      with:
+        name: music-release-unsigned
+        path: music/app/build/outputs/apk/release/app-release-unsigned.apk
+        if-no-files-found: error
+        retention-days: 7
+
+  music-release-sign:
+    needs: music-release-build
+    runs-on: ubuntu-24.04
+    # Holds the signing secrets (the launcher's key). Its deployment rule must allow music-v* tags.
+    environment: release
+    steps:
+    - name: Download unsigned APK
+      uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      with:
+        name: music-release-unsigned
+    - name: Sign
+      env:
+        KEYSTORE_B64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_B64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+      run: |
+        set -euo pipefail
+        if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+          echo "Release signing secrets are missing from the 'release' environment" >&2
+          exit 1
+        fi
+        BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+        umask 077
+        echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+        "$BT/zipalign" -f -P 16 4 app-release-unsigned.apk aligned.apk
+        "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.p12" --ks-type PKCS12 \
+          --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD \
+          --out vibb-music.apk aligned.apk
+    - name: Remove keystore
+      if: always()
+      run: rm -f "$RUNNER_TEMP/release.p12"
+    - name: Verify
+      env:
+        EXPECTED_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
+      run: |
+        set -euo pipefail
+        BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+        echo "build-tools: $BT ($("$BT/apksigner" --version))"
+        "$BT/apksigner" verify --print-certs vibb-music.apk | tee certs.txt
+        digests="$(grep -oE 'certificate SHA-256 digest: *[0-9a-fA-F]{64}' certs.txt \
+          | grep -oE '[0-9a-fA-F]{64}' | tr 'A-F' 'a-f' | sort -u)"
+        if [ -z "$digests" ]; then
+          echo "No certificate SHA-256 digest in apksigner's output (above)" >&2
+          exit 1
+        fi
+        if [ "$(printf '%s\n' "$digests" | wc -l)" -ne 1 ]; then
+          echo "More than one signing certificate: $digests" >&2
+          exit 1
+        fi
+        actual="$digests"
+        expected="$(echo "$EXPECTED_SHA256" | tr -d ' :' | tr 'A-F' 'a-f')"
+        if [ -z "$expected" ]; then
+          echo "Repo variable RELEASE_CERT_SHA256 is not set" >&2
+          exit 1
+        fi
+        if [ "$actual" != "$expected" ]; then
+          echo "Signing certificate SHA-256 is $actual, expected $expected (the launcher's)" >&2
+          exit 1
+        fi
+        if "$BT/aapt2" dump badging vibb-music.apk | grep -q 'application-debuggable'; then
+          echo "The release APK is debuggable" >&2
+          exit 1
+        fi
+        "$BT/aapt2" dump badging vibb-music.apk | grep "^package:" > badging.txt
+        grep -q "name='me.vibb.music' " badging.txt \
+          || { echo "Unexpected package: $(cat badging.txt)" >&2; exit 1; }
+        sha256sum vibb-music.apk > vibb-music.apk.sha256
+    - name: Upload signed APK
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      with:
+        name: music-release-signed
+        path: |
+          vibb-music.apk
+          vibb-music.apk.sha256
+        if-no-files-found: error
+
+  music-release-publish:
+    needs: [ music-release-build, music-release-sign ]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+    - name: Download signed APK
+      uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      with:
+        name: music-release-signed
+    - name: Create GitHub Release
+      uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
+      with:
+        tag: ${{ github.ref_name }}
+        name: music ${{ needs.music-release-build.outputs.version-name }}
+        prerelease: ${{ needs.music-release-build.outputs.prerelease }}
+        # Never "latest": that URL is the launcher's (the provisioning QR and its self-update).
+        makeLatest: false
+        generateReleaseNotes: true
+        artifacts: "vibb-music.apk,vibb-music.apk.sha256"
+        artifactErrorsFailBuild: true
+        token: ${{ secrets.GITHUB_TOKEN }}

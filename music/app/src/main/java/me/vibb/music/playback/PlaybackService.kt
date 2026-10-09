@@ -29,7 +29,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
-import androidx.media3.session.SessionCommands
+import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -51,6 +51,7 @@ import me.vibb.music.data.ShuffleRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.NetCaps
 import me.vibb.music.logic.Playability
 import me.vibb.music.logic.QueuePlan
 import me.vibb.music.logic.SLEEP_FADE_MS
@@ -186,7 +187,10 @@ class PlaybackService : MediaSessionService() {
             Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
         )
 
-        override fun getAvailableCommands(): Player.Commands = super.getAvailableCommands().buildUpon().addAll(*extra.toIntArray()).build()
+        override fun getAvailableCommands(): Player.Commands = super.getAvailableCommands().buildUpon()
+            .add(Player.COMMAND_SEEK_TO_NEXT).add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+            .add(Player.COMMAND_SEEK_TO_PREVIOUS).add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+            .build()
         override fun isCommandAvailable(command: Int): Boolean = command in extra || super.isCommandAvailable(command)
         override fun hasNextMediaItem(): Boolean = mediaItemCount > 1
         override fun hasPreviousMediaItem(): Boolean = mediaItemCount > 1
@@ -221,7 +225,7 @@ class PlaybackService : MediaSessionService() {
                 Commands.SHUFFLE -> toggleShuffle()
                 Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
                 Commands.OUTPUT -> setOutput(args.getInt(Commands.ARG_OUTPUT, Output.PHONE_ID))
-                else -> return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
+                else -> return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
@@ -337,20 +341,21 @@ class PlaybackService : MediaSessionService() {
     private fun startPos(a: Active, index: Int): Long =
         if (a.entry.resume) seekGate(resumeFrom(a.positions[a.items[index].key])) else 0
 
-    private fun playable(a: Active, index: Int): Boolean {
+    private fun playable(a: Active, index: Int, caps: NetCaps? = netCaps(this)): Boolean {
         val item = a.items[index]
         val hasCopy = item.fileId != null || item.key in a.copies
-        return playability(hasCopy, item.url != null, netCaps(this), store.mobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
+        return playability(hasCopy, item.url != null, caps, store.mobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
     }
 
     /** The first index from [index] on (or back) that can play now; null when none. */
     private fun playableFrom(a: Active, index: Int, forward: Boolean, wrap: Boolean): Int? {
         val n = a.items.size
+        val caps = netCaps(this)
         for (step in 0 until n) {
             val i = if (forward) index + step else index - step
             val j = if (wrap) i.mod(n) else i
             if (j !in 0 until n) return null
-            if (playable(a, j)) return j
+            if (playable(a, j, caps)) return j
         }
         return null
     }
@@ -615,8 +620,8 @@ class PlaybackService : MediaSessionService() {
                 exo.prepare()
                 exo.play()
             } else {
+                // Nothing after it can play now: stay here, paused (a tap on play tries again).
                 exo.pause()
-                exo.prepare()
             }
         }
 
