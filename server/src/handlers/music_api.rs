@@ -1,7 +1,7 @@
 //! The phone's music routes (design 21 §1.3), all bearer-authenticated and scoped to the requesting
 //! phone's ticked entries - anything else is a 404 like an unknown id:
 //!
-//! - `GET /api/devices/music/library`: this phone's library (`music::device_library`), `ETag` = its
+//! - `GET /api/devices/music/library`: this phone's library (`music::cached_library`), `ETag` = its
 //!   version, `If-None-Match` -> 304, gzip when asked for. 404 while nothing is ticked.
 //! - `GET /api/devices/music/covers/{hash}`: a cover the library names.
 //! - `GET /api/devices/music/files/{id}`: an own file, through design 13's `ServeFile` (Range, strong
@@ -62,11 +62,12 @@ pub async fn library(
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
     headers: HeaderMap,
 ) -> Response {
-    let library = match crate::music::device_library(&state.db, device.id).await {
-        Ok(Some(library)) => library,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(err) => return server_error(device.id, err, "couldn't build the music library"),
-    };
+    let library =
+        match crate::music::cached_library(&state.db, &state.music_libraries, device.id).await {
+            Ok(Some(library)) => library,
+            Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+            Err(err) => return server_error(device.id, err, "couldn't build the music library"),
+        };
     let etag = format!("\"{}\"", library.version);
     let etag_value = HeaderValue::from_str(&etag).expect("hex in quotes is a valid header");
     let mut response_headers = HeaderMap::new();
@@ -93,7 +94,7 @@ pub async fn library(
             Err(err) => tracing::warn!(device_id = device.id, %err, "couldn't gzip the library"),
         }
     }
-    (response_headers, library.json).into_response()
+    (response_headers, library.json.clone()).into_response()
 }
 
 pub async fn cover(
@@ -104,12 +105,10 @@ pub async fn cover(
     let Some(path) = crate::photos::path_for(&state.music_cover_dir, &hash) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let library = match crate::music::device_library(&state.db, device.id).await {
-        Ok(library) => library,
+    match crate::music::cover_in_library(&state.db, device.id, &hash).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::NOT_FOUND.into_response(),
         Err(err) => return server_error(device.id, err, "music cover lookup failed"),
-    };
-    if !library.is_some_and(|l| l.covers.contains(&hash)) {
-        return StatusCode::NOT_FOUND.into_response();
     }
     match tokio::fs::read(&path).await {
         Ok(bytes) => ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response(),

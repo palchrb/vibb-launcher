@@ -224,6 +224,8 @@ struct MusicTemplate {
     catalog: Option<CatalogCard>,
     /// "Import from Vibb" (design 21a, `#import`).
     import: super::music_import::ImportCard,
+    /// Own files on disk no entry names (qa-21-step1-code #7): how many and how big.
+    orphans: Option<(usize, String)>,
 }
 
 /// What a refused form on `/music` brings back.
@@ -443,7 +445,46 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
         storytel,
         catalog,
         import: entered.import.unwrap_or_default(),
+        orphans: music::orphan_files(&state.db, &state.music_files_dir)
+            .await
+            .map(|o| {
+                (!o.files.is_empty()).then(|| (o.files.len(), music::megabytes(o.bytes as i64)))
+            })?,
     })
+}
+
+/// `POST /music/orphans/delete`: deletes the own files no entry names (left by restoring an older
+/// backup), and the directories of entries that are gone. Looked up again here, so a file that got
+/// its row meanwhile stays.
+pub async fn delete_orphans(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+) -> Response {
+    let orphans = match music::orphan_files(&state.db, &state.music_files_dir).await {
+        Ok(orphans) => orphans,
+        Err(err) => return server_error(err, "couldn't list the music files"),
+    };
+    let mut deleted = 0;
+    for file in &orphans.files {
+        if tokio::fs::remove_file(file).await.is_ok() {
+            deleted += 1;
+        }
+        // An entry directory left empty goes too (best effort: fails while not empty).
+        if let Some(parent) = file.parent() {
+            tokio::fs::remove_dir(parent).await.ok();
+        }
+    }
+    log_event(
+        &state,
+        &admin,
+        "music_orphans_deleted",
+        &format!(
+            "{deleted} file(s), {}",
+            music::megabytes(orphans.bytes as i64)
+        ),
+    )
+    .await;
+    Redirect::to("/music#entries").into_response()
 }
 
 /// The category for a new entry: the one picked, else the first whose `default_kind` matches the
@@ -477,6 +518,9 @@ async fn entry_count(db: &sqlx::SqlitePool) -> Result<i64, sqlx::Error> {
 
 /// The `sort` of an entry added now: after every other (the carousel order).
 pub(super) const NEXT_SORT: &str = "(SELECT COALESCE(MAX(sort), 0) + 10 FROM music_entries)";
+/// Ends an `INSERT INTO music_entries ... SELECT ...` so it inserts nothing once the library holds
+/// the bound limit (`MAX_ENTRIES`): the count and the write are one statement.
+pub(super) const BELOW_ENTRY_LIMIT: &str = "WHERE (SELECT COUNT(*) FROM music_entries) < ?";
 
 /// `POST /music`: adds an NRK or RSS entry from a pasted link, after one GET that must look like
 /// the source; its title becomes the name. 400 (the page, the link kept, the reason by the field)
@@ -537,9 +581,10 @@ pub async fn add_link(
             return render_music(&state, StatusCode::BAD_REQUEST, refuse(err.message())).await;
         }
     };
-    let inserted: Result<i64, sqlx::Error> = sqlx::query_scalar(&format!(
+    // The limit is checked in the INSERT itself (qa-21-step1-code #6): two adds can't pass it.
+    let inserted: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(&format!(
         "INSERT INTO music_entries (name, category_id, source, target, key, cache, resume, sort) \
-         VALUES (?, ?, ?, ?, ?, ?, 1, {NEXT_SORT}) RETURNING id"
+         SELECT ?, ?, ?, ?, ?, ?, 1, {NEXT_SORT} {BELOW_ENTRY_LIMIT} RETURNING id"
     ))
     .bind(&title)
     .bind(category)
@@ -547,10 +592,15 @@ pub async fn add_link(
     .bind(&target)
     .bind(music::state_key(&target))
     .bind(music::DEFAULT_CACHE)
-    .fetch_one(&state.db)
+    .bind(MAX_ENTRIES)
+    .fetch_optional(&state.db)
     .await;
     let id = match inserted {
-        Ok(id) => id,
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
+            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
+        }
         // Added by another request since the check above.
         Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
             let error = "That link is already in the library.".to_string();
@@ -588,14 +638,7 @@ pub async fn add_own(
         let error = format!("Give it a name (at most {MAX_NAME_CHARS} characters).");
         return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
     };
-    match entry_count(&state.db).await {
-        Ok(n) if n >= MAX_ENTRIES => {
-            let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
-        }
-        Ok(_) => {}
-        Err(err) => return server_error(err, "music entry count failed"),
-    }
+    // The 200-entry limit is the INSERT's own condition below.
     let category = match pick_category(&state.db, &picked, "own").await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
@@ -603,29 +646,25 @@ pub async fn add_own(
         }
         Err(err) => return server_error(err, "music category lookup failed"),
     };
-    // The key is "own-<id>": a placeholder first, then the id, in one transaction.
-    let result: Result<i64, sqlx::Error> = async {
-        let mut tx = state.db.begin().await?;
-        let id: i64 = sqlx::query_scalar(&format!(
-            "INSERT INTO music_entries (name, category_id, source, key, cache, resume, sort) \
-             VALUES (?, ?, 'own', ?, -1, 0, {NEXT_SORT}) RETURNING id"
-        ))
-        .bind(&name)
-        .bind(category)
-        .bind(format!("own-new-{}", random_name()))
-        .fetch_one(&mut *tx)
-        .await?;
-        sqlx::query("UPDATE music_entries SET key = ? WHERE id = ?")
-            .bind(format!("own-{id}"))
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(id)
-    }
+    // The key is "own-" and 12 random hex digits, unique for good: after a restore the ids come
+    // back, and the music app keys positions and downloads by it (qa-21-step1-code #7). The limit
+    // is checked in the INSERT itself (#6).
+    let inserted: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(&format!(
+        "INSERT INTO music_entries (name, category_id, source, key, cache, resume, sort) \
+         SELECT ?, ?, 'own', ?, -1, 0, {NEXT_SORT} {BELOW_ENTRY_LIMIT} RETURNING id"
+    ))
+    .bind(&name)
+    .bind(category)
+    .bind(music::new_own_key())
+    .bind(MAX_ENTRIES)
+    .fetch_optional(&state.db)
     .await;
-    let id = match result {
-        Ok(id) => id,
+    let id = match inserted {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
+            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
+        }
         Err(err) => return server_error(err, "couldn't add an own-files entry"),
     };
     log_event(
@@ -1453,15 +1492,54 @@ enum ReceiveError {
     CutOff,
     TooBig,
     Empty,
+    /// The data disk would get below [MIN_FREE_BYTES] (qa-21-step1-code #5).
+    NoSpace,
     Disk(String),
 }
 
+/// How often (bytes written) an upload looks at the free space again.
+const DISK_CHECK_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Stops an upload before it takes the data disk below `floor` (qa-21-step1-code #5): the free
+/// space is looked at before the first byte and again every [DISK_CHECK_BYTES], so two uploads at
+/// once or a file bigger than what's left stop too - the SQLite database shares that disk.
+struct DiskGuard<'a> {
+    dir: &'a FsPath,
+    floor: u64,
+    next_check: u64,
+}
+
+impl<'a> DiskGuard<'a> {
+    fn new(dir: &'a FsPath, floor: u64) -> Self {
+        DiskGuard {
+            dir,
+            floor,
+            next_check: 0,
+        }
+    }
+
+    /// `written` = bytes of this file written so far.
+    fn check(&mut self, written: u64) -> Result<(), ReceiveError> {
+        if written < self.next_check {
+            return Ok(());
+        }
+        self.next_check = written + DISK_CHECK_BYTES;
+        match music::free_bytes(self.dir) {
+            Some(free) if free >= self.floor => Ok(()),
+            _ => Err(ReceiveError::NoSpace),
+        }
+    }
+}
+
 /// Streams one multipart file to `<dir>/<random>.part`, hashing it as it goes; nothing is held in
-/// memory beyond one chunk.
+/// memory beyond one chunk. Stops (the temp file goes) when the disk gets below `floor`.
 async fn receive(
     file_field: &mut Field<'_>,
     dir: &FsPath,
+    floor: u64,
 ) -> Result<(TempFile, u64, String), ReceiveError> {
+    let mut guard = DiskGuard::new(dir, floor);
+    guard.check(0)?;
     let temp = TempFile {
         path: dir.join(format!("{}.part", random_name())),
         keep: false,
@@ -1476,6 +1554,7 @@ async fn receive(
         if size > MAX_FILE_BYTES {
             return Err(ReceiveError::TooBig);
         }
+        guard.check(size)?;
         digest.update(&chunk);
         out.write_all(&chunk)
             .await
@@ -1489,6 +1568,164 @@ async fn receive(
         .and(out.sync_all().await)
         .map_err(|e| ReceiveError::Disk(e.to_string()))?;
     Ok((temp, size, hex::encode(digest.finalize())))
+}
+
+/// What became of one received own file.
+#[derive(Debug, PartialEq, Eq)]
+enum Kept {
+    Added(i64),
+    /// A missing file of the entry with the same content, back in place (its id and path kept).
+    Restored(i64),
+    /// The entry already has this file.
+    Duplicate,
+    /// The entry holds [MAX_FILES_PER_ENTRY] files.
+    Full,
+    Failed,
+}
+
+/// Keeps one received own file of entry `entry_id` (`temp` read by lofty as `tags`):
+/// - a **missing** file of the entry with the same SHA-256 is restored in place - same id and
+///   path, so the phones' copies and handover marks stay valid (qa-21-step1-code #2);
+/// - the same content already present is refused;
+/// - anything else is added, unless the entry is full (checked in the INSERT itself, #6).
+///
+/// The file is renamed into place before its row is written; a failed row write removes it again
+/// (so does an entry deleted meanwhile: the foreign key refuses the row, or the rename finds no
+/// directory).
+#[allow(clippy::too_many_arguments)]
+async fn keep_upload(
+    state: &AppState,
+    entry_id: i64,
+    mut temp: TempFile,
+    size: u64,
+    sha256: &str,
+    original: &str,
+    tags: &music::AudioTags,
+) -> Kept {
+    // (id, path, missing, art_hash) of a file of this entry with the same content.
+    type Same = (i64, String, bool, Option<String>);
+    let existing: Result<Option<Same>, sqlx::Error> = sqlx::query_as(
+        "SELECT id, path, missing, art_hash FROM music_files \
+             WHERE entry_id = ? AND sha256 = ? ORDER BY missing DESC, id LIMIT 1",
+    )
+    .bind(entry_id)
+    .bind(sha256)
+    .fetch_optional(&state.db)
+    .await;
+    let existing = match existing {
+        Ok(existing) => existing,
+        Err(err) => {
+            tracing::error!(%err, "music file lookup failed");
+            return Kept::Failed;
+        }
+    };
+    let art = async {
+        match tags.picture.clone() {
+            Some(picture) => photos::process_limited(picture.into(), Shape::Square)
+                .await
+                .ok(),
+            None => None,
+        }
+    };
+    match existing {
+        Some((_, _, false, _)) => Kept::Duplicate,
+        Some((file_id, path, true, art_hash)) => {
+            let Some(final_path) = music::file_path(&state.music_files_dir, &path) else {
+                return Kept::Failed;
+            };
+            if let Some(parent) = final_path.parent() {
+                tokio::fs::create_dir_all(parent).await.ok();
+            }
+            if let Err(err) = tokio::fs::rename(&temp.path, &final_path).await {
+                tracing::error!(%err, "couldn't put a restored music file back");
+                return Kept::Failed;
+            }
+            temp.keep = true;
+            // Its embedded art too, when the cover was lost with the rest.
+            let art = if art_hash.is_none() { art.await } else { None };
+            let _covers = MUSIC_COVERS.lock().await;
+            let new_art = match &art {
+                Some(processed) => photos::store(&state.music_cover_dir, processed)
+                    .await
+                    .ok()
+                    .map(|()| processed.hash.clone()),
+                None => None,
+            };
+            let updated = sqlx::query(
+                "UPDATE music_files SET missing = 0, art_hash = COALESCE(art_hash, ?) WHERE id = ?",
+            )
+            .bind(&new_art)
+            .bind(file_id)
+            .execute(&state.db)
+            .await;
+            match updated {
+                Ok(result) if result.rows_affected() == 1 => Kept::Restored(file_id),
+                Ok(_) => {
+                    tokio::fs::remove_file(&final_path).await.ok();
+                    Kept::Failed
+                }
+                Err(err) => {
+                    tracing::error!(%err, "couldn't restore a music file's row");
+                    tokio::fs::remove_file(&final_path).await.ok();
+                    Kept::Failed
+                }
+            }
+        }
+        None => {
+            let stored_name = format!("{}.{}", random_name(), tags.ext);
+            let dir = state.music_files_dir.join(entry_id.to_string());
+            let final_path = dir.join(&stored_name);
+            if let Err(err) = tokio::fs::rename(&temp.path, &final_path).await {
+                tracing::error!(%err, "couldn't move an uploaded music file into place");
+                return Kept::Failed;
+            }
+            temp.keep = true;
+            let art = art.await;
+            let inserted: Result<Option<i64>, sqlx::Error> = {
+                let _covers = MUSIC_COVERS.lock().await;
+                let art_hash = match &art {
+                    Some(processed) => photos::store(&state.music_cover_dir, processed)
+                        .await
+                        .ok()
+                        .map(|()| processed.hash.clone()),
+                    None => None,
+                };
+                sqlx::query_scalar(
+                    "INSERT INTO music_files (entry_id, path, original_name, size, sha256, title, \
+                     artist, album, track_no, duration_ms, art_hash, sort) \
+                     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0 \
+                     WHERE (SELECT COUNT(*) FROM music_files WHERE entry_id = ?) < ? RETURNING id",
+                )
+                .bind(entry_id)
+                .bind(format!("{entry_id}/{stored_name}"))
+                .bind(original)
+                .bind(i64::try_from(size).unwrap_or(i64::MAX))
+                .bind(sha256)
+                .bind(&tags.title)
+                .bind(&tags.artist)
+                .bind(&tags.album)
+                .bind(tags.track_no)
+                .bind(tags.duration_ms)
+                .bind(&art_hash)
+                .bind(entry_id)
+                .bind(MAX_FILES_PER_ENTRY)
+                .fetch_optional(&state.db)
+                .await
+            };
+            match inserted {
+                Ok(Some(file_id)) => Kept::Added(file_id),
+                Ok(None) => {
+                    tokio::fs::remove_file(&final_path).await.ok();
+                    Kept::Full
+                }
+                Err(err) => {
+                    tracing::error!(%err, "couldn't store an own music file");
+                    tokio::fs::remove_file(&final_path).await.ok();
+                    Kept::Failed
+                }
+            }
+        }
+    }
 }
 
 /// The browser's file name, reduced to its last component and cut to 200 characters.
@@ -1551,16 +1788,8 @@ pub async fn upload_files(
     if let Err(err) = tokio::fs::create_dir_all(&dir).await {
         return server_error(err, "couldn't create a music file directory");
     }
-    let mut count: i64 =
-        match sqlx::query_scalar("SELECT COUNT(*) FROM music_files WHERE entry_id = ?")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await
-        {
-            Ok(count) => count,
-            Err(err) => return server_error(err, "music file count failed"),
-        };
     let mut added: Vec<i64> = Vec::new();
+    let mut restored: Vec<i64> = Vec::new();
     let mut problems: Vec<String> = Vec::new();
     loop {
         let mut file_field = match multipart.next_field().await {
@@ -1578,20 +1807,7 @@ pub async fn upload_files(
         if original.is_empty() {
             continue; // the empty part a browser sends when no file was chosen
         }
-        if count >= MAX_FILES_PER_ENTRY {
-            problems.push(format!(
-                "{original}: not saved - an entry holds at most {MAX_FILES_PER_ENTRY} files."
-            ));
-            continue;
-        }
-        if music::free_bytes(&dir).is_none_or(|free| free < MIN_FREE_BYTES) {
-            problems.push(format!(
-                "{original}: not saved - the server has less than {} GB free.",
-                MIN_FREE_BYTES / 1_000_000_000
-            ));
-            break;
-        }
-        let (mut temp, size, sha256) = match receive(&mut file_field, &dir).await {
+        let (temp, size, sha256) = match receive(&mut file_field, &dir, MIN_FREE_BYTES).await {
             Ok(received) => received,
             Err(ReceiveError::CutOff) => {
                 problems.push(format!("{original}: the upload stopped half-way."));
@@ -1607,6 +1823,13 @@ pub async fn upload_files(
             Err(ReceiveError::Empty) => {
                 problems.push(format!("{original}: the file is empty."));
                 continue;
+            }
+            Err(ReceiveError::NoSpace) => {
+                problems.push(format!(
+                    "{original}: not saved - the server would have less than {} GB free.",
+                    MIN_FREE_BYTES / 1_000_000_000
+                ));
+                break;
             }
             Err(ReceiveError::Disk(err)) => {
                 tracing::error!(%err, "couldn't write an uploaded music file");
@@ -1631,58 +1854,16 @@ pub async fn upload_files(
             ));
             continue;
         };
-        let stored_name = format!("{}.{}", random_name(), tags.ext);
-        let final_path = dir.join(&stored_name);
-        if let Err(err) = tokio::fs::rename(&temp.path, &final_path).await {
-            tracing::error!(%err, "couldn't move an uploaded music file into place");
-            problems.push(format!("{original}: couldn't be saved on the server."));
-            continue;
-        }
-        temp.keep = true;
-        let art = match tags.picture.clone() {
-            Some(picture) => photos::process_limited(picture.into(), Shape::Square)
-                .await
-                .ok(),
-            None => None,
-        };
-        let inserted: Result<i64, sqlx::Error> = {
-            let _covers = MUSIC_COVERS.lock().await;
-            let art_hash = match &art {
-                Some(processed) => photos::store(&state.music_cover_dir, processed)
-                    .await
-                    .ok()
-                    .map(|()| processed.hash.clone()),
-                None => None,
-            };
-            sqlx::query_scalar(
-                "INSERT INTO music_files (entry_id, path, original_name, size, sha256, title, \
-                 artist, album, track_no, duration_ms, art_hash, sort) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id",
-            )
-            .bind(id)
-            .bind(format!("{id}/{stored_name}"))
-            .bind(&original)
-            .bind(i64::try_from(size).unwrap_or(i64::MAX))
-            .bind(&sha256)
-            .bind(&tags.title)
-            .bind(&tags.artist)
-            .bind(&tags.album)
-            .bind(tags.track_no)
-            .bind(tags.duration_ms)
-            .bind(&art_hash)
-            .fetch_one(&state.db)
-            .await
-        };
-        match inserted {
-            Ok(file_id) => {
-                count += 1;
-                added.push(file_id);
-            }
-            Err(err) => {
-                tracing::error!(%err, "couldn't store an own music file");
-                tokio::fs::remove_file(&final_path).await.ok();
-                problems.push(format!("{original}: couldn't be saved on the server."));
-            }
+        match keep_upload(&state, id, temp, size, &sha256, &original, &tags).await {
+            Kept::Added(file_id) => added.push(file_id),
+            Kept::Restored(file_id) => restored.push(file_id),
+            Kept::Duplicate => problems.push(format!(
+                "{original}: already in this entry - not saved again."
+            )),
+            Kept::Full => problems.push(format!(
+                "{original}: not saved - an entry holds at most {MAX_FILES_PER_ENTRY} files."
+            )),
+            Kept::Failed => problems.push(format!("{original}: couldn't be saved on the server.")),
         }
     }
     if let Err(err) = music::resort_files(&state.db, id).await {
@@ -1694,13 +1875,14 @@ pub async fn upload_files(
         .unwrap_or_default();
     if !added.is_empty() {
         for phone in &phones {
-            let too_big = match music::device_library(&state.db, *phone).await {
-                Ok(library) => library.is_some_and(|l| l.json.len() > MAX_LIBRARY_BYTES),
-                Err(err) => {
-                    tracing::error!(%err, "couldn't check a phone's library size");
-                    true
-                }
-            };
+            let too_big =
+                match music::cached_library(&state.db, &state.music_libraries, *phone).await {
+                    Ok(library) => library.is_some_and(|l| l.json.len() > MAX_LIBRARY_BYTES),
+                    Err(err) => {
+                        tracing::error!(%err, "couldn't check a phone's library size");
+                        true
+                    }
+                };
             if too_big {
                 remove_files(&state, &added).await;
                 music::resort_files(&state.db, id).await.ok();
@@ -1716,13 +1898,17 @@ pub async fn upload_files(
         }
     }
     MUSIC_COVERS.prune(&state.db, &state.music_cover_dir).await;
-    if !added.is_empty() {
+    if !added.is_empty() || !restored.is_empty() {
         nudge(&state, &phones);
         log_event(
             &state,
             &admin,
             "music_files_added",
-            &format!("entry {id}: {} file(s)", added.len()),
+            &format!(
+                "entry {id}: {} file(s), {} restored",
+                added.len(),
+                restored.len()
+            ),
         )
         .await;
     }
@@ -1731,7 +1917,7 @@ pub async fn upload_files(
     }
     let entered = EntryEntered {
         upload_problems: problems,
-        upload_saved: added.len(),
+        upload_saved: added.len() + restored.len(),
         ..Default::default()
     };
     render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await
@@ -1757,6 +1943,23 @@ pub async fn delete_file(
     let Some((path, name)) = row else {
         return (StatusCode::NOT_FOUND, "No such file").into_response();
     };
+    // Back to where the parent was (qa-21-step1-code #8): the next file in the list, else the one
+    // before, else the card.
+    let neighbours: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM music_files WHERE entry_id = ? ORDER BY sort, id")
+            .bind(id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+    let anchor = neighbours
+        .iter()
+        .position(|f| *f == file_id)
+        .and_then(|at| {
+            neighbours
+                .get(at + 1)
+                .or_else(|| at.checked_sub(1).and_then(|b| neighbours.get(b)))
+        })
+        .map_or_else(|| "files".to_string(), |next| format!("file-{next}"));
     if let Err(err) = sqlx::query("DELETE FROM music_files WHERE id = ?")
         .bind(file_id)
         .execute(&state.db)
@@ -1782,7 +1985,7 @@ pub async fn delete_file(
         &format!("entry {id}: {name}"),
     )
     .await;
-    Redirect::to(&format!("/music/entries/{id}#files")).into_response()
+    Redirect::to(&format!("/music/entries/{id}#{anchor}")).into_response()
 }
 
 /// `GET /music-covers/{hash}` (session): a cover for the parent's pages.
@@ -1805,6 +2008,8 @@ pub struct MusicTick {
     pub name: String,
     pub detail: String,
     pub checked: bool,
+    /// A refused tick of this entry (`?music_notice=...&music_entry=<id>`), shown by its row.
+    pub notice: Option<&'static str>,
 }
 
 pub struct MusicAppSwitch {
@@ -1848,7 +2053,14 @@ pub(crate) async fn device_card(
     policy: &DevicePolicy,
     latest_status: Option<&DeviceStatus>,
     notice: Option<&str>,
+    notice_entry: Option<i64>,
 ) -> Result<MusicCard, sqlx::Error> {
+    let notice = notice.and_then(notice_text);
+    // A notice about one entry goes by its row; otherwise at the card's top.
+    let (row_notice, notice) = match notice_entry {
+        Some(entry) => (Some((entry, notice)), None),
+        None => (None, notice),
+    };
     let device_id = policy.device_id;
     let entries: Vec<(i64, String, String, Option<String>, String, bool)> = sqlx::query_as(
         "SELECT e.id, e.name, e.source, e.target, COALESCE(c.name, ''), \
@@ -1873,6 +2085,9 @@ pub(crate) async fn device_card(
                 music::kind_label(&source, target.as_deref())
             ),
             checked,
+            notice: row_notice
+                .filter(|(entry, _)| *entry == id)
+                .and_then(|(_, notice)| notice),
         })
         .collect();
 
@@ -1909,7 +2124,7 @@ pub(crate) async fn device_card(
         None => None,
     };
 
-    let library = music::device_library(&state.db, device_id).await?;
+    let library = music::cached_library(&state.db, &state.music_libraries, device_id).await?;
     let entry_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM device_music_entries WHERE device_id = ?")
             .bind(device_id)
@@ -2015,7 +2230,7 @@ pub(crate) async fn device_card(
         }),
         lines,
         warnings,
-        notice: notice.and_then(notice_text),
+        notice,
     })
 }
 
@@ -2047,27 +2262,33 @@ pub async fn set_device_entry(
         Err(err) => return server_error(err, "music tick lookup failed"),
     };
     if selected {
-        let fits = match state.db.acquire().await {
-            Ok(mut conn) => music::tick_fits(&mut conn, id, entry_id).await,
-            Err(err) => Err(err),
-        };
-        match fits {
+        // The size check and the tick in one write transaction (qa-21-step1-code #6): two quick
+        // ticks can't pass the limit together.
+        let ticked: Result<bool, sqlx::Error> = async {
+            let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+            if !music::tick_fits(&mut tx, id, entry_id).await? {
+                return Ok(false);
+            }
+            sqlx::query(
+                "INSERT OR IGNORE INTO device_music_entries (device_id, entry_id) VALUES (?, ?)",
+            )
+            .bind(id)
+            .bind(entry_id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            Ok(true)
+        }
+        .await;
+        match ticked {
             Ok(true) => {}
             Ok(false) => {
-                return Redirect::to(&format!("/devices/{id}?music_notice=too_big#music"))
-                    .into_response();
+                return Redirect::to(&format!(
+                    "/devices/{id}?music_notice=too_big&music_entry={entry_id}#music-entry-{entry_id}"
+                ))
+                .into_response();
             }
-            Err(err) => return server_error(err, "couldn't check a phone's library size"),
-        }
-        if let Err(err) = sqlx::query(
-            "INSERT OR IGNORE INTO device_music_entries (device_id, entry_id) VALUES (?, ?)",
-        )
-        .bind(id)
-        .bind(entry_id)
-        .execute(&state.db)
-        .await
-        {
-            return server_error(err, "couldn't tick a music entry");
+            Err(err) => return server_error(err, "couldn't tick a music entry"),
         }
     } else if let Err(err) =
         sqlx::query("DELETE FROM device_music_entries WHERE device_id = ? AND entry_id = ?")
@@ -2089,7 +2310,8 @@ pub async fn set_device_entry(
         ),
     )
     .await;
-    Redirect::to(&format!("/devices/{id}#music")).into_response()
+    // Back to that row, not the card's top (qa-21-step1-code #8).
+    Redirect::to(&format!("/devices/{id}#music-entry-{entry_id}")).into_response()
 }
 
 /// `POST /devices/{id}/music`: mobile data (`mobile_data`), the volume cap (`volume_cap`: "off" or
@@ -2138,7 +2360,7 @@ pub async fn save_device_settings(
         ),
     )
     .await;
-    Redirect::to(&format!("/devices/{id}#music")).into_response()
+    Redirect::to(&format!("/devices/{id}#music-settings")).into_response()
 }
 
 #[cfg(test)]
@@ -2155,5 +2377,80 @@ mod tests {
         assert_eq!(original_name(None), "");
         assert_eq!(duration_text(Some(3_723_000)).as_deref(), Some("1:02:03"));
         assert_eq!(duration_text(Some(61_000)).as_deref(), Some("1:01"));
+    }
+}
+
+#[cfg(test)]
+mod fix_tests {
+    use super::*;
+
+    /// qa-21-step1-code #5: the free space is looked at before the first byte and every 64 MB.
+    #[test]
+    fn the_disk_guard_stops_below_the_floor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut guard = DiskGuard::new(dir.path(), u64::MAX);
+        assert!(matches!(guard.check(0), Err(ReceiveError::NoSpace)));
+        let mut guard = DiskGuard::new(dir.path(), 0);
+        assert!(guard.check(0).is_ok());
+        // Not looked at again before the next 64 MB (a floor that can't be met would show it).
+        guard.floor = u64::MAX;
+        assert!(guard.check(DISK_CHECK_BYTES - 1).is_ok());
+        assert!(matches!(
+            guard.check(DISK_CHECK_BYTES),
+            Err(ReceiveError::NoSpace)
+        ));
+    }
+
+    /// Test gap: an entry deleted while one of its uploads is on its way - the file goes, nothing
+    /// is stored (the directory is gone, or the foreign key refuses the row).
+    #[tokio::test]
+    async fn an_upload_into_a_deleted_entry_leaves_no_file() {
+        let app = crate::tests::TestApp::new().await;
+        let tags = music::AudioTags {
+            ext: "wav",
+            title: None,
+            artist: None,
+            album: None,
+            track_no: None,
+            duration_ms: None,
+            picture: None,
+        };
+        for directory_gone in [true, false] {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO music_entries (name, category_id, source, key) \
+                 VALUES ('X', 1, 'own', ?) RETURNING id",
+            )
+            .bind(music::new_own_key())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+            let dir = app.state.music_files_dir.join(id.to_string());
+            std::fs::create_dir_all(&dir).unwrap();
+            let temp_path = app.state.music_files_dir.join(format!("upload-{id}.part"));
+            std::fs::write(&temp_path, b"audio").unwrap();
+            // delete_entry meanwhile: the row goes, and (first case) the directory.
+            sqlx::query("DELETE FROM music_entries WHERE id = ?")
+                .bind(id)
+                .execute(&app.db)
+                .await
+                .unwrap();
+            if directory_gone {
+                std::fs::remove_dir_all(&dir).unwrap();
+            }
+            let temp = TempFile {
+                path: temp_path.clone(),
+                keep: false,
+            };
+            let kept = keep_upload(&app.state, id, temp, 5, "abc", "a.wav", &tags).await;
+            assert_eq!(kept, Kept::Failed, "directory gone: {directory_gone}");
+            assert!(!temp_path.exists());
+            let left = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0);
+            assert_eq!(left, 0, "directory gone: {directory_gone}");
+            let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_files")
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+            assert_eq!(rows, 0);
+        }
     }
 }

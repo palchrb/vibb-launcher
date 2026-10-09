@@ -127,6 +127,7 @@ impl TestApp {
                 crate::music_secret::MusicKey::from_bytes(&[42; 32]),
             )),
             music_fetch: fetch.clone(),
+            music_libraries: Default::default(),
         };
 
         TestApp {

@@ -431,17 +431,19 @@ pub async fn confirm(
             section_category.insert(s, id);
         }
         // The entries, in file order, after every existing one.
-        let mut added: Vec<(i64, String)> = Vec::new();
+        let mut added: Vec<(music::LibEntry, String)> = Vec::new();
         for &(s, r) in &accepted {
             let Ok(candidate) = &sections[s].rows[r].outcome else {
                 continue;
             };
-            let id: i64 = sqlx::query_scalar(&format!(
+            let category = section_category[&s];
+            let (id, sort): (i64, i64) = sqlx::query_as(&format!(
                 "INSERT INTO music_entries (name, category_id, source, target, key, play_order, \
-                 cache, resume, sort) VALUES (?, ?, ?, ?, ?, ?, ?, ?, {NEXT_SORT}) RETURNING id"
+                 cache, resume, sort) VALUES (?, ?, ?, ?, ?, ?, ?, ?, {NEXT_SORT}) \
+                 RETURNING id, sort"
             ))
             .bind(&candidate.name)
-            .bind(section_category[&s])
+            .bind(category)
             .bind(candidate.source)
             .bind(&candidate.target)
             .bind(&candidate.key)
@@ -450,36 +452,106 @@ pub async fn confirm(
             .bind(candidate.resume)
             .fetch_one(&mut *tx)
             .await?;
-            added.push((id, candidate.name.clone()));
+            // As `music::library_for` lists it - for the size estimate below.
+            let entry = music::LibEntry {
+                id,
+                key: candidate.key.clone(),
+                name: candidate.name.clone(),
+                category,
+                source: candidate.source.to_string(),
+                target: Some(candidate.target.clone()),
+                order: candidate.order.clone(),
+                cache: candidate.cache,
+                resume: candidate.resume,
+                cover: None,
+                sort,
+            };
+            added.push((entry, candidate.name.clone()));
         }
         // The ticks, never past a phone's limit (QA #4) - what doesn't fit stays unticked there.
+        // One library build per phone plus one to confirm (qa-21-step1-code #3): each entry's
+        // share of the document is estimated from its own JSON (and its category's, when new to
+        // the phone); the final build takes back from the end whatever still doesn't fit.
+        let lib_categories: HashMap<i64, music::LibCategory> = self::categories(&mut tx)
+            .await?
+            .into_iter()
+            .map(|c| {
+                (
+                    c.id,
+                    music::LibCategory {
+                        id: c.id,
+                        name: c.name,
+                        icon: c.icon,
+                        color: c.color,
+                        sort: c.sort,
+                    },
+                )
+            })
+            .collect();
+        let empty = music::Library::build(Vec::new(), Vec::new(), Vec::new())
+            .json
+            .len();
         let mut ticked_phones = Vec::new();
         let mut misses = Vec::new();
         for &phone in &phones {
-            let mut ticked = false;
-            for (id, name) in &added {
-                if music::tick_fits(&mut tx, phone, *id).await? {
-                    sqlx::query(
-                        "INSERT OR IGNORE INTO device_music_entries (device_id, entry_id) \
-                         VALUES (?, ?)",
-                    )
+            let current = music::library_for(&mut tx, phone, None).await?;
+            let (mut size, mut present): (usize, HashSet<i64>) = match &current {
+                Some(library) => (
+                    library.json.len(),
+                    library.category_ids.iter().copied().collect(),
+                ),
+                None => (empty, HashSet::new()),
+            };
+            let mut ticked: Vec<(i64, String)> = Vec::new();
+            for (entry, name) in &added {
+                let mut share = serde_json::to_vec(entry).map_or(usize::MAX / 4, |j| j.len()) + 1;
+                if !present.contains(&entry.category) {
+                    share += lib_categories
+                        .get(&entry.category)
+                        .and_then(|c| serde_json::to_vec(c).ok())
+                        .map_or(usize::MAX / 4, |j| j.len())
+                        + 1;
+                }
+                if size + share > music::MAX_LIBRARY_BYTES {
+                    misses.push((phone, name.clone()));
+                    continue;
+                }
+                sqlx::query(
+                    "INSERT OR IGNORE INTO device_music_entries (device_id, entry_id) VALUES (?, ?)",
+                )
+                .bind(phone)
+                .bind(entry.id)
+                .execute(&mut *tx)
+                .await?;
+                size += share;
+                present.insert(entry.category);
+                ticked.push((entry.id, name.clone()));
+            }
+            if ticked.is_empty() {
+                continue;
+            }
+            // The estimate errs on the large side; the real size decides.
+            while let Some(library) = music::library_for(&mut tx, phone, None).await?
+                && library.json.len() > music::MAX_LIBRARY_BYTES
+            {
+                let Some((id, name)) = ticked.pop() else {
+                    break;
+                };
+                sqlx::query("DELETE FROM device_music_entries WHERE device_id = ? AND entry_id = ?")
                     .bind(phone)
                     .bind(id)
                     .execute(&mut *tx)
                     .await?;
-                    ticked = true;
-                } else {
-                    misses.push((phone, name.clone()));
-                }
+                misses.push((phone, name));
             }
-            if ticked {
+            if !ticked.is_empty() {
                 ticked_phones.push(phone);
             }
         }
         tx.commit().await?;
         Ok(Ok(Done {
             as_previewed,
-            added,
+            added: added.into_iter().map(|(entry, name)| (entry.id, name)).collect(),
             categories_created: created.len(),
             ticked_phones,
             misses,

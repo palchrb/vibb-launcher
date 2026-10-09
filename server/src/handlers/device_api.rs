@@ -196,7 +196,7 @@ pub(crate) async fn build_policy(
 
     // Vibb music (design 21): `null` when it can't be read (QA #3) - the phone keeps what it has; a
     // made-up empty library would make it delete its downloads. Never fails the policy.
-    let music = match crate::music::policy_music(&state.db, &policy).await {
+    let music = match crate::music::policy_music(&state.db, &state.music_libraries, &policy).await {
         Ok(music) => Some(music),
         Err(err) => {
             tracing::error!(device_id, %err, "couldn't read the music library - policy sent with music: null");

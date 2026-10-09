@@ -79,6 +79,8 @@ pub struct AppState {
     pub music_key: Option<std::sync::Arc<music_secret::MusicKey>>,
     /// The add check's one GET (`music::HttpFetch`; canned in the tests).
     pub music_fetch: std::sync::Arc<dyn music::Fetch>,
+    /// Each phone's built music library, under the library revision (`music::LibraryCache`).
+    pub music_libraries: std::sync::Arc<music::LibraryCache>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -153,7 +155,8 @@ async fn main() {
     }
 
     // The Storytel login's key (design 21, QA #10): .env's MUSIC_SECRET_KEY, else our own key file
-    // outside data/, made on the first start.
+    // in data/keys/ (the only place the unit lets us write; no backup copies it), made on the first
+    // start.
     let music_key_file = std::env::var("MUSIC_SECRET_KEY_FILE")
         .ok()
         .filter(|v| !v.trim().is_empty())
@@ -162,7 +165,14 @@ async fn main() {
         std::env::var("MUSIC_SECRET_KEY").ok().as_deref(),
         std::path::Path::new(&music_key_file),
     ) {
-        Ok(key) => Some(std::sync::Arc::new(key)),
+        Ok(key) => {
+            if std::env::var("MUSIC_SECRET_KEY").is_ok_and(|v| !v.trim().is_empty()) {
+                tracing::info!("Storytel logins are sealed with MUSIC_SECRET_KEY from .env");
+            } else {
+                tracing::info!("Storytel logins are sealed with the key in {music_key_file}");
+            }
+            Some(std::sync::Arc::new(key))
+        }
         Err(err) => {
             tracing::error!("Storytel logins are off: {err}");
             None
@@ -186,6 +196,7 @@ async fn main() {
         music_cover_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_COVERS_DIR)),
         music_key,
         music_fetch: std::sync::Arc::new(music::HttpFetch),
+        music_libraries: Default::default(),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
@@ -471,6 +482,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             get(handlers::music::show).post(handlers::music::add_link),
         )
         .route("/music/own", post(handlers::music::add_own))
+        .route(
+            "/music/orphans/delete",
+            post(handlers::music::delete_orphans),
+        )
         .route(
             "/music/import",
             post(handlers::music_import::preview).layer(DefaultBodyLimit::max(

@@ -1217,6 +1217,7 @@ async fn render_device(
         &policy,
         latest_status.as_ref(),
         query.get("music_notice").map(String::as_str),
+        query.get("music_entry").and_then(|e| e.parse().ok()),
     )
     .await
     .map_err(|err| tracing::error!(device_id = id, %err, "couldn't load the music card"))

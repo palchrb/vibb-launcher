@@ -81,6 +81,16 @@ input, select { max-width: 100%; }
         <button type="submit">Make the entry</button>
     </form>
 
+    {% if let Some((count, size)) = orphans %}
+    <div class="card" id="orphans">
+        <h2>Files no entry uses</h2>
+        <p class="subtitle">{{ count }} own file{% if *count != 1 %}s{% endif %} ({{ size }}) on this server belong to no entry - most likely left over after an older backup was restored. Keep them while you might put the newer database back; otherwise they only take space.</p>
+        <form method="post" action="/music/orphans/delete" onsubmit="return confirm('Delete these files from the server for good?')">
+            <button type="submit" class="button-small button-danger">Delete them</button>
+        </form>
+    </div>
+    {% endif %}
+
     <div class="card" id="entries">
         <h2>Library ({{ entry_count }} of {{ max_entries }})</h2>
         {% if entries.is_empty() %}
@@ -183,7 +193,7 @@ input, select { max-width: 100%; }
         <div class="error">{{ error }}</div>
         {% endif %}
         {% if !storytel.key_available %}
-        <div class="error">Storytel is off: this server has no key to keep the login safe. Set MUSIC_SECRET_KEY in .env, or let the server write its key file (music-secret.key next to .env) - see DEPLOY.md.</div>
+        <div class="error">Storytel is off: this server has no key to keep the login safe. It makes one itself (data/keys/music-secret.key) unless MUSIC_SECRET_KEY is set in .env - the server's log says why that failed ("Storytel logins are off: ..."). See DEPLOY.md.</div>
         {% else %}
         {% if storytel.stale %}
         <div class="error">The saved login was locked with another key (a restored backup or a new key file), so the phones can't get it. Enter it again.</div>

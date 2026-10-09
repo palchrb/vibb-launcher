@@ -41,6 +41,7 @@ impl crate::music::Fetch for CannedFetch {
     fn get<'a>(
         &'a self,
         url: &'a str,
+        limit: usize,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Fetched, FetchError>> + Send + 'a>>
     {
         Box::pin(async move {
@@ -48,7 +49,8 @@ impl crate::music::Fetch for CannedFetch {
             match self.answers.lock().unwrap().get(url) {
                 Some((status, body)) => Ok(Fetched {
                     status: *status,
-                    body: body.clone(),
+                    body: body[..body.len().min(limit)].to_vec(),
+                    truncated: body.len() > limit,
                 }),
                 None => Err(FetchError::Network("no route to host".to_string())),
             }
@@ -618,17 +620,23 @@ async fn own_entries_get_their_key_after_the_id_and_play_everything() {
     .fetch_one(&app.db)
     .await
     .unwrap();
+    let (name, key, target, cache, resume, category) = row;
     assert_eq!(
-        row,
-        (
-            "Bilturen".into(),
-            format!("own-{id}"),
-            None,
-            -1,
-            false,
-            "Musikk".into()
-        )
+        (name, target, cache, resume, category),
+        ("Bilturen".into(), None, -1, false, "Musikk".into())
     );
+    // "own-" and 12 random hex digits, unique over time (qa-21-step1-code #7) - not the id, which a
+    // restored database hands out again.
+    assert_eq!(key.len(), 16, "{key}");
+    assert!(key.starts_with("own-") && key[4..].bytes().all(|b| b.is_ascii_hexdigit()));
+    assert_ne!(key, format!("own-{id}"));
+    let second = add_own(&app, &cookie, "Bilturen 2").await;
+    let second_key: String = sqlx::query_scalar("SELECT key FROM music_entries WHERE id = ?")
+        .bind(second)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_ne!(second_key, key);
     let res = app
         .request_form(
             Method::POST,
@@ -683,7 +691,8 @@ async fn the_policy_carries_a_small_music_object() {
     let res = tick(&app, &cookie, device, id, true).await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{device}#music").as_str())
+        Some(format!("/devices/{device}#music-entry-{id}").as_str()),
+        "back to that row (qa-21-step1-code #8)"
     );
     let music = music_policy(&app, &token).await;
     let version = music["library_version"].as_str().unwrap().to_string();
@@ -700,7 +709,7 @@ async fn the_policy_carries_a_small_music_object() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{device}#music").as_str())
+        Some(format!("/devices/{device}#music-settings").as_str())
     );
     let music = music_policy(&app, &token).await;
     assert_eq!(music["mobile_data"], json!(true));
@@ -798,8 +807,8 @@ async fn snapshot_library(app: &TestApp, device: i64) {
           'auto', 5, 1, ?, 10), \
          (2, 'Ukas nyheter', 4, 'rss', 'https://example.org/feed.xml', '40201d4c16fc', \
           'newest_first', 3, 1, NULL, 20), \
-         (3, 'Bilturen', 1, 'own', NULL, 'own-3', 'auto', -1, 0, NULL, 30), \
-         (4, 'Not on this phone', 2, 'own', NULL, 'own-4', 'auto', -1, 0, NULL, 40)",
+         (3, 'Bilturen', 1, 'own', NULL, 'own-5c0ffee1d0e5', 'auto', -1, 0, NULL, 30), \
+         (4, 'Not on this phone', 2, 'own', NULL, 'own-0b5e55ed4a11', 'auto', -1, 0, NULL, 40)",
     )
     .bind(&cover)
     .execute(&app.db)
@@ -1125,7 +1134,10 @@ async fn ticks_past_3_mb_are_refused() {
     let res = tick(&app, &cookie, device, big, true).await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{device}?music_notice=too_big#music").as_str())
+        Some(
+            format!("/devices/{device}?music_notice=too_big&music_entry={big}#music-entry-{big}")
+                .as_str()
+        )
     );
     let ticked: Vec<i64> =
         sqlx::query_scalar("SELECT entry_id FROM device_music_entries WHERE device_id = ?")
@@ -1135,10 +1147,19 @@ async fn ticks_past_3_mb_are_refused() {
             .unwrap();
     assert_eq!(ticked, vec![small]);
     let page = app
-        .get_page(&format!("/devices/{device}?music_notice=too_big"), &cookie)
+        .get_page(
+            &format!("/devices/{device}?music_notice=too_big&music_entry={big}"),
+            &cookie,
+        )
         .await
         .text();
-    assert!(page.contains("bigger than 3 MB"));
+    // By the refused row, not at the card's top.
+    let row = page
+        .split(&format!("id=\"music-entry-{big}\""))
+        .nth(1)
+        .and_then(|rest| rest.split("</form>").next())
+        .unwrap();
+    assert!(row.contains("bigger than 3 MB"), "{row}");
     assert!(music_policy(&app, &token).await["library_version"].is_string());
 }
 
@@ -1310,7 +1331,7 @@ async fn uploads_are_read_by_content_ordered_and_scoped() {
     );
     assert_eq!(
         events(&app, "music_files_added").await,
-        vec![format!("entry {entry}: 2 file(s)")]
+        vec![format!("entry {entry}: 2 file(s), 0 restored")]
     );
 }
 
@@ -1376,9 +1397,17 @@ async fn untagged_files_sort_by_name_and_non_audio_is_refused() {
             &[],
         )
         .await;
+    let b_wav: i64 = sqlx::query_scalar(
+        "SELECT id FROM music_files WHERE entry_id = ? AND original_name = 'b.wav'",
+    )
+    .bind(entry)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
     assert_eq!(
         res.location(),
-        Some(format!("/music/entries/{entry}#files").as_str())
+        Some(format!("/music/entries/{entry}#file-{b_wav}").as_str()),
+        "back to the next file, not the list's top (qa-21-step1-code #8)"
     );
     let rows: Vec<(String, i64)> = sqlx::query_as(
         "SELECT original_name, sort FROM music_files WHERE entry_id = ? ORDER BY sort",
@@ -2526,6 +2555,7 @@ async fn music_routes_refuse_without_a_session_and_write_nothing() {
             vec![("selected", "on")],
         ),
         ("/music/import".to_string(), vec![]),
+        ("/music/orphans/delete".to_string(), vec![]),
         (
             "/music/import/confirm".to_string(),
             vec![
@@ -3235,4 +3265,402 @@ async fn files_that_arent_a_vibb_library_are_refused_at_import() {
         .unwrap();
     assert_eq!(count, 0);
     assert!(events(&app, "music_library_imported").await.is_empty());
+}
+
+// ------------------------------------------------------------------------------------------------
+// Fixes after qa-21-step1-code.md
+// ------------------------------------------------------------------------------------------------
+
+fn builds() -> usize {
+    crate::music::LIBRARY_BUILDS.with(|b| b.get())
+}
+
+/// #2: uploading a missing file again puts it back in place (same id and path, so the phones'
+/// copies stay valid); the same content twice is refused.
+#[tokio::test]
+async fn reuploading_a_missing_file_restores_it_and_a_double_is_refused() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let entry = add_own(&app, &cookie, "Bilturen").await;
+    tick(&app, &cookie, device, entry, true).await;
+    let song = tagged_wav("Hjulene", "Koret", 1, Some(png(64, 64)));
+    upload(&app, &cookie, entry, &[("a.wav", song.clone())]).await;
+    let (id, path, art): (i64, String, String) =
+        sqlx::query_as("SELECT id, path, art_hash FROM music_files")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    // A restore without the audio (and without the cover).
+    let full = app.state.music_files_dir.join(&path);
+    std::fs::remove_file(&full).unwrap();
+    std::fs::remove_file(app.state.music_cover_dir.join(format!("{art}.jpg"))).unwrap();
+    sqlx::query("UPDATE music_files SET art_hash = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    crate::music::flag_missing_files(&app.db, &app.state.music_files_dir).await;
+
+    let res = upload(&app, &cookie, entry, &[("other-name.wav", song.clone())]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    let rows: Vec<(i64, String, bool, Option<String>)> =
+        sqlx::query_as("SELECT id, path, missing, art_hash FROM music_files")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 1, "no second track");
+    assert_eq!((rows[0].0, &rows[0].1, rows[0].2), (id, &path, false));
+    assert_eq!(
+        rows[0].3.as_deref(),
+        Some(art.as_str()),
+        "the art is made again"
+    );
+    assert_eq!(std::fs::read(&full).unwrap(), song);
+    let res = device_get(&app, &format!("/api/devices/music/files/{id}"), &token, &[]).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(
+        events(&app, "music_files_added").await.last().unwrap(),
+        &format!("entry {entry}: 0 file(s), 1 restored")
+    );
+
+    // The same file again, twice in one upload too: refused, nothing left behind.
+    let res = upload(
+        &app,
+        &cookie,
+        entry,
+        &[("x.wav", song.clone()), ("y.wav", song)],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let text = res.text();
+    assert!(text.contains("x.wav: already in this entry"), "{text}");
+    assert!(text.contains("y.wav: already in this entry"), "{text}");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_files")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        std::fs::read_dir(app.state.music_files_dir.join(entry.to_string()))
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+/// #6: the 300-file limit is the INSERT's own condition.
+#[tokio::test]
+async fn an_entry_holds_at_most_300_files() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let entry = add_own(&app, &cookie, "Full").await;
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300) \
+         INSERT INTO music_files (entry_id, path, original_name, size, sha256) \
+         SELECT ?, ? || '/f' || i || '.mp3', 'f.mp3', 1, printf('%064d', i) FROM n",
+    )
+    .bind(entry)
+    .bind(entry.to_string())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let res = upload(&app, &cookie, entry, &[("one-more.wav", wav(100))]).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("an entry holds at most 300 files"));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_files")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 300);
+    let on_disk = std::fs::read_dir(app.state.music_files_dir.join(entry.to_string()))
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert_eq!(on_disk, 0, "the refused file went again");
+}
+
+/// #3: a phone's library is built once and reused until something it is built from changes; a
+/// cover check builds nothing.
+#[tokio::test]
+async fn the_library_is_built_once_until_something_changes() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let entry = add_nrk(&app, &cookie, "abels_taarn", "Abels tårn").await;
+    tick(&app, &cookie, device, entry, true).await;
+    upload_cover(&app, &cookie, entry, &png(200, 200)).await;
+    let hash: String = sqlx::query_scalar("SELECT cover_hash FROM music_entries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+
+    let start = builds();
+    let first = music_policy(&app, &token).await["library_version"].clone();
+    for _ in 0..3 {
+        assert_eq!(music_policy(&app, &token).await["library_version"], first);
+        let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
+        assert_eq!(res.status, StatusCode::OK);
+    }
+    for _ in 0..5 {
+        let res = device_get(
+            &app,
+            &format!("/api/devices/music/covers/{hash}"),
+            &token,
+            &[],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::OK);
+    }
+    assert_eq!(
+        builds() - start,
+        1,
+        "one build for 4 polls, 3 library GETs and 5 covers"
+    );
+
+    // Every table the library is built from moves the revision (triggers, migration 0050).
+    let revision = || async {
+        sqlx::query_scalar::<_, i64>("SELECT revision FROM music_library_revision")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    for sql in [
+        "UPDATE music_entries SET name = 'Abels tårn!'",
+        "UPDATE music_categories SET name = 'Podcaster' WHERE id = 4",
+        "INSERT INTO music_files (entry_id, path, original_name, size, sha256) \
+         VALUES (1, '1/x.mp3', 'x.mp3', 1, 'x')",
+        "DELETE FROM music_files",
+        "DELETE FROM device_music_entries",
+        "INSERT INTO device_music_entries (device_id, entry_id) VALUES (1, 1)",
+    ] {
+        let before = revision().await;
+        sqlx::query(sql).execute(&app.db).await.unwrap();
+        assert!(revision().await > before, "{sql}");
+    }
+    // ... so the next poll builds again and sees the change, also when written by plain SQL.
+    let start = builds();
+    let music = music_policy(&app, &token).await;
+    assert_ne!(music["library_version"], first);
+    let library = device_get(&app, "/api/devices/music/library", &token, &[])
+        .await
+        .json();
+    assert_eq!(library["entries"][0]["name"], json!("Abels tårn!"));
+    assert_eq!(library["categories"][0]["name"], json!("Podcaster"));
+    assert_eq!(builds() - start, 1);
+    // The device page uses the same kept library.
+    let start = builds();
+    app.get_page(&format!("/devices/{device}"), &cookie).await;
+    assert_eq!(builds() - start, 0);
+}
+
+/// #3: an import builds each phone's library once, plus once to confirm - not once per entry and
+/// phone inside the write transaction.
+#[tokio::test]
+async fn an_import_builds_each_phones_library_once() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (big, _) = app.enrolled_device("Big").await;
+    let (small, _) = app.enrolled_device("Small").await;
+    let own = add_own(&app, &cookie, "Album").await;
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000) \
+         INSERT INTO music_files (entry_id, path, original_name, size, sha256, title, track_no) \
+         SELECT ?, ? || '/f' || i || '.mp3', 'f' || i || '.mp3', 1000, printf('%064d', i), \
+                'Spor nummer ' || i, i FROM n",
+    )
+    .bind(own)
+    .bind(own.to_string())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    tick(&app, &cookie, big, own, true).await;
+    let entries: Vec<Value> = (0..20)
+        .map(|i| json!({"name": format!("Podkast {i}"), "target": format!("https://example.org/{i}.rss")}))
+        .collect();
+    let file = json!({"sections": [{"name": "Podkast", "entries": entries}]});
+    let page = import_preview(&app, &cookie, file.to_string().as_bytes())
+        .await
+        .text();
+    let doc = preview_doc(&page);
+    let rows: Vec<String> = preview_rows(&page);
+    let (big_id, small_id) = (big.to_string(), small.to_string());
+    let mut fields: Vec<(&str, &str)> =
+        vec![("doc", &doc), ("phone", &big_id), ("phone", &small_id)];
+    fields.extend(rows.iter().map(|r| ("row", r.as_str())));
+    let start = builds();
+    let res = import_confirm(&app, &cookie, &fields).await;
+    assert_eq!(res.location(), Some("/music#import"));
+    assert_eq!(
+        builds() - start,
+        4,
+        "two phones, one build each plus one to confirm"
+    );
+    let ticks: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT device_id, COUNT(*) FROM device_music_entries GROUP BY device_id ORDER BY device_id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(ticks, vec![(big, 21), (small, 20)]);
+    // The estimate matched: both libraries are what a fresh build says, within the limit.
+    for phone in [big, small] {
+        let library = crate::music::device_library(&app.db, phone)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(library.json.len() <= crate::music::MAX_LIBRARY_BYTES);
+    }
+}
+
+/// #10: a feed is judged by its first 5 MB - a long feed with its episodes up front is added,
+/// one whose first 5 MB hold no episode isn't.
+#[tokio::test]
+async fn a_feed_longer_than_5_mb_is_judged_by_its_start() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let notes = "<item><title>Gammel episode</title><description>".to_string()
+        + &"Lange shownotes. ".repeat(200)
+        + "</description><enclosure url=\"https://example.org/old.mp3\"/></item>";
+    let mut long = String::from(
+        "<rss><channel><title>Lang podkast</title>\
+         <item><title>Ny</title><enclosure url=\"https://example.org/new.mp3\"/></item>",
+    );
+    while long.len() < 6_500_000 {
+        long.push_str(&notes);
+    }
+    long.push_str("</channel></rss>");
+    app.fetch
+        .answer("https://example.org/long.rss", 200, long.as_bytes());
+    let res = app
+        .request_form(
+            Method::POST,
+            "/music",
+            Some(&cookie),
+            &[("link", "https://example.org/long.rss")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    let name: String = sqlx::query_scalar("SELECT name FROM music_entries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(name, "Lang podkast");
+
+    let mut late = String::from("<rss><channel><title>Sen</title>");
+    while late.len() < 5_500_000 {
+        late.push_str("<item><title>Uten lyd</title></item>");
+    }
+    late.push_str("<item><enclosure url=\"https://example.org/x.mp3\"/></item></channel></rss>");
+    app.fetch
+        .answer("https://example.org/late.rss", 200, late.as_bytes());
+    let res = app
+        .request_form(
+            Method::POST,
+            "/music",
+            Some(&cookie),
+            &[("link", "https://example.org/late.rss")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(
+        res.text().contains("first 5 MB hold no episode"),
+        "{}",
+        res.text()
+    );
+}
+
+/// Test gap: hostile audio - an MP4 that claims a huge atom, an ID3 picture that claims 100 MB -
+/// is refused, leaves no file and the server goes on.
+#[tokio::test]
+async fn hostile_audio_is_refused_and_leaves_nothing() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let entry = add_own(&app, &cookie, "Rart").await;
+    let mut mp4 = Vec::new();
+    mp4.extend_from_slice(&0x18u32.to_be_bytes());
+    mp4.extend_from_slice(b"ftypM4A \0\0\0\0M4A isom");
+    mp4.extend_from_slice(&0x7fff_fff0u32.to_be_bytes());
+    mp4.extend_from_slice(b"moov");
+    mp4.extend_from_slice(&[0u8; 64]);
+    let mut id3 = b"ID3\x03\x00\x00\x0f\x7f\x7f\x7f".to_vec();
+    id3.extend_from_slice(b"APIC");
+    id3.extend_from_slice(&100_000_000u32.to_be_bytes());
+    id3.extend_from_slice(&[0, 0, 0]);
+    id3.extend_from_slice(b"image/jpeg\0\x03\0");
+    id3.extend_from_slice(&[0xffu8; 256]);
+    let res = upload(
+        &app,
+        &cookie,
+        entry,
+        &[("huge-atom.m4a", mp4), ("huge-picture.mp3", id3)],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let text = res.text();
+    assert!(text.contains("huge-atom.m4a: not an audio file"), "{text}");
+    assert!(
+        text.contains("huge-picture.mp3: not an audio file"),
+        "{text}"
+    );
+    let on_disk = std::fs::read_dir(app.state.music_files_dir.join(entry.to_string()))
+        .unwrap()
+        .count();
+    assert_eq!(on_disk, 0, "no temp file left");
+    // Still serving.
+    let res = upload(&app, &cookie, entry, &[("ok.wav", wav(200))]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+}
+
+/// #7: own files no entry names (an older backup restored) are shown on the Music page and
+/// deleted only on request; young files and the referenced ones stay.
+#[tokio::test]
+async fn files_no_entry_names_are_shown_and_deleted_on_request() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let entry = add_own(&app, &cookie, "Bilturen").await;
+    upload(&app, &cookie, entry, &[("a.wav", wav(300))]).await;
+    let dir = &app.state.music_files_dir;
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    let write_old = |path: std::path::PathBuf, bytes: usize| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, vec![0u8; bytes]).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    };
+    write_old(dir.join(entry.to_string()).join("stray.mp3"), 1_500_000);
+    write_old(dir.join("999").join("gone.mp3"), 500_000);
+    std::fs::write(
+        dir.join(entry.to_string()).join("young.mp3"),
+        b"just renamed",
+    )
+    .unwrap();
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("id=\"orphans\""));
+    assert!(page.contains("2 own files (2.0 MB)"), "{page}");
+
+    let res = app
+        .request_form(Method::POST, "/music/orphans/delete", Some(&cookie), &[])
+        .await;
+    assert_eq!(res.location(), Some("/music#entries"));
+    assert!(!dir.join(entry.to_string()).join("stray.mp3").exists());
+    assert!(!dir.join("999").exists(), "the gone entry's directory too");
+    assert!(dir.join(entry.to_string()).join("young.mp3").exists());
+    let path: String = sqlx::query_scalar("SELECT path FROM music_files")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert!(dir.join(path).exists(), "the referenced file stays");
+    assert_eq!(
+        events(&app, "music_orphans_deleted").await,
+        vec!["2 file(s), 2.0 MB".to_string()]
+    );
+    assert!(
+        !app.get_page("/music", &cookie)
+            .await
+            .text()
+            .contains("id=\"orphans\"")
+    );
 }

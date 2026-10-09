@@ -12,9 +12,11 @@
 //! - **Policy** `music` ([policy_music]): the version, mobile data, the volume cap and the Storytel
 //!   generation - or `null` when it can't be read, never an empty library.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -43,7 +45,7 @@ pub const MAX_NAME_CHARS: usize = 60;
 pub const MAX_CATEGORY_NAME_CHARS: usize = 20;
 /// Tag text kept from an own file.
 const MAX_TAG_CHARS: usize = 200;
-/// The add check: one GET, at most this long and this big.
+/// The add check: one GET, at most this long, reading at most this much of the body.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 pub const MAX_FEED_BYTES: usize = 5_000_000;
 /// NRK's programme API (the same one the vibb Pi and the music app use).
@@ -260,6 +262,12 @@ pub fn state_key(target: &str) -> String {
     hex::encode(Sha1::digest(target.as_bytes()))[..12].to_string()
 }
 
+/// A new own-files entry's key: "own-" and 12 random hex digits - unique over time, unlike the
+/// id, which a restored database hands out again (qa-21-step1-code #7).
+pub fn new_own_key() -> String {
+    format!("own-{}", &crate::security::generate_device_token()[..12])
+}
+
 /// "NRK podcast", "Own files", ... for the parent's pages.
 pub fn kind_label(source: &str, target: Option<&str>) -> &'static str {
     match source {
@@ -300,33 +308,39 @@ pub fn default_category<'a>(
 // The add check (the server's only fetch)
 // ------------------------------------------------------------------------------------------------
 
-/// One GET's answer: the status and the body (at most [MAX_FEED_BYTES]).
+/// One GET's answer: the status and the body - its first `limit` bytes (`truncated` = there was
+/// more). A bounded read, not a refusal (qa-21-step1-code #10): the caller decides what a prefix is
+/// good for - the add check needs only a feed's channel and first episode, a sweep (design 21b)
+/// can ask with its own limit and see that it got everything.
 pub struct Fetched {
     pub status: u16,
     pub body: Vec<u8>,
+    pub truncated: bool,
 }
 
 #[derive(Debug)]
 pub enum FetchError {
-    TooBig,
     Network(String),
 }
 
-/// The add check's HTTP GET - `AppState.music_fetch`, canned in the tests.
+/// The server's HTTP GET of a music source - `AppState.music_fetch`, canned in the tests.
 pub trait Fetch: Send + Sync {
+    /// At most `limit` bytes of the body are read.
     fn get<'a>(
         &'a self,
         url: &'a str,
+        limit: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Fetched, FetchError>> + Send + 'a>>;
 }
 
-/// The real one: [FETCH_TIMEOUT] overall, the body cut off past [MAX_FEED_BYTES].
+/// The real one: [FETCH_TIMEOUT] overall; reading stops at `limit` bytes.
 pub struct HttpFetch;
 
 impl Fetch for HttpFetch {
     fn get<'a>(
         &'a self,
         url: &'a str,
+        limit: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Fetched, FetchError>> + Send + 'a>> {
         Box::pin(async move {
             let client = reqwest::Client::builder()
@@ -340,24 +354,26 @@ impl Fetch for HttpFetch {
                 .await
                 .map_err(|e| FetchError::Network(e.to_string()))?;
             let status = response.status().as_u16();
-            if response
-                .content_length()
-                .is_some_and(|l| l > MAX_FEED_BYTES as u64)
-            {
-                return Err(FetchError::TooBig);
-            }
             let mut body = Vec::new();
+            let mut truncated = false;
             while let Some(chunk) = response
                 .chunk()
                 .await
                 .map_err(|e| FetchError::Network(e.to_string()))?
             {
-                if body.len() + chunk.len() > MAX_FEED_BYTES {
-                    return Err(FetchError::TooBig);
+                let room = limit - body.len();
+                if chunk.len() > room {
+                    body.extend_from_slice(&chunk[..room]);
+                    truncated = true;
+                    break; // the rest is never downloaded: dropping the response closes it
                 }
                 body.extend_from_slice(&chunk);
             }
-            Ok(Fetched { status, body })
+            Ok(Fetched {
+                status,
+                body,
+                truncated,
+            })
         })
     }
 }
@@ -388,7 +404,9 @@ impl CheckError {
             CheckError::Status(code) => {
                 format!("The site answered {code} - check the link, or try again later.")
             }
-            CheckError::TooBig => "That feed is over 5 MB - not added.".to_string(),
+            CheckError::TooBig => {
+                "That feed's first 5 MB hold no episode with audio - not added.".to_string()
+            }
             CheckError::Network(err) => {
                 format!("Couldn't reach the site ({err}) - try again later.")
             }
@@ -403,14 +421,21 @@ pub async fn check_link(fetch: &dyn Fetch, link: &Link) -> Result<String, CheckE
         Link::NrkPodcast { slug } => (format!("{PSAPI}/radio/catalog/podcast/{slug}"), slug),
         Link::NrkSeries { slug, .. } => (format!("{PSAPI}/radio/catalog/series/{slug}"), slug),
         Link::Rss { url } => {
-            let fetched = fetch.get(url).await.map_err(fetch_error)?;
+            // The channel's title and one episode come first in a feed: its first
+            // [MAX_FEED_BYTES] decide, however long the whole feed is (qa-21-step1-code #10).
+            let fetched = fetch.get(url, MAX_FEED_BYTES).await.map_err(fetch_error)?;
             if fetched.status != 200 {
                 return Err(CheckError::Status(fetched.status));
             }
-            return rss_title(&fetched.body);
+            return match rss_title(&fetched.body) {
+                Err(CheckError::NoItems | CheckError::NotFeed) if fetched.truncated => {
+                    Err(CheckError::TooBig)
+                }
+                other => other,
+            };
         }
     };
-    let fetched = fetch.get(&url).await.map_err(fetch_error)?;
+    let fetched = fetch.get(&url, MAX_FEED_BYTES).await.map_err(fetch_error)?;
     match fetched.status {
         200 => {}
         404 | 410 => return Err(CheckError::NotFound),
@@ -423,7 +448,6 @@ pub async fn check_link(fetch: &dyn Fetch, link: &Link) -> Result<String, CheckE
 
 fn fetch_error(err: FetchError) -> CheckError {
     match err {
-        FetchError::TooBig => CheckError::TooBig,
         FetchError::Network(e) => CheckError::Network(e),
     }
 }
@@ -713,8 +737,10 @@ pub const LIBRARY_FORMAT: u32 = 1;
 #[derive(Debug, Clone)]
 pub struct Library {
     pub version: String,
-    pub json: Vec<u8>,
-    pub covers: Vec<String>,
+    /// The served document (cheap to clone: the cache hands it out).
+    pub json: axum::body::Bytes,
+    /// The categories it lists (the import's size estimate, 21a).
+    pub category_ids: Vec<i64>,
 }
 
 impl Library {
@@ -723,6 +749,7 @@ impl Library {
         entries: Vec<LibEntry>,
         files: Vec<LibFile>,
     ) -> Library {
+        let category_ids = categories.iter().map(|c| c.id).collect();
         let mut covers: Vec<String> = entries
             .iter()
             .filter_map(|e| e.cover.clone())
@@ -750,8 +777,8 @@ impl Library {
         .expect("the library always serializes");
         Library {
             version,
-            json,
-            covers,
+            json: json.into(),
+            category_ids,
         }
     }
 }
@@ -772,6 +799,8 @@ pub async fn library_for(
     device_id: i64,
     extra: Option<i64>,
 ) -> Result<Option<Library>, sqlx::Error> {
+    #[cfg(test)]
+    LIBRARY_BUILDS.with(|builds| builds.set(builds.get() + 1));
     let extra = extra.unwrap_or(-1);
     let entries: Vec<MusicEntry> = sqlx::query_as(LIBRARY_ENTRIES)
         .bind(device_id)
@@ -852,7 +881,79 @@ pub async fn library_for(
     Ok(Some(Library::build(categories, entries, files)))
 }
 
-/// `device_id`'s library as it is now ([library_for]).
+#[cfg(test)]
+thread_local! {
+    /// How many libraries this thread built ([library_for]) - the tests count builds with it (a
+    /// `#[tokio::test]` runs on one thread, so the count is the test's own).
+    pub static LIBRARY_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Each phone's built library, kept under the library revision it was built at (migration 0050,
+/// qa-21-step1-code #3): the policy poll, the library route and the device card reuse it until
+/// something a library is built from changes. The revision moves by trigger on every write to
+/// `music_entries`, `music_categories`, `music_files` and `device_music_entries`; a new source of
+/// library data either gets the same triggers or calls [bump_library_revision]. In memory only,
+/// one library per phone.
+#[derive(Default)]
+pub struct LibraryCache(std::sync::Mutex<HashMap<i64, KeptLibrary>>);
+
+/// The revision a library was built at, and the library (`None` = nothing ticked).
+type KeptLibrary = (i64, Option<Arc<Library>>);
+
+impl LibraryCache {
+    fn get(&self, device_id: i64, revision: i64) -> Option<Option<Arc<Library>>> {
+        let cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        cache
+            .get(&device_id)
+            .filter(|(at, _)| *at == revision)
+            .map(|(_, library)| library.clone())
+    }
+
+    fn put(&self, device_id: i64, revision: i64, library: Option<Arc<Library>>) {
+        let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        // Never replace a newer build with an older one (two requests racing a change).
+        if cache.get(&device_id).is_none_or(|(at, _)| *at <= revision) {
+            cache.insert(device_id, (revision, library));
+        }
+    }
+}
+
+/// The library revision now (migration 0050).
+pub async fn library_revision(db: &mut sqlx::SqliteConnection) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT revision FROM music_library_revision WHERE id = 1")
+        .fetch_one(&mut *db)
+        .await
+}
+
+/// Moves the library revision by hand - for a writer whose table has no revision triggers.
+#[allow(dead_code)] // for the sweeper's tables (design 21b); the step-1 tables use triggers
+pub async fn bump_library_revision(db: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1")
+        .execute(&mut *db)
+        .await
+        .map(|_| ())
+}
+
+/// `device_id`'s library through `cache`: the kept one while the revision hasn't moved, else built
+/// - in one read transaction, so the revision and the data it is kept under agree.
+pub async fn cached_library(
+    db: &sqlx::SqlitePool,
+    cache: &LibraryCache,
+    device_id: i64,
+) -> Result<Option<Arc<Library>>, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let revision = library_revision(&mut tx).await?;
+    if let Some(kept) = cache.get(device_id, revision) {
+        return Ok(kept);
+    }
+    let library = library_for(&mut tx, device_id, None).await?.map(Arc::new);
+    tx.commit().await?;
+    cache.put(device_id, revision, library.clone());
+    Ok(library)
+}
+
+/// `device_id`'s library as it is now ([library_for]), built fresh.
+#[cfg(test)]
 pub async fn device_library(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -889,11 +990,12 @@ pub struct MusicPolicy {
 
 pub async fn policy_music(
     db: &sqlx::SqlitePool,
+    cache: &LibraryCache,
     policy: &crate::models::DevicePolicy,
 ) -> Result<MusicPolicy, sqlx::Error> {
-    let library_version = device_library(db, policy.device_id)
+    let library_version = cached_library(db, cache, policy.device_id)
         .await?
-        .map(|library| library.version);
+        .map(|library| library.version.clone());
     let storytel_generation = if policy.music_storytel {
         sqlx::query_scalar::<_, i64>(
             "SELECT generation FROM music_storytel WHERE id = 1 AND ciphertext IS NOT NULL",
@@ -910,6 +1012,30 @@ pub async fn policy_music(
         volume_cap_pct: volume_cap(policy.music_volume_cap_pct),
         storytel_generation,
     })
+}
+
+/// Whether `hash` is a cover in `device_id`'s library - an entry's cover or an own file's art of
+/// an entry the phone has ticked (one query, not a library build: qa-21-step1-code #3).
+pub async fn cover_in_library(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    hash: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM music_entries e \
+           JOIN device_music_entries d ON d.entry_id = e.id \
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'own') AND e.cover_hash = ? \
+         UNION ALL SELECT 1 FROM music_files f \
+           JOIN music_entries e ON e.id = f.entry_id \
+           JOIN device_music_entries d ON d.entry_id = f.entry_id \
+           WHERE d.device_id = ? AND e.source = 'own' AND f.art_hash = ?)",
+    )
+    .bind(device_id)
+    .bind(hash)
+    .bind(device_id)
+    .bind(hash)
+    .fetch_one(db)
+    .await
 }
 
 /// The phones that have `entry_id` ticked (to nudge after a change).
@@ -1066,6 +1192,60 @@ pub fn file_path(dir: &Path, relative: &str) -> Option<std::path::PathBuf> {
                     .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
         });
     ok.then(|| dir.join(relative))
+}
+
+/// Own files on disk that no row names (qa-21-step1-code #7): what a restore of an older database
+/// leaves behind. Never deleted silently - the newer database might be put back - but shown on the
+/// Music page with a button.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Orphans {
+    pub files: Vec<std::path::PathBuf>,
+    pub bytes: u64,
+}
+
+/// A file this young may be an upload between its rename and its row: never an orphan yet.
+const ORPHAN_MIN_AGE: Duration = Duration::from_secs(10 * 60);
+
+/// The files in `<dir>/<entry>/` that no `music_files.path` names (not `.part` files, none younger
+/// than [ORPHAN_MIN_AGE]).
+pub async fn orphan_files(db: &sqlx::SqlitePool, dir: &Path) -> Result<Orphans, sqlx::Error> {
+    let referenced: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT path FROM music_files")
+            .fetch_all(db)
+            .await?
+            .into_iter()
+            .collect();
+    let mut orphans = Orphans::default();
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+        return Ok(orphans);
+    };
+    let now = std::time::SystemTime::now();
+    while let Ok(Some(entry_dir)) = entries.next_entry().await {
+        let entry_name = entry_dir.file_name().to_string_lossy().into_owned();
+        let Ok(mut files) = tokio::fs::read_dir(entry_dir.path()).await else {
+            continue;
+        };
+        while let Ok(Some(file)) = files.next_entry().await {
+            let name = file.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".part") || referenced.contains(&format!("{entry_name}/{name}")) {
+                continue;
+            }
+            let Ok(meta) = file.metadata().await else {
+                continue;
+            };
+            let young = meta
+                .modified()
+                .ok()
+                .and_then(|m| now.duration_since(m).ok())
+                .is_none_or(|age| age < ORPHAN_MIN_AGE);
+            if meta.is_file() && !young {
+                orphans.bytes += meta.len();
+                orphans.files.push(file.path());
+            }
+        }
+    }
+    orphans.files.sort();
+    Ok(orphans)
 }
 
 /// At startup: deletes upload temp files (`*.part`) a crash left in `<dir>/<entry>/`.
