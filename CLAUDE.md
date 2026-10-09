@@ -12,6 +12,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
 - `server/` - admin server + device API (Rust/Axum/SQLite). Was the `kid-phone-server` fork.
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md` (Pi + systemd, and the Docker image
   from `server/Dockerfile`).
+- `music/` - the Vibb music app (Kotlin, Compose, Media3; applicationId `me.vibb.music`, debug
+  `me.vibb.music.debug`), designs 20/21/21b. Details: `music/CLAUDE.md`.
 - `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
   `kid-phone-server` = `server/`, `L` = `kids-launcher-mdm` = `launcher/`, "branch `handy`" = what is
   now `main` here. `docs/testing/emulator.md` - the emulator test loop. `docs/setup/` - setup
@@ -29,7 +31,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
 Server (from `server/`): `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets`.
 
 Launcher (from `launcher/`, JDK 17, `local.properties` with `sdk.dir=...`):
-`./gradlew assembleDebug assembleRelease testDebugUnitTest`. Without `-PrequireTsnet=true` a missing
+`./gradlew assembleDebug assembleRelease testDebugUnitTest`. Music app (from `music/`, the same JDK and
+`local.properties`): `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true`.
+Without `-PrequireTsnet=true` a missing
 `app/libs/tsnet.aar` falls back to a stub. No Firebase config is needed: FCM was removed in design 19 (the
 SSE stream is the only nudge), and `assembleRelease` fails if Firebase or Play services comes back on the
 release classpath.
@@ -41,22 +45,27 @@ launcher `PhoneNumbersTest`). The policy JSON shape is pinned on both sides
 directories in the same commit. The music library and an entry's episode list are pinned by
 `server/testdata/music_library.json` and `server/testdata/music_listing.json` (`music_library_snapshot`,
 `music_listing_snapshot`, regenerated with `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` / `MUSIC_LISTING_SNAPSHOT_WRITE=1`); the
-music app keeps byte-identical copies once it exists (design 21b §4.5), and a change goes into both in one commit.
+music app keeps byte-identical copies in `music/app/src/test/resources/` (with `music_icons.json`;
+`ContractFilesTest`), and a change goes into both in one commit.
 
 ## CI and releases
 
-- `.github/workflows/launcher.yml` and `server-ci.yml` run on every push/PR, but their build job
-  (`launcher-build`, `server-build`) only runs when its own directory or workflow changed
-  (`launcher.yml` also on `.github/actions/build-tsnet/`; `server-ci.yml`'s `server-image` job only
-  when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or the workflow
-  changed). Require the always-running gate jobs `launcher-ci` and `server-ci` in branch protection,
-  not the build jobs.
+- `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
+  (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
+  (`launcher.yml` also on `.github/actions/build-tsnet/`, `music.yml` also on the shared
+  `server/testdata/music_*.json`; `server-ci.yml`'s `server-image` job only when `server/Dockerfile`,
+  `server/.dockerignore`, `server/deploy/image-smoke.sh` or the workflow changed). Require the
+  always-running gate jobs `launcher-ci`, `server-ci` and `music-ci` in branch protection, not the build jobs.
 - `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
   release (`kids-launcher-mdm.apk`), versionCode `X*1_000_000 + Y*1_000 + Z` (RC: minus 1). Only
   stable launcher releases become GitHub's "latest", so
   `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL. The release build no
   longer reads the `HANDY_FCM_*` repository variables (design 19); they can go once a `launcher-v*` tag on
   design 19's launcher commit or later has been built (an older tag would still check them).
+- `music-vX.Y.Z` (or `-rc.N`) on a `main` commit -> `vibb-music.apk` + `.sha256`, signed with the
+  launcher's key in the `release` environment (its deployment rule must allow `music-v*` tags too; the same
+  `RELEASE_CERT_SHA256` check), versionCode as the launcher's, never "latest". Deploy a server with the music
+  catalog row (0.21.0+) before the first stable `music-v*` (design 21 QA #11).
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
   then the aarch64 tarball and its `.sha256`, never "latest". The server's update check and `install.sh`/`update.sh` find it by tag.
   Since 0.23.0 (design 22) the same run builds the multi-arch image `ghcr.io/<owner>/handy-server`,

@@ -309,3 +309,64 @@ Choices made while building (none changes a decision above):
    embedded art and the parent's covers are 512 px square JPEGs (`photos::process`, as contact photos).
 7. The 3 MB guard covers ticks (refused, `?music_notice=too_big#music`) and uploads (the new files are taken back);
    renaming a category or an entry isn't checked (a few bytes).
+
+## Step 2 implementation status (2026-10-09)
+
+Built and tested in the sandbox on branch `music-step2` (`music/`, `.github/workflows/music.yml`); not run on an
+emulator or a phone yet (no KVM here). `music/CLAUDE.md` describes the code.
+- **In**: the library and listing model (lenient, from the shared JSON), Room (listings, positions, bookmarks, Nytt,
+  seen keys, downloads, item errors, shuffle, the last queue), the sync and downloads as WorkManager jobs, keep/prune
+  on the server's lists (21b §6), NY/Nytt and the "N nye i Musikk" notification, the report for step 3
+  (`filesDir/music/report.json`: `version_code`, `library_version`, `cache_bytes`, `downloads_waiting`,
+  `entry_errors`, `item_errors`, `downloads`), the player service (Media3 session, focus, noisy, buttons, sleep,
+  outputs, stream errors, the queue rules), the screens of `Main.dc.html` v12 in nb/en, the debug feed
+  (`src/debug`, docs/testing/emulator.md §6f) and its release check, `music.yml`.
+- **Tests**: 106 JVM tests - the three shared files byte-identical and parsed; vibb's episode_resume, resume_overlap
+  (case 4), new_badge, cache_prune, offline_browse, offline_keep_all, now_playing (1-5, 8-12), prev_long_form,
+  mpv_next_wrap, mpv_prev, session_window (the phone's part), ui_carousel_slide (the index rules) and cat_carousel
+  ported; keep/prune with withdrawn copies and the bookmark; item errors from downloads and streams; the gate, HLS
+  keys, the address guard; translations, the escape scan, the debug feed outside `src/debug`, the glyphs.
+- **Checks done**: `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` and
+  `./gradlew build` (lint: 0 errors); the release APK is 4.6 MB, R8-minified, without the debug feed or Google
+  services. `scripts/material-symbols.sh` now also writes the music app's glyphs (no change elsewhere).
+
+Readings and deviations:
+1. **Compose** (foundation only, no Material), as §4.1 says - the launcher uses Views, but the specified carousel is a
+   `HorizontalPager` with `graphicsLayer`.
+2. **Downloads** run Media3's `ProgressiveDownloader`/`HlsDownloader` item by item inside the WorkManager job (QA #1),
+   not `DownloadManager`; Room's `downloads` is the index. An HLS item fetches one rendition (the best up to
+   192 kbit/s, else the lowest) and plays its copy with the same stream key; its cache key is the item plus the
+   resource's path relative to the playlist, so a re-resolved URL hits (QA #2).
+3. **Shuffle** keeps the permutation as the stored queue (Room's now-playing row) instead of ExoPlayer's shuffle mode
+   with `DefaultShuffleOrder`: the same behaviour, and it survives a restart. A cover tap on a shuffled entry starts
+   a new permutation; a list pick continues in the shown order.
+4. **Art**: the session carries `artworkUri` to a ≤ 300 px JPEG in the cache dir, not inline `artworkData` (the
+   session sends the whole queue's metadata to controllers; Media3 loads the bitmap for the platform session the
+   launcher reads). Episode art URLs aren't fetched: the entry's cover (or an own file's embedded art) everywhere,
+   else the category colour with its glyph.
+5. **Keep set**: the bookmarked item and the next one are kept even at depth 0 ("Ingen"), as 21 §4.5/21b §6 read
+   ("plus").
+6. **Queue ends**: next at the last item wraps to the first (vibb), but a queue played to its end stops, drops the
+   bookmark and hides the now-playing bar. A tap on the cover of the entry already loaded continues it.
+7. **Errors**: every failed download or stream of a listed url is recorded (`http_<code>`, `bad_media` for an HTML
+   answer or unparsable media, else `network`), at most once per item per sync, at most 50. A 4xx (not 408/429) waits
+   for a new url; the rest retry with WorkManager's backoff. The one message is "Ikke lastet ned - trenger Wi-Fi",
+   also when a stream fails; the queue moves on.
+8. **Address guard** (QA Low 14 of step 1c, 21b §2.7): audio goes through OkHttp; for a public-only entry its DNS
+   drops private answers and a network interceptor refuses a private connected address, on every redirect hop;
+   a refusal is the existing code `network`. NRK entries are always public-only. **An RSS entry's LAN/public class
+   isn't in the library or listing contract**, so RSS entries aren't guarded until the server sends it (see below).
+9. Until step 3, `mobile_data` comes from the debug feed's `config.json` and the language from the system (or
+   `cmd locale set-app-locales`). "Ingen bibliotek" also shows when no entry has anything to play.
+10. More than 20 entries show a window of 20 equal dots around the current one.
+
+Emulator (21 §6 step 2, emulator.md §6f): every screen at 320x569 dp in nb and en; the carousel (drag, snap, a
+neighbour tap, a tap during a slide, "Remove animations"); resume, shuffle, sleep (fade, a manual pause cancels it);
+airplane mode; restart -> the bar back paused, one tap continues; that `adb push` into the app's external dir
+works; Nytt and its notification; the output sheet. **Jelly Star**: 1 h screen off in Doze; a call pauses and
+resumes (with the 3 s overlap); unplugging pauses; BT buttons, also play after a restart (playback resumption);
+speaker vs BT; downloads wait on mobile data; an NRK serie (HLS) downloaded and played offline; battery and MB/h.
+
+Open for the user: **the LAN flag** - should the server add each entry's `lan` (21b §1) to the library entries, so
+the app can guard public RSS feeds too (a contract change in both directories)? Until then only NRK is guarded.
+The `release` environment's deployment rule must allow `music-v*` tags before the first music release.
