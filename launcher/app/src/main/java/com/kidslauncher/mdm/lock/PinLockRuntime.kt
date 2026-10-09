@@ -93,24 +93,28 @@ object PinLockRuntime {
      */
     private var bootMark: BootMarkState = BootMarkState.Over
 
-    /** Home's mark is verifiably up (qa-16e-code #1): Home resumed locked and hasn't been covered
-     * since - stopped, lost window focus, or paused without resuming within [HOME_PAUSE_GRACE_MS].
-     * Main thread. */
-    private var homeMarkUp = false
+    /** Home's last resume was locked - the night ground - and no stop or focus loss since (16e,
+     * an input of [homeMarkUp]). Main thread. */
+    private var homeResumedLocked = false
 
-    /** Home's night ground's first drawn frame in this process (elapsed realtime) - the 3 s count
-     * from it (16e). Main thread. */
-    private var homeFrameMs: Long? = null
+    /** When Home's mark was first verifiably on screen in this process ([homeMarkShown]: locked,
+     * the night ground drawn, the window focused; elapsed realtime) - the 3 s count from it
+     * (qa-16e-fix2 #1). Main thread. */
+    private var homeShownAtMs: Long? = null
 
-    /** Home's last pause and locked resume (elapsed realtime), for [homePauseEndsWait]. Main thread. */
-    private var homePausedAtMs = 0L
+    /** Home's last pause (`null` = none) and locked resume (elapsed realtime), for [homeMarkUp]. Main
+     * thread. */
+    private var homePausedAtMs: Long? = null
     private var homeResumedAtMs: Long? = null
+
+    /** Home's mark is up now ([homeMarkUp]). Main thread. */
+    private fun homeMarkUpNow(now: Long): Boolean = homeMarkUp(homeResumedLocked, homePausedAtMs, homeResumedAtMs, now)
 
     /** A pause of Home ends the wait only if Home doesn't resume within the grace (16e). */
     private val homePauseCheck = Runnable {
         val app = appContext ?: return@Runnable
-        if (homePauseEndsWait(homePausedAtMs, homeResumedAtMs, SystemClock.elapsedRealtime())) {
-            homeMarkUp = false
+        if (!homeMarkUpNow(SystemClock.elapsedRealtime())) {
+            homeResumedLocked = false
             if (bootMark != BootMarkState.Over) endBootMark(app, "Home paused")
         }
     }
@@ -123,10 +127,10 @@ object PinLockRuntime {
     @Volatile
     private var coverFrameMs: Long? = null
 
-    /** Ends the wait at its end: 3 s after the mark's first frame, or - Home never drew - 3 s after
-     * the wait began (16e). */
+    /** Ends the wait at its end: 3 s after the mark's start, or - Home's mark never shown -
+     * [LOCK_FALLBACK_MS] after the wait began (16e). */
     private val bootMarkBackstop = Runnable {
-        val why = if (bootMark is BootMarkState.Waiting) "Home's mark never drew" else "the mark's 3 s are up"
+        val why = if (bootMark is BootMarkState.Waiting) BOOT_MARK_NEVER_SHOWN else BOOT_MARK_TIME_UP
         appContext?.let { endBootMark(it, why) }
     }
 
@@ -204,23 +208,30 @@ object PinLockRuntime {
     /** HomeActivity resumed showing the mark (16e, the locked resume): the boot's lock may wait for
      * it now; a pause just before (a re-delivered HOME intent) doesn't count. Main thread. */
     fun onHomeMarkUp() {
-        homeMarkUp = true
+        homeResumedLocked = true
         homeResumedAtMs = SystemClock.elapsedRealtime()
         handler.removeCallbacks(homePauseCheck)
     }
 
     /**
-     * Home's night ground drew its first frame at [frameMs] (elapsed realtime, 16e): a wait for it
-     * now holds the lock 3 s from the mark's first frame ([bootMarkDrawn]) - a slow boot no longer
-     * eats them (emulator 2026-10-09: Home drew 1.8 s after its resume). Main thread.
+     * From Home at its window focus, its night ground's first frame and its locked resume (16e,
+     * qa-16e-fix2 #1): when the mark is verifiably on screen ([homeMarkShown]: resumed locked, the
+     * ground drawn, the window focused - the old front is gone), the first time is the mark's start,
+     * and a wait for it holds the lock 3 s from there ([bootMarkShown]) - a slow boot no longer eats
+     * them (emulator 2026-10-09). Main thread.
      */
-    fun onHomeMarkDrawn(context: Context, frameMs: Long) {
-        if (homeFrameMs == null) homeFrameMs = frameMs
+    fun onHomeMarkShown(context: Context, groundDrawn: Boolean, focused: Boolean) {
+        if (homeShownAtMs != null || !homeMarkShown(homeResumedLocked, groundDrawn, focused)) return
+        val now = SystemClock.elapsedRealtime()
+        homeShownAtMs = now
         val before = bootMark
         if (!before.holdsLock) return
-        val now = SystemClock.elapsedRealtime()
-        val next = bootMarkDrawn(before, homeFrameMs ?: frameMs, coverFrameMs, now)
-        if (next == BootMarkState.Over) endBootMark(context.applicationContext, "the cover's 3 s were up") else moveBootMark(before, next, now, "")
+        val next = bootMarkShown(before, now, coverFrameMs, now)
+        if (next == BootMarkState.Over) {
+            endBootMark(context.applicationContext, if (coverFrameMs != null) BOOT_MARK_TIME_UP else BOOT_MARK_NEVER_SHOWN)
+        } else {
+            moveBootMark(before, next, now, "")
+        }
     }
 
     /**
@@ -244,7 +255,7 @@ object PinLockRuntime {
      */
     fun onHomeCovered(context: Context, changingConfigurations: Boolean, why: String) {
         if (changingConfigurations) return
-        homeMarkUp = false
+        homeResumedLocked = false
         handler.removeCallbacks(homePauseCheck)
         if (bootMark != BootMarkState.Over) endBootMark(context.applicationContext, why)
     }
@@ -266,19 +277,21 @@ object PinLockRuntime {
 
     /**
      * An ask for the lock ([bootMarkStep]): whether the boot's mark holds it now - only while Home's
-     * mark is up ([homeMarkUp]). The first held ask waits for the mark's first frame (at most 3 s)
-     * or, with one known, fixes the end 3 s after it, and posts the backstop. Main thread.
+     * mark is up ([homeMarkUp]). The first held ask waits for the mark to be shown (at most
+     * [LOCK_FALLBACK_MS]) or, with its start known, fixes the end 3 s after it, and posts the
+     * backstop. Main thread.
      */
     private fun bootMarkHolds(context: Context, ask: LockAsk): Boolean {
         val before = bootMark
         if (before == BootMarkState.Over) return false
         val app = context.applicationContext
         val now = SystemClock.elapsedRealtime()
-        val next = bootMarkStep(before, ask, homeMarkUp, now, coverFrameMs, homeFrameMs) {
+        val up = homeMarkUpNow(now)
+        val next = bootMarkStep(before, ask, up, now, coverFrameMs, homeShownAtMs) {
             val telecom = telecomInCall(app)
             bootMarkExempt(ourCall(), telecom, emergencyFlowNow(telecom), alarmNow(app), VoipCalls.phase)
         }
-        moveBootMark(before, next.state, now, "$ask ask${if (homeMarkUp) "" else ", Home's mark not up"}")
+        moveBootMark(before, next.state, now, bootMarkOverWhy(before, ask, up, now, bootMarkStartMs(coverFrameMs, homeShownAtMs)))
         return !next.show
     }
 
@@ -287,7 +300,7 @@ object PinLockRuntime {
     private fun startBootMarkClock() {
         val before = bootMark
         val now = SystemClock.elapsedRealtime()
-        moveBootMark(before, bootMarkClock(before, now, coverFrameMs, homeFrameMs), now, "the cover's 3 s were up")
+        moveBootMark(before, bootMarkClock(before, now, coverFrameMs, homeShownAtMs), now, BOOT_MARK_TIME_UP)
     }
 
     /** [bootMark] to [state]: entering Waiting or Holding (re)posts the backstop for its end, leaving
@@ -297,9 +310,9 @@ object PinLockRuntime {
         if (state == before) return
         when (state) {
             is BootMarkState.Waiting -> {
-                Log.i(LOG_TAG, "Boot mark: the lock waits for the mark's first frame, at most ${state.frameDeadlineMs - now} ms")
+                Log.i(LOG_TAG, "Boot mark: the lock waits for Home's mark to show, at most ${state.deadlineMs - now} ms")
                 handler.removeCallbacks(bootMarkBackstop)
-                handler.postDelayed(bootMarkBackstop, state.frameDeadlineMs - now)
+                handler.postDelayed(bootMarkBackstop, state.deadlineMs - now)
             }
             is BootMarkState.Holding -> {
                 Log.i(LOG_TAG, "Boot mark: the lock waits ${state.untilMs - now} ms")
@@ -329,8 +342,8 @@ object PinLockRuntime {
     /** The wait is over: why, and how long the mark was on screen ([bootMarkOnScreenMs]) - the
      * smoke test checks it. */
     private fun logBootMarkOver(why: String, now: Long) {
-        val shown = bootMarkOnScreenMs(now, coverFrameMs, homeFrameMs)
-        Log.i(LOG_TAG, "Boot mark over: $why - the mark on screen ${if (shown == null) "never (not drawn)" else "$shown ms"}")
+        val shown = bootMarkOnScreenMs(now, coverFrameMs, homeShownAtMs)
+        Log.i(LOG_TAG, "Boot mark over: $why - the mark on screen ${if (shown == null) "never" else "$shown ms"}")
     }
 
     /** The wait ends without an ask ([bootMarkEnd]): the backstop, Home covered, a call. Main thread. */

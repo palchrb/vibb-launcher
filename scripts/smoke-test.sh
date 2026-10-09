@@ -570,22 +570,47 @@ else
             fi
         fi
         # The wait from the launcher's own log, captured once, then grepped: the boot's process
-        # start and `Boot mark over: <why> - the mark on screen N ms` - the 3 s count from the mark's
-        # first drawn frame, so N is about 3000 unless something ended the wait early (emulator
-        # 2026-10-09: 0.1 s after the system's own HOME start paused Home).
+        # start and `Boot mark over: <why> - the mark on screen N ms`. The 3 s count from Home's
+        # first focus with the night ground drawn (or the boot cover's first frame), so N is about
+        # 3000 when the 3 s ran out (less is a bug: FAIL). Sorted by <why> (qa-16e-fix2 #4): an
+        # early end by a Home pause, stop or focus loss FAILs below 2500 ms unless a UI dump caught
+        # another window over the mark (an ANR or "System UI isn't responding" dialog - the check
+        # above reports it); the safe ends SKIP - Home's mark never shown within 1 s (a slow or
+        # no-KVM emulator), no wait at all, an exemption, a call, an AT_ONCE ask (screen-off), the
+        # lock already up.
         pinlog="$(adb_ logcat -d -v brief -s PinLock 2>/dev/null | tr -d '\r')"
         mark_over="$(grep -m1 -o 'Boot mark over: .*' <<<"$pinlog" || true)"
+        mark_why="$(sed -e 's/^Boot mark over: //' -e 's/ - the mark on screen .*$//' <<<"$mark_over")"
         shown_ms="$(grep -o 'on screen [0-9]* ms' <<<"$mark_over" | grep -o '[0-9][0-9]*' || true)"
+        check="the boot's mark ~3 s before the lock (design 16e)"
         if ! grep -q 'Process start:' <<<"$pinlog"; then
-            skip "the boot's mark ~3 s before the lock (design 16e)" "no PinLock 'Process start' in logcat (buffer rolled over?)"
+            skip "$check" "no PinLock 'Process start' in logcat (buffer rolled over?)"
         elif [ -z "$mark_over" ]; then
-            fail "the boot's mark ~3 s before the lock (design 16e)" "no 'Boot mark over:' in logcat - the lock didn't wait for the mark"
+            skip "$check" "no 'Boot mark over:' in logcat - the wait never began (Home's mark not up at the first ask, or an exemption)"
         elif [ -z "$shown_ms" ]; then
-            fail "the boot's mark ~3 s before the lock (design 16e)" "the mark never drew: '$mark_over'"
-        elif [ "$shown_ms" -lt "$BOOT_MARK_MIN_SHOWN_MS" ]; then
-            fail "the boot's mark ~3 s before the lock (design 16e)" "on screen only $shown_ms ms: '$mark_over'"
+            skip "$check" "the mark was never shown (a safe end): '$mark_over'"
         else
-            pass "the boot's mark ~3 s before the lock (design 16e): ${mark_over#Boot mark }"
+            case "$mark_why" in
+                "the mark's 3 s are up")
+                    if [ "$shown_ms" -ge "$BOOT_MARK_MIN_SHOWN_MS" ]; then
+                        pass "$check: ${mark_over#Boot mark }"
+                    else
+                        fail "$check" "on screen only $shown_ms ms: '$mark_over'"
+                    fi
+                    ;;
+                "Home paused" | "Home stopped" | "Home lost focus" | "Home's mark not up")
+                    if [ "$shown_ms" -ge "$BOOT_MARK_MIN_SHOWN_MS" ]; then
+                        pass "$check: ${mark_over#Boot mark }"
+                    elif [ "${others:-0}" -gt 0 ]; then
+                        skip "$check" "ended by '$mark_why' after $shown_ms ms with another window over the mark (see 'nothing but the mark')"
+                    else
+                        fail "$check" "an unexplained '$mark_why' after $shown_ms ms: '$mark_over'"
+                    fi
+                    ;;
+                *)
+                    skip "$check" "a safe early end after $shown_ms ms: '$mark_why'"
+                    ;;
+            esac
         fi
     fi
     shot boot-lock

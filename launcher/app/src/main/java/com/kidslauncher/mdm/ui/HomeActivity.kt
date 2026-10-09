@@ -241,8 +241,9 @@ class HomeActivity : UIObjectActivity() {
         appsJob?.cancel()
         refreshHandler.removeCallbacks(badgeRender)
         refreshHandler.removeCallbacks(callTicker)
-        // Design 16e: the boot's 3 s count from the night ground's first drawn frame.
-        val ground = night ?: NightGround(this) { PinLockRuntime.onHomeMarkDrawn(this, it) }.also { night = it }
+        // Design 16e (qa-16e-fix2 #1): the boot's 3 s start once the drawn night ground has focus.
+        val ground = night ?: NightGround(this) { PinLockRuntime.onHomeMarkShown(this, groundDrawn = true, focused = hasWindowFocus()) }
+            .also { night = it }
         if (!nightShown) {
             setContentView(ground.root)
             nightShown = true
@@ -408,6 +409,8 @@ class HomeActivity : UIObjectActivity() {
             // only from here on, with the night ground resumed, does the mark count as up.
             if (PinLockRuntime.mode == LockMode.LOCKED) {
                 PinLockRuntime.onHomeMarkUp()
+                // A re-resume with the focus kept (a re-delivered HOME intent) gets no focus change.
+                PinLockRuntime.onHomeMarkShown(this, groundDrawn = night?.drawn == true, focused = hasWindowFocus())
                 PinLockRuntime.show(this, ask = LockAsk.BOOT)
             }
             return
@@ -517,11 +520,16 @@ class HomeActivity : UIObjectActivity() {
         }
     }
 
-    /** Design 16e (qa-16e-code #2): the assistant, the power menu or a dialog over the mark takes the
-     * focus without pausing Home - the boot's wait ends too. */
+    /** Design 16e: the first focus of the drawn night ground starts the mark's 3 s (qa-16e-fix2 #1 -
+     * focus goes only to a drawn, shown window); the assistant, the power menu or a dialog over the
+     * mark takes the focus without pausing Home - the boot's wait ends (qa-16e-code #2). */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home lost focus")
+        if (!hasFocus) {
+            PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home lost focus")
+        } else if (nightShown) {
+            PinLockRuntime.onHomeMarkShown(this, groundDrawn = night?.drawn == true, focused = true)
+        }
     }
 
     override fun onStop() {

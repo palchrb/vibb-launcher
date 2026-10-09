@@ -314,8 +314,8 @@ about 3 s. Decision:
 
 ### 16e implementation status (2026-10-07)
 
-Code with unit tests. Commit `1ee2298e`, the qa-16e-code fix round (`qa-16e-code.md`, all five fixed), then the
-emulator fix below.
+Code with unit tests. Commit `1ee2298e`, the qa-16e-code fix round (`qa-16e-code.md`, all five fixed), the
+emulator fix below (`511bc2cb`) and its QA round (`qa-16e-fix2.md`, all fixed).
 
 **Emulator fix (2026-10-09, "sometimes the right length, sometimes not")**: one boot's logcat - our typed HOME start
 29.186, `Boot mark: the lock waits 3000 ms` 29.591, the system's own HOME start (no `pkg=`) 31.202, `Boot mark over:
@@ -326,19 +326,36 @@ drawn frame (the night ground's `OnDrawListener` -> `PinLockRuntime.onHomeMarkDr
 `bootMarkDrawn`); (2) the system's HOME start re-delivered the intent, which pauses and resumes Home at once - a pause
 now ends the wait only if Home isn't resumed again within `HOME_PAUSE_GRACE_MS` (300 ms, `homePauseEndsWait`); a stop
 or lost focus still ends it at once. Every end logs `Boot mark over: <why> - the mark on screen N ms`
-(`bootMarkOnScreenMs`), and `smoke-test.sh REBOOT=1` fails below 2500 ms. Not re-run on the emulator yet.
+(`bootMarkOnScreenMs`). Not re-run on the emulator yet.
+
+**qa-16e-fix2 (2026-10-09)**: waiting up to 3 s for Home's first frame held the lock back while neither the mark nor
+the lock was on screen (Home's theme sets `windowDisablePreview`, so the old front - the stock launcher or
+FallbackHome - stayed up), and a Home never focused couldn't report covers that don't pause it. Now the mark counts as
+shown only from Home's first window focus after its locked resume with the night ground drawn (pure `homeMarkShown`;
+`onHomeMarkShown` from the focus gain, the ground's first frame and the locked resume; on API 34 focus goes only to a
+drawn, shown window), the 3 s start there (`bootMarkShown`), and `Waiting` lasts at most the pre-16e `LOCK_FALLBACK_MS`
+(1 s) from the wait's start - no focus by then means the lock, so a slow emulator safely shows no mark. The lock
+comes at most 1 s + 3 s after the wait began (an end-to-end test over every path). "Up" is the pure `homeMarkUp`
+(resumed locked, not stopped or unfocused since, not paused past the grace). The smoke test sorts on the end's reason
+(`bootMarkOverWhy`): it FAILs only a Home pause, stop or focus loss below 2500 ms that no UI dump explains (and a
+`the mark's 3 s are up` below 2500 ms, which is a bug) and SKIPs the safe ends (never shown, no wait, exemptions,
+`AT_ONCE` asks, the lock already up). **Blind spot, documented**: a pause that takes no focus (a translucent activity,
+or Recents over a Home not yet focused) goes unseen for up to `HOME_PAUSE_GRACE_MS` (300 ms); once Home has focus a
+focusable window over it takes the focus and a non-focusable top activity leaves none - both a focus loss, at once -
+and before the first focus the 1 s `Waiting` deadline bounds it. If the emulator still logs `Home paused` after the
+system's HOME start, log the pause-to-resume gap before raising the grace.
 - **Pure decision** (`lock/BootMarkPlan.kt`, `BootMarkPlanTest`): `bootMarkDue(bootCount, stored, lockActive,
   readable, sinceBoot)` - the first process start of a boot: `Settings.Global.BOOT_COUNT` known and not the one stored
   by the last start (CE `pin_lock_state` key `boot_mark_boot_count`, swapped in `PinLockRuntime.init` with `commit()`),
   the process started within `BOOT_MARK_WINDOW_MS` (5 min) of the boot, the lock active and its state readable
   (unreadable: no wait, qa-16c-code #3). A crash restart in the same boot, the first start of a new build after its
-  update and a restart after a lost write never wait. `bootMarkStep(state, ask, markUp, now, coverFrame, exempt)`:
-  `Due` -> `Waiting(frameDeadline)` -> `Holding(until)` -> `Over`; only the first showing waits, the 3 s count from the
-  mark's first drawn frame (Home's or the cover's, the earlier), an end once fixed never moves later, and a first ask
-  after the window doesn't wait (a first screen-on hours later).
-- **Only while Home's mark is up** (qa-16e-code #1): `markUp` is set by Home's locked resume (`onHomeMarkUp`, right
-  before its `show`) and cleared by Home's `onStop` and `onWindowFocusChanged(false)` at once, by `onPause` only after
-  `HOME_PAUSE_GRACE_MS` without a resume (not for a recreation). A boot ask without it shows the lock at once, as before
+  update and a restart after a lost write never wait. `bootMarkStep(state, ask, markUp, now, coverFrame, homeShown,
+  exempt)`: `Due` -> `Waiting(deadline)` -> `Holding(until)` -> `Over`; only the first showing waits, the 3 s count
+  from the mark's start (Home's first focus with the night ground drawn, or the cover's first frame, the earlier), an
+  end once fixed never moves later, and a first ask after the window doesn't wait (a first screen-on hours later).
+- **Only while Home's mark is up** (qa-16e-code #1, pure `homeMarkUp`): set by Home's locked resume (`onHomeMarkUp`,
+  right before its `show`), cleared by Home's `onStop` and `onWindowFocusChanged(false)` at once, by `onPause` only
+  after `HOME_PAUSE_GRACE_MS` without a resume (not for a recreation). A boot ask without it shows the lock at once, as before
   16e: Home's start failed or threw, Home never resumed (the stock launcher or FallbackHome in front), or Home was
   covered. When Home is started first (`showLockLater`), `bootMarkClock` only begins the wait at the process start; the
   1 s fallback then holds only with Home's mark up - never later than before 16e when Home doesn't come.
@@ -356,13 +373,13 @@ or lost focus still ends it at once. Every end logs `Boot mark over: <why> - the
   ringing system alarm, a VoIP ring or call; a call starting (`callsListener`), the re-front loop yielding to any of
   them, the lock coming up for any reason and anything over Home's mark (pause, stop, lost focus: an app, Recents, the
   assistant, the power menu, a translucent activity - qa-16e-code #2) end the wait.
-- **Never without a lock after the 3 s**: entering `Waiting` posts a backstop for its frame deadline (3 s after the
-  wait began - Home never drawing shows the lock then, `Home's mark never drew`), `Holding` one for `until`; it, like
-  the other early ends, runs `bootMarkEnd` - our call: the lock now (the call screen comes over it, as at a process
-  start in a call); otherwise the re-front check (yields to the system dialer, emergency, alarm or VoIP; screen off:
-  the screen-on shows it; else the lock). So the phone is never more than 3 s without the mark drawn, and the lock
-  comes 3 s after its first frame. Logcat: `Boot mark: the lock waits for the mark's first frame, at most N ms`,
-  `Boot mark: the lock waits N ms`, `Boot mark over: <why> - the mark on screen N ms`.
+- **Never without a lock after 1 s + 3 s**: entering `Waiting` posts a backstop for its deadline (`LOCK_FALLBACK_MS`
+  after the wait began - Home's mark not shown by then means the lock, `Home's mark never shown`), `Holding` one for
+  `until`; it, like the other early ends, runs `bootMarkEnd` - our call: the lock now (the call screen comes over it,
+  as at a process start in a call); otherwise the re-front check (yields to the system dialer, emergency, alarm or
+  VoIP; screen off: the screen-on shows it; else the lock). So the old front is never held over for more than the
+  pre-16e 1 s, and the lock comes 3 s after the mark's start. Logcat: `Boot mark: the lock waits for Home's mark to
+  show, at most N ms`, `Boot mark: the lock waits N ms`, `Boot mark over: <why> - the mark on screen N ms`.
 - **Boot cover**: `COVER_MIN_SHOWN_MS = BOOT_MARK_MS` (3 s from its first frame). The cover's record keeps its first
   frame of the boot (`shown_boot`, `shown_elapsed` - elapsed realtime; older records read without them, older readers
   ignore them; a recreated cover keeps the boot's first frame), and `until` is 3 s from the earlier of that frame and
@@ -370,13 +387,15 @@ or lost focus still ends it at once. Every end logs `Boot mark over: <why> - the
 - **Smoke test** (`REBOOT=1`, `docs/testing/emulator.md` §5b): on the same captured UI dumps, after the first one with
   the night ground no dump may hold another package's window (`boot-not-mark-<n>.xml`), and the lock must be in front
   within about 5 s of the mark (a lower bound; FAIL only on proof, SKIP when no dump caught the mark -
-  qa-16e-code #5); the mark's time on screen from the captured `logcat -d -s PinLock` (`Boot mark over: ... - the mark
-  on screen N ms`, FAIL below 2500 ms or without it).
+  qa-16e-code #5); the mark's time on screen from the captured `logcat -d -s PinLock` (`Boot mark over: <why> - the
+  mark on screen N ms`): FAIL only below 2500 ms for an unexplained Home pause, stop or focus loss (or the 3 s ending
+  short), SKIP for the safe ends (qa-16e-fix2 #4).
 
 Open device checks (emulator, then the Jelly Star):
 - [ ] `REBOOT=1` (`adb reboot`) several times, kiosk on and off: the night ground ~3 s, then the lock; the three 16e
-  checks PASS (`Boot mark over: the mark's 3 s are up - the mark on screen ~3000 ms`, also on a slow boot and when
-  the system's own HOME start comes during the wait); the 16d shade probe still PASSes.
+  checks PASS or SKIP a safe end (`Boot mark over: the mark's 3 s are up - the mark on screen ~3000 ms`, also when the
+  system's own HOME start comes during the wait; on a slow emulator `Home's mark never shown` after 1 s); the 16d
+  shade probe still PASSes.
 - [ ] `am crash` while LOCKED after the boot: no `Boot mark` line, the lock at once. The update to a new build (debug:
   `adb install -r` then the self-update path): no wait.
 - [ ] Screen-off during the 3 s (power button): the lock at once. A call to the emulator (`gsm call`) during the 3 s:

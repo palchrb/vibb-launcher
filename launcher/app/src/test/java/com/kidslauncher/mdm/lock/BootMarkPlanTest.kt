@@ -11,8 +11,9 @@ import java.io.File
  * Design 16e: the breathing mark for 3 s at boot - only the first lock showing of a boot's first
  * process start waits, only while Home's mark is up, the LOCKED chrome never does, calls, alarms
  * and VoIP skip it at once, and the lock comes when the 3 s are up whether Home drew or not; the
- * boot cover's minimum is the same 3 s. With the qa-16e-code fixes, and the 3 s counted from the
- * mark's first drawn frame (emulator 2026-10-09).
+ * boot cover's minimum is the same 3 s. With the qa-16e-code fixes, the emulator fix (2026-10-09)
+ * and qa-16e-fix2: the 3 s count from Home's first focus with the night ground drawn, the wait for
+ * it is capped at the pre-16e 1 s, and the lock comes at most 1 s + 3 s after the wait began.
  */
 class BootMarkPlanTest {
     private fun file(path: String) = listOf("src/main/$path", "app/src/main/$path").map(::File).first { it.exists() }
@@ -69,136 +70,237 @@ class BootMarkPlanTest {
     }
 
     @Test
-    fun `only the first lock showing of a boot waits - 3 s from the mark's first frame`() {
-        // The first held ask (Home's locked resume) comes before Home's first frame: wait for it.
-        val first = bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = 10_000L, coverFrameMs = null, homeFrameMs = null) { false }
-        assertEquals(BootMarkStep(BootMarkState.Waiting(13_000L), show = false), first)
-        val drawn = bootMarkDrawn(first.state, frameMs = 10_050L, coverFrameMs = null, nowMs = 10_050L)
-        assertEquals(BootMarkState.Holding(13_050L), drawn)
+    fun `only the first lock showing of a boot waits - 3 s from the mark shown`() {
+        // The first held ask (Home's locked resume) comes before Home's mark is shown: wait for it,
+        // at most the pre-16e 1 s.
+        val first = bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = 10_000L, coverFrameMs = null, homeShownMs = null) { false }
+        assertEquals(BootMarkStep(BootMarkState.Waiting(10_000L + LOCK_FALLBACK_MS), show = false), first)
+        val held = bootMarkShown(first.state, shownAtMs = 10_200L, coverFrameMs = null, nowMs = 10_200L)
+        assertEquals(BootMarkState.Holding(13_200L), held)
         // Later boot asks (the process start after Home's resume, a screen-on, the re-front loop) keep
-        // the same end - never later, whatever the cover or another frame says by then.
-        val again = bootMarkStep(drawn, LockAsk.BOOT, markUp = true, nowMs = 13_049L, coverFrameMs = 1L, homeFrameMs = 1L) { false }
-        assertEquals(BootMarkStep(BootMarkState.Holding(13_050L), show = false), again)
-        assertEquals(drawn, bootMarkDrawn(drawn, frameMs = 12_000L, coverFrameMs = null, nowMs = 12_000L))
-        assertEquals(shown, bootMarkStep(again.state, LockAsk.BOOT, markUp = true, nowMs = 13_050L, coverFrameMs = null, homeFrameMs = 10_050L, exempt = never))
-        // Over: every ask shows at once and nothing is read; a frame changes nothing.
+        // the same end - never later, whatever the cover or a later showing says.
+        val again = bootMarkStep(held, LockAsk.BOOT, markUp = true, nowMs = 13_199L, coverFrameMs = 1L, homeShownMs = 1L) { false }
+        assertEquals(BootMarkStep(held, show = false), again)
+        assertEquals(held, bootMarkShown(held, shownAtMs = 12_000L, coverFrameMs = null, nowMs = 12_000L))
+        assertEquals(shown, bootMarkStep(held, LockAsk.BOOT, markUp = true, nowMs = 13_200L, coverFrameMs = null, homeShownMs = 10_200L, exempt = never))
+        // Over: every ask shows at once and nothing is read; a showing changes nothing.
         for (ask in LockAsk.entries) {
-            for (up in listOf(true, false)) assertEquals(shown, bootMarkStep(BootMarkState.Over, ask, up, 13_051L, null, null, never))
+            for (up in listOf(true, false)) assertEquals(shown, bootMarkStep(BootMarkState.Over, ask, up, 13_201L, null, null, never))
         }
-        assertEquals(BootMarkState.Over, bootMarkDrawn(BootMarkState.Over, 13_051L, null, 13_051L))
-        assertEquals(BootMarkState.Due, bootMarkDrawn(BootMarkState.Due, 13_051L, null, 13_051L))
+        assertEquals(BootMarkState.Over, bootMarkShown(BootMarkState.Over, 13_201L, null, 13_201L))
+        assertEquals(BootMarkState.Due, bootMarkShown(BootMarkState.Due, 13_201L, null, 13_201L))
         // A first ask after the window never waits (qa-16e-code #4: a first screen-on hours later).
-        assertEquals(shown, bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = BOOT_MARK_WINDOW_MS, coverFrameMs = null, homeFrameMs = null, exempt = never))
+        assertEquals(shown, bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = BOOT_MARK_WINDOW_MS, coverFrameMs = null, homeShownMs = null, exempt = never))
         assertEquals(
-            BootMarkState.Waiting(BOOT_MARK_WINDOW_MS - 1 + BOOT_MARK_MS),
-            bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = BOOT_MARK_WINDOW_MS - 1, coverFrameMs = null, homeFrameMs = null) { false }.state,
+            BootMarkState.Waiting(BOOT_MARK_WINDOW_MS - 1 + LOCK_FALLBACK_MS),
+            bootMarkStep(BootMarkState.Due, LockAsk.BOOT, markUp = true, nowMs = BOOT_MARK_WINDOW_MS - 1, coverFrameMs = null, homeShownMs = null) { false }.state,
         )
     }
 
     @Test
-    fun `a slow boot doesn't eat the 3 s - they count from the mark's first drawn frame (emulator 2026-10-09)`() {
-        // The run: the Home-first process start 29.591, Home resumed, the 1 s fallback, Home's first
-        // frame only at 31.428 - the 3 s run from there, not from the process start.
-        val clock = bootMarkClock(BootMarkState.Due, nowMs = 29_591L, coverFrameMs = null, homeFrameMs = null)
-        assertEquals(BootMarkState.Waiting(32_591L), clock)
-        val resumed = bootMarkStep(clock, LockAsk.BOOT, markUp = true, nowMs = 29_700L, coverFrameMs = null, homeFrameMs = null) { false }
+    fun `the 3 s count from Home's first focus with the night ground drawn - never over the old front past 1 s`() {
+        // qa-16e-fix2 #1. The Home-first process start begins the wait; Home's drawn night ground
+        // gets the focus 0.4 s later - the 3 s run from that focus.
+        val clock = bootMarkClock(BootMarkState.Due, nowMs = 29_591L, coverFrameMs = null, homeShownMs = null)
+        assertEquals(BootMarkState.Waiting(30_591L), clock)
+        val resumed = bootMarkStep(clock, LockAsk.BOOT, markUp = true, nowMs = 29_700L, coverFrameMs = null, homeShownMs = null) { false }
         assertEquals(BootMarkStep(clock, show = false), resumed)
-        val fallback = bootMarkStep(clock, LockAsk.BOOT, markUp = true, nowMs = 29_591L + LOCK_FALLBACK_MS, coverFrameMs = null, homeFrameMs = null) { false }
-        assertEquals(BootMarkStep(clock, show = false), fallback)
-        val held = bootMarkDrawn(clock, frameMs = 31_428L, coverFrameMs = null, nowMs = 31_428L)
-        assertEquals(BootMarkState.Holding(34_428L), held)
-        assertEquals(BootMarkStep(held, show = false), bootMarkStep(held, LockAsk.BOOT, true, 34_427L, null, 31_428L) { false })
-        assertEquals(shown, bootMarkStep(held, LockAsk.BOOT, true, 34_428L, null, 31_428L, never))
-        assertEquals(3_000L, bootMarkOnScreenMs(34_428L, coverFrameMs = null, homeFrameMs = 31_428L))
-        // The cover drew first: its frame counts (one 3 s for both).
-        assertEquals(BootMarkState.Holding(33_000L), bootMarkDrawn(clock, frameMs = 31_428L, coverFrameMs = 30_000L, nowMs = 31_428L))
-        assertEquals(4_428L, bootMarkOnScreenMs(34_428L, coverFrameMs = 30_000L, homeFrameMs = 31_428L))
-        // A frame already known at the first ask: 3 s from it right away.
+        val held = bootMarkShown(clock, shownAtMs = 29_991L, coverFrameMs = null, nowMs = 29_991L)
+        assertEquals(BootMarkState.Holding(32_991L), held)
+        assertEquals(3_000L, bootMarkOnScreenMs(32_991L, coverFrameMs = null, homeShownMs = 29_991L))
+        // The emulator run of 2026-10-09 (Home drew 1.8 s after its resume): no focus by the 1 s
+        // fallback - the lock then, never longer over the stock launcher or FallbackHome; a later
+        // focus is too late (the backstop already ended it). A slow emulator shows no mark, safely.
+        assertEquals(shown, bootMarkStep(clock, LockAsk.BOOT, markUp = true, nowMs = 30_591L, coverFrameMs = null, homeShownMs = null, exempt = never))
+        assertEquals(BootMarkState.Over, bootMarkShown(clock, shownAtMs = 31_428L, coverFrameMs = null, nowMs = 31_428L))
+        assertNull(bootMarkOnScreenMs(30_591L, null, null))
+        // The cover drew first: its frame counts (one 3 s for both), also with Home's focus late.
+        assertEquals(BootMarkState.Holding(33_000L), bootMarkShown(clock, shownAtMs = 30_100L, coverFrameMs = 30_000L, nowMs = 30_100L))
+        assertEquals(BootMarkState.Holding(33_000L), bootMarkShown(clock, shownAtMs = 31_428L, coverFrameMs = 30_000L, nowMs = 31_428L))
+        assertEquals(4_000L, bootMarkOnScreenMs(34_000L, coverFrameMs = 30_000L, homeShownMs = 31_428L))
+        // A mark already shown at the first ask: 3 s from it right away.
         assertEquals(BootMarkState.Holding(13_050L), bootMarkStep(BootMarkState.Due, LockAsk.BOOT, true, 10_100L, null, 10_050L) { false }.state)
-        // Home never draws: the lock 3 s after the wait began - never later.
-        assertEquals(shown, bootMarkStep(clock, LockAsk.BOOT, markUp = true, nowMs = 32_591L, coverFrameMs = null, homeFrameMs = null, exempt = never))
-        assertNull(bootMarkOnScreenMs(32_591L, null, null))
         assertTrue(clock.holdsLock && held.holdsLock && !BootMarkState.Due.holdsLock && !BootMarkState.Over.holdsLock)
 
-        // The runtime: the night ground reports its first drawn frame (an OnDrawListener - only when
-        // a frame is really drawn), Home hands it on, and the runtime moves the wait to Holding.
+        // Shown = resumed locked, the night ground drawn and the window focused - all three (on API
+        // 34 focus goes only to a drawn, shown window, so the old front is gone).
+        assertTrue(homeMarkShown(resumedLocked = true, groundDrawn = true, focused = true))
+        for (resumed in listOf(true, false)) for (drawn in listOf(true, false)) for (focused in listOf(true, false)) {
+            if (resumed && drawn && focused) continue
+            assertFalse("$resumed $drawn $focused", homeMarkShown(resumed, drawn, focused))
+        }
+
+        // The runtime: Home reports at its focus gain, the ground's first frame and its locked resume
+        // (a re-resume keeps the focus); the first showing is the mark's start.
+        val focus = body(home, "onWindowFocusChanged")
+        assertTrue(focus.contains("} else if (nightShown) {"))
+        assertTrue(focus.contains("PinLockRuntime.onHomeMarkShown(this, groundDrawn = night?.drawn == true, focused = true)"))
+        assertTrue(body(home, "showNight").contains("NightGround(this) { PinLockRuntime.onHomeMarkShown(this, groundDrawn = true, focused = hasWindowFocus()) }"))
+        val locked = body(home, "onResume").substringAfter("if (!gate()) {").substringBefore("\n            return\n        }")
+        val markShown = locked.indexOf("PinLockRuntime.onHomeMarkShown(this, groundDrawn = night?.drawn == true, focused = hasWindowFocus())")
+        assertTrue(markShown in locked.indexOf("PinLockRuntime.onHomeMarkUp()") until locked.indexOf("PinLockRuntime.show(this, ask = LockAsk.BOOT)"))
         val ground = code("java/com/kidslauncher/mdm/ui/home/NightGround.kt")
         assertTrue(ground.contains("ViewTreeObserver.OnDrawListener"))
-        assertTrue(ground.contains("onFirstFrame(SystemClock.elapsedRealtime())"))
-        assertTrue(body(home, "showNight").contains("NightGround(this) { PinLockRuntime.onHomeMarkDrawn(this, it) }"))
-        val drawnFn = body(runtime, "onHomeMarkDrawn")
-        assertTrue(drawnFn.contains("bootMarkDrawn(before, homeFrameMs ?: frameMs, coverFrameMs, now)"))
-        assertTrue(drawnFn.contains("endBootMark(context.applicationContext, "))
-        // The measured time on screen is logged at every end; the backstop names a Home that never drew.
-        assertTrue(body(runtime, "logBootMarkOver").contains("bootMarkOnScreenMs(now, coverFrameMs, homeFrameMs)"))
+        assertTrue(ground.contains("onFirstFrame()"))
+        val shownFn = body(runtime, "onHomeMarkShown")
+        assertTrue(shownFn.contains("if (homeShownAtMs != null || !homeMarkShown(homeResumedLocked, groundDrawn, focused)) return"))
+        assertTrue(shownFn.contains("homeShownAtMs = now"))
+        assertTrue(shownFn.contains("bootMarkShown(before, now, coverFrameMs, now)"))
+        assertTrue(shownFn.contains("endBootMark(context.applicationContext, "))
+        // The measured time on screen is logged at every end; the backstop names a mark never shown.
+        assertTrue(body(runtime, "logBootMarkOver").contains("bootMarkOnScreenMs(now, coverFrameMs, homeShownAtMs)"))
         assertTrue(body(runtime, "logBootMarkOver").contains("the mark on screen"))
-        assertTrue(runtime.contains("if (bootMark is BootMarkState.Waiting) \"Home's mark never drew\" else \"the mark's 3 s are up\""))
+        assertTrue(runtime.contains("if (bootMark is BootMarkState.Waiting) BOOT_MARK_NEVER_SHOWN else BOOT_MARK_TIME_UP"))
     }
 
     @Test
-    fun `a re-delivered HOME intent's pause doesn't end the wait - a real cover does (emulator 2026-10-09)`() {
-        assertEquals(300L, HOME_PAUSE_GRACE_MS)
-        // The run: the system's own HOME start at 31.202 paused Home (onNewIntent) and resumed it at once.
-        assertFalse("resumed again", homePauseEndsWait(pausedAtMs = 31_383L, resumedAtMs = 31_384L, nowMs = 31_683L))
-        assertFalse("resumed at the same ms", homePauseEndsWait(pausedAtMs = 31_383L, resumedAtMs = 31_383L, nowMs = 31_700L))
-        // A translucent activity or a dialog: Home stays paused past the grace.
-        assertTrue("not resumed since", homePauseEndsWait(pausedAtMs = 31_383L, resumedAtMs = 29_700L, nowMs = 31_683L))
-        assertTrue("never resumed", homePauseEndsWait(pausedAtMs = 31_383L, resumedAtMs = null, nowMs = 31_683L))
-        assertFalse("the grace isn't over", homePauseEndsWait(pausedAtMs = 31_383L, resumedAtMs = null, nowMs = 31_682L))
-
-        // The runtime: a pause posts the check after the grace; the locked resume (Home's mark up
-        // again) records the resume and drops it; a stop or lost focus ends the wait at once.
-        assertTrue(body(home, "onPause").contains("PinLockRuntime.onHomePaused(isChangingConfigurations)"))
-        assertFalse(body(home, "onPause").contains("onHomeCovered"))
-        assertTrue(body(home, "onStop").contains("PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "))
-        assertTrue(body(home, "onWindowFocusChanged").contains("if (!hasFocus) PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "))
-        val paused = body(runtime, "onHomePaused")
-        assertTrue(paused.indexOf("if (changingConfigurations) return") in 0 until paused.indexOf("homePausedAtMs = "))
-        assertTrue(paused.contains("handler.postDelayed(homePauseCheck, HOME_PAUSE_GRACE_MS)"))
-        val up = body(runtime, "onHomeMarkUp")
-        assertTrue(up.contains("homeMarkUp = true"))
-        assertTrue(up.contains("homeResumedAtMs = SystemClock.elapsedRealtime()"))
-        assertTrue(up.contains("handler.removeCallbacks(homePauseCheck)"))
-        val check = runtime.substringAfter("private val homePauseCheck = Runnable {").substringBefore("\n    }")
-        assertTrue(check.contains("if (homePauseEndsWait(homePausedAtMs, homeResumedAtMs, SystemClock.elapsedRealtime())) {"))
-        assertTrue(check.contains("homeMarkUp = false"))
-        assertTrue(check.contains("endBootMark(app, "))
-        val covered = body(runtime, "onHomeCovered")
-        assertTrue(covered.indexOf("if (changingConfigurations) return") in 0 until covered.indexOf("homeMarkUp = false"))
-        assertTrue(covered.contains("endBootMark(context.applicationContext, why)"))
-    }
-
-    @Test
-    fun `waits only while Home's mark is up - else the lock at once, as before 16e`() {
-        // qa-16e-code #1: Home's start failed or it never resumed (the stock launcher or FallbackHome
-        // in front), or it was covered since - a boot ask shows at once, exemptions unread.
-        for (state in listOf(BootMarkState.Due, BootMarkState.Waiting(13_000L), BootMarkState.Holding(13_000L))) {
-            assertEquals(shown, bootMarkStep(state, LockAsk.BOOT, markUp = false, nowMs = 11_000L, coverFrameMs = null, homeFrameMs = 10_100L, exempt = never))
+    fun `the lock comes at most 1 s + 3 s after the wait began - end to end`() {
+        // qa-16e-fix2 #3/#5: every path from the wait's start - the Home-first clock or the first
+        // held ask, with or without a cover frame, Home's mark shown at any time or never - with a
+        // boot ask every 100 ms (the re-front loop) and the backstop at each state's end.
+        assertEquals(4_000L, LOCK_FALLBACK_MS + BOOT_MARK_MS)
+        val start = 20_000L
+        for (byClock in listOf(true, false)) for (shownAfter in listOf<Long?>(null, 0L, 50L, 400L, 990L, 1_000L, 1_800L, 5_000L)) {
+            for (coverBefore in listOf<Long?>(null, 2_000L, 500L)) {
+                val cover = coverBefore?.let { start - it }
+                var state = if (byClock) {
+                    bootMarkClock(BootMarkState.Due, start, cover, null)
+                } else {
+                    bootMarkStep(BootMarkState.Due, LockAsk.BOOT, true, start, cover, null) { false }.state
+                }
+                var homeShown: Long? = null
+                var lockAt: Long? = if (state == BootMarkState.Over) start else null
+                var t = start
+                while (lockAt == null && t <= start + 10_000L) {
+                    if (shownAfter != null && homeShown == null && t >= start + shownAfter) {
+                        homeShown = t
+                        state = bootMarkShown(state, t, cover, t)
+                        if (state == BootMarkState.Over) lockAt = t
+                    }
+                    val end = when (val s = state) {
+                        is BootMarkState.Waiting -> s.deadlineMs
+                        is BootMarkState.Holding -> s.untilMs
+                        else -> t
+                    }
+                    if (lockAt == null && t >= end) lockAt = t
+                    if (lockAt == null && (t - start) % 100L == 0L) {
+                        val step = bootMarkStep(state, LockAsk.BOOT, true, t, cover, homeShown) { false }
+                        state = step.state
+                        if (step.show) lockAt = t
+                    }
+                    t += 10L
+                }
+                val label = "clock=$byClock shown=$shownAfter cover=$coverBefore"
+                assertTrue(label, lockAt != null && lockAt <= start + LOCK_FALLBACK_MS + BOOT_MARK_MS)
+                // Home's mark shown within the 1 s and no cover: exactly 3 s on screen from that moment.
+                if (cover == null && shownAfter != null && shownAfter < LOCK_FALLBACK_MS) assertEquals(label, start + shownAfter + BOOT_MARK_MS, lockAt)
+                // Never shown and no cover: the pre-16e 1 s fallback.
+                if (cover == null && (shownAfter == null || shownAfter >= LOCK_FALLBACK_MS)) assertEquals(label, start + LOCK_FALLBACK_MS, lockAt)
+            }
         }
-        // Home started first: the wait begins at the process start, nothing is held there; the 1 s
-        // fallback holds only with Home's mark up, else shows - never later than before 16e.
-        val clock = bootMarkClock(BootMarkState.Due, nowMs = 10_000L, coverFrameMs = null, homeFrameMs = null)
-        assertEquals(BootMarkState.Waiting(13_000L), clock)
-        assertEquals(shown, bootMarkStep(clock, LockAsk.BOOT, markUp = false, nowMs = 10_000L + LOCK_FALLBACK_MS, coverFrameMs = null, homeFrameMs = null, exempt = never))
-        assertEquals(
-            BootMarkStep(BootMarkState.Waiting(13_000L), show = false),
-            bootMarkStep(clock, LockAsk.BOOT, markUp = true, nowMs = 10_300L, coverFrameMs = null, homeFrameMs = null) { false },
-        )
+
+        // The reason logged when an ask ends a held wait (the smoke test sorts on it).
+        assertEquals("AT_ONCE ask", bootMarkOverWhy(BootMarkState.Holding(13_000L), LockAsk.AT_ONCE, true, 11_000L, 10_000L))
+        assertEquals("Home's mark not up", bootMarkOverWhy(BootMarkState.Waiting(11_000L), LockAsk.BOOT, false, 10_500L, null))
+        assertEquals(BOOT_MARK_TIME_UP, bootMarkOverWhy(BootMarkState.Holding(13_000L), LockAsk.BOOT, true, 13_000L, 10_000L))
+        assertEquals(BOOT_MARK_TIME_UP, bootMarkOverWhy(BootMarkState.Waiting(11_000L), LockAsk.BOOT, true, 10_500L, 7_000L))
+        assertEquals(BOOT_MARK_NEVER_SHOWN, bootMarkOverWhy(BootMarkState.Waiting(11_000L), LockAsk.BOOT, true, 11_000L, null))
+        assertEquals("exempt: a call, the emergency flow, an alarm or VoIP", bootMarkOverWhy(BootMarkState.Holding(13_000L), LockAsk.BOOT, true, 11_000L, 10_000L))
+        assertTrue(body(runtime, "bootMarkHolds").contains("bootMarkOverWhy(before, ask, up, now, bootMarkStartMs(coverFrameMs, homeShownAtMs))"))
+    }
+
+    @Test
+    fun `Home's mark is up from its locked resume until a cover - a re-delivered HOME intent's pause doesn't count`() {
+        // qa-16e-fix2 #5: the pure decision.
+        assertTrue(homeMarkUp(resumedLocked = true, pausedAtMs = null, resumedAtMs = 29_700L, nowMs = 30_000L))
+        assertFalse("never resumed locked, or stopped / lost focus since", homeMarkUp(false, null, 29_700L, 30_000L))
+        // The emulator run: the system's own HOME start paused Home (onNewIntent) and resumed it at once.
+        assertTrue("resumed again", homeMarkUp(true, pausedAtMs = 31_383L, resumedAtMs = 31_384L, nowMs = 31_683L))
+        assertTrue("within the grace", homeMarkUp(true, pausedAtMs = 31_383L, resumedAtMs = 29_700L, nowMs = 31_682L))
+        assertFalse("paused past the grace", homeMarkUp(true, pausedAtMs = 31_383L, resumedAtMs = 29_700L, nowMs = 31_683L))
+        assertEquals(300L, HOME_PAUSE_GRACE_MS)
+        assertFalse(homePauseEndsWait(pausedAtMs = 31_383L, resumedAtMs = 31_383L, nowMs = 31_700L))
+        assertTrue(homePauseEndsWait(pausedAtMs = 31_383L, resumedAtMs = null, nowMs = 31_683L))
+        assertFalse(homePauseEndsWait(pausedAtMs = 31_383L, resumedAtMs = null, nowMs = 31_682L))
+        // Not up: a boot ask shows the lock at once, as before 16e - also the Home-first 1 s fallback.
+        for (state in listOf(BootMarkState.Due, BootMarkState.Waiting(13_000L), BootMarkState.Holding(13_000L))) {
+            assertEquals(shown, bootMarkStep(state, LockAsk.BOOT, markUp = false, nowMs = 11_000L, coverFrameMs = null, homeShownMs = 10_100L, exempt = never))
+        }
+        val clock = bootMarkClock(BootMarkState.Due, nowMs = 10_000L, coverFrameMs = null, homeShownMs = null)
+        assertEquals(shown, bootMarkStep(clock, LockAsk.BOOT, markUp = false, nowMs = 10_000L + LOCK_FALLBACK_MS, coverFrameMs = null, homeShownMs = null, exempt = never))
+        assertEquals(BootMarkStep(clock, show = false), bootMarkStep(clock, LockAsk.BOOT, markUp = true, nowMs = 10_300L, coverFrameMs = null, homeShownMs = null) { false })
         // The clock only starts from Due, inside the window, and not after a cover's full 3 s.
         assertEquals(BootMarkState.Over, bootMarkClock(BootMarkState.Over, 10_000L, null, null))
         assertEquals(BootMarkState.Holding(12_000L), bootMarkClock(BootMarkState.Holding(12_000L), 11_000L, null, null))
         assertEquals(BootMarkState.Over, bootMarkClock(BootMarkState.Due, BOOT_MARK_WINDOW_MS, null, null))
-        assertEquals(BootMarkState.Over, bootMarkClock(BootMarkState.Due, 10_000L, coverFrameMs = 7_000L, homeFrameMs = null))
-        assertEquals(BootMarkState.Holding(11_000L), bootMarkClock(BootMarkState.Due, 10_000L, coverFrameMs = 8_000L, homeFrameMs = null))
+        assertEquals(BootMarkState.Over, bootMarkClock(BootMarkState.Due, 10_000L, coverFrameMs = 7_000L, homeShownMs = null))
+        assertEquals(BootMarkState.Holding(11_000L), bootMarkClock(BootMarkState.Due, 10_000L, coverFrameMs = 8_000L, homeShownMs = null))
 
-        // The runtime: only Home's locked resume says the mark is up; a stop or lost focus (not a
-        // recreation) takes it down and ends the wait, a pause after the grace (below).
-        val resume = body(home, "onResume")
-        val locked = resume.substringAfter("if (!gate()) {").substringBefore("\n            return\n        }")
+        // The runtime: the locked resume sets it (and records the resume); a pause posts the check
+        // after the grace; a stop or lost focus ends the wait at once (not for a recreation).
+        val locked = body(home, "onResume").substringAfter("if (!gate()) {").substringBefore("\n            return\n        }")
         assertTrue(locked.indexOf("PinLockRuntime.onHomeMarkUp()") in 0 until locked.indexOf("PinLockRuntime.show(this, ask = LockAsk.BOOT)"))
         assertEquals(1, Regex("onHomeMarkUp\\(\\)").findAll(home).count())
-        assertTrue(body(runtime, "bootMarkHolds").contains("bootMarkStep(before, ask, homeMarkUp, now, coverFrameMs, homeFrameMs)"))
+        assertTrue(body(home, "onPause").contains("PinLockRuntime.onHomePaused(isChangingConfigurations)"))
+        assertFalse(body(home, "onPause").contains("onHomeCovered"))
+        assertTrue(body(home, "onStop").contains("PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "))
+        assertTrue(body(home, "onWindowFocusChanged").contains("PinLockRuntime.onHomeCovered(this, isChangingConfigurations, \"Home lost focus\")"))
+        val up = body(runtime, "onHomeMarkUp")
+        assertTrue(up.contains("homeResumedLocked = true"))
+        assertTrue(up.contains("homeResumedAtMs = SystemClock.elapsedRealtime()"))
+        assertTrue(up.contains("handler.removeCallbacks(homePauseCheck)"))
+        assertTrue(body(runtime, "homeMarkUpNow").contains("homeMarkUp(homeResumedLocked, homePausedAtMs, homeResumedAtMs, now)"))
+        assertTrue(body(runtime, "bootMarkHolds").contains("val up = homeMarkUpNow(now)"))
+        assertTrue(body(runtime, "bootMarkHolds").contains("bootMarkStep(before, ask, up, now, coverFrameMs, homeShownAtMs)"))
+        val paused = body(runtime, "onHomePaused")
+        assertTrue(paused.indexOf("if (changingConfigurations) return") in 0 until paused.indexOf("homePausedAtMs = "))
+        assertTrue(paused.contains("handler.postDelayed(homePauseCheck, HOME_PAUSE_GRACE_MS)"))
+        val check = runtime.substringAfter("private val homePauseCheck = Runnable {").substringBefore("\n    }")
+        assertTrue(check.contains("if (!homeMarkUpNow(SystemClock.elapsedRealtime())) {"))
+        assertTrue(check.contains("homeResumedLocked = false"))
+        assertTrue(check.contains("endBootMark(app, \"Home paused\")"))
+        val covered = body(runtime, "onHomeCovered")
+        assertTrue(covered.indexOf("if (changingConfigurations) return") in 0 until covered.indexOf("homeResumedLocked = false"))
+        assertTrue(covered.contains("endBootMark(context.applicationContext, why)"))
         assertTrue(body(runtime, "dispatch").substringAfter("if (result.showLockLater) {").substringBefore("}").contains("startBootMarkClock()"))
+    }
+
+    @Test
+    fun `never without a lock - the backstop at every end`() {
+        // When the wait ends without an ask (the backstop, Home covered, a call): the lock comes.
+        assertEquals(BootMarkEnd.RECHECK, bootMarkEnd(wasHolding = true, locked = true, lockResumed = false, ourCall = false))
+        assertEquals("our call: the lock under the call screen", BootMarkEnd.SHOW, bootMarkEnd(true, locked = true, lockResumed = false, ourCall = true))
+        assertEquals(BootMarkEnd.NOTHING, bootMarkEnd(wasHolding = false, locked = true, lockResumed = false, ourCall = false))
+        assertEquals(BootMarkEnd.NOTHING, bootMarkEnd(wasHolding = true, locked = false, lockResumed = false, ourCall = false))
+        assertEquals(BootMarkEnd.NOTHING, bootMarkEnd(wasHolding = true, locked = true, lockResumed = true, ourCall = true))
+        // The re-front check it hands to shows the lock unless an exempt screen is up or the screen
+        // is off (then the screen-on shows it - nothing waits any more).
+        val inputs = RefrontInputs(
+            locked = true, lockResumed = false, interactive = true, ourCall = false, telecomInCall = false,
+            emergencyFlow = false, alarmRinging = false,
+        )
+        assertTrue(refrontAction(inputs, 0) is RefrontAction.Refront)
+        assertEquals(BootMarkState.Holding(13_000L), bootMarkHeldFrom(startMs = 11_000L, nowMs = 10_000L))
+
+        // Entering Waiting or Holding (an ask, the clock, the showing) posts the backstop for its end;
+        // it runs endBootMark.
+        val move = body(runtime, "moveBootMark")
+        assertTrue(move.contains("handler.postDelayed(bootMarkBackstop, state.deadlineMs - now)"))
+        assertTrue(move.contains("handler.postDelayed(bootMarkBackstop, state.untilMs - now)"))
+        assertEquals(3, Regex("handler\\.removeCallbacks\\(bootMarkBackstop\\)").findAll(move).count())
+        assertTrue(body(runtime, "bootMarkHolds").contains("moveBootMark(before, next.state, now, "))
+        assertTrue(body(runtime, "startBootMarkClock").contains("moveBootMark(before, bootMarkClock(before, now, coverFrameMs, homeShownAtMs), now, "))
+        assertTrue(body(runtime, "onHomeMarkShown").contains("moveBootMark(before, next, now, "))
+        val backstop = runtime.substringAfter("private val bootMarkBackstop = Runnable {").substringBefore("\n    }")
+        assertTrue(backstop.contains("appContext?.let { endBootMark(it, why) }"))
+        val end = body(runtime, "endBootMark")
+        assertTrue(end.contains("BootMarkEnd.SHOW -> show(context)"))
+        assertTrue(end.contains("runRefrontCheck()"))
+        assertTrue(body(runtime, "skipBootMark").contains("bootMark = BootMarkState.Over"))
+        // A held ask starts nothing; the re-front loop asks as the boot and keeps going.
+        val show = body(runtime, "show")
+        assertTrue(show.indexOf("return false") in 0 until show.indexOf("startActivity"))
+        assertTrue(body(runtime, "runRefrontCheck").contains("if (show(context, ask = LockAsk.BOOT))"))
     }
 
     @Test
@@ -214,7 +316,7 @@ class BootMarkPlanTest {
         for (event in boot) assertEquals("$event", LockAsk.BOOT, lockAsk(event))
         for (event in atOnce) assertEquals("$event", LockAsk.AT_ONCE, lockAsk(event))
         for (state in listOf(BootMarkState.Due, BootMarkState.Holding(13_000L))) {
-            assertEquals(shown, bootMarkStep(state, LockAsk.AT_ONCE, markUp = true, nowMs = 11_000L, coverFrameMs = null, homeFrameMs = null, exempt = never))
+            assertEquals(shown, bootMarkStep(state, LockAsk.AT_ONCE, markUp = true, nowMs = 11_000L, coverFrameMs = null, homeShownMs = null, exempt = never))
         }
         // A screen-off, the remote lock and a VoIP ring still lock and show as before (the step is unchanged).
         assertTrue(step(LockMode.LOCKED, LockEvent.ScreenOff()).showLock)
@@ -236,7 +338,7 @@ class BootMarkPlanTest {
         )
         assertTrue(exempt.all { it })
         for (state in listOf(BootMarkState.Due, BootMarkState.Waiting(13_000L), BootMarkState.Holding(13_000L))) {
-            assertEquals(shown, bootMarkStep(state, LockAsk.BOOT, markUp = true, nowMs = 11_000L, coverFrameMs = null, homeFrameMs = null) { true })
+            assertEquals(shown, bootMarkStep(state, LockAsk.BOOT, markUp = true, nowMs = 11_000L, coverFrameMs = null, homeShownMs = null) { true })
         }
 
         // The runtime: every ask that would hold reads all of them; a call starting, the re-front loop
@@ -251,58 +353,6 @@ class BootMarkPlanTest {
         val refront = body(runtime, "runRefrontCheck")
         assertTrue(refront.substringAfter("is RefrontAction.Yield -> {").substringBefore("}").contains("skipBootMark("))
         assertTrue(body(runtime, "onLockResumed").contains("skipBootMark("))
-    }
-
-    @Test
-    fun `never without a lock after the 3 s - also when Home never draws`() {
-        // Never more than 3 s without the mark drawn, never more than 3 s after its first frame -
-        // whatever the cover says (a frame "after" now counts as now).
-        for (cover in listOf(null, 9_000L, 10_000L, 11_000L, 50_000L)) {
-            val clock = bootMarkClock(BootMarkState.Due, 10_000L, cover, null)
-            val end = when (clock) {
-                is BootMarkState.Waiting -> clock.frameDeadlineMs
-                is BootMarkState.Holding -> clock.untilMs
-                else -> 10_000L
-            }
-            assertTrue("clock, cover $cover", end <= 10_000L + BOOT_MARK_MS)
-        }
-        for (frame in listOf(10_000L, 11_500L, 12_999L)) {
-            val held = bootMarkDrawn(BootMarkState.Waiting(13_000L), frame, null, frame) as BootMarkState.Holding
-            assertEquals(frame + BOOT_MARK_MS, held.untilMs)
-        }
-        assertEquals(BootMarkState.Holding(13_000L), bootMarkHeldFrom(frameMs = 11_000L, nowMs = 10_000L))
-        assertEquals(3_000L, BOOT_MARK_MS)
-        // When the 3 s are up without an ask (the backstop, Home covered, a call): the lock comes.
-        assertEquals(BootMarkEnd.RECHECK, bootMarkEnd(wasHolding = true, locked = true, lockResumed = false, ourCall = false))
-        assertEquals("our call: the lock under the call screen", BootMarkEnd.SHOW, bootMarkEnd(true, locked = true, lockResumed = false, ourCall = true))
-        assertEquals(BootMarkEnd.NOTHING, bootMarkEnd(wasHolding = false, locked = true, lockResumed = false, ourCall = false))
-        assertEquals(BootMarkEnd.NOTHING, bootMarkEnd(wasHolding = true, locked = false, lockResumed = false, ourCall = false))
-        assertEquals(BootMarkEnd.NOTHING, bootMarkEnd(wasHolding = true, locked = true, lockResumed = true, ourCall = true))
-        // The re-front check it hands to shows the lock unless an exempt screen is up or the screen
-        // is off (then the screen-on shows it - nothing waits any more).
-        val inputs = RefrontInputs(
-            locked = true, lockResumed = false, interactive = true, ourCall = false, telecomInCall = false,
-            emergencyFlow = false, alarmRinging = false,
-        )
-        assertTrue(refrontAction(inputs, 0) is RefrontAction.Refront)
-
-        // Entering Holding (an ask or the clock) posts the backstop for the end; it runs endBootMark.
-        val move = body(runtime, "moveBootMark")
-        assertTrue(move.contains("handler.postDelayed(bootMarkBackstop, state.frameDeadlineMs - now)"))
-        assertTrue(move.contains("handler.postDelayed(bootMarkBackstop, state.untilMs - now)"))
-        assertEquals(3, Regex("handler\\.removeCallbacks\\(bootMarkBackstop\\)").findAll(move).count())
-        assertTrue(body(runtime, "bootMarkHolds").contains("moveBootMark(before, next.state, now, "))
-        assertTrue(body(runtime, "startBootMarkClock").contains("moveBootMark(before, bootMarkClock(before, now, coverFrameMs, homeFrameMs), now, "))
-        val backstop = runtime.substringAfter("private val bootMarkBackstop = Runnable {").substringBefore("\n    }")
-        assertTrue(backstop.contains("appContext?.let { endBootMark(it, why) }"))
-        val end = body(runtime, "endBootMark")
-        assertTrue(end.contains("BootMarkEnd.SHOW -> show(context)"))
-        assertTrue(end.contains("runRefrontCheck()"))
-        assertTrue(body(runtime, "skipBootMark").contains("bootMark = BootMarkState.Over"))
-        // A held ask starts nothing; the re-front loop asks as the boot and keeps going.
-        val show = body(runtime, "show")
-        assertTrue(show.indexOf("return false") in 0 until show.indexOf("startActivity"))
-        assertTrue(body(runtime, "runRefrontCheck").contains("if (show(context, ask = LockAsk.BOOT))"))
     }
 
     @Test
@@ -325,7 +375,7 @@ class BootMarkPlanTest {
         assertEquals(2, Regex("bootMarkHolds\\(").findAll(runtime).count())
         for (name in listOf(
             "bootMarkHolds", "startBootMarkClock", "moveBootMark", "skipBootMark", "endBootMark", "bootMarkAtStart",
-            "onHomeCovered", "onHomePaused", "onHomeMarkDrawn", "logBootMarkOver",
+            "onHomeCovered", "onHomePaused", "onHomeMarkShown", "logBootMarkOver",
         )) {
             val fn = body(runtime, name)
             for (chrome in listOf("LockTaskChrome", "refreshChrome", "healStatusBar", "CameraLock")) {
@@ -333,7 +383,7 @@ class BootMarkPlanTest {
             }
         }
         // No file read on an ask: the cover's frame is read once, on an IO thread at init.
-        for (name in listOf("bootMarkHolds", "startBootMarkClock", "moveBootMark", "onHomeMarkDrawn")) {
+        for (name in listOf("bootMarkHolds", "startBootMarkClock", "moveBootMark", "onHomeMarkShown")) {
             for (read in listOf("BootCoverGuard", "BootClock")) assertFalse("$name: $read", body(runtime, name).contains(read))
         }
         val init = body(runtime, "init")
@@ -347,16 +397,16 @@ class BootMarkPlanTest {
     fun `the boot cover's minimum is the same 3 s, counted with Home's mark`() {
         assertEquals(BOOT_MARK_MS, COVER_MIN_SHOWN_MS)
         // The cover was up 1 s before the first ask: 2 s more.
-        assertEquals(BootMarkState.Holding(12_000L), bootMarkStep(BootMarkState.Due, LockAsk.BOOT, true, 10_000L, coverFrameMs = 9_000L, homeFrameMs = null) { false }.state)
+        assertEquals(BootMarkState.Holding(12_000L), bootMarkStep(BootMarkState.Due, LockAsk.BOOT, true, 10_000L, coverFrameMs = 9_000L, homeShownMs = null) { false }.state)
         // The cover had its 3 s already: the lock at once - not 3 s twice.
-        assertEquals(shown, bootMarkStep(BootMarkState.Due, LockAsk.BOOT, true, 10_000L, coverFrameMs = 6_000L, homeFrameMs = null) { false })
-        // Waiting for Home's frame, the cover's frame read meanwhile counts at the next ask.
-        assertEquals(BootMarkState.Holding(12_000L), bootMarkStep(BootMarkState.Waiting(13_000L), LockAsk.BOOT, true, 10_500L, 9_000L, null) { false }.state)
+        assertEquals(shown, bootMarkStep(BootMarkState.Due, LockAsk.BOOT, true, 10_000L, coverFrameMs = 6_000L, homeShownMs = null) { false })
+        // Waiting for Home's mark, the cover's frame read meanwhile counts at the next ask.
+        assertEquals(BootMarkState.Holding(12_000L), bootMarkStep(BootMarkState.Waiting(11_000L), LockAsk.BOOT, true, 10_500L, 9_000L, null) { false }.state)
         // A cover frame "after" the ask can't push the end later.
         assertEquals(BootMarkState.Holding(13_000L), bootMarkHeldFrom(11_000L, 10_000L))
-        assertEquals(9_000L, bootMarkFrameMs(coverFrameMs = 9_000L, homeFrameMs = 10_050L))
-        assertEquals(10_050L, bootMarkFrameMs(coverFrameMs = null, homeFrameMs = 10_050L))
-        assertNull(bootMarkFrameMs(null, null))
+        assertEquals(9_000L, bootMarkStartMs(coverFrameMs = 9_000L, homeShownMs = 10_050L))
+        assertEquals(10_050L, bootMarkStartMs(coverFrameMs = null, homeShownMs = 10_050L))
+        assertNull(bootMarkStartMs(null, null))
 
         // Only a frame of this boot counts.
         val record = CoverRecord(bootCount = 12, shownBootCount = 12, shownElapsedMs = 9_000L)

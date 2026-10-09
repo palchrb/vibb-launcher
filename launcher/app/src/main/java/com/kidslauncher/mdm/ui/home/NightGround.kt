@@ -6,7 +6,6 @@ import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewTreeObserver
@@ -19,11 +18,11 @@ import com.kidslauncher.mdm.R
  * Home's face while the PIN lock is LOCKED, or not decided yet with a kid PIN (design 16c): the
  * night ground with the breathing Vibb mark (`splash_vibb_breathe.xml`, the boot cover's), centred,
  * from `activity_home_night.xml` - nothing to touch. Breathes only while Home is resumed.
- * [onFirstFrame] gets the elapsed realtime of its first drawn frame (design 16e: the boot's 3 s
- * count from it) - an `OnDrawListener`, which runs only when a frame is really drawn (not with the
- * display off).
+ * [onFirstFrame] runs at its first drawn frame ([drawn]) - an `OnDrawListener`, which runs only when
+ * a frame is really drawn (not with the display off). Design 16e: with the window focused too, the
+ * boot's 3 s start (qa-16e-fix2 #1).
  */
-class NightGround(private val activity: Activity, private val onFirstFrame: (Long) -> Unit = {}) {
+class NightGround(private val activity: Activity, private val onFirstFrame: () -> Unit = {}) {
     val root: View = LayoutInflater.from(activity).inflate(R.layout.activity_home_night, FrameLayout(activity), false)
     private val logo = root.findViewById<ImageView>(R.id.home_night_mark).drawable as? AnimatedVectorDrawable
     private val handler = Handler(Looper.getMainLooper())
@@ -36,14 +35,18 @@ class NightGround(private val activity: Activity, private val onFirstFrame: (Lon
         }
     }
 
-    private var drawn = false
+    /** The ground has drawn a frame. */
+    var drawn = false
+        private set
     private val firstDraw = object : ViewTreeObserver.OnDrawListener {
         override fun onDraw() {
             if (drawn) return
             drawn = true
-            onFirstFrame(SystemClock.elapsedRealtime())
-            // Not removable inside onDraw.
-            handler.post { root.viewTreeObserver.removeOnDrawListener(this) }
+            // Not inside the draw (and the listener isn't removable there).
+            handler.post {
+                root.viewTreeObserver.removeOnDrawListener(this)
+                onFirstFrame()
+            }
         }
     }
 
