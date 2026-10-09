@@ -236,3 +236,14 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
   - The app draws edge-to-edge with insets like the launcher (`KidInsets`), so about 520 dp of the 569 dp height is
     usable on the Jelly Star.
   - The library screen's flexible spacers absorb that. On the player, the cover may shrink to fit.
+
+## Design locked (user, 2026-10-09)
+
+The kid GUI is locked exactly as the mockup https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY (version 11) shows:
+- the library with peeking covers, single-choice category tiles, the search and bell buttons, NY badges and the
+  now-playing bar;
+- the player with a thin seek line and a big thumb, Liste / Sov / "Spill av på", plus the list with offline marks;
+- "Nytt" with "Fjern alle", search, the Home "Spilles nå" card with an unread count, and the two-stage lock with the
+  media view.
+
+The decisions above override the earlier sections of this doc where they differ. Next: a consolidated phase-1 spec.
