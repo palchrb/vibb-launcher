@@ -44,6 +44,8 @@ data class Entry(
     /** The listing's version, null for own files and for an NRK/RSS entry never listed (21b §4.1). */
     val items: String?,
     val sort: Int,
+    /** An RSS feed on the home LAN or tailnet (21b §2.7/§4.1): its audio may come from private addresses. */
+    val lan: Boolean = false,
 ) {
     /** An NRK serie (`radio.nrk.no/serie/...`): a story read from its start (vibb `_natural_order`). */
     val nrkSerie: Boolean get() = source == Source.NRK && target.orEmpty().contains("radio.nrk.no/serie/", ignoreCase = true)
@@ -99,6 +101,7 @@ private data class EntryDto(
     val cover: String? = null,
     val items: String? = null,
     val sort: Int = 0,
+    val lan: Boolean = false,
 )
 
 @Serializable
@@ -155,7 +158,7 @@ object LibraryParser {
         if (source != Source.OWN && d.target.isNullOrBlank()) return null
         return Entry(
             d.id, d.key, d.name.trim(), d.category, source, d.target, d.order, d.cache, d.resume, d.cover,
-            if (source == Source.OWN) null else d.items, d.sort,
+            if (source == Source.OWN) null else d.items, d.sort, source == Source.RSS && d.lan,
         )
     }
 

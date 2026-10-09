@@ -582,6 +582,11 @@ pub struct LibEntry {
     /// The version of `GET /api/devices/music/entries/{id}/items` (design 21b §4.1): null for own
     /// files and for an NRK/RSS entry never listed.
     pub items: Option<String>,
+    /// An RSS feed on the home LAN or the tailnet (21b §2.7, fixed at its first check): its audio
+    /// may come from private addresses. False for everything else (NRK, own files, a feed not yet
+    /// checked), and the music app then refuses private addresses for the entry's audio
+    /// (qa-21b-step1c-code #14, the user's decision of 2026-10-09).
+    pub lan: bool,
     pub sort: i64,
 }
 
@@ -679,13 +684,13 @@ impl Library {
 /// size check), phase-1 sources only, with their listing (design 21b).
 const LIBRARY_ENTRIES: &str = "SELECT e.id, e.name, e.category_id, e.source, e.target, e.key, \
      e.play_order, e.cache, e.resume, e.cover_hash, e.sort, l.version AS listing_version, \
-     l.cover_hash AS listing_cover, l.keep_end AS listing_keep_end \
+     l.cover_hash AS listing_cover, l.keep_end AS listing_keep_end, l.lan AS listing_lan \
      FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
      WHERE e.source IN ('nrk', 'rss', 'own') AND (e.id IN \
        (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR e.id = ?) \
      ORDER BY e.sort, e.id";
 
-/// A library entry row: the entry and its listing's version, cover and kept end.
+/// A library entry row: the entry and its listing's version, cover, kept end and address class.
 #[derive(sqlx::FromRow)]
 struct LibraryRow {
     #[sqlx(flatten)]
@@ -693,6 +698,7 @@ struct LibraryRow {
     listing_version: Option<String>,
     listing_cover: Option<String>,
     listing_keep_end: Option<String>,
+    listing_lan: Option<bool>,
 }
 
 /// The order the phone plays an entry in: as set, except that an `auto` NRK series whose list keeps
@@ -798,6 +804,7 @@ pub async fn library_for(
                 resume: e.resume,
                 cover: e.cover_hash.or(if own { None } else { row.listing_cover }),
                 items: if own { None } else { row.listing_version },
+                lan: e.source == "rss" && row.listing_lan == Some(true),
                 sort: e.sort,
                 source: e.source,
             }
@@ -1578,6 +1585,7 @@ mod tests {
             resume: true,
             cover: None,
             items: None,
+            lan: false,
             sort: 10,
         };
         let a = Library::build(vec![category.clone()], vec![entry.clone()], vec![]);

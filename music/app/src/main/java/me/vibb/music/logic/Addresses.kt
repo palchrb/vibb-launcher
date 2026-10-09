@@ -15,11 +15,11 @@ import java.net.InetAddress
  */
 
 /**
- * Must [entry]'s audio come from public addresses only? NRK is always public-only (21b §2.7). An
- * RSS entry's class (`lan`, fixed at the server's first check) isn't in the library or listing
- * contract yet, so RSS entries aren't guarded until the server sends it.
+ * Must [entry]'s audio come from public addresses only? Yes unless the library marks it `lan` (an
+ * RSS feed the server found on the home LAN or tailnet at its first check, 21b §2.7). NRK is never
+ * LAN; own files play from the phone and never use the network.
  */
-fun publicOnly(entry: Entry): Boolean = entry.source == Source.NRK
+fun publicOnly(entry: Entry): Boolean = !(entry.source == Source.RSS && entry.lan)
 
 /**
  * 21b §2.7's ranges: 0/8, 10/8, 100.64/10 (CGNAT, the tailnet), 127/8, 169.254/16, 172.16/12,

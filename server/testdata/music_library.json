@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "version": "aa485b7dd0d2a390",
+  "version": "cd0b77ca352b1fd4",
   "categories": [
     {
       "id": 1,
@@ -30,6 +30,7 @@
       "resume": true,
       "cover": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "items": null,
+      "lan": false,
       "sort": 10
     },
     {
@@ -44,6 +45,7 @@
       "resume": true,
       "cover": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "items": "0123456789abcdef",
+      "lan": false,
       "sort": 20
     },
     {
@@ -58,6 +60,7 @@
       "resume": false,
       "cover": null,
       "items": null,
+      "lan": false,
       "sort": 30
     }
   ],

@@ -32,7 +32,8 @@ class ContractFilesTest {
     @Test
     fun `the library snapshot parses`() {
         val lib = LibraryParser.parse(Fixtures.resource("music_library.json"))!!
-        assertEquals("aa485b7dd0d2a390", lib.version)
+        assertEquals("cd0b77ca352b1fd4", lib.version)
+        assertTrue("the snapshot's feeds are public", lib.entries.none { it.lan })
         assertEquals(listOf(1L, 4L), lib.categories.map { it.id })
         assertEquals(listOf("music_note", "mic"), lib.categories.map { it.icon })
         assertEquals(listOf(Source.NRK, Source.RSS, Source.OWN), lib.entries.map { it.source })
@@ -103,6 +104,15 @@ class ContractFilesTest {
             val lib = LibraryParser.parse(base.replace("\"cache\": -1", "\"cache\": $bad"))!!
             assertNull("cache=$bad", lib.entry(3))
         }
+    }
+
+    @Test
+    fun `lan is read for RSS only, and absent means public`() {
+        val base = Fixtures.resource("music_library.json")
+        val lan = LibraryParser.parse(base.replace("\"lan\": false", "\"lan\": true"))!!
+        assertEquals(listOf(false, true, false), lan.entries.map { it.lan })
+        val old = LibraryParser.parse(base.replace(",\n      \"lan\": false", ""))!!
+        assertTrue(old.entries.none { it.lan })
     }
 
     @Test

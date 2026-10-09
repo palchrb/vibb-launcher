@@ -1078,8 +1078,8 @@ async fn music_library_snapshot() {
     assert_eq!(
         entry_keys,
         [
-            "cache", "category", "cover", "id", "items", "key", "name", "order", "resume", "sort",
-            "source", "target"
+            "cache", "category", "cover", "id", "items", "key", "lan", "name", "order", "resume",
+            "sort", "source", "target"
         ]
     );
     let mut file_keys: Vec<&str> = served["files"][0]
@@ -1140,6 +1140,36 @@ async fn music_library_snapshot() {
         res.headers.get(header::ETAG).unwrap().to_str().unwrap(),
         format!("\"{version}\"")
     );
+}
+
+/// `lan` (21b §2.7, qa-21b-step1c #14): true only for an RSS entry whose first check found a LAN
+/// or tailnet feed; NRK is always public, and a feed not checked yet counts as public.
+#[tokio::test]
+async fn library_lan_only_for_a_lan_rss_feed() {
+    let app = TestApp::new().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    snapshot_library(&app, device).await;
+    let lan_of = |served: &serde_json::Value| -> Vec<bool> {
+        served["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["lan"].as_bool().unwrap())
+            .collect()
+    };
+    let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
+    assert_eq!(lan_of(&res.json()), [false, false, false]);
+    sqlx::query("UPDATE music_listings SET lan = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The version moves with it (the same update that lists a feed writes its class).
+    sqlx::query("UPDATE music_listings SET version = 'fedcba9876543210' WHERE entry_id = 2")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
+    assert_eq!(lan_of(&res.json()), [false, true, false]);
 }
 
 #[tokio::test]

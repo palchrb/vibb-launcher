@@ -74,9 +74,10 @@ class NetTest {
     }
 
     @Test
-    fun `NRK is always public-only, RSS waits for the server's lan flag, own files are local`() {
+    fun `only an RSS entry the server marks lan may use private addresses`() {
         assertTrue(publicOnly(entry(1, Source.NRK)))
-        assertFalse(publicOnly(entry(1, Source.RSS)))
-        assertFalse(publicOnly(entry(1, Source.OWN)))
+        assertTrue(publicOnly(entry(1, Source.NRK).copy(lan = true)))
+        assertTrue(publicOnly(entry(1, Source.RSS)))
+        assertFalse(publicOnly(entry(1, Source.RSS).copy(lan = true)))
     }
 }
