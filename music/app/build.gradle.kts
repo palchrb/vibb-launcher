@@ -95,6 +95,8 @@ android {
     }
 
     testOptions {
+        // ReportTest builds Media3's PlaybackException, whose constructor reads SystemClock (a stub
+        // in JVM tests). No other test touches Android.
         unitTests.isReturnDefaultValues = true
     }
 }

@@ -9,6 +9,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.Serializable
@@ -66,17 +68,11 @@ object Sync {
         WorkManager.getInstance(context).enqueueUniqueWork(WORK, policy, request)
     }
 
-    /** The current sync run (item errors are recorded once per item per run). */
-    fun syncId(context: Context): Long = context.getSharedPreferences("music", Context.MODE_PRIVATE).getLong("sync_id", 0)
-
     suspend fun run(context: Context) = withContext(Dispatchers.IO) {
-        val prefs = context.getSharedPreferences("music", Context.MODE_PRIVATE)
-        prefs.edit().putLong("sync_id", syncId(context) + 1).apply()
         val store = Store.get(context)
         val dao = store.db
         val lib = store.reloadLibrary()
         val entryErrors = readEntryErrors(store).toMutableList()
-        var urlChanged = false
 
         // Listings received from the bridge (step 2: the debug feed).
         if (lib != null) {
@@ -89,7 +85,7 @@ object Sync {
                     if (listing == null || listing.entryId != entry.id) {
                         entryErrors += EntryError(entry.id, "bad_listing")
                     } else {
-                        urlChanged = applyListing(store, entry, listing) || urlChanged
+                        applyListing(store, entry, listing)
                     }
                 }
                 file.delete()
@@ -98,36 +94,40 @@ object Sync {
             for (entry in lib.entries.filter { it.source == Source.OWN }) {
                 markSeen(store, entry.id, lib.filesOf(entry.id).map { it.key })
             }
-            // Entries the library dropped take their listing, NY state and positions with them.
-            val ids = lib.entries.map { it.id }.toSet()
+            // Entries the library no longer names at all take their listing, NY state and errors
+            // with them; one it names but can't read keeps everything (qa-21-step2-code H1).
+            // Positions and bookmarks are never deleted (vibb keeps its state files; the rows are tiny).
+            val ids = lib.entryIds
             dao.listings().filter { it.entryId !in ids }.forEach { dao.deleteItems(it.entryId); dao.deleteListing(it.entryId) }
             dao.seenEntries().filter { it !in ids }.forEach { dao.deleteSeen(it) }
             val tray = dao.news().map { NewsItem(it.entryId, it.key, it.seq) }
             val pruned = pruneTray(tray, ids)
             if (pruned != tray) dao.replaceNews(pruned.map { NewsRow(it.entryId, it.key, it.seq) })
-            val keys = lib.entries.map { it.key }
-            dao.prunePositions(keys)
-            dao.pruneBookmarks(keys)
+            dao.itemErrors().map { it.entryId }.distinct().filter { it !in ids }.forEach { dao.deleteItemErrors(it) }
             entryErrors.removeAll { it.entry !in ids }
-            // Own files' copies of files the library no longer lists (missing ones stay, QA #3).
-            val fileIds = lib.files.map { it.id }.toSet()
-            store.ownCopies().filter { it !in fileIds }.forEach { store.ownFile(it).delete() }
+            // Own files' copies of files the library no longer names (a `missing` one is still named, QA #3).
+            store.ownCopies().filter { it !in lib.fileIds }.forEach { store.ownFile(it).delete() }
         }
         writeEntryErrors(store, entryErrors)
 
         // Keep/prune (only on parsed listings), then the downloads.
-        val plan = downloadPlan(store.snapshot(), dao.downloads())
+        val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis())
         for (row in plan.prune) {
             MediaCache.remove(context, row.cacheKey, row.hls)
             dao.deleteDownload(row.entryId, row.itemKey)
         }
-        if (plan.wanted.isNotEmpty()) Downloads.enqueue(context, store.mobileData, urlChanged)
+        if (plan.wanted.isNotEmpty()) {
+            Downloads.enqueue(context, store.mobileData)
+        } else {
+            plan.nextRetryAt?.let { Downloads.enqueue(context, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
+        }
         NewNotifier.update(context, store.snapshot())
         writeReport(context)
     }
 
-    /** Apply one listing: items replaced, NY marked. True when a failed item's url changed (retry at once). */
-    private suspend fun applyListing(store: Store, entry: Entry, listing: Listing): Boolean {
+    /** Apply one listing: items replaced, NY marked, errors against another version dropped. A
+     * failed item whose url changed is retried at once by the plan (`mayRetry`). */
+    private suspend fun applyListing(store: Store, entry: Entry, listing: Listing) {
         val dao = store.db
         dao.replaceListing(
             ListingRow(entry.id, listing.version),
@@ -135,8 +135,7 @@ object Sync {
         )
         // Only items that can play are news (a withdrawn one without a copy is hidden).
         markSeen(store, entry.id, listing.items.map { it.key }, listing.items.filter { it.url != null }.map { it.key }.toSet())
-        val urls = listing.items.associate { it.key to it.url }
-        return dao.downloads().any { it.entryId == entry.id && it.failedUrl != null && urls[it.itemKey] != null && urls[it.itemKey] != it.failedUrl }
+        dao.deleteStaleItemErrors(entry.id, listing.version)
     }
 
     /** `_mark_new_seen` for one entry; new keys in [eligible] (default all) join the Nytt tray. */
@@ -168,11 +167,11 @@ object Sync {
     suspend fun writeReport(context: Context) = withContext(Dispatchers.IO) {
         val store = Store.get(context)
         val snap = store.snapshot()
-        val plan = downloadPlan(snap, store.db.downloads())
+        val plan = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis())
         val storageLow = store.ownDir.parentFile!!.usableSpace < LOW_STORAGE_BYTES
         val waiting = downloadWaiting(netCaps(context), store.mobileData, storageLow)
         val states = plan.states.map { if (it.have < it.want) it.copy(waiting = waiting) else it }
-        val errors = store.db.itemErrors().map { ItemError(it.entryId, it.version, it.itemKey, it.error, it.sync) }
+        val errors = store.db.itemErrors().map { ItemError(it.entryId, it.version, it.itemKey, it.error) }
         val ownBytes = store.ownDir.listFiles().orEmpty().sumOf { it.length() }
         val report = stateReport(
             BuildConfig.VERSION_CODE.toLong(),
@@ -182,8 +181,11 @@ object Sync {
             errors,
             states,
         )
-        Store.writeAtomic(store.reportFile, report.toString().toByteArray())
+        reportLock.withLock { Store.writeAtomic(store.reportFile, report.toString().toByteArray()) }
     }
+
+    /** The sync and the download job both write the report. */
+    private val reportLock = Mutex()
 }
 
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -193,17 +195,15 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     }
 }
 
-/** `item_errors` in Room: a failed download or stream of a listed url, once per item per sync. */
+/** `item_errors` in Room: the latest failure of a download or stream of a listed url, per item. */
 object ItemErrors {
     suspend fun record(context: Context, entryId: Long, itemKey: String, code: String) {
         val dao = Store.get(context).db
         val version = dao.listings().firstOrNull { it.entryId == entryId }?.version ?: return
-        val log = dao.itemErrors().map { ItemError(it.entryId, it.version, it.itemKey, it.error, it.sync) }
-        val next = addItemError(log, ItemError(entryId, version, itemKey, code, Sync.syncId(context)))
-        if (next == log) return
+        val log = dao.itemErrors().map { ItemError(it.entryId, it.version, it.itemKey, it.error) }
+        val next = addItemError(log, ItemError(entryId, version, itemKey, code))
         val keep = next.map { it.entry to it.item }.toSet()
         log.filter { (it.entry to it.item) !in keep }.forEach { dao.deleteItemError(it.entry, it.item) }
-        val added = next.last()
-        dao.upsertItemError(ItemErrorRow(added.entry, added.item, added.version, added.error, added.sync, System.currentTimeMillis()))
+        dao.upsertItemError(ItemErrorRow(entryId, itemKey, version, code, System.currentTimeMillis()))
     }
 }

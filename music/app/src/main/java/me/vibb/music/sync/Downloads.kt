@@ -15,12 +15,12 @@ import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsPlaylistParser
 import androidx.media3.exoplayer.offline.ProgressiveDownloader
 import androidx.media3.exoplayer.upstream.ParsingLoadable
-import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
@@ -60,17 +60,25 @@ fun netCaps(context: Context): NetCaps? {
 object Downloads {
     private const val WORK = "music-downloads"
 
-    /** Run the downloads when the network allows; [now] replaces a waiting job (a url changed). */
-    fun enqueue(context: Context, mobileData: Boolean, now: Boolean) {
+    /**
+     * Run the downloads when the network allows, after [delayMs]. A running job gets this one
+     * appended (it re-plans until nothing new is wanted, but a sync landing at its very end must not
+     * be lost); a waiting one is replaced, so a sync never sits behind a retry delay
+     * (qa-21-step2-code M4). Call off the main thread.
+     */
+    fun enqueue(context: Context, mobileData: Boolean, delayMs: Long = 0) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(if (mobileData) NetworkType.NOT_ROAMING else NetworkType.UNMETERED)
             .setRequiresStorageNotLow(true)
             .build()
         val request = OneTimeWorkRequestBuilder<DownloadWorker>()
             .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(WORK, if (now) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP, request)
+        val wm = WorkManager.getInstance(context)
+        val running = runCatching { wm.getWorkInfosForUniqueWork(WORK).get() }.getOrDefault(emptyList())
+            .any { it.state == WorkInfo.State.RUNNING }
+        wm.enqueueUniqueWork(WORK, if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE, request)
     }
 
     /** Fetch one item into the cache: (bytes cached, the HLS variant fetched). Blocking, interruptible. */
@@ -78,12 +86,11 @@ object Downloads {
     fun fetch(context: Context, w: WantedDownload): Pair<Long, Int?> {
         val url = requireNotNull(w.item.url)
         val cacheKey = itemCacheKey(w.entry.key, w.item.key)
-        val factory = MediaCache.downloadFactory(context, publicOnly(w.entry))
+        val factory = MediaCache.downloadFactory(context, publicOnly(w.entry), MediaCache.keyFactory(cacheKey, url, w.item.hls))
         if (!w.item.hls) {
             ProgressiveDownloader(MediaItem.Builder().setUri(url).setCustomCacheKey(cacheKey).build(), factory).download(null)
             return MediaCache.cachedBytes(context, cacheKey, false) to null
         }
-        MediaCache.registerHls(cacheKey, url)
         // One rendition only: a multivariant playlist would otherwise fetch every bitrate.
         val playlist = ParsingLoadable.load(factory.createDataSource(), HlsPlaylistParser(), Uri.parse(url), C.DATA_TYPE_MANIFEST)
         val variant = (playlist as? HlsMultivariantPlaylist)?.variants?.takeIf { it.isNotEmpty() }?.let { v ->
@@ -96,38 +103,75 @@ object Downloads {
     }
 }
 
-/** An HTTP status that means the url itself is wrong: no retry until the server sends another. */
-fun permanentFailure(code: String): Boolean {
-    val status = code.removePrefix("http_").toIntOrNull() ?: return false
-    return status in 400..499 && status != 408 && status != 429
-}
-
+/**
+ * The downloads: plan, fetch item by item, plan again until nothing new is wanted (a sync during
+ * the run adds items). A failure waits per item (logic/Offline.kt `mayRetry`) and never holds the
+ * others back; no network means the job ends and a new one waits on its constraints, not on a
+ * backoff (qa-21-step2-code M1, M4).
+ */
 class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val store = Store.get(applicationContext)
         val dao = store.db
-        val plan = downloadPlan(store.snapshot(), dao.downloads())
-        var retry = false
-        for (w in plan.wanted) {
-            if (downloadWaiting(netCaps(applicationContext), store.mobileData, false) != null) return@withContext Result.retry()
-            val url = w.item.url ?: continue
-            val row = DownloadRow(w.entry.id, w.item.key, itemCacheKey(w.entry.key, w.item.key), url, w.item.hls, false, 0, null, null)
-            dao.upsertDownload(row)
-            try {
-                val (bytes, variant) = runInterruptible { Downloads.fetch(applicationContext, w) }
-                dao.upsertDownload(row.copy(done = true, bytes = bytes, variant = variant))
-                dao.deleteItemError(w.entry.id, w.item.key)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                val code = MediaCache.errorCode(e)
-                ItemErrors.record(applicationContext, w.entry.id, w.item.key, code)
-                val permanent = permanentFailure(code)
-                dao.upsertDownload(row.copy(failedUrl = if (permanent) url else null))
-                if (!permanent) retry = true
+        val tried = mutableSetOf<Pair<Long, String>>()
+        var nextRetryAt: Long? = null
+        while (true) {
+            val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis())
+            nextRetryAt = plan.nextRetryAt
+            val todo = plan.wanted.filter { (it.entry.id to it.item.key) !in tried }
+            if (todo.isEmpty()) break
+            for (w in todo) {
+                tried += w.entry.id to w.item.key
+                if (downloadWaiting(netCaps(applicationContext), store.mobileData, false) != null) {
+                    // The constraints, not a backoff, wait for the network.
+                    Downloads.enqueue(applicationContext, store.mobileData)
+                    Sync.writeReport(applicationContext)
+                    return@withContext Result.success()
+                }
+                fetchOne(store, w)
             }
         }
+        nextRetryAt?.let { Downloads.enqueue(applicationContext, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
         Sync.writeReport(applicationContext)
-        if (retry) Result.retry() else Result.success()
+        Result.success()
+    }
+
+    private suspend fun fetchOne(store: Store, w: WantedDownload) {
+        val dao = store.db
+        val url = w.item.url ?: return
+        val cacheKey = itemCacheKey(w.entry.key, w.item.key)
+        val old = dao.downloads().firstOrNull { it.entryId == w.entry.id && it.itemKey == w.item.key }
+        // A partial copy from another url may be another file: start over (qa-21-step2-code L7).
+        if (old != null && !old.done && old.url != url) MediaCache.remove(applicationContext, old.cacheKey, old.hls)
+        val row = DownloadRow(w.entry.id, w.item.key, cacheKey, url, w.item.hls, false, 0, null, old?.failedUrl, old?.failedCode, old?.failedAt, old?.attempts ?: 0)
+        dao.upsertDownload(row)
+        var code = attempt(w)
+        if (code == "http_416") {
+            // The file changed under a partial copy: drop it and fetch from the start, once.
+            MediaCache.remove(applicationContext, cacheKey, w.item.hls)
+            code = attempt(w)
+        }
+        if (code == null) {
+            dao.deleteItemError(w.entry.id, w.item.key)
+            return
+        }
+        ItemErrors.record(applicationContext, w.entry.id, w.item.key, code)
+        val attempts = if (row.failedUrl == url && row.failedCode == code) row.attempts + 1 else 1
+        dao.upsertDownload(row.copy(failedUrl = url, failedCode = code, failedAt = System.currentTimeMillis(), attempts = attempts))
+    }
+
+    /** One attempt: null when the item is on the phone now, else the failure's code. */
+    private suspend fun attempt(w: WantedDownload): String? {
+        val dao = Store.get(applicationContext).db
+        return try {
+            val (bytes, variant) = runInterruptible { Downloads.fetch(applicationContext, w) }
+            val url = w.item.url!!
+            dao.upsertDownload(DownloadRow(w.entry.id, w.item.key, itemCacheKey(w.entry.key, w.item.key), url, w.item.hls, true, bytes, variant, null))
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            MediaCache.errorCode(e)
+        }
     }
 }

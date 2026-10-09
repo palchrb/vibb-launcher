@@ -60,12 +60,17 @@ data class DownloadRow(
     val bytes: Long,
     /** The HLS variant fetched (one rendition, played with the same stream key); null = progressive or a media playlist. */
     val variant: Int?,
-    /** The url that last failed, so a new url retries at once (21b §6). */
+    /** The url of the last failed attempt: a new url retries at once (21b §6). */
     val failedUrl: String?,
+    /** The last failure's `item_errors` code, when, and how many in a row (logic/Offline.kt `mayRetry`). */
+    val failedCode: String? = null,
+    val failedAt: Long? = null,
+    val attempts: Int = 0,
 )
 
+/** The latest failure per item (21b §4.3), cleared when the item plays or downloads, its listing changes or its entry goes. */
 @Entity(tableName = "item_errors", primaryKeys = ["entryId", "itemKey"])
-data class ItemErrorRow(val entryId: Long, val itemKey: String, val version: String, val error: String, val sync: Long, val at: Long)
+data class ItemErrorRow(val entryId: Long, val itemKey: String, val version: String, val error: String, val at: Long)
 
 @Entity(tableName = "shuffle")
 data class ShuffleRow(@PrimaryKey val entryKey: String, val on: Boolean)
@@ -164,8 +169,9 @@ interface MusicDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPosition(row: PositionRow)
 
-    @Query("DELETE FROM positions WHERE entryKey NOT IN (:keep)")
-    suspend fun prunePositions(keep: List<String>)
+    /** vibb's `clear_state` at a queue's natural end: the partial positions go, the done marks stay. */
+    @Query("DELETE FROM positions WHERE entryKey = :entryKey AND done = 0")
+    suspend fun clearPartialPositions(entryKey: String)
 
     @Query("SELECT * FROM bookmarks")
     suspend fun bookmarks(): List<BookmarkRow>
@@ -179,8 +185,6 @@ interface MusicDao {
     @Query("DELETE FROM bookmarks WHERE entryKey = :entryKey")
     suspend fun deleteBookmark(entryKey: String)
 
-    @Query("DELETE FROM bookmarks WHERE entryKey NOT IN (:keep)")
-    suspend fun pruneBookmarks(keep: List<String>)
 
     @Query("SELECT * FROM downloads")
     suspend fun downloads(): List<DownloadRow>
@@ -202,6 +206,13 @@ interface MusicDao {
 
     @Query("DELETE FROM item_errors WHERE entryId = :entryId AND itemKey = :itemKey")
     suspend fun deleteItemError(entryId: Long, itemKey: String)
+
+    /** A new listing version: errors reported against another one are stale. */
+    @Query("DELETE FROM item_errors WHERE entryId = :entryId AND version != :version")
+    suspend fun deleteStaleItemErrors(entryId: Long, version: String)
+
+    @Query("DELETE FROM item_errors WHERE entryId = :entryId")
+    suspend fun deleteItemErrors(entryId: Long)
 
     @Query("SELECT * FROM shuffle")
     fun shuffleFlow(): Flow<List<ShuffleRow>>

@@ -12,9 +12,12 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /*
  * The phone's library (design 21 §1.3, 21b §4.1): `GET /api/devices/music/library`, pinned by
- * server/testdata/music_library.json (byte-identical in src/test/resources, LibraryParseTest).
- * Parsing is lenient per element: a bad category, entry or file is dropped, never the library
- * (21 §4.6); only a document that isn't `v: 1` is refused (the old library stays).
+ * server/testdata/music_library.json (byte-identical in src/test/resources, ContractFilesTest).
+ * Parsing is lenient per element (21 §4.6): a field that can degrade does (an unknown order is
+ * `auto`, a bad cover none), an entry or file that still can't be used is hidden - but its id stays
+ * in [Library.entryIds]/[Library.fileIds], so nothing of it is deleted (qa-21-step2-code H1: a newer
+ * server must never make an older app prune a kid's place or copies). A document that isn't
+ * `v: 1` with its three arrays is refused (the old library stays).
  */
 
 val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -72,9 +75,14 @@ data class OwnFile(
 data class Library(
     val version: String,
     val categories: List<Category>,
+    /** The entries the app can use. */
     val entries: List<Entry>,
     val files: List<OwnFile>,
     val covers: Set<String>,
+    /** Every entry id the document names, usable or not: only an id missing here is removed. */
+    val entryIds: Set<Long> = entries.map { it.id }.toSet(),
+    /** Every own-file id the document names, usable or not. */
+    val fileIds: Set<Long> = files.map { it.id }.toSet(),
 ) {
     fun entry(id: Long): Entry? = entries.firstOrNull { it.id == id }
     fun filesOf(entryId: Long): List<OwnFile> = files.filter { it.entry == entryId }.sortedWith(compareBy({ it.sort }, { it.id }))
@@ -125,19 +133,25 @@ object LibraryParser {
         val root = runCatching { JSON.parseToJsonElement(text) }.getOrNull() as? JsonObject ?: return null
         if (root["v"]?.jsonPrimitive?.intOrNull != 1) return null
         val version = (root["version"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+        val rawEntries = root["entries"] as? JsonArray ?: return null
+        val rawFiles = root["files"] as? JsonArray ?: return null
         val categories = elements(root["categories"]).mapNotNull { decode<CategoryDto>(it) }
             .filter { it.id > 0 && it.name.isNotBlank() }
             .distinctBy { it.id }
             .map { Category(it.id, it.name.trim(), it.icon, it.color, it.sort) }
-        val entries = elements(root["entries"]).mapNotNull { decode<EntryDto>(it)?.let(::entry) }.distinctBy { it.id }
-        val entryIds = entries.map { it.id }.toSet()
-        val files = elements(root["files"]).mapNotNull { decode<FileDto>(it)?.let(::file) }
-            .filter { it.entry in entryIds }
+        val entries = rawEntries.mapNotNull { decode<EntryDto>(it)?.let(::entry) }.distinctBy { it.id }
+        val usable = entries.map { it.id }.toSet()
+        val files = rawFiles.mapNotNull { decode<FileDto>(it)?.let(::file) }
+            .filter { it.entry in usable }
             .distinctBy { it.id }
         val covers = elements(root["covers"]).mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
             .filter { HASH.matches(it) }.toSet()
-        return Library(version, categories, entries, files, covers)
+        return Library(version, categories, entries, files, covers, rawIds(rawEntries), rawIds(rawFiles))
     }
+
+    /** The numeric `id` of every object in [array], whatever else it holds. */
+    private fun rawIds(array: JsonArray): Set<Long> =
+        array.mapNotNull { ((it as? JsonObject)?.get("id") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() }.toSet()
 
     private fun elements(e: JsonElement?): List<JsonElement> = (e as? JsonArray).orEmpty()
 
@@ -151,14 +165,15 @@ object LibraryParser {
             else -> return null // storytel and spotify come with their phases
         }
         if (d.id <= 0 || !KEY.matches(d.key) || d.name.isBlank()) return null
-        if (d.order !in ORDERS) return null
-        if (!(d.cache == -1 || d.cache in 0..100)) return null
-        if (d.cover != null && !HASH.matches(d.cover)) return null
-        if (d.items != null && !VERSION.matches(d.items)) return null
+        if (!(d.cache == -1 || d.cache in 0..100)) return null // what to keep is unknown: hide it, keep its copies
         if (source != Source.OWN && d.target.isNullOrBlank()) return null
         return Entry(
-            d.id, d.key, d.name.trim(), d.category, source, d.target, d.order, d.cache, d.resume, d.cover,
-            if (source == Source.OWN) null else d.items, d.sort, source == Source.RSS && d.lan,
+            d.id, d.key, d.name.trim(), d.category, source, d.target,
+            d.order.takeIf { it in ORDERS } ?: "auto",
+            d.cache, d.resume,
+            d.cover?.takeIf { HASH.matches(it) },
+            if (source == Source.OWN) null else d.items?.takeIf { VERSION.matches(it) },
+            d.sort, source == Source.RSS && d.lan,
         )
     }
 

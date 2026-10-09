@@ -1,31 +1,13 @@
 package me.vibb.music.logic
 
 /*
- * The now-playing view's rules, ported from palchrb/vibb `pi/daemon.py` (`_settle_position`,
- * `POSITION_SETTLE_MAX_S`, `_resume_overlap` and its `RESUME_OVERLAP_*` values, and the
- * session/boot rules: a restart lands paused, the first tap ends the old session; MIT License,
+ * The now-playing view's rules, ported from palchrb/vibb `pi/daemon.py` (`_resume_overlap` and its
+ * `RESUME_OVERLAP_*` values, and the session/boot rules: a restart lands paused; MIT License,
  * Copyright (c) 2026 palchrb), reimplemented in Kotlin under the GPL-3.0 (or later) - see
  * NOTICE.md. Pure; NowPlayingTest ports tests/now_playing.py, resume_overlap.py and
- * session_window.py, as far as they concern a phone.
+ * session_window.py, as far as they concern a phone. vibb's `_settle_position` isn't needed:
+ * ExoPlayer reports the seek target as its position at once.
  */
-
-/** The position display holds at a resume target at most this long after a start. */
-const val POSITION_SETTLE_MAX_MS = 20_000L
-
-/** Within this of the target, the seek has landed. */
-const val POSITION_SETTLE_TOL_MS = 3_000L
-
-/**
- * The position to show while the player seeks to a resume target ([resumeMs]): the target until
- * the live position reaches it, then live - bounded to [POSITION_SETTLE_MAX_MS] after the start,
- * never after the user moved the position, and not for a fresh start (target within the first
- * [RESUME_MIN_MS]).
- */
-fun settledPosition(liveMs: Long?, resumeMs: Long, sinceStartMs: Long, userSeeked: Boolean): Long {
-    val live = liveMs ?: 0
-    if (userSeeked || resumeMs <= RESUME_MIN_MS || sinceStartMs > POSITION_SETTLE_MAX_MS) return live
-    return if (liveMs == null || liveMs < resumeMs - POSITION_SETTLE_TOL_MS) resumeMs else live
-}
 
 /** The play/pause button shows "playing" at once on a tap (the intent), not when audio starts. */
 fun showsPlaying(playWhenReady: Boolean, ended: Boolean): Boolean = playWhenReady && !ended
@@ -38,8 +20,9 @@ const val RESUME_LONG_GAP_MS = 120_000L
 
 /**
  * How far to back up when playback resumes after an outage (the output went, or a call took the
- * audio) - never after a tap. [goneMs]: how long it was gone; [recentFaults]: outages in the last
- * minute. A flapping output gets nothing, or ten faults would walk the story ten clauses back.
+ * audio) - never after a tap, and only on the item that was interrupted. [music]: an entry played
+ * without resume (music); [goneMs]: how long it was gone; [recentFaults]: outages in the last minute.
+ * A flapping output gets nothing, or ten faults would walk the story ten clauses back.
  */
 fun resumeOverlapMs(music: Boolean, goneMs: Long, recentFaults: Int): Long = when {
     recentFaults > 1 && goneMs < 15_000 -> 0

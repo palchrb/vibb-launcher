@@ -14,7 +14,9 @@ import kotlinx.serialization.json.longOrNull
  * One entry's listing (design 21b §4.2): `GET /api/devices/music/entries/{id}/items`, oldest first,
  * pinned by server/testdata/music_listing.json (byte-identical in src/test/resources). The server
  * built it; the phone only checks what would be unsafe to use (21b QA #13): keys, and http(s) URLs.
- * A bad item is dropped, not the listing.
+ * A bad item is dropped, not the listing - but a listing without an `items` array, or one where
+ * fewer than half of the items parse, is refused: applied, it would prune copies that can't be
+ * fetched again (qa-21-step2-code M5, QA #3). The sync then reports `bad_listing` and keeps the old one.
  */
 
 private val ITEM_KEY = Regex("[A-Za-z0-9_-]{1,64}")
@@ -53,13 +55,14 @@ fun safeUrl(url: String?): String? {
 }
 
 object ListingParser {
-    /** The listing, or null when [text] isn't a `v: 1` listing. */
+    /** The listing, or null when [text] isn't a `v: 1` listing with (mostly) readable items. */
     fun parse(text: String): Listing? {
         val root = runCatching { JSON.parseToJsonElement(text) }.getOrNull() as? JsonObject ?: return null
         if (root["v"]?.jsonPrimitive?.intOrNull != 1) return null
         val entry = (root["entry"] as? JsonPrimitive)?.longOrNull ?: return null
         val version = (root["version"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
-        val items = (root["items"] as? JsonArray).orEmpty().mapNotNull { e ->
+        val raw = root["items"] as? JsonArray ?: return null
+        val items = raw.mapNotNull { e ->
             val d = runCatching { JSON.decodeFromJsonElement<ItemDto>(e) }.getOrNull() ?: return@mapNotNull null
             if (!ITEM_KEY.matches(d.key)) return@mapNotNull null
             ListingItem(
@@ -71,6 +74,7 @@ object ListingParser {
                 safeUrl(d.art),
             )
         }.distinctBy { it.key }
+        if (items.size * 2 < raw.size) return null
         return Listing(entry, version, items)
     }
 }

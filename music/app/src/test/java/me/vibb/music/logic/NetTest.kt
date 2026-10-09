@@ -7,7 +7,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import me.vibb.music.media.MediaCache
+import okhttp3.Dns
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.net.InetAddress
+import java.net.ServerSocket
 
 /** The network gate (design 13's, ported), HLS cache keys (QA #2) and the public-address guard (21b §2.7). */
 class NetTest {
@@ -37,16 +42,21 @@ class NetTest {
     }
 
     @Test
-    fun `HLS keys survive a re-resolved url (new token, new CDN host)`() {
+    fun `HLS keys survive a re-resolved url (new token, new CDN host), per item`() {
         val first = "https://cdn1.example.org/hls/ep1/master.m3u8?token=a"
         val again = "https://cdn2.example.org/od/x/ep1/master.m3u8?token=b"
         val key = itemCacheKey("abels_taarn", "l_123")
-        val k1 = hlsCacheKey(mapOf(urlDirectory(first)!! to key), "https://cdn1.example.org/hls/ep1/seg/00001.aac?token=a")
-        val k2 = hlsCacheKey(mapOf(urlDirectory(again)!! to key), "https://cdn2.example.org/od/x/ep1/seg/00001.aac?token=b")
+        val k1 = hlsResourceKey(key, first, "https://cdn1.example.org/hls/ep1/seg/00001.aac?token=a")
+        val k2 = hlsResourceKey(key, again, "https://cdn2.example.org/od/x/ep1/seg/00001.aac?token=b")
         assertEquals("hls:abels_taarn:l_123/seg/00001.aac", k1)
         assertEquals(k1, k2)
-        assertNull("another host's resource isn't the item's", hlsCacheKey(mapOf(urlDirectory(first)!! to key), "https://other.example/seg.aac"))
-        assertTrue(k1!!.startsWith(hlsKeyPrefix(key)))
+        assertEquals("the playlist itself", "hls:abels_taarn:l_123/master.m3u8", hlsResourceKey(key, first, first))
+        // A resource elsewhere is still the item's (deleted with it), keyed without its query.
+        val elsewhere = hlsResourceKey(key, first, "https://other.example/seg.aac?sig=1")
+        assertEquals("hls:abels_taarn:l_123/@other.example/seg.aac", elsewhere)
+        // Two items sharing a directory never share a key (qa-21-step2-code L6).
+        val other = itemCacheKey("abels_taarn", "l_124")
+        assertTrue(hlsResourceKey(key, first, first) != hlsResourceKey(other, first, first))
     }
 
     @Test
@@ -79,5 +89,50 @@ class NetTest {
         assertTrue(publicOnly(entry(1, Source.NRK).copy(lan = true)))
         assertTrue(publicOnly(entry(1, Source.RSS)))
         assertFalse(publicOnly(entry(1, Source.RSS).copy(lan = true)))
+    }
+
+    // The guard on the wire (21b §2.7): a name that resolves to a private address, and an IP literal.
+
+    private fun server(): ServerSocket = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).also { socket ->
+        Thread {
+            runCatching {
+                socket.accept().use { c ->
+                    c.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".toByteArray())
+                }
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun get(client: OkHttpClient, url: String): Result<String> =
+        runCatching { client.newCall(Request.Builder().url(url).build()).execute().use { it.body!!.string() } }
+
+    @Test
+    fun `a public entry's client refuses a name that resolves to a private address`() {
+        server().use { s ->
+            // "Public" to the server, 127.0.0.1 here.
+            val rebinding = object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> = listOf(InetAddress.getLoopbackAddress())
+            }
+            val client = MediaCache.guarded(OkHttpClient(), rebinding)
+            val failure = get(client, "http://feed.example:${s.localPort}/ep.mp3").exceptionOrNull()
+            assertTrue("$failure", failure is MediaCache.PrivateAddressException)
+            assertEquals("network", MediaCache.errorCode(failure!!))
+        }
+    }
+
+    @Test
+    fun `an IP literal never reaches the DNS - the connected address is checked`() {
+        server().use { s ->
+            val client = MediaCache.guarded(OkHttpClient(), Dns.SYSTEM)
+            val failure = get(client, "http://127.0.0.1:${s.localPort}/ep.mp3").exceptionOrNull()
+            assertTrue("$failure", failure is MediaCache.PrivateAddressException)
+        }
+    }
+
+    @Test
+    fun `a LAN entry's client may connect to the home network`() {
+        server().use { s ->
+            assertEquals("ok", get(OkHttpClient(), "http://127.0.0.1:${s.localPort}/ep.mp3").getOrThrow())
+        }
     }
 }

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "84da8d85815d7999cfd27f8d7d45d202",
+    "identityHash": "609809a6adf9b5678b8cb1c3b46bc584",
     "entities": [
       {
         "tableName": "listings",
@@ -218,7 +218,7 @@
       },
       {
         "tableName": "downloads",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`entryId` INTEGER NOT NULL, `itemKey` TEXT NOT NULL, `cacheKey` TEXT NOT NULL, `url` TEXT NOT NULL, `hls` INTEGER NOT NULL, `done` INTEGER NOT NULL, `bytes` INTEGER NOT NULL, `variant` INTEGER, `failedUrl` TEXT, PRIMARY KEY(`entryId`, `itemKey`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`entryId` INTEGER NOT NULL, `itemKey` TEXT NOT NULL, `cacheKey` TEXT NOT NULL, `url` TEXT NOT NULL, `hls` INTEGER NOT NULL, `done` INTEGER NOT NULL, `bytes` INTEGER NOT NULL, `variant` INTEGER, `failedUrl` TEXT, `failedCode` TEXT, `failedAt` INTEGER, `attempts` INTEGER NOT NULL, PRIMARY KEY(`entryId`, `itemKey`))",
         "fields": [
           {
             "fieldPath": "entryId",
@@ -271,6 +271,22 @@
             "fieldPath": "failedUrl",
             "columnName": "failedUrl",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "failedCode",
+            "columnName": "failedCode",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "failedAt",
+            "columnName": "failedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -283,7 +299,7 @@
       },
       {
         "tableName": "item_errors",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`entryId` INTEGER NOT NULL, `itemKey` TEXT NOT NULL, `version` TEXT NOT NULL, `error` TEXT NOT NULL, `sync` INTEGER NOT NULL, `at` INTEGER NOT NULL, PRIMARY KEY(`entryId`, `itemKey`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`entryId` INTEGER NOT NULL, `itemKey` TEXT NOT NULL, `version` TEXT NOT NULL, `error` TEXT NOT NULL, `at` INTEGER NOT NULL, PRIMARY KEY(`entryId`, `itemKey`))",
         "fields": [
           {
             "fieldPath": "entryId",
@@ -307,12 +323,6 @@
             "fieldPath": "error",
             "columnName": "error",
             "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "sync",
-            "columnName": "sync",
-            "affinity": "INTEGER",
             "notNull": true
           },
           {
@@ -416,7 +426,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '84da8d85815d7999cfd27f8d7d45d202')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '609809a6adf9b5678b8cb1c3b46bc584')"
     ]
   }
 }

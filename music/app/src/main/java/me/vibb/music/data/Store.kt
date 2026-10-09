@@ -1,10 +1,13 @@
 package me.vibb.music.data
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.model.Library
 import me.vibb.music.model.LibraryParser
@@ -30,10 +33,17 @@ class Store private constructor(context: Context) {
     val db: MusicDao = MusicDb.get(app).dao()
     private val prefs = app.getSharedPreferences("music", Context.MODE_PRIVATE)
 
-    private val libraryState = MutableStateFlow(loadLibrary())
+    /** The parsed library, read from its file on first use (never in the constructor, which may run
+     * on the main thread); null = none (the app is unmanaged or never fed: "Ingen bibliotek"). */
+    private val libraryState = MutableStateFlow<Library?>(null)
 
-    /** The parsed library; null = none yet (the app is unmanaged or never fed: "Ingen bibliotek"). */
-    val library: StateFlow<Library?> = libraryState
+    @Volatile private var loaded = false
+
+    /** The library now (parsed on first use - call off the main thread). */
+    fun library(): Library? {
+        if (!loaded) reloadLibrary()
+        return libraryState.value
+    }
 
     var mobileData: Boolean
         get() = prefs.getBoolean("mobile_data", false)
@@ -42,7 +52,10 @@ class Store private constructor(context: Context) {
     private fun loadLibrary(): Library? = runCatching { libraryFile.readText() }.getOrNull()?.let(LibraryParser::parse)
 
     /** Re-read the library file (after the bridge or the debug feed wrote it). */
-    fun reloadLibrary(): Library? = loadLibrary().also { libraryState.value = it }
+    fun reloadLibrary(): Library? = loadLibrary().also {
+        libraryState.value = it
+        loaded = true
+    }
 
     fun coverFile(hash: String): File = File(coversDir, hash)
 
@@ -51,16 +64,19 @@ class Store private constructor(context: Context) {
     /** Own files with a copy on the phone. */
     fun ownCopies(): Set<Long> = ownDir.listFiles().orEmpty().mapNotNull { it.name.toLongOrNull() }.toSet()
 
-    /** Everything the screens and the player read, live. */
+    /** Everything the screens and the player read, live, built off the main thread. */
     fun snapshots(): Flow<Snapshot> = combine(
-        libraryState,
+        flow {
+            library()
+            emitAll(libraryState)
+        },
         combine(db.allItemsFlow(), db.downloadsFlow(), db.listingsFlow()) { items, downloads, listings -> Triple(items, downloads, listings) },
         combine(db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(), db.shuffleFlow()) { p, b, n, s -> Rows(p, b, n, s) },
-    ) { lib, (items, downloads, listings), rows -> snapshot(lib, items, downloads, listings, rows) }
+    ) { lib, (items, downloads, listings), rows -> snapshot(lib, items, downloads, listings, rows) }.flowOn(Dispatchers.Default)
 
     /** The same, once. */
     suspend fun snapshot(): Snapshot =
-        snapshot(library.value, db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle()))
+        snapshot(library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle()))
 
     private data class Rows(val positions: List<PositionRow>, val bookmarks: List<BookmarkRow>, val news: List<NewsRow>, val shuffle: List<ShuffleRow>)
 
@@ -77,10 +93,10 @@ class Store private constructor(context: Context) {
             instance ?: Store(context).also { instance = it }
         }
 
-        /** Write [bytes] to [file] atomically (a temp file renamed over it). */
+        /** Write [bytes] to [file] atomically (a temp file of its own, renamed over it). */
         fun writeAtomic(file: File, bytes: ByteArray) {
             file.parentFile?.mkdirs()
-            val tmp = File(file.parentFile, ".${file.name}.tmp")
+            val tmp = File.createTempFile(".${file.name}.", ".tmp", file.parentFile)
             tmp.writeBytes(bytes)
             if (!tmp.renameTo(file)) {
                 tmp.delete()

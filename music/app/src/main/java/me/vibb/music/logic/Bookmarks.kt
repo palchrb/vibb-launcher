@@ -45,3 +45,21 @@ fun rotateToBookmark(queue: List<String>, bookmark: Bookmark?): Pair<List<String
     if (idx < 0) return queue to 0L
     return (queue.subList(idx, queue.size) + queue.subList(0, idx)) to seekGate(bookmark!!.posMs)
 }
+
+/** What one save stores (`save_state`): the item's position, and the entry's bookmark on that item. */
+data class Save(val position: ItemPosition, val bookmark: Bookmark)
+
+fun save(itemKey: String, posMs: Long, durationMs: Long?): Save = Save(recordPosition(posMs, durationMs), Bookmark(itemKey, posMs))
+
+/**
+ * An item that played to its end by itself: its done mark, from the best duration known (the
+ * player's, else the listing's); null when neither is known (a live stream).
+ */
+fun finished(playerDurationMs: Long?, listedDurationMs: Long?): ItemPosition? =
+    (playerDurationMs?.takeIf { it > 0 } ?: listedDurationMs?.takeIf { it > 0 })?.let { recordPosition(it, it) }
+
+/**
+ * `clear_state` at a queue's natural end: the bookmark goes, and with it every partial position;
+ * the done marks stay (a second run through a finished series starts each episode fresh).
+ */
+fun clearState(positions: Map<String, ItemPosition>): Map<String, ItemPosition> = positions.filterValues { it.done }

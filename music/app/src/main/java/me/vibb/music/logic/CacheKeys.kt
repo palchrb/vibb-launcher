@@ -34,13 +34,16 @@ private fun withoutQuery(url: String): String? {
 }
 
 /**
- * The key of [resourceUrl] when it belongs to one of [roots] (playlist directory ->
- * item cache key, the longest matching directory wins); null when it belongs to none.
+ * The key of one HLS resource of the item with [itemCacheKey], whose playlist is [playlistUrl]: its
+ * path relative to the playlist's directory, else its host and path ("@host/path"), never the
+ * query - under [hlsKeyPrefix], so deleting the item finds every resource. One key factory per item
+ * (qa-21-step2-code S3), no shared map.
  */
-fun hlsCacheKey(roots: Map<String, String>, resourceUrl: String): String? {
-    val plain = withoutQuery(resourceUrl) ?: return null
-    val root = roots.keys.filter { plain.startsWith(it) }.maxByOrNull { it.length } ?: return null
-    return hlsKeyPrefix(roots.getValue(root)) + plain.removePrefix(root)
+fun hlsResourceKey(itemCacheKey: String, playlistUrl: String, resourceUrl: String): String {
+    val plain = withoutQuery(resourceUrl) ?: resourceUrl.substringBefore('?')
+    val dir = urlDirectory(playlistUrl)
+    val rel = if (dir != null && plain.startsWith(dir)) plain.removePrefix(dir) else "@" + plain.substringAfter("://")
+    return hlsKeyPrefix(itemCacheKey) + rel
 }
 
 /** The HLS rendition a download fetches: the highest bitrate up to this, else the lowest. */

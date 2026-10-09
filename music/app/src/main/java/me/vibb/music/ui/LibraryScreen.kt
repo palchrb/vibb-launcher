@@ -61,8 +61,8 @@ import me.vibb.music.logic.Kind
 import me.vibb.music.logic.carouselIndex
 import me.vibb.music.logic.carouselPageCount
 import me.vibb.music.logic.carouselStartPage
-import me.vibb.music.logic.coverTapIndex
-import me.vibb.music.logic.neighbourTapTarget
+import me.vibb.music.logic.CarouselTap
+import me.vibb.music.logic.carouselTap
 import me.vibb.music.model.Category
 import kotlin.math.abs
 import kotlin.math.sign
@@ -93,6 +93,8 @@ fun LibraryScreen(
     tiles: List<Category>,
     selected: Long?,
     startIndex: Int,
+    /** Changes when the carousel is turned from outside, so it re-centres on [startIndex]. */
+    jumps: Int,
     newsCount: Int,
     now: NowView?,
     onBack: () -> Unit,
@@ -128,7 +130,7 @@ fun LibraryScreen(
         if (entries.isEmpty()) {
             Line(stringResource(R.string.no_library), 15, 700, Palette.dim, Modifier.fillMaxWidth(), maxLines = 2, center = true)
         } else {
-            key(selected, entries.size) {
+            key(selected, entries.size, jumps) {
                 Carousel(entries, startIndex.coerceIn(entries.indices), onIndex, onPlay)
             }
         }
@@ -190,12 +192,11 @@ private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> 
                     }
                     .shadow(if (page == pager.currentPage) 12.dp else 0.dp, RoundedCornerShape(24.dp))
                     .button(label) {
-                        val target = pager.targetPage
-                        if (page == target || page == pager.currentPage) {
-                            onPlay(entries[coverTapIndex(target, n)])
-                        } else {
-                            val to = neighbourTapTarget(target, (page - target).coerceIn(-1, 1), pager.pageCount)
-                            scope.launch { if (animationsOn()) pager.animateScrollToPage(to, animationSpec = snap) else pager.scrollToPage(to) }
+                        when (val tap = carouselTap(page, pager.targetPage, pager.currentPage, n, pager.pageCount)) {
+                            is CarouselTap.Play -> onPlay(entries[tap.index])
+                            is CarouselTap.TurnTo -> scope.launch {
+                                if (animationsOn()) pager.animateScrollToPage(tap.page, animationSpec = snap) else pager.scrollToPage(tap.page)
+                            }
                         }
                     },
             ) {
@@ -205,7 +206,9 @@ private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> 
     }
     val index = carouselIndex(pager.targetPage, n)
     val current = entries[index]
-    Crossfade(current, animationSpec = tween(if (animationsOn()) 200 else 0), label = "title") { e ->
+    // Keyed on the entry, so a position save (the progress line) doesn't fade the title (L13).
+    Crossfade(current.entry.id, animationSpec = tween(if (animationsOn()) 200 else 0), label = "title") { id ->
+        val e = entries.firstOrNull { it.entry.id == id } ?: current
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Line(e.entry.name, 21, 800, Palette.white)
             Line(hintText(e.hint), 13, 700, Palette.sub)

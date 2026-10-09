@@ -3,6 +3,7 @@ package me.vibb.music.sync
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
@@ -14,7 +15,8 @@ import me.vibb.music.ui.MainActivity
  * The one "N nye i Musikk" notification (design 21 §4.5): while the Nytt tray holds N playable
  * items, LOW, silent, clearable, not ongoing, `setNumber(N)` (what the launcher's badge counts);
  * a tap opens Nytt; cancelled when the tray empties. A swipe only hides it: it comes back when the
- * count changes.
+ * count changes. Whether it shows is read from the system (so a reboot or a late notification
+ * permission posts it again), and a swipe is recorded by its delete intent (qa-21-step2-code L5).
  */
 object NewNotifier {
     const val CHANNEL = "news"
@@ -41,10 +43,12 @@ object NewNotifier {
         val nm = context.getSystemService(NotificationManager::class.java)
         if (n == 0) {
             nm.cancel(ID)
-            prefs.edit().putInt("news_posted", 0).apply()
+            prefs.edit().remove(SWIPED).apply()
             return
         }
-        if (prefs.getInt("news_posted", 0) == n) return
+        val showing = nm.activeNotifications.firstOrNull { it.id == ID }
+        if (showing != null && showing.notification.number == n) return
+        if (showing == null && prefs.getInt(SWIPED, -1) == n) return
         val open = PendingIntent.getActivity(
             context, 0,
             Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN, MainActivity.OPEN_NEWS)
@@ -52,6 +56,11 @@ object NewNotifier {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val text = context.resources.getQuantityString(R.plurals.news_notification, n, n)
+        val swiped = PendingIntent.getBroadcast(
+            context, 0,
+            Intent(context, Dismissed::class.java).putExtra(SWIPED, n),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.music_glyph_music_note)
             .setContentTitle(text)
@@ -60,8 +69,18 @@ object NewNotifier {
             .setOngoing(false)
             .setAutoCancel(false)
             .setContentIntent(open)
+            .setDeleteIntent(swiped)
             .build()
         runCatching { nm.notify(ID, notification) } // without POST_NOTIFICATIONS it isn't shown
-        prefs.edit().putInt("news_posted", n).apply()
+        prefs.edit().remove(SWIPED).apply()
+    }
+
+    private const val SWIPED = "news_swiped"
+
+    /** The kid swiped the notification away at this count: it stays hidden until the count changes. */
+    class Dismissed : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            context.getSharedPreferences("music", Context.MODE_PRIVATE).edit().putInt(SWIPED, intent.getIntExtra(SWIPED, -1)).apply()
+        }
     }
 }

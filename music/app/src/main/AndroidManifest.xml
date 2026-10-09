@@ -32,6 +32,10 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".sync.NewNotifier$Dismissed"
+            android:exported="false" />
+
         <service
             android:name=".playback.PlaybackService"
             android:exported="true"
@@ -41,8 +45,9 @@
             </intent-filter>
         </service>
 
+        <!-- Media3's receiver, but a press with nothing to resume never starts the service (M2). -->
         <receiver
-            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:name=".playback.KidMediaButtonReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />

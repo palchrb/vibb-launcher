@@ -79,6 +79,9 @@ class MainActivity : ComponentActivity() {
     private fun command(action: String, args: Bundle = Bundle.EMPTY) =
         withController { it.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), args) }
 
+    private fun restoreThen(then: String, positionMs: Long = 0) =
+        command(Commands.RESTORE, bundleOf(Commands.ARG_THEN to then, Commands.ARG_POSITION to positionMs))
+
     private val actions = object : Actions {
         override fun playEntry(entryId: Long) = command(Commands.PLAY_ENTRY, bundleOf(Commands.ARG_ENTRY to entryId))
         override fun playItem(entryId: Long, key: String) = command(Commands.PLAY_ITEM, bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_KEY to key))
@@ -90,10 +93,11 @@ class MainActivity : ComponentActivity() {
                 else -> withController { it.play() }
             }
         }
-        override fun next() = withController { if (PlayerHub.state.value.live) it.seekToNext() }
-        override fun previous() = withController { if (PlayerHub.state.value.live) it.seekToPrevious() }
-        override fun seekTo(ms: Long) = withController { if (PlayerHub.state.value.live) it.seekTo(ms) }
-        override fun toggleShuffle() = command(Commands.SHUFFLE)
+        // Before play after a restart the queue isn't loaded: these load it paused first (M6).
+        override fun next() = if (PlayerHub.state.value.live) withController { it.seekToNext() } else restoreThen(Commands.THEN_NEXT)
+        override fun previous() = if (PlayerHub.state.value.live) withController { it.seekToPrevious() } else restoreThen(Commands.THEN_PREVIOUS)
+        override fun seekTo(ms: Long) = if (PlayerHub.state.value.live) withController { it.seekTo(ms) } else restoreThen(Commands.THEN_SEEK, ms)
+        override fun toggleShuffle() = if (PlayerHub.state.value.live) command(Commands.SHUFFLE) else restoreThen(Commands.THEN_SHUFFLE)
         override fun sleep(minutes: Int) = command(Commands.SLEEP, bundleOf(Commands.ARG_MINUTES to minutes))
         override fun output(id: Int) = command(Commands.OUTPUT, bundleOf(Commands.ARG_OUTPUT to id))
         override fun backHome() = finish()

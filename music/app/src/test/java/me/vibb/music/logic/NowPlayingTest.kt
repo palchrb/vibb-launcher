@@ -17,9 +17,10 @@ import org.junit.Test
  * Ports of palchrb/vibb `tests/now_playing.py`, `resume_overlap.py` and `session_window.py` (MIT,
  * Copyright (c) 2026 palchrb), as far as they concern the phone:
  * - now_playing: the title comes from our own item (never a url or file name), a track change shows
- *   the new item at once, a stale publish for another entry is ignored, the position holds at the
- *   resume target until the seek lands (cases 8-11), and a tap shows "playing" at once (12). The
- *   Spotify cases (6, 7) come with phase 3.
+ *   the new item at once, a stale publish for another entry is ignored, and a tap shows "playing" at
+ *   once (12). Cases 8-11 (hold the position at the resume target until mpv's seek lands) need no
+ *   code: ExoPlayer reports the seek target at once. The Spotify cases (6, 7) come with phase 3, and
+ *   12's time bound on "playing" isn't ported (Media3 reports buffering itself).
  * - resume_overlap case 4: speech gets a clause, music a beat, a long outage a run-up, a flapping
  *   output nothing; the Pi-specific argv and mpv plumbing (1-3, 5-7) have no counterpart.
  * - session_window: the phone has no window (design 20: always continue after a restart, paused),
@@ -48,29 +49,6 @@ class NowPlayingTest {
     }
 
     @Test
-    fun `8 while seeking to the resume target the position holds there`() {
-        for (live in listOf(0L, 1_000L, 42_000L)) assertEquals(90_000L, settledPosition(live, 90_000, 1_000, false))
-    }
-
-    @Test
-    fun `9 it follows the player once the seek lands`() {
-        assertEquals(90_000L, settledPosition(90_000, 90_000, 2_000, false))
-        assertEquals(93_000L, settledPosition(93_000, 90_000, 5_000, false))
-    }
-
-    @Test
-    fun `10 a fresh start never holds`() {
-        assertEquals(2_000L, settledPosition(2_000, 0, 500, false))
-        assertEquals(2_000L, settledPosition(2_000, RESUME_MIN_MS, 500, false))
-    }
-
-    @Test
-    fun `11 the hold is bounded, and a seek by the kid wins`() {
-        assertEquals(3_000L, settledPosition(3_000, 90_000, POSITION_SETTLE_MAX_MS + 1, false))
-        assertEquals(3_000L, settledPosition(3_000, 90_000, 1_000, true))
-    }
-
-    @Test
     fun `12 a tap shows playing at once, a pause wins, the end is not playing`() {
         assertTrue(showsPlaying(playWhenReady = true, ended = false))
         assertFalse(showsPlaying(playWhenReady = false, ended = false))
@@ -80,7 +58,7 @@ class NowPlayingTest {
     // resume_overlap.py case 4
 
     @Test
-    fun `the overlap - a clause, a beat, a run-up, and nothing when flapping`() {
+    fun `the overlap - a clause, a beat for music (resume off), a run-up, and nothing when flapping`() {
         assertEquals(RESUME_OVERLAP_SPEECH_MS, resumeOverlapMs(music = false, goneMs = 5_000, recentFaults = 1))
         assertEquals(RESUME_OVERLAP_MUSIC_MS, resumeOverlapMs(music = true, goneMs = 5_000, recentFaults = 1))
         assertEquals(RESUME_OVERLAP_LONG_MS, resumeOverlapMs(music = false, goneMs = 600_000, recentFaults = 1))

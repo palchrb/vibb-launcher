@@ -63,13 +63,11 @@ class ReportTest {
     }
 
     @Test
-    fun `once per item per sync, the latest per item otherwise, at most 50`() {
-        var log = addItemError(emptyList(), ItemError(1, "v1", "a", "http_404", sync = 1))
-        log = addItemError(log, ItemError(1, "v1", "a", "network", sync = 1))
-        assertEquals(listOf("http_404"), log.map { it.error })
-        log = addItemError(log, ItemError(1, "v2", "a", "http_410", sync = 2))
+    fun `one row per item, the latest, at most 50`() {
+        var log = addItemError(emptyList(), ItemError(1, "v1", "a", "http_404"))
+        log = addItemError(log, ItemError(1, "v2", "a", "http_410"))
         assertEquals(listOf("http_410"), log.map { it.error })
-        for (i in 0 until 60) log = addItemError(log, ItemError(2, "v", "i$i", "network", sync = 2))
+        for (i in 0 until 60) log = addItemError(log, ItemError(2, "v", "i$i", "network"))
         assertEquals(ITEM_ERRORS_MAX, log.size)
         assertEquals("i59", log.last().item)
     }
@@ -79,7 +77,7 @@ class ReportTest {
         val report = stateReport(
             versionCode = 7, libraryVersion = "aa485b7dd0d2a390", cacheBytes = 1234,
             entryErrors = listOf(EntryError(3, "bad_listing")),
-            itemErrors = listOf(ItemError(2, "0123456789abcdef", "k1", "http_404", 1)),
+            itemErrors = listOf(ItemError(2, "0123456789abcdef", "k1", "http_404")),
             downloads = listOf(DownloadState(2, "0123456789abcdef", 1, 3, Waiting.WIFI), DownloadState(1, "v", 2, 2, null)),
         )
         assertEquals(

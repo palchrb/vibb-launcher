@@ -15,7 +15,7 @@ import java.io.File
 
 /*
  * Debug build only (src/debug; never in a release APK: `checkReleaseHasNoDebugFeed` and
- * DebugFeedAbsentTest). Design 21 §6 step 2: until step 3's bridge, the app is fed by hand. Push a
+ * SourceScanTest). Design 21 §6 step 2: until step 3's bridge, the app is fed by hand. Push a
  * feed into the app's external files dir and broadcast to this receiver (guarded by DUMP, which
  * the shell holds and apps don't):
  *
@@ -58,7 +58,7 @@ class DebugFeedReceiver : BroadcastReceiver() {
             val ok = Inbox.putLibrary(store, libraryFile.readText())
             Log.i(TAG, "library: ${if (ok) "loaded" else "refused (not a v1 library)"}")
         }
-        val library = store.library.value ?: run {
+        val library = store.library() ?: run {
             Log.w(TAG, "no library yet")
             return
         }

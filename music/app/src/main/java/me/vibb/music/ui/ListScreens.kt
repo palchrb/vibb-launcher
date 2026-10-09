@@ -110,7 +110,7 @@ private fun ListRowView(row: ListRow, onPick: (PlayItem) -> Unit) {
 /** One row of Nytt. */
 data class NewsRowUi(val entry: Entry, val category: Category?, val item: PlayItem, val kind: Kind)
 
-/** "Nytt" (`onNews`): the new items, "Fjern alle", a tap plays and removes. */
+/** "Nytt" (`onNews`): the new items (a mini cover and three lines, as the mockup), "Fjern alle", a tap plays and removes. */
 @Composable
 fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, onPick: (NewsRowUi) -> Unit) {
     Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -135,9 +135,6 @@ fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, o
                             Line(stringResource(if (row.kind == Kind.OWN) R.string.new_track else R.string.new_episode), 12, 800, Palette.peach)
                             Line(row.item.title, 15, 800, Palette.white)
                             Line(row.entry.name, 12, 700, Palette.sub)
-                        }
-                        Box(Modifier.size(36.dp).clip(CircleShape).background(Palette.peach), contentAlignment = Alignment.Center) {
-                            Glyph(Icons.play, 16.dp, Palette.bg)
                         }
                     }
                 }

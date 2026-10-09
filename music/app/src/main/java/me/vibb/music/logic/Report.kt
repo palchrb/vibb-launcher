@@ -15,8 +15,8 @@ const val ITEM_ERRORS_MAX = 50
 const val ENTRY_ERRORS_MAX = 50
 const val DOWNLOADS_MAX = 200
 
-/** A failed download or stream of a listed url (21b §4.3). [sync]: the sync run it happened in. */
-data class ItemError(val entry: Long, val version: String, val item: String, val error: String, val sync: Long)
+/** A failed download or stream of a listed url (21b §4.3). */
+data class ItemError(val entry: Long, val version: String, val item: String, val error: String)
 
 /** The app's own trouble with an entry (`bad_listing`). */
 data class EntryError(val entry: Long, val error: String)
@@ -31,12 +31,9 @@ fun itemErrorCode(httpStatus: Int?, badMedia: Boolean): String = when {
     else -> "network"
 }
 
-/** [log] with [error]: at most once per item per sync (the first one stands), the latest per
- * item otherwise, and at most [ITEM_ERRORS_MAX] (the newest kept). */
-fun addItemError(log: List<ItemError>, error: ItemError): List<ItemError> {
-    if (log.any { it.entry == error.entry && it.item == error.item && it.sync == error.sync }) return log
-    return (log.filterNot { it.entry == error.entry && it.item == error.item } + error).takeLast(ITEM_ERRORS_MAX)
-}
+/** [log] (oldest first) with [error]: one row per item, the latest, and at most [ITEM_ERRORS_MAX] (the newest kept). */
+fun addItemError(log: List<ItemError>, error: ItemError): List<ItemError> =
+    (log.filterNot { it.entry == error.entry && it.item == error.item } + error).takeLast(ITEM_ERRORS_MAX)
 
 /** The report, in `music_state`'s field names. */
 fun stateReport(

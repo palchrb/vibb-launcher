@@ -15,6 +15,8 @@ import kotlinx.coroutines.launch
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
+import me.vibb.music.logic.effectiveCategory
+import me.vibb.music.logic.shownEntries
 import me.vibb.music.logic.tapCategory
 import me.vibb.music.sync.NewNotifier
 
@@ -26,8 +28,8 @@ enum class SheetKind { SLEEP, OUTPUT }
 class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val store = Store.get(app)
 
-    val snapshot: StateFlow<Snapshot?> = store.snapshots().stateIn(viewModelScope, SharingStarted.Eagerly, null)
-    val nowRow: StateFlow<NowPlayingRow?> = store.db.nowPlayingFlow().stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val snapshot: StateFlow<Snapshot?> = store.snapshots().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val nowRow: StateFlow<NowPlayingRow?> = store.db.nowPlayingFlow().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     var screen by mutableStateOf(Screen.LIBRARY)
     var sheet by mutableStateOf<SheetKind?>(null)
@@ -36,12 +38,33 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The centred cover, as an index into the shown entries. */
     var carouselIndex by mutableIntStateOf(0)
+
+    /** Moves when the carousel is turned from outside (back from the player), so it re-centres. */
+    var carouselJumps by mutableIntStateOf(0)
+        private set
     var query by mutableStateOf("")
 
     /** A category tile: single choice, a re-tap or Alle shows all; the carousel starts at index 0. */
     fun pickCategory(tapped: Long?) {
         category = tapCategory(category, tapped)
         carouselIndex = 0
+    }
+
+    /**
+     * Back from the player: the library shows the playing entry, in its category when the one
+     * chosen doesn't hold it (vibb's cat_carousel case 6).
+     */
+    fun backToLibrary(snap: Snapshot?, entryId: Long?) {
+        screen = Screen.LIBRARY
+        val entries = snap?.entries ?: return
+        val entry = entries.firstOrNull { it.id == entryId } ?: return
+        var shown = shownEntries(entries, effectiveCategory(entries, category))
+        if (entry !in shown) {
+            category = entry.category?.takeIf { c -> entries.any { it.category == c } }
+            shown = shownEntries(entries, effectiveCategory(entries, category))
+        }
+        carouselIndex = shown.indexOf(entry).coerceAtLeast(0)
+        carouselJumps++
     }
 
     fun openSearch() {

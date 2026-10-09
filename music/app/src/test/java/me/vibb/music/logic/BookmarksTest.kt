@@ -25,18 +25,18 @@ class BookmarksTest {
     }
 
     @Test
-    fun `2 a stream and its downloaded copy share one position (keyed by the item)`() {
-        // Positions are keyed by (entry key, item key), never by url: the copy finds the stream's place.
-        val streamed = mapOf("ida" to recordPosition(300_000, duration))
-        val playingFromCopy = "ida"
-        assertEquals(300_000L, resumeFrom(streamed[playingFromCopy]))
+    fun `2 a stream and its downloaded copy share one position (keyed by the item, never the url)`() {
+        // What the player stores names the item key only: the copy of "ida" finds the stream's place.
+        val streamed = save("ida", 300_000, duration)
+        assertEquals(Bookmark("ida", 300_000), streamed.bookmark)
+        assertEquals(300_000L, resumeFrom(mapOf("ida" to streamed.position)["ida"]))
     }
 
     @Test
-    fun `3 the entry's bookmark follows the item played last`() {
-        var bookmark: Bookmark? = null
-        for ((key, pos) in listOf("ida" to 300_000L, "idb" to 120_000L)) bookmark = Bookmark(key, pos)
-        assertEquals(Bookmark("idb", 120_000), bookmark)
+    fun `3 the entry's bookmark follows the item saved last`() {
+        val saves = listOf(save("ida", 300_000, duration), save("idb", 120_000, duration))
+        assertEquals(Bookmark("idb", 120_000), saves.last().bookmark)
+        assertEquals("each keeps its own position", listOf(300_000L, 120_000L), saves.map { resumeFrom(it.position) })
     }
 
     @Test
@@ -73,5 +73,20 @@ class BookmarksTest {
     fun `the seek gate starts the first 20 s at 0`() {
         assertEquals(0L, seekGate(RESUME_MIN_MS))
         assertEquals(RESUME_MIN_MS + 1, seekGate(RESUME_MIN_MS + 1))
+    }
+
+    @Test
+    fun `an item that ends by itself is done, from the player's duration when the listing has none`() {
+        assertEquals(ItemPosition(600_000, true), finished(600_000, null))
+        assertEquals(ItemPosition(600_000, true), finished(null, 600_000))
+        assertEquals("the player's wins", ItemPosition(601_000, true), finished(601_000, 600_000))
+        assertNull("a live stream has no end", finished(null, null))
+        assertNull(finished(0, null))
+    }
+
+    @Test
+    fun `clear_state at a queue's end keeps only the done marks`() {
+        val positions = mapOf("a" to ItemPosition(600_000, true), "b" to ItemPosition(300_000, false), "c" to ItemPosition(0, false))
+        assertEquals(mapOf("a" to ItemPosition(600_000, true)), clearState(positions))
     }
 }

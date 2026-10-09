@@ -22,6 +22,7 @@
     <string name="hint_track">%1$s · track %2$d of %3$d</string>
     <string name="hint_continues">%1$s · continues where you left off</string>
     <string name="hint_from_start">%1$s · starts from the beginning</string>
+    <string name="cant_play">Can\'t play right now</string>
     <string name="not_downloaded">Not downloaded - needs Wi-Fi</string>
 
     <!-- Player -->

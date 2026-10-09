@@ -1,6 +1,7 @@
 package me.vibb.music.ui
 
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -46,7 +47,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +62,7 @@ import kotlinx.coroutines.withContext
 import me.vibb.music.data.Store
 import me.vibb.music.logic.formatDuration
 import me.vibb.music.model.Category
+import kotlin.math.abs
 
 /** A tinted icon. */
 @Composable
@@ -144,27 +149,45 @@ fun Cover(hash: String?, category: Category?, radius: Dp, glyph: Dp, modifier: M
 
 /**
  * The seek line (design 20: a thin 4 dp line, a 26 dp thumb, 44 dp to touch): the times follow
- * the finger, the seek happens on release.
+ * the finger, the seek happens on release, and the thumb stays where it was let go until the player
+ * gets there (or a second passes). TalkBack sees a slider.
  */
 @Composable
 fun SeekBar(positionMs: Long, durationMs: Long?, label: String, onSeek: (Long) -> Unit) {
     var dragFrac by remember { mutableStateOf<Float?>(null) }
+    var released by remember { mutableStateOf<Pair<Long, Long>?>(null) } // (target ms, when)
     val duration = durationMs?.takeIf { it > 0 }
-    val frac = dragFrac ?: if (duration != null) (positionMs.toFloat() / duration).coerceIn(0f, 1f) else 0f
+    val held = released?.takeIf { (target, at) -> abs(positionMs - target) > 1_000 && SystemClock.elapsedRealtime() - at < 1_000 }?.first
+    val shownMs = held ?: positionMs
+    val frac = dragFrac ?: if (duration != null) (shownMs.toFloat() / duration).coerceIn(0f, 1f) else 0f
+    val seek = { ms: Long ->
+        released = ms to SystemClock.elapsedRealtime()
+        onSeek(ms)
+    }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         BoxWithConstraints(
-            Modifier.fillMaxWidth().height(44.dp).semantics { contentDescription = label }
+            Modifier.fillMaxWidth().height(44.dp)
+                .semantics {
+                    contentDescription = label
+                    progressBarRangeInfo = ProgressBarRangeInfo(frac, 0f..1f)
+                    if (duration != null) {
+                        setProgress { f ->
+                            seek((f.coerceIn(0f, 1f) * duration).toLong())
+                            true
+                        }
+                    }
+                }
                 .pointerInput(duration) {
                     if (duration == null) return@pointerInput
                     detectHorizontalDragGestures(
                         onDragStart = { dragFrac = (it.x / size.width).coerceIn(0f, 1f) },
-                        onDragEnd = { dragFrac?.let { f -> onSeek((f * duration).toLong()) }; dragFrac = null },
+                        onDragEnd = { dragFrac?.let { f -> seek((f * duration).toLong()) }; dragFrac = null },
                         onDragCancel = { dragFrac = null },
                     ) { change, _ -> dragFrac = (change.position.x / size.width).coerceIn(0f, 1f) }
                 }
                 .pointerInput(duration) {
                     if (duration == null) return@pointerInput
-                    detectTapGestures { onSeek(((it.x / size.width).coerceIn(0f, 1f) * duration).toLong()) }
+                    detectTapGestures { seek(((it.x / size.width).coerceIn(0f, 1f) * duration).toLong()) }
                 },
         ) {
             val width = maxWidth

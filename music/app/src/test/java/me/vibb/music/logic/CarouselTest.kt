@@ -50,6 +50,19 @@ class CarouselTest {
         assertEquals(1, coverTapIndex(start + 1, n))
     }
 
+    @Test
+    fun `a tap - the landing or sliding-in cover plays the landed entry, a neighbour turns from the target`() {
+        val count = carouselPageCount(n)
+        val start = carouselStartPage(n, 0)
+        assertEquals(CarouselTap.Play(0), carouselTap(start, start, start, n, count))
+        // Sliding from start to start+1: a tap on the cover still on screen plays where it lands.
+        assertEquals(CarouselTap.Play(1), carouselTap(start, start + 1, start, n, count))
+        assertEquals(CarouselTap.Play(1), carouselTap(start + 1, start + 1, start, n, count))
+        // A tap on the right neighbour mid-slide turns one more, from the target.
+        assertEquals(CarouselTap.TurnTo(start + 2), carouselTap(start + 2, start + 1, start, n, count))
+        assertEquals(CarouselTap.TurnTo(start), carouselTap(start - 1, start + 1, start + 1, n, count))
+    }
+
     // cat_carousel.py
 
     private val music = Category(1, "Musikk", "music_note", "rose", 10)

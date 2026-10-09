@@ -92,6 +92,27 @@ fun neighbourTapTarget(targetPage: Int, direction: Int, pageCount: Int): Int =
 /** A cover tap plays the entry the carousel lands on, never the departing one. */
 fun coverTapIndex(targetPage: Int, n: Int): Int = carouselIndex(targetPage, n)
 
+/** What a tap on carousel page [page] does. */
+sealed interface CarouselTap {
+    /** Play the entry at this index. */
+    data class Play(val index: Int) : CarouselTap
+
+    /** Turn to this page. */
+    data class TurnTo(val page: Int) : CarouselTap
+}
+
+/**
+ * A tap on [page]: the cover the carousel is landing on ([targetPage]) or the one on screen
+ * ([currentPage], a cover still sliding in) plays the landed entry; a neighbour turns one page
+ * from the target.
+ */
+fun carouselTap(page: Int, targetPage: Int, currentPage: Int, n: Int, pageCount: Int): CarouselTap =
+    if (page == targetPage || page == currentPage) {
+        CarouselTap.Play(coverTapIndex(targetPage, n))
+    } else {
+        CarouselTap.TurnTo(neighbourTapTarget(targetPage, (page - targetPage).coerceIn(-1, 1), pageCount))
+    }
+
 /** One search hit. */
 sealed interface SearchHit {
     val entry: Entry

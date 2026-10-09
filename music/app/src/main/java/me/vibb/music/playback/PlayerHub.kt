@@ -12,6 +12,7 @@ object Commands {
     const val PLAY_ENTRY = "me.vibb.music.PLAY_ENTRY"
     const val PLAY_ITEM = "me.vibb.music.PLAY_ITEM"
     const val RESUME = "me.vibb.music.RESUME"
+    const val RESTORE = "me.vibb.music.RESTORE"
     const val SHUFFLE = "me.vibb.music.SHUFFLE"
     const val SLEEP = "me.vibb.music.SLEEP"
     const val OUTPUT = "me.vibb.music.OUTPUT"
@@ -21,7 +22,16 @@ object Commands {
     const val ARG_MINUTES = "minutes"
     const val ARG_OUTPUT = "output"
 
-    val ALL: List<SessionCommand> = listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, SHUFFLE, SLEEP, OUTPUT).map { SessionCommand(it, Bundle.EMPTY) }
+    /** [RESTORE]: the stored queue loaded paused, then this (one of the THEN_ values) - so the
+     * player's controls work before play after a restart (qa-21-step2-code M6). */
+    const val ARG_THEN = "then"
+    const val ARG_POSITION = "position"
+    const val THEN_NEXT = "next"
+    const val THEN_PREVIOUS = "previous"
+    const val THEN_SEEK = "seek"
+    const val THEN_SHUFFLE = "shuffle"
+
+    val ALL: List<SessionCommand> = listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT).map { SessionCommand(it, Bundle.EMPTY) }
 }
 
 enum class OutputKind { PHONE, BLUETOOTH, WIRED }
@@ -58,7 +68,8 @@ object PlayerHub {
         val output: Output = Output.PHONE,
     )
 
-    enum class Message { NOT_DOWNLOADED }
+    /** NOT_DOWNLOADED: not on the phone and no network to stream it; CANT_PLAY: it failed anyway. */
+    enum class Message { NOT_DOWNLOADED, CANT_PLAY }
 
     internal val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState

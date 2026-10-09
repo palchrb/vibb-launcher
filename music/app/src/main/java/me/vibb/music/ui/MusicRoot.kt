@@ -21,7 +21,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import me.vibb.music.R
 import me.vibb.music.data.Snapshot
@@ -42,22 +45,24 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
     val snap by vm.snapshot.collectAsStateWithLifecycle()
     val hub by PlayerHub.state.collectAsStateWithLifecycle()
     val row by vm.nowRow.collectAsStateWithLifecycle()
-    var message by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<PlayerHub.Message?>(null) }
     LaunchedEffect(Unit) {
         PlayerHub.messages.collect {
-            message = true
+            message = it
             delay(3_000)
-            message = false
+            message = null
         }
     }
     Box(Modifier.fillMaxSize().background(Palette.bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
         val s = snap ?: return@Box
         val now = nowView(s, hub, row)
         val screen = if (now == null && vm.screen in setOf(Screen.PLAYER, Screen.LIST)) Screen.LIBRARY else vm.screen
+        val backToLibrary = { vm.backToLibrary(s, now?.entry?.id) }
         BackHandler(enabled = vm.sheet != null || screen != Screen.LIBRARY) {
             when {
                 vm.sheet != null -> vm.sheet = null
                 screen == Screen.LIST -> vm.screen = Screen.PLAYER
+                screen == Screen.PLAYER -> backToLibrary()
                 else -> vm.screen = Screen.LIBRARY
             }
         }
@@ -69,7 +74,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 val order = listOrder(s, n)
                 PlayerScreen(
                     n, order.indexOfFirst { it.key == n.item.key } + 1, order.size, livePosition(n), hub.sleepMinutes, hub.output,
-                    onBack = { vm.screen = Screen.LIBRARY },
+                    onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,
                     onPrevious = actions::previous,
@@ -116,11 +121,14 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 },
             )
         }
-        if (message) {
+        message?.let { m ->
             Box(
                 Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp, start = 16.dp, end = 16.dp)
                     .clip(RoundedCornerShape(16.dp)).background(Palette.selected).padding(horizontal = 14.dp, vertical = 10.dp),
-            ) { Line(stringResource(R.string.not_downloaded), 14, 800, Palette.fg, maxLines = 2, center = true) }
+            ) {
+                val text = if (m == PlayerHub.Message.CANT_PLAY) R.string.cant_play else R.string.not_downloaded
+                Line(stringResource(text), 14, 800, Palette.fg, maxLines = 2, center = true)
+            }
         }
     }
 }
@@ -135,6 +143,7 @@ private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, actions: Act
         tiles = categoryTiles(s.library?.categories.orEmpty(), all),
         selected = selected,
         startIndex = vm.carouselIndex,
+        jumps = vm.carouselJumps,
         newsCount = NewNotifier.count(s),
         now = now,
         onBack = actions::backHome,
@@ -154,15 +163,19 @@ private fun newsRows(s: Snapshot): List<NewsRowUi> = s.news.mapNotNull { n ->
     NewsRowUi(entry, s.library?.categories?.firstOrNull { it.id == entry.category }, item, kindOf(entry))
 }
 
-/** The position to show: live from the player (ticking while it plays), else the stored one. */
+/** The position to show: live from the player (ticking while it plays and the screen is up), else the stored one. */
 @Composable
 private fun livePosition(now: NowView): Long {
     var pos by remember { mutableLongStateOf(now.storedPosMs) }
-    LaunchedEffect(now.live, now.playing, now.item.key) {
-        while (true) {
-            pos = if (now.live) PlayerHub.positionMs() ?: now.storedPosMs else now.storedPosMs
-            if (!now.live) break
-            delay(if (now.playing) 500 else 1_000)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(now.live, now.playing, now.item.key, now.storedPosMs) {
+        pos = if (now.live) PlayerHub.positionMs() ?: now.storedPosMs else now.storedPosMs
+        if (!now.live) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                pos = PlayerHub.positionMs() ?: now.storedPosMs
+                delay(if (now.playing) 500 else 1_000)
+            }
         }
     }
     return pos
