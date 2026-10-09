@@ -21,7 +21,7 @@
 # screen (BlockedAppActivity) after the unlock, on Recents or on a gesture swipe-up (design 16); with
 # REBOOT=1, after a reboot no UI dump shows Home's content (contacts, grid, call card) before the PIN
 # unlock (design 16c), once Home's breathing mark is up nothing else is shown before the lock and the
-# lock comes within about 5 s of it and logcat shows the lock waited for it (design 16e), and for 45 s
+# lock comes within about 5 s of it and logcat shows the mark was on screen ~3 s (design 16e), and for 45 s
 # after the lock is up neither the shade nor Quick Settings opens over it and SystemUI's
 # TaskbarDelegate has the status bar's disable flags (design 16d). Call state
 # comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
@@ -362,6 +362,8 @@ else
 fi
 # Design 16e: the boot's lock waits 3 s for the mark; "about 5 s" leaves the lock's own start time.
 BOOT_MARK_LIMIT_MS=5000
+# ... and the launcher logs how long the mark was on screen (3 s from its first frame): at least this.
+BOOT_MARK_MIN_SHOWN_MS=2500
 boot_completed() { [ "$(sh_ getprop sys.boot_completed)" = "1" ]; }
 
 # The notification shade or Quick Settings is expanded (design 16d): SystemUI's shade window has the
@@ -550,7 +552,7 @@ else
     if [ "$rebooted" -ne 1 ] || [ "$lock_seen" -ne 1 ]; then
         skip "the lock within ~5 s of the boot mark (design 16e)" "no reboot or no lock (above)"
         skip "nothing but the mark before the lock after a reboot (design 16e)" "no reboot or no lock (above)"
-        skip "the boot's lock waited for the mark (design 16e)" "no reboot or no lock (above)"
+        skip "the boot's mark ~3 s before the lock (design 16e)" "no reboot or no lock (above)"
     else
         if [ -z "$mark_ms" ]; then
             skip "the lock within ~5 s of the boot mark (design 16e)" "no UI dump caught the night ground ($dumps dumps)"
@@ -568,18 +570,22 @@ else
             fi
         fi
         # The wait from the launcher's own log, captured once, then grepped: the boot's process
-        # start, `Boot mark: the lock waits N ms` and `Boot mark over: <why>`.
+        # start and `Boot mark over: <why> - the mark on screen N ms` - the 3 s count from the mark's
+        # first drawn frame, so N is about 3000 unless something ended the wait early (emulator
+        # 2026-10-09: 0.1 s after the system's own HOME start paused Home).
         pinlog="$(adb_ logcat -d -v brief -s PinLock 2>/dev/null | tr -d '\r')"
-        mark_wait="$(grep -m1 -o 'Boot mark: the lock waits -\{0,1\}[0-9]* ms' <<<"$pinlog" || true)"
         mark_over="$(grep -m1 -o 'Boot mark over: .*' <<<"$pinlog" || true)"
+        shown_ms="$(grep -o 'on screen [0-9]* ms' <<<"$mark_over" | grep -o '[0-9][0-9]*' || true)"
         if ! grep -q 'Process start:' <<<"$pinlog"; then
-            skip "the boot's lock waited for the mark (design 16e)" "no PinLock 'Process start' in logcat (buffer rolled over?)"
-        elif [ -z "$mark_wait" ]; then
-            fail "the boot's lock waited for the mark (design 16e)" "no 'Boot mark: the lock waits' in logcat - the lock didn't wait (Home's mark not up, an exemption, or not the boot's first start)"
+            skip "the boot's mark ~3 s before the lock (design 16e)" "no PinLock 'Process start' in logcat (buffer rolled over?)"
         elif [ -z "$mark_over" ]; then
-            fail "the boot's lock waited for the mark (design 16e)" "'$mark_wait' but no 'Boot mark over:' although the lock is in front"
+            fail "the boot's mark ~3 s before the lock (design 16e)" "no 'Boot mark over:' in logcat - the lock didn't wait for the mark"
+        elif [ -z "$shown_ms" ]; then
+            fail "the boot's mark ~3 s before the lock (design 16e)" "the mark never drew: '$mark_over'"
+        elif [ "$shown_ms" -lt "$BOOT_MARK_MIN_SHOWN_MS" ]; then
+            fail "the boot's mark ~3 s before the lock (design 16e)" "on screen only $shown_ms ms: '$mark_over'"
         else
-            pass "the boot's lock waited for the mark (design 16e): ${mark_wait#Boot mark: }; ${mark_over#Boot mark }"
+            pass "the boot's mark ~3 s before the lock (design 16e): ${mark_over#Boot mark }"
         fi
     fi
     shot boot-lock

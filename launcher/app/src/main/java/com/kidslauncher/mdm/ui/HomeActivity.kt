@@ -241,7 +241,8 @@ class HomeActivity : UIObjectActivity() {
         appsJob?.cancel()
         refreshHandler.removeCallbacks(badgeRender)
         refreshHandler.removeCallbacks(callTicker)
-        val ground = night ?: NightGround(this).also { night = it }
+        // Design 16e: the boot's 3 s count from the night ground's first drawn frame.
+        val ground = night ?: NightGround(this) { PinLockRuntime.onHomeMarkDrawn(this, it) }.also { night = it }
         if (!nightShown) {
             setContentView(ground.root)
             nightShown = true
@@ -428,8 +429,9 @@ class HomeActivity : UIObjectActivity() {
     }
 
     override fun onPause() {
-        // Design 16e (qa-16e-code #2): anything over the mark - even translucent - ends the boot's wait.
-        PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home paused")
+        // Design 16e (qa-16e-code #2): anything over the mark - even translucent - ends the boot's
+        // wait, unless Home is resumed again at once (a re-delivered HOME intent pauses it).
+        PinLockRuntime.onHomePaused(isChangingConfigurations)
         resumedNow = false
         night?.stop()
         super.onPause()

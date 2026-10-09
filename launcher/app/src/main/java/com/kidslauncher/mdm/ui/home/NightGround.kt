@@ -6,8 +6,10 @@ import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.core.view.WindowCompat
@@ -17,8 +19,11 @@ import com.kidslauncher.mdm.R
  * Home's face while the PIN lock is LOCKED, or not decided yet with a kid PIN (design 16c): the
  * night ground with the breathing Vibb mark (`splash_vibb_breathe.xml`, the boot cover's), centred,
  * from `activity_home_night.xml` - nothing to touch. Breathes only while Home is resumed.
+ * [onFirstFrame] gets the elapsed realtime of its first drawn frame (design 16e: the boot's 3 s
+ * count from it) - an `OnDrawListener`, which runs only when a frame is really drawn (not with the
+ * display off).
  */
-class NightGround(private val activity: Activity) {
+class NightGround(private val activity: Activity, private val onFirstFrame: (Long) -> Unit = {}) {
     val root: View = LayoutInflater.from(activity).inflate(R.layout.activity_home_night, FrameLayout(activity), false)
     private val logo = root.findViewById<ImageView>(R.id.home_night_mark).drawable as? AnimatedVectorDrawable
     private val handler = Handler(Looper.getMainLooper())
@@ -31,8 +36,29 @@ class NightGround(private val activity: Activity) {
         }
     }
 
+    private var drawn = false
+    private val firstDraw = object : ViewTreeObserver.OnDrawListener {
+        override fun onDraw() {
+            if (drawn) return
+            drawn = true
+            onFirstFrame(SystemClock.elapsedRealtime())
+            // Not removable inside onDraw.
+            handler.post { root.viewTreeObserver.removeOnDrawListener(this) }
+        }
+    }
+
     init {
         logo?.registerAnimationCallback(loop)
+        // On the window's own tree observer, each time the ground is (re)attached until it drew.
+        root.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                if (!drawn) v.viewTreeObserver.addOnDrawListener(firstDraw)
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                v.viewTreeObserver.removeOnDrawListener(firstDraw)
+            }
+        })
     }
 
     /** Light status/navigation-bar icons on the night ground (Home's content sets them by ink). */

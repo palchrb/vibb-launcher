@@ -140,9 +140,10 @@ logged after the step started counts (logcat is cleared per step); silence is a 
   the lock may hold only `$PKG`'s windows (another package is a FAIL, saved as `boot-not-mark-<n>.xml`), and the lock
   must be in front within about 5 s of the mark - measured from the end of that first dump to the last top-activity
   check without the lock, a lower bound, so slow dumps never fail it (FAIL above 5 s; SKIP when no dump caught the
-  night ground - a dump plus the top check take 1-3 s, the mark is up for under 3 s). The wait itself is proven from
-  `logcat -d -s PinLock`, captured once: `Boot mark: the lock waits N ms` and `Boot mark over: <why>` (FAIL without
-  them, SKIP without the boot's `Process start:` line). `adb reboot` never arms the boot cover, so the mark is Home's;
+  night ground - a dump plus the top check take 1-3 s, the mark is up for about 3 s). The mark's time on screen comes
+  from `logcat -d -s PinLock`, captured once: `Boot mark over: <why> - the mark on screen N ms` (the 3 s count from its
+  first drawn frame) must say at least 2500 ms (FAIL below, without the line or when it never drew; SKIP without the
+  boot's `Process start:` line). `adb reboot` never arms the boot cover, so the mark is Home's;
 - then (design 16d) for 45 s from the lock's first appearance - past the launcher's status-bar heals 1-40 s after
   its start - `cmd statusbar expand-notifications`, `expand-settings` and a swipe down from the top, each followed
   by `cmd statusbar collapse`: the shade or Quick Settings open (`mCurrentFocus` NotificationShade, or SystemUI's
