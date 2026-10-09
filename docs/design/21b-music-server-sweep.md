@@ -797,3 +797,10 @@ and `LibEntry` takes `items`. The one plumbing gap is the clock (#6). **Conflict
       `downloads` carry the version (§2.3, §4, §5).
 21. **Low, PWA: accepted.** The buttons stay; Check now returns to its page; times say "UTC" like the tracked-app page;
     `music_check_requests`; at most 200 ids with aggregate queries; the hint follows user decision 3 (§3).
+
+## User answer to open question 1 (2026-10-09)
+**The window follows the play order** ("Ja, følg rekkefølgen! Default er nyeste først gjerne"). "Newest first" keeps the
+newest 100, "Oldest first" the first 100, and changing the order refills the list. The default (`auto`) for a capped NRK
+serie (more than 100 episodes) is **newest first**, so a new anthology entry gets recent episodes. Read narrowly on
+purpose: a serie of at most 100 episodes, a serial story, keeps vibb's oldest-first `auto`, and podkast/RSS are newest
+first already. The PWA card says which 100 are kept. (If the user meant every entry, only `auto`'s table changes.)
