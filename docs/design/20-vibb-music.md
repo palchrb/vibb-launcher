@@ -191,9 +191,12 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
 - **Storytel and the source fetching** (user, 2026-10-09): the phone fetches directly from the source, exactly as the
   vibb Pi does: Storytel books from Storytel's CDN, NRK and RSS from their origins. The handy server neither proxies
   nor stores any of it.
-  - The server's only role is the library definition. Open question: does the Storytel login live on the phone (like
-    the Pi, the simplest), or does the server keep it and only hand the phone short-lived signed download URLs (no
-    password on the kid's phone)?
+  - The server's only role is the library definition. **The Storytel login lives on the phone (like the Pi), but is
+    provisioned from the server's library GUI** (user, 2026-10-09):
+    - The parent enters it in the PWA, and it reaches the phone through the launcher.
+    - The music app logs in and downloads by itself.
+    - The server keeps it encrypted (key in `.env`) so a new phone can be provisioned again.
+    - It is never shown back in the PWA and never logged.
   - Own uploaded files are the one source that lives on the server, so the phone downloads those from it.
 - **Outputs** (user, 2026-10-09): a "Spill av på" button on the player picks the phone's speaker, a Bluetooth device or
   a **Sonos** room. The Sonos logic is ported from vibb `pi/sonosd.py`:
@@ -209,8 +212,8 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
     episode or book title. Tapping one plays it and removes it, and "Fjern alle" clears the list.
 - **Offline marks**: each track or episode in the player's list shows a download mark when it is on the phone. The
   list header says "Alle lastet ned" or "N av M lastet ned".
-- **The seek bar**: a thin 4 px line with a 26 px thumb and a 44 px touch height.
-- **The layout**: the carousel sits low, just above the category tiles.
+- **The seek bar**: an ordinary thin 4 px line with a 26 px round thumb on top, and a 44 px touch height.
+- **The layout**: the carousel sits midway between the header and the category tiles.
 - **Categories are parent-defined** (name + an icon from the fixed set + a colour) with defaults per source, chosen per
   library entry.
 - **Language**: follows the launcher's language (`launcher_ui.language`, set by the parent), else the phone's.
