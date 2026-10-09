@@ -241,3 +241,40 @@ Chromium, light and dark, plus the same pages with longer names (finding 4). A r
   at 3.2:1).
 - **Tests and lint:** server 292 passed, fmt clean, clippy 17 = 17; launcher 732 passed with
   `-PwarningsAsErrors=true`.
+
+## Fixes (implementer, 2026-10-09)
+
+All ten findings and the test gaps are fixed: server `cargo test` 302 passed, fmt clean, clippy 17 (no new ones).
+1. The key file defaults to `data/keys/music-secret.key` (0700 directory made by the server), the one place the unit
+   can write; no backup copies it (zip: DB + image stores; live mirror and external drive: the DB and `data/backups/`;
+   `update.sh`: DB files). `MUSIC_SECRET_KEY` and `MUSIC_SECRET_KEY_FILE` stay. A read-only directory is a clear error
+   naming the file (test); the card text, DEPLOY.md and a startup line ("sealed with ...") are corrected, and DEPLOY.md
+   has a `journalctl` smoke check.
+2. An upload with the SHA-256 of a `missing` file of the entry is put back at that row's path (same id; its art is
+   made again when lost); the same content otherwise is refused as already in the entry (`keep_upload`).
+3. Migration `0050_music_library_revision.sql`: triggers on the four library tables move one revision;
+   `music::cached_library` keeps each phone's library under it (built in one read transaction). Policy, library route
+   and device card use it; covers are one scoped query; the import builds each phone once plus one confirming build
+   (per-entry size estimate, then take back from the end). Tests count builds. For 21b: its listings table needs the
+   same triggers (or `bump_library_revision`), and its migration becomes 0051.
+4. `.page-header` wraps, its `h1` and `.error`/checkbox-row text break long words (`style.css?v=6`); checked in
+   Chromium at 360 px, light and dark, with the cases above (no horizontal scroll). The Storytel switch's label, which
+   broke into columns when no login was saved, is one span now.
+5. `receive` re-checks the free space every 64 MB (`DiskGuard`) and stops below 1 GB.
+6. The 200-entry and 300-file limits are the INSERT's own `WHERE`; a tick's size check and insert share one
+   `BEGIN IMMEDIATE`.
+7. Own keys are `own-<12 random hex>`. Files no row names are listed on `/music` ("Files no entry uses", count and
+   size, files younger than 10 minutes left out) with a delete button; nothing is deleted by itself.
+8. Ticks return to `#music-entry-<id>` (a refused tick shows its notice by that row), the settings to
+   `#music-settings`, a file delete to the next file's `#file-<id>`.
+9. The key file is written through `<file>.tmp` (0600, fsync), renamed, the directory synced; an empty file is made
+   again, a non-empty invalid one is refused with "fix it, or remove it".
+10. **Bounded read**, not a streaming parse: `Fetch::get(url, limit)` returns the first `limit` bytes and `truncated`.
+    The add check only needs the channel title and one enclosure, which a feed puts first, so a feed is judged by its
+    first 5 MB and long feeds are accepted; one whose first 5 MB hold no episode is refused with that reason. The
+    sweeper (21b) can call the same trait with its own limit and see whether it got the whole feed; episode parsing
+    should still get a real XML parser there (QA's note).
+
+Test gaps: key in a read-only directory (`music_secret` test), re-upload and double upload, hostile MP4/ID3 audio
+(refused, nothing left, server goes on), an import against a 2,000-file library (build count), an upload into an
+entry deleted meanwhile (`keep_upload`, both orders).

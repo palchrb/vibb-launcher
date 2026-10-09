@@ -177,14 +177,21 @@ The Music page (Apps | Music) holds the library for the Vibb music app; each pho
   `^kids-launcher-mdm\.apk$` (only where its cached release already is a `launcher-v*` one) and adds the music app's
   catalog row; anything else: the Music page's "Add the music app to the catalog" and the app's "Release tag prefix".
 - **Storytel key**: the family's Storytel login is encrypted with `MUSIC_SECRET_KEY` (base64, 32 bytes) from `.env`,
-  or else with the key file `/opt/kid-phone-server/music-secret.key` (`MUSIC_SECRET_KEY_FILE` to move it), which the
-  server writes (0600) at its first start. It is outside `data/`, so backups never hold it: a database restored on
-  another box, or a lost key file, means entering the login again on the Music page. Keep the file out of anything
-  that copies `data/` elsewhere. Without a usable key the Storytel form is off and the phones get 503.
+  or else with the key file `/opt/kid-phone-server/data/keys/music-secret.key`, which the server writes (0600, in a
+  0700 directory) at its first start - `data/` is the only place the service may write (`ProtectSystem=strict`).
+  `MUSIC_SECRET_KEY_FILE` points elsewhere, but only somewhere the service can write. No backup holds the key: the
+  backup zip has the database and the image stores, the live mirror and the external drive copy the database and
+  `data/backups/`, `update.sh` the database files - don't copy `data/keys/` anywhere yourself. A database restored
+  on another box, or a lost key file, means entering the login again on the Music page. Without a usable key the
+  Storytel form is off and the phones get 503.
+- **Smoke check after the update**: `journalctl -u kid-phone-server -b | grep -i storytel` shows "Storytel logins are
+  sealed with ..." - never "Storytel logins are off: ..." (that line says which file and why).
 - **Own files** are stored in `data/music_files/` and are **not** in the backups (too big). After a restore without
-  them they are listed as missing (the phones keep their copies); upload them again to restore them. Their covers are
-  in the backups.
-- Rolling back to 0.20 means restoring the `update.sh` backup: 0.20 refuses to start on a database with migration 0049.
+  them they are listed as missing (the phones keep their copies); upload them again to restore them in place. Their
+  covers are in the backups. Files left by restoring an *older* backup show on the Music page ("Files no entry
+  uses") with a delete button - nothing is deleted by itself.
+- Rolling back to 0.20 means restoring the `update.sh` backup: 0.20 refuses to start on a database with migration 0049
+  (and 0050, the library revision).
 
 ## Useful commands on the Pi
 

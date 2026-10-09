@@ -300,9 +300,9 @@ Choices made while building (none changes a decision above):
    `music-v*` (protects a fresh install's hand-made launcher row, which 0049 can't recognise). The prefix is editable on
    the app's page and the add form; `/music` has "Add the music app to the catalog" for a server where 0049 found no
    `launcher-v*` row. The music row starts enabled, so the hourly sync reports "no release" until the first `music-v*`.
-4. The Storytel key: `MUSIC_SECRET_KEY`, else `music-secret.key` in the working directory (`MUSIC_SECRET_KEY_FILE`
-   moves it), created 0600 at startup; `music_storytel.key_fingerprint` lets the page say "enter it again" after a
-   key change. The login is one sealed JSON (`email`, `password`).
+4. The Storytel key: `MUSIC_SECRET_KEY`, else `data/keys/music-secret.key` (`MUSIC_SECRET_KEY_FILE` moves it),
+   created 0600 at startup in a 0700 directory no backup copies; `music_storytel.key_fingerprint` lets the page say
+   "enter it again" after a key change. The login is one sealed JSON (`email`, `password`).
 5. Entries get up/down buttons on `/music` (the carousel order; not in §1.2). Categories' `default_kind` isn't
    editable; with the matching category deleted a new entry goes to the first one.
 6. Own files are stored as `data/music_files/<entry>/<random>.<ext>` with the extension of what lofty found; their

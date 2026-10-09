@@ -426,11 +426,23 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `testdata/music_library.json` (the music app keeps a copy). Ticks and uploads that would push a phone's library
   past 3 MB are refused / taken back. Own files not on disk are listed `missing` (startup check, and on a 404 while
   serving), never dropped.
-- **Uploads**: streamed to `.part` (hashed, <= 1 GB, refused below 1 GB free via `rustix` statvfs), read by content
-  with `lofty` in `spawn_blocking` (mp3/m4a/m4b/ogg/opus/flac/wav, else deleted and listed), embedded art and parent
-  covers in `photos::MUSIC_COVERS` (backed up, `recover_missing`); the audio is never backed up.
+- **Uploads**: streamed to `.part` (hashed, <= 1 GB, the free space re-checked every 64 MB - stopped below 1 GB free,
+  `rustix` statvfs), read by content with `lofty` in `spawn_blocking` (mp3/m4a/m4b/ogg/opus/flac/wav, else deleted and
+  listed), embedded art and parent covers in `photos::MUSIC_COVERS` (backed up, `recover_missing`); the audio is never
+  backed up. The same content again restores a `missing` row in place (id and path kept) or is refused as a double;
+  the 300-file and 200-entry limits are the INSERT's own `WHERE`, and a tick's size check and write share one
+  `BEGIN IMMEDIATE`. Own keys are `own-<12 random hex>` (ids repeat after a restore). Files no row names (an older
+  backup restored) show on `/music` with a delete button, never removed by themselves.
+- **Library cache** (migration `0050`): triggers on `music_entries`, `music_categories`, `music_files` and
+  `device_music_entries` move `music_library_revision`; `music::cached_library` (`AppState.music_libraries`) keeps each
+  phone's built library under it, so the policy poll, the library route and the device card build once per change. A
+  new table that feeds the library needs the same triggers (or `music::bump_library_revision`). Covers are checked
+  with one scoped query; the import builds each phone's library once plus once to confirm.
+- **Add check**: `Fetch::get(url, limit)` reads at most `limit` bytes and says `truncated`; a feed is judged by its
+  first 5 MB (channel title + one enclosure), so long feeds are accepted.
 - **Storytel** (`music_secret`): AES-256-GCM, random nonce, AAD `storytel-v1:<key fingerprint>`; the key from
-  `MUSIC_SECRET_KEY` or the 0600 key file outside `data/` (QA #10). Write-only in the PWA; `generation` +1 on save and
+  `MUSIC_SECRET_KEY` or the 0600 key file `data/keys/music-secret.key` (0700 directory, written through a temp file and
+  a rename; `data/` is all the unit may write, and no backup copies `data/keys/`). Write-only in the PWA; `generation` +1 on save and
   clear; policy generation 0 unless the phone's switch is on and a login is stored; the device route is `no-store`,
   404 (switch off / none), 503 (no key, other key). Never in a page, log, status or event.
 - **Catalog**: `newest_matching_release` honours `release_tag_prefix` (`release_allowed`: never `server-v*`; with a
