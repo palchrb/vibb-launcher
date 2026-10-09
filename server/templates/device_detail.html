@@ -29,7 +29,8 @@
     <div class="card">
         <h2>Status</h2>
         {% if let Some(status) = latest_status %}
-        <p>Lock state: <strong>{{ status.lock_reason }}</strong></p>
+        <p>Time lock at the last report: <strong>{% match status.lock_reason.as_str() %}{% when "NONE" %}none{% when "BEDTIME" %}bedtime{% when "SCHOOL" %}school{% when "SCREEN_TIME" %}screen time used up{% when "RULE" %}a time rule{% when other %}{{ other }}{% endmatch %}</strong></p>
+        <p class="subtitle">Whether a time rule (bedtime, school, screen time) was locking the phone. The kid's PIN lock is shown under "Screen lock".</p>
         {% if let Some(v) = status.app_version %}
         <p>App version: {{ v }}</p>
         {% endif %}
