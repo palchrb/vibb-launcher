@@ -223,3 +223,16 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
   - No automatic playback on a phone restart: a phone in a pocket must not start making noise. The Pi auto-resumes
     because powering it on means "play".
 - **Carousel dots**: all the same size, and the current one only changes colour.
+- **Header** (user, 2026-10-09): no "Musikk" title. On the right are two round buttons in the same style: **search** and
+  the **bell**.
+  - Search opens a field with live hits over entry titles and track, chapter and episode titles. Tapping a hit plays it,
+    like tapping a cover (an entry resumes when resume is on; a track hit starts that track).
+- **Unread count on launcher Home**: while "Nytt" holds items, the music app keeps **one silent notification** ("N nye i
+  Musikk", `setNumber(N)`, low importance, no sound). Tapping it opens "Nytt".
+  - The launcher's existing badge listener shows N on the app's tile; no new launcher code beyond the music app being
+    allowed.
+  - The notification is cancelled when the list is emptied, by play or by "Fjern alle".
+- **System bars**: the mockups omit Android's status bar and the gesture bar.
+  - The app draws edge-to-edge with insets like the launcher (`KidInsets`), so about 520 dp of the 569 dp height is
+    usable on the Jelly Star.
+  - The library screen's flexible spacers absorb that. On the player, the cover may shrink to fit.
