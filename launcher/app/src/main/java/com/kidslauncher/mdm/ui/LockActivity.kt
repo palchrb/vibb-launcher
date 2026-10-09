@@ -113,6 +113,9 @@ class LockActivity : UIObjectActivity() {
                     OfflineOverride.activate(this@LockActivity)
                     dialog.dismiss()
                     finish()
+                } else if (OfflineOverride.isLockedOut()) {
+                    Toast.makeText(this@LockActivity, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
+                    dialog.dismiss()
                 } else {
                     Toast.makeText(this@LockActivity, R.string.lock_unlock_code_wrong, Toast.LENGTH_SHORT).show()
                     input?.text?.clear()

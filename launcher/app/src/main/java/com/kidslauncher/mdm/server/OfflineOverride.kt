@@ -75,6 +75,8 @@ object OfflineOverride {
      * PBKDF2 (PinHash, ~0.5 s): never call this on the main thread.
      */
     fun verifyPin(pin: String): Boolean {
+        // Every try checks the lockout, not just the dialog that offers it (design 24 QA #1).
+        if (isLockedOut()) return false
         val mdm = LauncherPreferences.mdm()
         val hashHex = mdm.overridePinHash()
         val saltHex = mdm.overridePinSalt()
