@@ -697,8 +697,13 @@ pub async fn status(
     if let Some(report) = crate::music::parse_music_state(music_state_json.as_deref())
         && !report.item_errors.is_empty()
     {
-        match crate::music_sweep::flag_reports(&state.db, device.id, &report, chrono::Utc::now())
-            .await
+        match crate::music_sweep::flag_reports(
+            &state.db,
+            device.id,
+            &report,
+            state.music_sweep.now(),
+        )
+        .await
         {
             Ok(0) => {}
             Ok(_) => state.music_sweep.wake(),

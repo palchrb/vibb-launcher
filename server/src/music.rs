@@ -392,7 +392,7 @@ impl From<crate::music_net::FetchError> for CheckError {
 /// look like its source: psapi's catalog entry for NRK (public addresses only), an RSS feed with at
 /// least one enclosure for anything else - parsed by the sweep's own parser
 /// (`music_sources::parse_feed`) from at most `MAX_FEED_BYTES`. A feed the parent pasted may be on
-/// the home LAN or the tailnet.
+/// the home LAN or the tailnet (where its name resolves decides, as at the first sweep check).
 pub async fn check_link(
     source: &dyn crate::music_net::Source,
     link: &Link,
@@ -404,8 +404,16 @@ pub async fn check_link(
         Link::Rss { url } => {
             // The channel and its first episodes come first in a feed: a feed longer than the
             // cap is judged by what was read (qa-21-step1-code #10).
+            // Judged like the sweep's first check (§2.7): a feed on the LAN or the tailnet may be
+            // reached as such; a public one never follows a redirect to a private address (QA 1c
+            // #9: else it would be added but never list).
+            let reach = if crate::music_sweep::feed_is_lan(source, url).await? {
+                Reach::Any
+            } else {
+                Reach::Public
+            };
             let fetched = source
-                .get(SourceRequest::new(url.clone(), Kind::Feed, Reach::Any))
+                .get(SourceRequest::new(url.clone(), Kind::Feed, reach))
                 .await?;
             if fetched.status != 200 {
                 return Err(CheckError::Status(fetched.status));
@@ -429,7 +437,7 @@ pub async fn check_link(
 /// An RSS feed's channel title, if the body is a feed with at least one item that has an enclosure
 /// (vibb plays only those); `truncated` = the body is the cap's worth of a longer feed.
 pub fn feed_title(body: &[u8], truncated: bool) -> Result<String, CheckError> {
-    match crate::music_sources::parse_feed(body, false) {
+    match crate::music_sources::parse_feed(body, false, 1) {
         Ok(feed) => Ok(feed
             .title
             .and_then(|t| cut_title(&t, MAX_NAME_CHARS))
@@ -808,9 +816,9 @@ thread_local! {
 /// Each phone's built library, kept under the library revision it was built at (migration 0050,
 /// qa-21-step1-code #3): the policy poll, the library route and the device card reuse it until
 /// something a library is built from changes. The revision moves by trigger on every write to
-/// `music_entries`, `music_categories`, `music_files` and `device_music_entries`; a new source of
-/// library data either gets the same triggers or calls [bump_library_revision]. In memory only,
-/// one library per phone.
+/// `music_entries`, `music_categories`, `music_files` and `device_music_entries`, and on a change
+/// of a listing's version, cover or kept end (0051); a new source of library data gets the same
+/// triggers. In memory only, one library per phone.
 #[derive(Default)]
 pub struct LibraryCache(std::sync::Mutex<HashMap<i64, KeptLibrary>>);
 
@@ -842,15 +850,6 @@ pub async fn library_revision(db: &mut sqlx::SqliteConnection) -> Result<i64, sq
         .await
 }
 
-/// Moves the library revision by hand - for a writer whose table has no revision triggers.
-#[allow(dead_code)] // for the sweeper's tables (design 21b); the step-1 tables use triggers
-pub async fn bump_library_revision(db: &mut sqlx::SqliteConnection) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1")
-        .execute(&mut *db)
-        .await
-        .map(|_| ())
-}
-
 /// `device_id`'s library through `cache`: the kept one while the revision hasn't moved, else built
 /// - in one read transaction, so the revision and the data it is kept under agree.
 pub async fn cached_library(
@@ -879,54 +878,17 @@ pub async fn device_library(
     library_for(&mut conn, device_id, None).await
 }
 
-/// The episode lists one phone gets, together (design 21b §1): a tick that would pass it is
-/// refused; growth past it later only warns on the device card.
-pub const MAX_LISTINGS_BYTES_PER_PHONE: i64 = 32_000_000;
-
-/// Whether a tick fits a phone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TickFit {
-    Fits,
-    /// The library would pass [MAX_LIBRARY_BYTES] (QA #4).
-    LibraryTooBig,
-    /// The ticked entries' listings would pass [MAX_LISTINGS_BYTES_PER_PHONE] (21b §1).
-    ListingsTooBig,
-}
-
-/// Whether ticking `entry_id` keeps `device_id`'s library within [MAX_LIBRARY_BYTES] (QA #4) and
-/// its listings within [MAX_LISTINGS_BYTES_PER_PHONE] (21b) - the one check for a tick on the
-/// device card and for the import's ticks (21a; its new entries have no listing yet).
+/// Whether ticking `entry_id` keeps `device_id`'s library within [MAX_LIBRARY_BYTES] (QA #4) -
+/// the one check for a tick on the device card and for the import's ticks (21a). The episode
+/// lists aren't counted: a phone with many long feeds gets a few MB of them (21b's status).
 pub async fn tick_fits(
     db: &mut sqlx::SqliteConnection,
     device_id: i64,
     entry_id: i64,
-) -> Result<TickFit, sqlx::Error> {
-    if !library_for(db, device_id, Some(entry_id))
+) -> Result<bool, sqlx::Error> {
+    Ok(library_for(db, device_id, Some(entry_id))
         .await?
-        .is_none_or(|library| library.json.len() <= MAX_LIBRARY_BYTES)
-    {
-        return Ok(TickFit::LibraryTooBig);
-    }
-    if listing_bytes(db, device_id, Some(entry_id)).await? > MAX_LISTINGS_BYTES_PER_PHONE {
-        return Ok(TickFit::ListingsTooBig);
-    }
-    Ok(TickFit::Fits)
-}
-
-/// The size of the listings `device_id` gets (plus `extra`'s, an entry about to be ticked).
-pub async fn listing_bytes(
-    db: &mut sqlx::SqliteConnection,
-    device_id: i64,
-    extra: Option<i64>,
-) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT COALESCE(SUM(bytes), 0) FROM music_listings WHERE entry_id IN \
-           (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR entry_id = ?",
-    )
-    .bind(device_id)
-    .bind(extra.unwrap_or(-1))
-    .fetch_one(&mut *db)
-    .await
+        .is_none_or(|library| library.json.len() <= MAX_LIBRARY_BYTES))
 }
 
 /// `PolicyResponse.music` - small, always sent (`null` only when it can't be read).
@@ -1313,10 +1275,25 @@ pub fn is_version(value: &str) -> bool {
 /// numbers clamped, at most [MAX_ENTRY_ERRORS] errors; `None` for anything that isn't such an
 /// object.
 pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
-    if !value.is_object() {
-        return None;
+    let mut object = value.as_object()?.clone();
+    // The lists are read row by row: one row of the wrong shape drops that row, not the phone's
+    // whole report (QA 1c #15).
+    let mut rows = |key: &str| match object.remove(key) {
+        Some(serde_json::Value::Array(rows)) => rows,
+        _ => Vec::new(),
+    };
+    let entry_rows = rows("entry_errors");
+    let item_rows = rows("item_errors");
+    let download_rows = rows("downloads");
+    fn parsed<T: serde::de::DeserializeOwned>(rows: Vec<serde_json::Value>) -> Vec<T> {
+        rows.into_iter()
+            .filter_map(|row| serde_json::from_value(row).ok())
+            .collect()
     }
-    let state: MusicState = serde_json::from_value(value.clone()).ok()?;
+    let mut state: MusicState = serde_json::from_value(serde_json::Value::Object(object)).ok()?;
+    state.entry_errors = parsed(entry_rows);
+    state.item_errors = parsed(item_rows);
+    state.downloads = parsed(download_rows);
     let clean = MusicState {
         package: state
             .package
@@ -1702,6 +1679,17 @@ mod tests {
             ]
         );
         assert_eq!(state.downloads.len(), MAX_DOWNLOAD_ROWS);
+        // A row of the wrong shape drops that row only (QA 1c #15).
+        let mixed = serde_json::json!({
+            "storytel": "ok",
+            "item_errors": [{"entry": "3", "version": "0123456789abcdef", "item": "a", "error": "http_404"},
+                            {"entry": 3, "version": "0123456789abcdef", "item": "a", "error": "http_404"}],
+            "downloads": [{"entry": 3, "version": "0123456789abcdef", "have": "x", "want": 1}]
+        });
+        let lenient = parse_music_state(sanitize_music_state(&mixed).as_deref()).unwrap();
+        assert_eq!(lenient.storytel.as_deref(), Some("ok"));
+        assert_eq!(lenient.item_errors.len(), 1);
+        assert!(lenient.downloads.is_empty());
         assert_eq!(state.downloads[0].waiting.as_deref(), Some("wifi"));
         assert_eq!(state.downloads[1].waiting, None);
         assert_eq!(

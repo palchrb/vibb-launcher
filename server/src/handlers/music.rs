@@ -361,7 +361,7 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
 
     let category_of = |id: i64| categories.iter().find(|c| c.id == id);
     let count = entries.len();
-    let view = SweepView::load(state, chrono::Utc::now()).await?;
+    let view = SweepView::load(state, state.music_sweep.now()).await?;
     let entry_rows = entries
         .iter()
         .enumerate()
@@ -1205,7 +1205,7 @@ async fn render_entry(
         .bind(id)
         .fetch_all(&state.db)
         .await?;
-        let view = SweepView::load(state, chrono::Utc::now()).await?;
+        let view = SweepView::load(state, state.music_sweep.now()).await?;
         let form = entered.form.unwrap_or_else(|| EntryForm {
             name: entry.name.clone(),
             category: entry.category_id,
@@ -1361,6 +1361,10 @@ pub async fn save_entry(
     .await;
     if let Err(err) = updated {
         return server_error(err, "couldn't save a music entry");
+    }
+    if order != entry.play_order {
+        // An NRK series' window follows its order: the refill shouldn't wait (QA 1c #10).
+        state.music_sweep.wake();
     }
     nudge(
         &state,
@@ -2103,6 +2107,8 @@ struct SweepView {
 impl SweepView {
     async fn load(state: &AppState, now: DateTime<Utc>) -> Result<SweepView, sqlx::Error> {
         use crate::music_sweep::{self as sweep, parse_stamp};
+        // Before the rows: a check that ends while they are read still shows (QA 1c #18).
+        let current = state.music_sweep.current();
         let listings: HashMap<i64, sweep::Listing> =
             sqlx::query_as::<_, sweep::Listing>("SELECT * FROM music_listings")
                 .fetch_all(&state.db)
@@ -2162,7 +2168,7 @@ impl SweepView {
         Ok(SweepView {
             now,
             setting: sweep::sweep_hours(&state.db).await?,
-            current: state.music_sweep.current(),
+            current,
             listings,
             newest,
             schedule,
@@ -2181,10 +2187,22 @@ impl SweepView {
             tone,
             busy,
         };
-        if self.current == Some(entry.id) {
+        let listing = self.listings.get(&entry.id);
+        // A check under way: its start stamp is newer than its end (a success zeroes `failures`, a
+        // failure stamps `error_at`), and recent (a check a crash cut off doesn't last).
+        let checking = listing.is_some_and(|l| {
+            let started = l.checked_at.as_deref().and_then(parse_stamp);
+            let failed = l.error_at.as_deref().and_then(parse_stamp);
+            l.failures > 0
+                && started.is_some_and(|at| {
+                    failed.is_none_or(|f| f < at)
+                        && now - at
+                            < chrono::TimeDelta::minutes(crate::music_sweep::CHECKING_MINUTES)
+                })
+        });
+        if self.current == Some(entry.id) || checking {
             return block("Checking…".to_string(), "busy", true);
         }
-        let listing = self.listings.get(&entry.id);
         let scheduled = self.schedule.get(&entry.id);
         let next_try = scheduled.map(|(s, _)| utc_time(s.at.max(now), now));
         let waiting = |what: &str, ahead: usize| {
@@ -2445,7 +2463,7 @@ pub async fn check_now(
         )
             .into_response();
     }
-    let now = chrono::Utc::now();
+    let now = state.music_sweep.now();
     match crate::music_sweep::check_now_blocked_until(&state.db, id, now).await {
         Ok(Some(_)) => return Redirect::to(&back).into_response(),
         Ok(None) => {}
@@ -2549,7 +2567,7 @@ pub async fn cards(
         return (StatusCode::BAD_REQUEST, "At most 200 cards at once").into_response();
     }
     let built: Result<Vec<serde_json::Value>, sqlx::Error> = async {
-        let view = SweepView::load(&state, chrono::Utc::now()).await?;
+        let view = SweepView::load(&state, state.music_sweep.now()).await?;
         let entries: Vec<MusicEntry> = sqlx::query_as(
             "SELECT id, name, category_id, source, target, key, play_order, cache, resume, \
              cover_hash, sort FROM music_entries WHERE source IN ('nrk', 'rss')",
@@ -2623,10 +2641,6 @@ pub fn notice_text(code: &str) -> Option<&'static str> {
     Some(match code {
         "too_big" => {
             "Not ticked: with that entry this phone's music library would be bigger than 3 MB. \
-             Untick another entry first."
-        }
-        "lists_too_big" => {
-            "Not ticked: with that entry the episode lists this phone gets would pass 32 MB. \
              Untick another entry first."
         }
         _ => return None,
@@ -2782,19 +2796,6 @@ pub(crate) async fn device_card(
         None if capable => lines.push("The phone hasn't reported on music yet.".to_string()),
         None => {}
     }
-    // The listings grew past the budget after the ticks (design 21b §1): a warning, never an
-    // untick.
-    let lists = {
-        let mut conn = state.db.acquire().await?;
-        music::listing_bytes(&mut conn, device_id, None).await?
-    };
-    if lists > music::MAX_LISTINGS_BYTES_PER_PHONE {
-        warnings.push(format!(
-            "The episode lists of the entries ticked here add up to {} - more than the 32 MB a \
-             phone should get. Untick an entry with a long list.",
-            music::megabytes(lists)
-        ));
-    }
     if latest_status.is_some() && !capable && entry_count > 0 {
         warnings.push(
             "The launcher on this phone doesn't handle music yet - update it to deliver the \
@@ -2862,11 +2863,10 @@ pub async fn set_device_entry(
     if selected {
         // The size check and the tick in one write transaction (qa-21-step1-code #6): two quick
         // ticks can't pass the limit together.
-        let ticked: Result<Option<music::TickFit>, sqlx::Error> = async {
+        let ticked: Result<bool, sqlx::Error> = async {
             let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
-            match music::tick_fits(&mut tx, id, entry_id).await? {
-                music::TickFit::Fits => {}
-                refused => return Ok(Some(refused)),
+            if !music::tick_fits(&mut tx, id, entry_id).await? {
+                return Ok(false);
             }
             sqlx::query(
                 "INSERT OR IGNORE INTO device_music_entries (device_id, entry_id) VALUES (?, ?)",
@@ -2876,18 +2876,14 @@ pub async fn set_device_entry(
             .execute(&mut *tx)
             .await?;
             tx.commit().await?;
-            Ok(None)
+            Ok(true)
         }
         .await;
         match ticked {
-            Ok(None) => {}
-            Ok(Some(refused)) => {
-                let notice = match refused {
-                    music::TickFit::ListingsTooBig => "lists_too_big",
-                    _ => "too_big",
-                };
+            Ok(true) => {}
+            Ok(false) => {
                 return Redirect::to(&format!(
-                    "/devices/{id}?music_notice={notice}&music_entry={entry_id}#music-entry-{entry_id}"
+                    "/devices/{id}?music_notice=too_big&music_entry={entry_id}#music-entry-{entry_id}"
                 ))
                 .into_response();
             }

@@ -279,7 +279,8 @@ pub fn public_only(found: Vec<SocketAddr>) -> Vec<SocketAddr> {
 /// in a private range (names are checked by its resolver).
 fn redirect_policy(reach: Reach) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
-        if attempt.previous().len() >= 5 {
+        // `previous()` holds the first URL too: five redirects are six URLs (QA 1c #16).
+        if attempt.previous().len() > 5 {
             return attempt.error("more than 5 redirects");
         }
         let url = attempt.url();
@@ -579,6 +580,7 @@ mod tests {
     #[tokio::test]
     async fn the_client_keeps_public_sources_off_private_addresses() {
         let _ = rustls::crypto::ring::default_provider().install_default();
+        use axum::response::IntoResponse;
         use axum::routing::get;
         let app = axum::Router::new()
             .route(
@@ -599,6 +601,19 @@ mod tests {
                 }),
             )
             .route("/big", get(|| async { vec![b'x'; 300_000] }))
+            .route(
+                "/hop/{n}",
+                get(
+                    |axum::extract::Path(n): axum::extract::Path<u32>| async move {
+                        if n == 0 {
+                            axum::response::Redirect::temporary("/feed").into_response()
+                        } else {
+                            axum::response::Redirect::temporary(&format!("/hop/{}", n - 1))
+                                .into_response()
+                        }
+                    },
+                ),
+            )
             .route(
                 "/loop",
                 get(|| async { axum::response::Redirect::temporary("/loop") }),
@@ -638,6 +653,18 @@ mod tests {
         assert!(big.truncated);
         assert_eq!(big.body.len(), Kind::Manifest.limit());
 
+        // Five redirects are followed, a sixth isn't (`/hop/n` makes n + 1).
+        let five = source
+            .get(SourceRequest::new(url("/hop/4"), Kind::Feed, Reach::Any))
+            .await
+            .unwrap();
+        assert_eq!(five.status, 200);
+        assert!(
+            source
+                .get(SourceRequest::new(url("/hop/5"), Kind::Feed, Reach::Any))
+                .await
+                .is_err()
+        );
         for path in ["/loop", "/ftp"] {
             let err = source
                 .get(SourceRequest::new(url(path), Kind::Page, Reach::Any))

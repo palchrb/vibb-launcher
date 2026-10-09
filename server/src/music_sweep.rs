@@ -12,8 +12,9 @@
 //!   A failing root, listing page or feed keeps the last good list; a failing manifest only leaves
 //!   its item pending. 250 requests or 10 minutes commit what is resolved.
 //! - **The load rule**: every request goes through `AppState.music_fetch` (one in flight
-//!   server-wide, 200 ms apart, `music_net::Gated`); checks are 4 s apart; 3 network or 5xx
-//!   failures of one host in a pass defer that host's remaining entries ([Breaker]).
+//!   server-wide, 200 ms apart, `music_net::Gated`); checks are 4 s apart. During an outage each
+//!   entry backs off on its own: its listing request fails the check, and 3 network errors in a
+//!   row among its manifests do too. A routine NRK check asks for a 5-episode page first.
 //! - **Rechecks** ([flag_reports]): a phone's 401/403/404/410 for an item of the current list flags
 //!   it; the next check re-resolves it (one manifest, or an unconditional feed GET), at most once
 //!   per item a day, a whole entry once a day, 300 manifests a day server-wide.
@@ -58,10 +59,20 @@ pub const ENTRY_SPACING: Duration = Duration::from_secs(4);
 pub const FIRST_PASS_DELAY: Duration = Duration::from_secs(60);
 /// A long pass nudges the phones waiting for it this often.
 pub const NUDGE_FLUSH: Duration = Duration::from_secs(300);
-/// Network or 5xx failures of one host in a pass that defer its remaining entries...
-pub const BREAKER_FAILURES: u32 = 3;
-/// ...until this much later.
-pub const BREAKER_PAUSE_MINUTES: i64 = 15;
+/// Network errors in a row among a check's manifests that end the check as a failure (an outage
+/// that began mid-check backs the entry off instead of timing out every manifest).
+pub const MANIFEST_NETWORK_FAILURES: u32 = 3;
+/// A routine NRK check's first page (21b's follow-up "cheaper change checks"); the walk goes on
+/// with 50-episode pages only if all of these are new.
+pub const ROUTINE_PAGE_SIZE: usize = 5;
+/// A DNS lookup of a feed's media host (§2.7) waits at most this long.
+pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// "Checking…" on a card while a check started this recently hasn't ended (a crash's lasts no
+/// longer).
+pub const CHECKING_MINUTES: i64 = 10;
+/// Checks of one entry in one pass, at most (a budget-limited fill continues; nothing else is due
+/// again so soon).
+const CHECKS_PER_PASS: u32 = 5;
 /// Re-resolve manifests a day, server-wide (§2.5; expiry re-resolves count too).
 pub const RECHECKS_PER_DAY: i64 = 300;
 /// The sweep settings (hours) and the default (the Pi's).
@@ -100,14 +111,15 @@ fn hours(n: i64) -> TimeDelta {
 // ------------------------------------------------------------------------------------------------
 
 /// `AppState.music_sweep`: the wake-up, the entry being checked (the cards' "Checking…") and the
-/// hosts a breaker paused.
+/// clock (a fake one in the tests).
 pub struct Sweep {
     notify: tokio::sync::Notify,
     current: std::sync::Mutex<Option<i64>>,
-    paused: std::sync::Mutex<HashMap<String, DateTime<Utc>>>,
     /// [MAX_CHECK_REQUESTS] and [ENTRY_SPACING] (smaller in the tests).
     request_budget: std::sync::atomic::AtomicU32,
     spacing_ms: std::sync::atomic::AtomicU64,
+    /// The tests' fake clock; `None` = the real one.
+    clock: std::sync::Mutex<Option<DateTime<Utc>>>,
 }
 
 impl Default for Sweep {
@@ -115,9 +127,9 @@ impl Default for Sweep {
         Sweep {
             notify: tokio::sync::Notify::new(),
             current: Default::default(),
-            paused: Default::default(),
             request_budget: MAX_CHECK_REQUESTS.into(),
             spacing_ms: (ENTRY_SPACING.as_millis() as u64).into(),
+            clock: Default::default(),
         }
     }
 }
@@ -130,6 +142,20 @@ impl Sweep {
         self.request_budget.store(request_budget, Ordering::SeqCst);
         self.spacing_ms
             .store(spacing.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// The tests' fake clock (`None` = the real one again).
+    #[cfg(test)]
+    pub fn set_clock(&self, now: Option<DateTime<Utc>>) {
+        *self.clock.lock().unwrap_or_else(|e| e.into_inner()) = now;
+    }
+
+    /// Now, by the sweep's clock: every stamp the sweep and the phones' reports write.
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(Utc::now)
     }
 
     /// Whether a wake is waiting (taking it).
@@ -161,44 +187,6 @@ impl Sweep {
 
     fn set_current(&self, entry: Option<i64>) {
         *self.current.lock().unwrap_or_else(|e| e.into_inner()) = entry;
-    }
-
-    fn paused_hosts(&self, now: DateTime<Utc>) -> HashMap<String, DateTime<Utc>> {
-        let mut paused = self.paused.lock().unwrap_or_else(|e| e.into_inner());
-        paused.retain(|_, until| *until > now);
-        paused.clone()
-    }
-
-    fn pause(&self, host: String, until: DateTime<Utc>) {
-        self.paused
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(host, until);
-    }
-}
-
-/// The per-host breaker of one pass: [BREAKER_FAILURES] network or 5xx failures from a host
-/// defer its remaining work in the pass, without counting a failure for those entries.
-#[derive(Default, Debug)]
-pub struct Breaker {
-    failures: HashMap<String, u32>,
-}
-
-impl Breaker {
-    pub fn broken(&self, host: &str) -> bool {
-        self.failures.get(host).copied().unwrap_or(0) >= BREAKER_FAILURES
-    }
-
-    fn fail(&mut self, host: &str) {
-        *self.failures.entry(host.to_string()).or_default() += 1;
-    }
-
-    fn broken_hosts(&self) -> Vec<String> {
-        self.failures
-            .iter()
-            .filter(|(_, n)| **n >= BREAKER_FAILURES)
-            .map(|(host, _)| host.clone())
-            .collect()
     }
 }
 
@@ -305,8 +293,6 @@ pub struct Scheduled {
     pub at: DateTime<Utc>,
     /// Only flagged NRK items to re-resolve: no listing part (§2.2's restore of `failures`).
     pub recheck_only: bool,
-    /// The host its root, pages or feed come from (the breaker's key).
-    pub host: String,
     order: (i64, String, i64),
 }
 
@@ -367,13 +353,6 @@ pub fn desired_end(link: &Link, play_order: &str, capped: bool) -> &'static str 
     }
 }
 
-fn host_for(link: &Link) -> String {
-    match link {
-        Link::Rss { url } => music_net::host_of(url).unwrap_or_default(),
-        _ => "psapi.nrk.no".to_string(),
-    }
-}
-
 fn schedule_one(
     row: &ScheduleRow,
     setting_hours: i64,
@@ -409,14 +388,12 @@ fn schedule_one(
     let refill = row.source == "nrk"
         && row.keep_end.is_some()
         && row.keep_end.as_deref() != Some(desired_end(&link, &row.play_order, row.capped));
-    let host = host_for(&link);
     let make = |why: Why, at: DateTime<Utc>, recheck_only: bool, order: (i64, String, i64)| {
         Some(Scheduled {
             entry_id: row.entry_id,
             why,
             at,
             recheck_only,
-            host: host.clone(),
             order,
         })
     };
@@ -447,7 +424,9 @@ fn schedule_one(
             (row.sort, String::new(), row.entry_id),
         );
     }
-    if row.flagged && recheck_room {
+    // A flag waits for the backoff of a failing entry like everything else (QA 1c #1: a feed that
+    // keeps failing must not be asked again at once).
+    if row.flagged && recheck_room && row.failures == 0 {
         // Due for its own sake too: a whole check that also handles the flags.
         let recheck_only = regular > now && row.source == "nrk";
         return make(
@@ -870,34 +849,19 @@ pub struct CheckReport {
     pub changed: bool,
     pub phones: Vec<i64>,
     pub error: Option<String>,
-    /// The breaker deferred it: no failure counted.
-    pub deferred: bool,
 }
 
 /// One request's outcome inside a check.
 enum Got {
     Answer(SourceResponse),
     Failed(FetchError),
-    /// Not sent: the check's budget is spent, or the host's breaker is open.
+    /// Not sent: the check's budget is spent.
     Skipped,
 }
 
-/// Why the listing part stopped.
-enum Stop {
-    Failed(CheckError),
-    Deferred,
-}
-
-impl From<CheckError> for Stop {
-    fn from(err: CheckError) -> Stop {
-        Stop::Failed(err)
-    }
-}
-
-/// The requests of one check: the source, the budget and the breaker.
+/// The requests of one check: the source and the budget.
 struct Job<'a> {
     source: &'a dyn Source,
-    breaker: &'a mut Breaker,
     requests: u32,
     budget: u32,
     started: tokio::time::Instant,
@@ -912,43 +876,40 @@ impl Job<'_> {
     }
 
     async fn get(&mut self, request: SourceRequest) -> Got {
-        let host = music_net::host_of(&request.url).unwrap_or_default();
-        if self.spent() || self.breaker.broken(&host) {
+        if self.spent() {
             return Got::Skipped;
         }
         self.requests += 1;
-        // A listing request's 5xx says the host is down; a manifest's says that one programme is
-        // broken (QA #2), so it only counts against the item.
-        let listing = matches!(request.kind, Kind::Page | Kind::Feed);
         match self.source.get(request).await {
-            Ok(answer) => {
-                if answer.status >= 500 && listing {
-                    self.breaker.fail(&host);
-                }
-                Got::Answer(answer)
-            }
-            Err(err) => {
-                if !matches!(err, FetchError::Refused(_)) {
-                    self.breaker.fail(&host);
-                }
-                Got::Failed(err)
-            }
+            Ok(answer) => Got::Answer(answer),
+            Err(err) => Got::Failed(err),
         }
     }
 
-    /// A page, root or feed answer that must be 200 (404/410 = not found for psapi).
+    /// A root, page or feed answer that must be 200.
     async fn page(
         &mut self,
         url: String,
         kind: Kind,
         reach: Reach,
-    ) -> Result<SourceResponse, Stop> {
+    ) -> Result<SourceResponse, CheckError> {
         match self.get(SourceRequest::new(url, kind, reach)).await {
             Got::Answer(answer) if answer.status == 200 => Ok(answer),
-            Got::Answer(answer) => Err(Stop::Failed(CheckError::Status(answer.status))),
-            Got::Failed(err) => Err(Stop::Failed(err.into())),
-            Got::Skipped => Err(Stop::Deferred),
+            Got::Answer(answer) => Err(CheckError::Status(answer.status)),
+            Got::Failed(err) => Err(err.into()),
+            // The check's 10 minutes are up.
+            Got::Skipped => Err(CheckError::Timeout),
         }
+    }
+
+    /// Every address of `host`, within [LOOKUP_TIMEOUT] and the check's budget.
+    async fn lookup(&mut self, host: &str) -> Result<Vec<std::net::IpAddr>, FetchError> {
+        if self.spent() {
+            return Err(FetchError::Timeout);
+        }
+        tokio::time::timeout(LOOKUP_TIMEOUT, self.source.resolve(host))
+            .await
+            .unwrap_or(Err(FetchError::Timeout))
     }
 
     /// Whether a URL from a public feed may reach the phones: not a private IP literal, and not a
@@ -963,9 +924,9 @@ impl Job<'_> {
         if let Some(private) = self.private_hosts.get(&host) {
             return !private;
         }
-        let private = match self.source.resolve(&host).await {
+        let private = match self.lookup(&host).await {
             Ok(found) => !found.is_empty() && found.iter().all(|ip| music_net::is_private(*ip)),
-            // Unknown here: the phone resolves it itself.
+            // Unknown here (no answer in time): the phone resolves it itself.
             Err(_) => false,
         };
         self.private_hosts.insert(host, private);
@@ -996,6 +957,9 @@ struct Plan {
     new_items: usize,
     /// Recheck manifests still allowed today, server-wide.
     recheck_room: i64,
+    /// The items re-asked in this check (a manifest, or the feed of a flagged RSS entry): their
+    /// flags are cleared and `rechecked_at` stamped, even when the check then fails (QA 1c #1).
+    rechecked: HashSet<String>,
 }
 
 impl Plan {
@@ -1024,13 +988,21 @@ impl Plan {
     }
 }
 
+/// How a check runs, from the schedule.
+#[derive(Clone, Copy, Default)]
+struct Mode {
+    /// Only flagged NRK items to re-resolve: no listing part.
+    recheck_only: bool,
+    /// Check now: the full 50-episode first page, not the routine 5.
+    requested: bool,
+}
+
 /// Checks one entry now (§2.3): the start stamp, the listing (NRK or RSS), the rechecks, the cover
 /// and one closing transaction. `Ok(None)` = the entry is gone (or isn't NRK/RSS).
 pub async fn check_entry(
     state: &AppState,
     entry_id: i64,
     now: DateTime<Utc>,
-    breaker: &mut Breaker,
 ) -> Result<Option<CheckReport>, sqlx::Error> {
     let entry: Option<(String, String, Option<String>, String)> =
         sqlx::query_as("SELECT name, source, target, play_order FROM music_entries WHERE id = ?")
@@ -1046,11 +1018,15 @@ pub async fn check_entry(
     let Ok(link) = crate::music::parse_link(&target) else {
         return Ok(None);
     };
-    let recheck_only = schedule(&state.db, now)
+    let mode = schedule(&state.db, now)
         .await?
         .into_iter()
         .find(|s| s.entry_id == entry_id)
-        .is_some_and(|s| s.recheck_only);
+        .map(|s| Mode {
+            recheck_only: s.recheck_only,
+            requested: s.why == Why::CheckNow,
+        })
+        .unwrap_or_default();
     let old = load_listing(&state.db, entry_id).await?.unwrap_or_default();
 
     // The start stamp, in its own write: a crash from here on backs off like a failure.
@@ -1070,17 +1046,7 @@ pub async fn check_entry(
         Err(err) => return Err(err),
     }
     state.music_sweep.set_current(Some(entry_id));
-    let outcome = run_check(
-        state,
-        entry_id,
-        &link,
-        &play_order,
-        &old,
-        recheck_only,
-        now,
-        breaker,
-    )
-    .await;
+    let outcome = run_check(state, entry_id, &link, &play_order, &old, mode, now).await;
     state.music_sweep.set_current(None);
     let (plan, result, requests) = outcome?;
     let mut report = finish(
@@ -1090,7 +1056,7 @@ pub async fn check_entry(
         &old,
         plan,
         result,
-        recheck_only,
+        mode.recheck_only,
         requests,
     )
     .await?;
@@ -1101,17 +1067,15 @@ pub async fn check_entry(
 }
 
 /// The work of a check, without writing anything.
-#[allow(clippy::too_many_arguments)]
 async fn run_check(
     state: &AppState,
     entry_id: i64,
     link: &Link,
     play_order: &str,
     old: &Listing,
-    recheck_only: bool,
+    mode: Mode,
     now: DateTime<Utc>,
-    breaker: &mut Breaker,
-) -> Result<(Plan, Result<CoverResult, Stop>, u32), sqlx::Error> {
+) -> Result<(Plan, Result<CoverResult, CheckError>, u32), sqlx::Error> {
     let items = {
         let mut conn = state.db.acquire().await?;
         load_items(&mut conn, entry_id).await?
@@ -1136,60 +1100,47 @@ async fn run_check(
         full_recheck_at: old.full_recheck_at.clone(),
         new_items: 0,
         recheck_room,
+        rechecked: HashSet::new(),
     };
     let mut job = Job {
         source: state.music_fetch.as_ref(),
-        breaker,
         requests: 0,
         budget: state.music_sweep.budget(),
         started: tokio::time::Instant::now(),
         now,
         private_hosts: HashMap::new(),
     };
-    // A whole-entry re-resolve: two or more distinct items flagged within 24 h, once a day.
-    let flagged_recently = plan
+    // A whole-entry re-resolve (user decision 5): a flag now, two or more distinct items reported
+    // within 24 h (handled or not - streams fail one at a time, QA 1c #4), once a day.
+    let reported_recently = plan
         .items
         .iter()
         .filter(|i| {
-            i.recheck
-                && i.reported_at
-                    .as_deref()
-                    .and_then(parse_stamp)
-                    .is_some_and(|at| at > now - hours(24))
+            i.reported_at
+                .as_deref()
+                .and_then(parse_stamp)
+                .is_some_and(|at| at > now - hours(24))
         })
         .count();
-    let whole = flagged_recently >= 2
+    let any_flag = plan.items.iter().any(|i| i.recheck);
+    let whole = any_flag
+        && reported_recently >= 2
         && old
             .full_recheck_at
             .as_deref()
             .and_then(parse_stamp)
             .is_none_or(|at| at <= now - hours(24));
-    let any_flag = plan.items.iter().any(|i| i.recheck);
     let result = match link {
         Link::Rss { url } => rss_check(&mut job, &mut plan, url, old, any_flag).await,
         Link::NrkPodcast { slug } => {
             nrk_check(
-                &mut job,
-                &mut plan,
-                link,
-                slug,
-                "podcast",
-                play_order,
-                recheck_only,
-                whole,
+                &mut job, &mut plan, link, slug, "podcast", play_order, mode, whole,
             )
             .await
         }
         Link::NrkSeries { slug, .. } => {
             nrk_check(
-                &mut job,
-                &mut plan,
-                link,
-                slug,
-                "series",
-                play_order,
-                recheck_only,
-                whole,
+                &mut job, &mut plan, link, slug, "series", play_order, mode, whole,
             )
             .await
         }
@@ -1197,14 +1148,17 @@ async fn run_check(
     if whole {
         plan.full_recheck_at = Some(stamp(now));
     }
-    // Flags are cleared after any attempt, so a failing source can't keep the entry due (QA #5).
-    for item in plan.items.iter_mut().filter(|i| i.recheck) {
-        item.recheck = false;
-        item.rechecked_at = Some(stamp(now));
+    // A flag is cleared once its item was asked about (QA #5); one that waits for the day's
+    // budget stays (QA 1c #7).
+    for item in plan.items.iter_mut() {
+        if item.recheck && plan.rechecked.contains(&item.key) {
+            item.recheck = false;
+            item.rechecked_at = Some(stamp(now));
+        }
     }
     let result = match result {
         Ok(()) => Ok(cover(&mut job, &mut plan, link).await),
-        Err(stop) => Err(stop),
+        Err(err) => Err(err),
     };
     let requests = job.requests;
     Ok((plan, result, requests))
@@ -1223,28 +1177,42 @@ fn psapi_url(href: &str) -> Option<String> {
         .then(|| format!("{PSAPI}{href}"))
 }
 
+fn episodes_url(kind: &str, slug: &str, sort: &str, size: usize) -> String {
+    format!("{PSAPI}/radio/catalog/{kind}/{slug}/episodes?page=1&pageSize={size}&sort={sort}")
+}
+
 /// The result of walking psapi's episode pages.
 struct Walk {
     /// In walk order, repeated keys dropped.
     stubs: Vec<sources::Stub>,
     /// The source has more beyond what was taken.
     more: bool,
-    /// The first page listed no episode at all (podkast: use the RSS fallback).
+    /// The first page listed no episode at all (or answered 404/410).
     nothing: bool,
 }
 
-/// Walks `episodes?sort=<sort>` from page 1, taking stubs until `max`, a known key (when
-/// `known` is given) or the end.
+/// How a walk starts.
+#[derive(Clone, Copy)]
+struct WalkStart<'k> {
+    sort: &'static str,
+    /// Stop at the first of these (an incremental walk).
+    known: Option<&'k HashSet<String>>,
+    max: usize,
+    /// A routine check: a 5-episode page first, 50-episode pages only if all five are new.
+    routine: bool,
+}
+
+/// Walks `episodes?sort=<sort>` from page 1, taking stubs until `max`, a known key or the end. A
+/// routine walk sends the stored validators with its small page; a 304 means nothing new.
 async fn walk(
     job: &mut Job<'_>,
+    plan: &mut Plan,
     kind: &str,
     slug: &str,
-    sort: &str,
-    known: Option<&HashSet<String>>,
-    max: usize,
-) -> Result<Walk, Stop> {
-    let mut url =
-        format!("{PSAPI}/radio/catalog/{kind}/{slug}/episodes?page=1&pageSize=50&sort={sort}");
+    start: WalkStart<'_>,
+) -> Result<Walk, CheckError> {
+    let mut size = if start.routine { ROUTINE_PAGE_SIZE } else { 50 };
+    let mut url = episodes_url(kind, slug, start.sort, size);
     let mut seen = HashSet::new();
     let mut result = Walk {
         stubs: Vec::new(),
@@ -1253,30 +1221,40 @@ async fn walk(
     };
     let mut first = true;
     loop {
-        let answer = match job
-            .get(SourceRequest::new(url.clone(), Kind::Page, Reach::Public))
-            .await
-        {
+        let mut request = SourceRequest::new(url.clone(), Kind::Page, Reach::Public);
+        let small = first && size == ROUTINE_PAGE_SIZE;
+        if small {
+            // psapi sent no validators when this was written (Cache-Control only); if it ever
+            // does, the routine page costs a 304.
+            request.etag = plan.etag.clone();
+            request.last_modified = plan.last_modified.clone();
+        }
+        let answer = match job.get(request).await {
+            Got::Answer(answer) if small && answer.status == 304 => return Ok(result),
             Got::Answer(answer) if answer.status == 200 => answer,
             Got::Answer(answer) if first && matches!(answer.status, 404 | 410) => {
                 result.nothing = true;
                 return Ok(result);
             }
-            Got::Answer(answer) => return Err(Stop::Failed(CheckError::Status(answer.status))),
-            Got::Failed(err) => return Err(Stop::Failed(err.into())),
+            Got::Answer(answer) => return Err(CheckError::Status(answer.status)),
+            Got::Failed(err) => return Err(err.into()),
             // The budget: what was walked counts; the next check continues.
             Got::Skipped if !first => {
                 result.more = true;
                 return Ok(result);
             }
-            Got::Skipped => return Err(Stop::Deferred),
+            Got::Skipped => return Err(CheckError::Timeout),
         };
+        if small {
+            plan.etag = answer.etag.clone();
+            plan.last_modified = answer.last_modified.clone();
+        }
         let Some(page) = sources::parse_page(&answer.body) else {
-            return Err(Stop::Failed(if answer.truncated {
+            return Err(if answer.truncated {
                 CheckError::TooBig
             } else {
                 CheckError::NotFound
-            }));
+            });
         };
         if first && page.stubs.is_empty() {
             result.nothing = true;
@@ -1288,18 +1266,28 @@ async fn walk(
             if !seen.insert(stub.key.clone()) {
                 continue;
             }
-            if known.is_some_and(|k| k.contains(&stub.key)) {
+            if start.known.is_some_and(|k| k.contains(&stub.key)) {
                 return Ok(result);
             }
-            if result.stubs.len() == max {
+            if result.stubs.len() == start.max {
                 result.more = true;
                 return Ok(result);
             }
             result.stubs.push(stub);
-            if result.stubs.len() == max && (index + 1 < count || page.next.is_some()) {
+            if result.stubs.len() == start.max && (index + 1 < count || page.next.is_some()) {
                 result.more = true;
                 return Ok(result);
             }
+        }
+        if size == ROUTINE_PAGE_SIZE {
+            // All five were new: go on with the normal pages, from the start (psapi's own next
+            // link would continue in fives; `seen` skips the five already taken).
+            if page.next.is_none() && count < size {
+                return Ok(result);
+            }
+            size = 50;
+            url = episodes_url(kind, slug, start.sort, size);
+            continue;
         }
         match page.next.as_deref().and_then(psapi_url) {
             Some(next) => url = next,
@@ -1308,18 +1296,36 @@ async fn walk(
     }
 }
 
+/// What psapi said about one manifest.
+enum Asked {
+    Found(Manifest),
+    /// 404/410: unpublished.
+    Unpublished,
+    /// Another status, or an answer that isn't a manifest.
+    Failed,
+    /// A network error or a timeout.
+    Unreachable,
+    /// Not asked: the check's budget is spent.
+    Skipped,
+}
+
 /// psapi's playback manifest of an episode (`podcast`) or programme (`program`).
-async fn manifest(job: &mut Job<'_>, kind: &str, key: &str) -> Option<Result<Manifest, ()>> {
+async fn manifest(job: &mut Job<'_>, kind: &str, key: &str) -> Asked {
     let url = format!("{PSAPI}/playback/manifest/{kind}/{key}");
     match job
         .get(SourceRequest::new(url, Kind::Manifest, Reach::Public))
         .await
     {
         Got::Answer(answer) if answer.status == 200 => {
-            Some(sources::parse_manifest(&answer.body).ok_or(()))
+            match sources::parse_manifest(&answer.body) {
+                Some(found) => Asked::Found(found),
+                None => Asked::Failed,
+            }
         }
-        Got::Answer(_) | Got::Failed(_) => Some(Err(())),
-        Got::Skipped => None,
+        Got::Answer(answer) if matches!(answer.status, 404 | 410) => Asked::Unpublished,
+        Got::Answer(_) => Asked::Failed,
+        Got::Failed(_) => Asked::Unreachable,
+        Got::Skipped => Asked::Skipped,
     }
 }
 
@@ -1358,9 +1364,9 @@ async fn nrk_check(
     slug: &str,
     kind: &str,
     play_order: &str,
-    recheck_only: bool,
+    mode: Mode,
     whole: bool,
-) -> Result<(), Stop> {
+) -> Result<(), CheckError> {
     let manifest_kind = if kind == "podcast" {
         "podcast"
     } else {
@@ -1368,7 +1374,7 @@ async fn nrk_check(
     };
     let now = job.now;
     plan.lan = Some(false);
-    if !recheck_only {
+    if !mode.recheck_only {
         // The root: on the first fill and once a week (title and image).
         let root_due = plan.items.is_empty()
             || plan.title.is_none()
@@ -1381,10 +1387,8 @@ async fn nrk_check(
             let root_url = format!("{PSAPI}/radio/catalog/{kind}/{slug}");
             let answer = match job.page(root_url, Kind::Page, Reach::Public).await {
                 Ok(answer) => answer,
-                Err(Stop::Failed(CheckError::Status(404 | 410))) => {
-                    return Err(Stop::Failed(CheckError::NotFound));
-                }
-                Err(stop) => return Err(stop),
+                Err(CheckError::Status(404 | 410)) => return Err(CheckError::NotFound),
+                Err(err) => return Err(err),
             };
             let root = sources::parse_root(&answer.body).ok_or(CheckError::NotFound)?;
             plan.title = root.title.or(plan.title.take());
@@ -1397,34 +1401,50 @@ async fn nrk_check(
                 ..
             } => program_list(job, plan, program).await?,
             Link::NrkSeries { program: None, .. } => {
-                series_list(job, plan, link, slug, play_order).await?
+                series_list(job, plan, link, slug, play_order, mode).await?
             }
-            _ => podcast_list(job, plan, slug).await?,
+            _ => podcast_list(job, plan, slug, mode).await?,
         }
     }
-    resolve(job, plan, manifest_kind, whole, !recheck_only).await;
-    Ok(())
+    resolve(job, plan, manifest_kind, whole, !mode.recheck_only).await
 }
 
-/// NRK podkast: the newest 100, walked `sort=desc` to the first known key; the RSS fallback when
-/// psapi lists nothing.
-async fn podcast_list(job: &mut Job<'_>, plan: &mut Plan, slug: &str) -> Result<(), Stop> {
+/// NRK podkast: the newest 100, walked `sort=desc` to the first known key. The RSS fallback only
+/// for a first fill or a list that came from it: for a list psapi built, a psapi page with nothing
+/// on it is a failed check, and the last good list stays (QA 1c #2).
+async fn podcast_list(
+    job: &mut Job<'_>,
+    plan: &mut Plan,
+    slug: &str,
+    mode: Mode,
+) -> Result<(), CheckError> {
     let known = plan.keys();
-    let walked = walk(job, "podcast", slug, "desc", Some(&known), MAX_NRK_ITEMS).await?;
+    let routine = !plan.items.is_empty() && !mode.requested;
+    let start = WalkStart {
+        sort: "desc",
+        known: Some(&known),
+        max: MAX_NRK_ITEMS,
+        routine,
+    };
+    let walked = walk(job, plan, "podcast", slug, start).await?;
     if walked.nothing {
+        if !plan.items.is_empty() && !plan.fallback {
+            return Err(CheckError::NotFound);
+        }
         let url = format!("{RSS_FALLBACK}/{slug}.rss");
         let answer = job.page(url, Kind::Feed, Reach::Public).await?;
-        let feed = match sources::parse_feed(&answer.body, true) {
+        let feed = match sources::parse_feed(&answer.body, true, MAX_NRK_ITEMS) {
             Ok(feed) => feed,
-            Err(_) if answer.truncated => return Err(Stop::Failed(CheckError::TooBig)),
-            Err(sources::FeedError::NotFeed) => return Err(Stop::Failed(CheckError::NotFeed)),
-            Err(sources::FeedError::NoItems) => return Err(Stop::Failed(CheckError::NoItems)),
+            Err(_) if answer.truncated => return Err(CheckError::TooBig),
+            Err(sources::FeedError::NotFeed) => return Err(CheckError::NotFeed),
+            Err(sources::FeedError::NoItems) => return Err(CheckError::NoItems),
         };
         plan.title = plan.title.take().or(feed.title.clone());
         if plan.cover_candidate.is_none() {
             plan.cover_candidate = feed.image.clone();
         }
-        merge_feed(job, plan, feed, answer.truncated, MAX_NRK_ITEMS, false).await;
+        // The fallback is a short rolling window: what it lacks isn't gone.
+        merge_feed(job, plan, feed, false, MAX_NRK_ITEMS, false).await;
         plan.fallback = true;
         plan.keep_end = Some("newest".to_string());
         return Ok(());
@@ -1452,7 +1472,8 @@ async fn series_list(
     link: &Link,
     slug: &str,
     play_order: &str,
-) -> Result<(), Stop> {
+    mode: Mode,
+) -> Result<(), CheckError> {
     let now = job.now;
     let desired = desired_end(link, play_order, plan.capped);
     let to_items = |stubs: &[sources::Stub], reverse: bool, plan: &Plan| -> Vec<Item> {
@@ -1469,13 +1490,22 @@ async fn series_list(
             })
             .collect()
     };
+    let full = |sort: &'static str| WalkStart {
+        sort,
+        known: None,
+        max: MAX_NRK_ITEMS,
+        routine: false,
+    };
     if plan.items.is_empty() {
         // The first fill.
         let (sort, end) = match play_order {
             "oldest_first" => ("asc", "first"),
             _ => ("desc", "newest"),
         };
-        let walked = walk(job, "series", slug, sort, None, MAX_NRK_ITEMS).await?;
+        let walked = walk(job, plan, "series", slug, full(sort)).await?;
+        if walked.nothing {
+            return Err(CheckError::NotFound);
+        }
         plan.items = to_items(&walked.stubs, sort == "desc", plan);
         plan.new_items += plan.items.len();
         plan.capped = walked.more;
@@ -1491,7 +1521,10 @@ async fn series_list(
         if plan.capped {
             // A refill from the other end.
             let sort = if desired == "newest" { "desc" } else { "asc" };
-            let walked = walk(job, "series", slug, sort, None, MAX_NRK_ITEMS).await?;
+            let walked = walk(job, plan, "series", slug, full(sort)).await?;
+            if walked.nothing {
+                return Err(CheckError::NotFound);
+            }
             let refilled = to_items(&walked.stubs, sort == "desc", plan);
             let known = plan.keys();
             plan.new_items += refilled.iter().filter(|i| !known.contains(&i.key)).count();
@@ -1508,7 +1541,16 @@ async fn series_list(
         return Ok(());
     }
     let known = plan.keys();
-    let walked = walk(job, "series", slug, "desc", Some(&known), MAX_NRK_ITEMS).await?;
+    let start = WalkStart {
+        sort: "desc",
+        known: Some(&known),
+        max: MAX_NRK_ITEMS,
+        routine: !mode.requested,
+    };
+    let walked = walk(job, plan, "series", slug, start).await?;
+    if walked.nothing {
+        return Err(CheckError::NotFound);
+    }
     let new: Vec<Item> = walked
         .stubs
         .iter()
@@ -1546,7 +1588,7 @@ async fn series_list(
 
 /// NRK `serie/<slug>/<programId>`: the programmes from that one on, along the metadata's
 /// `_links.next` (vibb `_series`), at most 100; anchored at the start.
-async fn program_list(job: &mut Job<'_>, plan: &mut Plan, program: &str) -> Result<(), Stop> {
+async fn program_list(job: &mut Job<'_>, plan: &mut Plan, program: &str) -> Result<(), CheckError> {
     plan.keep_end = Some("first".to_string());
     let known = plan.keys();
     let mut next = if plan.items.is_empty() {
@@ -1575,23 +1617,23 @@ async fn program_list(job: &mut Job<'_>, plan: &mut Plan, program: &str) -> Resu
         }
         let mut item = Item::new(id.clone(), job.now);
         match manifest(job, "program", &id).await {
-            Some(Ok(found)) => {
+            Asked::Found(found) => {
                 if !apply_manifest(&mut item, &found) {
                     item.attempts = 1;
                 }
             }
-            Some(Err(())) => item.attempts = 1,
-            None => break,
+            Asked::Skipped => break,
+            _ => item.attempts = 1,
         }
         let url = format!("{PSAPI}/playback/metadata/program/{id}");
         let meta = match job.page(url, Kind::Manifest, Reach::Public).await {
             Ok(answer) => sources::parse_metadata(&answer.body),
-            Err(stop) if first_fill && added == 0 => return Err(stop),
+            Err(err) if first_fill && added == 0 => return Err(err),
             Err(_) => None,
         };
         let Some(meta) = meta else {
             if first_fill && added == 0 {
-                return Err(Stop::Failed(CheckError::NotFound));
+                return Err(CheckError::NotFound);
             }
             plan.items.push(item);
             added += 1;
@@ -1611,10 +1653,29 @@ async fn program_list(job: &mut Job<'_>, plan: &mut Plan, program: &str) -> Resu
 
 /// Manifests (§2.3, §2.5): expired items first, then flagged ones (or every item for a whole-entry
 /// re-resolve), then new pending ones, then at most 10 earlier failures; pending for 14 days ->
-/// `gone`.
-async fn resolve(job: &mut Job<'_>, plan: &mut Plan, kind: &str, whole: bool, pending: bool) {
+/// `gone`. [MANIFEST_NETWORK_FAILURES] network errors in a row fail the check (psapi went away
+/// mid-check: the entry backs off instead of timing out every manifest).
+async fn resolve(
+    job: &mut Job<'_>,
+    plan: &mut Plan,
+    kind: &str,
+    whole: bool,
+    pending: bool,
+) -> Result<(), CheckError> {
     let now = job.now;
     let day_ago = now - hours(24);
+    let mut unreachable = 0;
+    let mut outage = |asked: &Asked| -> Result<(), CheckError> {
+        if matches!(asked, Asked::Unreachable) {
+            unreachable += 1;
+            if unreachable >= MANIFEST_NETWORK_FAILURES {
+                return Err(CheckError::Network("psapi stopped answering".to_string()));
+            }
+        } else {
+            unreachable = 0;
+        }
+        Ok(())
+    };
     let recently_rechecked = |item: &Item| {
         item.rechecked_at
             .as_deref()
@@ -1646,22 +1707,28 @@ async fn resolve(job: &mut Job<'_>, plan: &mut Plan, kind: &str, whole: bool, pe
             break;
         }
         let key = plan.items[index].key.clone();
-        let Some(found) = manifest(job, kind, &key).await else {
+        let asked = manifest(job, kind, &key).await;
+        if matches!(asked, Asked::Skipped) {
             break;
-        };
+        }
         plan.recheck_room -= 1;
+        plan.rechecked.insert(key);
         let item = &mut plan.items[index];
         item.rechecked_at = Some(stamp(now));
-        // A failed request: the phone keeps its URL until the source says otherwise.
-        if let Ok(found) = found
-            && !apply_manifest(item, &found)
-        {
+        let gone = match &asked {
+            Asked::Found(found) => !apply_manifest(item, found),
+            Asked::Unpublished => true,
+            // No answer: the phone keeps its URL until the source says otherwise.
+            _ => false,
+        };
+        if gone {
             item.state = "gone".to_string();
             item.url = None;
         }
+        outage(&asked)?;
     }
     if !pending {
-        return;
+        return Ok(());
     }
     // 3. New stubs, oldest first; 4. at most 10 earlier failures.
     let untried: Vec<usize> = (0..plan.items.len())
@@ -1673,16 +1740,19 @@ async fn resolve(job: &mut Job<'_>, plan: &mut Plan, kind: &str, whole: bool, pe
         .collect();
     for index in untried.into_iter().chain(retries) {
         let key = plan.items[index].key.clone();
-        let Some(found) = manifest(job, kind, &key).await else {
+        let asked = manifest(job, kind, &key).await;
+        if matches!(asked, Asked::Skipped) {
             break;
-        };
+        }
         let item = &mut plan.items[index];
-        let resolved = matches!(&found, Ok(found) if apply_manifest(item, found));
+        let resolved = matches!(&asked, Asked::Found(found) if apply_manifest(item, found));
         if !resolved {
             item.attempts += 1;
         }
+        outage(&asked)?;
     }
     give_up_pending(plan, now);
+    Ok(())
 }
 
 /// Pending for [PENDING_DAYS] (tried at least once): `gone`.
@@ -1701,24 +1771,29 @@ fn give_up_pending(plan: &mut Plan, now: DateTime<Utc>) {
 // RSS
 // ------------------------------------------------------------------------------------------------
 
+/// Where a pasted or swept feed lives (§2.7): `true` when its host resolves only to private
+/// addresses (the home LAN or the tailnet). The add check and the first sweep check judge it alike.
+pub async fn feed_is_lan(source: &dyn Source, url: &str) -> Result<bool, FetchError> {
+    let host = music_net::host_of(url)
+        .ok_or_else(|| FetchError::Refused("only http and https links work".to_string()))?;
+    let found = tokio::time::timeout(LOOKUP_TIMEOUT, source.resolve(&host))
+        .await
+        .unwrap_or(Err(FetchError::Timeout))?;
+    Ok(!found.is_empty() && found.iter().all(|ip| music_net::is_private(*ip)))
+}
+
 async fn rss_check(
     job: &mut Job<'_>,
     plan: &mut Plan,
     url: &str,
     old: &Listing,
     recheck: bool,
-) -> Result<(), Stop> {
+) -> Result<(), CheckError> {
     // Where the target lives, fixed at the first check (§2.7).
     let lan = match plan.lan {
         Some(lan) => lan,
         None => {
-            let host = music_net::host_of(url).ok_or(CheckError::NotFeed)?;
-            let found = job
-                .source
-                .resolve(&host)
-                .await
-                .map_err(|e| Stop::Failed(e.into()))?;
-            let lan = !found.is_empty() && found.iter().all(|ip| music_net::is_private(*ip));
+            let lan = feed_is_lan(job.source, url).await?;
             plan.lan = Some(lan);
             lan
         }
@@ -1730,16 +1805,27 @@ async fn rss_check(
         request.etag = old.etag.clone();
         request.last_modified = old.last_modified.clone();
     }
-    let answer = match job.get(request).await {
+    let got = job.get(request).await;
+    if recheck && !matches!(got, Got::Skipped) {
+        // The flagged items were asked about (their feed), whatever it answered.
+        let flagged: Vec<String> = plan
+            .items
+            .iter()
+            .filter(|i| i.recheck)
+            .map(|i| i.key.clone())
+            .collect();
+        plan.rechecked.extend(flagged);
+    }
+    let answer = match got {
         Got::Answer(answer) => answer,
-        Got::Failed(err) => return Err(Stop::Failed(err.into())),
-        Got::Skipped => return Err(Stop::Deferred),
+        Got::Failed(err) => return Err(err.into()),
+        Got::Skipped => return Err(CheckError::Timeout),
     };
     if answer.status == 304 {
         return Ok(());
     }
     if answer.status != 200 {
-        return Err(Stop::Failed(CheckError::Status(answer.status)));
+        return Err(CheckError::Status(answer.status));
     }
     let body_sha256 = hex::encode(Sha256::digest(&answer.body));
     plan.etag = answer.etag.clone();
@@ -1748,11 +1834,11 @@ async fn rss_check(
         // A feed without validators that hasn't changed.
         return Ok(());
     }
-    let feed = match sources::parse_feed(&answer.body, false) {
+    let feed = match sources::parse_feed(&answer.body, false, MAX_RSS_ITEMS) {
         Ok(feed) => feed,
-        Err(_) if answer.truncated => return Err(Stop::Failed(CheckError::TooBig)),
-        Err(sources::FeedError::NotFeed) => return Err(Stop::Failed(CheckError::NotFeed)),
-        Err(sources::FeedError::NoItems) => return Err(Stop::Failed(CheckError::NoItems)),
+        Err(_) if answer.truncated => return Err(CheckError::TooBig),
+        Err(sources::FeedError::NotFeed) => return Err(CheckError::NotFeed),
+        Err(sources::FeedError::NoItems) => return Err(CheckError::NoItems),
     };
     plan.title = feed.title.clone().or(plan.title.take());
     let image = match feed.image.clone() {
@@ -1764,7 +1850,9 @@ async fn rss_check(
         _ => None,
     };
     plan.cover_candidate = image;
-    merge_feed(job, plan, feed, answer.truncated, MAX_RSS_ITEMS, lan).await;
+    // A cut-off feed doesn't say what left it.
+    let complete = !answer.truncated;
+    merge_feed(job, plan, feed, complete, MAX_RSS_ITEMS, lan).await;
     plan.body_sha256 = Some(body_sha256);
     plan.parser = Some(sources::PARSER_VERSION);
     Ok(())
@@ -1784,25 +1872,23 @@ async fn feed_url(job: &mut Job<'_>, url: Option<&str>, lan: bool) -> Option<Str
 }
 
 /// Merges a fresh feed into the list (§2.3, QA #9): items still in the feed are updated, new keys
-/// are placed where the feed has them (new ones at the newest end), an item missing from a fresh,
-/// complete feed becomes `gone` but stays, a returning one is `ok` again; then the newest `cap`
-/// are kept, `gone` ones dropped first.
+/// are placed where the feed has them (new ones at the newest end), an item missing from a
+/// `complete` feed becomes `gone` but stays, a returning one is `ok` again; then the newest `cap`
+/// are kept, `gone` ones dropped first. The feed holds at most `cap` items already (the parser
+/// keeps the newest), and `feed.more` says whether it had more.
 async fn merge_feed(
     job: &mut Job<'_>,
     plan: &mut Plan,
     feed: sources::Feed,
-    truncated: bool,
+    complete: bool,
     cap: usize,
     lan: bool,
 ) {
     let now = job.now;
+    let more = feed.more;
     let mut fresh = feed.items;
-    let more = fresh.len() > cap;
     if !feed.oldest_first {
         fresh.reverse();
-    }
-    if fresh.len() > cap {
-        fresh.drain(..fresh.len() - cap);
     }
     let mut candidates: Vec<Item> = Vec::with_capacity(fresh.len());
     for entry in &fresh {
@@ -1832,7 +1918,6 @@ async fn merge_feed(
         .collect();
     // New items go before the next known one in feed order, or at the end.
     let mut before: HashMap<usize, Vec<Item>> = HashMap::new();
-    let mut tail: Vec<Item> = Vec::new();
     let mut pending_new: Vec<Item> = Vec::new();
     for candidate in candidates {
         match known.get(&candidate.key).copied() {
@@ -1851,7 +1936,7 @@ async fn merge_feed(
             None => pending_new.push(candidate),
         }
     }
-    tail.append(&mut pending_new);
+    let tail = pending_new;
     let mut merged: Vec<Item> = Vec::with_capacity(plan.items.len() + tail.len());
     let mut new_count = tail.len();
     for (index, mut item) in std::mem::take(&mut plan.items).into_iter().enumerate() {
@@ -1859,7 +1944,7 @@ async fn merge_feed(
             new_count += inserted.len();
             merged.append(&mut inserted);
         }
-        if !fresh_keys.contains(&item.key) && !truncated {
+        if !fresh_keys.contains(&item.key) && complete {
             item.state = "gone".to_string();
             item.url = None;
         }
@@ -1922,7 +2007,8 @@ async fn cover(job: &mut Job<'_>, plan: &mut Plan, link: &Link) -> CoverResult {
 // ------------------------------------------------------------------------------------------------
 
 /// Writes what a check found, in one transaction that first checks the entry still exists (a
-/// delete mid-check drops the result). A failure keeps the last good list (§2.4).
+/// delete mid-check drops the result). A failure keeps the last good list (§2.4), but the items it
+/// asked about are stamped and their flags cleared (QA 1c #1).
 #[allow(clippy::too_many_arguments)]
 async fn finish(
     state: &AppState,
@@ -1930,7 +2016,7 @@ async fn finish(
     now: DateTime<Utc>,
     old: &Listing,
     plan: Plan,
-    result: Result<CoverResult, Stop>,
+    result: Result<CoverResult, CheckError>,
     recheck_only: bool,
     requests: u32,
 ) -> Result<Option<CheckReport>, sqlx::Error> {
@@ -1942,11 +2028,7 @@ async fn finish(
     };
     let (cover, failure) = match result {
         Ok(cover) => (cover.0, None),
-        Err(Stop::Deferred) => {
-            report.deferred = true;
-            (None, None)
-        }
-        Err(Stop::Failed(err)) => (None, Some(err)),
+        Err(err) => (None, Some(err)),
     };
     // The store's lock from writing the file to committing its hash (photos' rule).
     let cover_lock = match &cover {
@@ -1964,6 +2046,13 @@ async fn finish(
             Err(err) => tracing::warn!(%err, "couldn't store a music cover"),
         }
     }
+    let prune = |stored: bool| async move {
+        if stored {
+            crate::photos::MUSIC_COVERS
+                .prune(&state.db, &state.music_cover_dir)
+                .await;
+        }
+    };
 
     let initial = {
         let mut conn = state.db.acquire().await?;
@@ -1977,6 +2066,9 @@ async fn finish(
             .await?;
     if !exists {
         tx.rollback().await?;
+        // A cover stored for it is nobody's now (QA 1c #11).
+        drop(cover_lock);
+        prune(cover_hash.is_some()).await;
         return Ok(None);
     }
     let anchored = plan.keep_end.as_deref() == Some("first");
@@ -1986,24 +2078,25 @@ async fn finish(
         .items
         .iter()
         .any(|i| i.state == "pending" && i.attempts == 0);
-    // A list with no playable item is no list, unless a fill is still going (budget, breaker).
+    // A first fill with no playable item is no list, unless it is still going (the budget). A
+    // listed entry whose every item was withdrawn is listed so: the phones get `url: null`
+    // (hard rule 5 over §2.4, QA 1c #3).
     let failure = match failure {
-        None if !report.deferred && !recheck_only && !has_ok && !untried => {
+        None if !recheck_only && !has_ok && !untried && old.version.is_none() => {
             Some(CheckError::NoItems)
         }
         other => other,
     };
-    let listing_part = !recheck_only && !report.deferred;
+    let listing_part = !recheck_only;
     let mut version = old.version.clone();
     let mut listed = (old.item_count, old.bytes, old.cut);
+    // Never listed: a failed fill keeps its stubs and their attempts, so a retry continues (QA #2).
     let write_items = match &failure {
-        // Never listed: keep the stubs and their attempts, so a retry continues (QA #2).
         Some(_) => old.version.is_none() && plan.items != initial,
         None => plan.items != initial,
     };
     match &failure {
         Some(err) => report.error = Some(err.code()),
-        None if report.deferred => {}
         None => {
             if (has_ok || old.version.is_some())
                 && let Some(built) = &built
@@ -2013,7 +2106,17 @@ async fn finish(
             }
         }
     }
+    let now_text = stamp(now);
     if write_items {
+        // A phone's flag that came in during the check is kept (QA 1c #6).
+        let late_flags: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT key, reported_at FROM music_items \
+             WHERE entry_id = ? AND recheck = 1 AND reported_at > ?",
+        )
+        .bind(entry_id)
+        .bind(&now_text)
+        .fetch_all(&mut *tx)
+        .await?;
         sqlx::query("DELETE FROM music_items WHERE entry_id = ?")
             .bind(entry_id)
             .execute(&mut *tx)
@@ -2042,10 +2145,34 @@ async fn finish(
             .execute(&mut *tx)
             .await?;
         }
+        for (key, reported_at) in late_flags {
+            sqlx::query(
+                "UPDATE music_items SET recheck = 1, reported_at = ? WHERE entry_id = ? AND key = ?",
+            )
+            .bind(reported_at)
+            .bind(entry_id)
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+        }
+    } else {
+        // The rows stay the last good list; what was asked about is stamped, its flag cleared -
+        // unless a phone flagged it again during the check.
+        for key in &plan.rechecked {
+            sqlx::query(
+                "UPDATE music_items SET recheck = 0, rechecked_at = ? \
+                 WHERE entry_id = ? AND key = ? AND (reported_at IS NULL OR reported_at <= ?)",
+            )
+            .bind(&now_text)
+            .bind(entry_id)
+            .bind(key)
+            .bind(&now_text)
+            .execute(&mut *tx)
+            .await?;
+        }
     }
-    let now_text = stamp(now);
-    // `failures`: zeroed by a listing, restored for a recheck only or a deferral, kept (+1 from
-    // the start stamp) after a failure.
+    // `failures`: zeroed by a listing, restored for a recheck only, kept (+1 from the start stamp)
+    // after a failure.
     let failures = match (&failure, listing_part) {
         (Some(_), true) => old.failures + 1,
         (None, true) => 0,
@@ -2137,11 +2264,7 @@ async fn finish(
     .await?;
     tx.commit().await?;
     drop(cover_lock);
-    if cover_hash.is_some() {
-        crate::photos::MUSIC_COVERS
-            .prune(&state.db, &state.music_cover_dir)
-            .await;
-    }
+    prune(cover_hash.is_some()).await;
     report.changed = version != old.version
         || cover_hash.is_some()
         || (success && plan.keep_end != old.keep_end);
@@ -2161,7 +2284,7 @@ pub async fn run(state: AppState) {
     tokio::time::sleep(FIRST_PASS_DELAY).await;
     loop {
         let ok = run_pass(&state).await;
-        let wait = next_wait(&state, Utc::now()).await.max(if ok {
+        let wait = next_wait(&state, state.music_sweep.now()).await.max(if ok {
             Duration::from_secs(1)
         } else {
             Duration::from_secs(60)
@@ -2173,20 +2296,12 @@ pub async fn run(state: AppState) {
     }
 }
 
-/// How long to sleep: until the next entry is due (a paused host's entries at the pause's end), at
-/// most the setting's interval.
+/// How long to sleep: until the next entry is due, at most the setting's interval.
 async fn next_wait(state: &AppState, now: DateTime<Utc>) -> Duration {
     let setting = sweep_hours(&state.db).await.unwrap_or(DEFAULT_SWEEP_HOURS);
     let longest = hours(setting);
-    let paused = state.music_sweep.paused_hosts(now);
     let next = match schedule(&state.db, now).await {
-        Ok(all) => all
-            .iter()
-            .map(|s| match paused.get(&s.host) {
-                Some(until) => s.at.max(*until),
-                None => s.at,
-            })
-            .min(),
+        Ok(all) => all.iter().map(|s| s.at).min(),
         Err(err) => {
             tracing::error!(%err, "music sweep: can't read the schedule");
             None
@@ -2200,15 +2315,13 @@ async fn next_wait(state: &AppState, now: DateTime<Utc>) -> Duration {
 /// phones whose library changed once at the end (or every 5 minutes of a long pass). `false` after
 /// a database error.
 pub async fn run_pass(state: &AppState) -> bool {
-    let mut breaker = Breaker::default();
     let mut nudges: HashSet<i64> = HashSet::new();
     let mut last_flush = tokio::time::Instant::now();
     let mut last_check: Option<tokio::time::Instant> = None;
     let mut checks: HashMap<i64, u32> = HashMap::new();
     let mut ok = true;
     loop {
-        let now = Utc::now();
-        let paused = state.music_sweep.paused_hosts(now);
+        let now = state.music_sweep.now();
         let due = match due(&state.db, now).await {
             Ok(due) => due,
             Err(err) => {
@@ -2217,22 +2330,28 @@ pub async fn run_pass(state: &AppState) -> bool {
                 break;
             }
         };
-        let Some(next) = due.into_iter().find(|s| {
-            !breaker.broken(&s.host)
-                && !paused.contains_key(&s.host)
-                && checks.get(&s.entry_id).copied().unwrap_or(0) < 20
-        }) else {
+        let Some(next) = due
+            .into_iter()
+            .find(|s| checks.get(&s.entry_id).copied().unwrap_or(0) < CHECKS_PER_PASS)
+        else {
             break;
         };
         if let Some(at) = last_check {
             tokio::time::sleep_until(at + state.music_sweep.spacing()).await;
         }
         last_check = Some(tokio::time::Instant::now());
-        *checks.entry(next.entry_id).or_default() += 1;
-        match check_entry(state, next.entry_id, Utc::now(), &mut breaker).await {
+        let count = checks.entry(next.entry_id).or_default();
+        *count += 1;
+        if *count == CHECKS_PER_PASS {
+            tracing::warn!(
+                entry_id = next.entry_id,
+                "music sweep: an entry stayed due through {CHECKS_PER_PASS} checks in one pass"
+            );
+        }
+        match check_entry(state, next.entry_id, state.music_sweep.now()).await {
             Ok(Some(report)) => {
                 tracing::info!(
-                    "music sweep: entry {} \"{}\": {} request{}, {} new{}{}",
+                    "music sweep: entry {} \"{}\": {} request{}, {} new{}",
                     report.entry_id,
                     report.name,
                     report.requests,
@@ -2243,7 +2362,6 @@ pub async fn run_pass(state: &AppState) -> bool {
                         .as_deref()
                         .map(|e| format!(", failed: {e}"))
                         .unwrap_or_default(),
-                    if report.deferred { ", deferred" } else { "" },
                 );
                 nudges.extend(report.phones);
             }
@@ -2258,14 +2376,6 @@ pub async fn run_pass(state: &AppState) -> bool {
             nudge(state, &mut nudges);
             last_flush = tokio::time::Instant::now();
         }
-    }
-    let until = Utc::now() + TimeDelta::minutes(BREAKER_PAUSE_MINUTES);
-    for host in breaker.broken_hosts() {
-        tracing::warn!(
-            host,
-            "music sweep: {host} keeps failing - its entries wait 15 minutes"
-        );
-        state.music_sweep.pause(host, until);
     }
     nudge(state, &mut nudges);
     ok

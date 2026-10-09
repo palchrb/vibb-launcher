@@ -93,9 +93,9 @@ CREATE TABLE music_items (
 CREATE INDEX music_items_seq ON music_items(entry_id, seq);
 
 -- The library carries each entry's listing version (`items`), the listing's cover as a fallback and,
--- for an `auto` NRK series, the order its window implies: those move the library revision (0050's
+-- for an `auto` NRK series, the order its kept end implies: those move the library revision (0050's
 -- rule for a new table that feeds the library). Item rows reach the library only through the
--- version, written in the same transaction, but move it too, so no writer can forget it.
+-- version, which the sweep writes in the same transaction, so `music_items` needs no triggers.
 CREATE TRIGGER music_listings_insert_revision AFTER INSERT ON music_listings
 BEGIN
     UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1;
@@ -109,21 +109,6 @@ BEGIN
 END;
 
 CREATE TRIGGER music_listings_delete_revision AFTER DELETE ON music_listings
-BEGIN
-    UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1;
-END;
-
-CREATE TRIGGER music_items_insert_revision AFTER INSERT ON music_items
-BEGIN
-    UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1;
-END;
-
-CREATE TRIGGER music_items_update_revision AFTER UPDATE ON music_items
-BEGIN
-    UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1;
-END;
-
-CREATE TRIGGER music_items_delete_revision AFTER DELETE ON music_items
 BEGIN
     UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1;
 END;

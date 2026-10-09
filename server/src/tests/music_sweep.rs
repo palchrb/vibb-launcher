@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::TestApp;
 use super::music::{Canned, device_get, events, nudged, pretty_json, tick};
 use crate::music_net::FetchError;
-use crate::music_sweep::{self as sweep, Breaker, CheckReport, parse_stamp, stamp};
+use crate::music_sweep::{self as sweep, CheckReport, parse_stamp, stamp};
 
 const PSAPI: &str = "https://psapi.nrk.no";
 
@@ -55,7 +55,7 @@ async fn tick_on(app: &TestApp, device: i64, entry: i64) {
 }
 
 async fn check(app: &TestApp, entry: i64, now: DateTime<Utc>) -> CheckReport {
-    sweep::check_entry(&app.state, entry, now, &mut Breaker::default())
+    sweep::check_entry(&app.state, entry, now)
         .await
         .unwrap()
         .expect("the entry is checked")
@@ -124,7 +124,26 @@ fn answer_pages(app: &TestApp, kind: &str, slug: &str, newest_first: &[String]) 
                 body.to_string(),
             );
         }
+        // A routine check's small first page (its next link continues in fives).
+        let mut small = json!({
+            "_embedded": {"episodes": keys.iter().take(5).map(|key| {
+                let age = newest_first.iter().position(|k| k == key).unwrap() as i64;
+                stub(kind, slug, key, age * 60)
+            }).collect::<Vec<_>>()}
+        });
+        if keys.len() > 5 {
+            small["_links"] = json!({"next": {"href": format!(
+                "/radio/catalog/{kind}/{slug}/episodes?page=2&pageSize=5&sort={sort}"
+            )}});
+        }
+        app.fetch
+            .answer(&small_url(kind, slug, sort), 200, small.to_string());
     }
+}
+
+/// A routine check's first page: five episodes.
+fn small_url(kind: &str, slug: &str, sort: &str) -> String {
+    format!("{PSAPI}/radio/catalog/{kind}/{slug}/episodes?page=1&pageSize=5&sort={sort}")
 }
 
 fn manifest_url(kind: &str, key: &str) -> String {
@@ -329,7 +348,7 @@ async fn a_new_episode_moves_the_library_version_and_the_etag() {
     assert_eq!(
         app.fetch.calls.lock().unwrap().as_slice(),
         [
-            page_url("podcast", "ukas", "desc", 1),
+            small_url("podcast", "ukas", "desc"),
             manifest_url("podcast", "u_4")
         ],
         "the walk stops at the first known key; only the new episode's manifest"
@@ -1024,26 +1043,26 @@ async fn a_failing_source_keeps_the_last_good_list() {
     let kept_rss = (items(&app, rss).await, listing(&app, rss).await.version);
 
     let mut when = t0() + TimeDelta::hours(12);
-    let page = page_url("podcast", "k", "desc", 1);
+    let page = small_url("podcast", "k", "desc");
     for (setup, code) in [
         (
             Box::new(|app: &TestApp| {
                 app.fetch
-                    .answer(&page_url("podcast", "k", "desc", 1), 503, "")
+                    .answer(&small_url("podcast", "k", "desc"), 503, "")
             }) as Box<dyn Fn(&TestApp)>,
             "http_503",
         ),
         (
             Box::new(|app: &TestApp| {
                 app.fetch
-                    .fail(&page_url("podcast", "k", "desc", 1), FetchError::Timeout)
+                    .fail(&small_url("podcast", "k", "desc"), FetchError::Timeout)
             }),
             "timeout",
         ),
         (
             Box::new(|app: &TestApp| {
                 app.fetch.fail(
-                    &page_url("podcast", "k", "desc", 1),
+                    &small_url("podcast", "k", "desc"),
                     FetchError::Network("reset".into()),
                 )
             }),
@@ -1382,6 +1401,38 @@ async fn changes_wake_the_sweeper() {
         .await;
     assert_eq!(res.location(), Some(format!("/music#entry-{id}").as_str()));
     assert!(app.state.music_sweep.woken().await, "Check now");
+    // An order change (an NRK series' window follows it).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/music/entries/{id}"),
+            Some(&cookie),
+            &[
+                ("name", "W"),
+                ("category", "4"),
+                ("order", "newest_first"),
+                ("cache", "5"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    assert!(app.state.music_sweep.woken().await, "an order change");
+    app.request_form(
+        Method::POST,
+        &format!("/music/entries/{id}"),
+        Some(&cookie),
+        &[
+            ("name", "W2"),
+            ("category", "4"),
+            ("order", "newest_first"),
+            ("cache", "5"),
+        ],
+    )
+    .await;
+    assert!(
+        !app.state.music_sweep.woken().await,
+        "a rename alone doesn't"
+    );
     // Two wakes during a pass are kept as one.
     app.state.music_sweep.wake();
     app.state.music_sweep.wake();
@@ -1389,17 +1440,19 @@ async fn changes_wake_the_sweeper() {
     assert!(!app.state.music_sweep.woken().await);
 }
 
-/// The coordinator's load numbers: a simulated day of 30 NRK podcasts and 10 feeds, all ticked and
-/// listed, nothing new, stays within 21b's request counts at each setting.
-async fn simulate_day(setting: i64) -> usize {
+/// A family's library for the load runs: 30 NRK podcasts and 10 feeds, all ticked and listed at
+/// t0 (by a pass), nothing new afterwards.
+async fn day_library(setting: i64) -> (TestApp, i64) {
     let app = TestApp::new().await;
+    app.state
+        .music_sweep
+        .set_limits(sweep::MAX_CHECK_REQUESTS, std::time::Duration::ZERO);
     let (phone, _) = app.enrolled_device("Ella").await;
     sqlx::query("UPDATE music_settings SET sweep_hours = ?")
         .bind(setting)
         .execute(&app.db)
         .await
         .unwrap();
-    let mut ids = Vec::new();
     for n in 0..30 {
         let slug = format!("pod{n}");
         let id = entry(
@@ -1414,7 +1467,7 @@ async fn simulate_day(setting: i64) -> usize {
         let episodes = keys_n(&slug, 1);
         answer_pages(&app, "podcast", &slug, &episodes);
         answer_manifests(&app, "podcast", &episodes);
-        ids.push(id);
+        tick_on(&app, phone, id).await;
     }
     for n in 0..10 {
         let url = format!("https://feeds.example.org/{n}.rss");
@@ -1428,16 +1481,28 @@ async fn simulate_day(setting: i64) -> usize {
                 last_modified: None,
             },
         );
-        ids.push(id);
+        tick_on(&app, phone, id).await;
     }
-    for id in &ids {
-        tick_on(&app, phone, *id).await;
-        check(&app, *id, t0()).await;
-    }
+    app.state.music_sweep.set_clock(Some(t0()));
+    assert!(sweep::run_pass(&app.state).await);
+    let listed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM music_listings WHERE version IS NOT NULL")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(listed, 40);
     app.fetch.clear_calls();
+    (app, phone)
+}
+
+/// Runs the sweeper itself (`run_pass`, as `run` does) over a day of the fake clock, a pass at
+/// every due time; returns the number of passes. A pass that never ends, or an entry checked
+/// again and again (QA 1c #1), shows in the request counts.
+async fn run_day(app: &TestApp) -> usize {
     let end = t0() + TimeDelta::hours(24);
-    let mut now = t0();
+    let mut passes = 0;
     loop {
+        let now = app.state.music_sweep.now();
         let next = sweep::schedule(&app.db, now)
             .await
             .unwrap()
@@ -1448,11 +1513,20 @@ async fn simulate_day(setting: i64) -> usize {
         if next > end {
             break;
         }
-        now = next.max(now);
-        for due in sweep::due(&app.db, now).await.unwrap() {
-            check(&app, due.entry_id, now).await;
-        }
+        app.state.music_sweep.set_clock(Some(next.max(now)));
+        assert!(sweep::run_pass(&app.state).await);
+        passes += 1;
+        assert!(passes < 2000, "the sweeper keeps finding work");
     }
+    passes
+}
+
+/// The coordinator's load numbers: a simulated day of 30 NRK podcasts and 10 feeds, all ticked and
+/// listed, nothing new, stays within 21b's request counts at each setting - run through the
+/// sweeper's own passes.
+async fn simulate_day(setting: i64) -> usize {
+    let (app, _) = day_library(setting).await;
+    run_day(&app).await;
     app.fetch.count()
 }
 
@@ -1481,26 +1555,73 @@ async fn a_day_at_24_hours_stays_within_40_requests() {
     assert_eq!(simulate_day(24).await, 40);
 }
 
-/// The breaker: 3 network failures from psapi in a pass defer its remaining entries (no failure
-/// counted for them, the host paused); the feeds go on.
+/// QA 1c #1, through the sweeper's passes: a feed a phone flagged that then answers 404, and an
+/// NRK podcast whose page fails, each back off on their own (15 min, 1 h, 4 h, then the interval)
+/// while the rest keep the Pi's numbers.
 #[tokio::test]
-async fn an_nrk_outage_costs_three_requests_not_thirty() {
+async fn a_day_with_failing_sources_backs_off() {
+    let (app, phone) = day_library(6).await;
+    let feed_url = "https://feeds.example.org/0.rss";
+    let feed_id: i64 = sqlx::query_scalar("SELECT id FROM music_entries WHERE target = ?")
+        .bind(feed_url)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let version = listing(&app, feed_id).await.version.unwrap();
+    let key = crate::music_sources::short_sha1("a");
+    app.fetch.answer(feed_url, 404, "");
+    let page = small_url("podcast", "pod0", "desc");
+    app.fetch.answer(&page, 503, "");
+    let report = crate::music::MusicState {
+        item_errors: vec![crate::music::ItemError {
+            entry: feed_id,
+            version,
+            item: key,
+            error: "http_404".to_string(),
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        sweep::flag_reports(&app.db, phone, &report, t0())
+            .await
+            .unwrap(),
+        1
+    );
+    run_day(&app).await;
+    let calls = app.fetch.calls.lock().unwrap().clone();
+    let to = |url: &str| calls.iter().filter(|c| *c == url).count();
+    // t0, +15 min, +1 h 15, +5 h 15, then every 6 h: 11 h 15, 17 h 15, 23 h 15.
+    assert_eq!(to(feed_url), 7, "the flagged, failing feed");
+    // Its first check at 12 h, then 12 h 15, 13 h 15, 17 h 15 (the next is at 29 h 15).
+    assert_eq!(to(&page), 4, "the failing NRK page");
+    // The healthy day's 100, with that feed's 4 checks and that podcast's 2 replaced.
+    assert_eq!(calls.len(), 100 - 4 + 7 - 2 + 4, "the rest as before");
+    let row = listing(&app, feed_id).await;
+    assert_eq!(row.error.as_deref(), Some("http_404"));
+    assert!(
+        !items(&app, feed_id).await[0].recheck,
+        "the flag was cleared by the attempt"
+    );
+}
+
+/// Without a breaker an outage costs one failed request per entry, and each entry backs off on
+/// its own; an outage that starts mid-check ends the check after 3 manifests, not 100 timeouts.
+#[tokio::test]
+async fn an_nrk_outage_backs_each_entry_off() {
     let app = TestApp::new().await;
     app.state
         .music_sweep
         .set_limits(sweep::MAX_CHECK_REQUESTS, std::time::Duration::ZERO);
-    let mut nrk = Vec::new();
+    app.state.music_sweep.set_clock(Some(t0()));
     for n in 0..6 {
-        nrk.push(
-            entry(
-                &app,
-                &format!("https://radio.nrk.no/podkast/down{n}"),
-                "D",
-                "auto",
-                "2026-10-09 11:00:00",
-            )
-            .await,
-        );
+        entry(
+            &app,
+            &format!("https://radio.nrk.no/podkast/down{n}"),
+            "D",
+            "auto",
+            "2026-10-09 11:00:00",
+        )
+        .await;
     }
     let rss = entry(
         &app,
@@ -1518,25 +1639,46 @@ async fn an_nrk_outage_costs_three_requests_not_thirty() {
     // Nothing answers for psapi: every request is a network error.
     assert!(sweep::run_pass(&app.state).await);
     let calls = app.fetch.calls.lock().unwrap().clone();
-    assert_eq!(calls.iter().filter(|u| u.starts_with(PSAPI)).count(), 3);
-    assert!(calls.contains(&"https://example.org/up.rss".to_string()));
-    let failed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_listings WHERE failures > 0")
+    assert_eq!(calls.iter().filter(|u| u.starts_with(PSAPI)).count(), 6);
+    let failed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_listings WHERE failures = 1")
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(failed, 3, "the deferred entries aren't failures");
+    assert_eq!(failed, 6);
     assert!(listing(&app, rss).await.version.is_some());
-    // The next pass leaves psapi alone while it is paused.
     app.fetch.clear_calls();
+    assert!(sweep::run_pass(&app.state).await);
+    assert_eq!(app.fetch.count(), 0, "each backs off");
+    app.state
+        .music_sweep
+        .set_clock(Some(t0() + TimeDelta::minutes(15)));
     sweep::run_pass(&app.state).await;
-    assert!(
-        app.fetch
-            .calls
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|u| !u.starts_with(PSAPI))
-    );
+    assert_eq!(app.fetch.count(), 6, "15 minutes later, once each");
+
+    // psapi goes away during a fill: 3 manifests, then the check fails and backs off.
+    let mid = entry(
+        &app,
+        "https://radio.nrk.no/podkast/mid",
+        "Mid",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    answer_root(&app, "podcast", "mid", "Mid", None);
+    answer_pages(&app, "podcast", "mid", &keys_n("m", 20));
+    app.fetch.clear_calls();
+    let report = check(&app, mid, t0() + TimeDelta::minutes(20)).await;
+    assert_eq!(report.error.as_deref(), Some("network"));
+    assert_eq!(report.requests, 2 + sweep::MANIFEST_NETWORK_FAILURES);
+    let row = listing(&app, mid).await;
+    assert_eq!((row.failures, row.version), (1, None));
+    let due: Vec<i64> = sweep::due(&app.db, t0() + TimeDelta::minutes(21))
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.entry_id)
+        .collect();
+    assert!(!due.contains(&mid));
 }
 
 /// An entry deleted while it is checked: nothing is written.
@@ -1558,11 +1700,7 @@ async fn an_entry_deleted_mid_check_writes_nothing() {
     );
     app.fetch.delay(100);
     let state = app.state.clone();
-    let task = tokio::spawn(async move {
-        sweep::check_entry(&state, id, t0(), &mut Breaker::default())
-            .await
-            .unwrap()
-    });
+    let task = tokio::spawn(async move { sweep::check_entry(&state, id, t0()).await.unwrap() });
     tokio::time::sleep(std::time::Duration::from_millis(40)).await;
     sqlx::query("DELETE FROM music_entries WHERE id = ?")
         .bind(id)
@@ -1604,11 +1742,7 @@ async fn an_add_check_waits_for_one_request_not_a_fill() {
     );
     app.fetch.delay(15);
     let state = app.state.clone();
-    let fill = tokio::spawn(async move {
-        sweep::check_entry(&state, id, t0(), &mut Breaker::default())
-            .await
-            .unwrap()
-    });
+    let fill = tokio::spawn(async move { sweep::check_entry(&state, id, t0()).await.unwrap() });
     tokio::time::sleep(std::time::Duration::from_millis(40)).await;
     let res = app
         .request_form(
@@ -1899,6 +2033,10 @@ async fn failing_urls_reported_by_a_phone_are_re_resolved() {
     answer_manifests(&app, "podcast", &episodes);
     check(&app, id, t0()).await;
     let version = listing(&app, id).await.version.unwrap();
+    // The phones' reports are stamped by the sweep's clock.
+    app.state
+        .music_sweep
+        .set_clock(Some(t0() + TimeDelta::minutes(1)));
 
     // Only 401/403/404/410, for the current list, from a phone with the entry.
     report_errors(
@@ -2197,64 +2335,6 @@ fn a_listing_past_1_mb_is_cut_from_the_end_opposite_its_anchor() {
         built.version
     );
 }
-
-/// `tick_fits` adds up the listings: past 32 MB a tick is refused with its own notice.
-#[tokio::test]
-async fn ticks_past_the_listing_budget_are_refused() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (phone, _) = app.enrolled_device("Ella").await;
-    let big = entry(
-        &app,
-        "https://example.org/big.rss",
-        "Big",
-        "auto",
-        "2026-10-09 11:00:00",
-    )
-    .await;
-    let more = entry(
-        &app,
-        "https://example.org/more.rss",
-        "More",
-        "auto",
-        "2026-10-09 11:00:00",
-    )
-    .await;
-    sqlx::query("INSERT INTO music_listings (entry_id, version, bytes) VALUES (?, '0123456789abcdef', 31000000), (?, '0123456789abcdee', 2000000)")
-        .bind(big)
-        .bind(more)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    assert_eq!(
-        tick(&app, &cookie, phone, big, true).await.status,
-        StatusCode::SEE_OTHER
-    );
-    let refused = tick(&app, &cookie, phone, more, true).await;
-    assert_eq!(
-        refused.location(),
-        Some(
-            format!(
-                "/devices/{phone}?music_notice=lists_too_big&music_entry={more}#music-entry-{more}"
-            )
-            .as_str()
-        )
-    );
-    let page = app
-        .get_page(
-            &format!("/devices/{phone}?music_notice=lists_too_big&music_entry={more}"),
-            &cookie,
-        )
-        .await;
-    assert!(
-        page.text()
-            .contains("episode lists this phone gets would pass 32 MB")
-    );
-}
-
-// ------------------------------------------------------------------------------------------------
-// The PWA (§3)
-// ------------------------------------------------------------------------------------------------
 
 /// Every card state and the per-phone lines; Check now's limits and redirects; the offline
 /// select; the cards route.
@@ -2563,5 +2643,457 @@ async fn check_now_is_limited_per_hour_and_day() {
     assert!(
         until.is_some_and(|u| u > now + TimeDelta::hours(18)),
         "{until:?}"
+    );
+}
+
+// ------------------------------------------------------------------------------------------------
+// QA 1c fixes
+// ------------------------------------------------------------------------------------------------
+
+/// A flagged item in `entry`, at the current version, reported at `at`.
+async fn flag(app: &TestApp, phone: i64, entry: i64, key: &str, at: DateTime<Utc>) -> u64 {
+    let version = listing(app, entry).await.version.unwrap();
+    let report = crate::music::MusicState {
+        item_errors: vec![crate::music::ItemError {
+            entry,
+            version,
+            item: key.to_string(),
+            error: "http_403".to_string(),
+        }],
+        ..Default::default()
+    };
+    sweep::flag_reports(&app.db, phone, &report, at)
+        .await
+        .unwrap()
+}
+
+/// #1: a flagged feed that answers 404 is asked once, its flag is cleared, and it waits for its
+/// backoff - through the sweeper's passes.
+#[tokio::test]
+async fn a_flagged_feed_that_fails_is_asked_once_then_backs_off() {
+    let app = TestApp::new().await;
+    app.state
+        .music_sweep
+        .set_limits(sweep::MAX_CHECK_REQUESTS, std::time::Duration::ZERO);
+    let (phone, _) = app.enrolled_device("Ella").await;
+    let url = "https://example.org/retired.rss";
+    let id = entry(&app, url, "R", "auto", "2026-10-09 11:00:00").await;
+    tick_on(&app, phone, id).await;
+    app.fetch
+        .answer(url, 200, feed(&[("a", "https://example.org/a.mp3")], true));
+    check(&app, id, t0()).await;
+    app.fetch.answer(url, 404, "");
+    let key = crate::music_sources::short_sha1("a");
+    assert_eq!(flag(&app, phone, id, &key, t0()).await, 1);
+    app.fetch.clear_calls();
+    app.state.music_sweep.set_clock(Some(t0()));
+    sweep::run_pass(&app.state).await;
+    assert_eq!(app.fetch.count(), 1);
+    sweep::run_pass(&app.state).await;
+    assert_eq!(app.fetch.count(), 1, "nothing until the backoff");
+    let row = items(&app, id).await;
+    assert!(!row[0].recheck);
+    assert_eq!(row[0].rechecked_at.as_deref(), Some("2026-10-09 12:00:00"));
+    app.state
+        .music_sweep
+        .set_clock(Some(t0() + TimeDelta::minutes(15)));
+    sweep::run_pass(&app.state).await;
+    assert_eq!(app.fetch.count(), 2);
+}
+
+/// #2: one empty psapi page doesn't turn a listed podcast into the fallback's few episodes - the
+/// check fails and keeps the list; psapi back, all of it is still there.
+#[tokio::test]
+async fn a_listed_podcast_survives_an_empty_psapi_page() {
+    let app = TestApp::new().await;
+    let id = entry(
+        &app,
+        "https://radio.nrk.no/podkast/abels_taarn",
+        "A",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    answer_root(&app, "podcast", "abels_taarn", "A", None);
+    let episodes = keys_n("e", 15);
+    answer_pages(&app, "podcast", "abels_taarn", &episodes);
+    answer_manifests(&app, "podcast", &episodes);
+    app.fetch.answer(
+        "https://podkast.nrk.no/program/abels_taarn.rss",
+        200,
+        fixture("nrk_podkast_fallback.rss"),
+    );
+    check(&app, id, t0()).await;
+    let kept = items(&app, id).await;
+    for answer in ["{}", r#"{"_embedded": {"episodes": []}}"#] {
+        app.fetch
+            .answer(&small_url("podcast", "abels_taarn", "desc"), 200, answer);
+        let report = check(&app, id, t0() + TimeDelta::hours(12)).await;
+        assert_eq!(report.error.as_deref(), Some("not_found"));
+        assert_eq!(items(&app, id).await, kept);
+        assert!(!listing(&app, id).await.fallback);
+    }
+    app.fetch
+        .answer(&small_url("podcast", "abels_taarn", "desc"), 404, "");
+    assert_eq!(
+        check(&app, id, t0() + TimeDelta::hours(13))
+            .await
+            .error
+            .as_deref(),
+        Some("not_found")
+    );
+    answer_pages(&app, "podcast", "abels_taarn", &episodes);
+    check(&app, id, t0() + TimeDelta::hours(14)).await;
+    let list = items(&app, id).await;
+    assert_eq!(list.len(), 15);
+    assert!(list.iter().all(|i| i.state == "ok"));
+}
+
+/// #3: every item of a listed entry withdrawn at once is a listing: `gone` with `url: null`, the
+/// version moves, the phones are told, and the items are asked about once (stamped).
+#[tokio::test]
+async fn a_listed_entry_whose_every_item_is_withdrawn_lists_them_gone() {
+    let app = TestApp::new().await;
+    let (phone, _) = app.enrolled_device("Ella").await;
+    let id = entry(
+        &app,
+        "https://radio.nrk.no/podkast/jul",
+        "Jul",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    tick_on(&app, phone, id).await;
+    answer_root(&app, "podcast", "jul", "Jul", None);
+    let episodes = keys_n("j", 24);
+    answer_pages(&app, "podcast", "jul", &episodes);
+    answer_manifests(&app, "podcast", &episodes);
+    check(&app, id, t0()).await;
+    let version = listing(&app, id).await.version;
+    sqlx::query(
+        "UPDATE music_items SET available_until = '2026-10-09 18:00:00' WHERE entry_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    for key in &episodes {
+        app.fetch.answer(
+            &manifest_url("podcast", key),
+            200,
+            r#"{"playability": "nonPlayable"}"#,
+        );
+    }
+    let report = check(&app, id, t0() + TimeDelta::hours(12)).await;
+    assert_eq!(report.error, None);
+    assert!(report.changed);
+    assert_eq!(report.phones, vec![phone]);
+    let row = listing(&app, id).await;
+    assert_ne!(row.version, version);
+    assert_eq!(row.failures, 0);
+    let list = items(&app, id).await;
+    assert!(list.iter().all(|i| i.state == "gone" && i.url.is_none()));
+    assert!(list.iter().all(|i| i.rechecked_at.is_some()));
+    app.fetch.clear_calls();
+    check(&app, id, t0() + TimeDelta::hours(24)).await;
+    assert_eq!(
+        app.fetch.count(),
+        1,
+        "the page only: gone items aren't asked again"
+    );
+}
+
+/// #4: two items reported an hour apart (streams fail one at a time) re-resolve the whole entry,
+/// once a day.
+#[tokio::test]
+async fn two_reports_an_hour_apart_re_resolve_the_whole_entry() {
+    let app = TestApp::new().await;
+    let (phone, _) = app.enrolled_device("Ella").await;
+    let id = entry(
+        &app,
+        "https://radio.nrk.no/podkast/w",
+        "W",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    tick_on(&app, phone, id).await;
+    answer_root(&app, "podcast", "w", "W", None);
+    let episodes = keys_n("w", 4);
+    answer_pages(&app, "podcast", "w", &episodes);
+    answer_manifests(&app, "podcast", &episodes);
+    check(&app, id, t0()).await;
+    let at = t0() + TimeDelta::minutes(10);
+    flag(&app, phone, id, "w_1", at).await;
+    app.fetch.clear_calls();
+    check(&app, id, at).await;
+    assert_eq!(app.fetch.count(), 1, "one item");
+    let later = at + TimeDelta::hours(1);
+    flag(&app, phone, id, "w_2", later).await;
+    app.fetch.clear_calls();
+    check(&app, id, later).await;
+    assert_eq!(app.fetch.count(), 4, "the whole entry");
+    assert!(listing(&app, id).await.full_recheck_at.is_some());
+    let third = later + TimeDelta::hours(1);
+    flag(&app, phone, id, "w_3", third).await;
+    app.fetch.clear_calls();
+    check(&app, id, third).await;
+    assert_eq!(app.fetch.count(), 1, "once a day");
+}
+
+/// #6 and #7: a phone's flag that lands during a check is kept; flags past the day's budget wait
+/// (not cleared, not stamped); #8: a re-resolve answered 404 is `gone`.
+#[tokio::test]
+async fn flags_are_kept_until_their_item_is_asked() {
+    let app = TestApp::new().await;
+    let (phone, _) = app.enrolled_device("Ella").await;
+    let id = entry(
+        &app,
+        "https://radio.nrk.no/podkast/f",
+        "F",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    tick_on(&app, phone, id).await;
+    answer_root(&app, "podcast", "f", "F", None);
+    let mut episodes = keys_n("f", 3);
+    answer_pages(&app, "podcast", "f", &episodes);
+    answer_manifests(&app, "podcast", &episodes);
+    check(&app, id, t0()).await;
+
+    // A flag during a check that rewrites the rows (a new episode).
+    episodes.insert(0, "f_4".to_string());
+    answer_pages(&app, "podcast", "f", &episodes);
+    answer_manifests(&app, "podcast", &episodes[..1]);
+    app.fetch.delay(60);
+    let state = app.state.clone();
+    let start = t0() + TimeDelta::hours(12);
+    let task = tokio::spawn(async move { sweep::check_entry(&state, id, start).await.unwrap() });
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    assert_eq!(
+        flag(&app, phone, id, "f_1", start + TimeDelta::seconds(1)).await,
+        1
+    );
+    task.await.unwrap().unwrap();
+    app.fetch.delay(0);
+    assert_eq!(items(&app, id).await.len(), 4);
+    assert_eq!(flags(&app, id).await, ["f_1"], "kept for the next check");
+
+    // The day's budget has room for one: the other flag waits.
+    for n in 0..299 {
+        sqlx::query(
+            "INSERT INTO music_items (entry_id, key, seq, state, first_seen_at, rechecked_at) \
+             VALUES (?, ?, ?, 'gone', '2026-10-09 12:00:00', '2026-10-10 00:30:00')",
+        )
+        .bind(id)
+        .bind(format!("filler{n}"))
+        .bind(100 + n)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let at = t0() + TimeDelta::hours(13);
+    flag(&app, phone, id, "f_2", at).await;
+    app.fetch.answer(&manifest_url("podcast", "f_1"), 404, "");
+    app.fetch.clear_calls();
+    check(&app, id, at).await;
+    assert_eq!(app.fetch.count(), 1);
+    let list = items(&app, id).await;
+    let item = |key: &str| list.iter().find(|i| i.key == key).unwrap().clone();
+    assert_eq!(
+        item("f_1").state,
+        "gone",
+        "unpublished: 404 on a re-resolve"
+    );
+    assert!(!item("f_1").recheck);
+    assert!(item("f_2").recheck, "waits for the budget");
+    assert_eq!(item("f_2").rechecked_at, None);
+}
+
+/// #9: the add check reaches a pasted public feed as public (no redirect to the LAN), a LAN feed
+/// as LAN.
+#[tokio::test]
+async fn the_add_check_judges_a_feed_like_the_sweep() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    app.fetch.dns("nas.home", &["192.168.1.10"]);
+    for (link, reach) in [
+        (
+            "https://pod.example.com/feed.rss",
+            crate::music_net::Reach::Public,
+        ),
+        ("http://nas.home/feed.rss", crate::music_net::Reach::Any),
+    ] {
+        app.fetch
+            .answer(link, 200, feed(&[("a", "https://example.org/a.mp3")], true));
+        let res = app
+            .request_form(Method::POST, "/music", Some(&cookie), &[("link", link)])
+            .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{link}");
+        let reaches = app.fetch.reaches.lock().unwrap().clone();
+        assert_eq!(reaches.last(), Some(&(link.to_string(), reach)));
+    }
+}
+
+/// #11: a cover fetched for an entry deleted during its check isn't left in the store.
+#[tokio::test]
+async fn a_cover_for_an_entry_deleted_mid_check_is_pruned() {
+    let app = TestApp::new().await;
+    let url = "https://example.org/covered.rss";
+    let id = entry(&app, url, "C", "auto", "2026-10-09 11:00:00").await;
+    app.fetch.answer(
+        url,
+        200,
+        "<rss xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\"><channel><title>C</title>\
+         <itunes:image href=\"https://example.org/c.jpg\"/>\
+         <item><guid>1</guid><enclosure url=\"https://example.org/1.mp3\"/></item></channel></rss>",
+    );
+    app.fetch.answer("https://example.org/c.jpg", 200, jpeg(30));
+    app.fetch.delay(80);
+    let state = app.state.clone();
+    let task = tokio::spawn(async move { sweep::check_entry(&state, id, t0()).await.unwrap() });
+    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    sqlx::query("DELETE FROM music_entries WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(task.await.unwrap().is_none());
+    let left = std::fs::read_dir(&*app.state.music_cover_dir)
+        .map(|dir| {
+            dir.flatten()
+                .filter(|f| f.file_name().to_string_lossy().ends_with(".jpg"))
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(left, 0);
+}
+
+/// 21b's follow-up: a routine NRK check reads a 5-episode page; all five new -> the normal pages;
+/// Check now reads the full page; validators psapi gives are sent back, and a 304 is "nothing new".
+#[tokio::test]
+async fn a_routine_nrk_check_starts_with_five_episodes() {
+    let app = TestApp::new().await;
+    let id = entry(
+        &app,
+        "https://radio.nrk.no/podkast/small",
+        "S",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    answer_root(&app, "podcast", "small", "S", None);
+    let mut episodes = keys_n("s", 10);
+    answer_pages(&app, "podcast", "small", &episodes);
+    answer_manifests(&app, "podcast", &episodes);
+    check(&app, id, t0()).await;
+    assert_eq!(items(&app, id).await.len(), 10);
+
+    // Six new: the five are all new, so the walk goes on with page 1 of 50.
+    for n in 11..=16 {
+        episodes.insert(0, format!("s_{n}"));
+    }
+    answer_pages(&app, "podcast", "small", &episodes);
+    answer_manifests(&app, "podcast", &episodes[..6]);
+    app.fetch.clear_calls();
+    let report = check(&app, id, t0() + TimeDelta::hours(12)).await;
+    assert_eq!(report.new_items, 6);
+    let calls = app.fetch.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls[..2],
+        [
+            small_url("podcast", "small", "desc"),
+            page_url("podcast", "small", "desc", 1)
+        ]
+    );
+    assert_eq!(items(&app, id).await.len(), 16);
+
+    // Check now reads the full page.
+    sweep::request_check(&app.db, id, t0() + TimeDelta::hours(13))
+        .await
+        .unwrap();
+    app.fetch.clear_calls();
+    check(&app, id, t0() + TimeDelta::hours(13)).await;
+    assert_eq!(
+        app.fetch.calls.lock().unwrap().as_slice(),
+        [page_url("podcast", "small", "desc", 1)]
+    );
+
+    // Validators: sent back with the small page; a 304 means nothing new.
+    let small = small_url("podcast", "small", "desc");
+    let page: Value = json!({"_embedded": {"episodes": episodes.iter().take(5).map(|k| stub("podcast", "small", k, 0)).collect::<Vec<_>>()}});
+    app.fetch.canned(
+        &small,
+        Canned {
+            status: 200,
+            body: page.to_string().into_bytes(),
+            etag: Some("\"p1\"".to_string()),
+            last_modified: None,
+        },
+    );
+    check(&app, id, t0() + TimeDelta::hours(25)).await;
+    assert_eq!(listing(&app, id).await.etag.as_deref(), Some("\"p1\""));
+    app.fetch.clear_calls();
+    let report = check(&app, id, t0() + TimeDelta::hours(37)).await;
+    assert_eq!(report.error, None);
+    assert_eq!(
+        app.fetch.conditional.lock().unwrap().as_slice(),
+        [(small.clone(), Some("\"p1\"".to_string()))]
+    );
+}
+
+/// #18: right after a check started (its start stamp newer than its end), the card says
+/// "Checking…" and stays busy, so the page keeps polling.
+#[tokio::test]
+async fn the_card_says_checking_while_a_check_runs() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id = entry(
+        &app,
+        "https://example.org/busy.rss",
+        "Busy",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO music_listings (entry_id, version, listed_at, checked_at, failures) \
+         VALUES (?, '0123456789abcdef', ?, ?, 1)",
+    )
+    .bind(id)
+    .bind(stamp(now - TimeDelta::hours(2)))
+    .bind(stamp(now - TimeDelta::minutes(1)))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let cards = app
+        .get_page(&format!("/music/cards?ids={id}"), &cookie)
+        .await
+        .json();
+    assert_eq!(cards["cards"][0]["busy"], true);
+    assert!(
+        cards["cards"][0]["html"]
+            .as_str()
+            .unwrap()
+            .contains("Checking…")
+    );
+    // One cut off by a crash 20 minutes ago isn't "Checking…" for ever.
+    sqlx::query("UPDATE music_listings SET checked_at = ? WHERE entry_id = ?")
+        .bind(stamp(now - TimeDelta::minutes(20)))
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let cards = app
+        .get_page(&format!("/music/cards?ids={id}"), &cookie)
+        .await
+        .json();
+    assert!(
+        !cards["cards"][0]["html"]
+            .as_str()
+            .unwrap()
+            .contains("Checking…")
     );
 }

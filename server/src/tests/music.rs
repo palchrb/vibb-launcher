@@ -41,6 +41,8 @@ pub struct CannedFetch {
     pub calls: Mutex<Vec<String>>,
     /// The validators each request carried: (url, If-None-Match).
     pub conditional: Mutex<Vec<(String, Option<String>)>>,
+    /// Which addresses each request was allowed to reach.
+    pub reaches: Mutex<Vec<(String, crate::music_net::Reach)>>,
     delay_ms: std::sync::atomic::AtomicU64,
     in_flight: std::sync::atomic::AtomicUsize,
     pub most_in_flight: std::sync::atomic::AtomicUsize,
@@ -87,6 +89,7 @@ impl CannedFetch {
     pub fn clear_calls(&self) {
         self.calls.lock().unwrap().clear();
         self.conditional.lock().unwrap().clear();
+        self.reaches.lock().unwrap().clear();
     }
 
     fn lookup(&self, host: &str) -> Vec<std::net::IpAddr> {
@@ -124,6 +127,10 @@ impl crate::music_net::Source for CannedFetch {
                 .lock()
                 .unwrap()
                 .push((request.url.clone(), request.etag.clone()));
+            self.reaches
+                .lock()
+                .unwrap()
+                .push((request.url.clone(), request.reach));
             let host = crate::music_net::host_of(&request.url).unwrap_or_default();
             if request.reach == crate::music_net::Reach::Public
                 && self

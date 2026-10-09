@@ -159,7 +159,7 @@ input, select { max-width: 100%; }
         {% if phones.is_empty() %}
         <p class="subtitle">No phone has it yet - tick it on a phone's page (Music card).</p>
         {% else %}
-        <ul>
+        <ul style="overflow-wrap: anywhere;">
             {% for (id, name) in phones %}
             <li><a href="/devices/{{ id }}#music">{{ name }}</a></li>
             {% endfor %}
