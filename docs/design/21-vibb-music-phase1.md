@@ -223,3 +223,14 @@ Media3 and Material Symbols (Apache-2.0), Nunito (OFL). Root CLAUDE.md: `music/`
 2. Once the day's screen-time budget is used up, may music still play (spec: yes, it never counts), or is it suspended?
 3. Sonos (1b): may the handy server answer on the home LAN (short-lived signed URLs) so speakers can play own files,
    or are own files phone-only?
+
+## User answers (2026-10-09)
+
+- **Volume cap: off by default.** The parent can set it per phone in the PWA, from 100 % down to 60 %, applying to the
+  speaker and headphones alike.
+- **Screen time:** listening never counts, and music keeps playing after the budget is used up. Bedtime and school
+  stay governed by the time rules (the app as a rule's exempt app).
+- **Own files are always downloaded to the phone, so the phone has everything locally** (design 13's machinery,
+  Wi-Fi-only unless the per-phone mobile-data switch allows more). For Sonos (phase 1b), the speaker needs an HTTP
+  source, and the phone never serves anything. So: a short-lived signed URL on the home server over the LAN
+  (recommended), pending the user's confirmation.
