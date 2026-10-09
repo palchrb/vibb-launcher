@@ -217,3 +217,9 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
 - **Categories are parent-defined** (name + an icon from the fixed set + a colour) with defaults per source, chosen per
   library entry.
 - **Language**: follows the launcher's language (`launcher_ui.language`, set by the parent), else the phone's.
+- **After an app or phone restart** (user, 2026-10-09; as on the Pi):
+  - The last played item and its exact position are remembered, and the "Spilles nå" bar under the carousel and on
+    launcher Home is back at once, paused. One tap continues.
+  - No automatic playback on a phone restart: a phone in a pocket must not start making noise. The Pi auto-resumes
+    because powering it on means "play".
+- **Carousel dots**: all the same size, and the current one only changes colour.
