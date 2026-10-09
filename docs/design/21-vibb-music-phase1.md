@@ -272,5 +272,6 @@ Media3 and Material Symbols (Apache-2.0), Nunito (OFL). Root CLAUDE.md: `music/`
 - Volume cap (user): NULL/off by default; the PWA offers Off / 90 / 80 / 70 / 60 % per phone, for all output.
 - Budget (user): music may play after the screen-time budget is used up and never counts. Bedtime and school follow
   the time rules.
-- Sonos own files: pending the user. Proposed: out of 1b (Sonos plays NRK/RSS/Storytel from the origin), and later,
-  if wanted, a LAN-only listener on the server for signed own-file URLs (QA #12). Never the phone.
+- Sonos own files (user, 2026-10-09): **out of 1b.** Sonos plays NRK/RSS/Storytel (and Spotify in phase 3) from the
+  origin. Own files on Sonos come later only if missed, via a LAN-only listener on the server for signed own-file URLs
+  (QA #12), never the phone.
