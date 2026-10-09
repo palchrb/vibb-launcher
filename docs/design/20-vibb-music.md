@@ -151,3 +151,19 @@ library is managed by this repo's server and PWA; the phone never serves anythin
 4. Allow streaming on mobile data (proposed off), and what volume cap: one value for speaker and headphones (e.g. 60 %)?
 5. Should the server see listening positions or "now playing" for the PWA, or only what Storytel mirroring needs?
 6. Library scope: one family catalog with per-phone ticks (proposed), or a separate library per child?
+
+## User decisions (2026-10-09)
+
+1. **A separate APK in this repo** (`music/`, `me.vibb.music`, its own `music-v*` releases through the catalog), never
+   part of the launcher APK. The Pi box keeps its own library for now.
+2. **Storytel:** the family login lives on the home server. **No position mirroring back to Storytel at first**; it may
+   come later.
+3. **Time in the player never counts as screen time.** Bedtime rules: undecided; the app can already be a rule's exempt
+   app, and audiobooks-only at bedtime comes later if wanted.
+4. **Mobile data:** a server on/off switch per phone decides whether downloads *and* streaming may use mobile data
+   (default off). The volume cap is undecided (proposed 60 %, configurable).
+5. Undecided; default to the proposal: the server sees no listening positions or "now playing".
+6. **One family catalog with per-phone ticks.**
+7. **Kid GUI:** to be discussed with the user next, with a clickable mockup, before phase 1 is built.
+
+Also, before any `music-v*` release: the launcher's catalog row must only consider `launcher-v*` releases.
