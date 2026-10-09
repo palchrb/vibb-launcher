@@ -344,18 +344,22 @@ Readings and deviations:
    session sends the whole queue's metadata to controllers; Media3 loads the bitmap for the platform session the
    launcher reads). Episode art URLs aren't fetched: the entry's cover (or an own file's embedded art) everywhere,
    else the category colour with its glyph.
-5. **Keep set**: the bookmarked item and the next one are kept even at depth 0 ("Ingen"), as 21 §4.5/21b §6 read
-   ("plus").
+5. **Keep set**: the bookmarked item and the next one are kept at every depth above 0. **Depth 0 ("Ingen") keeps
+   nothing** - everything streams, the item in progress too (the user's decision after QA, as vibb's cache 0; this
+   reverses the first reading, "plus" even at 0).
 6. **Queue ends**: next at the last item wraps to the first (vibb), but a queue played to its end stops, drops the
-   bookmark and hides the now-playing bar. A tap on the cover of the entry already loaded continues it.
+   bookmark and the partial positions (vibb's `clear_state`) and hides the now-playing bar. A tap on the cover of the
+   entry already playing or paused in this session continues it, resume off included (the user's decision, as vibb's
+   tile press); resume off applies when the entry starts fresh (after another entry, or after a restart).
 7. **Errors**: every failed download or stream of a listed url is recorded (`http_<code>`, `bad_media` for an HTML
-   answer or unparsable media, else `network`), at most once per item per sync, at most 50. A 4xx (not 408/429) waits
-   for a new url; the rest retry with WorkManager's backoff. The one message is "Ikke lastet ned - trenger Wi-Fi",
-   also when a stream fails; the queue moves on.
+   answer or unparsable media, else `network`): the latest per item, at most 50, cleared when the item plays or
+   downloads, its listing version changes or its entry leaves. Retries are per item: a new url at once, a 4xx (not
+   408/429) after a day and then daily, anything else after 2 min doubling to 6 h. "Ikke lastet ned - trenger
+   Wi-Fi" when there is no network for a stream, else "Kan ikke spilles nå"; the queue moves on.
 8. **Address guard** (QA Low 14 of step 1c, 21b §2.7): audio goes through OkHttp; for a public-only entry its DNS
    drops private answers and a network interceptor refuses a private connected address, on every redirect hop;
-   a refusal is the existing code `network`. NRK entries are always public-only. **An RSS entry's LAN/public class
-   isn't in the library or listing contract**, so RSS entries aren't guarded until the server sends it (see below).
+   a refusal is the existing code `network`. Every entry is public-only unless the library marks it `lan` (an RSS
+   feed on the LAN or tailnet; added to the contract in the fix round, the user's decision).
 9. Until step 3, `mobile_data` comes from the debug feed's `config.json` and the language from the system (or
    `cmd locale set-app-locales`). "Ingen bibliotek" also shows when no entry has anything to play.
 10. More than 20 entries show a window of 20 equal dots around the current one.
@@ -367,6 +371,42 @@ works; Nytt and its notification; the output sheet. **Jelly Star**: 1 h screen o
 resumes (with the 3 s overlap); unplugging pauses; BT buttons, also play after a restart (playback resumption);
 speaker vs BT; downloads wait on mobile data; an NRK serie (HLS) downloaded and played offline; battery and MB/h.
 
-Open for the user: **the LAN flag** - should the server add each entry's `lan` (21b §1) to the library entries, so
-the app can guard public RSS feeds too (a contract change in both directories)? Until then only NRK is guarded.
 The `release` environment's deployment rule must allow `music-v*` tags before the first music release.
+
+### Fix round after QA's code review (`qa-21-step2-code.md`, 2026-10-09)
+
+All findings are fixed except as noted; 117 JVM tests (11 new), the server's 361 with `lan`.
+- **User decisions**: the library entries carry `lan` (server and app in one commit, both snapshots); depth 0 keeps
+  nothing; a cover tap on the loaded entry continues it (readings 5, 6 and 8 above).
+- **H1**: an entry or file counts as removed only when the library no longer names its id; one the app can't read is
+  hidden with its state kept, and fields degrade (an unknown order is `auto`, a bad cover or version none). Positions
+  and bookmarks are never pruned (vibb keeps its state files).
+- **M1/M4**: per-item retries (above); the download job re-plans until nothing new is wanted, ends without a backoff
+  when the network goes (its successor waits on the constraints), and a sync replaces a waiting job or follows a
+  running one. A 416 drops the partial copy and fetches once more from the start.
+- **M2**: `KidMediaButtonReceiver` starts the service for a media button only when a stored queue exists (a pref
+  written with the now-playing row). **M3**: headphones arriving while the phone's speaker is chosen take the sound.
+  **M5**: a listing without an `items` array, or with fewer than half its items readable, is refused (`bad_listing`,
+  the old one stays). **M6**: next, previous, seek and shuffle before play load the stored queue paused first.
+- **Low**: done marks from the player's duration, and the bookmark moves on when the next item can't play (1);
+  `clear_state` at a queue's end (2); the resume overlap only on the interrupted item, the music beat for resume-off
+  entries (3); the Nytt notification posted again when the system no longer shows it, a swipe recorded by its delete
+  intent (5); one cache-key factory per item (6, S3); a partial copy from another url starts over (7); a broken copy
+  is dropped so the next sync fetches it (8); item errors cleared (9); NRK/RSS audio reads http(s) only (10); the
+  snapshot built off the main thread, art made on the writer thread, `WhileSubscribed`, the position tick only while
+  the screen is up, no library parse in a constructor (11); the seek thumb holds after a release, slider semantics
+  (12); the title fades only on another entry (13); no play circle in Nytt (14); "Kan ikke spilles nå" (15); back from
+  the player lands on the playing entry and its category (16); unique temp files and a lock for the report (17);
+  `WAKE_MODE_LOCAL` for copies, `CONTENT_TYPE_SPEECH` for resume entries (18); vibb's MIT text in
+  `assets/licenses/MIT-vibb.txt`, NOTICE's icon line, the debug feed's test name (19).
+- **Simplifications** accepted: S1 (no position settle - ExoPlayer reports the seek target at once), S2 (no sync
+  counter; the latest error per item), S3 (above), S4 (`playedFromTray` is what the player uses).
+- **Tests added for QA's gaps**: what a save, a natural end and a queue end store (incl. no listed duration), the
+  carousel tap rule, the guard on a local socket (a rebinding name, an IP literal, a LAN client), unknown fields,
+  degraded fields, refused listings and libraries, a hidden entry keeping its copies.
+- **Not done, with reason**: now_playing case 12's 12 s bound on "playing" (Media3 reports buffering itself; the
+  button shows the intent); the service's transition wiring stays untested on the JVM (its decisions are pure and
+  tested; the wiring is for the emulator). `isReturnDefaultValues` stays: ReportTest builds a `PlaybackException`.
+- The Room schema stays version 1, changed in place: no build of the app was installed anywhere yet.
+- Device checks added: BT/car-kit PLAY after a queue ended does nothing (no crash); choose "Telefonen", then plug in
+  headphones; seek/next before play after a restart; the Nytt notification after a reboot.

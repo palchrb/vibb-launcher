@@ -23,8 +23,9 @@ The bundled Nunito font (in the launcher and the music app) is licensed under th
 `music/app/src/main/assets/licenses/OFL.txt`).
 
 The app icons and music category icons a parent can pick (`launcher/app/src/main/res/drawable/app_glyph_*.xml`,
-`server/static/app-icons/*.svg`, `server/static/music-icons/*.svg`, `music/app/src/main/res/drawable/music_glyph_*.xml`
-and the music app's icon, made by `scripts/material-symbols.sh`) are converted from Google's
+`server/static/app-icons/*.svg`, `server/static/music-icons/*.svg` and `music/app/src/main/res/drawable/music_glyph_*.xml`,
+made by `scripts/material-symbols.sh`, and the music app's icon `music/app/src/main/res/drawable/ic_launcher_foreground.xml`,
+which uses the `music_note` glyph's path) are converted from Google's
 [Material Symbols](https://github.com/google/material-design-icons) (Rounded, filled), licensed
 under the Apache License 2.0 - see
 [`launcher/app/src/main/assets/licenses/Apache-2.0.txt`](launcher/app/src/main/assets/licenses/Apache-2.0.txt)
@@ -48,6 +49,8 @@ The music app (`music/`, design 21 step 2) reimplements in Kotlin, under the GPL
 `sync_feed`, `prune_cache`: what stays offline), `pi/player.py` (queue planning) and `pi/daemon.py` (previous/next
 with the queue wrap and the long-form rule, `_settle_position`, `_resume_overlap`), and of `pi/ui.py`'s carousel
 and category rules; its unit tests port vibb's `tests/` of the same behaviour. Each ported file says so in its
-header. vibb is licensed under the MIT License, Copyright (c) 2026 palchrb. The music app uses AndroidX Media3,
+header. vibb is licensed under the MIT License, Copyright (c) 2026 palchrb; its permission notice is in
+[`music/app/src/main/assets/licenses/MIT-vibb.txt`](music/app/src/main/assets/licenses/MIT-vibb.txt), shipped in the
+app, and covers the server's port above too. The music app uses AndroidX Media3,
 Room, WorkManager and Jetpack Compose (Apache License 2.0), OkHttp (Apache License 2.0) and kotlinx.serialization
 (Apache License 2.0).

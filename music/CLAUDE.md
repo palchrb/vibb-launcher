@@ -40,11 +40,14 @@ shared files in `src/test/resources/` must equal `server/testdata/music_{library
 - Nothing ever starts playback by itself: a restart brings the now-playing bar back paused (`NowPlayingRow`).
 - Playback never waits for the network: a copy plays as it is, a stream only through the gate (Wi-Fi unless the
   parent's mobile-data switch, never roaming), else "Ikke lastet ned - trenger Wi-Fi" and the queue moves on.
-- Prune only on a parsed listing or library (QA #3); the bookmarked item is never deleted; a kept withdrawn copy
-  plays.
+- Prune only on a parsed listing, and only what the library no longer names: an entry or file the app can't read is
+  hidden with everything kept (qa-21-step2-code H1). Positions and bookmarks are never deleted except by vibb's
+  `clear_state` at a queue's natural end (partial positions only). Above depth 0 the bookmarked item is never
+  deleted; depth 0 ("Ingen") keeps nothing. A kept withdrawn copy plays.
 - Positions are keyed by (entry key, item key), never by URL.
-- A public entry's audio never comes from a private address (21b §2.7): NRK always; RSS once the server sends the
-  entry's LAN flag (not in the contract yet).
+- A public entry's audio never comes from a private address (21b §2.7): every entry except one the library marks
+  `lan` (an RSS feed on the LAN or tailnet).
+- Behaviour questions default to what the vibb Pi player does (`pi/daemon.py`, `pi/vibb/*.py`, `tests/`).
 - The kid's screens open nothing else: no settings, links, share or web views (`SourceScanTest`).
 - Not here yet (step 3): the bridge (AIDL, managed config, `reportState`, `setNowPlaying`, `setForeground`), so
   `mobile_data` and the language come from the debug feed or the system.
