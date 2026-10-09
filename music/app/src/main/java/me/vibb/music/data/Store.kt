@@ -1,0 +1,91 @@
+package me.vibb.music.data
+
+import android.content.Context
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import me.vibb.music.logic.ItemPosition
+import me.vibb.music.model.Library
+import me.vibb.music.model.LibraryParser
+import java.io.File
+
+/**
+ * Where the app keeps what it received and what it plays: the library file, received listings
+ * (applied into Room by the sync), covers, own files' copies (noBackupFilesDir, never backed up),
+ * the report, and the one setting from the launcher's restrictions (`mobile_data`; step 2's debug
+ * feed sets it).
+ */
+class Store private constructor(context: Context) {
+    private val app = context.applicationContext
+    val dir = File(app.filesDir, "music")
+    val libraryFile = File(dir, "library.json")
+
+    /** Received listings, `<entry id>.json`, until the sync applies them. */
+    val inboxDir = File(dir, "inbox")
+    val coversDir = File(dir, "covers")
+    val ownDir = File(app.noBackupFilesDir, "own")
+    val reportFile = File(dir, "report.json")
+    val entryErrorsFile = File(dir, "entry_errors.json")
+    val db: MusicDao = MusicDb.get(app).dao()
+    private val prefs = app.getSharedPreferences("music", Context.MODE_PRIVATE)
+
+    private val libraryState = MutableStateFlow(loadLibrary())
+
+    /** The parsed library; null = none yet (the app is unmanaged or never fed: "Ingen bibliotek"). */
+    val library: StateFlow<Library?> = libraryState
+
+    var mobileData: Boolean
+        get() = prefs.getBoolean("mobile_data", false)
+        set(value) = prefs.edit().putBoolean("mobile_data", value).apply()
+
+    private fun loadLibrary(): Library? = runCatching { libraryFile.readText() }.getOrNull()?.let(LibraryParser::parse)
+
+    /** Re-read the library file (after the bridge or the debug feed wrote it). */
+    fun reloadLibrary(): Library? = loadLibrary().also { libraryState.value = it }
+
+    fun coverFile(hash: String): File = File(coversDir, hash)
+
+    fun ownFile(fileId: Long): File = File(ownDir, fileId.toString())
+
+    /** Own files with a copy on the phone. */
+    fun ownCopies(): Set<Long> = ownDir.listFiles().orEmpty().mapNotNull { it.name.toLongOrNull() }.toSet()
+
+    /** Everything the screens and the player read, live. */
+    fun snapshots(): Flow<Snapshot> = combine(
+        libraryState,
+        combine(db.allItemsFlow(), db.downloadsFlow(), db.listingsFlow()) { items, downloads, listings -> Triple(items, downloads, listings) },
+        combine(db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(), db.shuffleFlow()) { p, b, n, s -> Rows(p, b, n, s) },
+    ) { lib, (items, downloads, listings), rows -> snapshot(lib, items, downloads, listings, rows) }
+
+    /** The same, once. */
+    suspend fun snapshot(): Snapshot =
+        snapshot(library.value, db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle()))
+
+    private data class Rows(val positions: List<PositionRow>, val bookmarks: List<BookmarkRow>, val news: List<NewsRow>, val shuffle: List<ShuffleRow>)
+
+    private fun snapshot(lib: Library?, items: List<ItemRow>, downloads: List<DownloadRow>, listings: List<ListingRow>, rows: Rows): Snapshot {
+        val positions = rows.positions.groupBy { it.entryKey }.mapValues { (_, ps) -> ps.associate { it.itemKey to ItemPosition(it.posMs, it.done) } }
+        val shuffle = rows.shuffle.filter { it.on }.map { it.entryKey }.toSet()
+        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle)
+    }
+
+    companion object {
+        @Volatile private var instance: Store? = null
+
+        fun get(context: Context): Store = instance ?: synchronized(this) {
+            instance ?: Store(context).also { instance = it }
+        }
+
+        /** Write [bytes] to [file] atomically (a temp file renamed over it). */
+        fun writeAtomic(file: File, bytes: ByteArray) {
+            file.parentFile?.mkdirs()
+            val tmp = File(file.parentFile, ".${file.name}.tmp")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(file)) {
+                tmp.delete()
+                throw java.io.IOException("rename to $file failed")
+            }
+        }
+    }
+}

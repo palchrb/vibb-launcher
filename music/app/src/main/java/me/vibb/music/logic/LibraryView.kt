@@ -1,0 +1,137 @@
+package me.vibb.music.logic
+
+import me.vibb.music.model.Category
+import me.vibb.music.model.Entry
+import me.vibb.music.model.PlayItem
+import me.vibb.music.model.Source
+import java.util.Locale
+
+/*
+ * The library screen's rules (design 21 §4.2, mockup v12 `Main.dc.html`): category tiles, the
+ * carousel's pages, the hint under a cover, search and the list rows. The category rules follow
+ * palchrb/vibb `pi/ui.py`'s category carousel (`carousel_cats`, scoped entry carousels; MIT
+ * License, Copyright (c) 2026 palchrb), reimplemented in Kotlin under the GPL-3.0 (or later) - see
+ * NOTICE.md. Pure; LibraryViewTest and CarouselTest (vibb's tests/cat_carousel.py and
+ * ui_carousel_slide.py).
+ */
+
+/** What a cover says it is: NRK and RSS "Podkast", own files "Egne filer" (Storytel's "Lydbok" and
+ * Spotify come with their phases). */
+enum class Kind { PODCAST, OWN }
+
+fun kindOf(entry: Entry): Kind = if (entry.source == Source.OWN) Kind.OWN else Kind.PODCAST
+
+/** The hint under a cover. */
+sealed interface Hint {
+    val kind: Kind
+
+    /** Resume on and started: "<kind> · episode|spor N av M". */
+    data class Started(override val kind: Kind, val n: Int, val of: Int) : Hint
+
+    /** Resume on, not started: "<kind> · fortsetter der du slapp". */
+    data class NotStarted(override val kind: Kind) : Hint
+
+    /** Resume off: "<kind> · starter fra begynnelsen". */
+    data class FromStart(override val kind: Kind) : Hint
+}
+
+/** Has the kid started [entry] (its bookmark is in [order] past the first item's start)? */
+fun started(order: List<String>, bookmark: Bookmark?): Boolean {
+    val i = bookmark?.let { order.indexOf(it.itemKey) } ?: -1
+    return i > 0 || (i == 0 && bookmark!!.posMs > 0)
+}
+
+fun hint(entry: Entry, order: List<String>, bookmark: Bookmark?): Hint = when {
+    !entry.resume -> Hint.FromStart(kindOf(entry))
+    started(order, bookmark) -> Hint.Started(kindOf(entry), order.indexOf(bookmark!!.itemKey) + 1, order.size)
+    else -> Hint.NotStarted(kindOf(entry))
+}
+
+/** The thin overall-progress line of a started resume entry: (items before + fraction of this) / all. */
+fun overallProgress(order: List<String>, bookmark: Bookmark?, durationMs: Long?): Float {
+    val i = bookmark?.let { order.indexOf(it.itemKey) } ?: -1
+    if (i < 0 || order.isEmpty()) return 0f
+    val frac = if (durationMs != null && durationMs > 0) (bookmark!!.posMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    return ((i + frac) / order.size).coerceIn(0f, 1f)
+}
+
+/** The category tiles after "Alle": the categories with entries here, in their order. */
+fun categoryTiles(categories: List<Category>, entries: List<Entry>): List<Category> =
+    categories.filter { c -> entries.any { it.category == c.id } }.sortedWith(compareBy({ it.sort }, { it.id }))
+
+/** Single choice: a tile shows only its category; tapping it again, or Alle (null), shows all. */
+fun tapCategory(selected: Long?, tapped: Long?): Long? = if (tapped == null || tapped == selected) null else tapped
+
+/** The carousel's entries for [selected]; a category that emptied out under the kid falls back to all. */
+fun shownEntries(entries: List<Entry>, selected: Long?): List<Entry> {
+    val scoped = if (selected == null) emptyList() else entries.filter { it.category == selected }
+    return scoped.ifEmpty { entries }
+}
+
+/** The selection still in force ([selected] unless its category emptied out). */
+fun effectiveCategory(entries: List<Entry>, selected: Long?): Long? =
+    selected?.takeIf { s -> entries.any { it.category == s } }
+
+/** Virtual pages: more than one entry wraps (laps of the list), so a swipe never hits an end. */
+const val CAROUSEL_LAPS = 1000
+
+fun carouselPageCount(n: Int): Int = if (n > 1) n * CAROUSEL_LAPS else n
+
+/** The page in the middle laps that shows entry [index]. */
+fun carouselStartPage(n: Int, index: Int): Int = if (n > 1) (CAROUSEL_LAPS / 2) * n + index.coerceIn(0, n - 1) else 0
+
+fun carouselIndex(page: Int, n: Int): Int = if (n <= 0) 0 else page.mod(n)
+
+/**
+ * A tap on a neighbour turns from where the carousel is going ([targetPage]), not from what is on
+ * screen mid-slide: a tap caught during a slide is never lost (vibb's mash rule).
+ */
+fun neighbourTapTarget(targetPage: Int, direction: Int, pageCount: Int): Int =
+    (targetPage + direction).coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+
+/** A cover tap plays the entry the carousel lands on, never the departing one. */
+fun coverTapIndex(targetPage: Int, n: Int): Int = carouselIndex(targetPage, n)
+
+/** One search hit. */
+sealed interface SearchHit {
+    val entry: Entry
+
+    data class EntryHit(override val entry: Entry) : SearchHit
+    data class ItemHit(override val entry: Entry, val item: PlayItem) : SearchHit
+}
+
+const val SEARCH_MAX = 12
+
+/**
+ * Live hits over entry and item titles, at most [SEARCH_MAX]: each entry that matches, then its
+ * matching items. An empty query lists the entries.
+ */
+fun search(query: String, entries: List<Entry>, itemsOf: (Entry) -> List<PlayItem>): List<SearchHit> {
+    val q = query.trim().lowercase()
+    val hits = mutableListOf<SearchHit>()
+    for (e in entries) {
+        if (q.isEmpty() || e.name.lowercase().contains(q)) hits += SearchHit.EntryHit(e)
+        if (q.isNotEmpty()) itemsOf(e).filter { it.title.lowercase().contains(q) }.forEach { hits += SearchHit.ItemHit(e, it) }
+        if (hits.size >= SEARCH_MAX) break
+    }
+    return hits.take(SEARCH_MAX)
+}
+
+/** A row in "Liste". */
+data class ListRow(val item: PlayItem, val number: Int, val playing: Boolean, val heard: Boolean, val offline: Boolean)
+
+/** [shown] (the play order, or the shuffled queue) as rows; a heard item shows ✓, the playing one its state. */
+fun listRows(shown: List<PlayItem>, currentKey: String?, heard: Set<String>, onPhone: Set<String>): List<ListRow> =
+    shown.mapIndexed { i, item ->
+        ListRow(item, i + 1, item.key == currentKey, item.key in heard && item.key != currentKey, item.key in onPhone)
+    }
+
+/** 754_000 -> "12:34", 3_723_000 -> "1:02:03". */
+fun formatDuration(ms: Long?): String {
+    if (ms == null || ms < 0) return ""
+    val s = ms / 1000
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) String.format(Locale.ROOT, "%d:%02d:%02d", h, m, sec) else String.format(Locale.ROOT, "%d:%02d", m, sec)
+}

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid's screens (design 21 §4.2, mockup v12). English here, bokmål in values-nb
+     (TranslationsTest). Category and entry names come from the parent's library, untranslated. -->
+<resources>
+    <string name="app_name">Music</string>
+
+    <!-- Library -->
+    <string name="back_home">Back to Home</string>
+    <string name="search">Search</string>
+    <string name="news_count">New: %1$d</string>
+    <string name="play_entry">Play %1$s</string>
+    <string name="previous_entry">Previous: %1$s</string>
+    <string name="next_entry">Next: %1$s</string>
+    <string name="categories">Categories</string>
+    <string name="category_all">All</string>
+    <string name="open_player">Open the player</string>
+    <string name="no_library">No library</string>
+    <string name="new_badge">NEW</string>
+    <string name="kind_podcast">Podcast</string>
+    <string name="kind_own">Own files</string>
+    <string name="hint_episode">%1$s · episode %2$d of %3$d</string>
+    <string name="hint_track">%1$s · track %2$d of %3$d</string>
+    <string name="hint_continues">%1$s · continues where you left off</string>
+    <string name="hint_from_start">%1$s · starts from the beginning</string>
+    <string name="not_downloaded">Not downloaded - needs Wi-Fi</string>
+
+    <!-- Player -->
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="back_library">Back to the library</string>
+    <string name="seek">Seek in the track</string>
+    <string name="shuffle">Shuffle</string>
+    <string name="previous">Previous</string>
+    <string name="next">Next</string>
+    <string name="episode_of">Episode %1$d of %2$d</string>
+    <string name="track_of">Track %1$d of %2$d</string>
+    <string name="list">List</string>
+    <string name="sleep">Sleep</string>
+    <string name="sleep_on">Sleep · %1$d min</string>
+    <string name="sleep_title">Sleep in</string>
+    <string name="minutes">%1$d min</string>
+    <string name="sleep_off">Off</string>
+    <string name="output">Play on</string>
+    <string name="output_label">Play on: %1$s</string>
+    <string name="output_phone">The phone</string>
+    <string name="output_phone_sub">Built-in speaker</string>
+    <string name="output_bluetooth">Headphones</string>
+    <string name="output_bluetooth_sub">Bluetooth · connected</string>
+    <string name="output_wired">Headphones</string>
+    <string name="output_wired_sub">Wired · connected</string>
+
+    <!-- List -->
+    <string name="back_player">Back to the player</string>
+    <string name="all_downloaded">All downloaded</string>
+    <string name="some_downloaded">%1$d of %2$d downloaded</string>
+    <string name="downloaded">Downloaded</string>
+    <string name="row_playing">Playing · %1$s</string>
+    <string name="row_heard">Heard · %1$s</string>
+
+    <!-- Nytt -->
+    <string name="news_title">New</string>
+    <string name="clear_all">Clear all</string>
+    <string name="new_episode">New episode</string>
+    <string name="new_track">New track</string>
+    <string name="nothing_new">Nothing new right now</string>
+    <string name="channel_news">New in Music</string>
+    <plurals name="news_notification">
+        <item quantity="one">%d new in Music</item>
+        <item quantity="other">%d new in Music</item>
+    </plurals>
+
+    <!-- Search -->
+    <string name="search_label">Search music and books</string>
+    <string name="search_item_sub">%1$s · %2$s</string>
+    <string name="nothing_found">Nothing found</string>
+</resources>

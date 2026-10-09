@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Musikk</string>
+
+    <!-- Biblioteket -->
+    <string name="back_home">Tilbake til Hjem</string>
+    <string name="search">Søk</string>
+    <string name="news_count">Nytt: %1$d</string>
+    <string name="play_entry">Spill %1$s</string>
+    <string name="previous_entry">Forrige: %1$s</string>
+    <string name="next_entry">Neste: %1$s</string>
+    <string name="categories">Kategorier</string>
+    <string name="category_all">Alle</string>
+    <string name="open_player">Åpne avspilling</string>
+    <string name="no_library">Ingen bibliotek</string>
+    <string name="new_badge">NY</string>
+    <string name="kind_podcast">Podkast</string>
+    <string name="kind_own">Egne filer</string>
+    <string name="hint_episode">%1$s · episode %2$d av %3$d</string>
+    <string name="hint_track">%1$s · spor %2$d av %3$d</string>
+    <string name="hint_continues">%1$s · fortsetter der du slapp</string>
+    <string name="hint_from_start">%1$s · starter fra begynnelsen</string>
+    <string name="not_downloaded">Ikke lastet ned - trenger Wi-Fi</string>
+
+    <!-- Avspilling -->
+    <string name="play">Spill</string>
+    <string name="pause">Pause</string>
+    <string name="back_library">Tilbake til biblioteket</string>
+    <string name="seek">Spol i sporet</string>
+    <string name="shuffle">Tilfeldig rekkefølge</string>
+    <string name="previous">Forrige</string>
+    <string name="next">Neste</string>
+    <string name="episode_of">Episode %1$d av %2$d</string>
+    <string name="track_of">Spor %1$d av %2$d</string>
+    <string name="list">Liste</string>
+    <string name="sleep">Sov</string>
+    <string name="sleep_on">Sov · %1$d min</string>
+    <string name="sleep_title">Sov om</string>
+    <string name="minutes">%1$d min</string>
+    <string name="sleep_off">Av</string>
+    <string name="output">Spill av på</string>
+    <string name="output_label">Spill av på: %1$s</string>
+    <string name="output_phone">Telefonen</string>
+    <string name="output_phone_sub">Innebygd høyttaler</string>
+    <string name="output_bluetooth">Hodetelefoner</string>
+    <string name="output_bluetooth_sub">Bluetooth · tilkoblet</string>
+    <string name="output_wired">Hodetelefoner</string>
+    <string name="output_wired_sub">Kablet · tilkoblet</string>
+
+    <!-- Liste -->
+    <string name="back_player">Tilbake til avspilling</string>
+    <string name="all_downloaded">Alle lastet ned</string>
+    <string name="some_downloaded">%1$d av %2$d lastet ned</string>
+    <string name="downloaded">Lastet ned</string>
+    <string name="row_playing">Spilles nå · %1$s</string>
+    <string name="row_heard">Hørt · %1$s</string>
+
+    <!-- Nytt -->
+    <string name="news_title">Nytt</string>
+    <string name="clear_all">Fjern alle</string>
+    <string name="new_episode">Ny episode</string>
+    <string name="new_track">Nytt spor</string>
+    <string name="nothing_new">Ingenting nytt akkurat nå</string>
+    <string name="channel_news">Nytt i Musikk</string>
+    <plurals name="news_notification">
+        <item quantity="one">%d ny i Musikk</item>
+        <item quantity="other">%d nye i Musikk</item>
+    </plurals>
+
+    <!-- Søk -->
+    <string name="search_label">Søk i musikk og bøker</string>
+    <string name="search_item_sub">%1$s · %2$s</string>
+    <string name="nothing_found">Fant ingenting</string>
+</resources>
