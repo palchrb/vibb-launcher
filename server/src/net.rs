@@ -51,6 +51,12 @@ impl IpNet {
         (prefix <= max).then_some(IpNet { addr, prefix })
     }
 
+    /// Every address in it is a loopback address.
+    pub fn is_loopback_only(&self) -> bool {
+        let min_prefix = if self.addr.is_ipv4() { 8 } else { 128 };
+        self.addr.is_loopback() && self.prefix >= min_prefix
+    }
+
     pub fn contains(&self, ip: IpAddr) -> bool {
         match (self.addr, ip.to_canonical()) {
             (IpAddr::V4(net), IpAddr::V4(ip)) => {
@@ -95,6 +101,19 @@ pub fn is_tailnet(ip: IpAddr) -> bool {
 
 pub fn is_loopback(ip: IpAddr) -> bool {
     ip.to_canonical().is_loopback()
+}
+
+/// RFC 1918, IPv6 ULA (outside the tailnet's) and link-local: an address that can't be a phone
+/// on the internet. Used only for the "every request comes from one private IP" warning
+/// (`limits`).
+pub fn is_private(ip: IpAddr) -> bool {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => {
+            !is_tailnet(IpAddr::V6(v6))
+                && ((v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80)
+        }
+    }
 }
 
 /// The key limits and bans count by: the IPv4 address itself, or the IPv6 /64 written as
@@ -292,6 +311,33 @@ impl NetConfig {
         }
     }
 
+    /// What `main` warns about at startup (design 22 §3.1): a listener on a non-loopback address
+    /// with only loopback proxies trusted - behind Docker's bridge network or a proxy on another
+    /// host every client then looks like that host (the admin gate refuses it, and limits can't
+    /// tell clients apart).
+    pub fn startup_warnings(&self) -> Vec<String> {
+        let loopback_only = self.trusted_proxies.iter().all(IpNet::is_loopback_only);
+        let mut warnings = Vec::new();
+        for (name, addr) in [
+            ("BIND_ADDR", Some(&self.bind_addr)),
+            ("DEVICE_BIND_ADDR", self.device_bind_addr.as_ref()),
+        ] {
+            let Some(addr) = addr else { continue };
+            let loopback_bind = addr
+                .parse::<std::net::SocketAddr>()
+                .is_ok_and(|a| a.ip().is_loopback());
+            if !loopback_bind && loopback_only {
+                warnings.push(format!(
+                    "{name}={addr} is not a loopback address and TRUSTED_PROXIES trusts only \
+                     loopback: behind Docker's bridge network or a proxy on another host every \
+                     client looks like that host. Set TRUSTED_PROXIES to the proxy or gateway \
+                     address (DEPLOY.md)."
+                ));
+            }
+        }
+        warnings
+    }
+
     /// The one line `main` logs about how this server is exposed.
     pub fn exposure_line(&self) -> String {
         let admin = if self.admin_public {
@@ -378,6 +424,11 @@ mod tests {
         assert!(is_tailnet(ip("fd7a:115c:a1e0::1")));
         assert!(!is_tailnet(ip("100.128.0.1")));
         assert!(!is_tailnet(ip("fd7a:115c:a1e1::1")));
+        assert!(is_private(ip("172.17.0.1")));
+        assert!(is_private(ip("fd00::1")));
+        assert!(!is_private(ip("fd7a:115c:a1e0::1")));
+        assert!(!is_private(ip("8.8.8.8")));
+        assert!(!is_private(ip("100.101.102.103")));
     }
 
     #[test]
@@ -441,6 +492,21 @@ mod tests {
         assert!(!net.is_trusted(ip("127.0.0.1")));
         let client = net.client(&xff(&["203.0.113.7"]), ip("172.30.0.20"));
         assert_eq!(client.ip, ip("203.0.113.7"));
+    }
+
+    #[test]
+    fn a_wide_bind_with_only_loopback_trusted_warns() {
+        assert!(NetConfig::default().startup_warnings().is_empty());
+        let wide = NetConfig::from_vars(&vars(&[("BIND_ADDR", "0.0.0.0:3100")]));
+        let warnings = wide.startup_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("BIND_ADDR=0.0.0.0:3100"));
+        let bridge = NetConfig::from_vars(&vars(&[
+            ("BIND_ADDR", "0.0.0.0:3100"),
+            ("DEVICE_BIND_ADDR", "0.0.0.0:3101"),
+            ("TRUSTED_PROXIES", "172.30.0.1"),
+        ]));
+        assert!(bridge.startup_warnings().is_empty());
     }
 
     #[test]

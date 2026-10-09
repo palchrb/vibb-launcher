@@ -25,6 +25,9 @@ pub struct StreamState {
     pub since: DateTime<Utc>,
 }
 
+/// Live command streams per phone; a new one past this closes the oldest.
+pub const MAX_PER_DEVICE: usize = 2;
+
 /// One open stream's close signal.
 struct OpenStream {
     id: u64,
@@ -62,10 +65,18 @@ impl CommandStreams {
         // during shutdown is either closed there or starts closed.
         let closed = {
             let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
+            let streams = open.entry(device_id).or_default();
+            // At most MAX_PER_DEVICE live streams per phone: a new one closes the oldest (design
+            // 22 §3.1) - a phone that reconnected before its old connection timed out here.
+            let mut live: Vec<&OpenStream> = streams
+                .iter()
+                .filter(|stream| !*stream.close.borrow())
+                .collect();
+            while live.len() >= MAX_PER_DEVICE {
+                live.remove(0).close.send_replace(true);
+            }
             let (close, closed) = watch::channel(self.closed.load(Ordering::SeqCst));
-            open.entry(device_id)
-                .or_default()
-                .push(OpenStream { id, close });
+            streams.push(OpenStream { id, close });
             closed
         };
         StreamGuard {
@@ -73,6 +84,14 @@ impl CommandStreams {
             device_id,
             id,
             closed,
+        }
+    }
+
+    /// Ends every open stream of one phone (deleted, or its access revoked).
+    pub fn close_device(&self, device_id: i64) {
+        let open = self.open.lock().unwrap_or_else(|e| e.into_inner());
+        for stream in open.get(&device_id).into_iter().flatten() {
+            stream.close.send_replace(true);
         }
     }
 
@@ -179,6 +198,25 @@ mod tests {
         assert_eq!(closed.open, 0);
         assert!(closed.since >= both.since);
         assert_eq!(streams.state(2), None, "per device");
+    }
+
+    #[test]
+    fn a_third_stream_closes_the_oldest_and_a_device_can_be_closed() {
+        let streams = Arc::new(CommandStreams::default());
+        let first = streams.open(1);
+        let second = streams.open(1);
+        let other = streams.open(2);
+        assert!(!*first.closed().borrow() && !*second.closed().borrow());
+        let third = streams.open(1);
+        assert!(*first.closed().borrow(), "the oldest closes");
+        assert!(!*second.closed().borrow() && !*third.closed().borrow());
+        // The closed one is still counted until its connection ends; a fourth closes the next.
+        let fourth = streams.open(1);
+        assert!(*second.closed().borrow());
+        assert!(!*third.closed().borrow() && !*fourth.closed().borrow());
+        streams.close_device(1);
+        assert!(*third.closed().borrow() && *fourth.closed().borrow());
+        assert!(!*other.closed().borrow(), "per device");
     }
 
     #[test]

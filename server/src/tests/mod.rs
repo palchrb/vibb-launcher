@@ -6,6 +6,7 @@ mod app_display;
 mod calls;
 mod cleanup;
 mod device_api;
+mod edge;
 mod hardening;
 mod launcher_ui;
 mod listeners;
@@ -156,6 +157,8 @@ impl TestApp {
             music_libraries: Default::default(),
             net: std::sync::Arc::new(net),
             audit: Default::default(),
+            limits: Default::default(),
+            tokens: Default::default(),
         };
 
         TestApp {

@@ -540,7 +540,24 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`SELECT 1`, "ok") skips every guard. Refused: empty 403 + `admin_refused` through `AppState.audit`
   (`src/audit.rs`: one row per kind and client key per minute, counts flushed into the detail every 30 s by
   `audit::run_flusher`).
-- Tests: `src/tests/listeners.rs` (no `"/api/devices` literal in `main.rs`; the device router 404s every admin path,
+- **Device edge** (S2, on both listeners, in `device_routes()`): `limits::device_edge` (512 in flight, a memory guard
+  only - 503; 30 s timeout except the SSE stream and file downloads; `Cache-Control` `no-store` unless the route set
+  one, `private, no-cache` for an `ETag` route, `private` added to anything else; `nosniff`; CSP `default-src 'none';
+  sandbox`), a 512 KiB body limit (4 KiB on enroll). `security::require_device_token`: the token is looked up in
+  `AppState.tokens` (`TokenIndex`, `token_hash -> id`, rebuilt at start and by `refresh` after enroll and delete -
+  never a DB query per request); `AuthedDevice` now carries only `DeviceRef { id }`. A bad or missing token counts
+  against the client's failure bucket (`limits`, key `net::limit_key`: 30 per 10 min, then 429 for 10 min) and a
+  throttled `device_auth_failed`; a valid token never touches it: its own bucket (600, 2/s), then an in-flight slot
+  (`route_class`: SSE + APK/music file downloads 4, others 8, `policy`/`status`/`command-result` always admitted),
+  held until the response body ends (`limits::hold_until_done`). Maps capped at 10k keys. Last access per phone
+  (when, tailnet/loopback/outside, the last 5 outside IPs) in memory, on the device page's Status card.
+  `CommandStreams`: 2 live streams per phone (a third closes the oldest), `close_device` on delete and re-enroll.
+  Warnings: a wide bind with only loopback trusted (startup), an untrusted peer sending XFF or two phones behind one
+  private address (logged once, `Limits::exposure_warning` for the Connection page).
+- Tests: `src/tests/edge.rs` (a valid token behind a full failure bucket, IPv6 /64, throttled events; policy and
+  command-result past full slots; a stream holds its slot; a third stream closes the first, delete ends the rest and
+  the token; re-enroll retires the old token; 413s and headers on both listeners; last access on the page),
+  `limits::tests`. `src/tests/listeners.rs` (no `"/api/devices` literal in `main.rs`; the device router 404s every admin path,
   sets no cookie and answers every route it reads from `device_routes.rs`; `ADMIN_DEVICE_API=off`; the gate matrix
   and its throttled event; `/healthz` past every guard; shutdown ends streams on both listeners), `net::tests`,
   `gate::tests`, `streams::tests`.

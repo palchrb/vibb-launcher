@@ -2,7 +2,6 @@ use argon2::password_hash::SaltString;
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::extract::{Request, State};
-use axum::http::HeaderMap;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use pbkdf2::pbkdf2_hmac;
@@ -11,7 +10,7 @@ use totp_rs::{Algorithm, Secret, TOTP};
 use tower_sessions::Session;
 
 use crate::AppState;
-use crate::models::{AdminUser, Device};
+use crate::models::AdminUser;
 
 pub const MIN_PASSWORD_LEN: usize = 12;
 
@@ -405,41 +404,157 @@ pub async fn require_full_auth(
     }
 }
 
-#[derive(Clone)]
-pub struct AuthedDevice(pub Device);
+/// The device a request's bearer token belongs to. Only the id: the token check is in memory
+/// ([TokenIndex]), and handlers read what they need.
+#[derive(Clone, Copy, Debug)]
+pub struct DeviceRef {
+    pub id: i64,
+}
 
-/// Bearer-token auth for the device-facing API (`/api/devices/*`, excluding
-/// enroll) - completely separate from the admin session system above, since
-/// a kid's phone is never an admin session.
+#[derive(Clone)]
+pub struct AuthedDevice(pub DeviceRef);
+
+/// `token_hash -> device id` for every enrolled phone (design 22 §3.1), so checking a token never
+/// touches the database: a failed check costs one SHA-256 and one hash probe. Rebuilt at start
+/// ([TokenIndex::reload]) and after every write to `devices.token_hash` - enroll, revoke, delete
+/// ([TokenIndex::refresh]).
+#[derive(Default)]
+pub struct TokenIndex {
+    map: std::sync::RwLock<std::collections::HashMap<String, i64>>,
+    /// Reloads run one at a time, each reading after its own write, so the last one to finish
+    /// holds every write.
+    reload: tokio::sync::Mutex<()>,
+}
+
+impl TokenIndex {
+    pub fn lookup(&self, token: &str) -> Option<i64> {
+        let hash = hash_token(token);
+        self.map
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&hash)
+            .copied()
+    }
+
+    /// Reads every token hash from the database.
+    pub async fn reload(&self, db: &sqlx::SqlitePool) -> Result<(), sqlx::Error> {
+        let _one_at_a_time = self.reload.lock().await;
+        let rows: Vec<(String, i64)> =
+            sqlx::query_as("SELECT token_hash, id FROM devices WHERE token_hash IS NOT NULL")
+                .fetch_all(db)
+                .await?;
+        *self.map.write().unwrap_or_else(|e| e.into_inner()) = rows.into_iter().collect();
+        Ok(())
+    }
+
+    /// After a write to one device's `token_hash` (`token_hash` = what was written, `None` =
+    /// cleared or deleted): [TokenIndex::reload], and if the database can't be read, the same
+    /// change applied by hand - a phone must never keep a revoked token, nor be refused the one it
+    /// was just given.
+    pub async fn refresh(&self, db: &sqlx::SqlitePool, device_id: i64, token_hash: Option<&str>) {
+        if let Err(err) = self.reload(db).await {
+            tracing::error!(device_id, %err, "couldn't reload the device tokens - patching");
+            let mut map = self.map.write().unwrap_or_else(|e| e.into_inner());
+            map.retain(|_, id| *id != device_id);
+            if let Some(hash) = token_hash {
+                map.insert(hash.to_string(), device_id);
+            }
+        }
+    }
+}
+
+fn too_many(refused: crate::limits::Refused) -> Response {
+    (
+        axum::http::StatusCode::TOO_MANY_REQUESTS,
+        [(
+            axum::http::header::RETRY_AFTER,
+            refused.retry_after_secs.to_string(),
+        )],
+    )
+        .into_response()
+}
+
+/// Bearer-token auth for the device-facing API (`/api/devices/*`, excluding enroll) - completely
+/// separate from the admin session system above, since a kid's phone is never an admin session.
+///
+/// Design 22 §3.1, in this order:
+/// - the token is looked up in memory ([TokenIndex]);
+/// - a bad or missing one counts against the client's failure bucket (`limits`; 429 once it's
+///   full, else 401) and a throttled `device_auth_failed` event;
+/// - a valid one never touches that bucket: it takes from the device's own bucket, then an
+///   in-flight slot for its route class, held until the response body is done (an SSE stream or
+///   a download holds it for its whole life).
 pub async fn require_device_token(
     State(state): State<AppState>,
-    headers: HeaderMap,
     mut request: Request,
     next: Next,
 ) -> Response {
-    let Some(token) = headers
+    use crate::limits;
+
+    let client =
+        crate::gate::peer_of(&request).map(|peer| state.net.client(request.headers(), peer.ip()));
+    if let Some(client) = &client {
+        state.limits.observe_peer(client);
+    }
+    let token = request
+        .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-    else {
-        return (axum::http::StatusCode::UNAUTHORIZED, "missing bearer token").into_response();
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let device_id = token.and_then(|token| state.tokens.lookup(token));
+
+    let Some(device_id) = device_id else {
+        let key = client
+            .map(|c| crate::net::limit_key(c.ip))
+            .unwrap_or_default();
+        if let Some(refused) = state.limits.ip_blocked(&key) {
+            return too_many(refused);
+        }
+        let blocked = state.limits.ip_failed(&key);
+        let what = if token.is_some() {
+            "invalid device token"
+        } else {
+            "missing bearer token"
+        };
+        let ip = client.map(|c| c.ip.to_string());
+        let detail = format!(
+            "{what} for {}{}",
+            request.uri().path().chars().take(100).collect::<String>(),
+            if blocked {
+                " - this client is now refused for 10 minutes"
+            } else {
+                ""
+            }
+        );
+        state
+            .audit
+            .record(
+                &state.db,
+                "device_auth_failed",
+                &key,
+                ip.as_deref(),
+                &detail,
+            )
+            .await;
+        return (axum::http::StatusCode::UNAUTHORIZED, what).into_response();
     };
 
-    let token_hash = hash_token(token);
-    let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE token_hash = ?")
-        .bind(&token_hash)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
-
-    match device {
-        Some(device) => {
-            request.extensions_mut().insert(AuthedDevice(device));
-            next.run(request).await
-        }
-        None => (axum::http::StatusCode::UNAUTHORIZED, "invalid device token").into_response(),
+    if let Err(refused) = state.limits.take_token(device_id) {
+        return too_many(refused);
     }
+    let class = limits::route_class(request.uri().path());
+    let permit = match state.limits.enter(device_id, class) {
+        Ok(permit) => permit,
+        Err(refused) => return too_many(refused),
+    };
+    if let Some(client) = &client {
+        state.limits.record_access(device_id, client);
+    }
+    request
+        .extensions_mut()
+        .insert(AuthedDevice(DeviceRef { id: device_id }));
+    let response = next.run(request).await;
+    limits::hold_until_done(response, permit)
 }
 
 #[cfg(test)]

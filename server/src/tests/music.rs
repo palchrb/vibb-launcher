@@ -2540,13 +2540,9 @@ async fn storytel_without_a_usable_key_is_a_503_and_the_form_says_so() {
     state.music_key = None;
     let res = crate::handlers::music_api::storytel(
         axum::extract::State(state.clone()),
-        axum::Extension(crate::security::AuthedDevice(
-            sqlx::query_as::<_, crate::models::Device>("SELECT * FROM devices WHERE id = ?")
-                .bind(device)
-                .fetch_one(&app.db)
-                .await
-                .unwrap(),
-        )),
+        axum::Extension(crate::security::AuthedDevice(crate::security::DeviceRef {
+            id: device,
+        })),
     )
     .await;
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);

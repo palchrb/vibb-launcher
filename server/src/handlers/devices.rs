@@ -298,6 +298,8 @@ struct DeviceDetailTemplate {
     display_forms: Vec<crate::app_display::AppDisplayForm>,
     /// "Music" card (design 21, `#music`); `None` when it couldn't be read (the card says so).
     music: Option<crate::handlers::music::MusicCard>,
+    /// When and how the phone last reached this server (design 22 §3.1, in memory).
+    last_access: String,
 }
 
 /// The kiosk app block switch on the "Play and kiosk" card (handy step 9): with it on, kiosk mode
@@ -1225,6 +1227,7 @@ async fn render_device(
 
     Html(
         DeviceDetailTemplate {
+            last_access: crate::limits::last_access_line(state.limits.last_access(id).as_ref()),
             crashes,
             music,
             app_updates_wifi_only: policy.app_updates_wifi_only,
@@ -2047,6 +2050,11 @@ pub async fn delete_device(
         .execute(&state.db)
         .await
         .ok();
+    // Its token stops working and its open command streams end (design 22 QA d: auth is checked
+    // only when a stream opens).
+    state.tokens.refresh(&state.db, id, None).await;
+    state.command_streams.close_device(id);
+    state.limits.forget_device(id);
     // device_contacts rows went with the device (ON DELETE CASCADE); drop address-book entries
     // no other device has.
     sqlx::query(

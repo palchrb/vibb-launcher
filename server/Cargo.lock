@@ -1305,6 +1305,7 @@ dependencies = [
  "flate2",
  "form_urlencoded",
  "hex",
+ "http-body",
  "http-body-util",
  "image",
  "lofty",

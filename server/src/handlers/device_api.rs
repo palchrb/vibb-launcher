@@ -53,6 +53,12 @@ pub async fn enroll(
     .execute(&state.db)
     .await
     .ok();
+    // The old token (a re-enrolled phone) stops working, the new one works from now on.
+    state
+        .tokens
+        .refresh(&state.db, device.id, Some(&token_hash))
+        .await;
+    state.command_streams.close_device(device.id);
 
     Json(EnrollResponse {
         device_id: device.id,

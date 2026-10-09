@@ -38,6 +38,7 @@
         <p>{{ line }}</p>
         {% endfor %}
         <p class="subtitle">Last reported {{ status.reported_at }}</p>
+        <p class="subtitle">{{ last_access }}</p>
         {% if let Some(problem) = policy_problem %}
         <div class="error">{{ problem }}</div>
         {% endif %}
@@ -46,6 +47,7 @@
         {% endif %}
         {% else %}
         <p class="subtitle">No status reported yet.</p>
+        <p class="subtitle">{{ last_access }}</p>
         {% endif %}
     </div>
     {% endif %}

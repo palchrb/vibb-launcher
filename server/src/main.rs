@@ -10,6 +10,7 @@ mod gate;
 mod handlers;
 mod kid_lock;
 mod kiosk_escapes;
+mod limits;
 mod models;
 mod music;
 mod music_icons;
@@ -97,6 +98,11 @@ pub struct AppState {
     /// Security events that come in floods, written at most once a minute per client
     /// (`audit::EventThrottle`).
     pub audit: std::sync::Arc<audit::EventThrottle>,
+    /// The device API's limits and each phone's last access, in memory (`limits::Limits`).
+    pub limits: std::sync::Arc<limits::Limits>,
+    /// `token_hash -> device id`, so a token check never touches the database
+    /// (`security::TokenIndex`).
+    pub tokens: std::sync::Arc<security::TokenIndex>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -226,7 +232,14 @@ async fn main() {
         music_libraries: Default::default(),
         net: std::sync::Arc::new(net_config),
         audit: Default::default(),
+        limits: Default::default(),
+        tokens: Default::default(),
     };
+    state
+        .tokens
+        .reload(&state.db)
+        .await
+        .expect("failed to read the device tokens");
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
     // from the backups, or drop the reference (design 05, 08).
@@ -269,6 +282,9 @@ async fn main() {
 async fn serve(state: AppState, session_layer: SessionManagerLayer<SqliteStore>) {
     let net = state.net.clone();
     tracing::info!("{}", net.exposure_line());
+    for warning in net.startup_warnings() {
+        tracing::warn!("{warning}");
+    }
 
     let admin_listener = match tokio::net::TcpListener::bind(&net.bind_addr).await {
         Ok(listener) => listener,
