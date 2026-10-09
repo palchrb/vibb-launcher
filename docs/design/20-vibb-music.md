@@ -179,3 +179,12 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
   tile with the album art and the title, a progress bar and prev / play-pause / next, plus Emergency call. A
   **"Lås opp"** button leads to the normal keypad, which has a back arrow and a compact play/pause row. The media view
   is part of the lock: it opens nothing but those controls. Not playing means the keypad as today.
+- **Library screen** (user, 2026-10-09):
+  - The neighbouring covers peek in at the sides, smaller and dimmed, and tapping one turns to it. They replace the
+    arrows.
+  - A resumable entry shows where the kid is ("Lydbok · del 3 av 5") with a thin overall progress line.
+  - **Category tiles** along the bottom: Alle, Musikk, Eventyr, Lydbøker, Podkast. Round icons with labels, **single
+    choice**: a tile shows only that category; tapping it again, or "Alle", shows everything.
+  - Each library entry has a category in the PWA. The default comes from the source (Spotify -> Musikk, Storytel ->
+    Lydbøker, NRK/RSS -> Podkast, own files -> Musikk). The parent can change it or add categories, each with an icon
+    from the fixed set and a colour.
