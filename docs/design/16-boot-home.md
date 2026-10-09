@@ -404,3 +404,9 @@ Open device checks (emulator, then the Jelly Star):
   `Boot mark over: Home paused`/`Home lost focus`, the lock at once.
 - [ ] With the boot cover on (power-menu restart): the cover ~3 s from its first frame; Home's mark only for what is
   left of them (none when the cover handed over after its 3 s).
+
+**Emulator results (user, 2026-10-09):**
+- The boot cover (16b), with the switch on and a proper shutdown, "looks good".
+- The 16e mark measured `the mark on screen 3011 ms` on a boot where Home got focus within 1 s. On a slow emulator boot,
+  Home misses the 1 s cap and the lock comes without the mark, as designed.
+- Still open: the Jelly Star.

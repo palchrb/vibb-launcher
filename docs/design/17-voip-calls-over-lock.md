@@ -255,3 +255,7 @@ Open device checks (emulator, then the Jelly Star; Element X from another accoun
   after it closes.
 - [ ] If SystemUI launches the FSI itself, Back from it shows the card, not Element's screen again
   (`The VoIP ring screen came up without our send`).
+
+**Emulator result (user, 2026-10-09):** an Element X call to the locked emulator, with the screen off, rings over the
+PIN lock and is answered in one step. Still open: the precedence checks against a phone call, emergency and alarm,
+and the Jelly Star.
