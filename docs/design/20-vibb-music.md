@@ -122,6 +122,17 @@ library is managed by this repo's server and PWA; the phone never serves anythin
   another context].
 - **Time rules**: no suspension. The launcher pauses the engine's MediaSession whenever the mode forbids music [spike
   item 6]. The design 11 rule cancels Spotify's promo notifications; its ongoing one can't be cancelled.
+- **Never shown** (user, 2026-10-09: the kid must never see the Spotify app). Layers: (1) not on Home/drawer, never
+  pinned outside setup mode, so every Spotify activity - its own, notification taps, `open.spotify.com` links from chat -
+  is stopped by lock task, and Android's background-activity-start limits stop Spotify raising itself; (2)
+  `connect(showAuthView=false)` only; consent is given in setup mode, and an expired or revoked consent shows "ask an
+  adult" in the player plus a PWA status, never Spotify's screen; (3) `AppEnforcer` denies Spotify `POST_NOTIFICATIONS`
+  (no promo notifications at all; the media-session notification is exempt and stays); (4) the weak spot is Spotify's
+  media card in the shade: a tap gives "App is not available", not Spotify. Spike item 6 decides between suspending
+  Spotify (hides the card and every activity, if App Remote and audio survive suspension) and the launcher sending a
+  blocked Spotify start to the player instead. Spike items 1 and 3 are kill criteria: if App Remote can't connect
+  without showing Spotify, the Spotify source is dropped rather than shown. Residual: kiosk off -> a card tap opens
+  Spotify (the PWA warns).
 
 ## 5. Phases
 
