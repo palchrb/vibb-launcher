@@ -9,18 +9,15 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 
 private const val LOG_TAG = "OfflineOverride"
 
-private const val MAX_FAILED_ATTEMPTS = 5
-private const val LOCKOUT_MS = 15 * 60 * 1000L
-private const val OVERRIDE_DURATION_MS = 2 * 60 * 60 * 1000L
+/** How long one offline override lasts (it ends sooner at the next successful sync). */
+internal const val OVERRIDE_DURATION_MS = 2 * 60 * 60 * 1000L
 
 /**
- * The offline "unlock code" failsafe: verifies a PIN entered directly on the phone against the
- * hash+salt cached from the last successful policy sync ([PolicyResponse.overridePinHash]/
- * [PolicyResponse.overridePinSalt]), entirely without network. On a match, immediately re-runs
- * [AppEnforcer] treating the policy as fully open so restrictions lift right away rather than
- * waiting for the next scheduled sync - [AppEnforcer.apply] already treats `offline_override_active`
- * as "ignore whatever policy I'm handed," so this just passes `null`. See
- * [com.kidslauncher.mdm.ui.LockActivity] for the entry point.
+ * The offline "unlock code" failsafe: the parent PIN typed on the time-lock screen
+ * ([com.kidslauncher.mdm.ui.LockActivity]) lifts the app restrictions and the time rules for up
+ * to two hours, entirely without network. The PIN is checked - against the hash+salt cached from
+ * the last successful policy sync ([PolicyResponse.overridePinHash]/[PolicyResponse.overridePinSalt]),
+ * with the escalating lockout - by [ParentPin], which also calls [activate].
  */
 object OfflineOverride {
 
@@ -60,48 +57,10 @@ object OfflineOverride {
         mdm.offlineOverrideExpiresAt(0)
     }
 
-    fun isLockedOut(): Boolean =
-        System.currentTimeMillis() < LauncherPreferences.mdm().offlineOverrideLockedUntil()
-
-    /**
-     * Returns true on a match, false otherwise - having recorded a failed attempt and triggered a
-     * 15-minute local lockout once [MAX_FAILED_ATTEMPTS] is reached, mirroring the server's own
-     * admin-login lockout in security.rs, tracked purely locally since this must keep working
-     * with zero network. Pure verification only - does NOT lift restrictions; callers that want
-     * the full "unlock the device" behavior must also call [activate] on success (see
-     * [com.kidslauncher.mdm.ui.LockActivity]). Kept separate so the Settings PIN-gate can reuse
-     * the same code+PIN without also triggering a 2-hour restrictions-off window - and handy's
-     * PIN lock's "Parent code" link (step 10), which only unlocks that lock.
-     * PBKDF2 (PinHash, ~0.5 s): never call this on the main thread.
-     */
-    fun verifyPin(pin: String): Boolean {
-        // Every try checks the lockout, not just the dialog that offers it (design 24 QA #1).
-        if (isLockedOut()) return false
+    /** Lifts all restrictions for [OVERRIDE_DURATION_MS] from [start] - called only by [ParentPin.check]
+     * after a correct PIN and its committed `unlocked` event (design 24 §2). Any thread. */
+    fun activate(context: Context, start: WindowStart) {
         val mdm = LauncherPreferences.mdm()
-        val hashHex = mdm.overridePinHash()
-        val saltHex = mdm.overridePinSalt()
-        if (hashHex.isNullOrEmpty() || saltHex.isNullOrEmpty()) return false
-
-        val matches = PinHash.verify(pin, hashHex, saltHex)
-
-        if (matches) {
-            mdm.offlineOverrideFailedAttempts(0)
-        } else {
-            val attempts = mdm.offlineOverrideFailedAttempts() + 1
-            if (attempts >= MAX_FAILED_ATTEMPTS) {
-                mdm.offlineOverrideFailedAttempts(0)
-                mdm.offlineOverrideLockedUntil(System.currentTimeMillis() + LOCKOUT_MS)
-            } else {
-                mdm.offlineOverrideFailedAttempts(attempts)
-            }
-        }
-        return matches
-    }
-
-    /** Lifts all restrictions for [OVERRIDE_DURATION_MS] - call only after [verifyPin] succeeds. */
-    fun activate(context: Context) {
-        val mdm = LauncherPreferences.mdm()
-        val start = BootClock.windowStart(OVERRIDE_DURATION_MS)
         mdm.offlineOverrideExpiresAt(start.untilWallMs)
         mdm.offlineOverrideElapsedStart(start.elapsedStartMs)
         mdm.offlineOverrideBoot(start.bootCount)

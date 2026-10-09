@@ -107,7 +107,13 @@
     <string name="quick_controls_brightness">Lysstyrke</string>
     <string name="quick_controls_manage_networks">Velg nettverk</string>
     <string name="quick_controls_manage_devices">Velg enheter</string>
-    <string name="lock_unlock_code_locked_out">For mange feil koder. Prøv igjen om 15 minutter.</string>
+    <string name="lock_unlock_code_locked_out">For mange feil koder. Prøv igjen om %1$s, eller lagre en ny foreldrekode på foreldresiden.</string>
+    <string name="parent_pin_last_try">Feil kode. Ett feilforsøk til låser den i %1$s.</string>
+    <string name="parent_pin_too_short">Skriv inn minst 6 sifre.</string>
+    <string name="parent_pin_unavailable">Klarte ikke å sjekke koden. Prøv igjen.</string>
+    <string name="parent_pin_storage_full">Telefonens lagringsplass er full. Frigjør litt plass og prøv igjen.</string>
+    <string name="parent_pin_unit_hours">t</string>
+    <string name="parent_pin_unit_minutes">min</string>
 
     <!-- Wi-Fi networks -->
     <string name="wifi_networks_title">Wi-Fi-nettverk</string>
@@ -240,7 +246,7 @@
     <string name="pin_lock_emergency">Nødsamtale</string>
     <string name="pin_lock_parent_code">Foreldrekode</string>
     <string name="pin_lock_parent_wrong">Det er ikke foreldrekoden.</string>
-    <string name="pin_lock_parent_locked_out">For mange feil koder. Prøv igjen om 15 minutter.</string>
+    <string name="pin_lock_parent_locked_out">For mange feil koder. Prøv igjen om %1$s, eller lagre en ny foreldrekode på foreldresiden.</string>
     <string name="pin_lock_parent_not_set">Ingen foreldrekode er satt for denne telefonen.</string>
     <string name="pin_lock_delete">Slett</string>
     <string name="pin_lock_dots">%1$d av %2$d siffer</string>

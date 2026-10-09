@@ -10,6 +10,7 @@ import android.util.Log
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreference
@@ -20,23 +21,21 @@ import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.copyToClipboard
 import com.kidslauncher.mdm.getDeviceInfo
-import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
-import com.kidslauncher.mdm.server.OfflineOverride
+import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.server.applyProvisioningExtras
-import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.createMdmApi
 import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
 import com.kidslauncher.mdm.server.performMdmSync
-import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.openAppsList
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.ui.LegalInfoActivity
+import com.kidslauncher.mdm.ui.ParentPinDialog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -155,20 +154,19 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             if (newValue == true) {
                 // Turning it on always takes the PIN again, on top of the Settings gate: Settings
                 // is open without one during setup (no policy yet), and a pause must never be.
-                // The switch only flips once the PIN checks out (see below).
-                if (!OfflineOverride.isConfigured()) {
-                    Toast.makeText(context, R.string.toast_mdm_pause_needs_pin, Toast.LENGTH_LONG).show()
-                } else {
-                    showPausePinDialog(context) {
-                        RestrictionsPause.start()
-                        restrictionsPaused.isChecked = true
-                        reapplyAfterPauseChange(context)
-                    }
-                }
+                // The switch only flips once the PIN checks out; the gate has started the pause
+                // (and re-applied) by then. No PIN, or a lockout: the dialog says so.
+                ParentPinDialog.show(
+                    context,
+                    lifecycleScope,
+                    ParentPinEntry.PAUSE,
+                    title = R.string.settings_mdm_restrictions_paused_pin_title,
+                    notConfigured = R.string.toast_mdm_pause_needs_pin,
+                ) { restrictionsPaused.isChecked = true }
                 false
             } else {
                 RestrictionsPause.clear()
-                reapplyAfterPauseChange(context)
+                RestrictionsPause.reapply(context)
                 true
             }
         }
@@ -184,21 +182,25 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 installMode.summary = getString(R.string.settings_play_install_mode_summary)
                 return@setOnPreferenceClickListener true
             }
+            // The PIN refusals (no PIN, a lockout) show in the PIN dialog; the others keep their
+            // toasts (design 24 §2.4).
             val refusal = when (PlayRuntime.canStart(context)) {
-                InstallModeStart.OK -> null
+                InstallModeStart.OK, InstallModeStart.NO_PIN, InstallModeStart.LOCKED_OUT -> null
                 InstallModeStart.NOT_NEEDED -> R.string.toast_play_install_mode_not_needed
-                InstallModeStart.NO_PIN -> R.string.toast_play_install_mode_needs_pin
-                InstallModeStart.LOCKED_OUT -> R.string.lock_unlock_code_locked_out
                 InstallModeStart.TIME_LOCKED -> R.string.toast_play_install_mode_time_locked
                 InstallModeStart.NO_PLAY_STORE -> R.string.toast_play_install_mode_no_store
             }
             if (refusal != null) {
                 Toast.makeText(context, refusal, Toast.LENGTH_LONG).show()
             } else {
-                showPausePinDialog(context, R.string.settings_play_install_mode_pin_title) {
-                    PlayRuntime.startInstallMode(context)
-                    updateInstallModeSummary(installMode)
-                }
+                // The gate starts install mode on a correct PIN.
+                ParentPinDialog.show(
+                    context,
+                    lifecycleScope,
+                    ParentPinEntry.INSTALL_MODE,
+                    title = R.string.settings_play_install_mode_pin_title,
+                    notConfigured = R.string.toast_play_install_mode_needs_pin,
+                ) { updateInstallModeSummary(installMode) }
             }
             true
         }
@@ -207,29 +209,6 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     private fun String?.orNotSet(): String = this?.takeIf { it.isNotBlank() }
         ?: getString(R.string.settings_mdm_not_set)
 
-    /**
-     * [androidx.preference.EditTextPreference]'s built-in dialog doesn't pick up this app's
-     * custom (dark) theme - it renders with invisible text/buttons. Uses the same themed
-     * AlertDialog approach as the app-rename dialog instead.
-     */
-    /**
-     * Re-runs enforcement right away, offline, after the pause switch changes - rather than
-     * waiting for the next sync. Hands off to a background coroutine: AppEnforcer.apply() can
-     * (re)start KidVpnService, whose onCreate() reads the blocklist from disk synchronously -
-     * confirmed live this froze the UI thread for seconds and caused an ANR when run on it.
-     * Ending a pause with no usable cached policy re-locks to the last-enforced plan.
-     */
-    private fun reapplyAfterPauseChange(context: Context) {
-        CoroutineScope(Dispatchers.IO).launch {
-            // apply() releases everything itself while the pause is active.
-            AppEnforcer.apply(context, currentPolicyDecision().policy)
-            reevaluateLockReasonFromCache(context)
-            com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(context)
-        }
-    }
-
-    /** Asks for the offline-override PIN; [onVerified] runs only on a match. Shares the PIN's
-     * attempt counter and 15-minute lockout with the lock screen and the Settings gate. */
     private fun updateInstallModeSummary(preference: Preference?) {
         preference ?: return
         val until = PlayRuntime.installModeUntil(requireContext())
@@ -243,43 +222,11 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         }
     }
 
-    private fun showPausePinDialog(
-        context: Context,
-        titleRes: Int = R.string.settings_mdm_restrictions_paused_pin_title,
-        onVerified: () -> Unit,
-    ) {
-        if (OfflineOverride.isLockedOut()) {
-            Toast.makeText(context, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
-            return
-        }
-        val dialog = AlertDialog.Builder(context, R.style.AlertDialogCustom).apply {
-            setTitle(titleRes)
-            setView(R.layout.dialog_offline_override_pin)
-            setNegativeButton(android.R.string.cancel) { d, _ -> d.cancel() }
-            setPositiveButton(android.R.string.ok, null)
-        }.create()
-        dialog.show()
-        // Overridden after show() so a wrong PIN re-prompts instead of dismissing.
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val input = dialog.findViewById<EditText>(R.id.dialog_offline_override_pin_input)
-            val pin = input?.text?.toString().orEmpty()
-            when {
-                OfflineOverride.verifyPin(pin) -> {
-                    dialog.dismiss()
-                    onVerified()
-                }
-                OfflineOverride.isLockedOut() -> {
-                    Toast.makeText(context, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
-                    dialog.dismiss()
-                }
-                else -> {
-                    Toast.makeText(context, R.string.lock_unlock_code_wrong, Toast.LENGTH_SHORT).show()
-                    input?.text?.clear()
-                }
-            }
-        }
-    }
-
+    /**
+     * [androidx.preference.EditTextPreference]'s built-in dialog doesn't pick up this app's
+     * custom (dark) theme - it renders with invisible text/buttons. Uses the same themed
+     * AlertDialog approach as the app-rename dialog instead.
+     */
     private fun showEditTextDialog(
         context: Context,
         title: String,

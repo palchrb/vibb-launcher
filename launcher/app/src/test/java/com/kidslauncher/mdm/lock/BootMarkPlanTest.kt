@@ -311,7 +311,7 @@ class BootMarkPlanTest {
         )
         val atOnce = listOf(
             LockEvent.ScreenOff(), LockEvent.RemoteLock(), LockEvent.CallsEnded(), LockEvent.VoipRinging(), LockEvent.VoipEnded(),
-            LockEvent.TimeRuleShown, LockEvent.Configured(true), LockEvent.Unlocked, LockEvent.LockResumed(ourCall = false),
+            LockEvent.TimeRuleShown, LockEvent.Configured(true), LockEvent.Unlocked(0, 0), LockEvent.LockResumed(ourCall = false),
         )
         for (event in boot) assertEquals("$event", LockAsk.BOOT, lockAsk(event))
         for (event in atOnce) assertEquals("$event", LockAsk.AT_ONCE, lockAsk(event))

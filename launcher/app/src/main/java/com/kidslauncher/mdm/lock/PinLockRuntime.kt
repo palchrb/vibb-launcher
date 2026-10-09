@@ -21,7 +21,9 @@ import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.LockReason
-import com.kidslauncher.mdm.server.OfflineOverride
+import com.kidslauncher.mdm.server.ParentPin
+import com.kidslauncher.mdm.server.ParentPinEntry
+import com.kidslauncher.mdm.server.ParentPinResult
 import com.kidslauncher.mdm.server.PinHash
 import com.kidslauncher.mdm.server.dto.LockStateReport
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -66,6 +68,12 @@ object PinLockRuntime {
     /** PinLockActivity is resumed. */
     @Volatile
     var lockResumed = false
+        private set
+
+    /** Screen-offs in this process (main thread): a PIN or parent-code check captures it when it
+     * starts, and an Ok that comes back after a screen-off is dropped (design 24 QA #4). */
+    @Volatile
+    var screenOffs = 0
         private set
 
     /** This process's lock mode is decided ([decide], design 16c) - before that Home treats the
@@ -610,6 +618,7 @@ object PinLockRuntime {
         override fun onReceive(context: Context, intent: Intent) {
             val app = context.applicationContext
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                screenOffs++
                 // The lock first: started now, it is drawn before the next screen-on.
                 rememberAlarm(app)
                 // The power button silences a VoIP ring on a ringing lock; a ring that began
@@ -1097,10 +1106,13 @@ object PinLockRuntime {
         }
     }
 
-    /** The parent code (the override PIN): its own 5/15-minute counter, works during the kid PIN's
-     * wait and offline; a match opens only this lock - no override. Background thread. */
-    fun checkParentCode(context: Context, code: String): Boolean {
-        if (!OfflineOverride.verifyPin(code)) return false
+    /** The parent code (the parent PIN, through its own gate and lockout - [ParentPin]): works
+     * during the kid PIN's wait and offline; a match opens only this lock - no override - and
+     * resets the kid's wait. Not nested: [ParentPin]'s lock is released before this one is taken.
+     * Background thread. */
+    fun checkParentCode(context: Context, code: String): ParentPinResult {
+        val result = ParentPin.check(context, ParentPinEntry.PIN_LOCK, code)
+        if (result != ParentPinResult.Ok) return result
         synchronized(this) {
             val app = context.applicationContext
             // An unreadable store never keeps the parent out (qa-16c-code #3).
@@ -1110,11 +1122,13 @@ object PinLockRuntime {
                 Log.w(LOG_TAG, "Backoff reset failed", e)
             }
         }
-        return true
+        return result
     }
 
-    /** The right PIN or parent code was entered (main thread). */
-    fun unlocked(context: Context) = dispatch(context.applicationContext, LockEvent.Unlocked)
+    /** The right PIN or parent code was entered, its check started at [checkedAt] screen-offs
+     * (main thread). After a screen-off since, nothing opens. */
+    fun unlocked(context: Context, checkedAt: Int) =
+        dispatch(context.applicationContext, LockEvent.Unlocked(checkedAt, screenOffs))
 
     /** After an unlock: the time-rule screen comes up if a rule is on (it was never suppressed). */
     private fun afterUnlock(context: Context) {

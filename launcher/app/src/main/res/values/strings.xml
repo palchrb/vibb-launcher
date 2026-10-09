@@ -131,7 +131,15 @@
     <string name="quick_controls_brightness">Screen brightness</string>
     <string name="quick_controls_manage_networks">Manage networks</string>
     <string name="quick_controls_manage_devices">Manage devices</string>
-    <string name="lock_unlock_code_locked_out">Too many wrong codes entered. Try again in 15 minutes.</string>
+    <string name="lock_unlock_code_locked_out">Too many wrong codes. Try again in %1$s, or save a new parent PIN on the parent page.</string>
+    <!-- Design 24 §2.4: the parent PIN's results, shown in its dialogs (never as toasts). -->
+    <string name="parent_pin_last_try">Wrong code. One more wrong try locks it for %1$s.</string>
+    <string name="parent_pin_too_short">Enter at least 6 digits.</string>
+    <string name="parent_pin_unavailable">Couldn\'t check the code. Try again.</string>
+    <string name="parent_pin_storage_full">The phone\'s storage is full. Free some space, then try again.</string>
+    <!-- "1 h 45 min" in the lockout texts. -->
+    <string name="parent_pin_unit_hours">h</string>
+    <string name="parent_pin_unit_minutes">min</string>
 
     <!--
       -
@@ -295,7 +303,7 @@
     <string name="pin_lock_emergency">Emergency call</string>
     <string name="pin_lock_parent_code">Parent code</string>
     <string name="pin_lock_parent_wrong">That isn\'t the parent code.</string>
-    <string name="pin_lock_parent_locked_out">Too many wrong codes. Try again in 15 minutes.</string>
+    <string name="pin_lock_parent_locked_out">Too many wrong codes. Try again in %1$s, or save a new parent PIN on the parent page.</string>
     <string name="pin_lock_parent_not_set">No parent code has been set for this phone.</string>
     <string name="pin_lock_delete">Delete</string>
     <string name="pin_lock_dots">%1$d of %2$d digits</string>

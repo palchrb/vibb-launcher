@@ -28,7 +28,8 @@ import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.databinding.ActivityPinLockBinding
 import com.kidslauncher.mdm.databinding.ViewVoipRingBinding
-import com.kidslauncher.mdm.server.OfflineOverride
+import com.kidslauncher.mdm.server.ParentPinResult
+import com.kidslauncher.mdm.ui.ParentPinDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -445,14 +446,18 @@ class PinLockActivity : AppCompatActivity() {
     private fun check(pin: String) {
         checking = true
         render()
+        val checkedAt = PinLockRuntime.screenOffs
         lifecycleScope.launch {
             val result = withContext(Dispatchers.Default) { PinLockRuntime.checkPin(this@PinLockActivity, pin) }
             checking = false
             entered = ""
             when (result) {
                 PinLockRuntime.PinResult.Ok -> {
-                    unlock()
-                    return@launch
+                    // A screen-off during the check: the lock stays (design 24 QA #4) - type again.
+                    if (PinLockRuntime.screenOffs == checkedAt) {
+                        unlock(checkedAt)
+                        return@launch
+                    }
                 }
                 is PinLockRuntime.PinResult.Wrong -> {
                     wrongShown = true
@@ -506,13 +511,15 @@ class PinLockActivity : AppCompatActivity() {
 
     // ---- parent code ------------------------------------------------------------------------
 
+    /** The parent PIN through its gate ([ParentPin], design 24): every result in the dialog's
+     * error line; no PIN or a running lockout opens it in that state with OK disabled. */
     private fun showParentCodeDialog() {
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_pin_parent_code, null)
         val input = view.findViewById<EditText>(R.id.parent_code_input)
         val error = view.findViewById<TextView>(R.id.parent_code_error)
-        fun showError(text: Int) {
-            error.setText(text)
-            error.visibility = View.VISIBLE
+        fun showError(text: String?) {
+            error.text = text
+            error.visibility = if (text == null) View.GONE else View.VISIBLE
         }
         val dialog = AlertDialog.Builder(this, R.style.AlertDialogCustom)
             .setTitle(R.string.pin_lock_parent_code)
@@ -522,39 +529,48 @@ class PinLockActivity : AppCompatActivity() {
             .create()
         dialog.show()
         trackDialog(dialog)
-        if (!OfflineOverride.isConfigured()) showError(R.string.pin_lock_parent_not_set)
-        // Overridden after show() so a wrong code keeps the dialog open.
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { button ->
-            when {
-                !OfflineOverride.isConfigured() -> showError(R.string.pin_lock_parent_not_set)
-                OfflineOverride.isLockedOut() -> showError(R.string.pin_lock_parent_locked_out)
-                else -> {
-                    val code = input.text.toString()
-                    button.isEnabled = false
-                    lifecycleScope.launch {
-                        val ok = withContext(Dispatchers.Default) { PinLockRuntime.checkParentCode(this@PinLockActivity, code) }
-                        button.isEnabled = true
-                        if (ok) {
-                            dialog.dismiss()
-                            unlock()
-                        } else {
-                            input.text.clear()
-                            showError(if (OfflineOverride.isLockedOut()) R.string.pin_lock_parent_locked_out else R.string.pin_lock_parent_wrong)
-                        }
-                    }
+        val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        ParentPinDialog.refusal(this, R.string.pin_lock_parent_not_set, R.string.pin_lock_parent_locked_out)?.let {
+            showError(it)
+            ok.isEnabled = false
+        }
+        // Set after show() so a wrong code keeps the dialog open.
+        ok.setOnClickListener {
+            val code = input.text.toString()
+            ok.isEnabled = false
+            val checkedAt = PinLockRuntime.screenOffs
+            lifecycleScope.launch {
+                val result = withContext(Dispatchers.Default) { PinLockRuntime.checkParentCode(this@PinLockActivity, code) }
+                if (result == ParentPinResult.Ok) {
+                    dialog.dismiss()
+                    // After a screen-off during the check the lock stays; the use is recorded.
+                    if (PinLockRuntime.screenOffs == checkedAt) unlock(checkedAt)
+                    return@launch
                 }
+                if (result is ParentPinResult.Wrong || result is ParentPinResult.LockedOut) input.text.clear()
+                showError(
+                    ParentPinDialog.resultText(
+                        this@PinLockActivity, result,
+                        wrong = R.string.pin_lock_parent_wrong,
+                        notConfigured = R.string.pin_lock_parent_not_set,
+                        lockedOut = R.string.pin_lock_parent_locked_out,
+                    ),
+                )
+                ok.isEnabled = ParentPinDialog.okAfter(result)
             }
         }
     }
 
     // ---- leaving ----------------------------------------------------------------------------
 
-    private fun unlock() {
+    /** [checkedAt]: the screen-off count when the PIN check started - checked again by the
+     * runtime's state machine. */
+    private fun unlock(checkedAt: Int) {
         finishingAfterUnlock = true
         // The lock task first: with the kiosk off the chrome change that follows unpins our
         // package, which would otherwise tear this task down under us.
         stopOwnLockTask()
-        PinLockRuntime.unlocked(this)
+        PinLockRuntime.unlocked(this, checkedAt)
         leave()
     }
 

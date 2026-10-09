@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The parent-PIN dialog of the time lock, the Settings gate, the pause and install mode (design
+     24 §2.4): every result shows in the error line, never as a toast (toasts don't show while a
+     screen-time budget sets DISALLOW_CREATE_WINDOWS). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     style="@style/AlertDialogCustom"
@@ -17,5 +20,17 @@
         android:textColor="#000000"
         android:textColorHint="#80000000"
         tools:ignore="LabelFor" />
+
+    <TextView
+        android:id="@+id/dialog_offline_override_pin_error"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="8dp"
+        android:accessibilityLiveRegion="polite"
+        android:textColor="#C92A2A"
+        android:textSize="14sp"
+        android:visibility="gone" />
 
 </LinearLayout>

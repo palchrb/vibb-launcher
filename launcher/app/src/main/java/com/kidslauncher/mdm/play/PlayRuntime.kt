@@ -18,6 +18,7 @@ import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.OfflineOverride
+import com.kidslauncher.mdm.server.ParentPin
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WindowStart
 import com.kidslauncher.mdm.server.currentPolicyDecision
@@ -150,17 +151,17 @@ object PlayRuntime {
         return canStartInstallMode(
             appsManaged = policy?.allowlist != null && !overrideActive(),
             pinConfigured = OfflineOverride.isConfigured(),
-            pinLockedOut = OfflineOverride.isLockedOut(),
+            pinLockedOut = ParentPin.lockoutRemainingMs(context) > 0L,
             timeLocked = lock.locked,
             playStoreInstalled = playStoreInstalled(context),
         )
     }
 
-    /** Call only after the PIN was verified and [canStart] said OK. Pins and unsuspends the Play
-     * Store (in the background), then opens it. */
-    fun startInstallMode(context: Context) {
+    /** Starts install mode from [start] - called only by [ParentPin.check] after a correct PIN
+     * (asked once [canStart] said OK) and its committed `unlocked` event (design 24 §2). Pins and
+     * unsuspends the Play Store (in the background), then opens it. Any thread. */
+    fun startInstallMode(context: Context, start: WindowStart) {
         val app = context.applicationContext
-        val start = BootClock.windowStart(INSTALL_MODE_DURATION_MS)
         prefs(app).edit()
             .putLong(UNTIL, start.untilWallMs)
             .putLong(ELAPSED, start.elapsedStartMs)
