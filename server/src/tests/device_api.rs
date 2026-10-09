@@ -320,6 +320,7 @@ async fn policy_json_keys_snapshot() {
             "launcher_ui",
             "location_policy",
             "lock_task_features",
+            "music",
             "notification_auto_cancel",
             "override_pin_hash",
             "override_pin_salt",
@@ -349,6 +350,7 @@ async fn policy_json_keys_snapshot() {
         "launcher_ui",
         "location_policy",
         "lock_task_features",
+        "music",
         "notification_auto_cancel",
         "packages_to_uninstall",
         "quick_controls_mask",
@@ -400,6 +402,19 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         object["location_policy"],
         serde_json::json!({"mode": "on_request", "interval_minutes": 30})
+    );
+
+    // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's
+    // defaults; only `library_version` and `volume_cap_pct` may be null. `null` as a whole only when
+    // it can't be read (tests/music.rs).
+    assert_eq!(
+        object["music"],
+        serde_json::json!({
+            "library_version": null,
+            "mobile_data": false,
+            "volume_cap_pct": null,
+            "storytel_generation": 0
+        })
     );
 }
 

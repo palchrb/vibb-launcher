@@ -211,14 +211,17 @@ pub async fn prune_old_backups(retention_count: usize) {
     }
 }
 
-/// The database snapshot plus every contact photo (`contact_photos/<hash>.jpg`) and wallpaper
-/// image (`wallpapers/<hash>.jpg`). A restore swaps in only the database (deploy/install.sh); the
-/// server puts back missing files from the backups at startup (`photos::recover_missing`).
+/// The database snapshot plus every contact photo (`contact_photos/<hash>.jpg`), wallpaper image
+/// (`wallpapers/<hash>.jpg`) and music cover (`music_covers/<hash>.jpg`). Never the parent's own
+/// music files (design 21: too big; a restore lists them as missing). A restore swaps in only the
+/// database (deploy/install.sh); the server puts back missing files from the backups at startup
+/// (`photos::recover_missing`).
 pub(crate) fn build_backup_zip(
     db_snapshot_path: &str,
     zip_path: &str,
     photo_dir: &std::path::Path,
     wallpaper_dir: &std::path::Path,
+    music_cover_dir: &std::path::Path,
 ) -> std::io::Result<()> {
     let file = std::fs::File::create(zip_path)?;
     let mut writer = zip::ZipWriter::new(file);
@@ -229,6 +232,7 @@ pub(crate) fn build_backup_zip(
     writer.write_all(&std::fs::read(db_snapshot_path)?)?;
     crate::photos::add_to_zip(&mut writer, photo_dir)?;
     crate::photos::WALLPAPERS.add_to_zip(&mut writer, wallpaper_dir)?;
+    crate::photos::MUSIC_COVERS.add_to_zip(&mut writer, music_cover_dir)?;
 
     writer.finish()?;
     Ok(())
@@ -264,12 +268,14 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
     let zip_path_for_zip = zip_path.clone();
     let photo_dir = state.photo_dir.as_path().to_path_buf();
     let wallpaper_dir = state.wallpaper_dir.as_path().to_path_buf();
+    let music_cover_dir = state.music_cover_dir.as_path().to_path_buf();
     let zip_result = tokio::task::spawn_blocking(move || {
         build_backup_zip(
             &snapshot_path_for_zip,
             &zip_path_for_zip,
             &photo_dir,
             &wallpaper_dir,
+            &music_cover_dir,
         )
     })
     .await;

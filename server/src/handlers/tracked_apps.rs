@@ -21,7 +21,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
-use crate::config::SERVER_RELEASE_TAG_PREFIX;
+use crate::config::{MUSIC_RELEASE_TAG_PREFIX, SERVER_RELEASE_TAG_PREFIX};
 use crate::models::TrackedApp;
 use crate::security::{CurrentAdmin, generate_device_token};
 
@@ -152,12 +152,14 @@ struct GithubRelease {
 /// A release only matches if it actually carries a matching asset, and a
 /// `server-v*` release never does: this project's own repo
 /// (`palchrb/vibb-launcher`) is a monorepo that publishes the server's
-/// releases next to the launcher's `launcher-v*` ones, so the launcher's
-/// catalog row must skip past a newer server release to the newest launcher.
+/// releases next to the launcher's `launcher-v*` and the music app's `music-v*`
+/// ones, so each catalog row must skip past the others' releases - see
+/// [release_allowed].
 async fn fetch_latest_release(
     github_repo: &str,
     include_prereleases: bool,
     asset_pattern: Option<&str>,
+    tag_prefix: Option<&str>,
 ) -> Result<(GithubRelease, GithubAsset), String> {
     let filter = AssetFilter::parse(asset_pattern)
         .map_err(|reason| format!("the asset filename filter is {reason}"))?;
@@ -173,18 +175,62 @@ async fn fetch_latest_release(
         return Err(format!("GitHub API returned {}", response.status()));
     }
     let releases: Vec<GithubRelease> = response.json().await.map_err(|e| e.to_string())?;
-    newest_matching_release(releases, include_prereleases, &filter)
+    newest_matching_release(releases, include_prereleases, &filter, tag_prefix)
+}
+
+/// Whether a catalog row may take a release with this tag: never a `server-v*` one (the server's
+/// own); with a `release_tag_prefix` (design 21: `launcher-v`, `music-v`) only its own; without one
+/// anything but the music app's `music-v*` releases, so a launcher row that predates the prefix
+/// (migration 0049 sets it only where the cached tag already was `launcher-v*`) can't pick up
+/// vibb-music.apk.
+fn release_allowed(tag: &str, tag_prefix: Option<&str>) -> bool {
+    if tag.starts_with(SERVER_RELEASE_TAG_PREFIX) {
+        return false;
+    }
+    match tag_prefix {
+        Some(prefix) => tag.starts_with(prefix),
+        None => !tag.starts_with(MUSIC_RELEASE_TAG_PREFIX),
+    }
+}
+
+/// The longest release tag prefix the forms accept.
+const MAX_TAG_PREFIX_CHARS: usize = 32;
+
+/// A release tag prefix as typed: blank = none; else letters, digits, `.`, `_` and `-`, starting
+/// with a letter or digit (e.g. `launcher-v`). `Err` completes the form's sentence.
+fn parse_tag_prefix(input: &str) -> Result<Option<String>, String> {
+    let prefix = input.trim();
+    if prefix.is_empty() {
+        return Ok(None);
+    }
+    let valid = prefix.len() <= MAX_TAG_PREFIX_CHARS
+        && prefix
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && prefix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if valid {
+        Ok(Some(prefix.to_string()))
+    } else {
+        Err(format!(
+            "The release tag prefix may only hold letters, digits, '.', '_' and '-' (at most \
+             {MAX_TAG_PREFIX_CHARS}), e.g. launcher-v. Nothing was saved."
+        ))
+    }
 }
 
 fn newest_matching_release(
     releases: Vec<GithubRelease>,
     include_prereleases: bool,
     filter: &AssetFilter,
+    tag_prefix: Option<&str>,
 ) -> Result<(GithubRelease, GithubAsset), String> {
     releases
         .into_iter()
         .filter(|r| !r.draft && (include_prereleases || !r.prerelease))
-        .filter(|r| !r.tag_name.starts_with(SERVER_RELEASE_TAG_PREFIX))
+        .filter(|r| release_allowed(&r.tag_name, tag_prefix))
         .find_map(|mut r| {
             let index = r.assets.iter().position(|a| filter.matches(&a.name))?;
             let asset = r.assets.swap_remove(index);
@@ -560,6 +606,7 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
         &app.github_repo,
         app.include_prereleases,
         app.asset_pattern.as_deref(),
+        app.release_tag_prefix.as_deref(),
     )
     .await?;
 
@@ -711,6 +758,10 @@ struct TrackedAppAddTemplate {
     github_repo: String,
     asset_pattern: String,
     include_prereleases: bool,
+    /// Design 21: only releases whose tag starts with this.
+    release_tag_prefix: String,
+    /// The field the error belongs to ("asset_pattern" or "release_tag_prefix").
+    error_field: &'static str,
 }
 
 pub async fn new_tracked_app_form() -> impl IntoResponse {
@@ -724,6 +775,8 @@ pub async fn new_tracked_app_form() -> impl IntoResponse {
             github_repo: String::new(),
             asset_pattern: String::new(),
             include_prereleases: false,
+            release_tag_prefix: String::new(),
+            error_field: "",
         }
         .render()
         .unwrap(),
@@ -782,10 +835,23 @@ pub async fn create_tracked_app(
         None
     };
     let include_prereleases = source_type == "github" && fields.contains_key("include_prereleases");
+    let tag_prefix = if source_type == "github" {
+        parse_tag_prefix(&field("release_tag_prefix"))
+    } else {
+        Ok(None)
+    };
 
     // A refused save shows the form again with everything as entered (400, nothing written).
     // It posts back to its own path, so static/scroll-restore.js keeps the scroll position.
-    if let Err(error) = validate_asset_pattern(asset_pattern.as_deref()) {
+    let refused = match (
+        validate_asset_pattern(asset_pattern.as_deref()),
+        &tag_prefix,
+    ) {
+        (Err(error), _) => Some((error, "asset_pattern")),
+        (Ok(()), Err(error)) => Some((error.clone(), "release_tag_prefix")),
+        (Ok(()), Ok(_)) => None,
+    };
+    if let Some((error, error_field)) = refused {
         let page = TrackedAppAddTemplate {
             title: "Add an app".to_string(),
             error: Some(error),
@@ -795,22 +861,26 @@ pub async fn create_tracked_app(
             github_repo: field("github_repo"),
             asset_pattern: field("asset_pattern"),
             include_prereleases,
+            release_tag_prefix: field("release_tag_prefix"),
+            error_field,
         };
         return (StatusCode::BAD_REQUEST, Html(page.render().unwrap())).into_response();
     }
+    let tag_prefix = tag_prefix.unwrap_or_default();
 
     // package_name is never taken from admin input (see update_tracked_app's own doc comment) -
     // a brand-new app can't have one known yet anyway, since nothing's been installed to detect
     // it from. Always starts empty; device_api::status backfills it automatically.
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, asset_pattern, include_prereleases) \
-         VALUES (?, '', ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, asset_pattern, \
+         include_prereleases, release_tag_prefix) VALUES (?, '', ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(field("name").trim())
     .bind(source_type)
     .bind(&github_repo)
     .bind(&asset_pattern)
     .bind(include_prereleases)
+    .bind(&tag_prefix)
     .fetch_one(&state.db)
     .await
     .expect("failed to create tracked app");
@@ -840,7 +910,11 @@ struct DetailsForm {
     name: String,
     github_repo: String,
     asset_pattern: String,
+    /// Design 21: only releases whose tag starts with this (blank = any but server-v*/music-v*).
+    release_tag_prefix: String,
     error: Option<String>,
+    /// The field the error belongs to ("asset_pattern" or "release_tag_prefix").
+    error_field: &'static str,
 }
 
 pub async fn view_tracked_app(
@@ -886,7 +960,9 @@ async fn render_detail_full(
         name: app.name.clone(),
         github_repo: app.github_repo.clone(),
         asset_pattern: app.asset_pattern.clone().unwrap_or_default(),
+        release_tag_prefix: app.release_tag_prefix.clone().unwrap_or_default(),
         error: None,
+        error_field: "",
     });
     let sync = state.app_syncs.status(id);
     let current = crate::app_display::DisplayValues {
@@ -1145,27 +1221,46 @@ pub async fn update_tracked_app(
     let field = |k: &str| fields.get(k).cloned().unwrap_or_default();
     let name = field("name").trim().to_string();
 
-    let (github_repo, asset_pattern) = if app.source_type == "github" {
+    let (github_repo, asset_pattern, tag_prefix) = if app.source_type == "github" {
         let repo = normalize_github_repo(field("github_repo").trim());
         let pattern = field("asset_pattern").trim().to_string();
-        (repo, (!pattern.is_empty()).then_some(pattern))
+        (
+            repo,
+            (!pattern.is_empty()).then_some(pattern),
+            parse_tag_prefix(&field("release_tag_prefix")),
+        )
     } else {
-        (app.github_repo.clone(), app.asset_pattern.clone())
+        (
+            app.github_repo.clone(),
+            app.asset_pattern.clone(),
+            Ok(app.release_tag_prefix.clone()),
+        )
     };
 
     // Refused as a whole (400, nothing written): the page comes back with the entered values and
-    // the reason in the Details card, its filter field focused (and so scrolled into view).
-    if let Err(error) = validate_asset_pattern(asset_pattern.as_deref()) {
+    // the reason in the Details card, that field focused (and so scrolled into view).
+    let refused = match (
+        validate_asset_pattern(asset_pattern.as_deref()),
+        &tag_prefix,
+    ) {
+        (Err(error), _) => Some((error, "asset_pattern")),
+        (Ok(()), Err(error)) => Some((error.clone(), "release_tag_prefix")),
+        (Ok(()), Ok(_)) => None,
+    };
+    if let Some((error, error_field)) = refused {
         let details = DetailsForm {
             name: field("name"),
             github_repo: field("github_repo"),
             asset_pattern: field("asset_pattern"),
+            release_tag_prefix: field("release_tag_prefix"),
             error: Some(error),
+            error_field,
         };
         let mut page = render_detail_page(&state, id, None, Some(details)).await;
         *page.status_mut() = StatusCode::BAD_REQUEST;
         return page;
     }
+    let tag_prefix = tag_prefix.unwrap_or_default();
 
     // package_name is deliberately not editable here - it used to be free text ("Android package
     // name (optional)"), and a typo or a missed applicationIdSuffix (confirmed live: the browser
@@ -1176,11 +1271,13 @@ pub async fn update_tracked_app(
     // human to type it at all. forget_package_name below is the escape hatch if it's ever
     // detected wrong.
     sqlx::query(
-        "UPDATE tracked_apps SET name = ?, github_repo = ?, asset_pattern = ? WHERE id = ?",
+        "UPDATE tracked_apps SET name = ?, github_repo = ?, asset_pattern = ?, \
+         release_tag_prefix = ? WHERE id = ?",
     )
     .bind(&name)
     .bind(&github_repo)
     .bind(&asset_pattern)
+    .bind(&tag_prefix)
     .bind(id)
     .execute(&state.db)
     .await
@@ -1335,7 +1432,7 @@ mod tests {
         pattern: Option<&str>,
     ) -> Result<(String, String), String> {
         let filter = AssetFilter::parse(pattern)?;
-        newest_matching_release(releases, include_prereleases, &filter)
+        newest_matching_release(releases, include_prereleases, &filter, None)
             .map(|(r, a)| (r.tag_name, a.name))
     }
 
@@ -1377,12 +1474,75 @@ mod tests {
             monorepo(),
             false,
             &AssetFilter::parse(Some("kids-launcher-mdm.apk")).unwrap(),
+            None,
         )
         .unwrap();
         assert_eq!((r.tag_name.as_str(), a.id), ("launcher-v0.30.0", 4));
 
-        let (r, a) = newest_matching_release(monorepo(), true, &AssetFilter::FirstApk).unwrap();
+        let (r, a) =
+            newest_matching_release(monorepo(), true, &AssetFilter::FirstApk, None).unwrap();
         assert_eq!((r.tag_name.as_str(), a.id), ("launcher-v0.31.0-rc.1", 3));
+    }
+
+    /// Design 21: a music-v* release (a newer RC and a stable one) sits above the launcher's. The
+    /// launcher row never takes it - with its prefix, and without one (a row 0049 left alone) - and
+    /// the music row takes only its own.
+    #[test]
+    fn launcher_and_music_rows_keep_to_their_own_releases() {
+        let releases = || {
+            let mut all = vec![
+                release("music-v0.0.1-rc.1", true, &[(20, "vibb-music.apk")]),
+                release("music-v0.1.0", false, &[(21, "vibb-music.apk")]),
+            ];
+            all.extend(monorepo());
+            all
+        };
+        let pick = |prereleases: bool, pattern: Option<&str>, prefix: Option<&str>| {
+            newest_matching_release(
+                releases(),
+                prereleases,
+                &AssetFilter::parse(pattern).unwrap(),
+                prefix,
+            )
+            .map(|(r, a)| (r.tag_name, a.id))
+        };
+        let launcher = Some(r"^kids-launcher-mdm\.apk$");
+        assert_eq!(
+            pick(false, launcher, Some("launcher-v")).unwrap(),
+            ("launcher-v0.30.0".to_string(), 4)
+        );
+        assert_eq!(
+            pick(true, None, Some("launcher-v")).unwrap(),
+            ("launcher-v0.31.0-rc.1".to_string(), 3)
+        );
+        // No prefix and no filter (the first .apk): still never the music app.
+        assert_eq!(
+            pick(true, None, None).unwrap(),
+            ("launcher-v0.31.0-rc.1".to_string(), 3)
+        );
+        assert_eq!(
+            pick(false, Some(r"^vibb-music\.apk$"), Some("music-v")).unwrap(),
+            ("music-v0.1.0".to_string(), 21)
+        );
+        assert_eq!(
+            pick(true, Some(r"^vibb-music\.apk$"), Some("music-v")).unwrap(),
+            ("music-v0.0.1-rc.1".to_string(), 20)
+        );
+        assert!(pick(false, Some(r"^vibb-music\.apk$"), None).is_err());
+        // server-v* stays out whatever the prefix.
+        assert!(pick(false, Some("odd"), Some("server-v")).is_err());
+    }
+
+    #[test]
+    fn release_tag_prefixes_are_checked() {
+        assert_eq!(parse_tag_prefix("  "), Ok(None));
+        assert_eq!(
+            parse_tag_prefix(" launcher-v "),
+            Ok(Some("launcher-v".to_string()))
+        );
+        assert!(parse_tag_prefix("-v").is_err());
+        assert!(parse_tag_prefix("a b").is_err());
+        assert!(parse_tag_prefix(&"a".repeat(33)).is_err());
     }
 
     #[test]

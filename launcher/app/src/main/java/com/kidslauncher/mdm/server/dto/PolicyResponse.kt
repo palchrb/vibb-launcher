@@ -101,6 +101,12 @@ data class PolicyResponse(
      * server) = **off**, as before; nullable so nothing the server sends here can fail the policy.
      * The offline override and the pause don't lift it - it guards data, not the kid. */
     val appUpdatesWifiOnly: Boolean? = null,
+    /** Vibb music (design 21): the server's `{library_version, mobile_data, volume_cap_pct,
+     * storytel_generation}`; `null` from an older server, or when the server couldn't read the
+     * library (then the music app keeps what it has - never an empty library). Step 1 only
+     * carries it, as raw JSON so nothing in it can fail the policy; the music sync (step 3) reads
+     * it field by field. Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val music: kotlinx.serialization.json.JsonElement? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

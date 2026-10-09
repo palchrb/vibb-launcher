@@ -1,0 +1,93 @@
+{
+  "v": 1,
+  "version": "743dfa192eafdcb2",
+  "categories": [
+    {
+      "id": 1,
+      "name": "Musikk",
+      "icon": "music_note",
+      "color": "rose",
+      "sort": 10
+    },
+    {
+      "id": 4,
+      "name": "Podkast",
+      "icon": "mic",
+      "color": "teal",
+      "sort": 40
+    }
+  ],
+  "entries": [
+    {
+      "id": 1,
+      "key": "abels_taarn",
+      "name": "Abels tårn",
+      "category": 4,
+      "source": "nrk",
+      "target": "https://radio.nrk.no/podkast/abels_taarn",
+      "order": "auto",
+      "cache": 5,
+      "resume": true,
+      "cover": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sort": 10
+    },
+    {
+      "id": 2,
+      "key": "40201d4c16fc",
+      "name": "Ukas nyheter",
+      "category": 4,
+      "source": "rss",
+      "target": "https://example.org/feed.xml",
+      "order": "newest_first",
+      "cache": 3,
+      "resume": true,
+      "cover": null,
+      "sort": 20
+    },
+    {
+      "id": 3,
+      "key": "own-3",
+      "name": "Bilturen",
+      "category": 1,
+      "source": "own",
+      "target": null,
+      "order": "auto",
+      "cache": -1,
+      "resume": false,
+      "cover": null,
+      "sort": 30
+    }
+  ],
+  "files": [
+    {
+      "id": 1,
+      "entry": 3,
+      "title": "Hjulene på bussen",
+      "artist": "Barnekoret",
+      "track": 1,
+      "duration_ms": 125000,
+      "size": 1000,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "art": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sort": 0,
+      "missing": false
+    },
+    {
+      "id": 2,
+      "entry": 3,
+      "title": "02 Lille",
+      "artist": null,
+      "track": 2,
+      "duration_ms": null,
+      "size": 2000,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "art": null,
+      "sort": 1,
+      "missing": true
+    }
+  ],
+  "covers": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ]
+}

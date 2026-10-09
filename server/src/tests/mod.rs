@@ -8,6 +8,7 @@ mod cleanup;
 mod device_api;
 mod hardening;
 mod launcher_ui;
+mod music;
 mod play;
 mod provisioning;
 mod sound_mode;
@@ -37,6 +38,8 @@ pub struct TestApp {
     /// (skipping the session/2FA middleware) or build a second router with different config.
     pub state: AppState,
     pub db: SqlitePool,
+    /// The music add check's canned answers (design 21): `fetch.answer(url, status, body)`.
+    pub fetch: std::sync::Arc<music::CannedFetch>,
     _dir: tempfile::TempDir,
 }
 
@@ -107,6 +110,7 @@ impl TestApp {
         let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
 
         let (command_notify, _) = tokio::sync::broadcast::channel(64);
+        let fetch = std::sync::Arc::new(music::CannedFetch::default());
         let state = AppState {
             db: db.clone(),
             dns_compiled: dns_engine::empty_compiled_blocklist(),
@@ -117,12 +121,19 @@ impl TestApp {
             command_streams: Default::default(),
             app_syncs: Default::default(),
             tracked_apps_dir: std::sync::Arc::new(dir.path().join("tracked_apps")),
+            music_files_dir: std::sync::Arc::new(dir.path().join("music_files")),
+            music_cover_dir: std::sync::Arc::new(dir.path().join("music_covers")),
+            music_key: Some(std::sync::Arc::new(
+                crate::music_secret::MusicKey::from_bytes(&[42; 32]),
+            )),
+            music_fetch: fetch.clone(),
         };
 
         TestApp {
             router: build_router(state.clone(), session_layer),
             state,
             db,
+            fetch,
             _dir: dir,
         }
     }

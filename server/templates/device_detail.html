@@ -257,6 +257,78 @@
     </script>
     {% endif %}
 
+    <div class="card" id="music">
+        <h2>Music</h2>
+        <p class="subtitle">The Vibb music app and what's in it on this phone. The library itself - podcasts, NRK, own files, categories - is on the <a href="/music">Music</a> page. Each choice here saves itself immediately.</p>
+        {% if let Some(music) = music %}
+        {% if let Some(notice) = music.notice %}
+        <div class="error">{{ notice }}</div>
+        {% endif %}
+        {% for warning in music.warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
+        {% if let Some(app) = music.app %}
+        <form method="post" action="/devices/{{ device.id }}/apps/toggle">
+            <input type="hidden" name="tracked_app_id" value="{{ app.tracked_app_id }}">
+            <input type="hidden" name="package_name" value="{{ app.package_name }}">
+            <input type="hidden" name="anchor" value="music">
+            <label class="checkbox-row">
+                <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} onchange="this.form.submit()">
+                <span>The music app on this phone (installed and allowed like any app from the catalog) <span class="app-status" style="white-space:normal;">{{ app.status }}</span></span>
+            </label>
+            <noscript><button type="submit" class="button-small">Save</button></noscript>
+        </form>
+        {% else %}
+        <p class="subtitle">The music app isn't in the Apps catalog yet - add it on the <a href="/music#app">Music</a> page.</p>
+        {% endif %}
+
+        <h3>In the library on this phone</h3>
+        {% if music.ticks.is_empty() %}
+        <p class="subtitle">Nothing in the library yet - add podcasts, NRK series or your own files on the <a href="/music">Music</a> page.</p>
+        {% else %}
+        <div class="app-checkbox-list">
+            {% for tick in music.ticks %}
+            <form method="post" action="/devices/{{ device.id }}/music/entries/{{ tick.id }}">
+                <label class="checkbox-row">
+                    <input type="checkbox" name="selected" {% if tick.checked %}checked{% endif %} onchange="this.form.submit()">
+                    <span>{{ tick.name }} <span class="subtitle">- {{ tick.detail }}</span></span>
+                </label>
+                <noscript><button type="submit" class="button-small">Save</button></noscript>
+            </form>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% if let Some(library) = music.library %}
+        <p class="subtitle">This phone's library: {{ library }}.</p>
+        {% endif %}
+
+        <form method="post" action="/devices/{{ device.id }}/music">
+            <label class="checkbox-row">
+                <input type="checkbox" name="mobile_data" value="on" {% if music.mobile_data %}checked{% endif %} onchange="this.form.submit()">
+                Music may use mobile data: downloads and streaming also off Wi-Fi (never while roaming). Off: only on Wi-Fi; what's downloaded still plays anywhere.
+            </label>
+            <label for="music_volume_cap">Volume cap (speaker and headphones, every app)</label>
+            <select id="music_volume_cap" name="volume_cap" onchange="this.form.submit()">
+                <option value="off" {% if music.volume_cap.is_none() %}selected{% endif %}>Off</option>
+                {% for (cap, selected) in music.volume_caps %}
+                <option value="{{ cap }}" {% if selected %}selected{% endif %}>{{ cap }} %</option>
+                {% endfor %}
+            </select>
+            <label class="checkbox-row" style="margin-top:12px;">
+                <input type="checkbox" name="storytel" value="on" {% if music.storytel %}checked{% endif %} onchange="this.form.submit()">
+                Storytel on this phone: the music app gets the family's Storytel login{% if !music.storytel_stored %} (none saved yet - add it on the <a href="/music#storytel">Music</a> page){% endif %}. Off removes it from the phone.
+            </label>
+            <noscript><button type="submit">Save</button></noscript>
+        </form>
+        {% for line in music.lines %}
+        <p class="subtitle">{{ line }}</p>
+        {% endfor %}
+        {% else %}
+        <div class="error">The music settings couldn't be read - check the server log.</div>
+        {% endif %}
+        <a href="/music" class="button-small" style="margin-top:12px;">Music library</a>
+    </div>
+
     <form method="post" action="/devices/{{ device.id }}/launcher" class="card">
         <h2>Launcher</h2>
         <p class="subtitle">The phone's home screen. Each choice saves itself immediately.</p>

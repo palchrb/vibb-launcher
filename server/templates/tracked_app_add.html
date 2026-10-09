@@ -30,12 +30,19 @@
             <input type="text" id="github_repo" name="github_repo" value="{{ github_repo }}" placeholder="e.g. tailscale/tailscale-android">
 
             <label for="asset_pattern">Asset filename filter (optional)</label>
-            {% if let Some(e) = error %}
+            {% if error_field == "asset_pattern" %}{% if let Some(e) = error %}
             <div class="error">{{ e }}</div>
-            {% endif %}
-            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ asset_pattern }}" placeholder="Leave blank to use the first .apk found"{% if error.is_some() %} autofocus{% endif %}>
+            {% endif %}{% endif %}
+            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ asset_pattern }}" placeholder="Leave blank to use the first .apk found"{% if error_field == "asset_pattern" %} autofocus{% endif %}>
             <p class="hint">Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$)</p>
             <p class="hint">Only needed if a release has more than one APK (e.g. per architecture) - the first .apk that matches is used (only .apk files are picked).</p>
+
+            <label for="release_tag_prefix">Release tag prefix (optional)</label>
+            {% if error_field == "release_tag_prefix" %}{% if let Some(e) = error %}
+            <div class="error">{{ e }}</div>
+            {% endif %}{% endif %}
+            <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ release_tag_prefix }}" placeholder="e.g. launcher-v"{% if error_field == "release_tag_prefix" %} autofocus{% endif %}>
+            <p class="hint">Only releases whose tag starts with this - for a repo that publishes several apps. This project's repo: launcher-v for the launcher, music-v for the music app. Blank: any release except this server's (server-v) and the music app's (music-v).</p>
 
             <label class="checkbox-row">
                 <input type="checkbox" name="include_prereleases" value="on"{% if include_prereleases %} checked{% endif %}>

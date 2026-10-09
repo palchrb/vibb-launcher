@@ -17,6 +17,9 @@ pub const DEFAULT_SERVER_RELEASE_REPO: &str = "palchrb/vibb-launcher";
 /// Tag prefix of this server's own releases in [`DEFAULT_SERVER_RELEASE_REPO`] - the in-app
 /// update check only ever considers `server-vX.Y.Z` releases (`handlers::system_update`).
 pub const SERVER_RELEASE_TAG_PREFIX: &str = "server-v";
+/// Tag prefix of the Vibb music app's releases in the same repo (design 21). A catalog row without
+/// a `release_tag_prefix` never picks one of them, so a launcher row can't install vibb-music.apk.
+pub const MUSIC_RELEASE_TAG_PREFIX: &str = "music-v";
 /// Before the monorepo (2026-10), the server and the launcher had a repo each. Installs from then
 /// may still carry these values in their `.env` (install.sh wrote `SERVER_RELEASE_REPO` there);
 /// they are read as the new defaults, so an existing install follows the move with no edit.

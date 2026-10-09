@@ -2,10 +2,19 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
+<style>
+.section-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.section-tabs a { flex: 1; text-align: center; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--color-border); text-decoration: none; color: var(--color-text); font-weight: 600; }
+.section-tabs a[aria-current="page"] { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+</style>
 </head>
 <body>
 {% include "partials/app_header.html" %}
 <main class="container">
+    <nav class="section-tabs" aria-label="Apps and music">
+        <a href="/apps" aria-current="page">Apps</a>
+        <a href="/music">Music</a>
+    </nav>
     <div class="page-header">
         <h1>Apps</h1>
         <a href="/apps/tracked/new" class="button-small">Add an app</a>

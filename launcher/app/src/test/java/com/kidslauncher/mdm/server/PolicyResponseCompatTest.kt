@@ -10,6 +10,7 @@ import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -229,6 +230,33 @@ class PolicyResponseCompatTest {
         )
         // An older server: no app_display.
         assertNull((decodeCached(withDisplay("[]").replace(", \"app_display\": []", "")) as CachedPolicy.Ok).policy.launcherUi!!.appDisplay)
+    }
+
+    /** Design 21 (step 1): the server's `music` object - today's shape, `null` (the server couldn't
+     * read the library), missing (an older server), or anything else: the policy always decodes,
+     * the cache round trip keeps it, and nothing reads it yet (the music sync comes in step 3). */
+    @Test
+    fun `music never fails the policy and is carried as is (21)`() {
+        fun withMusic(music: String) = serverResponse.replaceFirst("{", "{\"music\": $music,")
+        val today = withMusic(
+            """{"library_version": "0123456789abcdef", "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0}""",
+        )
+        val policy = (decodeCached(today) as CachedPolicy.Ok).policy
+        val music = policy.music!!.jsonObject
+        assertEquals("0123456789abcdef", music["library_version"]!!.jsonPrimitive.content)
+        assertEquals(setOf("library_version", "mobile_data", "volume_cap_pct", "storytel_generation"), music.keys)
+        assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        for (odd in listOf(
+            "null", "{}", "5", "\"x\"", "[]",
+            """{"library_version": 5, "mobile_data": "yes", "volume_cap_pct": "60", "storytel_generation": null}""",
+        )) {
+            assertTrue(odd, decodeCached(withMusic(odd)) is CachedPolicy.Ok)
+            assertTrue(odd, decodeFresh(withMusic(odd)) is FreshDecode.Ok)
+        }
+        // An older server: no key, nothing to carry. The rest of the policy is the same either way.
+        assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.music)
+        assertEquals((decodeCached(serverResponse) as CachedPolicy.Ok).policy, policy.copy(music = null))
     }
 
     /** Design 13: "App updates only on Wi-Fi". Missing (an older server) or `null` = off, as

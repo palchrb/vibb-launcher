@@ -296,6 +296,8 @@ struct DeviceDetailTemplate {
     app_downloads_line: Option<String>,
     /// Apps card (design 14): "Name and icon" for every allowed app with a package name.
     display_forms: Vec<crate::app_display::AppDisplayForm>,
+    /// "Music" card (design 21, `#music`); `None` when it couldn't be read (the card says so).
+    music: Option<crate::handlers::music::MusicCard>,
 }
 
 /// The kiosk app block switch on the "Play and kiosk" card (handy step 9): with it on, kiosk mode
@@ -1210,10 +1212,20 @@ async fn render_device(
         });
 
     let crashes = crate::crashes::latest(&state.db, id).await;
+    let music = crate::handlers::music::device_card(
+        &state,
+        &policy,
+        latest_status.as_ref(),
+        query.get("music_notice").map(String::as_str),
+    )
+    .await
+    .map_err(|err| tracing::error!(device_id = id, %err, "couldn't load the music card"))
+    .ok();
 
     Html(
         DeviceDetailTemplate {
             crashes,
+            music,
             app_updates_wifi_only: policy.app_updates_wifi_only,
             app_downloads_line,
             display_forms,
@@ -1420,6 +1432,11 @@ pub async fn toggle_app(
     }
 
     let _ = state.command_notify.send(id);
+    // The Music card's app switch (design 21) comes back to its card; the Apps card's to the
+    // page (scroll-restore keeps the place).
+    if form.get("anchor").map(String::as_str) == Some("music") {
+        return Redirect::to(&format!("/devices/{id}#music")).into_response();
+    }
     Redirect::to(&format!("/devices/{id}")).into_response()
 }
 

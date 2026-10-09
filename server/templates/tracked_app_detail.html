@@ -30,12 +30,19 @@
             <p class="hint">Paste the repo URL, its Releases page, or just "owner/repo" - any of those work.</p>
 
             <label for="asset_pattern">Asset filename filter (optional)</label>
-            {% if let Some(e) = details.error %}
+            {% if details.error_field == "asset_pattern" %}{% if let Some(e) = details.error %}
             <div class="error">{{ e }}</div>
-            {% endif %}
-            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ details.asset_pattern }}" placeholder="Leave blank to use the first .apk found"{% if details.error.is_some() %} autofocus{% endif %}>
+            {% endif %}{% endif %}
+            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ details.asset_pattern }}" placeholder="Leave blank to use the first .apk found"{% if details.error_field == "asset_pattern" %} autofocus{% endif %}>
             <p class="hint">Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$)</p>
             <p class="hint">Only .apk files are picked.</p>
+
+            <label for="release_tag_prefix">Release tag prefix (optional)</label>
+            {% if details.error_field == "release_tag_prefix" %}{% if let Some(e) = details.error %}
+            <div class="error">{{ e }}</div>
+            {% endif %}{% endif %}
+            <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ details.release_tag_prefix }}" placeholder="e.g. launcher-v"{% if details.error_field == "release_tag_prefix" %} autofocus{% endif %}>
+            <p class="hint">Only releases whose tag starts with this - launcher-v for the launcher and music-v for the music app in this project's repo. Blank: any release except this server's (server-v) and the music app's (music-v).</p>
             {% endif %}
 
             <button type="submit">Save</button>

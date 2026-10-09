@@ -48,6 +48,8 @@ static PROCESSING: Semaphore = Semaphore::const_new(1);
 static FILES: Mutex<()> = Mutex::const_new(());
 /// The same for wallpaper images (store + `wallpapers` insert, prune, recovery).
 static WALLPAPER_FILES: Mutex<()> = Mutex::const_new(());
+/// The same for music covers (design 21: entry covers and own files' embedded art).
+static MUSIC_COVER_FILES: Mutex<()> = Mutex::const_new(());
 
 /// One content-addressed image store: its lock, which hashes the database references, what a
 /// lost file does to the database, its backup zip prefix and its size limit.
@@ -55,8 +57,8 @@ pub struct Store {
     pub what: &'static str,
     lock: &'static Mutex<()>,
     referenced_sql: &'static str,
-    /// Run with the hash bound when a referenced file is in no backup.
-    forget_sql: &'static str,
+    /// Run in order, each with the hash bound, when a referenced file is in no backup.
+    forget_sql: &'static [&'static str],
     zip_prefix: &'static str,
     max_stored_bytes: u64,
 }
@@ -66,7 +68,7 @@ pub static CONTACT_PHOTOS: Store = Store {
     what: "contact photo",
     lock: &FILES,
     referenced_sql: "SELECT DISTINCT photo_hash FROM contacts WHERE photo_hash IS NOT NULL",
-    forget_sql: "UPDATE contacts SET photo_hash = NULL WHERE photo_hash = ?",
+    forget_sql: &["UPDATE contacts SET photo_hash = NULL WHERE photo_hash = ?"],
     zip_prefix: "contact_photos",
     max_stored_bytes: MAX_STORED_BYTES,
 };
@@ -77,9 +79,25 @@ pub static WALLPAPERS: Store = Store {
     what: "wallpaper",
     lock: &WALLPAPER_FILES,
     referenced_sql: "SELECT DISTINCT image_hash FROM wallpapers WHERE image_hash IS NOT NULL",
-    forget_sql: "DELETE FROM wallpapers WHERE image_hash = ?",
+    forget_sql: &["DELETE FROM wallpapers WHERE image_hash = ?"],
     zip_prefix: "wallpapers",
     max_stored_bytes: MAX_WALLPAPER_BYTES as u64,
+};
+
+/// Music covers (`AppState.music_cover_dir`, design 21): a parent's cover for an entry
+/// (`music_entries.cover_hash`) and an own file's embedded art (`music_files.art_hash`), both square
+/// JPEGs of at most [MAX_SIDE]. Backed up (unlike the audio); a lost one is dropped from the rows.
+pub static MUSIC_COVERS: Store = Store {
+    what: "music cover",
+    lock: &MUSIC_COVER_FILES,
+    referenced_sql: "SELECT cover_hash FROM music_entries WHERE cover_hash IS NOT NULL \
+                     UNION SELECT art_hash FROM music_files WHERE art_hash IS NOT NULL",
+    forget_sql: &[
+        "UPDATE music_entries SET cover_hash = NULL WHERE cover_hash = ?",
+        "UPDATE music_files SET art_hash = NULL WHERE art_hash = ?",
+    ],
+    zip_prefix: "music_covers",
+    max_stored_bytes: MAX_STORED_BYTES,
 };
 
 impl Store {
@@ -346,13 +364,16 @@ pub fn add_to_zip<W: std::io::Write + std::io::Seek>(
     CONTACT_PHOTOS.add_to_zip(writer, dir)
 }
 
-/// After a restore (or any start): see [Store::recover_missing]. Run at startup for both stores.
+/// After a restore (or any start): see [Store::recover_missing]. Run at startup for every store.
 pub async fn recover_missing(state: &crate::AppState, backup_dir: &Path) {
     CONTACT_PHOTOS
         .recover_missing(&state.db, &state.photo_dir, backup_dir)
         .await;
     WALLPAPERS
         .recover_missing(&state.db, &state.wallpaper_dir, backup_dir)
+        .await;
+    MUSIC_COVERS
+        .recover_missing(&state.db, &state.music_cover_dir, backup_dir)
         .await;
 }
 
@@ -454,8 +475,10 @@ impl Store {
                 what = self.what,
                 "stored file missing and in no backup - removing the reference"
             );
-            if let Err(err) = sqlx::query(self.forget_sql).bind(&hash).execute(db).await {
-                tracing::warn!(%err, what = self.what, "couldn't forget a missing file");
+            for sql in self.forget_sql {
+                if let Err(err) = sqlx::query(sql).bind(&hash).execute(db).await {
+                    tracing::warn!(%err, what = self.what, "couldn't forget a missing file");
+                }
             }
         }
     }

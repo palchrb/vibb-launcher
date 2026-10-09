@@ -8,6 +8,9 @@ mod handlers;
 mod kid_lock;
 mod kiosk_escapes;
 mod models;
+mod music;
+mod music_icons;
+mod music_secret;
 mod phone;
 mod photos;
 mod play;
@@ -67,6 +70,14 @@ pub struct AppState {
     /// Where catalog apps' cached APKs are stored (`data/tracked_apps/<app id>/`; a temp dir in
     /// tests) - see `handlers::tracked_apps`.
     pub tracked_apps_dir: std::sync::Arc<std::path::PathBuf>,
+    /// Vibb music (design 21): the parent's own audio files (`data/music_files/<entry id>/`, never
+    /// backed up) and the cover store (`data/music_covers`, `photos::MUSIC_COVERS`).
+    pub music_files_dir: std::sync::Arc<std::path::PathBuf>,
+    pub music_cover_dir: std::sync::Arc<std::path::PathBuf>,
+    /// The key the Storytel login is sealed with (`music_secret`); `None` = Storytel is off.
+    pub music_key: Option<std::sync::Arc<music_secret::MusicKey>>,
+    /// The add check's one GET (`music::HttpFetch`; canned in the tests).
+    pub music_fetch: std::sync::Arc<dyn music::Fetch>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -140,6 +151,23 @@ async fn main() {
         );
     }
 
+    // The Storytel login's key (design 21, QA #10): .env's MUSIC_SECRET_KEY, else our own key file
+    // outside data/, made on the first start.
+    let music_key_file = std::env::var("MUSIC_SECRET_KEY_FILE")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| music_secret::DEFAULT_KEY_FILE.to_string());
+    let music_key = match music_secret::load(
+        std::env::var("MUSIC_SECRET_KEY").ok().as_deref(),
+        std::path::Path::new(&music_key_file),
+    ) {
+        Ok(key) => Some(std::sync::Arc::new(key)),
+        Err(err) => {
+            tracing::error!("Storytel logins are off: {err}");
+            None
+        }
+    };
+
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
     let state = AppState {
         db,
@@ -153,11 +181,19 @@ async fn main() {
         tracked_apps_dir: std::sync::Arc::new(std::path::PathBuf::from(
             handlers::tracked_apps::TRACKED_APPS_DIR,
         )),
+        music_files_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_FILES_DIR)),
+        music_cover_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_COVERS_DIR)),
+        music_key,
+        music_fetch: std::sync::Arc::new(music::HttpFetch),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
     // from the backups, or drop the reference (design 05, 08).
     photos::recover_missing(&state, std::path::Path::new(handlers::backups::BACKUP_DIR)).await;
+    // Own music files are never backed up: one that isn't on disk is listed as missing (design 21,
+    // QA #3), and an upload a crash interrupted leaves no temp file.
+    music::remove_partial_uploads(&state.music_files_dir).await;
+    music::flag_missing_files(&state.db, &state.music_files_dir).await;
     // The conversation journal is gone (migration 0038); so are its media files.
     retention::remove_journal_media(std::path::Path::new(retention::JOURNAL_MEDIA_DIR)).await;
 
@@ -428,6 +464,70 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             "/apps/tracked/{id}/display",
             post(handlers::tracked_apps::save_display),
         )
+        // Vibb music (design 21).
+        .route(
+            "/music",
+            get(handlers::music::show).post(handlers::music::add_link),
+        )
+        .route("/music/own", post(handlers::music::add_own))
+        .route("/music/catalog-row", post(handlers::music::add_catalog_row))
+        .route("/music/categories", post(handlers::music::add_category))
+        .route(
+            "/music/categories/{id}",
+            post(handlers::music::save_category),
+        )
+        .route(
+            "/music/categories/{id}/move",
+            post(handlers::music::move_category),
+        )
+        .route(
+            "/music/categories/{id}/delete",
+            post(handlers::music::delete_category),
+        )
+        .route("/music/storytel", post(handlers::music::save_storytel))
+        .route(
+            "/music/storytel/clear",
+            post(handlers::music::clear_storytel),
+        )
+        .route(
+            "/music/entries/{id}",
+            get(handlers::music::show_entry).post(handlers::music::save_entry),
+        )
+        .route(
+            "/music/entries/{id}/move",
+            post(handlers::music::move_entry),
+        )
+        .route(
+            "/music/entries/{id}/delete",
+            post(handlers::music::delete_entry),
+        )
+        .route(
+            "/music/entries/{id}/cover",
+            post(handlers::music::upload_cover)
+                .layer(DefaultBodyLimit::max(photos::MAX_UPLOAD_BYTES + 64 * 1024)),
+        )
+        .route(
+            "/music/entries/{id}/cover/remove",
+            post(handlers::music::remove_cover),
+        )
+        .route(
+            "/music/entries/{id}/files",
+            post(handlers::music::upload_files)
+                .layer(DefaultBodyLimit::max(music::MAX_UPLOAD_REQUEST_BYTES)),
+        )
+        .route(
+            "/music/entries/{id}/files/{file_id}/delete",
+            post(handlers::music::delete_file),
+        )
+        .route("/music-covers/{hash}", get(handlers::music::view_cover))
+        .route(
+            "/devices/{id}/music",
+            post(handlers::music::save_device_settings),
+        )
+        .route(
+            "/devices/{id}/music/entries/{entry_id}",
+            post(handlers::music::set_device_entry),
+        )
         .route("/dns", get(handlers::dns_filter::show_dns_filter))
         .route("/dns/upstream", post(handlers::dns_filter::set_upstream))
         .route(
@@ -585,6 +685,22 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/api/devices/crashes",
             post(handlers::device_api::crash_reports),
+        )
+        .route(
+            "/api/devices/music/library",
+            get(handlers::music_api::library),
+        )
+        .route(
+            "/api/devices/music/covers/{hash}",
+            get(handlers::music_api::cover),
+        )
+        .route(
+            "/api/devices/music/files/{id}",
+            get(handlers::music_api::file),
+        )
+        .route(
+            "/api/devices/music/storytel",
+            get(handlers::music_api::storytel),
         )
         .layer(from_fn_with_state(
             state.clone(),

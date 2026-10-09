@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+<style>
+.music-row { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--color-border); padding: 10px 0; flex-wrap: wrap; }
+.music-row:first-of-type { border-top: none; }
+.music-row .music-text { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+.music-row form { margin: 0; }
+.music-cover { width: 96px; height: 96px; border-radius: 16px; object-fit: cover; }
+.music-art { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; flex: none; }
+input, select { max-width: 100%; }
+</style>
+</head>
+<body>
+{% include "partials/app_header.html" %}
+<main class="container">
+    <div class="page-header">
+        <h1>{{ entry.name }}</h1>
+        <a href="/music#entry-{{ entry.id }}" class="button-small button-secondary">Back to the library</a>
+    </div>
+    <p class="subtitle" style="overflow-wrap:anywhere;">{{ kind }}{% if let Some(target) = entry.target %} · <a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}</p>
+
+    <form method="post" action="/music/entries/{{ entry.id }}" class="card" id="entry-{{ entry.id }}">
+        <h2>Settings</h2>
+        {% if let Some(error) = form.error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        <label for="entry_name">Name on the phone (at most 60 characters)</label>
+        <input type="text" id="entry_name" name="name" value="{{ form.name }}" maxlength="60" required{% if form.error_field == "name" %} autofocus{% endif %}>
+        <label for="entry_category">Category</label>
+        <select id="entry_category" name="category"{% if form.error_field == "category" %} autofocus{% endif %}>
+            {% for (id, name) in categories %}
+            <option value="{{ id }}"{% if form.category == *id %} selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+        </select>
+        {% if !own %}
+        <label for="entry_order">Play order</label>
+        <select id="entry_order" name="order"{% if form.error_field == "order" %} autofocus{% endif %}>
+            {% for (value, label) in orders %}
+            <option value="{{ value }}"{% if form.order == **value %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <label for="entry_cache">Kept on the phone for offline listening (newest episodes)</label>
+        <select id="entry_cache" name="cache"{% if form.error_field == "cache" %} autofocus{% endif %}>
+            {% for (value, label) in caches %}
+            <option value="{{ value }}"{% if form.cache == *value %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <p class="hint" style="margin-top:4px;">Downloads wait for Wi-Fi unless the phone may use mobile data (its Music card).</p>
+        {% else %}
+        <p class="hint">Own files play in track order (or by file name when a file has no track number) and are always all on the phone.</p>
+        {% endif %}
+        <label class="checkbox-row">
+            <input type="checkbox" name="resume" value="on" {% if form.resume %}checked{% endif %}>
+            Continue where it stopped (a cover tap resumes; off: starts from the beginning)
+        </label>
+        <button type="submit">Save</button>
+    </form>
+
+    <div class="card" id="cover">
+        <h2>Cover</h2>
+        {% if let Some(error) = cover_error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        {% if let Some(cover) = entry.cover_hash %}
+        <img class="music-cover" src="/music-covers/{{ cover }}" alt="Cover of {{ entry.name }}">
+        <form method="post" action="/music/entries/{{ entry.id }}/cover/remove" style="margin-top:8px;">
+            <button type="submit" class="button-small button-secondary">Use the source's picture</button>
+        </form>
+        {% else %}
+        <p class="subtitle">The phone shows the source's own picture{% if own %} (the first file's embedded art){% endif %}. Upload a photo to use your own instead.</p>
+        {% endif %}
+        <form method="post" action="/music/entries/{{ entry.id }}/cover" enctype="multipart/form-data" style="margin-top:12px;">
+            <label for="cover_file">Photo (JPEG, PNG or WebP, up to 10 MB; cut square, no hidden information kept)</label>
+            <input type="file" id="cover_file" name="cover" accept="image/jpeg,image/png,image/webp" required{% if cover_error.is_some() %} autofocus{% endif %}>
+            <button type="submit">Upload</button>
+        </form>
+    </div>
+
+    {% if own %}
+    <div class="card" id="files">
+        <h2>Files ({{ file_count }} of {{ max_files }})</h2>
+        {% if !upload_problems.is_empty() %}
+        <div class="error">
+            {% if upload_saved > 0 %}Saved {{ upload_saved }} file{% if upload_saved != 1 %}s{% endif %}. {% endif %}
+            {% for problem in upload_problems %}<div>{{ problem }}</div>{% endfor %}
+        </div>
+        {% endif %}
+        <form method="post" action="/music/entries/{{ entry.id }}/files" enctype="multipart/form-data">
+            <label for="music_files">Audio files (mp3, m4a, m4b, ogg, opus, flac or wav; up to 1 GB each)</label>
+            <input type="file" id="music_files" name="file" accept="audio/*,.mp3,.m4a,.m4b,.ogg,.opus,.flac,.wav" multiple required{% if !upload_problems.is_empty() %} autofocus{% endif %}>
+            <button type="submit">Upload</button>
+        </form>
+        <p class="hint" style="margin-top:8px;">Large uploads take a while - keep this page open until it comes back. Title, artist, track number and cover come from the files' own tags.</p>
+        {% for file in files %}
+        <div class="music-row" id="file-{{ file.id }}">
+            {% if let Some(art) = file.art %}
+            <img class="music-art" src="/music-covers/{{ art }}" alt="">
+            {% endif %}
+            <div class="music-text">
+                <strong>{{ file.title }}</strong>
+                <div class="subtitle">{{ file.detail }}{% if file.missing %} · <strong>missing on this server</strong> (phones keep their copy; upload it again to restore it){% endif %}</div>
+            </div>
+            <form method="post" action="/music/entries/{{ entry.id }}/files/{{ file.id }}/delete" onsubmit="return confirm('Delete this file from the server and the phones?')">
+                <button type="submit" class="button-small button-danger">Delete</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="card" id="phones">
+        <h2>On these phones</h2>
+        {% if phones.is_empty() %}
+        <p class="subtitle">No phone has it yet - tick it on a phone's page (Music card).</p>
+        {% else %}
+        <ul>
+            {% for (id, name) in phones %}
+            <li><a href="/devices/{{ id }}#music">{{ name }}</a></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <form method="post" action="/music/entries/{{ entry.id }}/delete" class="card" id="delete" onsubmit="return confirm('Delete this entry from the library and every phone?')">
+        <h2>Delete</h2>
+        <p class="subtitle">Takes it off every phone{% if own %} and deletes its files from this server{% endif %}.</p>
+        <button type="submit" class="button-danger">Delete the entry</button>
+    </form>
+</main>
+</body>
+</html>

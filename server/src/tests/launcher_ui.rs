@@ -528,6 +528,7 @@ async fn backups_carry_photos_and_a_restore_gets_them_back() {
         zip_path.to_str().unwrap(),
         &app.state.photo_dir,
         &app.state.wallpaper_dir,
+        &app.state.music_cover_dir,
     )
     .unwrap();
     let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();

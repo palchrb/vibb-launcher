@@ -94,6 +94,12 @@ pub struct DevicePolicy {
     /// download on an unmetered network only; the launcher's own update after 3 days on any
     /// non-roaming one.
     pub app_updates_wifi_only: bool,
+    /// Vibb music (design 21, migrations/0049): music downloads and streaming may use mobile data
+    /// (default off), the volume cap in percent (`None` = off, the default; see
+    /// `music::VOLUME_CAPS`) and whether this phone gets the family's Storytel login.
+    pub music_mobile_data: bool,
+    pub music_volume_cap_pct: Option<i64>,
+    pub music_storytel: bool,
 }
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.
@@ -295,6 +301,8 @@ pub struct DeviceStatus {
     /// The phone's `app_downloads` (design 13, migrations/0043), see
     /// `app_downloads::AppDownloads`.
     pub app_downloads_json: Option<String>,
+    /// The phone's `music_state` (design 21, migrations/0049), see `music::MusicState`.
+    pub music_state_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -351,6 +359,10 @@ pub struct TrackedApp {
     pub display_label: Option<String>,
     pub display_icon: Option<String>,
     pub display_color: String,
+    /// Only releases whose tag starts with this (migrations/0049, design 21): `launcher-v` for the
+    /// launcher, `music-v` for the music app. `None` = every release but the monorepo's `server-v*`
+    /// and `music-v*` ones (`tracked_apps::newest_matching_release`).
+    pub release_tag_prefix: Option<String>,
 }
 
 impl TrackedApp {
@@ -582,6 +594,10 @@ pub struct PolicyResponse {
     /// unmetered network, the launcher's own update after 3 days on any non-roaming one. Missing
     /// (an older server) = off on the launcher, as before.
     pub app_updates_wifi_only: bool,
+    /// Vibb music (design 21), always sent: the library version, mobile data, the volume cap and
+    /// the Storytel generation (`music::MusicPolicy`). `null` when it couldn't be read - never a
+    /// made-up empty library (QA #3); the library itself is `GET /api/devices/music/library`.
+    pub music: Option<crate::music::MusicPolicy>,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -707,6 +723,10 @@ pub struct StatusReportRequest {
     /// and capped (`app_downloads::sanitize`).
     #[serde(default)]
     pub app_downloads: Option<serde_json::Value>,
+    /// Vibb music (design 21, capability `music_v1`): what the music app last reported through the
+    /// launcher - opaque, stored through the known fields only (`music::sanitize_music_state`).
+    #[serde(default)]
+    pub music_state: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.

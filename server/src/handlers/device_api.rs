@@ -194,6 +194,16 @@ pub(crate) async fn build_policy(
 
     let call_policy = build_call_policy(state, &policy).await?;
 
+    // Vibb music (design 21): `null` when it can't be read (QA #3) - the phone keeps what it has; a
+    // made-up empty library would make it delete its downloads. Never fails the policy.
+    let music = match crate::music::policy_music(&state.db, &policy).await {
+        Ok(music) => Some(music),
+        Err(err) => {
+            tracing::error!(device_id, %err, "couldn't read the music library - policy sent with music: null");
+            None
+        }
+    };
+
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
     // consumes a command, and two concurrent polls can't both get the same one. Delivery is
     // still at-most-once - a command popped into a response the launcher then refuses (it
@@ -272,6 +282,7 @@ pub(crate) async fn build_policy(
         },
         time_policy,
         location_policy,
+        music,
     })
 }
 
@@ -617,6 +628,11 @@ pub async fn status(
         .app_downloads
         .as_ref()
         .and_then(crate::app_downloads::sanitize);
+    // Vibb music (design 21): known fields only - never positions or what is playing.
+    let music_state_json = report
+        .music_state
+        .as_ref()
+        .and_then(crate::music::sanitize_music_state);
 
     // The previous report, for the security log below (install mode started, new apps).
     let previous: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
@@ -639,8 +655,8 @@ pub async fn status(
           install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json, \
           screen_timeout_seconds, ringer_mode, interruption_filter, update_fence_json, \
           notification_cancels_json, \
-          backup_service_enabled, app_downloads_json, boot_cover_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -672,6 +688,7 @@ pub async fn status(
     .bind(report.backup_service_enabled)
     .bind(&app_downloads_json)
     .bind(&boot_cover_json)
+    .bind(&music_state_json)
     .execute(&state.db)
     .await
     .ok();

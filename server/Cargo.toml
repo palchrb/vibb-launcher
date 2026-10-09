@@ -1,26 +1,36 @@
 [package]
 name = "kid_phone_server"
-version = "0.20.0"
+version = "0.21.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]
+# Vibb music (design 21): the Storytel login at rest, AES-256-GCM with the server's own key.
+aes-gcm = "0.11"
 argon2 = "0.5.3"
 askama = "0.16.0"
 axum = { version = "0.8.9", features = ["multipart"] }
+# MUSIC_SECRET_KEY in .env is base64 (design 21); already in the tree.
+base64 = "0.22"
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
+# The music library endpoint (design 21) answers gzip; already in the tree through zip.
+flate2 = "1"
 form_urlencoded = "1"
 hex = "0.4"
 # Contact photos (src/photos.rs): decode, crop/resize and re-encode as JPEG, which also drops all
 # metadata (EXIF/GPS). Pure Rust; already in the tree through totp-rs's QR feature (png only) -
 # jpeg (zune-jpeg) and webp (image-webp) are the formats added here.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# Own music files (design 21): tags, duration and embedded art (MIT/Apache-2.0).
+lofty = "0.25"
 pbkdf2 = "0.12"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # Tracked apps (handlers/tracked_apps.rs): an asset filter starting with "^" is a regular expression.
 regex = "1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json"] }
+# Free space before an own-file upload (statvfs, safe API); already in the tree through tempfile.
+rustix = { version = "1", features = ["fs"] }
 # Not used directly (dns_engine.rs no longer runs a live TLS/DoT listener) - still a direct
 # dependency purely so main.rs can install a process-wide default CryptoProvider before anything
 # opens a connection. reqwest's own rustls backend needs one installed somewhere, and there's no
@@ -36,6 +46,8 @@ reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+# vibb's state_key: sha1(target)[:12] (design 21); already in the tree.
+sha1 = "0.10"
 sha2 = "0.10"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "chrono"] }
 tokio = { version = "1.52.3", features = ["full"] }
