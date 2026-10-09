@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<title>PIN-lås med avspilling</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Nunito',system-ui,sans-serif}
+</style>
+</helmet>
+<div style="width: 320px; height: 568px; box-sizing: border-box; background: #0C0C14; color: #FBE4DC; font-family: 'Nunito', system-ui, sans-serif; position: relative; overflow: hidden">
+
+  <sc-if value="{{onMedia}}" hint-placeholder-val="{{ true }}">
+    <div style="height: 100%; box-sizing: border-box; padding: 26px 20px 16px; display: flex; flex-direction: column; align-items: center; gap: 6px">
+      <div style="font-size: 56px; font-weight: 800; color: #FFFFFF; line-height: 1">14:32</div>
+      <div style="font-size: 14px; font-weight: 700; color: rgba(251,228,220,0.78)">fredag 9. oktober</div>
+
+      <div style="margin-top: 22px; width: 100%; box-sizing: border-box; background: #1B1B28; border-radius: 24px; padding: 14px; display: flex; flex-direction: column; gap: 12px">
+        <div style="display: flex; align-items: center; gap: 12px">
+          <span style="width: 72px; height: 72px; border-radius: 16px; background: linear-gradient(160deg, #C2683F, #3A1F2B); display: flex; align-items: center; justify-content: center; flex: none">
+            <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2.5z"></path><path d="M8 7h7M8 11h5"></path></svg>
+          </span>
+          <span style="flex: 1; display: flex; flex-direction: column; min-width: 0">
+            <span style="font-size: 16px; font-weight: 800; color: #FFFFFF">Kapittel 3: Månen</span>
+            <span style="font-size: 13px; font-weight: 700; color: rgba(251,228,220,0.78)">Reven og månen</span>
+          </span>
+        </div>
+        <div style="height: 5px; border-radius: 3px; background: #2A2A3A; overflow: hidden">
+          <div style="width: 42%; height: 5px; background: #F0A884"></div>
+        </div>
+        <div style="display: flex; align-items: center; justify-content: center; gap: 18px">
+          <button type="button" aria-label="Forrige" style="all: unset; cursor: pointer; width: 52px; height: 52px; border-radius: 50%; background: #2A2A3A; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h2v14H7zM20 5v14L10 12z"></path></svg>
+          </button>
+          <button type="button" onClick="{{togglePlay}}" aria-label="{{playLabel}}" style="all: unset; cursor: pointer; width: 64px; height: 64px; border-radius: 50%; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center">
+            <sc-if value="{{playing}}" hint-placeholder-val="{{ true }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg></sc-if>
+            <sc-if value="{{paused}}" hint-placeholder-val="{{ false }}"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg></sc-if>
+          </button>
+          <button type="button" aria-label="Neste" style="all: unset; cursor: pointer; width: 52px; height: 52px; border-radius: 50%; background: #2A2A3A; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M15 5h2v14h-2zM4 5v14l10-7z"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <div style="flex: 1"></div>
+
+      <button type="button" onClick="{{toKeypad}}" style="all: unset; cursor: pointer; width: 100%; height: 56px; border-radius: 20px; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 17px; font-weight: 800">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 7.8-1.2"></path></svg>
+        Lås opp
+      </button>
+      <button type="button" style="all: unset; cursor: pointer; margin-top: 6px; height: 44px; padding: 0 18px; border-radius: 22px; color: #FF8A8A; display: flex; align-items: center; font-size: 15px; font-weight: 800">Nødanrop</button>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{onKeypad}}" hint-placeholder-val="{{ false }}">
+    <div style="height: 100%; box-sizing: border-box; padding: 10px 20px 16px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+      <div style="width: 100%; display: flex; align-items: center; height: 56px">
+        <button type="button" onClick="{{toMedia}}" aria-label="Tilbake til avspilling" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #1B1B28; display: flex; align-items: center; justify-content: center; color: #FBE4DC">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+        <div style="flex: 1; text-align: center; font-size: 17px; font-weight: 800; color: #FFFFFF; padding-right: 44px">Skriv koden</div>
+      </div>
+
+      <div style="display: flex; gap: 12px; margin: 4px 0 8px">
+        <span style="width: 14px; height: 14px; border-radius: 50%; border: 2px solid #FBE4DC"></span>
+        <span style="width: 14px; height: 14px; border-radius: 50%; border: 2px solid #FBE4DC"></span>
+        <span style="width: 14px; height: 14px; border-radius: 50%; border: 2px solid #FBE4DC"></span>
+        <span style="width: 14px; height: 14px; border-radius: 50%; border: 2px solid #FBE4DC"></span>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 22px">
+        <sc-for list="{{keys}}" as="k" hint-placeholder-count="12">
+          <sc-if value="{{k.isKey}}" hint-placeholder-val="{{ true }}">
+            <button type="button" style="all: unset; cursor: pointer; width: 62px; height: 62px; border-radius: 50%; background: #1B1B28; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 800">{{k.label}}</button>
+          </sc-if>
+          <sc-if value="{{k.isGap}}" hint-placeholder-val="{{ false }}"><span></span></sc-if>
+        </sc-for>
+      </div>
+
+      <div style="margin-top: auto; width: 100%; display: flex; align-items: center; gap: 10px; background: #1B1B28; border-radius: 16px; padding: 6px 8px; box-sizing: border-box">
+        <span style="width: 32px; height: 32px; border-radius: 9px; background: linear-gradient(160deg, #C2683F, #3A1F2B); flex: none"></span>
+        <span style="flex: 1; font-size: 13px; font-weight: 800; color: rgba(251,228,220,0.85)">Reven og månen</span>
+        <button type="button" onClick="{{togglePlay}}" aria-label="{{playLabel}}" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; color: #F0A884; display: flex; align-items: center; justify-content: center">
+          <sc-if value="{{playing}}" hint-placeholder-val="{{ true }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg></sc-if>
+          <sc-if value="{{paused}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg></sc-if>
+        </button>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":320,"height":568}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { view: 'media', playing: true };
+  }
+  renderVals() {
+    const s = this.state;
+    const labels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', ''];
+    return {
+      onMedia: s.view === 'media',
+      onKeypad: s.view === 'keypad',
+      playing: s.playing,
+      paused: !s.playing,
+      playLabel: s.playing ? 'Pause' : 'Spill',
+      keys: labels.map((l) => ({ label: l, isKey: l !== '', isGap: l === '' })),
+      togglePlay: () => this.setState({ playing: !s.playing }),
+      toKeypad: () => this.setState({ view: 'keypad' }),
+      toMedia: () => this.setState({ view: 'media' })
+    };
+  }
+}
+</script>
+</body>
+</html>

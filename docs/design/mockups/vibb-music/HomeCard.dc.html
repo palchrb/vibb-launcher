@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<title>Hjem med spilles nå-kort</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Nunito',system-ui,sans-serif}
+</style>
+</helmet>
+<div style="width: 320px; height: 568px; box-sizing: border-box; background: #0C0C14; color: #FBE4DC; font-family: 'Nunito', system-ui, sans-serif; padding: 16px; display: flex; flex-direction: column; gap: 16px">
+  <div style="display: flex; justify-content: center; gap: 20px">
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px">
+      <div style="width: 76px; height: 76px; border-radius: 50%; background: #4DABF7; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; color: #0C0C14">P</div>
+      <div style="font-size: 14px; font-weight: 800; color: #FFFFFF">Pappa</div>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px">
+      <div style="width: 76px; height: 76px; border-radius: 50%; background: #F08C3A; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; color: #0C0C14">M</div>
+      <div style="font-size: 14px; font-weight: 800; color: #FFFFFF">Mamma</div>
+    </div>
+  </div>
+
+  <button type="button" style="all: unset; cursor: pointer; display: flex; align-items: center; gap: 12px; background: #2A2233; border-radius: 20px; padding: 10px 12px">
+    <span style="width: 52px; height: 52px; border-radius: 14px; background: linear-gradient(160deg, #C2683F, #3A1F2B); display: flex; align-items: center; justify-content: center; flex: none">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2.5z"></path><path d="M8 7h7M8 11h5"></path></svg>
+    </span>
+    <span style="flex: 1; display: flex; flex-direction: column; min-width: 0">
+      <span style="font-size: 12px; font-weight: 800; color: #F0A884">Spilles nå</span>
+      <span style="font-size: 15px; font-weight: 800; color: #FFFFFF">Reven og månen</span>
+      <span style="font-size: 12px; font-weight: 700; color: rgba(251,228,220,0.78)">Kapittel 3 · 7:46 av 18:30</span>
+    </span>
+    <span aria-label="Pause" style="width: 44px; height: 44px; border-radius: 50%; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center; flex: none">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>
+    </span>
+  </button>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 8px">
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px">
+      <div style="width: 60px; height: 60px; border-radius: 50%; background: #2B8A3E; display: flex; align-items: center; justify-content: center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"></rect><circle cx="12" cy="10" r="3"></circle><path d="M8 17c1-2 7-2 8 0"></path></svg></div>
+      <div style="font-size: 13px; font-weight: 700; color: #FFFFFF">Telefonbok</div>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px">
+      <div style="width: 60px; height: 60px; border-radius: 50%; background: #F0A884; display: flex; align-items: center; justify-content: center; position: relative"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0C0C14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle></svg><span aria-label="2 nye" style="position: absolute; right: -4px; top: -4px; min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: 11px; background: #C92A2A; border: 2px solid #0C0C14; color: #FFFFFF; font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center">2</span></div>
+      <div style="font-size: 13px; font-weight: 700; color: #FFFFFF">Musikk</div>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px">
+      <div style="width: 60px; height: 60px; border-radius: 50%; background: #2F7A6B; display: flex; align-items: center; justify-content: center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-5A8 8 0 1 1 21 12z"></path></svg></div>
+      <div style="font-size: 13px; font-weight: 700; color: #FFFFFF">Chat</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":320,"height":568}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

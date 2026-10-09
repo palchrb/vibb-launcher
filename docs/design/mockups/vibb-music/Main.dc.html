@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<title>Vibb musikk</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Nunito',system-ui,sans-serif}
+a{color:inherit;text-decoration:none}a:hover{color:inherit}
+input.seek{-webkit-appearance:none;appearance:none;background:transparent;padding:0;margin:0;cursor:pointer}
+input.seek::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:transparent}
+input.seek::-moz-range-track{height:4px;border-radius:2px;background:transparent}
+input.seek::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:26px;height:26px;margin-top:-11px;border-radius:50%;background:#FBE4DC;border:5px solid #F0A884;box-sizing:border-box}
+input.seek::-moz-range-thumb{width:26px;height:26px;border-radius:50%;background:#FBE4DC;border:5px solid #F0A884;box-sizing:border-box}
+</style>
+</helmet>
+<div style="width: 320px; height: 568px; box-sizing: border-box; background: #0C0C14; color: #FBE4DC; font-family: 'Nunito', system-ui, sans-serif; position: relative; overflow: hidden">
+
+  <sc-if value="{{onLibrary}}" hint-placeholder-val="{{ true }}">
+    <div style="height: 100%; box-sizing: border-box; padding: 10px 16px 12px; display: flex; flex-direction: column; gap: 8px">
+      <div style="display: flex; align-items: center; height: 52px">
+        <button type="button" aria-label="Tilbake til Hjem" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #1B1B28; display: flex; align-items: center; justify-content: center; color: #FBE4DC">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+        <div style="flex: 1"></div>
+        <button type="button" onClick="{{openSearch}}" aria-label="Søk" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #1B1B28; display: flex; align-items: center; justify-content: center; color: #FBE4DC; margin-right: 8px">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        </button>
+        <button type="button" onClick="{{openNews}}" aria-label="Nytt: {{newCount}}" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #1B1B28; display: flex; align-items: center; justify-content: center; color: #FBE4DC; position: relative">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"></path></svg>
+          <sc-if value="{{hasNews}}" hint-placeholder-val="{{ true }}">
+            <span style="position: absolute; right: -2px; top: -2px; min-width: 20px; height: 20px; padding: 0 5px; box-sizing: border-box; border-radius: 10px; background: #F0A884; color: #0C0C14; font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center">{{newCount}}</span>
+          </sc-if>
+        </button>
+      </div>
+
+      <div style="flex: 1"></div>
+
+      <div style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 184px">
+        <sc-if value="{{hasPeeks}}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{prevCover}}" aria-label="Forrige: {{prevE.title}}" style="all: unset; cursor: pointer; width: 46px; height: 132px; border-radius: 0 18px 18px 0; background: {{prevE.grad}}; opacity: 0.45; flex: none"></button>
+        </sc-if>
+        <button type="button" onClick="{{tapCover}}" aria-label="Spill {{cur.title}}" style="all: unset; cursor: pointer; width: 180px; height: 180px; border-radius: 24px; background: {{cur.grad}}; position: relative; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(0,0,0,0.45); flex: none">
+          <sc-if value="{{cur.isMoon}}" hint-placeholder-val="{{ false }}"><svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"></path><path d="M16 4.5v2M15 5.5h2"></path></svg></sc-if>
+          <sc-if value="{{cur.isBook}}" hint-placeholder-val="{{ false }}"><svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2.5z"></path><path d="M8 7h7M8 11h5"></path></svg></sc-if>
+          <sc-if value="{{cur.isMic}}" hint-placeholder-val="{{ false }}"><svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></sc-if>
+          <sc-if value="{{cur.isNote}}" hint-placeholder-val="{{ false }}"><svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle></svg></sc-if>
+          <sc-if value="{{cur.isStar}}" hint-placeholder-val="{{ false }}"><svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg></sc-if>
+          <span style="position: absolute; left: 10px; bottom: 10px; padding: 3px 9px; border-radius: 11px; background: rgba(12,12,20,0.72); color: #FBE4DC; font-size: 11px; font-weight: 800">{{cur.kind}}</span>
+          <sc-if value="{{cur.isNew}}" hint-placeholder-val="{{ false }}">
+            <span style="position: absolute; left: 10px; top: 10px; padding: 3px 9px; border-radius: 11px; background: #F0A884; color: #0C0C14; font-size: 11px; font-weight: 800">NY</span>
+          </sc-if>
+          <sc-if value="{{cur.showResume}}" hint-placeholder-val="{{ false }}">
+            <span style="position: absolute; right: 10px; top: 10px; width: 32px; height: 32px; border-radius: 50%; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+            </span>
+          </sc-if>
+        </button>
+        <sc-if value="{{hasPeeks}}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{nextCover}}" aria-label="Neste: {{nextE.title}}" style="all: unset; cursor: pointer; width: 46px; height: 132px; border-radius: 18px 0 0 18px; background: {{nextE.grad}}; opacity: 0.45; flex: none"></button>
+        </sc-if>
+      </div>
+
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center">
+        <div style="font-size: 21px; font-weight: 800; color: #FFFFFF; line-height: 1.15">{{cur.title}}</div>
+        <div style="font-size: 13px; font-weight: 700; color: rgba(251,228,220,0.78)">{{cur.hint}}</div>
+        <sc-if value="{{cur.showResume}}" hint-placeholder-val="{{ false }}">
+          <div style="width: 140px; height: 4px; border-radius: 2px; background: #2A2A3A; overflow: hidden; margin-top: 3px">
+            <div style="width: {{cur.overall}}; height: 4px; background: #F0A884"></div>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="display: flex; justify-content: center; gap: 6px">
+        <sc-for list="{{dots}}" as="d" hint-placeholder-count="5">
+          <span style="width: {{d.w}}; height: 8px; border-radius: 4px; background: {{d.bg}}"></span>
+        </sc-for>
+      </div>
+
+      <div style="flex: 1"></div>
+
+      <div role="group" aria-label="Kategorier" style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px">
+        <sc-for list="{{cats}}" as="c" hint-placeholder-count="5">
+          <button type="button" onClick="{{c.pick}}" aria-pressed="{{c.pressed}}" style="all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 64px">
+            <span style="width: 44px; height: 44px; border-radius: 50%; background: {{c.bg}}; color: {{c.fg}}; box-sizing: border-box; border: {{c.ring}}; display: flex; align-items: center; justify-content: center">
+              <sc-if value="{{c.isAll}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="2"></rect><rect x="13" y="4" width="7" height="7" rx="2"></rect><rect x="4" y="13" width="7" height="7" rx="2"></rect><rect x="13" y="13" width="7" height="7" rx="2"></rect></svg></sc-if>
+              <sc-if value="{{c.isMusic}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle></svg></sc-if>
+              <sc-if value="{{c.isFairy}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg></sc-if>
+              <sc-if value="{{c.isBook}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2.5z"></path></svg></sc-if>
+              <sc-if value="{{c.isPod}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></sc-if>
+            </span>
+            <span style="font-size: 11px; font-weight: 800; color: {{c.labelColor}}">{{c.label}}</span>
+          </button>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{hasNowPlaying}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; align-items: center; gap: 10px; background: #1B1B28; border-radius: 16px; padding: 6px 8px">
+          <button type="button" onClick="{{openPlayer}}" aria-label="Åpne avspilling" style="all: unset; cursor: pointer; flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0">
+            <span style="width: 36px; height: 36px; border-radius: 10px; background: {{np.grad}}; flex: none"></span>
+            <span style="display: flex; flex-direction: column; min-width: 0">
+              <span style="font-size: 13px; font-weight: 800; color: #FFFFFF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{np.trackTitle}}</span>
+              <span style="font-size: 11px; font-weight: 700; color: rgba(251,228,220,0.78)">{{np.title}}</span>
+            </span>
+          </button>
+          <button type="button" onClick="{{togglePlay}}" aria-label="{{playLabel}}" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center; flex: none">
+            <sc-if value="{{playing}}" hint-placeholder-val="{{ true }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg></sc-if>
+            <sc-if value="{{paused}}" hint-placeholder-val="{{ false }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg></sc-if>
+          </button>
+        </div>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{onPlayer}}" hint-placeholder-val="{{ false }}">
+    <div style="height: 100%; box-sizing: border-box; padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; height: 56px">
+        <button type="button" onClick="{{toLibrary}}" aria-label="Tilbake til biblioteket" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #1B1B28; display: flex; align-items: center; justify-content: center; color: #FBE4DC">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+        <div style="flex: 1; text-align: center; font-size: 15px; font-weight: 800; color: rgba(251,228,220,0.78); padding-right: 44px">{{np.title}}</div>
+      </div>
+
+      <div style="align-self: center; width: 224px; height: 224px; border-radius: 26px; background: {{np.grad}}; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(0,0,0,0.45)">
+        <sc-if value="{{np.isMoon}}" hint-placeholder-val="{{ false }}"><svg width="104" height="104" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"></path><path d="M16 4.5v2M15 5.5h2"></path></svg></sc-if>
+        <sc-if value="{{np.isBook}}" hint-placeholder-val="{{ false }}"><svg width="104" height="104" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2.5z"></path><path d="M8 7h7M8 11h5"></path></svg></sc-if>
+        <sc-if value="{{np.isMic}}" hint-placeholder-val="{{ false }}"><svg width="104" height="104" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></sc-if>
+        <sc-if value="{{np.isNote}}" hint-placeholder-val="{{ false }}"><svg width="104" height="104" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle></svg></sc-if>
+        <sc-if value="{{np.isStar}}" hint-placeholder-val="{{ false }}"><svg width="104" height="104" viewBox="0 0 24 24" fill="none" stroke="#FBE4DC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"></path></svg></sc-if>
+      </div>
+
+      <div style="text-align: center; display: flex; flex-direction: column; gap: 2px">
+        <div style="font-size: 20px; font-weight: 800; color: #FFFFFF; line-height: 1.15">{{np.trackTitle}}</div>
+        <div style="font-size: 13px; font-weight: 700; color: rgba(251,228,220,0.78)">{{np.trackOf}}</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 2px">
+        <div style="position: relative; height: 44px">
+          <div style="position: absolute; left: 0; right: 0; top: 20px; height: 4px; border-radius: 2px; background: #2A2A3A"></div>
+          <div style="position: absolute; left: 0; top: 20px; height: 4px; border-radius: 2px; width: {{np.progressPct}}; background: #F0A884"></div>
+          <input class="seek" type="range" min="0" max="1000" step="1" value="{{np.seekVal}}" onChange="{{seek}}" aria-label="Spol i sporet" style="position: absolute; left: 0; top: 0; width: 100%; height: 44px">
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: rgba(251,228,220,0.78)">
+          <span>{{np.posText}}</span><span>{{np.durText}}</span>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; justify-content: center; gap: 22px">
+        <button type="button" onClick="{{prevTrack}}" aria-label="Forrige" style="all: unset; cursor: pointer; width: 56px; height: 56px; border-radius: 50%; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h2v14H7zM20 5v14L10 12z"></path></svg>
+        </button>
+        <button type="button" onClick="{{togglePlay}}" aria-label="{{playLabel}}" style="all: unset; cursor: pointer; width: 76px; height: 76px; border-radius: 50%; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center">
+          <sc-if value="{{playing}}" hint-placeholder-val="{{ true }}"><svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg></sc-if>
+          <sc-if value="{{paused}}" hint-placeholder-val="{{ false }}"><svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg></sc-if>
+        </button>
+        <button type="button" onClick="{{nextTrack}}" aria-label="Neste" style="all: unset; cursor: pointer; width: 56px; height: 56px; border-radius: 50%; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M15 5h2v14h-2zM4 5v14l10-7z"></path></svg>
+        </button>
+      </div>
+
+      <div style="display: flex; gap: 8px; margin-top: auto">
+        <button type="button" onClick="{{openList}}" style="all: unset; cursor: pointer; flex: 1; height: 48px; border-radius: 16px; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; font-weight: 800">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"></path></svg>
+          Liste
+        </button>
+        <button type="button" onClick="{{openSleep}}" style="all: unset; cursor: pointer; flex: 1; height: 48px; border-radius: 16px; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; font-weight: 800">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"></path></svg>
+          {{sleepLabel}}
+        </button>
+        <button type="button" onClick="{{openOut}}" aria-label="Spill av på: {{outLabel}}" style="all: unset; cursor: pointer; flex: 1.2; height: 48px; border-radius: 16px; background: {{outBg}}; color: {{outFg}}; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; font-weight: 800; min-width: 0">
+          <sc-if value="{{outIsPhone}}" hint-placeholder-val="{{ true }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"></path></svg></sc-if>
+          <sc-if value="{{outIsBt}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v-3a8 8 0 0 1 16 0v3"></path><rect x="3" y="14" width="4" height="6" rx="1.5"></rect><rect x="17" y="14" width="4" height="6" rx="1.5"></rect></svg></sc-if>
+          <sc-if value="{{outIsSonos}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="3"></rect><circle cx="12" cy="14" r="3"></circle><path d="M12 7h.01"></path></svg></sc-if>
+          <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{outLabel}}</span>
+        </button>
+      </div>
+    </div>
+
+    <sc-if value="{{sheetOpen}}" hint-placeholder-val="{{ false }}">
+      <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.55)"></div>
+      <div style="position: absolute; left: 0; right: 0; bottom: 0; background: #1B1B28; border-radius: 26px 26px 0 0; padding: 14px 16px 20px; display: flex; flex-direction: column; gap: 12px">
+        <div style="align-self: center; width: 40px; height: 5px; border-radius: 3px; background: rgba(251,228,220,0.35)"></div>
+        <div style="font-size: 18px; font-weight: 800; color: #FFFFFF; text-align: center">Sov om</div>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+          <sc-for list="{{sleepOptions}}" as="o" hint-placeholder-count="4">
+            <button type="button" onClick="{{o.pick}}" style="all: unset; cursor: pointer; height: 52px; border-radius: 16px; background: {{o.bg}}; color: {{o.fg}}; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800">{{o.label}}</button>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{outOpen}}" hint-placeholder-val="{{ false }}">
+      <div style="position: absolute; inset: 0; background: rgba(0,0,0,0.55)"></div>
+      <div style="position: absolute; left: 0; right: 0; bottom: 0; background: #1B1B28; border-radius: 26px 26px 0 0; padding: 14px 16px 20px; display: flex; flex-direction: column; gap: 8px">
+        <div style="align-self: center; width: 40px; height: 5px; border-radius: 3px; background: rgba(251,228,220,0.35)"></div>
+        <div style="font-size: 18px; font-weight: 800; color: #FFFFFF; text-align: center; margin-bottom: 4px">Spill av på</div>
+        <sc-for list="{{outputs}}" as="o" hint-placeholder-count="4">
+          <button type="button" onClick="{{o.pick}}" style="all: unset; cursor: pointer; min-height: 52px; border-radius: 16px; background: {{o.bg}}; padding: 6px 14px; display: flex; align-items: center; gap: 12px">
+            <span style="width: 34px; height: 34px; border-radius: 50%; background: {{o.iconBg}}; color: {{o.iconFg}}; display: flex; align-items: center; justify-content: center; flex: none">
+              <sc-if value="{{o.isPhone}}" hint-placeholder-val="{{ false }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path></svg></sc-if>
+              <sc-if value="{{o.isBt}}" hint-placeholder-val="{{ false }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15v-3a8 8 0 0 1 16 0v3"></path><rect x="3" y="14" width="4" height="6" rx="1.5"></rect><rect x="17" y="14" width="4" height="6" rx="1.5"></rect></svg></sc-if>
+              <sc-if value="{{o.isSonos}}" hint-placeholder-val="{{ false }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="3"></rect><circle cx="12" cy="14" r="3"></circle></svg></sc-if>
+            </span>
+            <span style="flex: 1; display: flex; flex-direction: column">
+              <span style="font-size: 15px; font-weight: 800; color: #FFFFFF">{{o.label}}</span>
+              <span style="font-size: 12px; font-weight: 700; color: rgba(251,228,220,0.78)">{{o.sub}}</span>
+            </span>
+            <sc-if value="{{o.selected}}" hint-placeholder-val="{{ false }}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F0A884" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></sc-if>
+          </button>
+        </sc-for>
+      </div>
+    </sc-if>
+  </sc-if>
+
+  <sc-if value="{{onNews}}" hint-placeholder-val="{{ false }}">
+    <div style="height: 100%; box-sizing: border-box; padding: 10px 16px 14px; display: flex; flex-direction: column; gap: 8px">
+      <div style="display: flex; align-items: center; height: 56px">
+        <button type="button" onClick="{{toLibrary}}" aria-label="Tilbake til biblioteket" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #1B1B28; display: flex; align-items: center; justify-content: center; color: #FBE4DC">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+        <h1 style="margin: 0; flex: 1; text-align: center; font-size: 20px; font-weight: 800; color: #FFFFFF">Nytt</h1>
+        <button type="button" onClick="{{clearNews}}" style="all: unset; cursor: pointer; height: 44px; padding: 0 10px; border-radius: 22px; color: #F0A884; font-size: 14px; font-weight: 800; display: flex; align-items: center">Fjern alle</button>
+      </div>
+      <sc-if value="{{hasNews}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <sc-for list="{{news}}" as="w" hint-placeholder-count="3">
+            <button type="button" onClick="{{w.pick}}" style="all: unset; cursor: pointer; min-height: 64px; border-radius: 16px; background: #1B1B28; padding: 8px 10px; display: flex; align-items: center; gap: 12px">
+              <span style="width: 48px; height: 48px; border-radius: 12px; background: {{w.grad}}; flex: none"></span>
+              <span style="flex: 1; display: flex; flex-direction: column; min-width: 0">
+                <span style="font-size: 12px; font-weight: 800; color: #F0A884">{{w.what}}</span>
+                <span style="font-size: 15px; font-weight: 800; color: #FFFFFF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{w.track}}</span>
+                <span style="font-size: 12px; font-weight: 700; color: rgba(251,228,220,0.78)">{{w.title}}</span>
+              </span>
+              <span style="width: 36px; height: 36px; border-radius: 50%; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center; flex: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg></span>
+            </button>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{noNews}}" hint-placeholder-val="{{ false }}">
+        <div style="margin-top: 40px; text-align: center; font-size: 15px; font-weight: 700; color: rgba(251,228,220,0.72)">Ingenting nytt akkurat nå</div>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{onSearch}}" hint-placeholder-val="{{ false }}">
+    <div style="height: 100%; box-sizing: border-box; padding: 10px 16px 14px; display: flex; flex-direction: column; gap: 10px">
+      <div style="display: flex; align-items: center; gap: 8px; height: 56px">
+        <button type="button" onClick="{{toLibrary}}" aria-label="Tilbake til biblioteket" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #1B1B28; display: flex; align-items: center; justify-content: center; color: #FBE4DC; flex: none">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+        <label for="musicsearch" style="flex: 1; height: 44px; border-radius: 22px; background: #1B1B28; display: flex; align-items: center; gap: 8px; padding: 0 14px; box-sizing: border-box; color: rgba(251,228,220,0.78)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+          <input id="musicsearch" type="text" value="{{query}}" onChange="{{typeQuery}}" placeholder="Søk" aria-label="Søk i musikk og bøker" style="all: unset; flex: 1; min-width: 0; color: #FFFFFF; font-family: 'Nunito', system-ui, sans-serif; font-size: 16px; font-weight: 700">
+        </label>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; overflow-y: auto">
+        <sc-for list="{{hits}}" as="h" hint-placeholder-count="4">
+          <button type="button" onClick="{{h.pick}}" style="all: unset; cursor: pointer; min-height: 60px; border-radius: 16px; background: #1B1B28; padding: 8px 10px; display: flex; align-items: center; gap: 12px">
+            <span style="width: 44px; height: 44px; border-radius: 12px; background: {{h.grad}}; flex: none"></span>
+            <span style="flex: 1; display: flex; flex-direction: column; min-width: 0">
+              <span style="font-size: 15px; font-weight: 800; color: #FFFFFF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{h.title}}</span>
+              <span style="font-size: 12px; font-weight: 700; color: rgba(251,228,220,0.78)">{{h.sub}}</span>
+            </span>
+          </button>
+        </sc-for>
+        <sc-if value="{{noHits}}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 30px; text-align: center; font-size: 15px; font-weight: 700; color: rgba(251,228,220,0.72)">Fant ingenting</div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{onList}}" hint-placeholder-val="{{ false }}">
+    <div style="height: 100%; box-sizing: border-box; padding: 10px 16px 14px; display: flex; flex-direction: column; gap: 8px">
+      <div style="display: flex; align-items: center; height: 56px">
+        <button type="button" onClick="{{openPlayer}}" aria-label="Tilbake til avspilling" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: #1B1B28; display: flex; align-items: center; justify-content: center; color: #FBE4DC">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+        </button>
+        <h1 style="margin: 0; flex: 1; text-align: center; font-size: 20px; font-weight: 800; color: #FFFFFF; padding-right: 44px">{{np.title}}</h1>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; font-weight: 800; color: rgba(251,228,220,0.78)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F0A884" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>
+        {{offlineSummary}}
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; overflow-y: auto">
+        <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+          <button type="button" onClick="{{r.pick}}" style="all: unset; cursor: pointer; min-height: 56px; border-radius: 16px; background: {{r.bg}}; padding: 8px 12px; display: flex; align-items: center; gap: 12px">
+            <span style="width: 30px; height: 30px; border-radius: 50%; background: {{r.badgeBg}}; color: {{r.badgeFg}}; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; flex: none">{{r.badge}}</span>
+            <span style="flex: 1; display: flex; flex-direction: column; min-width: 0">
+              <span style="font-size: 15px; font-weight: 800; color: #FFFFFF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{r.title}}</span>
+              <span style="font-size: 12px; font-weight: 700; color: rgba(251,228,220,0.78)">{{r.meta}}</span>
+            </span>
+            <sc-if value="{{r.offline}}" hint-placeholder-val="{{ false }}">
+              <span aria-label="Lastet ned" style="width: 26px; height: 26px; border-radius: 50%; border: 2px solid #F0A884; color: #F0A884; display: flex; align-items: center; justify-content: center; flex: none; box-sizing: border-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v10M7 11l5 5 5-5"></path></svg></span>
+            </sc-if>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":320,"height":568}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      screen: 'library',
+      idx: 1,
+      cats: [],
+      playingId: 'reven',
+      playing: false,
+      track: { godnatt: 0, reven: 2, nyheter: 0, biltur: 0, eventyr: 1, troll: 0, dans: 0 },
+      frac: { godnatt: 0, reven: 0.42, nyheter: 0.18, biltur: 0, eventyr: 0.6, troll: 0, dans: 0 },
+      done: { nyheter: [1, 2], eventyr: [0] },
+      sleep: null,
+      sheet: false,
+      outSheet: false,
+      query: '',
+      output: 'phone',
+      news: [{ id: 'nyheter', track: 0, what: 'Ny episode' }, { id: 'troll', track: 1, what: 'Ny bok i serien' }],
+      offline: { godnatt: [0, 1, 2, 3, 4], reven: [0, 1, 2, 3], nyheter: [0, 1], eventyr: [0, 1, 2], troll: [0, 1], dans: [], biltur: [0, 1, 2] }
+    };
+  }
+  entries() {
+    return [
+      { id: 'godnatt', title: 'Godnattsanger', kind: 'Spilleliste', cat: 'musikk', resume: false, glyph: 'moon',
+        grad: 'linear-gradient(160deg, #3B4A8C, #141428)',
+        tracks: [['Lille fugl', '2:41'], ['Over fjellet', '3:05'], ['Stjernevise', '2:58'], ['Når kvelden kommer', '3:22'], ['Sov nå', '2:47']] },
+      { id: 'reven', title: 'Reven og månen', kind: 'Lydbok', cat: 'lydbok', resume: true, glyph: 'book',
+        grad: 'linear-gradient(160deg, #C2683F, #3A1F2B)',
+        tracks: [['Kapittel 1: Hiet', '14:10'], ['Kapittel 2: Stien', '16:02'], ['Kapittel 3: Månen', '18:30'], ['Kapittel 4: Bekken', '15:44'], ['Kapittel 5: Hjem', '17:20']] },
+      { id: 'eventyr', title: 'Eventyrstund', kind: 'Podkast', cat: 'eventyr', resume: true, glyph: 'star',
+        grad: 'linear-gradient(160deg, #B08A2E, #2A2010)',
+        tracks: [['Prinsessen på erten', '9:12'], ['De tre bukkene', '8:40'], ['Askeladden', '11:05']] },
+      { id: 'nyheter', title: 'Ukas nyheter', kind: 'Podkast', cat: 'podkast', resume: true, glyph: 'mic',
+        grad: 'linear-gradient(160deg, #2F7A6B, #0C2420)',
+        tracks: [['Fredag 9. okt', '11:20'], ['Fredag 2. okt', '10:45'], ['Fredag 25. sep', '12:05'], ['Fredag 18. sep', '9:58']] },
+      { id: 'troll', title: 'Trollet i skogen', kind: 'Lydbok', cat: 'eventyr', resume: true, glyph: 'star',
+        grad: 'linear-gradient(160deg, #4E7A3A, #142010)',
+        tracks: [['Del 1', '21:10'], ['Del 2', '19:42']] },
+      { id: 'dans', title: 'Dansefest', kind: 'Spilleliste', cat: 'musikk', resume: false, glyph: 'note',
+        grad: 'linear-gradient(160deg, #C24F7A, #2A1020)',
+        tracks: [['Hopp og sprett', '2:12'], ['Rundt og rundt', '2:48'], ['Klapp i hendene', '2:30']] },
+      { id: 'biltur', title: 'Bilturen', kind: 'Egne filer', cat: 'musikk', resume: false, glyph: 'note',
+        grad: 'linear-gradient(160deg, #8A5A9E, #1E1230)',
+        tracks: [['Kjør, kjør', '2:31'], ['Vi er snart fremme', '3:10'], ['Langs veien', '2:54']] }
+    ];
+  }
+  secs(t) { const p = t.split(':'); return parseInt(p[0], 10) * 60 + parseInt(p[1], 10); }
+  fmt(s) { const m = Math.floor(s / 60); const r = Math.floor(s % 60); return m + ':' + (r < 10 ? '0' : '') + r; }
+  glyphs(e) { return { isMoon: e.glyph === 'moon', isBook: e.glyph === 'book', isMic: e.glyph === 'mic', isNote: e.glyph === 'note', isStar: e.glyph === 'star' }; }
+  renderVals() {
+    const s = this.state;
+    const all = this.entries();
+    const shown = s.cats.length ? all.filter((e) => s.cats.indexOf(e.cat) >= 0) : all;
+    const n = shown.length;
+    const i = Math.min(s.idx, n - 1);
+    const cur = shown[i];
+    const prevE = shown[(i + n - 1) % n];
+    const nextE = shown[(i + 1) % n];
+    const curTrack = s.track[cur.id];
+    const resumable = cur.resume && (curTrack > 0 || s.frac[cur.id] > 0);
+    const hint = cur.resume
+      ? (resumable ? cur.kind + ' · ' + (cur.kind === 'Podkast' ? 'episode ' : (cur.kind === 'Lydbok' ? 'del ' : 'spor ')) + (curTrack + 1) + ' av ' + cur.tracks.length : cur.kind + ' · fortsetter der du slapp')
+      : cur.kind + ' · starter fra begynnelsen';
+    const overall = Math.round(((curTrack + s.frac[cur.id]) / cur.tracks.length) * 100) + '%';
+    const npE = all.find((e) => e.id === s.playingId) || cur;
+    const ti = s.track[npE.id];
+    const dur = this.secs(npE.tracks[ti][1]);
+    const pos = Math.round(dur * s.frac[npE.id]);
+    const isEpisodes = npE.kind === 'Podkast';
+    const done = s.done[npE.id] || [];
+    const setScreen = (screen) => () => this.setState({ screen: screen, sheet: false, outSheet: false });
+    const newIds = s.news.map((w) => w.id);
+    const offl = s.offline[npE.id] || [];
+    const outDefs = [
+      { id: 'phone', label: 'Telefonen', sub: 'Innebygd høyttaler', kind: 'phone' },
+      { id: 'bt', label: 'Hodetelefoner', sub: 'Bluetooth · tilkoblet', kind: 'bt' },
+      { id: 'stue', label: 'Stue', sub: 'Sonos', kind: 'sonos' },
+      { id: 'kjokken', label: 'Kjøkken', sub: 'Sonos', kind: 'sonos' }
+    ];
+    const curOut = outDefs.find((o) => o.id === s.output) || outDefs[0];
+    const playEntry = () => {
+      const t = Object.assign({}, s.track);
+      const f = Object.assign({}, s.frac);
+      if (!cur.resume) { t[cur.id] = 0; f[cur.id] = 0; }
+      this.setState({ playingId: cur.id, playing: true, track: t, frac: f, screen: 'player' });
+    };
+    const step = (d) => () => {
+      const t = Object.assign({}, s.track);
+      const f = Object.assign({}, s.frac);
+      t[npE.id] = Math.max(0, Math.min(npE.tracks.length - 1, ti + d));
+      f[npE.id] = 0;
+      this.setState({ track: t, frac: f, playingId: npE.id });
+    };
+    const catDefs = [
+      { id: 'alle', label: 'Alle', color: '#FBE4DC' },
+      { id: 'musikk', label: 'Musikk', color: '#C24F7A' },
+      { id: 'eventyr', label: 'Eventyr', color: '#B08A2E' },
+      { id: 'lydbok', label: 'Lydbøker', color: '#C2683F' },
+      { id: 'podkast', label: 'Podkast', color: '#2F7A6B' }
+    ];
+    const cats = catDefs.map((c) => {
+      const on = c.id === 'alle' ? s.cats.length === 0 : s.cats.indexOf(c.id) >= 0;
+      return {
+        label: c.label,
+        isAll: c.id === 'alle', isMusic: c.id === 'musikk', isFairy: c.id === 'eventyr', isBook: c.id === 'lydbok', isPod: c.id === 'podkast',
+        pressed: on ? 'true' : 'false',
+        bg: on ? (c.id === 'alle' ? '#F0A884' : c.color) : '#1B1B28',
+        fg: on ? (c.id === 'alle' ? '#0C0C14' : '#FFFFFF') : 'rgba(251,228,220,0.85)',
+        ring: on ? '3px solid #FBE4DC' : '1px solid rgba(251,228,220,0.25)',
+        labelColor: on ? '#FFFFFF' : 'rgba(251,228,220,0.72)',
+        pick: () => {
+          // Single choice: a category shows only that; tapping it again, or "Alle", shows everything.
+          if (c.id === 'alle' || (s.cats.length === 1 && s.cats[0] === c.id)) { this.setState({ cats: [], idx: 0 }); return; }
+          this.setState({ cats: [c.id], idx: 0 });
+        }
+      };
+    });
+    const rows = npE.tracks.map((tr, j) => {
+      const current = j === ti && s.playingId === npE.id;
+      const finished = done.indexOf(j) >= 0;
+      return {
+        title: tr[0],
+        meta: current ? 'Spilles nå · ' + tr[1] : (finished ? 'Hørt · ' + tr[1] : tr[1]),
+        badge: finished ? '✓' : String(j + 1),
+        bg: current ? '#2A2233' : '#1B1B28',
+        badgeBg: current ? '#F0A884' : '#2A2A3A',
+        badgeFg: current ? '#0C0C14' : '#FBE4DC',
+        offline: offl.indexOf(j) >= 0,
+        pick: () => {
+          const t = Object.assign({}, s.track);
+          const f = Object.assign({}, s.frac);
+          t[npE.id] = j;
+          f[npE.id] = 0;
+          this.setState({ track: t, frac: f, playingId: npE.id, playing: true, screen: 'player' });
+        }
+      };
+    });
+    const sleepOptions = [15, 30, 45, null].map((m) => ({
+      label: m ? m + ' min' : 'Av',
+      bg: s.sleep === m ? '#F0A884' : '#2A2A3A',
+      fg: s.sleep === m ? '#0C0C14' : '#FBE4DC',
+      pick: () => this.setState({ sleep: m, sheet: false })
+    }));
+    return {
+      onLibrary: s.screen === 'library',
+      onPlayer: s.screen === 'player',
+      onList: s.screen === 'list',
+      onNews: s.screen === 'news',
+      onSearch: s.screen === 'search',
+      query: s.query,
+      typeQuery: (e) => this.setState({ query: e && e.target ? String(e.target.value) : '' }),
+      openSearch: () => this.setState({ screen: 'search', query: '' }),
+      hits: (() => {
+        const q = s.query.trim().toLowerCase();
+        const pool = [];
+        all.forEach((e) => {
+          if (!q || e.title.toLowerCase().indexOf(q) >= 0) pool.push({ e: e, t: -1 });
+          e.tracks.forEach((tr, j) => { if (q && tr[0].toLowerCase().indexOf(q) >= 0) pool.push({ e: e, t: j }); });
+        });
+        return pool.slice(0, 12).map((p) => ({
+          title: p.t < 0 ? p.e.title : p.e.tracks[p.t][0],
+          sub: p.t < 0 ? p.e.kind : p.e.title + ' · ' + p.e.kind,
+          grad: p.e.grad,
+          pick: () => {
+            const t = Object.assign({}, s.track);
+            const f = Object.assign({}, s.frac);
+            if (p.t >= 0) { t[p.e.id] = p.t; f[p.e.id] = 0; } else if (!p.e.resume) { t[p.e.id] = 0; f[p.e.id] = 0; }
+            this.setState({ track: t, frac: f, playingId: p.e.id, playing: true, screen: 'player' });
+          }
+        }));
+      })(),
+      noHits: s.query.trim() !== '' && !all.some((e) => e.title.toLowerCase().indexOf(s.query.trim().toLowerCase()) >= 0 || e.tracks.some((tr) => tr[0].toLowerCase().indexOf(s.query.trim().toLowerCase()) >= 0)),
+      outOpen: s.outSheet,
+      hasNews: s.news.length > 0,
+      noNews: s.news.length === 0,
+      newCount: String(s.news.length),
+      news: s.news.map((w) => {
+        const e = all.find((x) => x.id === w.id);
+        return {
+          what: w.what, title: e.title, track: e.tracks[w.track][0], grad: e.grad,
+          pick: () => {
+            const t = Object.assign({}, s.track);
+            const f = Object.assign({}, s.frac);
+            t[e.id] = w.track; f[e.id] = 0;
+            this.setState({ track: t, frac: f, playingId: e.id, playing: true, screen: 'player', news: s.news.filter((x) => x !== w) });
+          }
+        };
+      }),
+      openNews: () => this.setState({ screen: 'news' }),
+      clearNews: () => this.setState({ news: [] }),
+      offlineSummary: offl.length === npE.tracks.length ? 'Alle lastet ned' : offl.length + ' av ' + npE.tracks.length + ' lastet ned',
+      outLabel: curOut.label,
+      outIsPhone: curOut.kind === 'phone',
+      outIsBt: curOut.kind === 'bt',
+      outIsSonos: curOut.kind === 'sonos',
+      outBg: curOut.kind === 'phone' ? '#1B1B28' : '#2A2233',
+      outFg: curOut.kind === 'phone' ? '#FBE4DC' : '#F0A884',
+      openOut: () => this.setState({ outSheet: true }),
+      outputs: outDefs.map((o) => ({
+        label: o.label, sub: o.sub,
+        isPhone: o.kind === 'phone', isBt: o.kind === 'bt', isSonos: o.kind === 'sonos',
+        selected: o.id === s.output,
+        bg: o.id === s.output ? '#2A2233' : '#14141F',
+        iconBg: o.id === s.output ? '#F0A884' : '#2A2A3A',
+        iconFg: o.id === s.output ? '#0C0C14' : '#FBE4DC',
+        pick: () => this.setState({ output: o.id, outSheet: false })
+      })),
+      sheetOpen: s.sheet,
+      playing: s.playing,
+      paused: !s.playing,
+      playLabel: s.playing ? 'Pause' : 'Spill',
+      hasNowPlaying: s.playingId !== null,
+      hasPeeks: n > 1,
+      prevE: { title: prevE.title, grad: prevE.grad },
+      nextE: { title: nextE.title, grad: nextE.grad },
+      cur: Object.assign({ title: cur.title, kind: cur.kind, grad: cur.grad, hint: hint, showResume: resumable, overall: overall, isNew: newIds.indexOf(cur.id) >= 0 }, this.glyphs(cur)),
+      dots: shown.map((e, k) => ({ w: '8px', bg: k === i ? '#F0A884' : 'rgba(251,228,220,0.35)' })),
+      cats: cats,
+      np: Object.assign({
+        title: npE.title,
+        grad: npE.grad,
+        trackTitle: npE.tracks[ti][0],
+        trackOf: (isEpisodes ? 'Episode ' : 'Spor ') + (ti + 1) + ' av ' + npE.tracks.length,
+        seekVal: Math.round(s.frac[npE.id] * 1000),
+        progressPct: (s.frac[npE.id] * 100) + '%',
+        seekTrack: 'linear-gradient(to right, #F0A884 ' + (s.frac[npE.id] * 100) + '%, #2A2A3A ' + (s.frac[npE.id] * 100) + '%)',
+        posText: this.fmt(pos),
+        durText: npE.tracks[ti][1]
+      }, this.glyphs(npE)),
+      rows: rows,
+      sleepOptions: sleepOptions,
+      sleepLabel: s.sleep ? 'Sov · ' + s.sleep + ' min' : 'Sov',
+      prevCover: () => this.setState({ idx: (i + n - 1) % n }),
+      nextCover: () => this.setState({ idx: (i + 1) % n }),
+      tapCover: playEntry,
+      togglePlay: () => this.setState({ playing: !s.playing, playingId: s.playingId || npE.id }),
+      prevTrack: step(-1),
+      nextTrack: step(1),
+      openPlayer: setScreen('player'),
+      openList: setScreen('list'),
+      toLibrary: setScreen('library'),
+      openSleep: () => this.setState({ sheet: true }),
+      seek: (e) => {
+        const v = Math.max(0, Math.min(1000, Number(e && e.target ? e.target.value : 0)));
+        const f = Object.assign({}, s.frac);
+        f[npE.id] = v / 1000;
+        this.setState({ frac: f, playingId: s.playingId || npE.id });
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
