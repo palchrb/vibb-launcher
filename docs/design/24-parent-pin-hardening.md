@@ -450,3 +450,250 @@ fun parentLockoutMs(level: Int) = min(BASE shl (level - 1).coerceAtMost(7), CAP)
 
 Not in scope: Web Push, a remote "reset lockout" command, lockout decay over time, refusing birthdays, the kid-PIN
 rules, and the phone's "unlock code"/"Parent code" wording.
+
+## QA review (design)
+
+QA, 2026-10-09, against 26c7a154 (code at 5c93c3c0). Read:
+- the design and `launcher/CLAUDE.md`;
+- launcher: `OfflineOverride`, `RestrictionsPause` (`BootClock`, `timedWindowActive`), `PinBackoff`, `PinLockStore`,
+  `PinLockRuntime.checkPin`/`checkParentCode`, `PinLockState.step`, `PinLockActivity`, `LockActivity`,
+  `SettingsActivity`, `SettingsGate`, `SettingsFragmentLauncher`, `PlayRuntime`/`PlayPolicy`, `MdmSyncWorker`,
+  `CrashReports`, `CommandListenerService`;
+- server: `devices.rs::update_policy`, `security.rs`, `device_api.rs` (`crash_reports`, `log_play_events`),
+  `device_routes.rs`, the routers in `main.rs`, `admin.rs`, `device_detail.html`, `scroll-restore.js`.
+
+**Verdict:** the shape is right: one gate with the lockout inside it, count-first, wall-clock carry-over across a
+reboot, and an endpoint of its own. Two findings break the hard rules: #1 is a bypass today, and #2 can lock the parent
+out for good. #3-#6 are cheap fixes to the state machine and the dialogs. #7 and #9 need a user decision. S1-S3 remove
+about a third of the events and server machinery.
+
+**§0 against the code: all of it holds.**
+- `PinHash.verify(` appears only in `OfflineOverride.verifyPin` and `PinLockRuntime.checkPin`, so §1's five entries
+  are all of them.
+- An old server answers 404 on both listeners: `build_admin_router` has no fallback, and `build_device_router` has
+  `not_found`. §3.1's premise holds.
+- `BootClock` and `backoffRemainingMs` fit this use. A `BOOT_COUNT` of -1 at both ends is harmless, because the
+  wall-clock half of the `max` still holds the lockout.
+- The migration (§2.2) is right. A running lockout never gets longer, `pin_fp` stops a self-reset, and a crash between
+  its two commits leaves only legacy keys that nothing reads.
+- Server card and endpoint:
+  - the route belongs in `admin_routes` (`require_full_auth`);
+  - CSRF is covered by the session cookie's `SameSite=Strict` (the tower-sessions default, not overridden);
+  - no echo: the redirect carries only the code, and the field is never rendered back.
+
+### High
+
+1. **High - the live bypass is real. Close it before step 1.**
+   - `LockActivity.showUnlockCodeDialog` checks `isLockedOut()` once, when the dialog opens. Every later OK runs
+     `verifyPin`, which has no lockout check, and on a match `activate()`.
+   - `verifyPin` resets the counter at each 5th wrong try, so the tries go on at about one per 3 s (≈1,000 an hour)
+     during any time lock. With 3-4 digits seen over the parent's shoulder, that takes minutes.
+   - The other four entries have no bypass today. The Settings gate and the pause/install dialogs close on the 5th
+     wrong try, and the PIN lock re-checks on every OK.
+   - Fix now, in a commit of its own: `verifyPin` returns false without hashing while `isLockedOut()`, and the dialog's
+     wrong branch closes it on a lockout. Step 1 then replaces both.
+2. **High - `Unavailable` has no way out, so an unreadable state locks the parent out for good.**
+   - §2.3 refuses whenever "the store throws".
+   - Scenario: a later build changes `events_v1`'s shape, or reads a key as the wrong type (`getInt` on a stored Long
+     throws `ClassCastException`). From then on, every check fails on load:
+     - all five entries say "Couldn't check the code";
+     - a new PIN from the PWA doesn't help, because the fingerprint is compared after the failed read;
+     - Settings never opens, so the phone can't be re-enrolled.
+   - The kid lock's `Unusable` has a way out (the parent code). This one has none.
+   - Fix:
+     - decode the event queue separately and leniently: a corrupt queue becomes empty and is logged, and it never
+       decides the PIN result;
+     - under the lock, an unreadable counter state is replaced by a committed level-1 lockout starting now (15 min).
+       That fails closed, then gives fresh tries;
+     - keep `Unavailable` for a failed commit only, which is transient (#3);
+     - test: a corrupt `events_v1` and a type clash each give a result other than `Unavailable` within 15 min.
+
+### Medium
+
+3. **Medium - a failed `commit()` still changes memory, so pressing OK on "Couldn't check" escalates the lockout.**
+   - `SharedPreferences.commit()` updates the in-memory map before the disk write and doesn't roll it back.
+   - Scenario, with storage full (in the threat model): each OK is counted in memory and returns `Unavailable`. The
+     5th press leaves a level-1 window in memory, and about 40 presses reach level 8. Once space is freed, in the same
+     process:
+     - the next check finds a 24 h lockout, although no PIN was ever hashed;
+     - the in-memory `wrong` events are uploaded as real wrong tries.
+   - Fix:
+     - on a failed commit, write the pre-attempt state back (memory is restored even if the disk write fails again),
+       and record nothing;
+     - when `filesDir.usableSpace` is low, the text says "The phone's storage is full. Free some space, then try
+       again."
+   - Also correct §2.3's "like the kid lock's `PinResult.Unusable`". `checkPin` ignores `saveBackoff`'s `false`, and
+     only exceptions give `Unusable`. So with storage full the kid PIN keeps working and the parent PIN doesn't. That's
+     acceptable, but the design should say so.
+4. **Medium - with the Settings gate's check off the main thread, a late OK opens Settings for the next person.**
+   - Today `verifyPin` blocks the main thread, so `onStop` can't run in between. In §2.3 the result comes back through
+     `lifecycleScope`, which lives until `onDestroy`.
+   - Scenario:
+     1. The parent types the PIN, taps OK, and presses power within ~0.5 s.
+     2. `onStop` resets `gatePassed`, and then the late Ok sets it again.
+     3. The kid unlocks the PIN lock, Settings comes back to the front, and `enforceGate` shows it - pause and install
+        mode included - without asking for the PIN.
+   - Fix: take a session number when the check starts, bump it in `onStop`, and drop an Ok from an ended session. Its
+     `unlocked` event stays.
+   - The PIN lock has the same pattern today. An Ok (kid PIN or parent code) that lands after a screen-off sends
+     `Unlocked`, and `step` goes from LOCKED to UNLOCKED with the screen dark. Drop an Ok that arrives after a ScreenOff
+     in the same way.
+5. **Medium - PIN messages shown as Toasts are invisible on phones with a budget, including the new last-try warning.**
+   - `DISALLOW_CREATE_WINDOWS` is on whenever a screen-time budget is set, and toasts don't show then
+     (`launcher/CLAUDE.md`, design 10).
+   - Toasts are used for:
+     - `LockActivity`'s wrong and locked-out texts;
+     - the Settings gate's refusal;
+     - the pause and install-mode dialogs.
+   - So on the time-lock screen of such a phone, §2.4's `parent_pin_last_try` never shows, and neither does
+     `lockoutText`. The warning exists to stop a parent walking into a 4 h lockout. And "every dialog closes" on
+     `LockedOut` then leaves no message at all.
+   - Fix:
+     - one error line inside the dialog for all four dialog entries, like `parent_code_error` in the PIN lock's
+       `dialog_pin_parent_code`;
+     - on `LockedOut` the dialog stays open, with the text and OK disabled;
+     - no toasts for PIN results.
+6. **Medium - the wrong-try and lockout events are written after PBKDF2, so tries can be hidden.**
+   - Step 4 commits the count, and only step 6 writes the event.
+   - A hard reset (power held ~10 s) timed into the 0.5 s hash keeps the count but loses the event. On a 5th try it
+     loses the lockout event too.
+   - That allows guessing at the full budget with nothing showing in the PWA. The threat model includes power-cycling
+     and patience.
+   - Fix:
+     - step 4's commit already holds the `wrong` or `lockout` event;
+     - on a match, step 6 removes that id and adds `unlocked`, in one commit;
+     - test: the state from `beginParentAttempt` carries the event.
+7. **Medium (user decision) - the guessing bound holds only if the parent never types the PIN.**
+   - A correct PIN resets `level`. With one parent use a day, the kid stops after 6 rounds: 30 tries, with the last
+     8 h lockout ending at 15h45, so the PIN is free for the parent's next use and its reset.
+   - That is about 11,000 tries a year (1.1 % of 6 digits), not ~1,900. With some digits seen, it takes days.
+   - Options:
+     - (a) keep it, fix §2.1's numbers, and rely on the reports plus a PIN change;
+     - (b) a correct PIN clears `failures` and the window but keeps `level`, and only a new PIN resets it. That gives
+       35 tries per PIN, then about 5 a day. The cost: the parent's own rare 5 wrong in a row then locks longer, and a
+       lockout the kid triggers stays at 24 h until a new PIN.
+   - Recommend (b), with the PWA's lockout notice saying "save a new parent PIN to reset it".
+8. **Medium - a refused PIN's reason is shown where the parent can't see it.**
+   - `device_detail.html:13` renders `notice` above the Status card, and the redirect's `#parent-pin` scrolls past
+     it.
+   - Scenario: the parent saves 123456. The card looks unchanged, so they believe it was saved. On the phone they type
+     it: 5 wrong tries, then a 15 min lockout, then 30 min.
+   - Today's `#screen-lock` refusals have the same flaw.
+   - Fix: render the parent-PIN notices, the "saved" one included, at the top of the `#parent-pin` card, and the
+     kid-lock notices inside `#screen-lock`, not at the top of the page.
+9. **Medium (user decision) - birthdays are the kid's first guesses.**
+   - This kid knows every family birthday. 5 people in 4 formats is 20 tries, which fits in the first day's budget.
+   - What refusing dates costs:
+     - 8 digits (DDMMYYYY, MMDDYYYY, YYYYMMDD, years 1900-2099): under 0.1 % of 8-digit PINs;
+     - 6 digits (DDMMYY, MMDDYY, YYMMDD): about 10 %, a mild nuisance.
+   - Recommend refusing both, with `parent_pin_date`: "Parent PIN not changed: it looks like a date. Pick one that is
+     hard to guess." The label should then say "8 digits or more".
+   - It's a pure function, with no sweep needed (S2).
+
+### Low
+
+10. **Low - upload status codes, the cap and the keys.**
+   - Axum's `Json` answers 422 for a type mismatch, 413 for size and 415 for the content type. §3.2 handles only 400.
+     A batch kept on a 422 is re-sent forever, and nothing queued behind it arrives. Fix:
+     - the server reads `events` as `Vec<serde_json::Value>` and each one leniently (`kind`/`entry` as strings), so
+       only a body that isn't JSON is refused;
+     - the launcher drops the batch on any 4xx except 401, 404, 408 and 429.
+   - More than 100 events: refuse with 413 rather than storing 100 and answering 204, which makes the phone delete the
+     rest. Use one constant, pinned in both tests.
+   - Keys: the server's integration test posts §3.3's JSON literal, and `PolicyResponseCompatTest` encodes to the same
+     literal.
+11. **Low - upload races.**
+   - `upload` (in the sync) and `uploadSoon` can overlap. The ids dedupe, but `dropped` is subtracted twice and logged
+     twice.
+   - Removing the sent ids is a load-modify-commit. It must run under `ParentPin`'s lock, or a `check` committed in
+     between is lost.
+   - Fix: one mutex for both paths, and the removal under the lock. S1 and S3 remove most of this.
+12. **Low - server validation silently drops events.**
+   - An event outside 2020..now+1 d is skipped, the phone gets 204, and it deletes the event.
+   - Scenario: during an override or pause (auto time is lifted then), the kid moves the clock forward and keeps
+     airplane mode on. Every later wrong try is then dropped as implausible.
+   - Fix: store such an event with `occurred_at_ms` set to the received time and a "phone clock was off" mark. The
+     notices fall back to `received_at`.
+13. **Low - the security log floods.**
+   - The security page shows the last 200 rows (`admin.rs`). A guessing kid adds up to 35 `parent_pin_wrong` rows a
+     day, and every parent visit to Settings adds one more. Sign-ins and bans scroll off the page.
+   - Fix:
+     - the security log gets `parent_pin_used` and `parent_pin_lockout` only; wrong tries stay on the device card;
+     - write the event row and its log row in one transaction, as `crash_reports` does.
+14. **Low - an empty or short input costs a try (today too).**
+   - Tapping OK on an empty field uses up 1 of the 5 tries.
+   - Fix: refuse it locally, uncounted: "Enter 6-10 digits." No PIN that short exists (the server has always required
+     at least 6 digits), so the kid gains nothing.
+15. **Low - PWA texts and placement.**
+   - Put the card right after "Screen lock". That card says "unlock code (offline override PIN, below)"; reword it to
+     "parent PIN". Link `managed_without_pin`'s "Set a PIN below" to `#parent-pin`.
+   - The PIN input is `type="text"`, but the card's own hint is about a kid watching. Use `type="password"`,
+     `inputmode="numeric"` and `autocomplete="new-password"`.
+   - The use notice ends every use with "Typed where your child could see?", so the parent gets it after each of their
+     own visits to Settings. Keep that tail for `override` only, so the lockout and wrong-try notices don't get lost.
+   - Add the way out to the phone's locked-out text and to the PWA's lockout line: "A new parent PIN from the parent
+     page ends this." A kid can hold the lockout at 24 h by typing 5 wrong codes each time it ends. If the phone is
+     offline (server down, which is exactly when the parent needs Settings), the parent then waits up to 24 h with the
+     phone in hand. That's not for good, but the card should say so.
+   - Every outcome redirects with `#parent-pin`, so the no-jump rule holds.
+16. **Low - the common list misses frequent shapes.**
+   - Missing: 100000, 200000, 232323, 147147, 741852, 963852, 852456, 456123, 321654, 951753, 357159.
+   - Two rules cover most of the list and these:
+     - "at most 2 distinct digits", which refuses 0.28 % of 6-digit PINs;
+     - "a block repeated" (123123, 520520, 12341234).
+   - Both work only without the sweep (S2): the 10-digit PINs with at most 2 distinct digits alone are 46k candidates.
+17. **Low - nits.**
+   - `parentLockoutMs(0)` shifts by -1, and Kotlin then uses only the low 6 bits of the shift count. Use
+     `coerceIn(0, 7)`.
+   - §6 step 1's list misses the `isLockedOut` call in `SettingsFragmentLauncher.showPausePinDialog`. The scan test
+     would catch it.
+   - Lock order: `ParentPin` first, then `PinLockRuntime` (in `checkParentCode`), never the reverse.
+
+### Simplification
+
+- S1. **Drop `uploadSoon`.**
+  - There is no push, so the parent sees an event only when they open the PWA.
+  - On an online phone the next sync is at most 30 min away (the backstop), and the override's event arrives in the
+    very sync that ends it.
+  - This removes the second client path, the single-flight, the timeout, the `SyncRunner` scan rule and most of #11.
+    Bring it back with Web Push or ntfy (Q2).
+  - The endpoint stays: §3.1's first reason (an old server answers 204 and loses the events) still holds.
+- S2. **Drop the startup sweep.**
+  - Replace the three-state `override_pin_weak` with one column, `override_pin_checked`: 0 by default, 1 when saved
+    through `update_parent_pin`.
+  - A set PIN at 0 shows "Set before easy PINs were refused - save a new one to have it checked."
+  - Today there is one install and one test phone.
+  - This also frees the rules from the 176-candidate limit (#9, #16).
+- S3. **Drop `dropped`.**
+  - The eviction keeps the lockouts and drops `wrong` events first, and a lockout event already means "5 wrong".
+  - This removes the counter, its subtraction, the double log and `parent_pin_events_dropped`.
+- S4. **(optional) Start the window inside `check`** (for OVERRIDE, PAUSE and INSTALL_MODE) instead of
+  `ParentPinGrant` + `require`.
+  - A source scan ("the starters are called only from `ParentPin.kt`") gives the same guarantee.
+  - An `unlocked` event can then no longer exist without its window. Today that happens when the dialog's coroutine is
+    cancelled mid-check (the time lock ended and `LockActivity` finished).
+
+### Open questions
+
+1. Agree: a new PIN resets. Only the parent's session can do it. It fails when:
+   - the phone is offline (expected);
+   - the save was refused (the parent must see why, #8);
+   - storage is full (#3).
+
+   See #7 for the `level` choice.
+2. Agree. With S1, there is no prompt send until push exists.
+3. Use S2 instead of the sweep.
+4. Agree, but narrower:
+   - `Unavailable` only for a failed commit, with memory restored (#3);
+   - an unreadable state becomes a 15-minute lockout (#2).
+5. Agree. What remains:
+   - a clock moved forward during an override or pause (auto time lifted) gives one extra round per override, then
+     nothing;
+   - a drained battery's clock reset gives at most one extra duration.
+6. Agree.
+7. Agree.
+
+**Needs a user decision:**
+- #7: does a correct PIN reset `level`?
+- #9: refuse dates?
+- #1: does the hotfix ship before step 1?
