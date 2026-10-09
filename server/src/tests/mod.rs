@@ -7,6 +7,7 @@ mod calls;
 mod cleanup;
 mod device_api;
 mod edge;
+mod enrollment;
 mod hardening;
 mod launcher_ui;
 mod listeners;
@@ -159,6 +160,7 @@ impl TestApp {
             audit: Default::default(),
             limits: Default::default(),
             tokens: Default::default(),
+            enrollment: Default::default(),
         };
 
         TestApp {
@@ -318,24 +320,29 @@ impl TestApp {
     }
 
     /// Inserts a device the way `handlers::devices::create_device` does (kiosk on, policy row
-    /// present) with a valid enrollment code, and returns `(device_id, enrollment_code)`.
+    /// present) and gives it a setup-QR enrollment code (design 22: stored hashed, valid 30
+    /// minutes), returning `(device_id, enrollment_code)`.
     pub async fn create_device(&self, name: &str) -> (i64, String) {
-        let code = format!("CODE-{name}");
-        let id: i64 = sqlx::query_scalar(
-            "INSERT INTO devices (name, enrollment_code, enrollment_code_expires_at) \
-             VALUES (?, ?, datetime('now', '+15 minutes')) RETURNING id",
-        )
-        .bind(name)
-        .bind(&code)
-        .fetch_one(&self.db)
-        .await
-        .expect("failed to insert device");
+        let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
+            .bind(name)
+            .fetch_one(&self.db)
+            .await
+            .expect("failed to insert device");
         sqlx::query("INSERT INTO device_policy (device_id, kiosk_desired) VALUES (?, 1)")
             .bind(id)
             .execute(&self.db)
             .await
             .expect("failed to insert device policy");
+        let code = self.new_code(id, crate::enrollment::Kind::Qr).await;
         (id, code)
+    }
+
+    /// A new enrollment code of `kind` for a device, as the device page or the QR page makes one.
+    pub async fn new_code(&self, device_id: i64, kind: crate::enrollment::Kind) -> String {
+        crate::enrollment::new_code(&self.state, device_id, kind)
+            .await
+            .expect("failed to make an enrollment code")
+            .0
     }
 
     /// Creates and enrolls a device, returning `(device_id, bearer_token)`.

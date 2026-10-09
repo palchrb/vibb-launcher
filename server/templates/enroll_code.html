@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% include "partials/app_header.html" %}
+<main class="container container-narrow">
+    <div class="page-header">
+        <h1>Code for {{ device.name }}</h1>
+    </div>
+    <div class="card enrollment-card">
+        <p>On the phone, open the launcher's Settings, choose "Enroll now" and type:</p>
+        <p class="enrollment-code">{{ code }}</p>
+        <p class="subtitle">Valid for {{ minutes }} minutes (until {{ expires_at }} UTC), and only once. It is shown only on this page and replaces any code made before - if you lose it, make a new one.</p>
+        {% if let Some(text) = paused %}
+        <div class="error">{{ text }}</div>
+        {% endif %}
+        {% if enrolled %}
+        <div class="error">{{ device.name }} is enrolled now. Using this code gives the phone that uses it a new token and disconnects the one enrolled now.</div>
+        {% endif %}
+        <a href="/devices/{{ device.id }}#access" class="button-small">Back to {{ device.name }}</a>
+    </div>
+</main>
+</body>
+</html>

@@ -14,14 +14,21 @@
     <div class="card"><div class="error">{{ text }}</div></div>
     {% endif %}
 
-    {% if let Some(code) = device.enrollment_code %}
-    <div class="card enrollment-card">
+    {% if device.enrolled_at.is_none() %}
+    <div class="card enrollment-card" id="access">
         <h2>Not enrolled yet</h2>
-        <p>On the phone, open Settings and enter this code:</p>
-        <p class="enrollment-code">{{ code }}</p>
-        <p class="subtitle">This code expires soon. If it stops working before the phone is set up, generate a new one.</p>
+        {% if let Some(text) = access.notice %}
+        <div class="error">{{ text }}</div>
+        {% endif %}
+        {% if let Some(line) = access.live_code %}
+        <p>{{ line }}</p>
+        {% endif %}
+        {% if let Some(text) = access.typed_paused %}
+        <div class="error">{{ text }}</div>
+        {% endif %}
+        <p>Make a code and type it in the launcher's Settings ("Enroll now"), or set the phone up with a QR code. A code is shown once, works once and replaces the one before it.</p>
         <form method="post" action="/devices/{{ device.id }}/regenerate-code">
-            <button type="submit" class="button-secondary">Generate new code</button>
+            <button type="submit" class="button-secondary">New code</button>
         </form>
         <a href="/devices/{{ device.id }}/provision" class="button-small">Provision by QR code instead</a>
     </div>
@@ -38,7 +45,6 @@
         <p>{{ line }}</p>
         {% endfor %}
         <p class="subtitle">Last reported {{ status.reported_at }}</p>
-        <p class="subtitle">{{ last_access }}</p>
         {% if let Some(problem) = policy_problem %}
         <div class="error">{{ problem }}</div>
         {% endif %}
@@ -47,7 +53,40 @@
         {% endif %}
         {% else %}
         <p class="subtitle">No status reported yet.</p>
-        <p class="subtitle">{{ last_access }}</p>
+        {% endif %}
+    </div>
+
+    <div class="card" id="access">
+        <h2>Access</h2>
+        {% if let Some(text) = access.notice %}
+        <div class="error">{{ text }}</div>
+        {% endif %}
+        <p>{{ last_access }}</p>
+        {% if !access.has_token %}
+        <div class="error">This phone's access is revoked: it can't reach this server until it is enrolled again with a new code. It keeps enforcing its last policy.</div>
+        {% endif %}
+        {% if let Some(line) = access.live_code %}
+        <p>{{ line }}</p>
+        {% endif %}
+        {% if let Some(text) = access.typed_paused %}
+        <div class="error">{{ text }}</div>
+        {% endif %}
+        <p class="subtitle">A new code enrolls the phone again - after a reset, or with its access revoked. Using it disconnects the phone that is enrolled now.</p>
+        <form method="post" action="/devices/{{ device.id }}/regenerate-code">
+            <button type="submit" class="button-secondary">New code</button>
+        </form>
+        <a href="/devices/{{ device.id }}/provision" class="button-small">Provision by QR code</a>
+        {% if access.has_token %}
+        <details>
+            <summary class="button-danger" style="display:inline-block; cursor:pointer; list-style:none; margin-top:12px;">Revoke access&hellip;</summary>
+            <form method="post" action="/devices/{{ device.id }}/revoke" style="margin-top:12px;">
+                <label class="checkbox-row">
+                    <input type="checkbox" name="confirm" value="yes" required>
+                    <span>Cut {{ device.name }} off now: its token stops working and it can't sync until it is enrolled again. It keeps enforcing its last policy.</span>
+                </label>
+                <button type="submit" class="button-danger">Revoke access</button>
+            </form>
+        </details>
         {% endif %}
     </div>
     {% endif %}

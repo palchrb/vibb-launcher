@@ -234,20 +234,13 @@ async fn a_third_stream_closes_the_first_and_delete_closes_the_rest() {
 async fn re_enrolling_a_phone_retires_its_old_token() {
     let app = TestApp::new().await;
     let (id, old_token) = app.enrolled_device("phone").await;
-    sqlx::query(
-        "UPDATE devices SET enrollment_code = 'AGAIN', \
-         enrollment_code_expires_at = datetime('now', '+15 minutes') WHERE id = ?",
-    )
-    .bind(id)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    let code = app.new_code(id, crate::enrollment::Kind::Typed).await;
     let res = app
         .request(
             Method::POST,
             "/api/devices/enroll",
             None,
-            Some(serde_json::json!({"enrollment_code": "AGAIN"})),
+            Some(serde_json::json!({"enrollment_code": code})),
         )
         .await;
     assert_eq!(res.status, StatusCode::OK);

@@ -51,7 +51,7 @@ No prior programming experience - build features directly rather than explaining
 ## Architecture
 
 - **Two completely separate auth systems**: admin sessions (`tower-sessions`, cookie-based, for the parent-facing web UI) and device bearer tokens (`Authorization: Bearer <token>`, for the phone's API calls). A device is never a session; an admin never touches the device API.
-- **Enrollment is a one-shot code, not a device-number+URL pair.** The admin generates a short human-typeable code from a device's page; the phone POSTs it once to `/api/devices/enroll` and gets back a bearer token in return. The code is cleared from the DB the moment it's used - it can never be replayed.
+- **Enrollment is a one-shot code, not a device-number+URL pair.** The admin generates a short human-typeable code from a device's page (or a long one inside the setup QR); the phone POSTs it once to `/api/devices/enroll` and gets back a bearer token in return. Only the code's hash is stored, and it is cleared the moment it's used - it can never be replayed (design 22, see "Connectivity and exposure").
 - **`kiosk_desired` is server-authoritative** - the admin UI sets it, the device applies it automatically on its next sync, no on-device confirmation or local override switch. Fully built and confirmed working live on the physical test phone, using the full `lock_task_features` bitmask - status bar info, home, recents, keyguard, notifications, and the power button menu are all always forced on whenever kiosk mode is (see the gotcha below for why keyguard specifically can't be optional; notifications/power-button were originally separate per-device checkboxes, removed once it was clear there was never a real reason to want either off while kiosk mode is on). **`kiosk_desired` is no longer admin-configurable at all (2026-08-11)** - every device is kiosk mode now, full stop, matching how this project is actually used in practice (there was never a real reason to enroll a device and leave it unrestricted). `create_device` and `update_policy` both hardcode it to `1`/`true` unconditionally; the "Restrict this phone..." checkbox and its explanatory copy are gone from `device_detail.html` entirely, not just defaulted on.
 - **Friendlier allowlist**: the device reports its installed apps (`{package_name, label}` pairs) in every status heartbeat; the admin UI renders checkboxes from that real, current list rather than asking a parent to hand-type Android package names. See `device_status.installed_apps_json` and `handlers::devices::view_device`.
 - **Schedules became named time rules in handy step 6** - see "Time rules, screen time, location policy" below. History: the original fixed weekday/weekend allowed windows + bedtime (minutes since midnight, `weekday_start_minutes` etc.) lived per device, then (2026-08-11) moved to `/schedules` as a global default (`global_schedule`) plus a per-device opt-in override (`device_policy.custom_schedule_enabled`). Those columns are now frozen: converted into rules once and only still sent for launchers without `time_rules_v1`. The override switch itself is still `custom_schedule_enabled`.
@@ -237,7 +237,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 ## Data model (SQLite, see `migrations/`)
 
 - `admin_users` - parent login accounts, TOTP secret, forced-password-change flag
-- `devices` - one row per kid's phone: name, enrollment code (+ expiry, cleared on use), hashed bearer token, enrolled/last-seen timestamps
+- `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
 - `device_policy` - one row per device: allowlist JSON, `custom_schedule_enabled` (own time rules + `daily_budget_json` instead of the global ones), `location_mode`/`location_interval_minutes`, the frozen pre-step-6 schedule columns, `kiosk_desired` (always `1` now), `lock_task_features` (bitmask), `override_pin_hash`/`override_pin_salt`, `kid_pin_hash`/`kid_pin_salt`/`kid_pin_length` (step 10)
 - `global_schedule` - singleton (`id = 1`): the global `daily_budget_json` and the frozen pre-step-6 schedule; `time_rules` (device_id NULL = global) and `time_lifts` - see "Time rules" above
 - `device_status` - append-only heartbeat log (pruned after 30 days, the newest report per phone kept): lock reason, kiosk-engaged, installed-app snapshot, app version, timestamp, `offline_override_used`, `policy_state`, `restrictions_paused`, `capabilities_json`, `call_state_json`, `time_state_json`, `lock_state_json`, `update_fence_json`, `notification_cancels_json`, `backup_service_enabled`
@@ -554,7 +554,24 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `CommandStreams`: 2 live streams per phone (a third closes the oldest), `close_device` on delete and re-enroll.
   Warnings: a wide bind with only loopback trusted (startup), an untrusted peer sending XFF or two phones behind one
   private address (logged once, `Limits::exposure_warning` for the Connection page).
-- Tests: `src/tests/edge.rs` (a valid token behind a full failure bucket, IPv6 /64, throttled events; policy and
+- **Enrollment** (S3, `src/enrollment.rs`, migration `0052_enrollment_codes.sql`): one live code per phone, stored
+  only as SHA-256 of the normalised code (upper-case, no spaces/dashes) in `devices.enrollment_code_hash` with
+  `enrollment_code_kind` - `qr` (26 chars base32, 30 min, only in the setup QR) or `typed` (8 chars of
+  `TYPED_ALPHABET`, 15 min, shown as ABCD-EFGH); the plaintext column is cleared and never written (open codes died
+  with the migration). A new device has no code; "New code" (`POST /devices/{id}/regenerate-code`) renders
+  `enroll_code.html` once (`no-store`), the provision page makes a QR code. `enroll`: not code-shaped -> 401;
+  typed-shaped -> 429 while paused or the client's failure bucket is full, 401 uncounted with no typed code live, a
+  miss counts toward the bucket and `Enrollment::typed_failed` (20 an hour server-wide while a typed code is live
+  pause typed codes until the hour ends: `enroll_typed_paused`, the device page offers the QR); QR-shaped always
+  checked. At most 8 checks at once (`Enrollment::gate`, after the body is read). Use = one `UPDATE ... WHERE
+  enrollment_code_hash = ? AND not expired RETURNING`; then the token index, streams, `device_enrolled` (with IP).
+  Failures: throttled `enroll_failed`. Device page "Access" card (`#access`): last access, the live code's kind and
+  expiry, New code (re-enroll: disconnects the enrolled phone), Provision, Revoke access (`POST
+  /devices/{id}/revoke`, confirm box; `token_hash = NULL`, index, streams closed, `access_revoked`).
+- Tests: `src/tests/enrollment.rs` (QR once, no plaintext stored, a race of 8 gives one token, expiry, typed
+  failures without a live typed code count for nothing, the pause with QR codes still enrolling after 200 junk QR
+  codes, the shared failure bucket, New code once and replacing, revoke, the setup QR's kind), `enrollment::tests`.
+  `src/tests/edge.rs` (a valid token behind a full failure bucket, IPv6 /64, throttled events; policy and
   command-result past full slots; a stream holds its slot; a third stream closes the first, delete ends the rest and
   the token; re-enroll retires the old token; 413s and headers on both listeners; last access on the page),
   `limits::tests`. `src/tests/listeners.rs` (no `"/api/devices` literal in `main.rs`; the device router 404s every admin path,

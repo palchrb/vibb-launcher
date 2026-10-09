@@ -452,11 +452,11 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
     )
     .await;
     assert!(response.status().is_redirection());
-    let (id, code): (i64, String) =
-        sqlx::query_as("SELECT id, enrollment_code FROM devices WHERE name = 'new'")
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
+    let id: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE name = 'new'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let code = app.new_code(id, crate::enrollment::Kind::Typed).await;
     let mask = |device: i64| {
         sqlx::query_scalar::<_, i64>(
             "SELECT quick_controls_mask FROM device_policy WHERE device_id = ?",

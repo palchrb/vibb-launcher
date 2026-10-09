@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -11,7 +11,7 @@ use tokio_stream::wrappers::{BroadcastStream, WatchStream};
 
 use crate::AppState;
 use crate::models::{
-    CallPolicy, CommandResultRequest, Device, DeviceContactRow, DevicePolicy, DnsBlocklistCategory,
+    CallPolicy, CommandResultRequest, DeviceContactRow, DevicePolicy, DnsBlocklistCategory,
     DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse, GlobalSchedule,
     InstallProgressReport, InstalledApp, LauncherUi, PendingCommand, PolicyContact, PolicyResponse,
     StatusReportRequest, TrackedApp, TrackedAppUpdate,
@@ -19,49 +19,136 @@ use crate::models::{
 use crate::security::{self, AuthedDevice};
 use crate::time_rules::{LocationPolicy, TimePolicy};
 
+/// `POST /api/devices/enroll` (design 22 §3.1): a code from the device page or a setup QR for a
+/// device token. The code is normalised and hashed ([crate::enrollment]); using it is one atomic
+/// `UPDATE ... RETURNING`, so two phones racing for one code get one token between them.
+///
+/// - Not code-shaped: 401 at once (nothing to look up, nothing counted).
+/// - Typed-shaped: 429 while typed codes are paused or this client's failure bucket is full;
+///   401 at once, uncounted, when no typed code is live; a miss counts toward both.
+/// - QR-shaped: always checked (130 bits - guessing is hopeless), never paused.
+///
+/// At most `enrollment::IN_FLIGHT` checks run at once (the body was already read); a failure is a
+/// throttled `enroll_failed` event, a success a `device_enrolled` event with the client's IP.
 pub async fn enroll(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<EnrollRequest>,
-) -> impl IntoResponse {
-    let device = sqlx::query_as::<_, Device>(
-        "SELECT * FROM devices WHERE enrollment_code = ? \
-         AND enrollment_code_expires_at > datetime('now')",
-    )
-    .bind(&req.enrollment_code)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+) -> axum::response::Response {
+    use crate::enrollment::{self, Kind};
 
-    let Some(device) = device else {
-        return (
+    let client = state.net.client(&headers, addr.ip());
+    let ip = client.ip.to_string();
+    let key = crate::net::limit_key(client.ip);
+    let code = enrollment::normalize(&req.enrollment_code);
+    let unauthorized = || {
+        (
             StatusCode::UNAUTHORIZED,
             "invalid or expired enrollment code",
         )
-            .into_response();
+            .into_response()
+    };
+    let too_many = |seconds: i64| {
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, seconds.max(1).to_string())],
+        )
+            .into_response()
+    };
+
+    let Some(kind) = enrollment::shape(&code) else {
+        return unauthorized();
+    };
+    let now = chrono::Utc::now();
+    if kind == Kind::Typed {
+        if let Some(until) = state.enrollment.typed_paused_until(now) {
+            return too_many((until - now).num_seconds());
+        }
+        if let Some(refused) = state.limits.ip_blocked(&key) {
+            return too_many(refused.retry_after_secs as i64);
+        }
+        if !state.enrollment.typed_live(now) {
+            return unauthorized();
+        }
+    }
+
+    let gate = state.enrollment.gate();
+    let Ok(Ok(_slot)) = tokio::time::timeout(Duration::from_secs(5), gate.acquire()).await else {
+        return too_many(5);
     };
 
     let token = security::generate_device_token();
     let token_hash = security::hash_token(&token);
-
-    sqlx::query(
-        "UPDATE devices SET token_hash = ?, enrollment_code = NULL, \
-         enrollment_code_expires_at = NULL, enrolled_at = datetime('now') WHERE id = ?",
+    let enrolled: Result<Option<(i64, String)>, sqlx::Error> = sqlx::query_as(
+        "UPDATE devices SET token_hash = ?, enrollment_code_hash = NULL, \
+         enrollment_code_kind = NULL, enrollment_code_expires_at = NULL, \
+         enrolled_at = datetime('now') \
+         WHERE enrollment_code_hash = ? AND enrollment_code_expires_at > datetime('now') \
+         RETURNING id, name",
     )
     .bind(&token_hash)
-    .bind(device.id)
-    .execute(&state.db)
-    .await
-    .ok();
+    .bind(enrollment::code_hash(&code))
+    .fetch_optional(&state.db)
+    .await;
+
+    let (device_id, name) = match enrolled {
+        Ok(Some(device)) => device,
+        Ok(None) => {
+            let mut detail = format!("{} code", kind.as_str());
+            if kind == Kind::Typed {
+                if state.limits.ip_failed(&key) {
+                    detail.push_str(" - this client is now refused for 10 minutes");
+                }
+                if state.enrollment.typed_failed(now) {
+                    security::record_security_event(
+                        &state.db,
+                        "enroll_typed_paused",
+                        None,
+                        Some(&ip),
+                        Some(&format!(
+                            "{} wrong typed codes this hour - typed codes are paused until {} UTC; \
+                             setup QR codes still work",
+                            enrollment::TYPED_PAUSE_FAILURES,
+                            enrollment::end_of_hour(now).format("%H:%M")
+                        )),
+                    )
+                    .await;
+                }
+            }
+            state
+                .audit
+                .record(&state.db, "enroll_failed", &key, Some(&ip), &detail)
+                .await;
+            return unauthorized();
+        }
+        Err(err) => {
+            tracing::error!(%err, "enrollment failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
     // The old token (a re-enrolled phone) stops working, the new one works from now on.
     state
         .tokens
-        .refresh(&state.db, device.id, Some(&token_hash))
+        .refresh(&state.db, device_id, Some(&token_hash))
         .await;
-    state.command_streams.close_device(device.id);
+    state.command_streams.close_device(device_id);
+    state.enrollment.refresh(&state.db).await;
+    security::record_security_event(
+        &state.db,
+        "device_enrolled",
+        None,
+        Some(&ip),
+        Some(&format!(
+            "{name} (device {device_id}), {} code",
+            kind.as_str()
+        )),
+    )
+    .await;
 
     Json(EnrollResponse {
-        device_id: device.id,
+        device_id,
         device_token: token,
     })
     .into_response()

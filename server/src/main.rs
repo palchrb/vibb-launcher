@@ -6,6 +6,7 @@ mod config;
 mod crashes;
 mod device_routes;
 mod dns_engine;
+mod enrollment;
 mod gate;
 mod handlers;
 mod kid_lock;
@@ -103,6 +104,8 @@ pub struct AppState {
     /// `token_hash -> device id`, so a token check never touches the database
     /// (`security::TokenIndex`).
     pub tokens: std::sync::Arc<security::TokenIndex>,
+    /// Whether a typed enrollment code is live, and the typed-code pause (`enrollment`).
+    pub enrollment: std::sync::Arc<enrollment::Enrollment>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -234,12 +237,14 @@ async fn main() {
         audit: Default::default(),
         limits: Default::default(),
         tokens: Default::default(),
+        enrollment: Default::default(),
     };
     state
         .tokens
         .reload(&state.db)
         .await
         .expect("failed to read the device tokens");
+    state.enrollment.refresh(&state.db).await;
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
     // from the backups, or drop the reference (design 05, 08).
@@ -528,6 +533,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/regenerate-code",
             post(handlers::devices::regenerate_code),
+        )
+        .route(
+            "/devices/{id}/revoke",
+            post(handlers::devices::revoke_access),
         )
         .route(
             "/devices/{id}/delete",

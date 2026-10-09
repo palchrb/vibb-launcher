@@ -42,17 +42,6 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
-/// Short, human-typeable, unambiguous (no 0/O/1/I/L) enrollment code shown in
-/// the admin UI and typed once into the phone's Settings screen - this
-/// replaces the old flow of typing a raw server URL + made-up device number.
-pub fn generate_enrollment_code() -> String {
-    const CHARS: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
-    let mut rng = OsRng;
-    (0..8)
-        .map(|_| CHARS[(rng.next_u32() as usize) % CHARS.len()] as char)
-        .collect()
-}
-
 /// High-entropy bearer token handed to a device once, at enrollment. Only
 /// its SHA-256 hash (see `hash_token`) is ever stored - the plaintext value
 /// is shown/returned exactly once and can't be recovered afterward, the same

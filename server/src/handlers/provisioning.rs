@@ -117,23 +117,28 @@ pub async fn provision_form(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Query(params): Query<ProvisionQueryParams>,
-) -> impl IntoResponse {
-    let code = crate::security::generate_enrollment_code();
-    sqlx::query(
-        "UPDATE devices SET enrollment_code = ?, \
-         enrollment_code_expires_at = datetime('now', '+30 minutes') WHERE id = ?",
-    )
-    .bind(&code)
-    .bind(id)
-    .execute(&state.db)
-    .await
-    .ok();
-
-    let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+) -> axum::response::Response {
+    let Some(device) = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
-        .fetch_one(&state.db)
+        .fetch_optional(&state.db)
         .await
-        .expect("device must exist to provision it");
+        .ok()
+        .flatten()
+    else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    // A setup-QR code (design 22 §3.1): 130 bits, 30 minutes, once; only its hash is stored.
+    let code = match crate::enrollment::new_code(&state, id, crate::enrollment::Kind::Qr).await {
+        Ok((code, _)) => code,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't make an enrollment code");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't make a code - check the server log.",
+            )
+                .into_response();
+        }
+    };
 
     let settings = sqlx::query_as::<_, ProvisioningSettings>(
         "SELECT * FROM provisioning_settings WHERE id = 1",
@@ -186,6 +191,7 @@ pub async fn provision_form(
         .render()
         .unwrap(),
     )
+    .into_response()
 }
 
 /// Android's standard zero-touch Device Owner provisioning flow: on a

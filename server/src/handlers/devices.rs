@@ -9,12 +9,6 @@ use crate::AppState;
 use crate::models::{Device, DevicePolicy, DeviceStatus, Hardening, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
 
-/// How long a freshly-generated enrollment code stays valid before it must
-/// be regenerated - long enough to walk from the computer to the phone and
-/// type it in, short enough that a code shown once on screen isn't a
-/// standing credential.
-const ENROLLMENT_CODE_MINUTES: i64 = 30;
-
 struct DeviceListRow {
     id: i64,
     name: String,
@@ -104,18 +98,15 @@ pub async fn create_device(
 /// The device row and its `device_policy` row go in one transaction: a device without a policy
 /// row can't exist, since `device_api::build_policy` refuses to serve one (500) rather than
 /// invent a default.
+///
+/// No enrollment code yet: the device page makes one ("New code", shown once) or the setup QR
+/// does (design 22 §3.1) - a code made here could never be shown again.
 async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, sqlx::Error> {
-    let code = security::generate_enrollment_code();
     let mut tx = state.db.begin().await?;
-    let id: i64 = sqlx::query_scalar(
-        "INSERT INTO devices (name, enrollment_code, enrollment_code_expires_at) \
-         VALUES (?, ?, datetime('now', ?)) RETURNING id",
-    )
-    .bind(name)
-    .bind(&code)
-    .bind(format!("+{ENROLLMENT_CODE_MINUTES} minutes"))
-    .fetch_one(&mut *tx)
-    .await?;
+    let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await?;
 
     // Kiosk mode on, with the full always-on feature set, for every device - see
     // `update_policy` and this repo's CLAUDE.md (`kiosk_desired` is no longer admin-configurable).
@@ -135,23 +126,187 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
     Ok(id)
 }
 
+#[derive(Template)]
+#[template(path = "enroll_code.html")]
+struct EnrollCodeTemplate {
+    title: String,
+    device: Device,
+    code: String,
+    expires_at: String,
+    minutes: i64,
+    /// The phone is enrolled: using the code cuts the enrolled phone off (recovery).
+    enrolled: bool,
+    /// Typed codes are paused right now (too many wrong ones this hour).
+    paused: Option<String>,
+}
+
+/// "New code" on the device page (design 22 §3.1): a typed code (8 characters, 15 minutes),
+/// shown on this response only - only its hash is stored. Replaces any live code. Also the
+/// recovery path for an enrolled phone: using the code gives it a new token and retires the old
+/// one. 409 while typed codes are paused (the page offers the QR).
 pub async fn regenerate_code(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> impl IntoResponse {
-    let code = security::generate_enrollment_code();
-    sqlx::query(
-        "UPDATE devices SET enrollment_code = ?, \
-         enrollment_code_expires_at = datetime('now', ?) WHERE id = ?",
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+) -> Response {
+    let Some(device) = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let kind = crate::enrollment::Kind::Typed;
+    let (code, expires_at) = match crate::enrollment::new_code(&state, id, kind).await {
+        Ok(made) => made,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't make an enrollment code");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't make a code - nothing was changed. Check the server log.",
+            )
+                .into_response();
+        }
+    };
+    security::record_security_event(
+        &state.db,
+        "enroll_code_created",
+        Some(&admin.username),
+        None,
+        Some(&format!("{} (device {id}), typed code", device.name)),
     )
-    .bind(&code)
-    .bind(format!("+{ENROLLMENT_CODE_MINUTES} minutes"))
-    .bind(id)
-    .execute(&state.db)
-    .await
-    .ok();
+    .await;
+    let html = EnrollCodeTemplate {
+        title: format!("Code for {}", device.name),
+        code: crate::enrollment::display(&code),
+        expires_at,
+        minutes: kind.minutes(),
+        enrolled: device.enrolled_at.is_some(),
+        paused: state
+            .enrollment
+            .typed_paused_until(chrono::Utc::now())
+            .map(|until| {
+                format!(
+                    "Typed codes are paused until {} UTC (too many wrong ones this hour): this code \
+                     works only after that. A setup QR code (Provision) works now.",
+                    until.format("%H:%M")
+                )
+            }),
+        device,
+    }
+    .render()
+    .unwrap();
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Html(html),
+    )
+        .into_response()
+}
 
-    Redirect::to(&format!("/devices/{id}"))
+#[derive(Deserialize)]
+pub struct RevokeForm {
+    #[serde(default)]
+    confirm: String,
+}
+
+/// "Revoke access" (design 22 §3.1): the phone's token stops working at once and its open
+/// streams end. The phone keeps enforcing what it has and says "access revoked - enroll again";
+/// a new code (above) enrolls it again. Needs the confirm box (else nothing happens).
+pub async fn revoke_access(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<RevokeForm>,
+) -> Response {
+    if form.confirm != "yes" {
+        return Redirect::to(&format!("/devices/{id}?notice=revoke_unconfirmed#access"))
+            .into_response();
+    }
+    let revoked = sqlx::query_scalar::<_, String>(
+        "UPDATE devices SET token_hash = NULL WHERE id = ? RETURNING name",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
+    let name = match revoked {
+        Ok(Some(name)) => name,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't revoke the device's access");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    state.tokens.refresh(&state.db, id, None).await;
+    state.command_streams.close_device(id);
+    security::record_security_event(
+        &state.db,
+        "access_revoked",
+        Some(&admin.username),
+        None,
+        Some(&format!("{name} (device {id})")),
+    )
+    .await;
+    Redirect::to(&format!("/devices/{id}?notice=access_revoked#access")).into_response()
+}
+
+/// The device page's "Access" card (design 22 §3.1).
+pub struct AccessCard {
+    /// The phone has a working token.
+    pub has_token: bool,
+    /// "A typed code is valid until ..." when one is live.
+    pub live_code: Option<String>,
+    /// Typed codes are paused after too many wrong ones this hour.
+    pub typed_paused: Option<String>,
+    pub notice: Option<&'static str>,
+}
+
+fn access_card(state: &AppState, device: &Device, notice: Option<&str>) -> AccessCard {
+    let now = chrono::Utc::now();
+    let live_code = match (
+        &device.enrollment_code_kind,
+        &device.enrollment_code_expires_at,
+    ) {
+        (Some(kind), Some(expires))
+            if chrono::NaiveDateTime::parse_from_str(expires, "%Y-%m-%d %H:%M:%S")
+                .is_ok_and(|t| t.and_utc() > now) =>
+        {
+            Some(format!(
+                "A {} is valid until {expires} UTC (once).",
+                if kind == "qr" {
+                    "setup QR code"
+                } else {
+                    "typed code"
+                }
+            ))
+        }
+        _ => None,
+    };
+    AccessCard {
+        has_token: device.token_hash.is_some(),
+        live_code,
+        typed_paused: state.enrollment.typed_paused_until(now).map(|until| {
+            format!(
+                "Typed codes are paused until {} UTC: {} wrong ones were tried this hour. A setup \
+                 QR code (Provision) still works.",
+                until.format("%H:%M"),
+                crate::enrollment::TYPED_PAUSE_FAILURES
+            )
+        }),
+        notice: notice.and_then(access_notice),
+    }
+}
+
+fn access_notice(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "access_revoked" => {
+            "Access revoked: the phone's token no longer works. It keeps enforcing its last \
+             policy and asks to be enrolled again - make a new code below."
+        }
+        "revoke_unconfirmed" => "Nothing revoked: tick the box first.",
+        _ => return None,
+    })
 }
 
 /// One row in the unified Apps list - either an app the device has actually reported installed
@@ -300,6 +455,8 @@ struct DeviceDetailTemplate {
     music: Option<crate::handlers::music::MusicCard>,
     /// When and how the phone last reached this server (design 22 §3.1, in memory).
     last_access: String,
+    /// "Access" card (design 22 §3.1): codes, revoke.
+    access: AccessCard,
 }
 
 /// The kiosk app block switch on the "Play and kiosk" card (handy step 9): with it on, kiosk mode
@@ -1228,6 +1385,7 @@ async fn render_device(
     Html(
         DeviceDetailTemplate {
             last_access: crate::limits::last_access_line(state.limits.last_access(id).as_ref()),
+            access: access_card(&state, &device, query.get("notice").map(String::as_str)),
             crashes,
             music,
             app_updates_wifi_only: policy.app_updates_wifi_only,

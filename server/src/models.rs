@@ -16,7 +16,9 @@ pub struct AdminUser {
 pub struct Device {
     pub id: i64,
     pub name: String,
-    pub enrollment_code: Option<String>,
+    /// The live enrollment code's kind ("qr"/"typed") and expiry; the code itself is stored only
+    /// hashed (`enrollment_code_hash`, design 22 §3.1, never read into this struct).
+    pub enrollment_code_kind: Option<String>,
     pub enrollment_code_expires_at: Option<String>,
     pub token_hash: Option<String>,
     pub enrolled_at: Option<String>,
