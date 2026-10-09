@@ -167,3 +167,14 @@ library is managed by this repo's server and PWA; the phone never serves anythin
 7. **Kid GUI:** to be discussed with the user next, with a clickable mockup, before phase 1 is built.
 
 Also, before any `music-v*` release: the launcher's catalog row must only consider `launcher-v*` releases.
+
+## Kid GUI decisions so far (mockup https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY, 2026-10-09)
+
+- **Tapping a cover** whose library entry has resume on continues exactly where it stopped. Other entries start from
+  the beginning. A **"Liste"** button on the player opens the list of songs, chapters or episodes, like vibb on the
+  Pi. **"Sov"** is a sleep timer (15/30/45 min / off).
+- **Launcher Home** shows a "Spilles nå" card while something plays, like the ongoing-call card.
+- **PIN lock while media is actively playing and the screen is on:** a media view comes first. It shows the clock, a
+  tile with the album art and the title, a progress bar and prev / play-pause / next, plus Emergency call. A
+  **"Lås opp"** button leads to the normal keypad, which has a back arrow and a compact play/pause row. The media view
+  is part of the lock: it opens nothing but those controls. Not playing means the keypad as today.
