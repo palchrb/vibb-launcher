@@ -225,7 +225,16 @@ launchable.
   keepalive 240 s by default, hardened for deep sleep (stale-stream reconnect, a wake lock for
   the first retries); one APK works with anyone's server, no Firebase setup, no nudge metadata
   to Google. Device run on the Jelly Star still to do: time a ring in Doze, after a server
-  restart and after a Wi-Fi/mobile switch, and battery at keepalive 120 s vs 240 s. The
+  restart and after a Wi-Fi/mobile switch, and battery at keepalive 120 s vs 240 s.
+  **Plan B if that run is bad (user, 2026-10-09: "Evt ntfy")**: an optional UnifiedPush wake
+  channel per phone, next to SSE. The launcher becomes a UnifiedPush client, and the
+  family's ntfy (self-hosted with `upstream-base-url: https://ntfy.sh`, or ntfy.sh itself)
+  is the push server. The ntfy app (Play flavour) runs as a hidden engine app on the kid's
+  phone and is woken via ntfy.sh's FCM with a content-free poll request, so neither our
+  Firebase project nor any content goes to Google. A push only triggers a sync over the
+  device API. Costs: one more app to keep allowed and exempt, plus a dependency on ntfy.sh
+  and Play services. Before building it, try a battery-optimisation exemption at setup
+  and design 22's direct-HTTPS mode without tsnet. The
   original decision, as history: FCM (works without a
   Google account; Play services stay installed and are never suspended).
   Content-free high-priority data message, so a forged or replayed push can only
