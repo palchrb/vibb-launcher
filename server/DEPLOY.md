@@ -7,7 +7,7 @@ These steps get Kids Device MDM running on a Raspberry Pi Zero 2 W. Only 64-bit 
 SSH into the Pi, then run:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/install.sh | sudo bash
 ```
 
 This downloads the newest server release (the newest `server-vX.Y.Z` release of the
@@ -36,7 +36,7 @@ reach the phones at their 30-minute check-in.
 ## Updating
 
 ```
-curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/update.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/update.sh | sudo bash
 ```
 
 Downloads the newest stable `server-vX.Y.Z` release (prereleases and drafts are skipped), checks it against the

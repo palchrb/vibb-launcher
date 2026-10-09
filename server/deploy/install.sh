@@ -3,7 +3,7 @@
 # systemd box).
 #
 # Usage (as root, e.g. via sudo):
-#   curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/install.sh | sudo bash
 #
 # To install from a different fork, set KPS_REPO=owner/repo (e.g.
 # `... | sudo KPS_REPO=someone/vibb-launcher bash`; the fork must keep
