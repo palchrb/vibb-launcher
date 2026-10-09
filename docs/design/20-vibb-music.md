@@ -239,7 +239,7 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
 
 ## Design locked (user, 2026-10-09)
 
-The kid GUI is locked exactly as the mockup https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY (version 11) shows:
+The kid GUI is locked exactly as the mockup https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY (version 12, with shuffle) shows:
 - the library with peeking covers, single-choice category tiles, the search and bell buttons, NY badges and the
   now-playing bar;
 - the player with a thin seek line and a big thumb, Liste / Sov / "Spill av på", plus the list with offline marks;
@@ -247,3 +247,9 @@ The kid GUI is locked exactly as the mockup https://claude.ai/artifact/2np6veF8Y
   media view.
 
 The decisions above override the earlier sections of this doc where they differ. Next: a consolidated phase-1 spec.
+- **Shuffle** (user, 2026-10-09; mockup version 12):
+  - A round shuffle toggle sits left of "previous" on the player, peach when on. An empty slot on the right keeps play
+    centred.
+  - Only for music entries (playlists, albums, own files), hidden for audiobooks and podcasts, where order and resume
+    matter.
+  - Remembered per entry. With shuffle on, "next" picks a random unplayed track, and the list shows the shuffled order.

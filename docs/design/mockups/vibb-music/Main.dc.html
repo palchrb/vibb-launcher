@@ -151,7 +151,13 @@ input.seek::-moz-range-thumb{width:26px;height:26px;border-radius:50%;background
         </div>
       </div>
 
-      <div style="display: flex; align-items: center; justify-content: center; gap: 22px">
+      <div style="display: flex; align-items: center; justify-content: center; gap: 14px">
+        <sc-if value="{{np.canShuffle}}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{toggleShuffle}}" aria-label="Tilfeldig rekkefølge" aria-pressed="{{np.shufflePressed}}" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: {{np.shuffleBg}}; color: {{np.shuffleFg}}; display: flex; align-items: center; justify-content: center">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"></path></svg>
+          </button>
+        </sc-if>
+        <sc-if value="{{np.noShuffle}}" hint-placeholder-val="{{ false }}"><span style="width: 44px; height: 44px"></span></sc-if>
         <button type="button" onClick="{{prevTrack}}" aria-label="Forrige" style="all: unset; cursor: pointer; width: 56px; height: 56px; border-radius: 50%; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h2v14H7zM20 5v14L10 12z"></path></svg>
         </button>
@@ -162,6 +168,7 @@ input.seek::-moz-range-thumb{width:26px;height:26px;border-radius:50%;background
         <button type="button" onClick="{{nextTrack}}" aria-label="Neste" style="all: unset; cursor: pointer; width: 56px; height: 56px; border-radius: 50%; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M15 5h2v14h-2zM4 5v14l10-7z"></path></svg>
         </button>
+        <span style="width: 44px; height: 44px"></span>
       </div>
 
       <div style="display: flex; gap: 8px; margin-top: auto">
@@ -324,6 +331,7 @@ class Component extends DCLogic {
       outSheet: false,
       query: '',
       output: 'phone',
+      shuffle: {},
       news: [{ id: 'nyheter', track: 0, what: 'Ny episode' }, { id: 'troll', track: 1, what: 'Ny bok i serien' }],
       offline: { godnatt: [0, 1, 2, 3, 4], reven: [0, 1, 2, 3], nyheter: [0, 1], eventyr: [0, 1, 2], troll: [0, 1], dans: [], biltur: [0, 1, 2] }
     };
@@ -532,6 +540,11 @@ class Component extends DCLogic {
         trackOf: (isEpisodes ? 'Episode ' : 'Spor ') + (ti + 1) + ' av ' + npE.tracks.length,
         seekVal: Math.round(s.frac[npE.id] * 1000),
         progressPct: (s.frac[npE.id] * 100) + '%',
+        canShuffle: npE.kind === 'Spilleliste' || npE.kind === 'Egne filer',
+        noShuffle: !(npE.kind === 'Spilleliste' || npE.kind === 'Egne filer'),
+        shufflePressed: s.shuffle[npE.id] ? 'true' : 'false',
+        shuffleBg: s.shuffle[npE.id] ? '#F0A884' : '#1B1B28',
+        shuffleFg: s.shuffle[npE.id] ? '#0C0C14' : '#FBE4DC',
         seekTrack: 'linear-gradient(to right, #F0A884 ' + (s.frac[npE.id] * 100) + '%, #2A2A3A ' + (s.frac[npE.id] * 100) + '%)',
         posText: this.fmt(pos),
         durText: npE.tracks[ti][1]
@@ -549,6 +562,7 @@ class Component extends DCLogic {
       openList: setScreen('list'),
       toLibrary: setScreen('library'),
       openSleep: () => this.setState({ sheet: true }),
+      toggleShuffle: () => { const sh = Object.assign({}, s.shuffle); sh[npE.id] = !sh[npE.id]; this.setState({ shuffle: sh }); },
       seek: (e) => {
         const v = Math.max(0, Math.min(1000, Number(e && e.target ? e.target.value : 0)));
         const f = Object.assign({}, s.frac);
