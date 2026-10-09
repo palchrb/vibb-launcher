@@ -584,3 +584,228 @@ volumes: {handy-data: {}, handy-keys: {}, caddy-data: {}}
 5. **Hash enrollment codes** (shown once at creation, a new code to see another): yes.
 6. **Token rotation**: no; revoke + "last access" instead. **Passkeys**: later (design 23).
 7. **Image name** `ghcr.io/palchrb/handy-server`: yes.
+
+## QA review (design)
+
+QA, 2026-10-09, against 3a8cfd05. Read: `S/main.rs`, `security.rs`, `handlers/{auth,device_api,devices,provisioning,
+settings,backups}.rs`, `streams.rs`, `L/server/{MdmApi,TsnetClient,Provisioning,KidVpnService}.kt`,
+`dto/ProvisioningExtras.kt`, the manifest, `server-release.yml`, `install.sh`, and the tower-sessions 0.14 and
+totp-rs 5.7 sources. **Verdict**: the direction holds: a separate phone listener, TLS at a proxy, no pinning and no
+rotation. Three gaps (#1-#3) would let one internet host or one stolen session undo it. And "a proxy mistake can't
+expose the admin" holds only one way round. Settle #1-#3 in this note before S1.
+
+**§0 against the code**
+
+| # | Verdict | Note |
+|---|---|---|
+| 1 XFF | real, latent | `client_ip` takes the **left-most** entry. `tailscale serve` and Caddy (without `trusted_proxies`) replace XFF, so today's documented setup can't be forged. nginx's `$proxy_add_x_forwarded_for` can, and so can any non-loopback `BIND_ADDR` (the emulator loop; DEPLOY §2's stale "visit `http://<pi-tailscale-ip>:3100`", which can't work with the loopback bind). |
+| 2 TOTP counter | real, Medium | `auth.rs:127`. About 15 guesses per 75 min per IP, unbounded across IPs. |
+| 3 replay, fixation | replay real (Low); fixation **not exploitable** | tower-sessions gives a new id when the cookie's id isn't in the store (`get_record`), and a session is stored only after a correct password, so the only id an attacker can plant is his own post-password one. Keep `cycle_id()` as hygiene. |
+| 4 CSRF | real, Low today | `ts.net` is on the PSL, so sibling hosts are cross-site. It matters in (b). The counts are right (3 inline `<script>`, 12 inline handlers). |
+| 5 enrollment | real, Low | About 2e-6 per live code at 1k req/s for 30 min. The race leaves the losing phone with a dead token, not two live ones. |
+| 6 token off-tsnet | real; **High** for a phone with an `http://` URL | With `https://`, TLS still protects. `CommandListenerService` has the same `proxy()?.let`. |
+| 7 provisioning GET | real, Low-Medium | The QR page and the settings form also have no `Cache-Control`. |
+| 8 argon2 | real, **mis-described** | `verify_password` runs inline on the tokio workers (no `spawn_blocking`): at most 4 run at once on the Pi (about 76 MiB, so no OOM), but those 4 block every worker, and SSE keepalives, the device API and the admin all stall. The fix is `spawn_blocking` behind the semaphore. A semaphore awaited on the worker doesn't fix it. |
+| 9 one router | real | - |
+
+Missed, of the same kind (fold into S4 unless noted):
+- a. A password change or 2FA reset leaves every other session alive. Bump `session_epoch` on both.
+- b. `admin_users.totp_secret` is plaintext, so every backup zip, live mirror and volume snapshot carries the second
+  factor. Seal it with the `data/keys/` key as Storytel is (a restore on a new box then needs the key, or #5's
+  `reset-2fa`), or write down the trade-off.
+- c. `security_events` is never pruned, and S3 adds one row per failed enroll on a public listener. Prune after 180
+  days, and write at most one row per key per minute, with a count.
+- d. Deleting a device leaves its open SSE stream up (auth is checked only at connect). Close it on delete, as on
+  revoke.
+- e. `pending_admin_id` never expires (the design's 5 min fixes it).
+
+### High
+
+1. **High - the admin guard is opt-in and forgeable, so "a proxy mistake can't expose the admin" holds only for the
+   device router.** Scenarios:
+   - (i) A Caddyfile typo, `reverse_proxy 127.0.0.1:3100` (or `172.30.0.20:3100`: the compose leaves the admin at
+     `0.0.0.0:3100` on the `edge` network next to Caddy), puts the whole admin on the internet. `ADMIN_HOSTS` is unset
+     by default.
+   - (ii) `ADMIN_TAILSCALE_USERS` believes `Tailscale-User-Login` from any trusted peer. Caddy on the same host is
+     127.0.0.1, which is trusted, and Caddy passes client headers through, so a public client sends the header
+     itself. The layer meant to catch (i) falls to the same misroute.
+   - (iii) The image's `BIND_ADDR=0.0.0.0:3100` puts a cleartext admin on the LAN (the kid) and on any public IPv6 in
+     the host layout, and on the sidecar's tailnet IP, bypassing serve.
+
+   Each one silently turns (c) into (b), behind password + TOTP alone, in the mode sold as "the admin isn't on the
+   internet at all". Fix (simplification #23):
+   - The admin listener serves a request only when the resolved client IP (§2's walk) is loopback or tailnet
+     (100.64.0.0/10, fd7a:115c:a1e0::/48), or when it comes from a trusted peer that sent no XFF (local tools, the
+     healthcheck). Anything else gets 403 and an event.
+   - `ADMIN_PUBLIC=on` is the explicit switch for (b).
+   - `Tailscale-User-Login` counts only when the resolved IP is a tailnet IP, and DEPLOY's Caddyfiles strip
+     `Tailscale-*`.
+   - `ADMIN_HOSTS` becomes an optional extra, and the Funnel refusal stays as a second check.
+   - The host and sidecar compose files set `BIND_ADDR=127.0.0.1:3100`.
+   - Left over: a serve rule to the wrong port in (a) (`8444 -> 3100`) comes from a tailnet IP. `ADMIN_TAILSCALE_USERS`
+     covers it, since tagged kid nodes carry no login, so recommend it in every mode that hands out a tsnet key.
+2. **High - the device listener's global caps are a kill switch for any single internet host in (c).** The caps are 50
+   req/s before auth for the whole listener, and 128 in flight. Slow enroll bodies hold a slot until the 30 s timeout,
+   so about 5 new connections a second keep it full. While it's full, every phone gets a 429 or waits on policy, SSE
+   and command-result, so lock, locate and ring don't arrive. A 429 isn't a path failure, so R5 never falls back.
+   Separately, the per-IP enroll limit (10/h) counts successful and QR calls too. A carrier-CGNAT neighbour, or Docker
+   or rootless setups where every client looks like the gateway, can then block QR setup. Fix:
+   - A request with a valid token never touches a global or per-IP bucket. An in-memory `token_hash -> device_id` map,
+     refreshed on enroll, revoke and delete, makes a failed lookup cost one SHA-256 and one hash probe.
+   - The global and per-IP limits count only unauthenticated or failed requests.
+   - Enroll gets its own in-flight cap (8). Its per-IP cap counts typed-shaped failures, and QR-shaped codes are always
+     evaluated.
+   - Drop the global pre-auth bucket. A large global in-flight cap (say 512) stays as a memory guard only.
+   - Startup and the Connection page warn when every public request resolves to the same private IP.
+3. **High - step-up failures are unlimited.** §3.2.1 limits TOTP at login only. A stolen session can try step-up codes
+   at network speed: the threat model's stolen parent phone, or XSS while CSP keeps `'unsafe-inline'`. With 3 valid
+   codes in 10^6, about 170k tries are expected, which is about an hour at 50/s. Step-up guards wipe, the catalog (an
+   APK is code on the kid's phone), Connection (every phone and its token sent to the attacker's URL) and backup
+   download. Fix:
+   - Step-up failures count. 3 in one session end that session (event `stepup_failed`).
+   - They don't lock the account: the thief has to start again from the password, and the parent isn't locked out.
+
+### Medium
+
+4. **Medium - the TOTP lock is a lever for whoever knows the password.** Five failures per 15 min keep new parent
+   logins locked indefinitely. Logged-in sessions still work. After the first lock, `record_failed_login` locks again
+   on every single failure, so about 96 guesses a day get through, about 10 % a year. Fix:
+   - After a complete login, show a banner: "N failed 2FA attempts since your last login (IPs ...): your password is
+     known, change it".
+   - Lock periods double up to 24 h, and a lock's expiry doesn't reset the counter.
+   - With #1, only tailnet attackers get this far in (a) and (c).
+5. **Medium - step-up by TOTP for "2FA changes" breaks `reset_totp`.** That route exists for a parent who lost the
+   authenticator and is still logged in. Nothing documents recovery from a full lockout either, and the distroless
+   image has no shell. Fix:
+   - The 2FA reset steps up with the current password instead.
+   - Add `kid_phone_server reset-2fa <user>`: it clears TOTP and the lock and bumps the epoch.
+     `docker compose exec handy /app/kid_phone_server reset-2fa admin` works without a shell. On the Pi, run the
+     unit's binary as `kidphone`.
+6. **Medium - fallback candidates outlive their endpoints.** `previous` and its state are "never deleted". Scenario:
+   the family drops `phones.example.com` (§7 "changing exposure"). A squatter registers it and gets a certificate. The
+   next 20-min tsnet outage sends the bearer token, which is as good as the override PIN, to the squatter. Fix:
+   - R5's candidates are what the latest policy publishes: `tailnet_url` via tsnet if a key exists, `public_url`
+     direct. Never a remembered URL.
+   - `previous` serves only R3's 1 h grace. A URL the server stops publishing is forgotten at the next sync.
+   - DEPLOY (own domain): a CAA record (letsencrypt.org, plus zerossl.com since Caddy can fall back to it) instead of
+     CT watching, which nobody does.
+7. **Medium - the cleartext rules leak in three places.**
+   - (i) EndpointPolicy's "until L3, http to a tailnet IP literal" isn't tied to tsnet.
+   - (ii) §4.6's migration makes a phone without a key `direct` with its stored URL. An `http://100.x` or LAN URL is
+     then either cleartext over the OS network (finding 6 again), or refused, and the phone loses its server.
+   - (iii) Mode 2's `Dns` filter checks the answer, not the route. With the Tailscale app off, a cached 100.x answer
+     goes out over the carrier.
+
+   Fix:
+   - `http` only ever goes through tsnet's SOCKS, as legacy, and is reported. Every new endpoint is https: serve's
+     8444, Funnel and Caddy all are.
+   - A migrated endpoint that fails EndpointPolicy stays active as `legacy` (reported, never newly adopted) until the
+     server publishes one that passes.
+   - That drops the tailnet `Dns` filter and the `ts.net` cleartext exception in the NSC (#25).
+8. **Medium - the token goes to any host the client is pointed at.** `createMdmApi`'s interceptor adds `Authorization`
+   to every request, including `@Url` absolute URLs (`downloadTrackedApp`). §4.2 routes "the music bridge's fetches"
+   through the same client, so an NRK, podcast or cover URL would get the token. Fix: `ServerConnection` attaches the
+   token only when scheme://host:port equals the active endpoint's (unit-test it). External media gets its own client.
+9. **Medium - the per-token cap of 8 in flight counts long requests.** One or two SSE streams, an APK download and a
+   few music files fill it. Then policy and command-result get a 429, and a ring or lock waits for `Retry-After`. Fix:
+   - SSE and file/range downloads get their own cap.
+   - `policy`, `status` and `command-result` are always admitted (the token bucket still applies).
+   - Size the 600-request bucket from the music implementer's measured first sync, not an estimate.
+10. **Medium - the docs can run ahead of the code.** Users read `DEPLOY.md` from `main` (raw URLs). If (b) lands there
+    before server-v0.23.0, a 0.22 server gets `admin.example.com -> 3100` with none of S2 or S4. ((c) on 0.22 fails
+    closed: nothing listens on 3101.) The music implementer may also tag a server release from `main` between S1 and
+    S4. Fix:
+    - DEPLOY's public sections and the Docker section land in R1's commit, marked "server >= 0.23.0".
+    - S1-S4 go in as one series, or nobody tags `server-v*` while S2-S4 are pending.
+    - S1 starts with a mechanical `device_routes()` extraction, merged at once, so the music branch rebases once.
+      Add a test that `main.rs` has no `"/api/devices` literal outside `device_routes()`. §9's path list misses
+      routes added later.
+11. **Medium - Docker updates don't work as written.**
+    - The compose pins `0.23.0`, so "`docker compose pull && docker compose up -d`" changes nothing. Use
+      `image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}`, and the page says "set `HANDY_VERSION=X` in `.env`,
+      then pull and up".
+    - `server-release-image` runs after `publish`, and buildx pushes `X.Y.Z` before the smoke. The update check reads
+      releases, so it can announce a version whose image is missing or broken. Build, push by digest, smoke, then tag
+      `X.Y.Z` and `latest`, and publish the release last.
+    - Nothing takes the "pre-update backup" that rollback relies on. On startup, with migrations pending, run
+      `VACUUM INTO data/backups/pre-migrate-<from>-<to>.db` first (keep 3). It's cheap and covers systemd too.
+12. **Medium - step-up covers destructive actions, but the targeted adult wants live location, location history and
+    contacts** (adding himself as a caller). A stolen parent phone with a 30-day session gets all three without a
+    code. **User decision**:
+    - (a) step-up with a long window (e.g. 12 h) on locate, location history and contact edits; or
+    - (b) leave it to the parent phone's lock screen, and default to a shorter `SESSION_INACTIVITY_DAYS` in (b).
+
+    QA leans to (a) for contacts and (b) for locate, where speed matters.
+
+### Low
+
+13. **Low - `/healthz` must skip every admin guard** (`ADMIN_HOSTS` gives 421, `ADMIN_TAILSCALE_USERS` 403, and #1),
+    or the container goes unhealthy as soon as a guard is set. The healthcheck dials `BIND_ADDR`'s host (`0.0.0.0` ->
+    127.0.0.1, `::` -> ::1). `selftest-tls` passes on any HTTP status, because unauthenticated api.github.com
+    rate-limits shared runners.
+14. **Low - cookie, CSRF and redirect details.**
+    - `__Host-` requires Secure, so with `INSECURE_COOKIES` (the emulator loop) use a plain name, or nobody can log in.
+    - The Origin fallback should compare host[:port] only. Behind a proxy that sends no `X-Forwarded-Proto` (nginx's
+      default), the guessed scheme is wrong, and every POST from a browser without `Sec-Fetch-Site` gets a 403.
+    - `/auth/confirm?next=` refuses `//` and `/\`.
+15. **Low - a 401 means revoked only if it comes from our server.** A public URL that now reaches another service's 401
+    turns fallback off for good. Fix:
+    - A 401 triggers one probe of the other published endpoints. Only a 401 everywhere means revoked.
+    - R5 also counts `dns` failures (an expired domain, a stale DDNS).
+    - Report "fallback last proven" per candidate (a weekly direct probe is cheap), so a dead fallback shows before
+      it's needed.
+16. **Low - Docker details.**
+    - A bind mount isn't seeded from the image (only named volumes are). Fail with "data/ not writable by uid 65532"
+      rather than a SQLite error.
+    - Set `TZ` in the compose: `chrono::Local` drives the backup and update schedules, and distroless is UTC.
+    - The sidecar needs `TS_USERSPACE=false`. The image defaults to userspace: no tailnet IP in the netns, tailnet
+      clients arrive as 127.0.0.1, and #1 and S6 break.
+    - Docker refuses `net.*` sysctls with `network_mode: host`, so S6 in Docker means the sidecar.
+    - Restore: consume `restore_request` before the swap, and exit non-zero. If `connect_db` fails after a swap, put
+      the prerestore copy back: there is no shell to break a loop.
+    - The first-run password goes to `data/initial-admin-password` (0600), and the log names the path. Logs get
+      shipped.
+    - GHCR may create the package private on the first push [belief]: check, and make it public once (user action).
+17. **Low - mode 2's resolver trusts self-reported `tailnet_ips`.** A token holder can claim another node's IP, and a
+    sibling then gets this phone's list. Key on the source IP seen on the phone's authenticated tailnet requests
+    (serve's XFF). For S6's check-in.
+18. **Low - device listener headers.** Responses get `nosniff` and `Content-Security-Policy: default-src 'none';
+    sandbox`. In (a) on `:8444` and in Funnel (c) the listener shares the admin's hostname, and cookies aren't scoped
+    by port.
+19. **Low - the typed-code pause is easy to trigger.** 20 junk requests an hour keep typed codes paused for good.
+    Count failures only while a typed code is live: otherwise there's nothing to guess.
+20. **Low - `Cache-Control: no-store` on all admin HTML turns off bfcache.** Back and forward then reload the page,
+    which risks the PWA's scroll restore. Use `private, no-cache` for HTML. Keep `no-store` for location JSON,
+    backups, the QR page, and the account and 2FA pages.
+21. **Low - DEPLOY's tsnet keys.** In every mode that hands out a key (a (c) phone with a tsnet fallback too), use
+    tagged, pre-approved, non-ephemeral keys plus the `tag:kid -> pi:8444` ACL, not only in (a). Auth keys expire
+    within 90 days, so the tsnet fallback lives on the node's stored state, not on the key.
+22. **Low - QR v2's `"v"`.** Send `"v": "2"`: strings are the safe type in ManagedProvisioning's extras bundle
+    [belief]. A launcher that doesn't know a `mode` treats the QR as v1 (`server_url` only).
+
+### Simplification
+
+23. One default-on rule for the admin (#1's client-IP gate) in place of `ADMIN_HOSTS` plus the Funnel refusal as the
+    main guard. `ADMIN_TAILSCALE_USERS` stays optional.
+24. `limits.rs` with two key kinds: the token, and IP/64 for unauthenticated or failed requests, plus the SSE cap. No
+    global pre-auth bucket (#2): less to tune, and nothing to DoS ourselves with.
+25. https for every new endpoint (#7). There is then no tailnet `Dns` filter and no `ts.net` exception, L3 becomes
+    "cleartext off, debug overlay on", and `NetworkSecurityConfigTest` shrinks.
+26. Leave mode 2 out of S5 and L1, except its CHECK value: changing a SQLite CHECK later means rebuilding the table.
+    No `tailscale_app` radio, no `vpn_owner`/`dns`/`tailnet_ips`/`tailscale_app` status fields, and no R2 branch for
+    it until L2. Drop `previous` as a fallback candidate (#6).
+27. Docker docs: one recommended layout. `network_mode: host` with the host's `tailscaled` and Caddy keeps the default
+    `TRUSTED_PROXIES`, and docker-proxy never hides the client IP. Give the bridge and sidecar layouts a paragraph
+    each, and drop the table.
+
+**Open questions, QA's view**
+1. **User decision.** An own domain puts the home IP in public DNS, which tells the targeted adult the family's ISP and
+   rough location. Funnel avoids that, along with the port forward, DDNS and Caddy's RAM on the Pi; it costs the
+   bandwidth cap on APK and music downloads. QA leans to Funnel first, and an own domain only if downloads hurt (then
+   with CAA, #6).
+2. Agree, and go further: no `ts.net` cleartext exception at all (#25).
+3. Agree, keyed on the observed source (#17), with kernel-mode Tailscale in Docker (#16).
+4. Agree, with the candidates limited to what the current policy publishes (#6).
+5. Agree. Plain SHA-256 is enough. For the 8-char code it's cosmetic against someone with the DB, but harmless.
+6. Agree on both. Add `reset-2fa` (#5).
+7. Agree. Check the package's visibility after the first push (#16).
