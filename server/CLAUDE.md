@@ -251,6 +251,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"
+- `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep"
 - `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (`requested_at`/`delivered_at`/`acknowledged_at`/`result`), see the Find My Device architecture bullet above
 
 ## Device-facing API (plain JSON, no envelope)
@@ -264,7 +265,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204
 - `POST /api/devices/dns-events` (bearer) - blocked domains, stored only while the phone's log is on (default off) -> 204
 - `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download, both scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above; the download is resumable (`Range`/`If-Match`, `X-Release-Tag`; "App downloads" below)
-- `GET /api/devices/music/library` (ETag/304, gzip), `/music/covers/{hash}`, `/music/files/{id}` (Range, `X-Content-SHA256`), `/music/storytel` (bearer) - the phone's music library, scoped to its ticks (design 21)
+- `GET /api/devices/music/library` (ETag/304, gzip), `/music/entries/{id}/items` (ETag/304, gzip; design 21b), `/music/covers/{hash}`, `/music/files/{id}` (Range, `X-Content-SHA256`), `/music/storytel` (bearer) - the phone's music library, scoped to its ticks (design 21)
 
 ## Architecture change in progress (2026-08-07): on-device DNS filtering + embedded tsnet
 
@@ -438,8 +439,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   phone's built library under it, so the policy poll, the library route and the device card build once per change. A
   new table that feeds the library needs the same triggers (or `music::bump_library_revision`). Covers are checked
   with one scoped query; the import builds each phone's library once plus once to confirm.
-- **Add check**: `Fetch::get(url, limit)` reads at most `limit` bytes and says `truncated`; a feed is judged by its
-  first 5 MB (channel title + one enclosure), so long feeds are accepted.
+- **Add check**: through the sweep's client (`music_net`, below): psapi's catalog root (public only) or the feed
+  (LAN allowed), read up to the kind's cap and marked `truncated`; a feed is judged by what the first 20 MB hold
+  (`music_sources::parse_feed`, the sweep's parser), so long feeds are accepted.
 - **Storytel** (`music_secret`): AES-256-GCM, random nonce, AAD `storytel-v1:<key fingerprint>`; the key from
   `MUSIC_SECRET_KEY` or the 0600 key file `data/keys/music-secret.key` (0700 directory, written through a temp file and
   a rename; `data/` is all the unit may write, and no backup copies `data/keys/`). Write-only in the PWA; `generation` +1 on save and
@@ -457,6 +459,53 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (target or key), repeats, past 200.
 - Tests: `src/tests/music.rs`, `music::tests`, `music_secret::tests`, `music_import::tests`, `tracked_apps::tests`
   (`launcher_and_music_rows_keep_to_their_own_releases`).
+
+## Vibb music: the server sweep (design 21b = step 1c, `docs/design/21b-music-server-sweep.md`, migration `0051_music_sweep.sql`, 0.22.0)
+
+- **What**: the server lists every NRK/RSS entry itself (vibb's logic); phones get each list from `GET
+  /api/devices/music/entries/{id}/items` and only download audio from the source. `music_sweep::run` is spawned in
+  `main` (never in `build_router`), its first pass 60 s after start, then whenever something is due or `wake()`
+  (`AppState.music_sweep`: after an add, the import's commit, a tick, Check now, a flagged item, the setting).
+- **Data**: `music_settings.sweep_hours` (1/3/6/12/24, default 6), `music_check_requests` (Check now's hourly/daily
+  limits), `music_listings` (one per NRK/RSS entry: source title, `lan`, `fallback`, `capped`, `cut`, `keep_end`
+  newest/first, cover, RSS validators + `parser`, `version`, stamps, `failures`), `music_items` (`seq` oldest first,
+  `state` ok/pending/gone, keys checked). Stamps are UTC text from the caller's `now` (tests drive a fake clock).
+  Triggers on both tables move `music_library_revision` (the library names `items` = the listing version, falls back
+  to the listing's cover, and plays an `auto` NRK series that keeps its newest 100 `newest_first`).
+- **Fetching** (`music_net`): every source request (add check, sweep, covers) through `AppState.music_fetch` =
+  `Gated(HttpSource)` - one request in flight server-wide, starts 200 ms apart; caps/timeouts per `Kind` (page 2 MB /
+  30 s, manifest 256 KB / 15 s, feed 20 MB / 120 s, image 10 MB / 60 s; 10 s connect, 30 s without data), gzip, no
+  proxy, <= 5 redirects http(s) only. `Reach::Public` (NRK, and a feed whose target resolved publicly at its first
+  check) uses a resolver that drops private answers at connect time and refuses private IP literals and redirects to
+  them; `Reach::Any` only for a LAN/tailnet feed the parent entered. Tests use `tests::music::CannedFetch` (canned
+  answers, DNS, ETags, an in-flight counter) behind the real gate; no test touches the network.
+- **Parsing** (`music_sources`, pure): psapi pages/roots/manifests/metadata (keys `[A-Za-z0-9_-]{1,64}`, years >=
+  2100 = always) and RSS with `quick-xml` (decoded by BOM/declaration with `encoding_rs`; a DOCTYPE with an internal
+  subset is refused; direction from adjacent `pubDate` pairs; keys `sha1(guid)[:12]`, else of the enclosure; NRK's
+  fallback uses the guid). Recorded answers in `testdata/music_sources/`.
+- **Checks** (`check_entry`): start stamp (`failures` + 1), work, one closing transaction that drops the result if
+  the entry is gone. NRK podkast newest 100 (`sort=desc` to the first known key, RSS fallback when psapi lists
+  nothing); serie by play order (`keep_end`, refill on change; `auto` = newest 100 past 100 episodes, else all from
+  the start); `serie/<slug>/<programId>` along the metadata's `next`. Failing manifests leave items `pending` (<= 10
+  retries a check, `gone` after 14 days); only a root/page/feed failure fails a check and keeps the last good list.
+  RSS: conditional GET (validators only for the current `parser`), body-hash skip, merge (missing -> `gone`, back ->
+  `ok`), 1000 kept; tracking prefixes stripped from `url`. Budget 250 requests / 10 min commits progress. The
+  breaker: 3 network errors (or 5xx on a root/page/feed) of a host in a pass pause it 15 min.
+- **Cadence** (`schedule`/`due`): RSS every `I`, NRK `max(I, min(2I, 12 h))`, unticked daily; priority Check now >
+  never listed > rework (flags, untried pending, refill) > interval; backoff 15 min x 4^(n-1) capped at the interval,
+  daily after 7 days.
+- **Rechecks**: `music_state.item_errors` 401/403/404/410 at the current version from a phone with the entry flag the
+  item (`flag_reports`, once per item a day); two in a day re-resolve the whole entry (once a day); 300 manifests a
+  day server-wide (expiry re-resolves count).
+- **PWA**: `#sweep` setting card, the library cards (`partials/music_card.html`: cover, source title, LAN, episodes,
+  capped/cut notes, a two-line `.music-status`, Check now within its limits, the offline select, per-phone lines from
+  `music_state.downloads`/`item_errors`), the entry page's `#status`, `GET /music/cards?ids=` (<= 200) +
+  `static/music-cards.js` (swaps busy status blocks in place, `scrollBy` keeps the view). Times say UTC.
+- **Contract**: `music_listing_snapshot` pins `testdata/music_listing.json`; `music_library_snapshot` now shows
+  `items`; `tick_fits` also refuses past 32 MB of listings per phone (`lists_too_big`), growth past it warns on the
+  device card. The policy shape is unchanged.
+- Tests: `src/tests/music_sweep.rs` (incl. a simulated day per setting against 21b's request counts),
+  `music_sweep`/`music_sources`/`music_net::tests` (loopback server for the address rules).
 
 ## Current status (2026-08-08, `v0.13.0`)
 

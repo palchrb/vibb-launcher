@@ -37,7 +37,10 @@ Shared between the two and checked by tests on both sides: `server/testdata/phon
 `launcher/app/src/test/resources/phone_vectors.json` must be identical (server `phone::tests`,
 launcher `PhoneNumbersTest`). The policy JSON shape is pinned on both sides
 (`policy_json_keys_snapshot` / `PolicyResponseCompatTest`). A change to the API goes into both
-directories in the same commit.
+directories in the same commit. The music library and an entry's episode list are pinned by
+`server/testdata/music_library.json` and `server/testdata/music_listing.json` (`music_library_snapshot`,
+`music_listing_snapshot`, regenerated with `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` / `MUSIC_LISTING_SNAPSHOT_WRITE=1`); the
+music app keeps byte-identical copies once it exists (design 21b §4.5), and a change goes into both in one commit.
 
 ## CI and releases
 

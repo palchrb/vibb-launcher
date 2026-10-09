@@ -804,3 +804,47 @@ newest 100, "Oldest first" the first 100, and changing the order refills the lis
 serie (more than 100 episodes) is **newest first**, so a new anthology entry gets recent episodes. Read narrowly on
 purpose: a serie of at most 100 episodes, a serial story, keeps vibb's oldest-first `auto`, and podkast/RSS are newest
 first already. The PWA card says which 100 are kept. (If the user meant every entry, only `auto`'s table changes.)
+
+## Step 1c implementation status (2026-10-09)
+
+Implemented on `main` as server 0.22.0: migration `0051_music_sweep.sql` (0050 was already the library revision),
+`src/music_net.rs` (the one client and gate), `src/music_sources.rs` (psapi and RSS parsers, recorded answers in
+`server/testdata/music_sources/`), `src/music_sweep.rs` (cadence, checks, rechecks, covers, the listing, the loop),
+the listing route, `items` and the cover fallback in the library, the new `music_state` fields and the flags, the
+`#sweep` setting, the cards (`partials/music_card.html`), Check now, the offline select, `GET /music/cards` with
+`static/music-cards.js`, the entry page's `#status`, `wake()` after an add, the 21a import's commit, a tick, Check now,
+a flag and the setting. NOTICE.md credits vibb (MIT). Tests: `src/tests/music_sweep.rs` and the modules' own, all on
+canned answers (no test touches the network), including a simulated day of 30 NRK + 10 RSS entries per setting that
+makes exactly QA's counts (600/200/100/80/40). The PWA was checked in headless Chromium at 360 px, light and dark,
+against a real server and a local LAN feed server: the error, "Checking…" and "Waiting…" states, a capped and cut
+series, the per-phone lines, an in-place swap that keeps the first visible card still, Check now and the selects
+returning to their card. The Pi checks of §7 are still to do (DEPLOY.md lists them).
+
+**Deviations and readings**
+- `encoding_rs` decodes a non-UTF-8 feed (by BOM, else its XML declaration) before `quick-xml` parses it, instead of
+  `quick-xml`'s `encoding` feature (the same library underneath; the parser then works on `&str`).
+- `music_listings` has three columns §1 doesn't list: `keep_end` (`newest`/`first`, which 100 an NRK list keeps),
+  `item_count` and `bytes` (the cards and the 32 MB per-phone budget). `capped` means "the source has more than the
+  list keeps" at either end (the card says "first 100" or "the newest 100").
+- The user's answer is read narrowly, as written: the window follows the play order for an NRK **serie** only; a
+  podkast keeps its newest 100 whatever its order. An `auto` serie keeps the newest 100 when it has more than 100
+  episodes, and the library then sends its `order` as `newest_first` (no new field; the phone needn't know the
+  window). Switching between orders when the whole series fits only moves `keep_end`, no refill. A full
+  oldest-first serie makes no request at all at a check.
+- A fill stopped by the budget or the breaker commits its items without counting `no_items`. A first fill whose every
+  manifest failed counts `no_items` but keeps the stubs with their attempts, so the retry continues (QA #2).
+- The breaker counts network errors from any request but a 5xx only from a root, page or feed: a manifest's 5xx is
+  that programme's trouble (QA #2's broken programme would otherwise defer every NRK entry). A broken host's entries
+  wait 15 minutes (kept in memory), so the next pass doesn't retry it at once.
+- A lost source cover keeps its `cover_url` in `music_listings` (only `cover_hash` is forgotten), so the next check
+  fetches it again without re-reading the NRK root.
+- The status block is at least two lines (`min-height`), not a fixed height: a long error text may take three or four
+  lines at 360 px rather than being cut, and the swap's `scrollBy` keeps the view still when it grows.
+- Items whose URL the address or URL rules drop are stored `gone` (`url: null`). A recheck that can't reach psapi
+  leaves the item's URL as it was (only "not playable" makes it `gone`).
+- The recheck budget counts items with `rechecked_at` in the last 24 h: NRK manifests, expiry re-resolves and the
+  items of an RSS recheck (one feed GET).
+- The offline select logs `music_entry_saved` (§3); the entry page's form still logs `music_entry_changed`.
+
+**Open for the user**: none blocking. The version is 0.22.0 ("the next server minor version", §7), although 0.21.0
+was never released - shipping both as 0.21.0 is a one-line change if preferred.
