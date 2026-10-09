@@ -246,3 +246,12 @@ Each step is green alone. The device A/B (§5) can run before any of them.
    dialog. The pause path (P3) is then the fallback.
 4. **If an OEM manager exists, switch it off or allowlist the launcher?** Switch it off, before enrolling.
    Allowlist the launcher and Play services only if it can't be switched off.
+
+## User decision (2026-10-09)
+Two phases ("Ok ift ditt forslag"):
+- **Phase 1, now:**
+  - the `battery_optimization_exempt` status field and a plain device-page line;
+  - the `adb shell dumpsys deviceidle whitelist +me.vibb.launcher` line in the setup docs;
+  - the row in the PIN-gated Settings during the existing pause.
+- **Phase 2, the prompt inside QR provisioning:** only if the Jelly Star run shows a difference, or the phone has an OEM battery manager.
+- Open questions 1-4: the architect's recommendations stand.
