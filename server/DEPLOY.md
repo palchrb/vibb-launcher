@@ -167,6 +167,25 @@ on a database with migration 0048.
 `SSE_KEEPALIVE_SECS` (5-240, default 240 since 0.20.0, 120 before): each keepalive wakes the phone's radio, and the
 launcher reconnects after 300 s of silence. `SSE_KEEPALIVE_SECS=120` in `.env` reverts to the old default.
 
+## Vibb music library (server 0.21.0, design 21 step 1)
+
+The Music page (Apps | Music) holds the library for the Vibb music app; each phone's page has a Music card.
+
+- **Order**: install this server (`server-v0.21.0` or later) **before any stable `music-v*` release** is published in
+  the repo. Older servers don't know the `music-v` tag prefix, and their launcher row (blank asset filter) could pick
+  `vibb-music.apk` as the launcher update. Migration 0049 sets the launcher row to `launcher-v*` releases and
+  `^kids-launcher-mdm\.apk$` (only where its cached release already is a `launcher-v*` one) and adds the music app's
+  catalog row; anything else: the Music page's "Add the music app to the catalog" and the app's "Release tag prefix".
+- **Storytel key**: the family's Storytel login is encrypted with `MUSIC_SECRET_KEY` (base64, 32 bytes) from `.env`,
+  or else with the key file `/opt/kid-phone-server/music-secret.key` (`MUSIC_SECRET_KEY_FILE` to move it), which the
+  server writes (0600) at its first start. It is outside `data/`, so backups never hold it: a database restored on
+  another box, or a lost key file, means entering the login again on the Music page. Keep the file out of anything
+  that copies `data/` elsewhere. Without a usable key the Storytel form is off and the phones get 503.
+- **Own files** are stored in `data/music_files/` and are **not** in the backups (too big). After a restore without
+  them they are listed as missing (the phones keep their copies); upload them again to restore them. Their covers are
+  in the backups.
+- Rolling back to 0.20 means restoring the `update.sh` backup: 0.20 refuses to start on a database with migration 0049.
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`

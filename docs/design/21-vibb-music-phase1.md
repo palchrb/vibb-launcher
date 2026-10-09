@@ -275,3 +275,37 @@ Media3 and Material Symbols (Apache-2.0), Nunito (OFL). Root CLAUDE.md: `music/`
 - Sonos own files (user, 2026-10-09): **out of 1b.** Sonos plays NRK/RSS/Storytel (and Spotify in phase 3) from the
   origin. Own files on Sonos come later only if missed, via a LAN-only listener on the server for signed own-file URLs
   (QA #12), never the phone.
+
+## Step 1 implementation status (2026-10-09)
+
+Built and tested in the sandbox (server 0.21.0 and the launcher DTO); not yet checked on the Pi or a phone.
+- **Server**: migration 0049 (new tables and defaulted columns only, plus the two guarded catalog updates - tested on a
+  database migrated to 0048 with data in it), `/music` + `/music/entries/{id}` + the device card `#music`, the policy's
+  `music` object, `GET /api/devices/music/{library,covers/{hash},files/{id},storytel}`, the status `music_state`
+  (known fields only, shown on the card), SSE nudges, `music_*`/`storytel_login_*` events. `server/CLAUDE.md` ("Vibb
+  music library") and `server/DEPLOY.md` (order, key file, own files outside backups) describe it.
+- **Launcher**: `PolicyResponse.music` is a nullable raw `JsonElement` (nothing in it can fail the policy), unused;
+  `PolicyResponseCompatTest` covers today's shape, `null`, missing and odd shapes and the cache round trip.
+- **Checks done**: `cargo test` (279), fmt, clippy (no new warnings); the launcher's unit tests and debug build with
+  `-PwarningsAsErrors=true`; the pages rendered at 360 px wide in light and dark (no horizontal scroll; a 400 scrolls
+  to its focused field). **Still to do (§6 step 1)**: the PWA on a phone, real NRK/RSS adds, `curl` of the library
+  (ETag/304) and of a file with Range on the Pi, the launcher row after a `music-v0.0.1-rc.1` in a fork.
+
+Choices made while building (none changes a decision above):
+1. The PWA stays English like every other page ("Apps | Music", "Own files", "Saved 9 Oct 2026" + Remove, "Storytel on
+   this phone"); only the seeded category names are Norwegian, since the kid sees them.
+2. The library lists `files[].missing` (QA #3) and is a 404 while nothing is ticked (the policy then says
+   `library_version: null`). `testdata/music_library.json` is the served document pretty-printed in wire order.
+3. Release prefixes: a catalog row with `release_tag_prefix` takes only its own tags; one **without** never takes
+   `music-v*` (protects a fresh install's hand-made launcher row, which 0049 can't recognise). The prefix is editable on
+   the app's page and the add form; `/music` has "Add the music app to the catalog" for a server where 0049 found no
+   `launcher-v*` row. The music row starts enabled, so the hourly sync reports "no release" until the first `music-v*`.
+4. The Storytel key: `MUSIC_SECRET_KEY`, else `music-secret.key` in the working directory (`MUSIC_SECRET_KEY_FILE`
+   moves it), created 0600 at startup; `music_storytel.key_fingerprint` lets the page say "enter it again" after a
+   key change. The login is one sealed JSON (`email`, `password`).
+5. Entries get up/down buttons on `/music` (the carousel order; not in §1.2). Categories' `default_kind` isn't
+   editable; with the matching category deleted a new entry goes to the first one.
+6. Own files are stored as `data/music_files/<entry>/<random>.<ext>` with the extension of what lofty found; their
+   embedded art and the parent's covers are 512 px square JPEGs (`photos::process`, as contact photos).
+7. The 3 MB guard covers ticks (refused, `?music_notice=too_big#music`) and uploads (the new files are taken back);
+   renaming a category or an entry isn't checked (a few bytes).
