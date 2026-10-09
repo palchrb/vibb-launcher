@@ -234,3 +234,43 @@ Media3 and Material Symbols (Apache-2.0), Nunito (OFL). Root CLAUDE.md: `music/`
   Wi-Fi-only unless the per-phone mobile-data switch allows more). For Sonos (phase 1b), the speaker needs an HTTP
   source, and the phone never serves anything. So: a short-lived signed URL on the home server over the LAN
   (recommended), pending the user's confirmation.
+
+## QA review (2026-10-09)
+1. **High, FGS**: the music app may not start `DownloadService` (dataSync FGS) from a nudge or job (Android 12+; 6 h a
+   day on 15+): listings + downloads as WorkManager jobs, Range per item; `mediaPlayback` only on a tap or a command.
+2. **High, HLS**: Media3 has no `customCacheKey` for HLS: a `CacheKeyFactory` (item key + segment) survives re-resolves.
+3. **High, only copy**: missing audio (never backed up) "left out" makes phones prune it after a Pi restore: list it as
+   `missing`; prune only what a parsed library dropped; a query error sends `music: null`, never a null version.
+4. **Medium, library**: hash it without its own `version`; refuse ticks over ~3 MB per phone (60k files ~15 MB).
+5. **Medium, screen time** is safe only if `setForeground` follows `onTopResumedActivityChanged`, false in multi-window
+   (as `freeScreenSharesScreen`), and the app never keeps the screen on, so the auto-lock bounds a left-on player.
+6. **Medium, badge**: `badgeCounts` skips `EXTRA_MEDIA_SESSION` (paused = counted); DO-grant `POST_NOTIFICATIONS`.
+7. **Medium, bridge**: `<queries>` for both launcher names; rebind on `onBindingDied` (self-update; the fence skips the
+   app: controllable, not HOME); generations compare `!=` (DB restore); CI debug APKs differ in key: build both locally.
+8. **Medium, launcher**: `sessionActivity` needs `ALLOW_IF_VISIBLE` (as `VoipCalls`); listener-free fallbacks: pause on
+   `ACTION_MY_PACKAGE_SUSPENDED`, defer by the last `setNowPlaying`; own files one ahead of handover, APKs first.
+9. **Medium, sources**: `sort=asc` + <= 100 keeps a long podcast's oldest 100 (as vibb): podkast walks `sort=desc`;
+   listings obey the mobile-data/roaming gate; untagged own files sort by filename (vibb), not upload order.
+10. **Medium, server**: old `.env`s never get `MUSIC_SECRET_KEY`: the server writes a 0600 key file outside `data/`,
+    fingerprint in the AAD (changed key = 503, re-enter); 0049 sets `launcher-v` only where the cached tag has it.
+11. **Steps/CI**: deploy the step-1 server before a stable `music-v*` (old servers offer it as the launcher update);
+    step 3 needs a signed music RC; launcher `buildFeatures.aidl`; licence assets; `PinLockLayoutTest` stays >= 52 dp.
+12. **Open questions**: 1 - §1.1/§3: NULL default, Off/90/80/70/60; 2 - as specced; 3 - yes in 1b: a LAN-only listener
+    for HMAC-signed, <= 1 h, Range own-file URLs (the main server stays on the tailnet).
+
+## Decisions after QA review (2026-10-09)
+
+- All 12 QA findings are accepted as written and override the matching parts of §1-§6. In particular:
+  - downloads and listings run as WorkManager jobs, with the `mediaPlayback` FGS only on a tap or command (#1);
+  - an HLS `CacheKeyFactory` (#2);
+  - missing own files listed as `missing`, never pruned by a failed query (#3);
+  - the library is hashed without its own version, with ~3 MB per phone (#4);
+  - the screen-time lease follows top-resumed and multi-window, and the screen is never kept on (#5);
+  - the bridge gets `<queries>`, rebinds and `!=` generation checks (#7);
+  - the server writes its own 0600 music key file when `.env` has none (#10);
+  - the deploy order: the step-1 server before any stable `music-v*` (#11).
+- Volume cap (user): NULL/off by default; the PWA offers Off / 90 / 80 / 70 / 60 % per phone, for all output.
+- Budget (user): music may play after the screen-time budget is used up and never counts. Bedtime and school follow
+  the time rules.
+- Sonos own files: pending the user. Proposed: out of 1b (Sonos plays NRK/RSS/Storytel from the origin), and later,
+  if wanted, a LAN-only listener on the server for signed own-file URLs (QA #12). Never the phone.
