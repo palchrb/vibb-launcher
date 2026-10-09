@@ -62,6 +62,30 @@ within the file (target and key); the 200 limit mid-file; the per-phone limit on
 the confirm re-checks a tampered hidden field (a Spotify row, a 201st row, an unknown category id); zero calls on
 the fake fetcher; one event; 400 on non-JSON and over 1 MB; the notice is shown at `#import`.
 
-## Implementation status
+## Implementation status (2026-10-09)
 
-Not started.
+Built on step 1 (server 0.21.0, no new migration, no API or phone change) and tested in the sandbox: `music_import`
+(pure: `parse`, `plan`, `document`) and `handlers::music_import` (`POST /music/import`, `/music/import/confirm`),
+the "Import from Vibb" card at the bottom of `/music`. 13 tests (`music_import::tests`, 6 in `tests/music.rs`) cover
+the list under "Tests"; the fake fetcher records no call. The flow ran end to end in headless Chromium at 360 px, light
+and dark: the preview and the result land at `#import`, no horizontal scroll.
+
+Where it differs from the text above, following the step-1 code:
+1. **The hidden field is the whole file as read**, normalised (`music_import::document`: every section and row, a
+   candidate's cleaned name and normalised target, a skipped row's own text cut to 300 characters), not only the
+   importable rows. The confirm parses it with the same `parse` as an upload, so it allows nothing more, and it can
+   still name every skipped row in the result. Ticks are `row = "<section>.<row>"`, choices `category_<section>`.
+2. **The result is a one-time session flash** shown in the card at `/music#import` (the skipped list can be long; a
+   query string can't carry it), at most 100 lines. Rows the parent unticked count as "left out", not "skipped".
+3. **Both forms post to an `#import` action** (`/music/import#import`, `/music/import/confirm#import`), so the preview
+   - a POST answer - opens at the card, and a refused upload focuses the file field there.
+4. **A refused confirm** (an unknown category or phone, a malformed form) is a 400 with the preview again and the
+   reason; nothing is stored. A missing or broken document asks for a new preview.
+5. **Shared code**: `music::library_for` now reads on a connection, so the import checks each tick inside its
+   transaction with the same `music::tick_fits` as the device card; `music::default_category` is `pick_category`'s
+   rule and gives a "New:" category the icon and colour of its first imported row's source category. One category is
+   made per new name within an import; its name is the section name cut to 20 characters ("Vibb" when empty).
+6. **A Vibb `cache` outside the page's choices** (e.g. 42) is kept as the design says; the entry page lists it as
+   "42 (from Vibb)" and accepts it unchanged on a save (any other value must be one of the choices).
+7. A target *or* key already in the library is "already in the library" (it outranks "in the file twice").
+

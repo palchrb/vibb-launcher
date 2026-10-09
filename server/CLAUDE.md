@@ -436,7 +436,14 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Catalog**: `newest_matching_release` honours `release_tag_prefix` (`release_allowed`: never `server-v*`; with a
   prefix only its tags; without one never `music-v*`), so the launcher row can't take `vibb-music.apk`. Editable on the
   app's page and the add form.
-- Tests: `src/tests/music.rs`, `music::tests`, `music_secret::tests`, `tracked_apps::tests`
+- **Import from Vibb** (design 21a, `src/music_import.rs` pure, `handlers::music_import`): `POST /music/import`
+  (multipart `library`, <= 1 MB, never stored) previews a Pi's `library.json` at `#import`; `POST
+  /music/import/confirm` re-reads the preview's hidden document with the same parser and re-checks in one transaction
+  (new categories, entries in file order after `NEXT_SORT`, ticks via `music::tick_fits`), then a session flash at
+  `/music#import` and one `music_library_imported` event. Targets only through `parse_link`: no outgoing request.
+  Skips: Spotify, Storytel, folders, `parse_link` refusals, `spotify_user` sections, no name, already in the library
+  (target or key), repeats, past 200.
+- Tests: `src/tests/music.rs`, `music::tests`, `music_secret::tests`, `music_import::tests`, `tracked_apps::tests`
   (`launcher_and_music_rows_keep_to_their_own_releases`).
 
 ## Current status (2026-08-08, `v0.13.0`)
