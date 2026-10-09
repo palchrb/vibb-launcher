@@ -1,0 +1,36 @@
+{
+ "_links": {
+  "self": {
+   "href": "/radio/catalog/podcast/abels_taarn"
+  }
+ },
+ "series": {
+  "id": "abels_taarn",
+  "titles": {
+   "title": "Abels tårn",
+   "subtitle": "Forum for funfacts, hard forskning og bedrevitenskap "
+  },
+  "squareImage": [
+   {
+    "url": "https://gfx.nrk.no/3jJO7vXNegeaT_tX5k8EdgAWnNV90L24s5bzyOaudbVw",
+    "width": 300
+   },
+   {
+    "url": "https://gfx.nrk.no/3jJO7vXNegeaT_tX5k8Edgv9IS7o3CdUg5bzyOaudbVw",
+    "width": 600
+   },
+   {
+    "url": "https://gfx.nrk.no/3jJO7vXNegeaT_tX5k8EdgwrGZkLzmIWo5bzyOaudbVw",
+    "width": 960
+   },
+   {
+    "url": "https://gfx.nrk.no/3jJO7vXNegeaT_tX5k8EdgSi3W9pwW8xM5bzyOaudbVw",
+    "width": 1280
+   },
+   {
+    "url": "https://gfx.nrk.no/3jJO7vXNegeaT_tX5k8EdgS2RnwBfqYUM5bzyOaudbVw",
+    "width": 1600
+   }
+  ]
+ }
+}

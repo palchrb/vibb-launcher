@@ -693,6 +693,19 @@ pub async fn status(
     .await
     .ok();
 
+    // A phone's failing downloads and streams flag their items for a re-resolve (design 21b §2.5).
+    if let Some(report) = crate::music::parse_music_state(music_state_json.as_deref())
+        && !report.item_errors.is_empty()
+    {
+        match crate::music_sweep::flag_reports(&state.db, device.id, &report, chrono::Utc::now())
+            .await
+        {
+            Ok(0) => {}
+            Ok(_) => state.music_sweep.wake(),
+            Err(err) => tracing::warn!(device_id = device.id, %err, "can't flag music items"),
+        }
+    }
+
     // The package-name backfill below compares against the same previous report (read before
     // this one was stored, so a failed INSERT or two reports in one second can't confuse it).
     let previous_apps_json: Option<String> = previous.as_ref().and_then(|(apps, _)| apps.clone());

@@ -464,6 +464,7 @@ pub async fn confirm(
                 cache: candidate.cache,
                 resume: candidate.resume,
                 cover: None,
+                items: None,
                 sort,
             };
             added.push((entry, candidate.name.clone()));
@@ -574,6 +575,8 @@ pub async fn confirm(
         };
     let result = describe(&sections, &wanted, &done, &phone_names);
     nudge(&state, &done.ticked_phones);
+    // The sweep fills the new entries in the background (design 21b §7).
+    state.music_sweep.wake();
     let skipped = skipped_rows(&sections, &done.as_previewed, &wanted).len();
     log_event(
         &state,

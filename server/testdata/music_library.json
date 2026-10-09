@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "version": "20212c4467c98008",
+  "version": "aa485b7dd0d2a390",
   "categories": [
     {
       "id": 1,
@@ -29,6 +29,7 @@
       "cache": 5,
       "resume": true,
       "cover": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "items": null,
       "sort": 10
     },
     {
@@ -41,7 +42,8 @@
       "order": "newest_first",
       "cache": 3,
       "resume": true,
-      "cover": null,
+      "cover": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "items": "0123456789abcdef",
       "sort": 20
     },
     {
@@ -55,6 +57,7 @@
       "cache": -1,
       "resume": false,
       "cover": null,
+      "items": null,
       "sort": 30
     }
   ],
@@ -88,6 +91,7 @@
   ],
   "covers": [
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   ]
 }

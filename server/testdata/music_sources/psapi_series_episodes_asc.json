@@ -1,0 +1,95 @@
+{
+ "_links": {
+  "self": {
+   "href": "/radio/catalog/series/radioteatret/episodes?page=1&pageSize=50&sort=asc"
+  }
+ },
+ "_embedded": {
+  "episodes": [
+   {
+    "_links": {
+     "self": {
+      "href": "/radio/catalog/programs/MKTT72550116"
+     }
+    },
+    "episodeId": "MKTT72550116",
+    "titles": {
+     "title": "Et budskap fra de døde",
+     "subtitle": "Sperret inne av uvær og forfulgt av nazistene, sitter Erik Berg på en hytte i fjellet nær svenskegrensen og skriver ned beretningen om de gåtefulle og uhyggelige opplevelsene han hadde høsten 1938, da han som ung student tok inn på Frøken Neumanns pensjonat i Oslo. Beboerne er en underlig gjeng som er lidenskapelig opptatt av alle slags former for mystikk og okkultisme. Og det skjer ting som det synes umulig å forklare med sunn fornuft."
+    },
+    "date": "1993-10-02T14:00:00+01:00",
+    "durationInSeconds": 3300,
+    "usageRights": {
+     "from": {
+      "date": "2016-01-02T17:05:00+01:00",
+      "displayValue": "2. januar 2016 kl. 17:05"
+     },
+     "to": {
+      "date": "9999-12-31T00:00:00+01:00",
+      "displayValue": "Alltid tilgjengelig"
+     },
+     "geoBlock": {
+      "isGeoBlocked": false,
+      "displayValue": "Verden"
+     }
+    }
+   },
+   {
+    "_links": {
+     "self": {
+      "href": "/radio/catalog/programs/MKTT72550216"
+     }
+    },
+    "episodeId": "MKTT72550216",
+    "titles": {
+     "title": "Heksesabbat",
+     "subtitle": "Student Erik Berg har tatt inn på Frøken Neumanns pensjonat. Beboerne er svært opptatt av alle slags former for mystikk og okkultisme, og holder seanser hvor det skjer underlige ting. Hvilken hemmelighet er det den unge og vakre Celia gjemmer på? Og hva betyr de merkelige, skremmende lydene inne på frøken Ullmans værelse om natten? Erik Berg bestemmer seg for å finne ut av saken, men det fører ham opp i nye marerittlignende opplevelser."
+    },
+    "date": "1993-10-09T14:00:00+01:00",
+    "durationInSeconds": 3300,
+    "usageRights": {
+     "from": {
+      "date": "2016-01-09T17:05:00+01:00",
+      "displayValue": "9. januar 2016 kl. 17:05"
+     },
+     "to": {
+      "date": "9999-12-31T00:00:00+01:00",
+      "displayValue": "Alltid tilgjengelig"
+     },
+     "geoBlock": {
+      "isGeoBlocked": false,
+      "displayValue": "Verden"
+     }
+    }
+   },
+   {
+    "_links": {
+     "self": {
+      "href": "/radio/catalog/programs/MKTT72550316"
+     }
+    },
+    "episodeId": "MKTT72550316",
+    "titles": {
+     "title": "Varsel om død",
+     "subtitle": "Erik Berg har problemer med å forstå hva som foregår på pensjonatet til Frøken Neumann. Det er stadig seanser som utarter, hemmelighetsfulle brev og grufulle gjerninger beboerne blir utsatt for. En traust kriminalbetjent med navn Bjørgan prøver å spre lys i mørket, men for Erik Berg blir nervene nok en gang satt på prøve."
+    },
+    "date": "1993-10-16T14:00:00+01:00",
+    "durationInSeconds": 3300,
+    "usageRights": {
+     "from": {
+      "date": "2016-01-16T17:05:00+01:00",
+      "displayValue": "16. januar 2016 kl. 17:05"
+     },
+     "to": {
+      "date": "9999-12-31T00:00:00+01:00",
+      "displayValue": "Alltid tilgjengelig"
+     },
+     "geoBlock": {
+      "isGeoBlocked": false,
+      "displayValue": "Verden"
+     }
+    }
+   }
+  ]
+ }
+}

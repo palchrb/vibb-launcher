@@ -14,47 +14,159 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{TestApp, TestResponse};
-use crate::music::{FetchError, Fetched};
 
 // ------------------------------------------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------------------------------------------
 
-/// The add check's GET in the tests: canned answers by URL (anything else is a network error), and
-/// every URL asked for.
+/// One canned answer.
+#[derive(Clone, Default)]
+pub struct Canned {
+    pub status: u16,
+    pub body: Vec<u8>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+}
+
+/// Every music source fetch in the tests (`AppState.music_fetch`, behind the real gate): canned
+/// answers by URL (anything else is a network error), canned DNS (unknown hosts resolve to a
+/// public address), a public-only request to a host that resolves only privately is refused like
+/// the real resolver does, `If-None-Match` matching a canned ETag answers 304. Every URL asked for
+/// is recorded, and how many requests were in flight at once.
 #[derive(Default)]
 pub struct CannedFetch {
-    answers: Mutex<HashMap<String, (u16, Vec<u8>)>>,
+    answers: Mutex<HashMap<String, Canned>>,
+    failures: Mutex<HashMap<String, crate::music_net::FetchError>>,
+    dns: Mutex<HashMap<String, Vec<std::net::IpAddr>>>,
     pub calls: Mutex<Vec<String>>,
+    /// The validators each request carried: (url, If-None-Match).
+    pub conditional: Mutex<Vec<(String, Option<String>)>>,
+    delay_ms: std::sync::atomic::AtomicU64,
+    in_flight: std::sync::atomic::AtomicUsize,
+    pub most_in_flight: std::sync::atomic::AtomicUsize,
 }
 
 impl CannedFetch {
     pub fn answer(&self, url: &str, status: u16, body: impl Into<Vec<u8>>) {
-        self.answers
+        self.canned(
+            url,
+            Canned {
+                status,
+                body: body.into(),
+                ..Default::default()
+            },
+        );
+    }
+
+    pub fn canned(&self, url: &str, answer: Canned) {
+        self.failures.lock().unwrap().remove(url);
+        self.answers.lock().unwrap().insert(url.to_string(), answer);
+    }
+
+    pub fn fail(&self, url: &str, err: crate::music_net::FetchError) {
+        self.answers.lock().unwrap().remove(url);
+        self.failures.lock().unwrap().insert(url.to_string(), err);
+    }
+
+    pub fn dns(&self, host: &str, ips: &[&str]) {
+        self.dns.lock().unwrap().insert(
+            host.to_string(),
+            ips.iter().map(|ip| ip.parse().unwrap()).collect(),
+        );
+    }
+
+    /// Every answer takes this long (the gate tests).
+    pub fn delay(&self, ms: u64) {
+        self.delay_ms.store(ms, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn count(&self) -> usize {
+        self.calls.lock().unwrap().len()
+    }
+
+    pub fn clear_calls(&self) {
+        self.calls.lock().unwrap().clear();
+        self.conditional.lock().unwrap().clear();
+    }
+
+    fn lookup(&self, host: &str) -> Vec<std::net::IpAddr> {
+        if let Some(ip) = crate::music_net::literal_ip(host) {
+            return vec![ip];
+        }
+        self.dns
             .lock()
             .unwrap()
-            .insert(url.to_string(), (status, body.into()));
+            .get(host)
+            .cloned()
+            .unwrap_or_else(|| vec!["93.184.216.34".parse().unwrap()])
     }
 }
 
-impl crate::music::Fetch for CannedFetch {
+impl crate::music_net::Source for CannedFetch {
     fn get<'a>(
         &'a self,
-        url: &'a str,
-        limit: usize,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Fetched, FetchError>> + Send + 'a>>
-    {
+        request: crate::music_net::SourceRequest,
+    ) -> crate::music_net::BoxFut<
+        'a,
+        Result<crate::music_net::SourceResponse, crate::music_net::FetchError>,
+    > {
+        use std::sync::atomic::Ordering;
         Box::pin(async move {
-            self.calls.lock().unwrap().push(url.to_string());
-            match self.answers.lock().unwrap().get(url) {
-                Some((status, body)) => Ok(Fetched {
-                    status: *status,
-                    body: body[..body.len().min(limit)].to_vec(),
-                    truncated: body.len() > limit,
-                }),
-                None => Err(FetchError::Network("no route to host".to_string())),
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.most_in_flight.fetch_max(now, Ordering::SeqCst);
+            let delay = self.delay_ms.load(Ordering::SeqCst);
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             }
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            self.calls.lock().unwrap().push(request.url.clone());
+            self.conditional
+                .lock()
+                .unwrap()
+                .push((request.url.clone(), request.etag.clone()));
+            let host = crate::music_net::host_of(&request.url).unwrap_or_default();
+            if request.reach == crate::music_net::Reach::Public
+                && self
+                    .lookup(&host)
+                    .iter()
+                    .all(|ip| crate::music_net::is_private(*ip))
+            {
+                return Err(crate::music_net::FetchError::Refused(format!(
+                    "{host} resolves only to private addresses"
+                )));
+            }
+            if let Some(err) = self.failures.lock().unwrap().get(&request.url) {
+                return Err(err.clone());
+            }
+            let Some(answer) = self.answers.lock().unwrap().get(&request.url).cloned() else {
+                return Err(crate::music_net::FetchError::Network(
+                    "no route to host".to_string(),
+                ));
+            };
+            if answer.etag.is_some() && request.etag == answer.etag {
+                return Ok(crate::music_net::SourceResponse {
+                    status: 304,
+                    etag: answer.etag,
+                    ..Default::default()
+                });
+            }
+            let limit = request.kind.limit();
+            Ok(crate::music_net::SourceResponse {
+                status: answer.status,
+                truncated: answer.body.len() > limit,
+                body: answer.body[..answer.body.len().min(limit)].to_vec(),
+                etag: answer.etag,
+                last_modified: answer.last_modified,
+            })
         })
+    }
+
+    fn resolve<'a>(
+        &'a self,
+        host: &'a str,
+    ) -> crate::music_net::BoxFut<'a, Result<Vec<std::net::IpAddr>, crate::music_net::FetchError>>
+    {
+        Box::pin(async move { Ok(self.lookup(host)) })
     }
 }
 
@@ -107,7 +219,13 @@ async fn add_own(app: &TestApp, cookie: &str, name: &str) -> i64 {
     id
 }
 
-async fn tick(app: &TestApp, cookie: &str, device: i64, entry: i64, on: bool) -> TestResponse {
+pub(super) async fn tick(
+    app: &TestApp,
+    cookie: &str,
+    device: i64,
+    entry: i64,
+    on: bool,
+) -> TestResponse {
     let fields: &[(&str, &str)] = if on { &[("selected", "on")] } else { &[] };
     app.request_form(
         Method::POST,
@@ -118,7 +236,7 @@ async fn tick(app: &TestApp, cookie: &str, device: i64, entry: i64, on: bool) ->
     .await
 }
 
-async fn music_policy(app: &TestApp, token: &str) -> Value {
+pub(super) async fn music_policy(app: &TestApp, token: &str) -> Value {
     let res = app
         .request(Method::GET, "/api/devices/policy", Some(token), None)
         .await;
@@ -127,7 +245,7 @@ async fn music_policy(app: &TestApp, token: &str) -> Value {
 }
 
 /// A GET with a bearer token and extra headers.
-async fn device_get(
+pub(super) async fn device_get(
     app: &TestApp,
     uri: &str,
     token: &str,
@@ -254,7 +372,7 @@ async fn upload_cover(app: &TestApp, cookie: &str, entry: i64, bytes: &[u8]) -> 
     app.send(request).await
 }
 
-fn nudged(rx: &mut tokio::sync::broadcast::Receiver<i64>) -> Vec<i64> {
+pub(super) fn nudged(rx: &mut tokio::sync::broadcast::Receiver<i64>) -> Vec<i64> {
     let mut ids = Vec::new();
     while let Ok(id) = rx.try_recv() {
         ids.push(id);
@@ -262,7 +380,7 @@ fn nudged(rx: &mut tokio::sync::broadcast::Receiver<i64>) -> Vec<i64> {
     ids
 }
 
-async fn events(app: &TestApp, kind: &str) -> Vec<String> {
+pub(super) async fn events(app: &TestApp, kind: &str) -> Vec<String> {
     sqlx::query_scalar(
         "SELECT COALESCE(detail, '') FROM security_events WHERE event_type = ? ORDER BY id",
     )
@@ -838,11 +956,22 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .execute(&app.db)
     .await
     .unwrap();
+    // The feed is listed (design 21b: `items` names its listing; its cover is the feed's own),
+    // the podcast not yet (`items: null`).
+    sqlx::query(
+        "INSERT INTO music_listings (entry_id, version, cover_hash, keep_end, listed_at) \
+         VALUES (2, '0123456789abcdef', ?, NULL, '2026-10-09 12:00:00'), \
+                (1, NULL, NULL, NULL, NULL)",
+    )
+    .bind("c".repeat(64))
+    .execute(&app.db)
+    .await
+    .unwrap();
 }
 
 /// Compact JSON indented by two spaces, keys in the order they were sent (serde_json's `Value`
 /// would sort them).
-fn pretty_json(compact: &str) -> String {
+pub(super) fn pretty_json(compact: &str) -> String {
     let mut out = String::new();
     let mut depth = 0usize;
     let mut in_string = false;
@@ -942,8 +1071,8 @@ async fn music_library_snapshot() {
     assert_eq!(
         entry_keys,
         [
-            "cache", "category", "cover", "id", "key", "name", "order", "resume", "sort", "source",
-            "target"
+            "cache", "category", "cover", "id", "items", "key", "name", "order", "resume", "sort",
+            "source", "target"
         ]
     );
     let mut file_keys: Vec<&str> = served["files"][0]
@@ -987,7 +1116,13 @@ async fn music_library_snapshot() {
         json!("02 Lille"),
         "the file name without a tag"
     );
-    assert_eq!(served["covers"], json!(["a".repeat(64), "b".repeat(64)]));
+    // The feed's own cover stands in for a parent's (design 21b §2.6).
+    assert_eq!(
+        served["covers"],
+        json!(["a".repeat(64), "b".repeat(64), "c".repeat(64)])
+    );
+    assert_eq!(served["entries"][1]["items"], json!("0123456789abcdef"));
+    assert_eq!(served["entries"][0]["items"], Value::Null, "never listed");
     // The policy names the same version as the document and its ETag.
     let version = served["version"].as_str().unwrap();
     assert_eq!(
@@ -3511,10 +3646,10 @@ async fn an_import_builds_each_phones_library_once() {
     }
 }
 
-/// #10: a feed is judged by its first 5 MB - a long feed with its episodes up front is added,
-/// one whose first 5 MB hold no episode isn't.
+/// #10: a feed is judged by its first 20 MB (design 21b raised it from 5 MB) - a long feed with
+/// its episodes up front is added, one whose first 20 MB hold no episode isn't.
 #[tokio::test]
-async fn a_feed_longer_than_5_mb_is_judged_by_its_start() {
+async fn a_feed_longer_than_the_cap_is_judged_by_its_start() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let notes = "<item><title>Gammel episode</title><description>".to_string()
@@ -3524,7 +3659,7 @@ async fn a_feed_longer_than_5_mb_is_judged_by_its_start() {
         "<rss><channel><title>Lang podkast</title>\
          <item><title>Ny</title><enclosure url=\"https://example.org/new.mp3\"/></item>",
     );
-    while long.len() < 6_500_000 {
+    while long.len() < 21_000_000 {
         long.push_str(&notes);
     }
     long.push_str("</channel></rss>");
@@ -3546,7 +3681,7 @@ async fn a_feed_longer_than_5_mb_is_judged_by_its_start() {
     assert_eq!(name, "Lang podkast");
 
     let mut late = String::from("<rss><channel><title>Sen</title>");
-    while late.len() < 5_500_000 {
+    while late.len() < 20_500_000 {
         late.push_str("<item><title>Uten lyd</title></item>");
     }
     late.push_str("<item><enclosure url=\"https://example.org/x.mp3\"/></item></channel></rss>");
@@ -3562,7 +3697,7 @@ async fn a_feed_longer_than_5_mb_is_judged_by_its_start() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert!(
-        res.text().contains("first 5 MB hold no episode"),
+        res.text().contains("first 20 MB hold no episode"),
         "{}",
         res.text()
     );

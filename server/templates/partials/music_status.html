@@ -1,0 +1,3 @@
+{#- An NRK/RSS entry's status (design 21b §3): the cards on /music, the entry's page and
+    GET /music/cards (static/music-cards.js swaps it in place while it is busy). -#}
+{% macro status_block(status) %}<div class="music-status music-status-{{ status.tone }}" data-entry="{{ status.entry_id }}" data-busy="{% if status.busy %}1{% else %}0{% endif %}" role="status">{{ status.text }}</div>{% endmacro %}

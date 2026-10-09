@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "entry": 1,
+  "version": "33e4fb66e77b8d7f",
+  "items": [
+    {
+      "key": "c00dbbc9dadf",
+      "title": "Gammel",
+      "url": null,
+      "hls": false,
+      "duration_ms": null,
+      "art": null
+    },
+    {
+      "key": "c2a6b03f190d",
+      "title": "Ny episode",
+      "url": "https://cdn.example.org/ny.m3u8",
+      "hls": true,
+      "duration_ms": 3723000,
+      "art": "https://example.org/ny.jpg"
+    }
+  ]
+}

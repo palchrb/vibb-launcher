@@ -1,0 +1,41 @@
+{
+ "_links": {
+  "self": {
+   "href": "/playback/manifest/podcast/l_59575a02-8559-4b80-975a-0285598b8073"
+  },
+  "metadata": {
+   "href": "/playback/metadata/podcast/l_59575a02-8559-4b80-975a-0285598b8073",
+   "name": "metadata"
+  }
+ },
+ "id": "l_59575a02-8559-4b80-975a-0285598b8073",
+ "playability": "playable",
+ "availability": {
+  "information": "",
+  "isGeoBlocked": false,
+  "onDemand": {
+   "from": "2026-10-09T09:30:00Z",
+   "to": "9999-12-31T23:59:59.9999999Z",
+   "hasRightsNow": true
+  },
+  "live": null,
+  "externalEmbeddingAllowed": true
+ },
+ "playable": {
+  "endSequenceStartTime": null,
+  "duration": "PT57M34S",
+  "assets": [
+   {
+    "url": "https://podkast.nrk.no/fil/abels_taarn/59575a02-8559-4b80-975a-0285598b8073_1_ID192MP3.mp3",
+    "format": "MP3",
+    "mimeType": "audio/mp3",
+    "encrypted": false,
+    "encryptionScheme": "none"
+   }
+  ],
+  "liveBuffer": null,
+  "subtitles": [],
+  "thumbnails": []
+ },
+ "nonPlayable": null
+}

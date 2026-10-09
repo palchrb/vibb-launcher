@@ -1,6 +1,6 @@
 [package]
 name = "kid_phone_server"
-version = "0.21.0"
+version = "0.22.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
@@ -12,6 +12,9 @@ askama = "0.16.0"
 axum = { version = "0.8.9", features = ["multipart"] }
 # MUSIC_SECRET_KEY in .env is base64 (design 21); already in the tree.
 base64 = "0.22"
+# A feed that isn't UTF-8 is decoded by its BOM or XML declaration (design 21b) - the library behind
+# quick-xml's own "encoding" feature (MIT/Apache-2.0).
+encoding_rs = "0.8"
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
 # The music library endpoint (design 21) answers gzip; already in the tree through zip.
@@ -25,10 +28,12 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # Own music files (design 21): tags, duration and embedded art (MIT/Apache-2.0).
 lofty = "0.25"
 pbkdf2 = "0.12"
+# The music sweep's RSS parser (design 21b): a pull parser over the feed decoded to UTF-8 (MIT).
+quick-xml = "0.42"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # Tracked apps (handlers/tracked_apps.rs): an asset filter starting with "^" is a regular expression.
 regex = "1"
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json", "gzip"] }
 # Free space before an own-file upload (statvfs, safe API); already in the tree through tempfile.
 rustix = { version = "1", features = ["fs"] }
 # Not used directly (dns_engine.rs no longer runs a live TLS/DoT listener) - still a direct

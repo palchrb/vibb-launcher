@@ -1,0 +1,214 @@
+{
+ "_links": {
+  "self": {
+   "href": "/radio/catalog/podcast/abels_taarn/episodes?page=1&pageSize=50&sort=desc"
+  },
+  "next": {
+   "href": "/radio/catalog/podcast/abels_taarn/episodes?page=2&pageSize=50&sort=desc"
+  }
+ },
+ "_embedded": {
+  "episodes": [
+   {
+    "_links": {
+     "self": {
+      "href": "/radio/catalog/podcast/abels_taarn/episodes/l_59575a02-8559-4b80-975a-0285598b8073"
+     }
+    },
+    "episodeId": "l_59575a02-8559-4b80-975a-0285598b8073",
+    "titles": {
+     "title": "Hvordan lader du mobilen perfekt?",
+     "subtitle": "Er du lydig og stopper på 80%, eller er du en rebell som lader til 100%? Det kommer kanskje an på om du FØLER deg stor eller liten? Men hva ER du?"
+    },
+    "date": "2026-10-09T11:30:00+02:00",
+    "durationInSeconds": 3454,
+    "squareImage": [
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAeDn20eYbGHMYW91WQLFJ4Q",
+      "width": 300
+     },
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAccWMpd8RA9sYW91WQLFJ4Q",
+      "width": 600
+     },
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHADpUWbcQ7YzkYW91WQLFJ4Q",
+      "width": 960
+     },
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAsDz_v_vrRugYW91WQLFJ4Q",
+      "width": 1280
+     },
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAHs-6QmzSLzYYW91WQLFJ4Q",
+      "width": 1600
+     }
+    ],
+    "usageRights": {
+     "from": {
+      "date": "2026-10-09T11:30:00+02:00",
+      "displayValue": "9. oktober 2026 kl. 11:30"
+     },
+     "to": {
+      "date": "9999-12-22T00:59:59+01:00",
+      "displayValue": "Alltid tilgjengelig"
+     },
+     "geoBlock": {
+      "isGeoBlocked": false,
+      "displayValue": "Verden"
+     }
+    }
+   },
+   {
+    "_links": {
+     "self": {
+      "href": "/radio/catalog/podcast/abels_taarn/episodes/l_641212df-eff4-463f-9212-dfeff4d63f47"
+     }
+    },
+    "episodeId": "l_641212df-eff4-463f-9212-dfeff4d63f47",
+    "titles": {
+     "title": "Er gen Z dummere enn sine foreldre?",
+     "subtitle": "Eller er testene feil? Dessuten, genetiske bomber er rundt deg. Og nytt romteleskop brukes av alle"
+    },
+    "date": "2026-10-07T06:00:00+02:00",
+    "durationInSeconds": 1554,
+    "squareImage": [
+     {
+      "url": "https://gfx.nrk.no/BWmcbAaKjcbCEKU1tt6pEwJG6mYSQaoHJOnAmol7wfsw",
+      "width": 300
+     },
+     {
+      "url": "https://gfx.nrk.no/BWmcbAaKjcbCEKU1tt6pEwZBvJq696ntlOnAmol7wfsw",
+      "width": 600
+     },
+     {
+      "url": "https://gfx.nrk.no/BWmcbAaKjcbCEKU1tt6pEwB8uP4b8dtxdOnAmol7wfsw",
+      "width": 960
+     },
+     {
+      "url": "https://gfx.nrk.no/BWmcbAaKjcbCEKU1tt6pEwdaqTFDxyC9ROnAmol7wfsw",
+      "width": 1280
+     },
+     {
+      "url": "https://gfx.nrk.no/BWmcbAaKjcbCEKU1tt6pEwHEDyOviIeuJOnAmol7wfsw",
+      "width": 1600
+     }
+    ],
+    "usageRights": {
+     "from": {
+      "date": "2026-10-07T06:00:00+02:00",
+      "displayValue": "7. oktober 2026 kl. 06:00"
+     },
+     "to": {
+      "date": "9999-12-22T00:59:59+01:00",
+      "displayValue": "Alltid tilgjengelig"
+     },
+     "geoBlock": {
+      "isGeoBlocked": false,
+      "displayValue": "Verden"
+     }
+    }
+   },
+   {
+    "_links": {
+     "self": {
+      "href": "/radio/catalog/podcast/abels_taarn/episodes/l_d99301c3-6259-4d04-9301-c36259fd0463"
+     }
+    },
+    "episodeId": "l_d99301c3-6259-4d04-9301-c36259fd0463",
+    "titles": {
+     "title": "Hjernens hemmelige av/på-knapp",
+     "subtitle": "Årets nobelpriser i realfag går til hjerneforskning, spøkelsespartikler og speilvendte molekyler"
+    },
+    "date": "2026-10-07T06:00:00+02:00",
+    "durationInSeconds": 1633,
+    "squareImage": [
+     {
+      "url": "https://gfx.nrk.no/oAAgIxHLnd6aDqN1MVC3XgdJeHUbGLonaS0EQcUsyJgA",
+      "width": 300
+     },
+     {
+      "url": "https://gfx.nrk.no/oAAgIxHLnd6aDqN1MVC3XgEIFT_YUG1TuS0EQcUsyJgA",
+      "width": 600
+     },
+     {
+      "url": "https://gfx.nrk.no/oAAgIxHLnd6aDqN1MVC3XguY-JElfyx1WS0EQcUsyJgA",
+      "width": 960
+     },
+     {
+      "url": "https://gfx.nrk.no/oAAgIxHLnd6aDqN1MVC3Xgk0J7SqCiXaSS0EQcUsyJgA",
+      "width": 1280
+     },
+     {
+      "url": "https://gfx.nrk.no/oAAgIxHLnd6aDqN1MVC3Xg5uuhN4_riDeS0EQcUsyJgA",
+      "width": 1600
+     }
+    ],
+    "usageRights": {
+     "from": {
+      "date": "2026-10-07T06:00:00+02:00",
+      "displayValue": "7. oktober 2026 kl. 06:00"
+     },
+     "to": {
+      "date": "9999-12-22T00:59:59+01:00",
+      "displayValue": "Alltid tilgjengelig"
+     },
+     "geoBlock": {
+      "isGeoBlocked": false,
+      "displayValue": "Verden"
+     }
+    }
+   },
+   {
+    "_links": {
+     "self": {
+      "href": "/radio/catalog/podcast/abels_taarn/episodes/l_59575a02-8559-4b80-975a-0285598b8073"
+     }
+    },
+    "episodeId": "l_59575a02-8559-4b80-975a-0285598b8073",
+    "titles": {
+     "title": "Hvordan lader du mobilen perfekt?",
+     "subtitle": "Er du lydig og stopper på 80%, eller er du en rebell som lader til 100%? Det kommer kanskje an på om du FØLER deg stor eller liten? Men hva ER du?"
+    },
+    "date": "2026-10-09T11:30:00+02:00",
+    "durationInSeconds": 3454,
+    "squareImage": [
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAeDn20eYbGHMYW91WQLFJ4Q",
+      "width": 300
+     },
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAccWMpd8RA9sYW91WQLFJ4Q",
+      "width": 600
+     },
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHADpUWbcQ7YzkYW91WQLFJ4Q",
+      "width": 960
+     },
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAsDz_v_vrRugYW91WQLFJ4Q",
+      "width": 1280
+     },
+     {
+      "url": "https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAHs-6QmzSLzYYW91WQLFJ4Q",
+      "width": 1600
+     }
+    ],
+    "usageRights": {
+     "from": {
+      "date": "2026-10-09T11:30:00+02:00",
+      "displayValue": "9. oktober 2026 kl. 11:30"
+     },
+     "to": {
+      "date": "9999-12-22T00:59:59+01:00",
+      "displayValue": "Alltid tilgjengelig"
+     },
+     "geoBlock": {
+      "isGeoBlocked": false,
+      "displayValue": "Verden"
+     }
+    }
+   }
+  ]
+ }
+}

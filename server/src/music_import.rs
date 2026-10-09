@@ -5,7 +5,8 @@
 //! library already holds; the pages are `handlers::music_import`.
 //!
 //! No network: a target goes through `music::parse_link` only (the same normalised target, source
-//! and key as "Add"), never `check_link` - a dead feed shows up later as the phone's entry error.
+//! and key as "Add"), never `check_link`. The commit wakes the sweep, which fills the new entries
+//! in the background (design 21b); a dead feed shows up as its card's first-check error.
 //! Positions and downloads aren't imported (design 20: no position mirroring).
 
 use std::collections::HashSet;

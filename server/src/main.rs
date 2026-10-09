@@ -11,7 +11,10 @@ mod models;
 mod music;
 mod music_icons;
 mod music_import;
+mod music_net;
 mod music_secret;
+mod music_sources;
+mod music_sweep;
 mod phone;
 mod photos;
 mod play;
@@ -77,8 +80,11 @@ pub struct AppState {
     pub music_cover_dir: std::sync::Arc<std::path::PathBuf>,
     /// The key the Storytel login is sealed with (`music_secret`); `None` = Storytel is off.
     pub music_key: Option<std::sync::Arc<music_secret::MusicKey>>,
-    /// The add check's one GET (`music::HttpFetch`; canned in the tests).
-    pub music_fetch: std::sync::Arc<dyn music::Fetch>,
+    /// Every music source fetch - the add check, the sweep, source covers (design 21b §2.1/§2.7):
+    /// `music_net::HttpSource` behind the one gate (`music_net::Gated`); canned in the tests.
+    pub music_fetch: std::sync::Arc<dyn music_net::Source>,
+    /// The music sweep's wake-up and what it is checking (`music_sweep::Sweep`).
+    pub music_sweep: std::sync::Arc<music_sweep::Sweep>,
     /// Each phone's built music library, under the library revision (`music::LibraryCache`).
     pub music_libraries: std::sync::Arc<music::LibraryCache>,
 }
@@ -195,7 +201,11 @@ async fn main() {
         music_files_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_FILES_DIR)),
         music_cover_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_COVERS_DIR)),
         music_key,
-        music_fetch: std::sync::Arc::new(music::HttpFetch),
+        music_fetch: std::sync::Arc::new(music_net::Gated::new(
+            std::sync::Arc::new(music_net::HttpSource::new()),
+            music_net::REQUEST_SPACING,
+        )),
+        music_sweep: Default::default(),
         music_libraries: Default::default(),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
@@ -226,6 +236,8 @@ async fn main() {
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
     // Blocked domains, location history and status history (src/retention.rs).
     tokio::task::spawn(retention::run_pruning(state.clone()));
+    // The music sweep (design 21b): lists every NRK/RSS entry, its first pass 60 s from now.
+    tokio::task::spawn(music_sweep::run(state.clone()));
 
     let app = build_router(state, session_layer);
 
@@ -482,6 +494,16 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             get(handlers::music::show).post(handlers::music::add_link),
         )
         .route("/music/own", post(handlers::music::add_own))
+        .route("/music/sweep", post(handlers::music::save_sweep))
+        .route("/music/cards", get(handlers::music::cards))
+        .route(
+            "/music/entries/{id}/check",
+            post(handlers::music::check_now),
+        )
+        .route(
+            "/music/entries/{id}/offline",
+            post(handlers::music::save_offline),
+        )
         .route(
             "/music/orphans/delete",
             post(handlers::music::delete_orphans),
@@ -717,6 +739,10 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
         .route(
             "/api/devices/music/library",
             get(handlers::music_api::library),
+        )
+        .route(
+            "/api/devices/music/entries/{id}/items",
+            get(handlers::music_api::listing),
         )
         .route(
             "/api/devices/music/covers/{hash}",

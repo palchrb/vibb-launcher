@@ -6,13 +6,26 @@
 .section-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
 .section-tabs a { flex: 1; text-align: center; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--color-border); text-decoration: none; color: var(--color-text); font-weight: 600; }
 .section-tabs a[aria-current="page"] { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
-.music-row { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--color-border); padding: 12px 0; flex-wrap: wrap; }
-.music-row:first-of-type { border-top: none; }
-.music-row .music-text { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
-.music-row .music-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.music-row .music-actions form { margin: 0; }
-.music-cover { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; flex: none; }
-.music-tile { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 48px; height: 48px; border-radius: 50%; }
+.music-card { border-top: 1px solid var(--color-border); padding: 14px 0; }
+.music-card:first-of-type { border-top: none; padding-top: 4px; }
+.music-head { display: flex; align-items: flex-start; gap: 12px; }
+.music-head .music-text { flex: 1 1 auto; min-width: 0; }
+.music-oneline { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-note { font-style: italic; }
+.music-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.music-actions form { margin: 0; }
+.music-offline { display: inline-flex; align-items: center; gap: 6px; }
+.music-offline label { margin: 0; font-size: 0.85rem; color: var(--color-text-muted); }
+.music-offline select { width: auto; margin: 0; padding: 4px 8px; }
+.music-check-after { font-size: 0.85rem; }
+.music-status { min-height: 2.6em; line-height: 1.3em; margin-top: 8px; font-size: 0.9rem; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.music-status-error { color: var(--color-danger); }
+.music-status-busy { color: var(--color-primary); }
+.music-phones { list-style: none; padding: 0; margin: 8px 0 0; font-size: 0.85rem; color: var(--color-text-muted); }
+.music-phones li { overflow-wrap: anywhere; }
+.music-cover { width: 64px; height: 64px; border-radius: 12px; object-fit: cover; flex: none; }
+.music-tile { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 64px; height: 64px; border-radius: 50%; }
+#sweep select { width: auto; }
 .music-tile img { width: 55%; height: 55%; }
 .music-tile-small { width: 32px; height: 32px; }
 .category-block { border-top: 1px solid var(--color-border); padding: 12px 0; }
@@ -43,11 +56,11 @@ input, select { max-width: 100%; }
     <div class="page-header">
         <h1>Music</h1>
     </div>
-    <p class="subtitle">The library for the Vibb music app: podcasts, NRK series and your own files, sorted into categories. Pick what each phone gets on that phone's page (Music card). The phones fetch podcasts and NRK straight from the source; this server only keeps the list and your own files.</p>
+    <p class="subtitle">The library for the Vibb music app: podcasts, NRK series and your own files, sorted into categories. Pick what each phone gets on that phone's page (Music card). This server checks NRK and the podcast feeds for new episodes and sends the phones the lists; the phones download the audio straight from the source. Your own files are kept here.</p>
 
     <form method="post" action="/music" class="card" id="add">
         <h2>Add from a link</h2>
-        <p class="subtitle">Paste an NRK radio link (radio.nrk.no/podkast/... or radio.nrk.no/serie/...) or a podcast feed (RSS). The server checks the link once and takes its title as the name.</p>
+        <p class="subtitle">Paste an NRK radio link (radio.nrk.no/podkast/... or radio.nrk.no/serie/...) or a podcast feed (RSS). The server checks the link and takes its title as the name, then lists its episodes in the background.</p>
         {% if let Some(error) = add.error %}
         <div class="error">{{ error }}</div>
         {% endif %}
@@ -91,35 +104,30 @@ input, select { max-width: 100%; }
     </div>
     {% endif %}
 
+    <form method="post" action="/music/sweep" class="card" id="sweep">
+        <h2>New episodes</h2>
+        <label for="sweep_hours">Check for new episodes</label>
+        <select id="sweep_hours" name="hours" onchange="this.form.submit()">
+            {% for hours in sweep_choices %}
+            <option value="{{ hours }}"{% if *hours == sweep_hours %} selected{% endif %}>every {{ hours }} hour{% if *hours != 1 %}s{% endif %}</option>
+            {% endfor %}
+        </select>
+        <noscript><button type="submit" class="button-small">Save</button></noscript>
+        <p class="hint">6 hours is what the Vibb Pi uses (NRK podcasts every 12 hours). Shorter means more requests to NRK and the podcast sites: about 2&times; the Pi at 3 hours and 6&times; at 1 hour. Entries no phone has are checked once a day. "Check now" on an entry checks it at once.</p>
+        <p class="hint">Feeds on your home network or tailnet work. A public feed can never send the server or the phones to a private address.</p>
+    </form>
+
     <div class="card" id="entries">
         <h2>Library ({{ entry_count }} of {{ max_entries }})</h2>
         {% if entries.is_empty() %}
         <p class="subtitle">Nothing yet - add a link or own files above.</p>
         {% endif %}
         {% for entry in entries %}
-        <div class="music-row" id="entry-{{ entry.id }}">
-            {% if let Some(cover) = entry.cover %}
-            <img class="music-cover" src="/music-covers/{{ cover }}" alt="">
-            {% else %}
-            <span class="music-tile" style="background: {{ entry.category_color }}"><img src="/static/music-icons/{{ entry.category_icon }}.svg" alt=""></span>
-            {% endif %}
-            <div class="music-text">
-                <strong>{{ entry.name }}</strong>
-                <div class="subtitle">{{ entry.kind }} · {{ entry.category }} · on {{ entry.phones }} phone{% if entry.phones != 1 %}s{% endif %}{% if entry.kind == "Own files" %} · {{ entry.files }} file{% if entry.files != 1 %}s{% endif %}{% endif %}{% if entry.missing > 0 %} · <strong>{{ entry.missing }} missing on this server</strong>{% endif %}</div>
-            </div>
-            <div class="music-actions">
-                {% if !entry.first %}
-                <form method="post" action="/music/entries/{{ entry.id }}/move"><input type="hidden" name="direction" value="up"><button type="submit" class="button-small button-secondary" aria-label="Move {{ entry.name }} up">&uarr;</button></form>
-                {% endif %}
-                {% if !entry.last %}
-                <form method="post" action="/music/entries/{{ entry.id }}/move"><input type="hidden" name="direction" value="down"><button type="submit" class="button-small button-secondary" aria-label="Move {{ entry.name }} down">&darr;</button></form>
-                {% endif %}
-                <a class="button-small" href="/music/entries/{{ entry.id }}">Edit</a>
-            </div>
-        </div>
+        {% include "partials/music_card.html" %}
         {% endfor %}
-        <p class="hint" style="margin-top:12px;">The order here is the order of the covers on the phones.</p>
+        <p class="hint" style="margin-top:12px;">The order here is the order of the covers on the phones. Times are UTC.</p>
     </div>
+    <script src="/static/music-cards.js?v=1" defer></script>
 
     <div class="card" id="categories">
         <h2>Categories</h2>

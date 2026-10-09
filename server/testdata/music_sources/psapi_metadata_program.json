@@ -1,0 +1,31 @@
+{
+ "_links": {
+  "self": {
+   "href": "/playback/metadata/program/MKTT72550116"
+  },
+  "next": {
+   "href": "/playback/metadata/program/MKTT72550216",
+   "name": "next"
+  }
+ },
+ "id": "MKTT72550116",
+ "playability": "playable",
+ "duration": "PT55M",
+ "availability": {
+  "information": "",
+  "isGeoBlocked": false,
+  "onDemand": {
+   "from": "2016-01-02T17:05:00+01:00",
+   "to": "9999-12-31T00:00:00+01:00",
+   "hasRightsNow": true
+  },
+  "live": null,
+  "externalEmbeddingAllowed": true
+ },
+ "preplay": {
+  "titles": {
+   "title": "Radioteatret",
+   "subtitle": "Et budskap fra de døde"
+  }
+ }
+}

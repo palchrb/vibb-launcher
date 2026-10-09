@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
+{% import "partials/music_status.html" as music_status %}
 <style>
 .music-row { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--color-border); padding: 10px 0; flex-wrap: wrap; }
 .music-row:first-of-type { border-top: none; }
@@ -10,6 +11,12 @@
 .music-cover { width: 96px; height: 96px; border-radius: 16px; object-fit: cover; }
 .music-art { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; flex: none; }
 input, select { max-width: 100%; }
+.music-oneline { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-status { min-height: 2.6em; line-height: 1.3em; margin: 8px 0; font-size: 0.9rem; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.music-status-error { color: var(--color-danger); }
+.music-status-busy { color: var(--color-primary); }
+.music-phones { list-style: none; padding: 0; margin: 8px 0 0; font-size: 0.85rem; color: var(--color-text-muted); }
+.music-phones li { overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -20,6 +27,40 @@ input, select { max-width: 100%; }
         <a href="/music#entry-{{ entry.id }}" class="button-small button-secondary">Back to the library</a>
     </div>
     <p class="subtitle" style="overflow-wrap:anywhere;">{{ kind }}{% if let Some(target) = entry.target %} · <a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}</p>
+
+    {% if let Some(sweep) = sweep %}
+    <div class="card" id="status">
+        <h2>Episodes</h2>
+        {% if let Some(title) = sweep.source_title %}
+        <p class="subtitle music-oneline">At the source: {{ title }}</p>
+        {% endif %}
+        {% if let Some(episodes) = sweep.episodes %}
+        <p class="music-oneline" style="margin:0;">{{ episodes }}</p>
+        {% endif %}
+        {% for note in sweep.notes %}
+        <p class="subtitle" style="margin:0;">{{ note }}</p>
+        {% endfor %}
+        {% if sweep.lan %}
+        <p class="subtitle" style="margin:0;">On your home network or tailnet.</p>
+        {% endif %}
+        {% call music_status::status_block(sweep.status) %}{% endcall %}
+        {% if let Some(after) = sweep.check_after %}
+        <p class="subtitle">Check again after {{ after }}</p>
+        {% else %}
+        <form method="post" action="/music/entries/{{ entry.id }}/check">
+            <input type="hidden" name="back" value="entry">
+            <button type="submit" class="button-small button-secondary">Check now</button>
+        </form>
+        {% endif %}
+        {% if !phone_lines.is_empty() %}
+        <ul class="music-phones">
+            {% for line in phone_lines %}<li>{{ line }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        <p class="hint" style="margin-top:8px;">Times are UTC.</p>
+    </div>
+    <script src="/static/music-cards.js?v=1" defer></script>
+    {% endif %}
 
     <form method="post" action="/music/entries/{{ entry.id }}" class="card" id="entry-{{ entry.id }}">
         <h2>Settings</h2>
@@ -69,6 +110,9 @@ input, select { max-width: 100%; }
             <button type="submit" class="button-small button-secondary">Use the source's picture</button>
         </form>
         {% else %}
+        {% if let Some(cover) = source_cover %}
+        <img class="music-cover" src="/music-covers/{{ cover }}" alt="The source's picture">
+        {% endif %}
         <p class="subtitle">The phone shows the source's own picture{% if own %} (the first file's embedded art){% endif %}. Upload a photo to use your own instead.</p>
         {% endif %}
         <form method="post" action="/music/entries/{{ entry.id }}/cover" enctype="multipart/form-data" style="margin-top:12px;">

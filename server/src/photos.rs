@@ -85,16 +85,20 @@ pub static WALLPAPERS: Store = Store {
 };
 
 /// Music covers (`AppState.music_cover_dir`, design 21): a parent's cover for an entry
-/// (`music_entries.cover_hash`) and an own file's embedded art (`music_files.art_hash`), both square
-/// JPEGs of at most [MAX_SIDE]. Backed up (unlike the audio); a lost one is dropped from the rows.
+/// (`music_entries.cover_hash`), an own file's embedded art (`music_files.art_hash`) and a source's
+/// cover the sweep fetched (`music_listings.cover_hash`, design 21b), all square JPEGs of at most
+/// [MAX_SIDE]. Backed up (unlike the audio); a lost one is dropped from the rows.
 pub static MUSIC_COVERS: Store = Store {
     what: "music cover",
     lock: &MUSIC_COVER_FILES,
     referenced_sql: "SELECT cover_hash FROM music_entries WHERE cover_hash IS NOT NULL \
-                     UNION SELECT art_hash FROM music_files WHERE art_hash IS NOT NULL",
+                     UNION SELECT art_hash FROM music_files WHERE art_hash IS NOT NULL \
+                     UNION SELECT cover_hash FROM music_listings WHERE cover_hash IS NOT NULL",
     forget_sql: &[
         "UPDATE music_entries SET cover_hash = NULL WHERE cover_hash = ?",
         "UPDATE music_files SET art_hash = NULL WHERE art_hash = ?",
+        // The source's cover (design 21b §2.6): its URL stays, so the next check fetches it again.
+        "UPDATE music_listings SET cover_hash = NULL WHERE cover_hash = ?",
     ],
     zip_prefix: "music_covers",
     max_stored_bytes: MAX_STORED_BYTES,

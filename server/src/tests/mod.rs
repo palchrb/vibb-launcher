@@ -9,6 +9,7 @@ mod device_api;
 mod hardening;
 mod launcher_ui;
 mod music;
+mod music_sweep;
 mod play;
 mod provisioning;
 mod sound_mode;
@@ -38,7 +39,8 @@ pub struct TestApp {
     /// (skipping the session/2FA middleware) or build a second router with different config.
     pub state: AppState,
     pub db: SqlitePool,
-    /// The music add check's canned answers (design 21): `fetch.answer(url, status, body)`.
+    /// Every music source fetch's canned answers (designs 21, 21b): `fetch.answer(url, status,
+    /// body)`.
     pub fetch: std::sync::Arc<music::CannedFetch>,
     _dir: tempfile::TempDir,
 }
@@ -126,7 +128,12 @@ impl TestApp {
             music_key: Some(std::sync::Arc::new(
                 crate::music_secret::MusicKey::from_bytes(&[42; 32]),
             )),
-            music_fetch: fetch.clone(),
+            // The real gate (one request at a time), without the 200 ms spacing.
+            music_fetch: std::sync::Arc::new(crate::music_net::Gated::new(
+                fetch.clone(),
+                std::time::Duration::ZERO,
+            )),
+            music_sweep: Default::default(),
             music_libraries: Default::default(),
         };
 

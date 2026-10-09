@@ -1,0 +1,41 @@
+{
+ "_links": {
+  "self": {
+   "href": "/playback/manifest/program/MKTT72550116"
+  },
+  "metadata": {
+   "href": "/playback/metadata/program/MKTT72550116",
+   "name": "metadata"
+  }
+ },
+ "id": "MKTT72550116",
+ "playability": "playable",
+ "availability": {
+  "information": "",
+  "isGeoBlocked": false,
+  "onDemand": {
+   "from": "2016-01-02T17:05:00+01:00",
+   "to": "9999-12-31T00:00:00+01:00",
+   "hasRightsNow": true
+  },
+  "live": null,
+  "externalEmbeddingAllowed": true
+ },
+ "playable": {
+  "endSequenceStartTime": null,
+  "duration": "PT55M",
+  "assets": [
+   {
+    "url": "https://nrk-od-world-87.akamaized.net/open/ps/mktt/mktt72550116/87d9034b-0.smil/muxed.m3u8?adap=audio&aco=aac",
+    "format": "HLS",
+    "mimeType": "application/vnd.apple.mpegurl",
+    "encrypted": false,
+    "encryptionScheme": "none"
+   }
+  ],
+  "liveBuffer": null,
+  "subtitles": [],
+  "thumbnails": []
+ },
+ "nonPlayable": null
+}

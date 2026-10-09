@@ -3,6 +3,8 @@
 //!
 //! - `GET /api/devices/music/library`: this phone's library (`music::cached_library`), `ETag` = its
 //!   version, `If-None-Match` -> 304, gzip when asked for. 404 while nothing is ticked.
+//! - `GET /api/devices/music/entries/{id}/items`: an NRK/RSS entry's episode list (design 21b
+//!   §4.2), the same way; 404 while the sweep hasn't listed it.
 //! - `GET /api/devices/music/covers/{hash}`: a cover the library names.
 //! - `GET /api/devices/music/files/{id}`: an own file, through design 13's `ServeFile` (Range, strong
 //!   ETag, `If-Match` -> 412, 416) plus `X-Content-SHA256`. A file flagged missing is a 404.
@@ -68,33 +70,71 @@ pub async fn library(
             Ok(None) => return StatusCode::NOT_FOUND.into_response(),
             Err(err) => return server_error(device.id, err, "couldn't build the music library"),
         };
-    let etag = format!("\"{}\"", library.version);
+    versioned_json(
+        device.id,
+        &headers,
+        &library.version,
+        &library.json,
+        "library",
+    )
+}
+
+/// `GET /api/devices/music/entries/{id}/items` (design 21b §4.2): an entry's episode list, for an
+/// entry this phone has ticked, once the sweep has listed it - 404 otherwise. ETag = its version.
+pub async fn listing(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    headers: HeaderMap,
+) -> Response {
+    let listing = match crate::music_sweep::device_listing(&state.db, device.id, id).await {
+        Ok(Some(listing)) => listing,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(err) => return server_error(device.id, err, "couldn't read a music listing"),
+    };
+    versioned_json(
+        device.id,
+        &headers,
+        &listing.version,
+        &listing.json,
+        "listing",
+    )
+}
+
+/// A JSON document under its version: `ETag`, `If-None-Match` -> 304, `no-cache`, gzip when asked
+/// for.
+fn versioned_json(
+    device_id: i64,
+    headers: &HeaderMap,
+    version: &str,
+    json: &[u8],
+    what: &str,
+) -> Response {
+    let etag = format!("\"{version}\"");
     let etag_value = HeaderValue::from_str(&etag).expect("hex in quotes is a valid header");
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::ETAG, etag_value);
     response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     response_headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
-    if etag_matches(&headers, &etag) {
+    if etag_matches(headers, &etag) {
         return (StatusCode::NOT_MODIFIED, response_headers).into_response();
     }
     response_headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
-    if accepts_gzip(&headers) {
+    if accepts_gzip(headers) {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        let gzipped = encoder
-            .write_all(&library.json)
-            .and_then(|()| encoder.finish());
+        let gzipped = encoder.write_all(json).and_then(|()| encoder.finish());
         match gzipped {
             Ok(body) => {
                 response_headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
                 return (response_headers, body).into_response();
             }
-            Err(err) => tracing::warn!(device_id = device.id, %err, "couldn't gzip the library"),
+            Err(err) => tracing::warn!(device_id, %err, "couldn't gzip the music {what}"),
         }
     }
-    (response_headers, library.json.clone()).into_response()
+    (response_headers, json.to_vec()).into_response()
 }
 
 pub async fn cover(

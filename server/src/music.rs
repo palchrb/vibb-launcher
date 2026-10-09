@@ -2,20 +2,23 @@
 //! QA review and decisions; the kid's GUI is design 20): the server's half - the library
 //! *definition* (categories, entries, the parent's own files) and what goes to each phone.
 //!
-//! - **Sources**: an NRK podcast or series link, an RSS feed, or "own files" uploaded here. The phone
-//!   fetches NRK and RSS from the source like the vibb Pi; the server never proxies or stores them.
-//!   Adding a link is the server's only fetch (one GET that must look like the source).
+//! - **Sources**: an NRK podcast or series link, an RSS feed, or "own files" uploaded here. Adding a
+//!   link is checked with one GET that must look like the source ([check_link]). The server then
+//!   lists every NRK/RSS entry itself (design `21b-music-server-sweep.md`: `music_sweep`,
+//!   `music_sources`, all fetches through `music_net`'s one client and gate) and serves each list
+//!   at `GET /api/devices/music/entries/{id}/items`; the phones download the audio straight from
+//!   the source - the server never proxies or stores NRK/RSS audio.
 //! - **The library** of a phone is its ticked entries with their categories, files and covers
-//!   ([device_library]), served by `GET /api/devices/music/library` and named in the policy by its
+//!   ([library_for]), served by `GET /api/devices/music/library` and named in the policy by its
 //!   version: 16 hex of the SHA-256 of the library JSON *without* its own `version` field (QA #4).
-//!   Own files that aren't on disk (never backed up) stay listed as `missing` (QA #3).
+//!   Each NRK/RSS entry names its listing's version (`items`, 21b §4.1) and falls back to the
+//!   source's cover. Own files that aren't on disk (never backed up) stay listed as `missing`
+//!   (QA #3).
 //! - **Policy** `music` ([policy_music]): the version, mobile data, the volume cap and the Storytel
 //!   generation - or `null` when it can't be read, never an empty library.
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,9 +48,6 @@ pub const MAX_NAME_CHARS: usize = 60;
 pub const MAX_CATEGORY_NAME_CHARS: usize = 20;
 /// Tag text kept from an own file.
 const MAX_TAG_CHARS: usize = 200;
-/// The add check: one GET, at most this long, reading at most this much of the body.
-pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
-pub const MAX_FEED_BYTES: usize = 5_000_000;
 /// NRK's programme API (the same one the vibb Pi and the music app use).
 pub const PSAPI: &str = "https://psapi.nrk.no";
 
@@ -305,80 +305,11 @@ pub fn default_category<'a>(
 }
 
 // ------------------------------------------------------------------------------------------------
-// The add check (the server's only fetch)
+// The add check
 // ------------------------------------------------------------------------------------------------
 
-/// One GET's answer: the status and the body - its first `limit` bytes (`truncated` = there was
-/// more). A bounded read, not a refusal (qa-21-step1-code #10): the caller decides what a prefix is
-/// good for - the add check needs only a feed's channel and first episode, a sweep (design 21b)
-/// can ask with its own limit and see that it got everything.
-pub struct Fetched {
-    pub status: u16,
-    pub body: Vec<u8>,
-    pub truncated: bool,
-}
-
-#[derive(Debug)]
-pub enum FetchError {
-    Network(String),
-}
-
-/// The server's HTTP GET of a music source - `AppState.music_fetch`, canned in the tests.
-pub trait Fetch: Send + Sync {
-    /// At most `limit` bytes of the body are read.
-    fn get<'a>(
-        &'a self,
-        url: &'a str,
-        limit: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Fetched, FetchError>> + Send + 'a>>;
-}
-
-/// The real one: [FETCH_TIMEOUT] overall; reading stops at `limit` bytes.
-pub struct HttpFetch;
-
-impl Fetch for HttpFetch {
-    fn get<'a>(
-        &'a self,
-        url: &'a str,
-        limit: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Fetched, FetchError>> + Send + 'a>> {
-        Box::pin(async move {
-            let client = reqwest::Client::builder()
-                .user_agent("kid-phone-server (self-hosted; vibb music library)")
-                .timeout(FETCH_TIMEOUT)
-                .build()
-                .map_err(|e| FetchError::Network(e.to_string()))?;
-            let mut response = client
-                .get(url)
-                .send()
-                .await
-                .map_err(|e| FetchError::Network(e.to_string()))?;
-            let status = response.status().as_u16();
-            let mut body = Vec::new();
-            let mut truncated = false;
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|e| FetchError::Network(e.to_string()))?
-            {
-                let room = limit - body.len();
-                if chunk.len() > room {
-                    body.extend_from_slice(&chunk[..room]);
-                    truncated = true;
-                    break; // the rest is never downloaded: dropping the response closes it
-                }
-                body.extend_from_slice(&chunk);
-            }
-            Ok(Fetched {
-                status,
-                body,
-                truncated,
-            })
-        })
-    }
-}
-
-/// Why a link wasn't added.
+/// Why a link wasn't added, or why the sweep couldn't list an entry (design 21b §2.4: the error
+/// codes are [CheckError::code]).
 #[derive(Debug, PartialEq, Eq)]
 pub enum CheckError {
     NotFound,
@@ -387,6 +318,7 @@ pub enum CheckError {
     Status(u16),
     TooBig,
     Network(String),
+    Timeout,
 }
 
 impl CheckError {
@@ -404,38 +336,86 @@ impl CheckError {
             CheckError::Status(code) => {
                 format!("The site answered {code} - check the link, or try again later.")
             }
-            CheckError::TooBig => {
-                "That feed's first 5 MB hold no episode with audio - not added.".to_string()
-            }
+            CheckError::TooBig => format!(
+                "That feed's first {} MB hold no episode with audio.",
+                crate::music_net::MAX_FEED_BYTES / 1_000_000
+            ),
             CheckError::Network(err) => {
                 format!("Couldn't reach the site ({err}) - try again later.")
             }
+            CheckError::Timeout => "The site didn't answer in time - try again later.".to_string(),
+        }
+    }
+
+    /// The stored code (`music_listings.error`).
+    pub fn code(&self) -> String {
+        match self {
+            CheckError::NotFound => "not_found".to_string(),
+            CheckError::NotFeed => "not_feed".to_string(),
+            CheckError::NoItems => "no_items".to_string(),
+            CheckError::Status(code) => format!("http_{code}"),
+            CheckError::TooBig => "too_big".to_string(),
+            CheckError::Network(_) => "network".to_string(),
+            CheckError::Timeout => "timeout".to_string(),
+        }
+    }
+
+    /// A stored code back (the card's text for an entry never listed).
+    pub fn from_code(code: &str) -> CheckError {
+        match code {
+            "not_found" => CheckError::NotFound,
+            "not_feed" => CheckError::NotFeed,
+            "no_items" => CheckError::NoItems,
+            "too_big" => CheckError::TooBig,
+            "timeout" => CheckError::Timeout,
+            other => match other
+                .strip_prefix("http_")
+                .and_then(|c| c.parse::<u16>().ok())
+            {
+                Some(status) => CheckError::Status(status),
+                None => CheckError::Network("no connection".to_string()),
+            },
         }
     }
 }
 
-/// The title of a link, after one GET that must look like its source: psapi's catalog entry for
-/// NRK, an RSS feed with at least one enclosure for anything else.
-pub async fn check_link(fetch: &dyn Fetch, link: &Link) -> Result<String, CheckError> {
+impl From<crate::music_net::FetchError> for CheckError {
+    fn from(err: crate::music_net::FetchError) -> CheckError {
+        match err {
+            crate::music_net::FetchError::Timeout => CheckError::Timeout,
+            other => CheckError::Network(other.message()),
+        }
+    }
+}
+
+/// The title of a link, after one GET through the music source client (design 21b §2.7) that must
+/// look like its source: psapi's catalog entry for NRK (public addresses only), an RSS feed with at
+/// least one enclosure for anything else - parsed by the sweep's own parser
+/// (`music_sources::parse_feed`) from at most `MAX_FEED_BYTES`. A feed the parent pasted may be on
+/// the home LAN or the tailnet.
+pub async fn check_link(
+    source: &dyn crate::music_net::Source,
+    link: &Link,
+) -> Result<String, CheckError> {
+    use crate::music_net::{Kind, Reach, SourceRequest};
     let (url, slug) = match link {
         Link::NrkPodcast { slug } => (format!("{PSAPI}/radio/catalog/podcast/{slug}"), slug),
         Link::NrkSeries { slug, .. } => (format!("{PSAPI}/radio/catalog/series/{slug}"), slug),
         Link::Rss { url } => {
-            // The channel's title and one episode come first in a feed: its first
-            // [MAX_FEED_BYTES] decide, however long the whole feed is (qa-21-step1-code #10).
-            let fetched = fetch.get(url, MAX_FEED_BYTES).await.map_err(fetch_error)?;
+            // The channel and its first episodes come first in a feed: a feed longer than the
+            // cap is judged by what was read (qa-21-step1-code #10).
+            let fetched = source
+                .get(SourceRequest::new(url.clone(), Kind::Feed, Reach::Any))
+                .await?;
             if fetched.status != 200 {
                 return Err(CheckError::Status(fetched.status));
             }
-            return match rss_title(&fetched.body) {
-                Err(CheckError::NoItems | CheckError::NotFeed) if fetched.truncated => {
-                    Err(CheckError::TooBig)
-                }
-                other => other,
-            };
+            return feed_title(&fetched.body, fetched.truncated);
         }
     };
-    let fetched = fetch.get(&url, MAX_FEED_BYTES).await.map_err(fetch_error)?;
+    let fetched = source
+        .get(SourceRequest::new(url, Kind::Page, Reach::Public))
+        .await?;
     match fetched.status {
         200 => {}
         404 | 410 => return Err(CheckError::NotFound),
@@ -446,9 +426,17 @@ pub async fn check_link(fetch: &dyn Fetch, link: &Link) -> Result<String, CheckE
     Ok(nrk_title(&json).unwrap_or_else(|| slug.clone()))
 }
 
-fn fetch_error(err: FetchError) -> CheckError {
-    match err {
-        FetchError::Network(e) => CheckError::Network(e),
+/// An RSS feed's channel title, if the body is a feed with at least one item that has an enclosure
+/// (vibb plays only those); `truncated` = the body is the cap's worth of a longer feed.
+pub fn feed_title(body: &[u8], truncated: bool) -> Result<String, CheckError> {
+    match crate::music_sources::parse_feed(body, false) {
+        Ok(feed) => Ok(feed
+            .title
+            .and_then(|t| cut_title(&t, MAX_NAME_CHARS))
+            .unwrap_or_else(|| "Podcast".to_string())),
+        Err(_) if truncated => Err(CheckError::TooBig),
+        Err(crate::music_sources::FeedError::NotFeed) => Err(CheckError::NotFeed),
+        Err(crate::music_sources::FeedError::NoItems) => Err(CheckError::NoItems),
     }
 }
 
@@ -467,114 +455,6 @@ pub fn nrk_title(json: &serde_json::Value) -> Option<String> {
             .and_then(|v| v.as_str())
             .and_then(|t| cut_title(t, MAX_NAME_CHARS))
     })
-}
-
-/// The text inside an XML element body: CDATA kept as is, the five entities and numeric
-/// references decoded, tags dropped.
-fn xml_text(raw: &str) -> String {
-    let mut out = String::new();
-    let mut rest = raw;
-    while !rest.is_empty() {
-        if let Some(after) = rest.strip_prefix("<![CDATA[") {
-            let end = after.find("]]>").unwrap_or(after.len());
-            out.push_str(&after[..end]);
-            rest = after.get(end + 3..).unwrap_or("");
-        } else if rest.starts_with('<') {
-            let end = rest.find('>').map_or(rest.len(), |i| i + 1);
-            rest = &rest[end..];
-        } else if rest.starts_with('&') {
-            let end = rest.find(';').filter(|i| *i <= 10);
-            let decoded = end.and_then(|i| {
-                let name = &rest[1..i];
-                match name {
-                    "amp" => Some('&'),
-                    "lt" => Some('<'),
-                    "gt" => Some('>'),
-                    "quot" => Some('"'),
-                    "apos" => Some('\''),
-                    _ => name
-                        .strip_prefix("#x")
-                        .or_else(|| name.strip_prefix("#X"))
-                        .and_then(|h| u32::from_str_radix(h, 16).ok())
-                        .or_else(|| name.strip_prefix('#').and_then(|d| d.parse().ok()))
-                        .and_then(char::from_u32),
-                }
-            });
-            match (decoded, end) {
-                (Some(c), Some(i)) => {
-                    out.push(c);
-                    rest = &rest[i + 1..];
-                }
-                _ => {
-                    out.push('&');
-                    rest = &rest[1..];
-                }
-            }
-        } else {
-            let end = rest
-                .find(['<', '&'])
-                .unwrap_or(rest.len())
-                .max(rest.chars().next().map_or(1, char::len_utf8));
-            out.push_str(&rest[..end]);
-            rest = &rest[end..];
-        }
-    }
-    out
-}
-
-/// The index just after the opening tag `<name` (followed by `>`, `/` or whitespace) at or after
-/// `from`, and where that tag starts.
-fn find_tag(text: &str, name: &str, from: usize) -> Option<(usize, usize)> {
-    let needle = format!("<{name}");
-    let mut at = from;
-    while let Some(i) = text.get(at..)?.find(&needle) {
-        let start = at + i;
-        let after = start + needle.len();
-        match text[after..].chars().next() {
-            Some('>') | Some('/') => return Some((start, after)),
-            Some(c) if c.is_whitespace() => return Some((start, after)),
-            _ => at = after,
-        }
-    }
-    None
-}
-
-/// An RSS feed's channel title, if the body is an RSS feed with at least one item that has an
-/// enclosure with a URL (vibb plays only those). Lenient on purpose: it only has to tell a feed from
-/// a web page; the music app parses it properly.
-pub fn rss_title(body: &[u8]) -> Result<String, CheckError> {
-    let text = String::from_utf8_lossy(body);
-    let Some((_, channel)) = find_tag(&text, "channel", 0) else {
-        return Err(CheckError::NotFeed);
-    };
-    let first_item = find_tag(&text, "item", channel).map(|(start, _)| start);
-    let title = find_tag(&text, "title", channel)
-        .filter(|(start, _)| first_item.is_none_or(|item| *start < item))
-        .and_then(|(_, after)| {
-            let open_end = after + text[after..].find('>')? + 1;
-            let close = open_end + text[open_end..].find("</title>")?;
-            cut_title(&xml_text(&text[open_end..close]), MAX_NAME_CHARS)
-        });
-    let mut items = 0;
-    let mut at = channel;
-    while let Some((start, after)) = find_tag(&text, "item", at) {
-        let end = text[after..]
-            .find("</item>")
-            .map_or(text.len(), |i| after + i);
-        let item = &text[start..end];
-        let has_audio = find_tag(item, "enclosure", 0).is_some_and(|(_, a)| {
-            let tag_end = item[a..].find('>').map_or(item.len(), |i| a + i);
-            item[a..tag_end].contains("url=")
-        });
-        if has_audio {
-            items += 1;
-        }
-        at = end.max(after);
-    }
-    if items == 0 {
-        return Err(CheckError::NoItems);
-    }
-    Ok(title.unwrap_or_else(|| "Podcast".to_string()))
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -689,7 +569,11 @@ pub struct LibEntry {
     pub order: String,
     pub cache: i64,
     pub resume: bool,
+    /// The parent's cover, else the source's (the sweep's, design 21b §2.6).
     pub cover: Option<String>,
+    /// The version of `GET /api/devices/music/entries/{id}/items` (design 21b §4.1): null for own
+    /// files and for an NRK/RSS entry never listed.
+    pub items: Option<String>,
     pub sort: i64,
 }
 
@@ -784,12 +668,35 @@ impl Library {
 }
 
 /// The entries in a phone's library: its ticks (plus `extra`, an entry about to be ticked - the
-/// size check), phase-1 sources only.
-const LIBRARY_ENTRIES: &str = "SELECT id, name, category_id, source, target, key, play_order, \
-     cache, resume, cover_hash, sort FROM music_entries \
-     WHERE source IN ('nrk', 'rss', 'own') AND (id IN \
-       (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR id = ?) \
-     ORDER BY sort, id";
+/// size check), phase-1 sources only, with their listing (design 21b).
+const LIBRARY_ENTRIES: &str = "SELECT e.id, e.name, e.category_id, e.source, e.target, e.key, \
+     e.play_order, e.cache, e.resume, e.cover_hash, e.sort, l.version AS listing_version, \
+     l.cover_hash AS listing_cover, l.keep_end AS listing_keep_end \
+     FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
+     WHERE e.source IN ('nrk', 'rss', 'own') AND (e.id IN \
+       (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR e.id = ?) \
+     ORDER BY e.sort, e.id";
+
+/// A library entry row: the entry and its listing's version, cover and kept end.
+#[derive(sqlx::FromRow)]
+struct LibraryRow {
+    #[sqlx(flatten)]
+    entry: MusicEntry,
+    listing_version: Option<String>,
+    listing_cover: Option<String>,
+    listing_keep_end: Option<String>,
+}
+
+/// The order the phone plays an entry in: as set, except that an `auto` NRK series whose list keeps
+/// the newest 100 (it has more than 100 episodes; the user's answer to 21b's open question 1) plays
+/// newest first. A podcast's `auto` is newest first on the phone already.
+pub fn effective_order(play_order: &str, target: Option<&str>, keep_end: Option<&str>) -> String {
+    let series = target.is_some_and(|t| t.contains("radio.nrk.no/serie/"));
+    if play_order == "auto" && series && keep_end == Some("newest") {
+        return "newest_first".to_string();
+    }
+    play_order.to_string()
+}
 
 /// `device_id`'s library, with `extra` added (an entry about to be ticked; `None` = as is), read
 /// on `db` - a pooled connection or a transaction's (the import ticks inside one, 21a).
@@ -802,14 +709,15 @@ pub async fn library_for(
     #[cfg(test)]
     LIBRARY_BUILDS.with(|builds| builds.set(builds.get() + 1));
     let extra = extra.unwrap_or(-1);
-    let entries: Vec<MusicEntry> = sqlx::query_as(LIBRARY_ENTRIES)
+    let rows: Vec<LibraryRow> = sqlx::query_as(LIBRARY_ENTRIES)
         .bind(device_id)
         .bind(extra)
         .fetch_all(&mut *db)
         .await?;
-    if entries.is_empty() {
+    if rows.is_empty() {
         return Ok(None);
     }
+    let entries: Vec<&MusicEntry> = rows.iter().map(|r| &r.entry).collect();
     let category_ids: std::collections::HashSet<i64> =
         entries.iter().map(|e| e.category_id).collect();
     let categories: Vec<LibCategory> =
@@ -862,20 +770,29 @@ pub async fn library_for(
             })
             .collect();
     }
-    let entries = entries
+    let entries = rows
         .into_iter()
-        .map(|e| LibEntry {
-            id: e.id,
-            key: e.key,
-            name: e.name,
-            category: e.category_id,
-            target: e.target,
-            order: e.play_order,
-            cache: if e.source == "own" { -1 } else { e.cache },
-            resume: e.resume,
-            cover: e.cover_hash,
-            sort: e.sort,
-            source: e.source,
+        .map(|row| {
+            let e = row.entry;
+            let own = e.source == "own";
+            LibEntry {
+                id: e.id,
+                key: e.key,
+                name: e.name,
+                category: e.category_id,
+                order: effective_order(
+                    &e.play_order,
+                    e.target.as_deref(),
+                    row.listing_keep_end.as_deref(),
+                ),
+                target: e.target,
+                cache: if own { -1 } else { e.cache },
+                resume: e.resume,
+                cover: e.cover_hash.or(if own { None } else { row.listing_cover }),
+                items: if own { None } else { row.listing_version },
+                sort: e.sort,
+                source: e.source,
+            }
         })
         .collect();
     Ok(Some(Library::build(categories, entries, files)))
@@ -962,16 +879,54 @@ pub async fn device_library(
     library_for(&mut conn, device_id, None).await
 }
 
-/// Whether ticking `entry_id` keeps `device_id`'s library within [MAX_LIBRARY_BYTES] (QA #4) -
-/// the one check for a tick on the device card and for the import's ticks (21a).
+/// The episode lists one phone gets, together (design 21b §1): a tick that would pass it is
+/// refused; growth past it later only warns on the device card.
+pub const MAX_LISTINGS_BYTES_PER_PHONE: i64 = 32_000_000;
+
+/// Whether a tick fits a phone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickFit {
+    Fits,
+    /// The library would pass [MAX_LIBRARY_BYTES] (QA #4).
+    LibraryTooBig,
+    /// The ticked entries' listings would pass [MAX_LISTINGS_BYTES_PER_PHONE] (21b §1).
+    ListingsTooBig,
+}
+
+/// Whether ticking `entry_id` keeps `device_id`'s library within [MAX_LIBRARY_BYTES] (QA #4) and
+/// its listings within [MAX_LISTINGS_BYTES_PER_PHONE] (21b) - the one check for a tick on the
+/// device card and for the import's ticks (21a; its new entries have no listing yet).
 pub async fn tick_fits(
     db: &mut sqlx::SqliteConnection,
     device_id: i64,
     entry_id: i64,
-) -> Result<bool, sqlx::Error> {
-    Ok(library_for(db, device_id, Some(entry_id))
+) -> Result<TickFit, sqlx::Error> {
+    if !library_for(db, device_id, Some(entry_id))
         .await?
-        .is_none_or(|library| library.json.len() <= MAX_LIBRARY_BYTES))
+        .is_none_or(|library| library.json.len() <= MAX_LIBRARY_BYTES)
+    {
+        return Ok(TickFit::LibraryTooBig);
+    }
+    if listing_bytes(db, device_id, Some(entry_id)).await? > MAX_LISTINGS_BYTES_PER_PHONE {
+        return Ok(TickFit::ListingsTooBig);
+    }
+    Ok(TickFit::Fits)
+}
+
+/// The size of the listings `device_id` gets (plus `extra`'s, an entry about to be ticked).
+pub async fn listing_bytes(
+    db: &mut sqlx::SqliteConnection,
+    device_id: i64,
+    extra: Option<i64>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(SUM(bytes), 0) FROM music_listings WHERE entry_id IN \
+           (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR entry_id = ?",
+    )
+    .bind(device_id)
+    .bind(extra.unwrap_or(-1))
+    .fetch_one(&mut *db)
+    .await
 }
 
 /// `PolicyResponse.music` - small, always sent (`null` only when it can't be read).
@@ -1014,8 +969,9 @@ pub async fn policy_music(
     })
 }
 
-/// Whether `hash` is a cover in `device_id`'s library - an entry's cover or an own file's art of
-/// an entry the phone has ticked (one query, not a library build: qa-21-step1-code #3).
+/// Whether `hash` is a cover in `device_id`'s library - an entry's cover (the parent's or the
+/// source's, 21b §2.6) or an own file's art of an entry the phone has ticked (one query, not a
+/// library build: qa-21-step1-code #3).
 pub async fn cover_in_library(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -1028,8 +984,15 @@ pub async fn cover_in_library(
          UNION ALL SELECT 1 FROM music_files f \
            JOIN music_entries e ON e.id = f.entry_id \
            JOIN device_music_entries d ON d.entry_id = f.entry_id \
-           WHERE d.device_id = ? AND e.source = 'own' AND f.art_hash = ?)",
+           WHERE d.device_id = ? AND e.source = 'own' AND f.art_hash = ? \
+         UNION ALL SELECT 1 FROM music_listings l \
+           JOIN music_entries e ON e.id = l.entry_id \
+           JOIN device_music_entries d ON d.entry_id = l.entry_id \
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss') AND e.cover_hash IS NULL \
+             AND l.cover_hash = ?)",
     )
+    .bind(device_id)
+    .bind(hash)
     .bind(device_id)
     .bind(hash)
     .bind(device_id)
@@ -1281,6 +1244,34 @@ pub struct EntryError {
     pub error: String,
 }
 
+/// At most this many item errors and download rows are kept (design 21b §4.3).
+pub const MAX_ITEM_ERRORS: usize = 50;
+pub const MAX_DOWNLOAD_ROWS: usize = 200;
+
+/// A failed download or stream of a listed `url` (21b §4.3): the listing version the phone used,
+/// the item key and `http_<code>`, `bad_media` or `network`. Only 401/403/404/410 at the current
+/// version flag the item for a re-resolve (§2.5).
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct ItemError {
+    pub entry: i64,
+    pub version: String,
+    pub item: String,
+    pub error: String,
+}
+
+/// One entry's downloads on the phone (21b §4.3): the listing version applied, the items it holds
+/// against what its keep rule wants, and what they wait for (`wifi`, `storage`, `roaming`).
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct Download {
+    pub entry: i64,
+    pub version: String,
+    pub have: i64,
+    pub want: i64,
+    pub waiting: Option<String>,
+}
+
 /// `StatusReportRequest.music_state` (capability `music_v1`): the last state the music app reported
 /// through the launcher plus the launcher's own view. Never positions or what is playing.
 #[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
@@ -1297,6 +1288,8 @@ pub struct MusicState {
     pub entry_errors: Vec<EntryError>,
     /// The Storytel login on the phone ("ok", "none", "login_failed", ...).
     pub storytel: Option<String>,
+    pub item_errors: Vec<ItemError>,
+    pub downloads: Vec<Download>,
 }
 
 fn word(value: Option<String>) -> Option<String> {
@@ -1308,7 +1301,8 @@ fn word(value: Option<String>) -> Option<String> {
     })
 }
 
-fn is_version(value: &str) -> bool {
+/// 16 lower-case hex digits (a library or listing version).
+pub fn is_version(value: &str) -> bool {
     value.len() == 16
         && value
             .bytes()
@@ -1344,20 +1338,61 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
             .take(MAX_ENTRY_ERRORS)
             .collect(),
         storytel: word(state.storytel),
+        item_errors: state
+            .item_errors
+            .into_iter()
+            .filter(|e| {
+                is_version(&e.version)
+                    && crate::music_sources::valid_key(&e.item)
+                    && item_error_code(&e.error)
+            })
+            .map(|e| ItemError {
+                entry: e.entry.max(0),
+                ..e
+            })
+            .take(MAX_ITEM_ERRORS)
+            .collect(),
+        downloads: state
+            .downloads
+            .into_iter()
+            .filter(|d| is_version(&d.version))
+            .map(|d| Download {
+                entry: d.entry.max(0),
+                have: d.have.clamp(0, 100_000),
+                want: d.want.clamp(0, 100_000),
+                waiting: d
+                    .waiting
+                    .filter(|w| matches!(w.as_str(), "wifi" | "storage" | "roaming")),
+                version: d.version,
+            })
+            .take(MAX_DOWNLOAD_ROWS)
+            .collect(),
     };
     serde_json::to_string(&clean).ok()
+}
+
+/// `http_<3 digits>`, `bad_media` or `network`.
+fn item_error_code(code: &str) -> bool {
+    match code.strip_prefix("http_") {
+        Some(status) => status.len() == 3 && status.bytes().all(|b| b.is_ascii_digit()),
+        None => matches!(code, "bad_media" | "network"),
+    }
 }
 
 pub fn parse_music_state(json: Option<&str>) -> Option<MusicState> {
     json.and_then(|j| serde_json::from_str(j).ok())
 }
 
-/// "not found at the source" for an entry error code.
+/// "not found at the source" for an entry error code (the phone's, and the sweep's, 21b §2.4).
 pub fn entry_error_text(code: &str) -> String {
     match code {
         "not_found" => "not found at the source".to_string(),
         "not_feed" => "the link isn't a feed any more".to_string(),
         "no_items" => "no episodes".to_string(),
+        "network" => "the site couldn't be reached".to_string(),
+        "timeout" => "the site didn't answer in time".to_string(),
+        "too_big" => "the feed is too big".to_string(),
+        "bad_media" => "what came back isn't audio".to_string(),
         other => match other.strip_prefix("http_") {
             Some(status) => format!("the source answered {status}"),
             None => other.replace('_', " "),
@@ -1474,26 +1509,33 @@ mod tests {
   <item><title>Uten lyd</title></item>
   <item><title>Episode 1</title><enclosure url="https://example.org/1.mp3" type="audio/mpeg" length="1"/></item>
 </channel></rss>"#;
-        assert_eq!(rss_title(feed).unwrap(), "Godnatt &amp; eventyr");
+        assert_eq!(feed_title(feed, false).unwrap(), "Godnatt &amp; eventyr");
         let entities = b"<rss><channel><title>Bl&#229; &amp; gr&#xF8;nn</title>\
             <item><enclosure url='x.mp3'/></item></channel></rss>";
-        assert_eq!(rss_title(entities).unwrap(), "Blå & grønn");
+        assert_eq!(feed_title(entities, false).unwrap(), "Blå & grønn");
         // An item's title isn't the channel's.
         let no_title =
             b"<rss><channel><item><title>Ep</title><enclosure url=\"a\"/></item></channel></rss>";
-        assert_eq!(rss_title(no_title).unwrap(), "Podcast");
+        assert_eq!(feed_title(no_title, false).unwrap(), "Podcast");
         assert_eq!(
-            rss_title(
-                b"<rss><channel><title>T</title><item><title>x</title></item></channel></rss>"
+            feed_title(
+                b"<rss><channel><title>T</title><item><title>x</title></item></channel></rss>",
+                false
             ),
             Err(CheckError::NoItems)
         );
         assert_eq!(
-            rss_title(b"<!doctype html><html><head><title>Hi</title></head></html>"),
+            feed_title(
+                b"<!doctype html><html><head><title>Hi</title></head></html>",
+                false
+            ),
             Err(CheckError::NotFeed)
         );
         assert_eq!(
-            rss_title(b"<rss><channelx><item><enclosure url='a'/></item></channelx></rss>"),
+            feed_title(
+                b"<rss><channelx><item><enclosure url='a'/></item></channelx></rss>",
+                false
+            ),
             Err(CheckError::NotFeed)
         );
     }
@@ -1558,6 +1600,7 @@ mod tests {
             cache: 5,
             resume: true,
             cover: None,
+            items: None,
             sort: 10,
         };
         let a = Library::build(vec![category.clone()], vec![entry.clone()], vec![]);
@@ -1626,6 +1669,54 @@ mod tests {
             None
         );
         assert_eq!(entry_error_text("http_503"), "the source answered 503");
+    }
+
+    /// Design 21b §4.3: item errors and download rows, known fields only, checked and capped.
+    #[test]
+    fn music_state_keeps_item_errors_and_downloads_checked() {
+        let raw = serde_json::json!({
+            "item_errors": [
+                {"entry": 3, "version": "0123456789abcdef", "item": "l_abc-1", "error": "http_404", "url": "x"},
+                {"entry": 3, "version": "0123456789abcdef", "item": "../x", "error": "http_404"},
+                {"entry": 3, "version": "short", "item": "a", "error": "http_404"},
+                {"entry": 3, "version": "0123456789abcdef", "item": "a", "error": "http_4044"},
+                {"entry": 3, "version": "0123456789abcdef", "item": "a", "error": "bad_media"},
+                {"entry": -3, "version": "0123456789abcdef", "item": "b", "error": "network"}
+            ],
+            "downloads": (0..250).map(|i| serde_json::json!({
+                "entry": i, "version": "0123456789abcdef", "have": -1, "want": 9_000_000,
+                "waiting": if i == 0 { "wifi" } else { "anything" }
+            })).collect::<Vec<_>>()
+        });
+        let state = parse_music_state(sanitize_music_state(&raw).as_deref()).unwrap();
+        assert_eq!(
+            state
+                .item_errors
+                .iter()
+                .map(|e| (e.entry, e.item.as_str(), e.error.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (3, "l_abc-1", "http_404"),
+                (3, "a", "bad_media"),
+                (0, "b", "network")
+            ]
+        );
+        assert_eq!(state.downloads.len(), MAX_DOWNLOAD_ROWS);
+        assert_eq!(state.downloads[0].waiting.as_deref(), Some("wifi"));
+        assert_eq!(state.downloads[1].waiting, None);
+        assert_eq!(
+            (state.downloads[0].have, state.downloads[0].want),
+            (0, 100_000)
+        );
+        let many = serde_json::json!({"item_errors": (0..80).map(|_| serde_json::json!(
+            {"entry": 1, "version": "0123456789abcdef", "item": "a", "error": "http_403"})).collect::<Vec<_>>()});
+        assert_eq!(
+            parse_music_state(sanitize_music_state(&many).as_deref())
+                .unwrap()
+                .item_errors
+                .len(),
+            MAX_ITEM_ERRORS
+        );
     }
 
     #[test]
