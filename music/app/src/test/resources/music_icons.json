@@ -1,0 +1,27 @@
+{
+  "comment": "Design 21: the icons and colours a parent picks for a music category (the kid's category tiles in the Vibb music app). The music app keeps a byte-identical copy; scripts/material-symbols.sh makes the glyphs and the server's table from this file. icons: key -> Material Symbols Rounded name (filled, 24 px). colors: key -> the tile colour (white on it >= 3:1).",
+  "icons": {
+    "music_note": "music_note",
+    "star": "star",
+    "menu_book": "menu_book",
+    "mic": "mic",
+    "auto_stories": "auto_stories",
+    "bedtime": "bedtime",
+    "headphones": "headphones",
+    "radio": "radio",
+    "piano": "piano",
+    "pets": "pets",
+    "favorite": "favorite",
+    "rocket_launch": "rocket_launch"
+  },
+  "colors": {
+    "rose": "#C24F7A",
+    "gold": "#B08A2E",
+    "terracotta": "#C2683F",
+    "teal": "#2F7A6B",
+    "indigo": "#3B4A8C",
+    "purple": "#8A5A9E",
+    "green": "#4E7A3A",
+    "sky": "#1E7ED4"
+  }
+}
