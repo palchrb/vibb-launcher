@@ -33,7 +33,7 @@ use crate::security::{self, CurrentAdmin};
 
 type FormMap = HashMap<String, String>;
 
-fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
+pub(super) fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -46,13 +46,18 @@ fn field(form: &FormMap, key: &str) -> String {
     form.get(key).cloned().unwrap_or_default()
 }
 
-fn nudge(state: &AppState, devices: &[i64]) {
+pub(super) fn nudge(state: &AppState, devices: &[i64]) {
     for device in devices {
         let _ = state.command_notify.send(*device);
     }
 }
 
-async fn log_event(state: &AppState, admin: &crate::models::AdminUser, kind: &str, detail: &str) {
+pub(super) async fn log_event(
+    state: &AppState,
+    admin: &crate::models::AdminUser,
+    kind: &str,
+    detail: &str,
+) {
     security::record_security_event(&state.db, kind, Some(&admin.username), None, Some(detail))
         .await;
 }
@@ -217,6 +222,8 @@ struct MusicTemplate {
     new_category: NewCategoryForm,
     storytel: StorytelCard,
     catalog: Option<CatalogCard>,
+    /// "Import from Vibb" (design 21a, `#import`).
+    import: super::music_import::ImportCard,
 }
 
 /// What a refused form on `/music` brings back.
@@ -228,14 +235,48 @@ struct Entered {
     /// A refused category save: its id, the values and the error.
     category: Option<(i64, String, String, String, String, &'static str)>,
     storytel_error: Option<String>,
+    import: Option<super::music_import::ImportCard>,
 }
 
 fn tile_of(color: &str) -> String {
     music::color_hex(color).unwrap_or("#5C6370").to_string()
 }
 
-pub async fn show(State(state): State<AppState>) -> Response {
-    render_music(&state, StatusCode::OK, Entered::default()).await
+/// `GET /music`; shows (once) how the last import went (design 21a, a session flash).
+pub async fn show(State(state): State<AppState>, session: tower_sessions::Session) -> Response {
+    let result: Option<super::music_import::ImportResult> = session
+        .remove(super::music_import::RESULT_FLASH)
+        .await
+        .ok()
+        .flatten();
+    let entered = Entered {
+        import: result.map(|result| super::music_import::ImportCard {
+            open: true,
+            result: Some(result),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    render_music(&state, StatusCode::OK, entered).await
+}
+
+/// The page as it is, without a session (the tests call it with another state).
+#[cfg(test)]
+pub(crate) async fn render_plain(state: &AppState) -> Response {
+    render_music(state, StatusCode::OK, Entered::default()).await
+}
+
+/// The page with the import card as given (a preview, or a refused import).
+pub(super) async fn render_import(
+    state: &AppState,
+    status: StatusCode,
+    card: super::music_import::ImportCard,
+) -> Response {
+    let entered = Entered {
+        import: Some(card),
+        ..Default::default()
+    };
+    render_music(state, status, entered).await
 }
 
 async fn render_music(state: &AppState, status: StatusCode, entered: Entered) -> Response {
@@ -401,6 +442,7 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
         new_category: entered.new_category.unwrap_or_default(),
         storytel,
         catalog,
+        import: entered.import.unwrap_or_default(),
     })
 }
 
@@ -422,11 +464,7 @@ async fn pick_category(
             .map(|c| c.id)
             .ok_or("That category doesn't exist any more."));
     }
-    let kind = music::default_kind(source);
-    Ok(categories
-        .iter()
-        .find(|c| c.default_kind.as_deref() == Some(kind))
-        .or_else(|| categories.first())
+    Ok(music::default_category(&categories, source)
         .map(|c| c.id)
         .ok_or("Add a category first."))
 }
@@ -437,7 +475,8 @@ async fn entry_count(db: &sqlx::SqlitePool) -> Result<i64, sqlx::Error> {
         .await
 }
 
-const NEXT_SORT: &str = "(SELECT COALESCE(MAX(sort), 0) + 10 FROM music_entries)";
+/// The `sort` of an entry added now: after every other (the carousel order).
+pub(super) const NEXT_SORT: &str = "(SELECT COALESCE(MAX(sort), 0) + 10 FROM music_entries)";
 
 /// `POST /music`: adds an NRK or RSS entry from a pasted link, after one GET that must look like
 /// the source; its title becomes the name. 400 (the page, the link kept, the reason by the field)
@@ -997,7 +1036,9 @@ struct EntryTemplate {
     form: EntryForm,
     categories: Vec<(i64, String)>,
     orders: Vec<(&'static str, &'static str)>,
-    caches: Vec<(i64, &'static str)>,
+    /// The offline choices, plus the entry's own value when it is none of them (an import keeps
+    /// the Vibb box's, design 21a).
+    caches: Vec<(i64, String)>,
     files: Vec<FileRow>,
     file_count: i64,
     max_files: i64,
@@ -1116,7 +1157,16 @@ async fn render_entry(
             form,
             categories,
             orders: ORDERS.to_vec(),
-            caches: CACHE_CHOICES.to_vec(),
+            caches: {
+                let mut caches: Vec<(i64, String)> = CACHE_CHOICES
+                    .iter()
+                    .map(|(value, label)| (*value, label.to_string()))
+                    .collect();
+                if !music::valid_cache(entry.cache) {
+                    caches.push((entry.cache, format!("{} (from Vibb)", entry.cache)));
+                }
+                caches
+            },
             file_count: files.len() as i64,
             files: file_rows,
             max_files: MAX_FILES_PER_ENTRY,
@@ -1200,7 +1250,8 @@ pub async fn save_entry(
         let entered = refuse("Pick one of the orders.".to_string(), "order");
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
     }
-    if !own && !music::valid_cache(cache) {
+    // One of the choices, or the value it already has (an import keeps the Vibb box's, 21a).
+    if !own && !music::valid_cache(cache) && cache != entry.cache {
         let entered = refuse("Pick one of the offline choices.".to_string(), "cache");
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
     }
@@ -1996,12 +2047,16 @@ pub async fn set_device_entry(
         Err(err) => return server_error(err, "music tick lookup failed"),
     };
     if selected {
-        match music::library_for(&state.db, id, Some(entry_id)).await {
-            Ok(Some(library)) if library.json.len() > MAX_LIBRARY_BYTES => {
+        let fits = match state.db.acquire().await {
+            Ok(mut conn) => music::tick_fits(&mut conn, id, entry_id).await,
+            Err(err) => Err(err),
+        };
+        match fits {
+            Ok(true) => {}
+            Ok(false) => {
                 return Redirect::to(&format!("/devices/{id}?music_notice=too_big#music"))
                     .into_response();
             }
-            Ok(_) => {}
             Err(err) => return server_error(err, "couldn't check a phone's library size"),
         }
         if let Err(err) = sqlx::query(

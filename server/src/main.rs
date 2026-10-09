@@ -10,6 +10,7 @@ mod kiosk_escapes;
 mod models;
 mod music;
 mod music_icons;
+mod music_import;
 mod music_secret;
 mod phone;
 mod photos;
@@ -470,6 +471,18 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             get(handlers::music::show).post(handlers::music::add_link),
         )
         .route("/music/own", post(handlers::music::add_own))
+        .route(
+            "/music/import",
+            post(handlers::music_import::preview).layer(DefaultBodyLimit::max(
+                music_import::MAX_IMPORT_BYTES + 64 * 1024,
+            )),
+        )
+        .route(
+            "/music/import/confirm",
+            // The preview's document comes back form-encoded (up to about three times its size).
+            post(handlers::music_import::confirm)
+                .layer(DefaultBodyLimit::max(4 * music_import::MAX_IMPORT_BYTES)),
+        )
         .route("/music/catalog-row", post(handlers::music::add_catalog_row))
         .route("/music/categories", post(handlers::music::add_category))
         .route(

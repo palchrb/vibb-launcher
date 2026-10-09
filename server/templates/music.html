@@ -19,6 +19,18 @@
 .category-block:first-of-type { border-top: none; }
 .category-block summary { cursor: pointer; display: flex; align-items: center; gap: 10px; }
 input, select { max-width: 100%; }
+#import > summary { cursor: pointer; }
+#import > summary h2 { display: inline; }
+.import-section { border-top: 1px solid var(--color-border); padding-top: 12px; margin-top: 16px; }
+.import-table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; }
+.import-table th { text-align: left; font-size: 0.85rem; color: var(--color-text-muted); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--color-border); }
+.import-table td { vertical-align: top; padding: 8px 6px; border-bottom: 1px solid var(--color-border); overflow-wrap: anywhere; }
+.import-table td:first-child { width: 2.5rem; text-align: center; }
+.import-table input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
+.import-table tbody tr:last-child td { border-bottom: none; }
+.import-skip { color: var(--color-text-muted); font-size: 0.85rem; }
+.import-skip strong { color: var(--color-danger); font-weight: 600; }
+.import-target { font-size: 0.8rem; color: var(--color-text-muted); }
 </style>
 </head>
 <body>
@@ -205,6 +217,84 @@ input, select { max-width: 100%; }
         </form>
         {% endif %}
     </div>
+    <details class="card" id="import"{% if import.open %} open{% endif %}>
+        <summary><h2>Import from Vibb</h2></summary>
+        <p class="subtitle">Bring a Vibb box's library over in one go: its podcasts and NRK series become entries here, each Vibb section a category. Copy the file from the box first, for example with <code>scp &lt;pi&gt;:/etc/vibb/library.json .</code> (the box's <code>GET /library</code> answer works too). You see what would be added before anything is saved. Nothing is fetched while importing; Spotify, Storytel and the box's own folders aren't brought over, nor positions or downloads.</p>
+        {% if let Some(result) = import.result %}
+        <div class="success">{{ result.summary }}</div>
+        {% if !result.lines.is_empty() %}
+        <ul class="subtitle">
+            {% for line in result.lines %}<li>{{ line }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+        {% if let Some(error) = import.error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        <form method="post" action="/music/import#import" enctype="multipart/form-data">
+            <label for="import_file">The library file (library.json, at most 1 MB)</label>
+            <input type="file" id="import_file" name="library" accept=".json,application/json" required{% if import.error.is_some() && import.preview.is_none() %} autofocus{% endif %}>
+            <button type="submit"{% if import.preview.is_some() %} class="button-secondary"{% endif %}>Preview</button>
+        </form>
+        {% if let Some(preview) = import.preview %}
+        <form method="post" action="/music/import/confirm#import" id="import-preview">
+            <input type="hidden" name="doc" value="{{ preview.doc }}">
+            <p style="margin-top:16px;"><strong>{{ preview.importable }}</strong> entr{% if preview.importable == 1 %}y{% else %}ies{% endif %} can be added{% if preview.skipped > 0 %}, {{ preview.skipped }} can't (the reason is on each){% endif %}. Untick what you don't want.</p>
+            {% for section in preview.sections %}
+            <div class="import-section">
+                <h3>{{ section.name }}</h3>
+                {% if section.importable > 0 %}
+                <label for="import_category_{{ section.index }}">Category on the phones</label>
+                <select id="import_category_{{ section.index }}" name="category_{{ section.index }}">
+                    {% for (id, name) in category_options %}
+                    <option value="{{ id }}"{% if section.selected == id.to_string() %} selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                    <option value="new"{% if section.selected == "new" %} selected{% endif %}>New: {{ section.new_name }}</option>
+                </select>
+                {% endif %}
+                {% if section.rows.is_empty() %}
+                <p class="subtitle">No entries in this section.</p>
+                {% else %}
+                <table class="import-table">
+                    <thead><tr><th scope="col">Add</th><th scope="col">Entry</th></tr></thead>
+                    <tbody>
+                    {% for row in section.rows %}
+                    <tr>
+                        <td>{% if row.reason.is_none() %}<input type="checkbox" name="row" value="{{ row.value }}" checked aria-label="Add {{ row.name }}">{% else %}<span aria-hidden="true">-</span>{% endif %}</td>
+                        <td>
+                            <strong>{{ row.name }}</strong>
+                            {% if let Some(reason) = row.reason %}
+                            <div class="import-skip"><strong>Not added:</strong> {{ reason }}</div>
+                            {% if !row.target.is_empty() %}<div class="import-target">{{ row.target }}</div>{% endif %}
+                            {% else %}
+                            <div class="subtitle">{{ row.settings }}</div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% if preview.importable > 0 %}
+            <fieldset class="import-section" style="border:none;padding-left:0;padding-right:0;">
+                <legend><strong>Tick them on these phones</strong></legend>
+                {% if preview.phones.is_empty() %}
+                <p class="subtitle">No phones yet - tick the entries on a phone's page later.</p>
+                {% endif %}
+                {% for (id, name) in preview.phones %}
+                <label class="checkbox-row"><input type="checkbox" name="phone" value="{{ id }}" checked> {{ name }}</label>
+                {% endfor %}
+                <p class="hint" style="margin-top:0;">A phone whose music library would grow past 3 MB gets only what fits; the rest stays in the library, unticked there.</p>
+            </fieldset>
+            <button type="submit"{% if import.error.is_some() %} autofocus{% endif %}>Import the ticked entries</button>
+            {% else %}
+            <p class="subtitle">Nothing here can be added{% if preview.skipped > 0 %} - see the reasons above{% endif %}.</p>
+            {% endif %}
+        </form>
+        {% endif %}
+    </details>
 </main>
 </body>
 </html>

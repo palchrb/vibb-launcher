@@ -2379,11 +2379,9 @@ async fn storytel_without_a_usable_key_is_a_503_and_the_form_says_so() {
     )
     .await;
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let page = super::read_response(
-        crate::handlers::music::show(axum::extract::State(state.clone())).await,
-    )
-    .await
-    .text();
+    let page = super::read_response(crate::handlers::music::render_plain(&state).await)
+        .await
+        .text();
     assert!(page.contains("Storytel is off"));
     assert!(!page.contains("id=\"storytel_password\""));
 }
@@ -2527,6 +2525,17 @@ async fn music_routes_refuse_without_a_session_and_write_nothing() {
             format!("/devices/{device}/music/entries/{entry}"),
             vec![("selected", "on")],
         ),
+        ("/music/import".to_string(), vec![]),
+        (
+            "/music/import/confirm".to_string(),
+            vec![
+                (
+                    "doc",
+                    r#"{"sections":[{"name":"P","entries":[{"name":"X","target":"https://example.org/x.rss"}]}]}"#,
+                ),
+                ("row", "0.0"),
+            ],
+        ),
     ] {
         let res = app.request_form(Method::POST, &uri, None, &fields).await;
         assert!(res.status.is_redirection(), "{uri}: {}", res.status);
@@ -2630,4 +2639,600 @@ async fn the_release_tag_prefix_is_edited_on_the_app_page() {
             .await
             .unwrap();
     assert_eq!(prefix.as_deref(), Some("music-v"));
+}
+
+// ------------------------------------------------------------------------------------------------
+// Import from Vibb (design 21a)
+// ------------------------------------------------------------------------------------------------
+
+async fn import_preview(app: &TestApp, cookie: &str, bytes: &[u8]) -> TestResponse {
+    const BOUNDARY: &str = "handy-import-boundary";
+    let mut body = format!(
+        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"library\"; filename=\"library.json\"\r\n\
+         Content-Type: application/json\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/music/import")
+        .header(header::COOKIE, cookie)
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={BOUNDARY}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    app.send(request).await
+}
+
+/// The preview's hidden document, as the browser sends it back.
+fn preview_doc(page: &str) -> String {
+    let start = page
+        .find("name=\"doc\" value=\"")
+        .expect("no preview document")
+        + 18;
+    let end = start + page[start..].find('"').unwrap();
+    page[start..end]
+        .replace("&#34;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+/// Every tick value the preview offers ("s.r").
+fn preview_rows(page: &str) -> Vec<String> {
+    page.split("name=\"row\" value=\"")
+        .skip(1)
+        .map(|rest| rest[..rest.find('"').unwrap()].to_string())
+        .collect()
+}
+
+async fn import_confirm(app: &TestApp, cookie: &str, fields: &[(&str, &str)]) -> TestResponse {
+    app.request_form(Method::POST, "/music/import/confirm", Some(cookie), fields)
+        .await
+}
+
+/// A Pi's /etc/vibb/library.json: every source and every skip reason.
+fn vibb_library() -> Value {
+    json!({"version": 1, "sections": [
+        {"id": "podkast", "name": " podkast ", "entries": [
+            {"id": "a1", "name": "Abels tårn", "target": "https://radio.nrk.no/podkast/abels_taarn", "order": "auto", "cache": 5, "resume": true},
+            {"id": "a2", "name": "Ukas nyheter", "target": "https://example.org/feed.xml", "order": "newest_first", "cache": 3, "resume": false},
+            {"id": "a3", "name": "Spilleliste", "target": "spotify:playlist:37i9dQ", "order": "auto", "cache": 0, "resume": true},
+            {"id": "a4", "name": "Lydbok", "target": "storytel:series:123", "order": "auto", "cache": -1, "resume": true},
+            {"id": "a5", "name": "Egne sanger", "target": "/srv/vibb/music/egne", "order": "auto", "cache": 0, "resume": true},
+            {"id": "a6", "name": "P1 direkte", "target": "https://radio.nrk.no/direkte/p1", "order": "auto", "cache": 0, "resume": true}
+        ]},
+        {"id": "eventyr", "name": "Eventyr og sånt", "entries": [
+            {"id": "b1", "name": "Radioteatret", "target": "https://radio.nrk.no/serie/radioteatret", "order": "oldest_first", "cache": 42, "resume": true},
+            {"id": "b2", "name": "Abels tårn (igjen)", "target": "https://radio.nrk.no/podkast/abels_taarn/l_99", "order": "auto", "cache": 5, "resume": true},
+            {"id": "b3", "name": "", "target": "https://example.org/noname.rss", "order": "auto", "cache": 5, "resume": true}
+        ]},
+        {"id": "kari", "name": "Karis lister", "spotify_user": "kari", "entries": [
+            {"id": "c1", "name": "Uke 41", "target": "https://example.org/uke41.rss", "order": "auto", "cache": 5, "resume": true}
+        ]}
+    ]})
+}
+
+#[tokio::test]
+async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, anna_token) = app.enrolled_device("Anna").await;
+    let (emil, _) = app.enrolled_device("Emil").await;
+
+    let res = import_preview(&app, &cookie, vibb_library().to_string().as_bytes()).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let page = res.text();
+    assert!(page.contains("id=\"import\" open"), "the card is open");
+    assert!(page.contains("action=\"/music/import/confirm#import\""));
+    for (text, why) in [
+        ("Abels tårn", "nrk"),
+        (
+            "NRK podcast · natural order · newest 5 kept offline · continues where it stopped",
+            "settings",
+        ),
+        (
+            "Podcast (RSS) · newest first · newest 3 kept offline · starts from the beginning",
+            "rss settings",
+        ),
+        (
+            "NRK series · oldest first · newest 42 kept offline",
+            "a Pi value kept",
+        ),
+        ("Spotify comes in a later version", "spotify"),
+        ("Storytel books come in a later version", "storytel"),
+        ("upload the files as an own-files entry", "folder"),
+        ("neither a podcast", "parse_link"),
+        ("it is in the file twice", "repeat within the file"),
+        ("it has no name", "no name"),
+        ("it comes from a Spotify profile", "spotify_user"),
+        ("New: Eventyr og sånt", "a new category"),
+    ] {
+        assert!(page.contains(text), "{why}: {text}");
+    }
+    // " podkast " matches the existing Podkast (trimmed, case-insensitive).
+    assert!(page.contains("<option value=\"4\" selected>Podkast</option>"));
+    assert!(page.contains("<option value=\"new\" selected>New: Eventyr og sånt</option>"));
+    assert_eq!(preview_rows(&page), vec!["0.0", "0.1", "1.0"]);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM music_entries")
+            .fetch_one(&app.db)
+            .await
+            .unwrap(),
+        0,
+        "the preview stores nothing"
+    );
+
+    let doc = preview_doc(&page);
+    let mut rx = app.state.command_notify.subscribe();
+    let anna_id = anna.to_string();
+    let emil_id = emil.to_string();
+    let res = import_confirm(
+        &app,
+        &cookie,
+        &[
+            ("doc", &doc),
+            ("category_0", "4"),
+            ("category_1", "new"),
+            ("row", "0.0"),
+            ("row", "0.1"),
+            ("row", "1.0"),
+            ("phone", &anna_id),
+            ("phone", &emil_id),
+        ],
+    )
+    .await;
+    assert_eq!(res.location(), Some("/music#import"), "{}", res.text());
+    let mut nudges = nudged(&mut rx);
+    nudges.sort_unstable();
+    assert_eq!(nudges, vec![anna, emil], "one nudge per phone that changed");
+    assert!(
+        app.fetch.calls.lock().unwrap().is_empty(),
+        "no outgoing request"
+    );
+
+    type Imported = (
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        i64,
+        bool,
+        String,
+    );
+    let rows: Vec<Imported> = sqlx::query_as(
+        "SELECT e.name, e.source, e.target, e.key, e.play_order, e.cache, e.resume, c.name \
+         FROM music_entries e JOIN music_categories c ON c.id = e.category_id ORDER BY e.sort",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "Abels tårn".into(),
+                "nrk".into(),
+                Some("https://radio.nrk.no/podkast/abels_taarn".into()),
+                "abels_taarn".into(),
+                "auto".into(),
+                5,
+                true,
+                "Podkast".into()
+            ),
+            (
+                "Ukas nyheter".into(),
+                "rss".into(),
+                Some("https://example.org/feed.xml".into()),
+                crate::music::state_key("https://example.org/feed.xml"),
+                "newest_first".into(),
+                3,
+                false,
+                "Podkast".into()
+            ),
+            (
+                "Radioteatret".into(),
+                "nrk".into(),
+                Some("https://radio.nrk.no/serie/radioteatret".into()),
+                crate::music::state_key("https://radio.nrk.no/serie/radioteatret"),
+                "oldest_first".into(),
+                42,
+                true,
+                "Eventyr og sånt".into()
+            ),
+        ]
+    );
+    // The new category: after the others, icon and colour of the podcast category (its first
+    // row's source).
+    let new: (String, String, i64) = sqlx::query_as(
+        "SELECT icon, color, sort FROM music_categories WHERE name = 'Eventyr og sånt'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(new, ("mic".into(), "teal".into(), 50));
+    let ticks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_music_entries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(ticks, 6, "three entries on two phones");
+    assert_eq!(
+        music_policy(&app, &anna_token).await["library_version"]
+            .as_str()
+            .map(str::len),
+        Some(16)
+    );
+    assert_eq!(
+        events(&app, "music_library_imported").await,
+        vec!["3 entries, 1 categories, 7 skipped".to_string()]
+    );
+
+    // The result, once, at #import.
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("id=\"import\" open"));
+    assert!(
+        page.contains("Imported 3 entries and 1 new category, ticked on Anna, Emil. 7 skipped:"),
+        "{page}"
+    );
+    assert!(page.contains("podkast / Spilleliste: Spotify comes in a later version"));
+    assert!(page.contains("Eventyr og sånt / Abels tårn (igjen): it is in the file twice"));
+    let again = app.get_page("/music", &cookie).await.text();
+    assert!(!again.contains("Imported 3 entries"), "shown once");
+    assert!(!again.contains("id=\"import\" open"));
+
+    // A Pi value outside the page's choices stays, and survives a save of the entry.
+    let radioteatret: i64 =
+        sqlx::query_scalar("SELECT id FROM music_entries WHERE name = 'Radioteatret'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let entry_page = app
+        .get_page(&format!("/music/entries/{radioteatret}"), &cookie)
+        .await
+        .text();
+    assert!(entry_page.contains("<option value=\"42\" selected>42 (from Vibb)</option>"));
+    let category =
+        sqlx::query_scalar::<_, i64>("SELECT category_id FROM music_entries WHERE id = ?")
+            .bind(radioteatret)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+            .to_string();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/music/entries/{radioteatret}"),
+            Some(&cookie),
+            &[
+                ("name", "Radioteatret"),
+                ("category", &category),
+                ("order", "oldest_first"),
+                ("cache", "42"),
+                ("resume", "on"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+}
+
+#[tokio::test]
+async fn the_pis_get_library_answer_imports_too_and_a_reimport_adds_nothing() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    // GET /library: the same shape plus image/new fields.
+    let answer = json!({"version": 1, "sections": [{"id": "musikk", "name": "MUSIKK", "image": "/art/m.png", "entries": [
+        {"id": "x1", "name": "Ukas nyheter", "target": "https://example.org/feed.xml", "order": "auto", "cache": 5, "resume": true, "image": "/art/x.jpg", "new": true},
+        {"id": "x2", "name": "Godnatt", "target": "https://example.org/godnatt.rss", "order": "bogus", "cache": "lots", "resume": null, "new": false}
+    ]}]});
+    let page = import_preview(&app, &cookie, answer.to_string().as_bytes())
+        .await
+        .text();
+    assert!(
+        page.contains("<option value=\"1\" selected>Musikk</option>"),
+        "matched by name"
+    );
+    let doc = preview_doc(&page);
+    let res = import_confirm(
+        &app,
+        &cookie,
+        &[
+            ("doc", &doc),
+            ("category_0", "1"),
+            ("row", "0.0"),
+            ("row", "0.1"),
+        ],
+    )
+    .await;
+    assert_eq!(res.location(), Some("/music#import"));
+    let rows: Vec<(String, String, i64, bool, i64)> = sqlx::query_as(
+        "SELECT name, play_order, cache, resume, category_id FROM music_entries ORDER BY sort",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("Ukas nyheter".into(), "auto".into(), 5, true, 1),
+            ("Godnatt".into(), "auto".into(), 5, true, 1),
+        ],
+        "bad settings fall back to the defaults"
+    );
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("on no phone yet"), "no phone ticked");
+
+    // The same file again: nothing to add, and it says so - in the preview and the result.
+    let page = import_preview(&app, &cookie, answer.to_string().as_bytes())
+        .await
+        .text();
+    assert!(preview_rows(&page).is_empty());
+    assert!(page.contains("already in the library"));
+    assert!(page.contains("Nothing here can be added"));
+    let doc = preview_doc(&page);
+    let res = import_confirm(&app, &cookie, &[("doc", &doc)]).await;
+    assert_eq!(res.location(), Some("/music#import"));
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("Nothing new to import. 2 skipped:"), "{page}");
+    assert!(page.contains("MUSIKK / Godnatt: already in the library"));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_entries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(events(&app, "music_library_imported").await.len(), 2);
+}
+
+#[tokio::test]
+async fn an_import_stops_at_200_entries_and_skips_whats_in_the_library() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 198) \
+         INSERT INTO music_entries (name, category_id, source, key, sort) \
+         SELECT 'E' || i, 1, 'own', 'own-x' || i, i * 10 FROM n",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // One already here by target, one by key (another URL of the same podcast slug).
+    sqlx::query(
+        "INSERT INTO music_entries (name, category_id, source, target, key, sort) VALUES \
+         ('Old', 4, 'rss', 'https://example.org/old.rss', ?, 5000)",
+    )
+    .bind(crate::music::state_key("https://example.org/old.rss"))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let file = json!({"sections": [{"name": "Podkast", "entries": [
+        {"name": "Old again", "target": "https://example.org/old.rss"},
+        {"name": "One", "target": "https://example.org/1.rss"},
+        {"name": "Two", "target": "https://example.org/2.rss"}
+    ]}]});
+    let page = import_preview(&app, &cookie, file.to_string().as_bytes())
+        .await
+        .text();
+    assert!(page.contains("already in the library"));
+    assert!(page.contains("the library holds at most 200 entries"));
+    assert_eq!(preview_rows(&page), vec!["0.1"]);
+    let doc = preview_doc(&page);
+    // A hand-made form ticking the third row too: re-checked, still the limit.
+    let res = import_confirm(
+        &app,
+        &cookie,
+        &[("doc", &doc), ("row", "0.1"), ("row", "0.2")],
+    )
+    .await;
+    assert_eq!(res.location(), Some("/music#import"));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_entries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 200);
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM music_entries WHERE name IN ('One', 'Two')")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(names, vec!["One"], "rows are taken in file order");
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("Podkast / Two: the library holds at most 200 entries"));
+}
+
+#[tokio::test]
+async fn an_import_ticks_a_phone_only_as_far_as_its_library_allows() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (full, _) = app.enrolled_device("Full").await;
+    let (roomy, _) = app.enrolled_device("Roomy").await;
+    let entry = add_own(&app, &cookie, "Nesten full").await;
+    tick(&app, &cookie, full, entry, true).await;
+    sqlx::query(
+        "INSERT INTO music_files (entry_id, path, original_name, size, sha256, title) \
+         VALUES (?, ?, 'pad.mp3', 1, ?, 'x')",
+    )
+    .bind(entry)
+    .bind(format!("{entry}/pad.mp3"))
+    .bind("0".repeat(64))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let size = crate::music::device_library(&app.db, full)
+        .await
+        .unwrap()
+        .unwrap()
+        .json
+        .len();
+    sqlx::query("UPDATE music_files SET title = ? WHERE original_name = 'pad.mp3'")
+        .bind("x".repeat(crate::music::MAX_LIBRARY_BYTES - size - 50))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let file = json!({"sections": [{"name": "Podkast", "entries": [
+        {"name": "Ukas nyheter", "target": "https://example.org/feed.xml"}
+    ]}]});
+    let page = import_preview(&app, &cookie, file.to_string().as_bytes())
+        .await
+        .text();
+    let doc = preview_doc(&page);
+    let (full_id, roomy_id) = (full.to_string(), roomy.to_string());
+    let res = import_confirm(
+        &app,
+        &cookie,
+        &[
+            ("doc", &doc),
+            ("row", "0.0"),
+            ("phone", &full_id),
+            ("phone", &roomy_id),
+        ],
+    )
+    .await;
+    assert_eq!(res.location(), Some("/music#import"));
+    let ticked: Vec<i64> = sqlx::query_scalar(
+        "SELECT d.device_id FROM device_music_entries d JOIN music_entries e ON e.id = d.entry_id \
+         WHERE e.name = 'Ukas nyheter'",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        ticked,
+        vec![roomy],
+        "in the library, unticked on the full phone"
+    );
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("ticked on Roomy."));
+    assert!(page.contains("Not ticked on Full: &#34;Ukas nyheter&#34; - that phone"));
+}
+
+#[tokio::test]
+async fn the_confirm_trusts_nothing_in_the_form() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (phone, _) = app.enrolled_device("phone").await;
+    let file = json!({"sections": [{"name": "Podkast", "entries": [
+        {"name": "Ukas nyheter", "target": "https://example.org/feed.xml"}
+    ]}]});
+    let page = import_preview(&app, &cookie, file.to_string().as_bytes())
+        .await
+        .text();
+    let doc = preview_doc(&page);
+    let count = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT (SELECT COUNT(*) FROM music_entries) + (SELECT COUNT(*) FROM music_categories)",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let before = count().await;
+
+    // An unknown category or phone: 400, the preview again with the reason, nothing stored.
+    for (fields, message) in [
+        (
+            vec![("category_0", "999"), ("row", "0.0")],
+            "category doesn",
+        ),
+        (vec![("row", "0.0"), ("phone", "999")], "phone doesn"),
+        (vec![("row", "zero")], "filled in as expected"),
+    ] {
+        let mut all = vec![("doc", doc.as_str())];
+        all.extend(fields);
+        let res = import_confirm(&app, &cookie, &all).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{message}");
+        let text = res.text();
+        assert!(text.contains(message), "{message}: {text}");
+        assert!(text.contains("name=\"doc\""), "the preview is back");
+        assert_eq!(count().await, before, "{message}");
+    }
+    // No or a broken document.
+    for doc in [
+        "",
+        "{not json",
+        &"x".repeat(crate::music_import::MAX_IMPORT_BYTES + 1),
+    ] {
+        let res = import_confirm(&app, &cookie, &[("doc", doc), ("row", "0.0")]).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert!(res.text().contains("preview it again"));
+    }
+    let res = import_confirm(&app, &cookie, &[("row", "0.0")]).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+
+    // A document edited to carry a Spotify row, a folder and 201 entries: only what a fresh upload
+    // would allow gets in.
+    let mut entries = vec![
+        json!({"name": "Spill", "target": "spotify:playlist:1"}),
+        json!({"name": "Mappe", "target": "/srv/x"}),
+    ];
+    entries.extend((0..201).map(
+        |i| json!({"name": format!("F{i}"), "target": format!("https://example.org/{i}.rss")}),
+    ));
+    let tampered = json!({"sections": [{"name": "Podkast", "entries": entries}]}).to_string();
+    let rows: Vec<String> = (0..203).map(|i| format!("0.{i}")).collect();
+    let mut fields: Vec<(&str, &str)> = vec![("doc", tampered.as_str())];
+    fields.extend(rows.iter().map(|r| ("row", r.as_str())));
+    let phone_id = phone.to_string();
+    fields.push(("phone", &phone_id));
+    let res = import_confirm(&app, &cookie, &fields).await;
+    assert_eq!(res.location(), Some("/music#import"));
+    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM music_entries ORDER BY sort")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(names.len(), crate::music::MAX_ENTRIES as usize);
+    assert_eq!(names.first().map(String::as_str), Some("F0"));
+    assert!(
+        !names
+            .iter()
+            .any(|n| n == "Spill" || n == "Mappe" || n == "F200")
+    );
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("Podkast / Spill: Spotify comes in a later version"));
+    assert!(page.contains("Podkast / F200: the library holds at most 200 entries"));
+    assert!(app.fetch.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn files_that_arent_a_vibb_library_are_refused_at_import() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    for (bytes, message) in [
+        (b"<html>not json</html>".to_vec(), "isn&#39;t JSON"),
+        (br#"{"entries": []}"#.to_vec(), "no &#34;sections&#34; list"),
+        (
+            vec![b' '; crate::music_import::MAX_IMPORT_BYTES + 1],
+            "over 1 MB",
+        ),
+        (Vec::new(), "Choose the library file first"),
+    ] {
+        let res = import_preview(&app, &cookie, &bytes).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{message}");
+        let text = res.text();
+        assert!(text.contains(message), "{message}: {text}");
+        assert!(text.contains("id=\"import\" open"));
+        let input = text
+            .split("id=\"import_file\"")
+            .nth(1)
+            .and_then(|rest| rest.split('>').next())
+            .unwrap();
+        assert!(input.contains("autofocus"), "the file field is focused");
+    }
+    // Bigger than the route takes at all.
+    let res = import_preview(
+        &app,
+        &cookie,
+        &vec![b' '; 3 * crate::music_import::MAX_IMPORT_BYTES],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_entries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    assert!(events(&app, "music_library_imported").await.is_empty());
 }

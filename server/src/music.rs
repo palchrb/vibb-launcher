@@ -283,6 +283,19 @@ pub fn default_kind(source: &str) -> &'static str {
     }
 }
 
+/// The category a new entry of `source` goes into unless the parent picks one: the first whose
+/// `default_kind` is the source's ([default_kind]), else the first category.
+pub fn default_category<'a>(
+    categories: &'a [MusicCategory],
+    source: &str,
+) -> Option<&'a MusicCategory> {
+    let kind = default_kind(source);
+    categories
+        .iter()
+        .find(|c| c.default_kind.as_deref() == Some(kind))
+        .or_else(|| categories.first())
+}
+
 // ------------------------------------------------------------------------------------------------
 // The add check (the server's only fetch)
 // ------------------------------------------------------------------------------------------------
@@ -751,10 +764,11 @@ const LIBRARY_ENTRIES: &str = "SELECT id, name, category_id, source, target, key
        (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR id = ?) \
      ORDER BY sort, id";
 
-/// `device_id`'s library, with `extra` added (an entry about to be ticked; `None` = as is).
+/// `device_id`'s library, with `extra` added (an entry about to be ticked; `None` = as is), read
+/// on `db` - a pooled connection or a transaction's (the import ticks inside one, 21a).
 /// `Ok(None)` = nothing ticked. A database error is an error - the caller sends `music: null`.
 pub async fn library_for(
-    db: &sqlx::SqlitePool,
+    db: &mut sqlx::SqliteConnection,
     device_id: i64,
     extra: Option<i64>,
 ) -> Result<Option<Library>, sqlx::Error> {
@@ -762,7 +776,7 @@ pub async fn library_for(
     let entries: Vec<MusicEntry> = sqlx::query_as(LIBRARY_ENTRIES)
         .bind(device_id)
         .bind(extra)
-        .fetch_all(db)
+        .fetch_all(&mut *db)
         .await?;
     if entries.is_empty() {
         return Ok(None);
@@ -771,7 +785,7 @@ pub async fn library_for(
         entries.iter().map(|e| e.category_id).collect();
     let categories: Vec<LibCategory> =
         sqlx::query_as::<_, MusicCategory>("SELECT * FROM music_categories ORDER BY sort, id")
-            .fetch_all(db)
+            .fetch_all(&mut *db)
             .await?
             .into_iter()
             .filter(|c| category_ids.contains(&c.id))
@@ -799,7 +813,7 @@ pub async fn library_for(
         )
         .bind(device_id)
         .bind(extra)
-        .fetch_all(db)
+        .fetch_all(&mut *db)
         .await?;
         files = rows
             .into_iter()
@@ -843,7 +857,20 @@ pub async fn device_library(
     db: &sqlx::SqlitePool,
     device_id: i64,
 ) -> Result<Option<Library>, sqlx::Error> {
-    library_for(db, device_id, None).await
+    let mut conn = db.acquire().await?;
+    library_for(&mut conn, device_id, None).await
+}
+
+/// Whether ticking `entry_id` keeps `device_id`'s library within [MAX_LIBRARY_BYTES] (QA #4) -
+/// the one check for a tick on the device card and for the import's ticks (21a).
+pub async fn tick_fits(
+    db: &mut sqlx::SqliteConnection,
+    device_id: i64,
+    entry_id: i64,
+) -> Result<bool, sqlx::Error> {
+    Ok(library_for(db, device_id, Some(entry_id))
+        .await?
+        .is_none_or(|library| library.json.len() <= MAX_LIBRARY_BYTES))
 }
 
 /// `PolicyResponse.music` - small, always sent (`null` only when it can't be read).
