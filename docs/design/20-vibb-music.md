@@ -172,7 +172,8 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
 
 - **Tapping a cover** whose library entry has resume on continues exactly where it stopped. Other entries start from
   the beginning. A **"Liste"** button on the player opens the list of songs, chapters or episodes, like vibb on the
-  Pi. **"Sov"** is a sleep timer (15/30/45 min / off).
+  Pi. **"Sov"** is a sleep timer (15/30/45 min / off). The progress bar has a **draggable thumb for seeking**
+  within the track, with the times updating while dragging.
 - **Launcher Home** shows a "Spilles nå" card while something plays, like the ongoing-call card.
 - **PIN lock while media is actively playing and the screen is on:** a media view comes first. It shows the clock, a
   tile with the album art and the title, a progress bar and prev / play-pause / next, plus Emergency call. A
