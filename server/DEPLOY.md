@@ -198,9 +198,9 @@ The Music page (Apps | Music) holds the library for the Vibb music app; each pho
 The server now lists every NRK and RSS entry itself and sends the phones the lists; the phones only download the
 audio from the source.
 
-- **What it fetches**: psapi.nrk.no (one page per NRK entry at each check, manifests only for new episodes), the RSS
-  feeds (a conditional GET), gfx.nrk.no and feed images (covers, at most once a day). One request at a time, 200 ms
-  apart, 4 s between entries. The Music page's "New episodes" card sets how often (every 1/3/6/12/24 h, default 6 =
+- **What it fetches**: psapi.nrk.no (one 5-episode page per NRK entry at each check, manifests only for new
+  episodes), the RSS feeds (a conditional GET), gfx.nrk.no and feed images (covers, at most once a day). One request
+  at a time, 200 ms apart, 4 s between entries. The Music page's "New episodes" card sets how often (every 1/3/6/12/24 h, default 6 =
   the Vibb Pi; NRK every 12 h at 6). Check now on an entry checks it at once (15 min per entry, 12 an hour, 48 a day).
 - **Addresses**: a feed on the home LAN or the tailnet works (its first check fixes it as LAN). A public feed is never
   followed to a private address (redirects, DNS answers and media URLs are checked).
@@ -210,8 +210,8 @@ audio from the source.
 - **Checks on the Pi after the update**: an NRK podcast, an NRK series of more than 100 episodes, a
   `serie/<slug>/<programId>` link, two RSS feeds (one oldest first, one with a rolling window) and a LAN feed: the
   first fill, the logged request counts and the 304s (`curl -H "If-None-Match: ..."` of
-  `/api/devices/music/entries/{id}/items` with a phone's token); a restart and a `kill -9` mid-fill (neither loops nor
-  starts over); a setting change and the Check now limits; a 21a import filled in the background; a 404 feed keeping
+  `/api/devices/music/entries/{id}/items` with a phone's token); a restart, and a `kill -9` mid-fill (it doesn't loop:
+  the entry waits 15 minutes, then its fill starts over - a fill is written in one go); a setting change and the Check now limits; a 21a import filled in the background; a 404 feed keeping
   its list; a public feed that redirects to a LAN address refused; yesterday's NRK series HLS URL still playing; the
   cards on a phone in light and dark, iOS Safari included.
 - **Order**: this server before any stable `music-v*` release, as for 0.21.

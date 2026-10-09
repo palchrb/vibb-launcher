@@ -486,25 +486,34 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Checks** (`check_entry`): start stamp (`failures` + 1), work, one closing transaction that drops the result if
   the entry is gone. NRK podkast newest 100 (`sort=desc` to the first known key, RSS fallback when psapi lists
   nothing); serie by play order (`keep_end`, refill on change; `auto` = newest 100 past 100 episodes, else all from
-  the start); `serie/<slug>/<programId>` along the metadata's `next`. Failing manifests leave items `pending` (<= 10
-  retries a check, `gone` after 14 days); only a root/page/feed failure fails a check and keeps the last good list.
-  RSS: conditional GET (validators only for the current `parser`), body-hash skip, merge (missing -> `gone`, back ->
-  `ok`), 1000 kept; tracking prefixes stripped from `url`. Budget 250 requests / 10 min commits progress. The
-  breaker: 3 network errors (or 5xx on a root/page/feed) of a host in a pass pause it 15 min.
+  the start); `serie/<slug>/<programId>` along the metadata's `next`. A routine NRK check reads a 5-episode page
+  first (50-episode pages only if all five are new; Check now and fills read 50) and sends psapi's validators back if
+  it ever gives any. The RSS fallback only for a first fill or a list already in fallback (a psapi list whose page
+  comes back empty fails the check), and its merge marks nothing `gone`. Failing manifests leave items `pending`
+  (<= 10 retries a check, `gone` after 14 days); 3 network errors in a row among them fail the check (an outage backs
+  each entry off on its own - there is no breaker); a root/page/feed failure fails a check and keeps the last good
+  list; a listed entry whose every item is withdrawn is listed with them `gone`. RSS: conditional GET (validators only
+  for the current `parser`), body-hash skip, merge (missing -> `gone`, back -> `ok`), 1000 kept; tracking prefixes
+  stripped from `url`. Budget 250 requests / 10 min commits progress. The parser is bounded: the newest `keep` items
+  and their dedupe sets only, 8 KB of text per element, nesting past 64 = `not_feed`.
 - **Cadence** (`schedule`/`due`): RSS every `I`, NRK `max(I, min(2I, 12 h))`, unticked daily; priority Check now >
   never listed > rework (flags, untried pending, refill) > interval; backoff 15 min x 4^(n-1) capped at the interval,
   daily after 7 days.
 - **Rechecks**: `music_state.item_errors` 401/403/404/410 at the current version from a phone with the entry flag the
-  item (`flag_reports`, once per item a day); two in a day re-resolve the whole entry (once a day); 300 manifests a
-  day server-wide (expiry re-resolves count).
+  item (`flag_reports`, once per item a day; stamped by `Sweep::now`, the tests' fake clock); a flag makes an entry
+  due only while it isn't failing; it is cleared (and `rechecked_at` stamped) once its item was asked - also when the
+  check then fails - and kept when the day's budget ran out; two items reported within 24 h re-resolve the whole entry
+  (once a day); 300 manifests a day server-wide (expiry re-resolves count); a re-resolve answered 404/410 is `gone`;
+  a flag that lands during a check survives its rewrite.
 - **PWA**: `#sweep` setting card, the library cards (`partials/music_card.html`: cover, source title, LAN, episodes,
   capped/cut notes, a two-line `.music-status`, Check now within its limits, the offline select, per-phone lines from
   `music_state.downloads`/`item_errors`), the entry page's `#status`, `GET /music/cards?ids=` (<= 200) +
   `static/music-cards.js` (swaps busy status blocks in place, `scrollBy` keeps the view). Times say UTC.
 - **Contract**: `music_listing_snapshot` pins `testdata/music_listing.json`; `music_library_snapshot` now shows
-  `items`; `tick_fits` also refuses past 32 MB of listings per phone (`lists_too_big`), growth past it warns on the
-  device card. The policy shape is unchanged.
-- Tests: `src/tests/music_sweep.rs` (incl. a simulated day per setting against 21b's request counts),
+  `items`. Listings aren't counted against a phone (no listing budget; a library of long feeds is a few MB). The
+  policy shape is unchanged. Revision triggers are on `music_listings` only (version, cover, kept end).
+- Tests: `src/tests/music_sweep.rs` (incl. a simulated day per setting through `run_pass` itself, with the fake
+  clock, against 21b's request counts, and one with a flagged failing feed and a failing NRK page),
   `music_sweep`/`music_sources`/`music_net::tests` (loopback server for the address rules).
 
 ## Current status (2026-08-08, `v0.13.0`)

@@ -291,3 +291,39 @@ All ten fixes still hold at cb61212c:
   would skip items 6-50.
 - Conditional psapi requests: `walk` and `Job::page` treat anything other than 200 as a failure today, so a 304
   must become "unchanged" there first. Finding 2's empty-page rule applies to the small page too.
+
+## Fixes (2026-10-09)
+
+All findings fixed except Low 14 (below); tests in `src/tests/music_sweep.rs` unless named.
+- **1**: a flag makes an entry due only while `failures` is 0; a failed check still clears (and stamps) the flags of
+  the items it asked about. `a_flagged_feed_that_fails_is_asked_once_then_backs_off` drives `run_pass`; the load
+  runs now go through `run_pass` with a fake clock (`Sweep::now`), and `a_day_with_failing_sources_backs_off` adds a
+  flagged 404 feed and a failing NRK page to a simulated day.
+- **2**: the fallback only for a first fill or a list already in fallback; otherwise an empty/404 page fails the check
+  (`not_found`); a fallback merge marks nothing `gone` (`a_listed_podcast_survives_an_empty_psapi_page`).
+- **3**: a listed entry whose every item is withdrawn is a successful listing with `url: null` (hard rule 5);
+  `no_items` stays for a first fill (`a_listed_entry_whose_every_item_is_withdrawn_lists_them_gone`).
+- **4**: the whole-entry re-resolve counts the items reported within 24 h, handled or not
+  (`two_reports_an_hour_apart_re_resolve_the_whole_entry`).
+- **5**: the RSS parser is bounded (first/last `keep` items, 8 KB of text per element, nesting past 64 = `not_feed`,
+  a closing tag unwinds to its own name, a UTF-8 body isn't copied); the 20 MB cap stays
+  (`music_sources::tests::hostile_and_huge_feeds_stay_bounded`).
+- **6, 7, 8**: a flag that lands during a check survives its rewrite; flags past the day's budget stay unstamped;
+  a re-resolve answered 404/410 is `gone` (`flags_are_kept_until_their_item_is_asked`).
+- **9**: the add check classifies a pasted feed like the first sweep check (`music_sweep::feed_is_lan`)
+  (`the_add_check_judges_a_feed_like_the_sweep`). **10**: a saved change of play order wakes the sweeper.
+  **11**: a cover stored for an entry deleted mid-check is pruned (`a_cover_for_an_entry_deleted_mid_check_is_pruned`).
+  **12**: DEPLOY.md's `kill -9` line corrected. **13**: media-host lookups wait at most 5 s and stop when the check's
+  budget is spent. **15**: `music_state` lists are read row by row (`music::tests`). **16**: five redirects are
+  followed, a sixth isn't (`music_net::tests`). **17**: durations outside 0-7 days are dropped
+  (`music_sources::tests::durations_are_checked`). **18**: the cards read `current` first and show "Checking…" while a
+  check's start stamp is newer than its end and less than 10 minutes old
+  (`the_card_says_checking_while_a_check_runs`; PWA: Check now on a listed feed whose check then failed updated in
+  place to the error, no reload). **19**: the entry page's phone list wraps (PWA: 360 px with a 56-character
+  one-word phone name, light and dark).
+- **20-23**: accepted by the architect - the breaker, the listing budget, the `music_items` triggers and
+  `bump_library_revision` are gone; see 21b's status ("After QA's code review").
+- **Not fixed - 14**: a phone resolving a rebinding name itself is the music app's to refuse (step 2); the server
+  can't see the phone's DNS answers.
+- The follow-up "cheaper change checks" is in too: a routine NRK check reads 5 episodes first
+  (`a_routine_nrk_check_starts_with_five_episodes`); psapi sends no validators today.

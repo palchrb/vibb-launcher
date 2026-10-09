@@ -824,30 +824,54 @@ returning to their card. The Pi checks of §7 are still to do (DEPLOY.md lists t
 - `encoding_rs` decodes a non-UTF-8 feed (by BOM, else its XML declaration) before `quick-xml` parses it, instead of
   `quick-xml`'s `encoding` feature (the same library underneath; the parser then works on `&str`).
 - `music_listings` has three columns §1 doesn't list: `keep_end` (`newest`/`first`, which 100 an NRK list keeps),
-  `item_count` and `bytes` (the cards and the 32 MB per-phone budget). `capped` means "the source has more than the
-  list keeps" at either end (the card says "first 100" or "the newest 100").
+  `item_count` and `bytes` (the cards; `bytes` is kept for the record since the listing budget went). `capped` means
+  "the source has more than the list keeps" at either end (the card says "first 100" or "the newest 100").
 - The user's answer is read narrowly, as written: the window follows the play order for an NRK **serie** only; a
   podkast keeps its newest 100 whatever its order. An `auto` serie keeps the newest 100 when it has more than 100
   episodes, and the library then sends its `order` as `newest_first` (no new field; the phone needn't know the
   window). Switching between orders when the whole series fits only moves `keep_end`, no refill. A full
   oldest-first serie makes no request at all at a check.
-- A fill stopped by the budget or the breaker commits its items without counting `no_items`. A first fill whose every
+- A fill stopped by the check's budget commits its items without counting `no_items`. A first fill whose every
   manifest failed counts `no_items` but keeps the stubs with their attempts, so the retry continues (QA #2).
-- The breaker counts network errors from any request but a 5xx only from a root, page or feed: a manifest's 5xx is
-  that programme's trouble (QA #2's broken programme would otherwise defer every NRK entry). A broken host's entries
-  wait 15 minutes (kept in memory), so the next pass doesn't retry it at once.
 - A lost source cover keeps its `cover_url` in `music_listings` (only `cover_hash` is forgotten), so the next check
   fetches it again without re-reading the NRK root.
 - The status block is at least two lines (`min-height`), not a fixed height: a long error text may take three or four
   lines at 360 px rather than being cut, and the swap's `scrollBy` keeps the view still when it grows.
-- Items whose URL the address or URL rules drop are stored `gone` (`url: null`). A recheck that can't reach psapi
-  leaves the item's URL as it was (only "not playable" makes it `gone`).
+- Items whose URL the address or URL rules drop are stored `gone` (`url: null`). A recheck that can't reach psapi (a
+  network error, a 5xx) leaves the item's URL as it was; "not playable" and 404/410 make it `gone`.
 - The recheck budget counts items with `rechecked_at` in the last 24 h: NRK manifests, expiry re-resolves and the
   items of an RSS recheck (one feed GET).
 - The offline select logs `music_entry_saved` (§3); the entry page's form still logs `music_entry_changed`.
 
 **Open for the user**: none blocking. The version is 0.22.0 ("the next server minor version", §7), although 0.21.0
 was never released - shipping both as 0.21.0 is a one-line change if preferred.
+
+**After QA's code review** (`qa-21b-step1c-code.md`, the fix round; the architect's decisions):
+- **Simplified** (QA 20-23, accepted): no per-host breaker, no 32 MB listing budget per phone (`tick_fits` counts the
+  library only; a phone with many long feeds gets a few MB of lists), no revision triggers on `music_items` (the
+  library sees items only through `music_listings.version`, whose trigger stays; 0051 edited while 0.22.0 is
+  unreleased), no `bump_library_revision`. What they guarded stays covered: during an outage each entry backs off on
+  its own - its listing request fails the check, and 3 network errors in a row among its manifests do too, so an
+  outage that starts mid-check costs 3 manifests, not 100 timeouts (`an_nrk_outage_backs_each_entry_off`); new
+  episodes still reach the phones through the listing version's trigger (`a_new_episode_moves_the_library_version_and_the_etag`).
+- **Hard rule 5 over §2.4** (QA #3): for an entry listed before, a check that leaves every item `gone` is a successful
+  listing - the version moves and the phones get `url: null`. `no_items` stays for a first fill and for a feed without
+  enclosures.
+- **The RSS fallback** (QA #2) is used for a first fill or a list already in fallback only; for a list psapi built, an
+  empty or 404 first page fails the check (`not_found`) and keeps the list. A fallback merge marks nothing `gone`.
+- **The parser's memory** (QA #5) is bounded on the Pi Zero's 512 MB without lowering the 20 MB cap: it keeps the
+  first and the last `keep` items while parsing (which end is the newest is known only at the end) with their dedupe
+  sets, at most 8 KB of text per element, an open-element stack that a closing tag unwinds to its own name, and
+  nesting past 64 levels is `not_feed`. A UTF-8 feed is no longer copied. A 20 MB feed of nested tags is refused in
+  well under a second; one of 357,000 tiny items keeps 1,000.
+- **The counting test drives the sweeper itself** (`run_pass` with the sweep's fake clock, `Sweep::now`), so a loop
+  like QA #1's shows in its request counts; one more simulated day adds a flagged feed that 404s and a failing NRK
+  page and checks their backoffs.
+- **Cheaper change checks** (the follow-up below): a routine NRK check (not a fill, not Check now) reads
+  `pageSize=5`; only if all five are new does it read the 50-episode page 1 and go on. psapi sends no validators
+  (checked 2026-10-09 on an episodes page: `Cache-Control: public,max-age=60` only, no `ETag` or `Last-Modified`),
+  so the conditional request is in place but unused; a 304 would mean "nothing new".
+- Other fixes, Low 6-19: see the Fixes note under QA's review.
 
 ## Follow-up: cheaper change checks (user question, 2026-10-09)
 For the QA fix round of step 1c:
