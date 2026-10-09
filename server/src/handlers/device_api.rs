@@ -7,7 +7,7 @@ use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::{Extension, Json};
 use tokio_stream::StreamExt;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{BroadcastStream, WatchStream};
 
 use crate::AppState;
 use crate::models::{
@@ -1020,18 +1020,24 @@ pub async fn commands_stream(
     let rx = state.command_notify.subscribe();
     // Moved into the stream: dropped (stream counted closed) when the connection ends.
     let guard = state.command_streams.open(device_id);
+    // The stream ends when its close signal turns true (shutdown, design 22 §2).
+    let close = WatchStream::new(guard.closed()).filter_map(|closed| closed.then_some(None));
     // A lagged receiver lost ids - possibly this device's - so it nudges (QA 07 #16): one extra
     // sync is harmless, a lost ring isn't.
-    let stream = BroadcastStream::new(rx).filter_map(move |msg| {
-        let _open: &crate::streams::StreamGuard = &guard;
-        match msg {
-            Ok(id) if id == device_id => Some(Ok(Event::default().data("command"))),
-            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
-                Some(Ok(Event::default().data("command")))
-            }
-            _ => None,
+    let nudges = BroadcastStream::new(rx).filter_map(move |msg| match msg {
+        Ok(id) if id == device_id => Some(Some(Event::default().data("command"))),
+        Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
+            Some(Some(Event::default().data("command")))
         }
+        _ => None,
     });
+    let stream = nudges
+        .merge(close)
+        .take_while(Option::is_some)
+        .filter_map(move |event| {
+            let _open: &crate::streams::StreamGuard = &guard;
+            event.map(Ok)
+        });
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(state.config.sse_keepalive_secs)))
 }

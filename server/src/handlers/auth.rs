@@ -46,7 +46,7 @@ pub async fn login(
     headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> impl IntoResponse {
-    let ip = security::client_ip(&headers, addr);
+    let ip = state.net.client(&headers, addr.ip()).ip.to_string();
 
     if security::is_ip_banned(&state.db, &ip).await {
         return (
@@ -184,7 +184,7 @@ pub async fn verify_2fa(
     headers: HeaderMap,
     Form(form): Form<Verify2faForm>,
 ) -> impl IntoResponse {
-    let ip = security::client_ip(&headers, addr);
+    let ip = state.net.client(&headers, addr.ip()).ip.to_string();
 
     if security::is_ip_banned(&state.db, &ip).await {
         return (

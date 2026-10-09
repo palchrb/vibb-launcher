@@ -519,6 +519,32 @@ needed to manage the phone, delete on a schedule, never store notification or me
   clock, against 21b's request counts, and one with a flagged failing feed and a failing NRK page),
   `music_sweep`/`music_sources`/`music_net::tests` (loopback server for the address rules).
 
+## Connectivity and exposure (design 22, `docs/design/22-connectivity-and-docker.md`, server 0.23.0)
+
+- **Two listeners** (S1, `main::serve`, one `try_join!`): `BIND_ADDR` (default `127.0.0.1:3100`) =
+  `build_admin_router` (admin, onboarding, public routes, `/static`, the device API unless `ADMIN_DEVICE_API=off`,
+  `/healthz`, empty-404 fallback), and `DEVICE_BIND_ADDR` (unset = none) = `build_device_router` (`device_routes()`
+  + `/healthz` + empty-404 fallback; no session layer, no `/static`). `build_router` (the tests) = the admin router.
+  Equal addresses refuse to start; one exposure line is logged (`NetConfig::exposure_line`). SIGTERM/Ctrl-C: graceful
+  stop, `CommandStreams::close_all` ends every SSE stream (each stream merges its close signal, a `watch`), 8 s grace.
+- **`src/net.rs`** (`AppState.net`, `NetConfig::from_vars`): `BIND_ADDR`, `DEVICE_BIND_ADDR`, `ADMIN_DEVICE_API`
+  (on), `ADMIN_PUBLIC` (off), `TRUSTED_PROXIES` (`127.0.0.1,::1`; IPs or CIDRs, a bad entry is dropped, never
+  widened), `ADMIN_TAILSCALE_USERS`. `NetConfig::client`: `X-Forwarded-For` only from a trusted peer, walked from the
+  right skipping trusted entries (all trusted: the left-most; malformed: the peer); IPv4-mapped peers are canonical.
+  `limit_key`: IPv4 address or IPv6 /64. Login uses it (the old `security::client_ip` took the left-most XFF entry
+  from anyone - §0 #1).
+- **Admin gate** (`src/gate.rs`, outermost layer of the admin router): passes loopback and tailnet
+  (100.64.0.0/10, fd7a:115c:a1e0::/48) clients and a trusted peer without XFF; `Tailscale-Funnel-Request` is refused;
+  `ADMIN_PUBLIC=on` passes everyone. `ADMIN_TAILSCALE_USERS`: admin pages also need a listed `Tailscale-User-Login`,
+  believed only from a tailnet client; `/api/devices/*` skips that check (tagged phones have no login). `/healthz`
+  (`SELECT 1`, "ok") skips every guard. Refused: empty 403 + `admin_refused` through `AppState.audit`
+  (`src/audit.rs`: one row per kind and client key per minute, counts flushed into the detail every 30 s by
+  `audit::run_flusher`).
+- Tests: `src/tests/listeners.rs` (no `"/api/devices` literal in `main.rs`; the device router 404s every admin path,
+  sets no cookie and answers every route it reads from `device_routes.rs`; `ADMIN_DEVICE_API=off`; the gate matrix
+  and its throttled event; `/healthz` past every guard; shutdown ends streams on both listeners), `net::tests`,
+  `gate::tests`, `streams::tests`.
+
 ## Current status (2026-08-08, `v0.13.0`)
 
 Feature-complete relative to the original build plan and confirmed working end-to-end on both physical test phones (Pixel 4a 5G GrapheneOS, Moto G Play), not just built-and-reviewed: enrollment (now defaulting a new device to kiosk mode on, see below), allowlist, kiosk mode + full lock-task feature set, schedule (with working clear), WiFi/Bluetooth restrictions, offline override PIN, Settings PIN-gate, pause-all-restrictions kill-switch, mandatory 2FA admin login, scheduled backups + external-drive support, self-update, on-device DNS/content filtering (the old live-DNS-server/DoT-to-Pi approach fully retired - see the Phase A-E writeup above), Find My Device (locate/ring/lock/wipe/stop_ring + SSE instant push), and the Apps catalog with per-device install scoping.

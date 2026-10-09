@@ -7,7 +7,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use pbkdf2::pbkdf2_hmac;
 use sha2::{Digest, Sha256};
-use std::net::SocketAddr;
 use totp_rs::{Algorithm, Secret, TOTP};
 use tower_sessions::Session;
 
@@ -69,19 +68,6 @@ pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     hex::encode(hasher.finalize())
-}
-
-/// Best-effort client IP: prefers X-Forwarded-For (set by a reverse proxy -
-/// relevant once this is behind Tailscale Funnel), falling back to the TCP
-/// peer address.
-pub fn client_ip(headers: &HeaderMap, addr: SocketAddr) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| addr.ip().to_string())
 }
 
 pub async fn record_security_event(

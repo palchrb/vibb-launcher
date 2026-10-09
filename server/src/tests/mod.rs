@@ -46,6 +46,10 @@ pub struct TestApp {
     _dir: tempfile::TempDir,
 }
 
+/// The peer every plain test request comes from.
+pub const LOOPBACK_PEER: std::net::SocketAddr =
+    std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 40000);
+
 pub struct TestResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
@@ -96,6 +100,20 @@ impl TestResponse {
 
 impl TestApp {
     pub async fn new() -> Self {
+        Self::with_net(crate::net::NetConfig::default()).await
+    }
+
+    /// A test app whose listeners are configured like `vars` (`BIND_ADDR`, `ADMIN_PUBLIC`, ...,
+    /// design 22 §2).
+    pub async fn with_env(vars: &[(&str, &str)]) -> Self {
+        let vars = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Self::with_net(crate::net::NetConfig::from_vars(&vars)).await
+    }
+
+    pub async fn with_net(net: crate::net::NetConfig) -> Self {
         // As `main` does before anything opens a connection: handlers that build a reqwest
         // client (the DNS upstream switch refreshes the blocklists) need the process-wide rustls
         // provider. The FCM tests used to install it as a side effect (design 19).
@@ -136,6 +154,8 @@ impl TestApp {
             )),
             music_sweep: Default::default(),
             music_libraries: Default::default(),
+            net: std::sync::Arc::new(net),
+            audit: Default::default(),
         };
 
         TestApp {
@@ -171,20 +191,39 @@ impl TestApp {
 
     /// Sends a request through the router as a real connection would: with a fixed loopback
     /// `ConnectInfo` (handlers that rate-limit by client address extract it).
-    async fn send(&self, mut request: Request<Body>) -> TestResponse {
-        request
-            .extensions_mut()
-            .insert(ConnectInfo(std::net::SocketAddr::from((
-                [127, 0, 0, 1],
-                40000,
-            ))));
-        let response = self
-            .router
+    async fn send(&self, request: Request<Body>) -> TestResponse {
+        self.send_via(&self.router, LOOPBACK_PEER, request).await
+    }
+
+    /// Sends a request through `router` (the admin router, or [TestApp::device_router]) from the
+    /// TCP peer `peer`.
+    pub async fn send_via(
+        &self,
+        router: &Router,
+        peer: std::net::SocketAddr,
+        request: Request<Body>,
+    ) -> TestResponse {
+        read_response(self.call_via(router, peer, request).await).await
+    }
+
+    /// [TestApp::send_via] without reading the body (a stream).
+    pub async fn call_via(
+        &self,
+        router: &Router,
+        peer: std::net::SocketAddr,
+        mut request: Request<Body>,
+    ) -> axum::response::Response {
+        request.extensions_mut().insert(ConnectInfo(peer));
+        router
             .clone()
             .oneshot(request)
             .await
-            .expect("router returned an error");
-        read_response(response).await
+            .expect("router returned an error")
+    }
+
+    /// The phone listener's router (`DEVICE_BIND_ADDR`) on the same state.
+    pub fn device_router(&self) -> Router {
+        crate::build_device_router(self.state.clone())
     }
 
     /// A urlencoded form POST (or other method) with an optional session cookie, as a browser

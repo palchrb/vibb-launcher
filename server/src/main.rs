@@ -1,10 +1,12 @@
 mod app_display;
 mod app_downloads;
 mod app_icons;
+mod audit;
 mod config;
 mod crashes;
 mod device_routes;
 mod dns_engine;
+mod gate;
 mod handlers;
 mod kid_lock;
 mod kiosk_escapes;
@@ -16,6 +18,7 @@ mod music_net;
 mod music_secret;
 mod music_sources;
 mod music_sweep;
+mod net;
 mod phone;
 mod photos;
 mod play;
@@ -30,8 +33,9 @@ mod wallpapers;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
-use axum::response::Redirect;
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
@@ -88,6 +92,11 @@ pub struct AppState {
     pub music_sweep: std::sync::Arc<music_sweep::Sweep>,
     /// Each phone's built music library, under the library revision (`music::LibraryCache`).
     pub music_libraries: std::sync::Arc<music::LibraryCache>,
+    /// Where this server listens and whom it believes (design 22 §2): `net::NetConfig`.
+    pub net: std::sync::Arc<net::NetConfig>,
+    /// Security events that come in floods, written at most once a minute per client
+    /// (`audit::EventThrottle`).
+    pub audit: std::sync::Arc<audit::EventThrottle>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -109,7 +118,14 @@ async fn main() {
 
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://data/kidphone.db".into());
-    let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3100".into());
+    let net_config = net::NetConfig::from_env();
+    if net_config.device_bind_addr.as_deref() == Some(net_config.bind_addr.as_str()) {
+        tracing::error!(
+            "BIND_ADDR and DEVICE_BIND_ADDR are both {} - give the phone listener its own port",
+            net_config.bind_addr
+        );
+        std::process::exit(2);
+    }
 
     std::fs::create_dir_all("data").expect("failed to create data directory");
 
@@ -208,6 +224,8 @@ async fn main() {
         )),
         music_sweep: Default::default(),
         music_libraries: Default::default(),
+        net: std::sync::Arc::new(net_config),
+        audit: Default::default(),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
@@ -239,23 +257,170 @@ async fn main() {
     tokio::task::spawn(retention::run_pruning(state.clone()));
     // The music sweep (design 21b): lists every NRK/RSS entry, its first pass 60 s from now.
     tokio::task::spawn(music_sweep::run(state.clone()));
+    // Counts of throttled security events (refused admin requests, failed enrollments).
+    tokio::task::spawn(audit::run_flusher(state.clone()));
 
-    let app = build_router(state, session_layer);
-
-    tracing::info!("listening on {bind_addr}");
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap();
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await
-    .unwrap();
+    serve(state, session_layer).await;
 }
 
-/// Every route, middleware and the session layer, given ready-made state. Split out of `main()`
-/// so tests can drive the exact same router in-process (see `tests`) - nothing here may spawn
-/// background tasks or touch the filesystem beyond what serving a request does.
+/// Both listeners (design 22 §2) until SIGTERM or Ctrl-C, then a graceful stop: no new
+/// connections, the SSE streams end (`streams::CommandStreams::close_all`), and requests in
+/// flight get [SHUTDOWN_GRACE] to finish.
+async fn serve(state: AppState, session_layer: SessionManagerLayer<SqliteStore>) {
+    let net = state.net.clone();
+    tracing::info!("{}", net.exposure_line());
+
+    let admin_listener = match tokio::net::TcpListener::bind(&net.bind_addr).await {
+        Ok(listener) => listener,
+        Err(err) => {
+            tracing::error!("can't listen on BIND_ADDR {}: {err}", net.bind_addr);
+            std::process::exit(1);
+        }
+    };
+    let device_listener = match &net.device_bind_addr {
+        Some(addr) => match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => Some(listener),
+            Err(err) => {
+                tracing::error!("can't listen on DEVICE_BIND_ADDR {addr}: {err}");
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
+
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let stopped = move || {
+        let mut stop_rx = stop_rx.clone();
+        async move {
+            let _ = stop_rx.wait_for(|stop| *stop).await;
+        }
+    };
+    let streams = state.command_streams.clone();
+    let db = state.db.clone();
+
+    let admin = axum::serve(
+        admin_listener,
+        build_admin_router(state.clone(), session_layer)
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(stopped());
+    let device = device_listener.map(|listener| {
+        axum::serve(
+            listener,
+            build_device_router(state)
+                .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(stopped())
+    });
+    let both = async {
+        tokio::try_join!(admin.into_future(), async {
+            match device {
+                Some(device) => device.await,
+                None => Ok(()),
+            }
+        })
+    };
+    tokio::pin!(both);
+
+    tokio::select! {
+        result = &mut both => {
+            if let Err(err) = result {
+                tracing::error!("a listener failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        () = shutdown_signal() => {
+            tracing::info!("shutting down");
+            let _ = stop_tx.send(true);
+            streams.close_all();
+            match tokio::time::timeout(SHUTDOWN_GRACE, &mut both).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => tracing::error!("a listener failed while stopping: {err}"),
+                Err(_) => tracing::warn!(
+                    "requests still running after {} s - stopping anyway",
+                    SHUTDOWN_GRACE.as_secs()
+                ),
+            }
+        }
+    }
+    // Idle connections close at once; a background task's query gets a moment to finish.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), db.close()).await;
+}
+
+/// How long requests in flight (an APK download, say) get after SIGTERM. Docker kills a
+/// container 10 s after its stop signal.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(err) => {
+                tracing::error!("can't watch for SIGTERM: {err}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
+}
+
+/// `GET /healthz` on both listeners: `SELECT 1`, and only "ok" (no version, nothing else). It
+/// skips every guard (the admin gate lets it through by path), so a container stays healthy with
+/// any `ADMIN_*` setting.
+async fn healthz(axum::extract::State(state): axum::extract::State<AppState>) -> Response {
+    match sqlx::query_scalar::<_, i64>("SELECT 1")
+        .fetch_one(&state.db)
+        .await
+    {
+        Ok(_) => ([(axum::http::header::CACHE_CONTROL, "no-store")], "ok").into_response(),
+        Err(err) => {
+            tracing::error!(%err, "healthz: the database didn't answer");
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+    }
+}
+
+/// Unknown paths: an empty 404 (both listeners).
+async fn not_found() -> StatusCode {
+    StatusCode::NOT_FOUND
+}
+
+/// The phone listener (`DEVICE_BIND_ADDR`, design 22 §2): the device API and `/healthz`, nothing
+/// else - no session layer, no `/static`, and an empty 404 for every other path, so a proxy rule
+/// meant for the phones can't expose the admin.
+pub fn build_device_router(state: AppState) -> Router {
+    device_routes::device_routes(state.clone())
+        .route("/healthz", get(healthz))
+        .fallback(not_found)
+        .with_state(state)
+}
+
+/// The admin listener as the tests drive it: [build_admin_router], device routes included unless
+/// `ADMIN_DEVICE_API=off`.
 pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteStore>) -> Router {
+    build_admin_router(state, session_layer)
+}
+
+/// The admin listener (`BIND_ADDR`): every admin route, middleware and the session layer, given
+/// ready-made state, plus the device API unless `ADMIN_DEVICE_API=off`, behind the admin gate
+/// (`gate::admin_gate`, design 22 §2). Split out of `main()` so tests can drive the exact same
+/// router in-process (see `tests`) - nothing here may spawn background tasks or touch the
+/// filesystem beyond what serving a request does.
+pub fn build_admin_router(
+    state: AppState,
+    session_layer: SessionManagerLayer<SqliteStore>,
+) -> Router {
     // Reachable without any session at all. /sw.js lives here too - a
     // service-worker fetch has no session cookie context the way a page
     // load does, so it can't sit behind require_full_auth.
@@ -688,14 +853,20 @@ pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteSt
             security::require_full_auth,
         ));
 
-    Router::new()
+    let mut app = Router::new()
         .merge(public_routes)
         .merge(onboarding_routes)
-        .merge(admin_routes)
-        .merge(device_routes::device_routes(state.clone()))
+        .merge(admin_routes);
+    if state.net.admin_device_api {
+        app = app.merge(device_routes::device_routes(state.clone()));
+    }
+    app.route("/healthz", get(healthz))
         .nest_service("/static", ServeDir::new("static"))
-        .with_state(state)
+        .fallback(not_found)
+        .with_state(state.clone())
         .layer(session_layer)
+        // Outermost: a refused request never reaches the session store.
+        .layer(from_fn_with_state(state, gate::admin_gate))
 }
 
 /// Opens the SQLite pool with this app's connection settings and runs all migrations.
