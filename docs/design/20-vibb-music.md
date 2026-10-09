@@ -188,3 +188,29 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
   - Each library entry has a category in the PWA. The default comes from the source (Spotify -> Musikk, Storytel ->
     Lydbøker, NRK/RSS -> Podkast, own files -> Musikk). The parent can change it or add categories, each with an icon
     from the fixed set and a colour.
+- **Storytel and the source fetching** (user, 2026-10-09): the phone fetches directly from the source, exactly as the
+  vibb Pi does: Storytel books from Storytel's CDN, NRK and RSS from their origins. The handy server neither proxies
+  nor stores any of it.
+  - The server's only role is the library definition. Open question: does the Storytel login live on the phone (like
+    the Pi, the simplest), or does the server keep it and only hand the phone short-lived signed download URLs (no
+    password on the kid's phone)?
+  - Own uploaded files are the one source that lives on the server, so the phone downloads those from it.
+- **Outputs** (user, 2026-10-09): a "Spill av på" button on the player picks the phone's speaker, a Bluetooth device or
+  a **Sonos** room. The Sonos logic is ported from vibb `pi/sonosd.py`:
+  - UPnP control from the phone as a controller, never a server.
+  - Content kinds: `url` (the speaker fetches from the origin: NRK/RSS enclosures and Storytel's signed CDN URL),
+    `nrk_program` (the NRK Radio Sonos service, x-sonos-http, sid=277) and `spotify_sharelink` (SoCo ShareLink; Sonos
+    owns the queue).
+  - The uid -> ip cache, discovery only on a cache miss, a rescan or a failed play.
+  - Own uploaded files on Sonos: a short-lived signed URL on the handy server, which the speaker fetches over the LAN.
+- **New content**:
+  - A "NY" badge on a cover with a new episode or book (e.g. a new book in a synced Storytel series), as on vibb.
+  - A bell with a count in the library header opens "Nytt": the new items with a mini cover, the entry name and the
+    episode or book title. Tapping one plays it and removes it, and "Fjern alle" clears the list.
+- **Offline marks**: each track or episode in the player's list shows a download mark when it is on the phone. The
+  list header says "Alle lastet ned" or "N av M lastet ned".
+- **The seek bar**: a thin 4 px line with a 26 px thumb and a 44 px touch height.
+- **The layout**: the carousel sits low, just above the category tiles.
+- **Categories are parent-defined** (name + an icon from the fixed set + a colour) with defaults per source, chosen per
+  library entry.
+- **Language**: follows the launcher's language (`launcher_ui.language`, set by the parent), else the phone's.
