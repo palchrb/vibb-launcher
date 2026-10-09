@@ -399,3 +399,181 @@ English, light and dark, 360 px wide without horizontal scroll (long titles take
    nothing for NRK for up to 12 h.
 2. **Withdrawn episodes** (`url` null: the rights ended, or the manifest has nothing playable). Either a copy already
    on the phone keeps playing, as on the Pi, or it is deleted. **Recommend keeping it**, as the Pi does.
+
+## QA review (design)
+
+QA, 2026-10-09. Read against 21 (§1-§4, §6, QA, decisions), 21a, step 1 (`music.rs`, `handlers/music{,_api}.rs`,
+`photos.rs`, 0049, `music_library.json`), vibb `main` (`content.py`, `library.py`) and live answers today (psapi
+radioteatret `sort=asc`/`desc`, a program and a podcast manifest, podkast.nrk.no's abels_taarn RSS). **Buildable** on
+step 1: 0049 stays untouched, `MUSIC_COVERS` takes one more reference, `etag_matches`/`accepts_gzip` serve the listing,
+and `LibEntry` takes `items`. The one plumbing gap is the clock (#6). **Conflicts with 21**: #1 (decision 1), #3 (QA
+#9's point), #8 (§4.5 "newest N by publication") and #9 (Q2).
+
+**Load, computed** (30 NRK podkast + 10 RSS entries; a steady check is 1 request, plus 1 manifest per new episode):
+
+| Setting | NRK every | NRK req/day | RSS req/day | Total | Against the Pi (60 NRK + 40 RSS) |
+|---|---|---|---|---|---|
+| 1 h | 2 h | 360 | 240 | 600 | NRK 6× |
+| 3 h | 6 h | 120 | 80 | 200 | NRK 2× |
+| 6 h | 12 h | 60 | 40 | 100 | equal |
+| 12 h | 12 h | 60 | 20 | 80 | below |
+| 24 h | 24 h | 30 | 10 | 40 | below |
+
+- **A 21a import of those 40**: 30 × (root + 2 pages + 100 manifests) = 3,090 psapi requests, plus 30 gfx covers and
+  10 × (feed + cover). That is about 3,140 requests, the same as the Pi's first sweep (which runs 8 wide). At >= 200 ms
+  a request and 4 s an entry it takes >= 13 min, and 20-30 min at realistic psapi latency. A
+  `serie/<slug>/<programId>` entry costs up to 200 (a manifest and a metadata call per item).
+- **Check now**: 12 an hour in all, so up to 288 extra checks a day (4.8× the Pi's 60 NRK requests).
+- **Rechecks** (§2.5): one manifest per item a day. 30 entries × keep 5 = 150 a day from one phone that misreports
+  (2.5× the Pi).
+
+1. **High - the cadence breaks decision 1 and the user's NRK bound.** Whatever its sweep interval, the Pi never
+   re-lists NRK within `CATALOG_TTL_S` (12 h). §2.2 re-lists NRK every 2 h at the 1 h setting (6×) and every 6 h at
+   3 h (2×). Fix: NRK every `max(I, 12 h)`, i.e. 12/12/12/12/24. The setting then shortens only RSS, which the Pi
+   refetches at every sweep and menu open anyway. Hint: "NRK podcasts are checked every 12 hours at most, as on the
+   Pi". Check now (Q1) is then the only NRK exception. **User decision**, with the worst case above (288 a day).
+2. **High - one failed manifest fails the whole check, for good.** §2.3 fails the check on a network error or 5xx in
+   any manifest and writes nothing. A first fill is 103 requests, so at a 0.5 % transient error rate 40 % of first
+   fills fail and start over. Take a manifest that keeps answering 5xx (one broken programme): the entry stays
+   `items: null`, hidden on every phone, and re-runs 103 requests at each backoff step. That is 7 tries (~720 requests)
+   on day 1, then ~410 a day: 7× the Pi's NRK budget for all 30 entries. vibb skips such an episode (`_manifest_url`
+   -> None) and keeps the rest. Fix:
+   - a manifest that fails (network, 5xx, 4xx) skips its item for this check;
+   - keep the skipped stubs as pending and retry at most 10 per later check;
+   - fail the check only when the root, a listing page or the feed fails;
+   - a check that reaches 250 requests or 10 min commits what it has resolved, so a retry continues instead of
+     starting over.
+3. **High - a serie's `sort=asc` first fill is undone at its next check.** Checked today: radioteatret's `sort=asc`
+   starts in 1993, `sort=desc` in 2018. A serie with more than 100 episodes keeps episodes 1-100 at the first fill. 12 h
+   later the `sort=desc` walk finds no known key, takes 100 "new" episodes (2 pages + 100 manifests) and drops "the
+   oldest beyond 100". The list is now the newest 100, and the phone prunes the story's start, including the episode
+   the kid is in. The same happens to `serie/<slug>/<programId>` at its cap, and vibb has the same flaw (`_catalog`
+   asc, then `_new_episodes` desc). Fix: a list that starts at the beginning (serie, programId) never evicts from the
+   front. The incremental check adds only while the list is below the cap; at the cap the card says "first 100 of N
+   episodes" (raising the serie cap instead is a user call). Test with a 150-episode serie.
+4. **High - SSRF through the feed itself.** §2.6 checks addresses only for covers. The feed URL is "fetched as given",
+   and reqwest follows up to 10 redirects to any host (and an environment proxy unless `.no_proxy()`). The sweeper
+   re-fetches the feed unattended every `I`, from inside the LAN and the tailnet, and 21a's targets never even had an
+   add check. Scenario: a podcast domain lapses and someone re-registers it. Its feed now 302s to
+   `http://192.168.1.1/cgi-bin/...` or to a `100.x` tailnet peer, and the home server GETs that every hour, for ever.
+   Fix: one client for every source fetch (add check, sweep, covers):
+   - a `dns_resolver` that drops non-public answers, checked at connect time, so DNS rebinding has no gap;
+   - a redirect policy that re-checks IP-literal hosts, allows http/https only and at most 5 hops;
+   - `.no_proxy()`;
+   - refuse 0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12, 192.0.0/24, 192.168/16, 198.18/15, 224/3, `::`,
+     `::1`, fc00::/7 (with the tailnet's fd7a:115c:a1e0::/48), fe80::/10 and ff00::/8, and check ::ffff:0:0/96 and
+     64:ff9b::/96 by their embedded IPv4.
+
+   A LAN feed then gets "only public addresses work" (a user call, if LAN feeds matter).
+5. **Medium - phone reports can loop and break the bound.** Three cases:
+   - Behind a captive portal, every download gets HTML -> `bad_media` -> every wanted item is flagged: 150 manifests
+     a day for 30 entries.
+   - `recheck` is cleared "afterwards". If the check fails (say the feed now 404s), the flag stays, and "recheck and
+     `checked_at` >= 1 h" makes the entry due every hour for ever, past the failure backoff.
+   - A phone with a stale list reports a URL the server has already replaced.
+
+   Fix: only `http_401/403/404/410` flag; `recheck` is cleared after any attempt; at most one recheck per entry a day
+   and ~20 manifests a day server-wide; `item_errors` carry the listing `version` the phone used, and reports against
+   an older version are ignored.
+6. **Medium - restart-safe, but not crash-safe.** Nothing is stamped until a check ends. If the server restarts
+   mid-check (or the Zero runs out of memory on a 20 MB feed), the entry is due again 60 s after the start, so a crash
+   loop refetches the source every minute and a first fill starts over. A Check now pressed during a check is lost,
+   because `checked_at` ends up later than `requested_at`. Fix:
+   - at the start of a check, in its own write, upsert the row with `checked_at` = now (a new entry keeps `version`
+     NULL);
+   - the due rule reads `version IS NULL` plus the backoff instead of "no row";
+   - stamps are written from the `now` parameter, not `datetime('now')` (§1), or §8's fake clock can't drive them.
+7. **Medium - duplicate or empty keys fail an entry for good.** Some feeds have an empty `<guid/>`, or one guid on
+   several items (common in hand-made and WordPress feeds); all those items hash to one key. Also, a psapi episode
+   published between two `sort=desc` pages repeats a stub. Either way the insert hits the `(entry_id, key)` primary
+   key, the check fails, and the entry stays dark. Fix: trim the guid and treat an empty one as missing; dedupe,
+   keeping the first (newest) occurrence; check NRK ids against `[A-Za-z0-9_-]{1,64}` before they become keys and
+   manifest paths.
+8. **Medium - "feeds list newest first" is wrong for serial feeds.** Some feeds list oldest first (`itunes:type`
+   serial, audiobook feeds). "The newest 1000 in feed order, stored oldest first" stores such a list upside down: the
+   phone keeps the oldest N as "the newest", and NY marks the wrong end. Fix: order by `pubDate` when nearly every
+   item has one (ties in document order), else take document order as newest first. Test an oldest-first feed.
+9. **Medium - items that leave the source delete the kid's copy.** §6 deletes "items gone from the list". That also
+   hits RSS rolling windows (podkast.nrk.no's own RSS has 3 items today, and many hosts keep only the last 10-50),
+   the NRK and RSS caps, and an episode a host pulls. The bookmarked item and its download vanish mid-story, while a
+   withdrawn NRK item (`url: null`, Q2) keeps playing. Fix:
+   - an RSS item missing from a fresh feed stays in the listing with `url: null` (merge, don't replace);
+   - the cap drops the oldest `url: null` items first;
+   - keep/prune never deletes the bookmarked item or a downloaded `url: null` item;
+   - Q2: keep the copy, as recommended.
+10. **Medium - the in-place card updates move the page.** iOS Safari has long lacked scroll anchoring, so don't rely
+    on it. A card above the view that grows from "Waiting…" to three lines pushes the view down every 3 s. Swapping
+    whole cards also replaces an open offline select or a focused button. Fix:
+    - swap only the status block (`#entry-<id> .music-status`), and never a card that holds `document.activeElement`;
+    - before a swap, note the first visible card's top, then `scrollBy` the difference;
+    - give the status a fixed two-line height.
+11. **Low - the sweeper loop.**
+    - The gate is per request and FIFO (`tokio::sync::Mutex` is fair), so an add check waits for one request (at most
+      30 s, for a cover), not for a whole first fill.
+    - Check now and the newest add come before an import's backlog. Otherwise an add right after a 40-entry import
+      waits 20-30 min.
+    - Re-read `due(now)` after each entry and wake with `notify_one`, so a wake during a pass isn't lost.
+    - The final transaction checks that the entry still exists. If it was deleted mid-check, drop the result and
+      write no error row.
+12. **Low - time and size limits.**
+    - At 10 s overall, a 20 MB feed needs ~16 Mbit/s, so a big feed on a slow host fails as `timeout` for ever. Use a
+      10 s connect, 30 s without data and 120 s overall for feeds.
+    - Caps per kind: psapi page 2 MB, manifest 256 KB, image 10 MB, feed 20 MB.
+    - A feed without validators is a full GET at every check (20 MB × 24 a day at 1 h). Enable reqwest's `gzip` (the
+      cap counts decoded bytes), and skip the parse when the body's SHA-256 is unchanged.
+    - `CheckError::TooBig` still says 5 MB.
+13. **Low - item URLs reach the phone unchecked.** An enclosure or `itunes:image` of `file:`, `content:` or `data:`
+    would be opened by Media3's `DefaultDataSource` on the phone. Keep only http/https URLs without userinfo for `url`
+    and `art`, and cap `art` at 2000 characters like `url`.
+14. **Low - the listing limits.** The design doesn't say what happens past `MAX_LISTING_BYTES`, and failing the
+    check would darken the entry. 1000 items with long tracking URLs pass 1 MB. Fix: drop the oldest items until it
+    fits, and say so on the card. Per phone, 200 ticked 1 MB listings (~200 MB over tsnet, stored twice on the phone)
+    are outside QA #4's limit: give `tick_fits` a listing budget, or accept it in the doc.
+15. **Low - covers.**
+    - Hold the `MUSIC_COVERS` lock from writing the file to committing `cover_hash` (photos' rule). Otherwise a
+      parent's prune in between deletes the new file.
+    - NRK's incremental check never reads the root, so it never sees a new show image or title. Re-read the root
+      once a week (1 request).
+    - A signed cover URL whose query changes at every fetch would mean up to 10 MB at every check: refetch at most
+      once a day.
+16. **Low - NRK details.**
+    - podkast.nrk.no's RSS `guid` is the episode id (`l_…`, checked today). In fallback, use it as the key, not
+      `sha1(guid)`, so the keys (and with them positions, downloads and Nytt) survive psapi's return.
+    - NRK sometimes extends `usageRights.to`. Re-resolve the manifest before setting `url` NULL (it counts as a
+      recheck).
+    - psapi sends 9999 (and 2100) for no end date: read any year >= 2100 as "always".
+17. **Low - outages.**
+    - With NRK down, 30 entries fail one by one at 10 s each, and the backoff (15 min, 1 h, 4 h) retries faster than
+      the Pi's 6 h. Add a per-host breaker: after 3 network/5xx failures in a pass, defer that host's remaining
+      entries without counting a failure.
+    - Cap the backoff at the source's interval, not `I`: at 6 h a failing NRK entry is retried every 6 h, while a
+      healthy one is checked every 12 h.
+    - After 7 days of failures, try once a day.
+18. **Low - unticked entries.** The Pi sweeps only its own library's entries, and only those with `cache != 0`. §2.2
+    sweeps every NRK/RSS entry, ticked or not, so a 200-entry import with 40 ticked costs 5× for lists no phone
+    gets. Fix: an unticked entry gets its first fill, then a 24 h cadence (the card stays roughly current); ticked
+    entries follow the setting, and a tick wakes the sweeper.
+19. **Low - the parser.**
+    - "Refuses a DTD" also refuses RSS 0.91's Netscape `<!DOCTYPE>`, which vibb's ElementTree accepts. Ignore a
+      DOCTYPE without an internal subset, and refuse only internal subsets (entity bombs).
+    - Decode a non-UTF-8 feed by its XML declaration (quick-xml's `encoding` feature, MIT).
+    - Store a parser version, and send `If-None-Match`/`If-Modified-Since` only for a listing the current parser
+      built. Otherwise a parser fix never reaches a feed that keeps answering 304.
+20. **Low - contract.**
+    - The launcher requires `version` to equal the one it asked for, so a check that lands between the library GET
+      and the listing GET fails that sync. Accept any newer version.
+    - `openListing` returns null both for "unchanged" and "absent". Return a status that tells them apart.
+    - Append new AIDL methods at the end.
+    - Add `music_listing.json` to the `music.yml`/`launcher.yml` path filters and to the root CLAUDE.md's
+      shared-files list.
+    - Nudge once per sweep pass, not once per entry, so a phone refetches its library (up to 3 MB) once per pass.
+    - `downloads` rows carry the applied listing `version`, so the card can say "has an older list" for a phone
+      stuck on a failed fetch.
+21. **Low - PWA.**
+    - The card drops step 1's up/down and Edit buttons. Keep them.
+    - Check now on `/music/entries/{id}` redirects back to that page, not to `/music`.
+    - Card times say UTC like the rest of the PWA (or use one local zone everywhere).
+    - The 12-an-hour count needs its own record: `requested_at` holds only an entry's last press.
+    - Cap `GET /music/cards?ids=` at 200 ids, and build the cards with a few aggregate queries (200 cards on a Pi
+      Zero).
+    - §3's hint follows #1.
