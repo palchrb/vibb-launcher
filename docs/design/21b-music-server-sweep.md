@@ -848,3 +848,11 @@ returning to their card. The Pi checks of §7 are still to do (DEPLOY.md lists t
 
 **Open for the user**: none blocking. The version is 0.22.0 ("the next server minor version", §7), although 0.21.0
 was never released - shipping both as 0.21.0 is a one-line change if preferred.
+
+## Follow-up: cheaper change checks (user question, 2026-10-09)
+For the QA fix round of step 1c:
+- **A routine NRK check asks for a small first page**: `episodes?page=1&pageSize=5&sort=desc`. Only if all five are new
+  does the walk continue with the normal 50-item pages. The first fill and Check now are unchanged.
+- **Conditional headers for psapi too**: send `If-None-Match`/`If-Modified-Since` when psapi gave validators earlier.
+  Note in the status whether it does; the recorded answers show it.
+- RSS stays as built: a conditional GET, and the parse is skipped when the body hash is unchanged.
