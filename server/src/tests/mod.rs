@@ -8,6 +8,7 @@ mod cleanup;
 mod device_api;
 mod hardening;
 mod launcher_ui;
+mod listeners;
 mod music;
 mod music_sweep;
 mod play;

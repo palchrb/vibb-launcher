@@ -256,6 +256,9 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 
 ## Device-facing API (plain JSON, no envelope)
 
+Every route below is declared in `src/device_routes.rs` (`device_routes()`, design 22 S0), never in `main.rs`
+(`tests::listeners::main_rs_has_no_device_route_literal`): both listeners build from it.
+
 - `POST /api/devices/enroll` - `{enrollment_code}` → `{device_id, device_token}`
 - `GET /api/devices/policy` (bearer) → allowlist, `time_policy` (effective rules + budget, global or the device's own, and active lifts) and `location_policy` (always), the frozen legacy schedule fields, `kiosk_desired`, `lock_task_features`, `override_pin_hash`/`override_pin_salt`, `pending_command`, `call_policy` (always, explicit `managed`; contacts carry `photo`), `hardening` (always, every switch explicit), `launcher_ui` (always), `block_activity_start` (always; never inside `lock_task_features`), `kid_lock` (always, null = no lock), `screen_timeout_seconds`, `update_fence`, `notification_auto_cancel` (always), `music` (always the key; `null` when unreadable)
 - `POST /api/devices/command-result` (bearer) - `{command_id, success, message}` → 204, never sent for a `wipe` command
