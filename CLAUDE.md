@@ -46,16 +46,19 @@ directories in the same commit. The music library and an entry's episode list ar
 `server/testdata/music_library.json` and `server/testdata/music_listing.json` (`music_library_snapshot`,
 `music_listing_snapshot`, regenerated with `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` / `MUSIC_LISTING_SNAPSHOT_WRITE=1`); the
 music app keeps byte-identical copies in `music/app/src/test/resources/` (with `music_icons.json`;
-`ContractFilesTest`), and a change goes into both in one commit.
+`ContractFilesTest`), and a change goes into both in one commit. The launcher-music bridge's AIDL
+(`*/app/src/main/aidl/me/vibb/bridge/`) is byte-identical in `launcher/` and `music/` (`MusicPlanTest`,
+`BridgeTest`); new methods are appended.
 
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
-  (`launcher.yml` also on `.github/actions/build-tsnet/`, `music.yml` also on the shared
-  `server/testdata/music_*.json`; `server-ci.yml`'s `server-image` job only when `server/Dockerfile`,
-  `server/.dockerignore`, `server/deploy/image-smoke.sh` or the workflow changed). Require the
-  always-running gate jobs `launcher-ci`, `server-ci` and `music-ci` in branch protection, not the build jobs.
+  (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read, `music.yml` also
+  on the shared `server/testdata/music_*.json` and the launcher's copy of the bridge AIDL; `server-ci.yml`'s
+  `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
+  the workflow changed). Require the always-running gate jobs `launcher-ci`, `server-ci` and `music-ci` in
+  branch protection, not the build jobs.
 - `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
   release (`kids-launcher-mdm.apk`), versionCode `X*1_000_000 + Y*1_000 + Z` (RC: minus 1). Only
   stable launcher releases become GitHub's "latest", so

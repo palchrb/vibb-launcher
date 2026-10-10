@@ -410,3 +410,67 @@ All findings are fixed except as noted; 117 JVM tests (11 new), the server's 361
 - The Room schema stays version 1, changed in place: no build of the app was installed anywhere yet.
 - Device checks added: BT/car-kit PLAY after a queue ended does nothing (no crash); choose "Telefonen", then plug in
   headphones; seek/next before play after a restart; the Nytt notification after a reboot.
+
+## Step 3 implementation status (2026-10-10)
+
+Built and tested in the sandbox on `music-step2` (launcher, music app; no server change); not run on an emulator or a
+phone. The launcher's part is a new package `com.kidslauncher.mdm.music` with small hooks elsewhere (the sync, the
+status DTO and capability `music_v1`, the manifest, one check in `AppDownloads`).
+- **Bridge (§2, 21b §5)**: `me/vibb/bridge/IMusicBridge.aidl` and `IStorytelCallback.aidl`, byte-identical in both
+  apps (both suites compare), all of §2's methods plus `listingVersion`/`openListing` at the end. The launcher's
+  `MusicBridgeService` is exported behind its own signature permission `<applicationId>.permission.MUSIC_BRIDGE`
+  and checks the caller's package on every call; the music app requests both build names' permission, has
+  `<queries>` for both launchers, and binds only the restrictions' launcher when it is a launcher name signed with
+  its own certificate (`hasSigningCertificate`).
+- **Launcher sync (§3, 21b §5)**: `MusicSync` after the wallpapers, only with a music app installed: the library on
+  a new `library_version` (If-None-Match, ≤ 4 MB, `v == 1`), the listings whose version changed (≤ 2 MB, any version
+  stored, the unnamed ones deleted), covers (hash-checked), own files queued, then the managed config (`v`,
+  `managed`, `launcher_package`, `language`, `mobile_data`, `library_version`, `storytel_generation`; written when it
+  differs, cleared without a policy) and one nudge (`BRIDGE_CHANGED`) when anything changed. A failure keeps what
+  is stored; `PolicyResponse.music` stays raw and nullable.
+- **Own files**: one ahead of the handover, after the catalog's APKs, design 13's rules (Range + the first ETag as
+  If-Match, 412/416/404, size + SHA-256, NOT_METERED unless `music.mobile_data`, never roaming, room); the music app
+  copies from `openFile`, checks size and SHA-256, closes, `releaseFile`s; `wantFiles` asks again.
+- **Storytel**: the launcher fetches the login when the music app's generation isn't the policy's (`!=`) and
+  answers through the callback in memory only (404 = generation 0); the music app keeps it AES-GCM-sealed under an
+  Android Keystore key in noBackupFilesDir, deletes it at generation 0, and reports `storytel` "ok"/"none".
+- **Updates and status**: a music app update waits while the last `setNowPlaying` says "playing" (a `DEFER` outcome
+  in `AppDownloads`' install; the pause asks for a run); `music_state` = the music app's last `reportState` (known
+  keys) + the package, version code and `bridge` ("bound" while reports arrive, else "unbound").
+- **Music app**: the bridge part runs first in the sync and the report goes back at its end; the managed config sets
+  the language (`LocaleManager`) and mobile data; `BRIDGE_CHANGED` and the restrictions-changed broadcast start a
+  sync; `LiveBridge` (held by the player and the screens, rebound after the launcher's own update) sends
+  `setNowPlaying` (play/pause/item change, art ≤ 64 KB, null at a queue's end) and `setForeground` (the top resumed
+  activity, never in multi-window, its token dying with the process); `MY_PACKAGE_SUSPENDED` pauses (QA #8's
+  fallback). The debug feed still works and doesn't need the launcher.
+- **Tests**: launcher `MusicPlanTest` (AIDL identity, the signature permission, the caller check, policy and library
+  reading on the shared snapshots, listings, one-ahead own files, the managed config's keys, the deferral,
+  `music_state`); music `BridgeTest` (AIDL identity, the config, another signer refused, nothing ticked, listings,
+  the sealed login) and the report's `storytel`.
+
+Readings and deviations:
+1. **Own files have their own small runner** (`MusicFileDownloads`) built on design 13's pure rules, not new
+   `DownloadRecord` kinds inside `AppDownloads`: design 22 L1 rewrites that runner's transport, and the music files
+   need neither installs nor release tags. It has no network callback: a run starts at each sync, handover or
+   `wantFiles`, and stops when the network stops qualifying. Its room check is design 13's (twice the file).
+2. **All music server calls sit behind `MusicServer`** (Retrofit over the tsnet proxy, the bearer), for L1.
+3. **`reportState` also names the own files the music app holds** (`held_files`, `held_sha256`; never sent to the
+   server). They replace the launcher's handed-over marks, so a launcher reinstall or files fed another way never
+   cause a second download, and a stale "ready" file can't block the one-ahead rule.
+4. **The nudge goes only when something changed** (library, listing, cover, the managed config, a file ready), not at
+   every sync.
+5. **Nothing ticked**: the launcher deletes its library and the managed config says `library_version` ""; the music app
+   then applies an empty library (the parent's explicit choice; an unmanaged phone never does).
+6. **The managed config is written by `MusicSync`** (after the library, from the enforced policy), not inside
+   `AppEnforcer.apply()`: one place, and `apply()` stays untouched.
+7. The launcher stores `setForeground` and `setNowPlaying` now; their readers (screen time, the Home card, the lock
+   view) and QA #6 (the badge, the POST_NOTIFICATIONS grant) are step 4.
+8. Local build note: the sandbox's SDK `aidl` is x86_64 only; it now uses the aarch64 `aidl` from the same third-party
+   tools as the aapt2 override (not in the repo; CI's x86_64 runners are unaffected).
+
+Device checks (21 §6 step 3): a catalog install of the music app and its kiosk pin; a language change in the PWA reaching
+the music app; a music app signed with another key isn't bound; own files over an interrupted Wi-Fi (resumed, one
+ahead of the handover); a Storytel login set -> stored ("ok" on the card) / cleared -> deleted; a launcher self-update
+while playing (the music keeps playing, the bridge comes back); a music update deferred while playing and installed
+after the pause; `BRIDGE_CHANGED` and a restrictions change start a sync; the device card shows the music app with no
+bridge warning.

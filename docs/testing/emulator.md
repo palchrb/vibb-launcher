@@ -449,9 +449,12 @@ adb logcat -s LockTaskDebug LockTaskChrome
 - Only shell can send it: the receiver needs `android.permission.DUMP`. Never on a kid's phone: release builds don't
   have it.
 
-## 6f. Vibb music (design 21 step 2): the debug feed
+## 6f. Vibb music (design 21 steps 2-3): the bridge, or the debug feed
 
-Until step 3's bridge the music app (`music/`, debug package `me.vibb.music.debug`) gets its library from a
+With the debug launcher as device owner and the server's music library ticked for the phone, the debug music app
+gets everything through the launcher's bridge (step 3): install both debug APKs (the same debug key on one machine -
+CI's debug APKs differ in key, QA #7), sync the launcher, and the music app follows on the `BRIDGE_CHANGED` nudge
+(`adb logcat -s MusicSync MusicFiles MusicBridge BridgeSync`). Without a launcher, the music app takes a library from a
 debug-only receiver (`src/debug`, `checkReleaseHasNoDebugFeed`, `SourceScanTest`). Build with
 `cd music && ./gradlew assembleDebug` (-> `music/app/build/outputs/apk/debug/app-debug.apk`) and install it
 next to the launcher; no device owner or server is needed for these checks.

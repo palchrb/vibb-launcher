@@ -2,7 +2,8 @@ name: Music
 
 # The Vibb music app in music/ (design 21 §5). Two flows, like launcher.yml:
 # - Every push to master/main and every PR: music-build (debug, unsigned release, lint, unit tests)
-#   runs when music/, this workflow or the music files shared with the server changed, and uploads
+#   runs when music/, this workflow, the music files shared with the server or the launcher's copy
+#   of the bridge's AIDL (BridgeTest compares them) changed, and uploads
 #   the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
 #   master/main: music-release-build builds the unsigned release APK (no secrets),
@@ -59,7 +60,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/music_(library|listing|icons)\.json$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/music_(library|listing|icons)\.json$|launcher/app/src/main/aidl/)'; then
           changed=true
         else
           changed=false

@@ -49,5 +49,8 @@ shared files in `src/test/resources/` must equal `server/testdata/music_{library
   `lan` (an RSS feed on the LAN or tailnet).
 - Behaviour questions default to what the vibb Pi player does (`pi/daemon.py`, `pi/vibb/*.py`, `tests/`).
 - The kid's screens open nothing else: no settings, links, share or web views (`SourceScanTest`).
-- Not here yet (step 3): the bridge (AIDL, managed config, `reportState`, `setNowPlaying`, `setForeground`), so
-  `mobile_data` and the language come from the debug feed or the system.
+- The bridge (design 21 step 3, `bridge/`): the launcher is the only way to the server. `BridgeSync.pull` runs first
+  in every sync (library, changed listings, covers, own files copied + checked + released, the Storytel login sealed
+  under a Keystore key) and `push` sends the report at its end; `LiveBridge` sends `setNowPlaying`/`setForeground`.
+  Bind only the restrictions' launcher, and only when it is signed like this app. The AIDL is byte-identical with
+  `launcher/` - append, never reorder.
