@@ -561,7 +561,7 @@ async fn the_session_cookie_is_host_prefixed_unless_insecure() {
 async fn the_tailscale_key_is_write_only() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let save = |key: &'static str, clear: bool| {
+    fn save(key: &str, clear: bool) -> Vec<(&str, &str)> {
         let mut fields = vec![
             ("server_url", "https://pi.tail1234.ts.net:8444"),
             ("tailscale_auth_key", key),
@@ -572,7 +572,7 @@ async fn the_tailscale_key_is_write_only() {
             fields.push(("clear_tailscale_auth_key", "on"));
         }
         fields
-    };
+    }
     // Built from parts and without the real format's "CNTRL" marker, so secret scanners don't take a test value
     // for a real Tailscale key (GitHub flagged the earlier literal).
     let key = ["tskey-auth-", "TESTONLY", "-not-a-real-key-9z8y"].concat();
