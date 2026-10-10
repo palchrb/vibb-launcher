@@ -573,7 +573,10 @@ async fn the_tailscale_key_is_write_only() {
         }
         fields
     };
-    let key = "tskey-auth-kAbCdEf1234CNTRL-supersecretvalue9z8y";
+    // Built from parts and without the real format's "CNTRL" marker, so secret scanners don't take a test value
+    // for a real Tailscale key (GitHub flagged the earlier literal).
+    let key = ["tskey-auth-", "TESTONLY", "-not-a-real-key-9z8y"].concat();
+    let key = key.as_str();
     let res = app
         .request_form(
             Method::POST,
