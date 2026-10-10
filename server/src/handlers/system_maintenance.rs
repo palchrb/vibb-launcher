@@ -201,6 +201,21 @@ pub(crate) struct OsUpdateData {
     pub(crate) schedule_summary: String,
 }
 
+/// Nothing to report: the container has no OS or Tailscale of its own to manage (design 22 §6).
+pub(crate) fn not_managed() -> OsUpdateData {
+    let schedule = ScheduleConfig::defaults();
+    OsUpdateData {
+        watcher_busy: false,
+        os_update_count: None,
+        reboot_required: false,
+        tailscale_current: None,
+        tailscale_upstream: None,
+        tailscale_update_available: false,
+        schedule_summary: schedule.summary(),
+        schedule,
+    }
+}
+
 pub(crate) async fn gather() -> OsUpdateData {
     let busy = watcher_busy().await;
 

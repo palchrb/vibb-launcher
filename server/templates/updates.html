@@ -14,6 +14,22 @@
     <div class="success">{{ m }}</div>
     {% endif %}
 
+    {% if docker %}
+    <div class="card" id="app-version">
+        <h2>App version</h2>
+        <p class="subtitle">Running: <strong>{{ app.current_version }}</strong> (Docker image)</p>
+        {% if app.check_failed %}
+        <p class="subtitle">Couldn't check GitHub for the latest version right now.</p>
+        {% else %}
+            {% if let Some(version) = docker_version %}
+            <div class="success">Version {{ version }} is out. Set <code>HANDY_VERSION={{ version }}</code> in <code>.env</code>, then run <code>docker compose pull &amp;&amp; docker compose up -d</code>. A backup of the database is taken by itself before it changes anything (<code>data/backups/pre-migrate-*.db</code>).</div>
+            {% else %}
+            <p class="subtitle">You're up to date.</p>
+            {% endif %}
+        {% endif %}
+        <p class="subtitle">The container's own operating system and Tailscale are updated with the image and on the host, not here.</p>
+    </div>
+    {% else %}
     <div class="card">
         <h2>App version</h2>
         <p class="subtitle">Running: <strong>{{ app.current_version }}</strong></p>
@@ -205,6 +221,7 @@
             <button type="submit" style="margin-top:8px;">Save schedule</button>
         </form>
     </div>
+    {% endif %}
 </main>
 </body>
 </html>

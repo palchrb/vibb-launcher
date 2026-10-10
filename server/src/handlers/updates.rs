@@ -19,15 +19,44 @@ struct UpdatesTemplate {
     message: Option<String>,
     app: system_update::AppUpdateData,
     os: system_maintenance::OsUpdateData,
+    /// `DEPLOY_KIND=docker` (design 22 §6): updates are a new image, not "Update now"; no OS,
+    /// Tailscale or helper-script cards.
+    docker: bool,
+    /// What to set `HANDY_VERSION` to ("0.23.0") when a newer release is out.
+    docker_version: Option<String>,
 }
 
 pub(crate) async fn render_page(state: &AppState, message: Option<String>) -> Html<String> {
+    let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
+    let app = system_update::gather(state).await;
+    let os = if docker {
+        system_maintenance::not_managed()
+    } else {
+        system_maintenance::gather().await
+    };
+    page(docker, app, os, message)
+}
+
+/// The page from what was gathered (no network: the tests build it directly).
+pub(crate) fn page(
+    docker: bool,
+    app: system_update::AppUpdateData,
+    os: system_maintenance::OsUpdateData,
+    message: Option<String>,
+) -> Html<String> {
+    let docker_version = app
+        .latest_version
+        .as_deref()
+        .filter(|_| docker && app.update_available)
+        .map(|version| version.trim_start_matches('v').to_string());
     Html(
         UpdatesTemplate {
             title: "Software updates".to_string(),
             message,
-            app: system_update::gather(state).await,
-            os: system_maintenance::gather().await,
+            os,
+            app,
+            docker,
+            docker_version,
         }
         .render()
         .unwrap(),

@@ -1,0 +1,5 @@
+# The image only needs the cross-built binaries and the static files (see Dockerfile).
+*
+!dist/amd64/kid_phone_server
+!dist/arm64/kid_phone_server
+!dist/static/

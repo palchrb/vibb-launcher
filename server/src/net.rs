@@ -177,6 +177,24 @@ fn parse_forwarded_entry(entry: &str) -> Option<IpAddr> {
         .map(|ip| ip.to_canonical())
 }
 
+/// What `DEPLOY_KIND` says this install is (design 22 §6): the Pi's systemd unit with the
+/// root-side helper scripts, or the Docker image (no helper, no shell; updates by setting
+/// `HANDY_VERSION` and pulling the image).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeployKind {
+    Systemd,
+    Docker,
+}
+
+impl DeployKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeployKind::Systemd => "systemd",
+            DeployKind::Docker => "docker",
+        }
+    }
+}
+
 pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:3100";
 pub const DEFAULT_SESSION_INACTIVITY_DAYS: i64 = 30;
 
@@ -201,6 +219,8 @@ pub struct NetConfig {
     pub admin_tailscale_users: Option<Vec<String>>,
     /// `SESSION_INACTIVITY_DAYS` (default 30, 1-365): an admin session's lifetime without use.
     pub session_inactivity_days: i64,
+    /// `DEPLOY_KIND` (default systemd; the image sets docker).
+    pub deploy_kind: DeployKind,
 }
 
 impl Default for NetConfig {
@@ -278,6 +298,14 @@ impl NetConfig {
                 }
             },
         };
+        let deploy_kind = match get("DEPLOY_KIND").as_deref() {
+            None | Some("systemd") => DeployKind::Systemd,
+            Some("docker") => DeployKind::Docker,
+            Some(other) => {
+                tracing::error!("DEPLOY_KIND={other:?} is not systemd or docker - using systemd");
+                DeployKind::Systemd
+            }
+        };
         NetConfig {
             bind_addr: get("BIND_ADDR").unwrap_or_else(|| DEFAULT_BIND_ADDR.to_string()),
             device_bind_addr: get("DEVICE_BIND_ADDR"),
@@ -287,6 +315,7 @@ impl NetConfig {
             // An empty list would refuse everyone; unset means "don't check".
             admin_tailscale_users: admin_tailscale_users.filter(|users| !users.is_empty()),
             session_inactivity_days,
+            deploy_kind,
         }
     }
 
@@ -381,9 +410,11 @@ impl NetConfig {
             None => String::new(),
         };
         format!(
-            "admin listener on {} {admin}, {device_api}; {phones}; trusted proxies: {}{users}",
+            "admin listener on {} {admin}, {device_api}; {phones}; trusted proxies: {}{users}; \
+             deploy kind {}",
             self.bind_addr,
             if trusted.is_empty() { "none" } else { &trusted },
+            self.deploy_kind.as_str(),
         )
     }
 }
@@ -534,7 +565,9 @@ mod tests {
         assert!(!net.admin_public);
         assert_eq!(net.admin_tailscale_users, None);
         assert_eq!(net.session_inactivity_days, 30);
+        assert_eq!(net.deploy_kind, DeployKind::Systemd);
         let net = NetConfig::from_vars(&vars(&[
+            ("DEPLOY_KIND", "docker"),
             ("SESSION_INACTIVITY_DAYS", "7"),
             ("DEVICE_BIND_ADDR", "127.0.0.1:3101"),
             ("ADMIN_DEVICE_API", "off"),
@@ -543,6 +576,7 @@ mod tests {
         ]));
         assert_eq!(net.device_bind_addr.as_deref(), Some("127.0.0.1:3101"));
         assert_eq!(net.session_inactivity_days, 7);
+        assert_eq!(net.deploy_kind, DeployKind::Docker);
         assert!(!net.admin_device_api);
         assert!(net.admin_public);
         assert_eq!(

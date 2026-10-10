@@ -2,7 +2,9 @@ name: Server CI
 
 # The admin server in server/. No `paths:` filter on the triggers (a skipped workflow leaves a
 # required check pending forever): server-changes decides, server-build runs only when server/ or
-# this workflow changed, and server-ci (always runs) is the check to require.
+# this workflow changed, server-image only when the image's files (Dockerfile, .dockerignore,
+# deploy/image-smoke.sh) or this workflow changed, and server-ci (always runs) is the check to
+# require.
 # Third-party actions are pinned by commit SHA. Never add a pull_request_target trigger.
 
 on:
@@ -19,6 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       changed: ${{ steps.diff.outputs.changed }}
+      image: ${{ steps.diff.outputs.image }}
     steps:
     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       with:
@@ -38,13 +41,24 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(server/|\.github/workflows/server-ci\.yml$)'; then
-          changed=true
+          image=true
         else
-          changed=false
+          files="$(git diff --name-only "$base" "$GITHUB_SHA")"
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$)' <<<"$files"; then
+            changed=true
+          else
+            changed=false
+          fi
+          # The image job (design 22 §6): only when the image's own files or this workflow changed.
+          if grep -qE '^(server/Dockerfile|server/\.dockerignore|server/deploy/image-smoke\.sh|\.github/workflows/server-ci\.yml)$' <<<"$files"; then
+            image=true
+          else
+            image=false
+          fi
         fi
         echo "changed=$changed" >> "$GITHUB_OUTPUT"
-        echo "server changed: $changed (base ${base:-none})"
+        echo "image=$image" >> "$GITHUB_OUTPUT"
+        echo "server changed: $changed, image: $image (base ${base:-none})"
 
   server-build:
     needs: server-changes
@@ -69,19 +83,57 @@ jobs:
       # Reports warnings without failing the build; the existing ones predate the test harness.
       - run: cargo clippy --all-targets --locked
 
+  # The container image (design 22 §6), without pushing: a static amd64 musl build, docker build,
+  # and the same smoke test the release runs before it tags an image.
+  server-image:
+    needs: server-changes
+    if: ${{ needs.server-changes.outputs.image == 'true' }}
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - name: Install cross
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cross
+      - name: Build (x86_64-unknown-linux-musl)
+        run: cross build --release --locked --target x86_64-unknown-linux-musl
+      - name: Stage the image context
+        run: |
+          set -euo pipefail
+          mkdir -p dist/amd64
+          cp target/x86_64-unknown-linux-musl/release/kid_phone_server dist/amd64/
+          cp -r static dist/static
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the image
+        run: |
+          docker buildx build --platform linux/amd64 --load \
+            --build-arg VERSION=ci --build-arg REVISION="$GITHUB_SHA" \
+            -t handy-server:ci .
+      - name: Smoke test
+        run: deploy/image-smoke.sh handy-server:ci
+
   # The one check to mark as required in branch protection: it always runs and passes when the
-  # build passed, or was skipped because nothing of server's changed.
+  # build (and the image job) passed, or were skipped because nothing of theirs changed.
   server-ci:
     if: ${{ always() }}
-    needs: [ server-changes, server-build ]
+    needs: [ server-changes, server-build, server-image ]
     runs-on: ubuntu-24.04
     steps:
-    - name: Check server-build
+    - name: Check server-build and server-image
       env:
         CHANGES: ${{ needs.server-changes.result }}
         CHANGED: ${{ needs.server-changes.outputs.changed }}
+        IMAGE_CHANGED: ${{ needs.server-changes.outputs.image }}
         BUILD: ${{ needs.server-build.result }}
+        IMAGE: ${{ needs.server-image.result }}
       run: |
-        echo "changes: $CHANGES, changed: $CHANGED, build: $BUILD"
+        echo "changes: $CHANGES, changed: $CHANGED, build: $BUILD, image changed: $IMAGE_CHANGED, image: $IMAGE"
         [ "$CHANGES" = success ] || exit 1
         if [ "$CHANGED" = true ]; then [ "$BUILD" = success ]; else [ "$BUILD" = skipped ]; fi
+        if [ "$IMAGE_CHANGED" = true ]; then [ "$IMAGE" = success ]; else [ "$IMAGE" = skipped ]; fi

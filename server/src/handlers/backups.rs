@@ -304,9 +304,16 @@ struct BackupsTemplate {
     external_mount: String,
     external_drive_mounted: bool,
     removable_drives: Vec<RemovableDrive>,
+    /// `DEPLOY_KIND=docker` (design 22 §6): no external drive, live mirror or formatting.
+    docker: bool,
 }
 
-async fn render_backups(success: Option<String>, error: Option<String>) -> Html<String> {
+async fn render_backups(
+    state: &AppState,
+    success: Option<String>,
+    error: Option<String>,
+) -> Html<String> {
+    let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
     let mut backups: Vec<BackupRow> = Vec::new();
     if let Ok(mut entries) = tokio::fs::read_dir(BACKUP_DIR).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -355,16 +362,21 @@ async fn render_backups(success: Option<String>, error: Option<String>) -> Html<
             schedule,
             schedule_summary,
             external_mount: EXTERNAL_MOUNT.to_string(),
-            external_drive_mounted: external_drive_mounted().await,
-            removable_drives: list_removable_drives().await,
+            external_drive_mounted: !docker && external_drive_mounted().await,
+            removable_drives: if docker {
+                Vec::new()
+            } else {
+                list_removable_drives().await
+            },
+            docker,
         }
         .render()
         .unwrap(),
     )
 }
 
-pub async fn list_backups() -> impl IntoResponse {
-    render_backups(None, None).await
+pub async fn list_backups(State(state): State<AppState>) -> impl IntoResponse {
+    render_backups(&state, None, None).await
 }
 
 pub async fn create_backup(State(state): State<AppState>) -> impl IntoResponse {
@@ -374,13 +386,14 @@ pub async fn create_backup(State(state): State<AppState>) -> impl IntoResponse {
             if let Some(retention) = schedule.retention_count() {
                 prune_old_backups(retention).await;
             }
-            render_backups(Some("Backup created.".to_string()), None)
+            render_backups(&state, Some("Backup created.".to_string()), None)
                 .await
                 .into_response()
         }
         Err(e) => {
             tracing::error!("manual backup failed: {e}");
             render_backups(
+                &state,
                 None,
                 Some("Something went wrong creating the backup.".to_string()),
             )
@@ -409,11 +422,14 @@ pub async fn download_backup(Path(filename): Path<String>) -> impl IntoResponse 
     }
 }
 
-pub async fn delete_backup(Path(filename): Path<String>) -> impl IntoResponse {
+pub async fn delete_backup(
+    State(state): State<AppState>,
+    Path(filename): Path<String>,
+) -> impl IntoResponse {
     if is_safe_backup_filename(&filename) {
         let _ = tokio::fs::remove_file(format!("{BACKUP_DIR}/{filename}")).await;
     }
-    render_backups(Some("Backup deleted.".to_string()), None).await
+    render_backups(&state, Some("Backup deleted.".to_string()), None).await
 }
 
 #[derive(Deserialize)]
@@ -437,7 +453,7 @@ pub async fn save_backup_schedule(
     if !VALID_FREQUENCIES.contains(&form.frequency.as_str()) {
         return (
             StatusCode::BAD_REQUEST,
-            render_backups(None, Some("Invalid frequency.".to_string())).await,
+            render_backups(&state, None, Some("Invalid frequency.".to_string())).await,
         )
             .into_response();
     }
@@ -461,8 +477,11 @@ pub async fn save_backup_schedule(
         day_of_month: day_of_month.to_string(),
         backup_time,
         retention_count: retention_count.to_string(),
-        external_copy_enabled: form.external_copy_enabled.is_some(),
-        continuous_mirror_enabled: form.continuous_mirror_enabled.is_some(),
+        // No external drive in the container (design 22 §6).
+        external_copy_enabled: form.external_copy_enabled.is_some()
+            && state.net.deploy_kind == crate::net::DeployKind::Systemd,
+        continuous_mirror_enabled: form.continuous_mirror_enabled.is_some()
+            && state.net.deploy_kind == crate::net::DeployKind::Systemd,
     };
 
     let message = if tokio::fs::write(SCHEDULE_FILE, config.to_file_contents())
@@ -482,7 +501,9 @@ pub async fn save_backup_schedule(
         "Couldn't save the schedule.".to_string()
     };
 
-    render_backups(Some(message), None).await.into_response()
+    render_backups(&state, Some(message), None)
+        .await
+        .into_response()
 }
 
 /// Background task (spawned once at startup, see main.rs) that creates a
@@ -701,6 +722,7 @@ pub async fn format_drive(
     let drives = list_removable_drives().await;
     let Some(drive) = drives.iter().find(|d| d.device == form.device) else {
         return render_backups(
+            &state,
             None,
             Some("That drive is no longer detected - nothing was formatted.".to_string()),
         )
@@ -709,6 +731,7 @@ pub async fn format_drive(
     };
     if form.confirm_size.trim() != drive.size_display {
         return render_backups(
+            &state,
             None,
             Some(
                 "Confirmation text didn't match the drive size - nothing was formatted."
@@ -737,7 +760,9 @@ pub async fn format_drive(
         "Couldn't write the request file.".to_string()
     };
 
-    render_backups(Some(message), None).await.into_response()
+    render_backups(&state, Some(message), None)
+        .await
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -769,6 +794,7 @@ pub async fn restore_backup(
     let names = list_backup_filenames().await;
     if !names.contains(&filename) {
         return render_backups(
+            &state,
             None,
             Some("That backup is no longer there - nothing was restored.".to_string()),
         )
@@ -777,11 +803,18 @@ pub async fn restore_backup(
     }
     if form.confirm_filename.trim() != filename {
         return render_backups(
+            &state,
             None,
             Some("Confirmation text didn't match the filename - nothing was restored.".to_string()),
         )
         .await
         .into_response();
+    }
+
+    if state.net.deploy_kind == crate::net::DeployKind::Docker {
+        return restore_in_container(&state, &admin, &filename)
+            .await
+            .into_response();
     }
 
     let flag_content = format!("restore_backup {filename}");
@@ -801,7 +834,63 @@ pub async fn restore_backup(
         "Couldn't write the request file.".to_string()
     };
 
-    render_backups(Some(message), None).await.into_response()
+    render_backups(&state, Some(message), None)
+        .await
+        .into_response()
+}
+
+/// The restore in the container (design 22 §6): no root helper, so the marker
+/// `data/restore_request` names the backup and the process exits non-zero; the restart policy
+/// brings it back, and startup applies the restore before opening the database
+/// (`startup::apply_restore_request`, which also puts the old database back if the restored one
+/// won't open).
+async fn restore_in_container(
+    state: &AppState,
+    admin: &crate::models::AdminUser,
+    filename: &str,
+) -> Html<String> {
+    let marker = std::path::Path::new("data").join(crate::startup::RESTORE_REQUEST);
+    if let Err(err) = tokio::fs::write(&marker, filename).await {
+        tracing::error!(%err, "couldn't write the restore request");
+        return render_backups(
+            state,
+            None,
+            Some("Couldn't write the restore request - nothing was restored.".to_string()),
+        )
+        .await;
+    }
+    security::record_security_event(
+        &state.db,
+        "backup_restore_triggered",
+        Some(&admin.username),
+        None,
+        Some(filename),
+    )
+    .await;
+    restart_soon(state.clone());
+    render_backups(
+        state,
+        Some(
+            "Restoring now - the server stops, swaps in the backup and starts again (Docker's \
+             restart policy). This takes a few seconds; reload the page then."
+                .to_string(),
+        ),
+        None,
+    )
+    .await
+}
+
+/// Exits non-zero a moment after the response went out, with the database closed (its WAL
+/// checkpointed), so the restart policy starts the container again. Not in tests.
+fn restart_soon(state: AppState) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        state.command_streams.close_all();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), state.db.close()).await;
+        tracing::info!("restarting for the restore");
+        #[cfg(not(test))]
+        std::process::exit(3);
+    });
 }
 
 /// Accepts an uploaded backup zip - e.g. one downloaded earlier and saved
@@ -810,19 +899,26 @@ pub async fn restore_backup(
 /// other backup. Never trusts the browser-supplied filename or the .zip
 /// extension alone: the archive is actually opened and checked for a
 /// `kidphone.db` entry before being accepted.
-pub async fn upload_backup(mut multipart: axum::extract::Multipart) -> impl IntoResponse {
+pub async fn upload_backup(
+    State(state): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> impl IntoResponse {
     let Ok(Some(field)) = multipart.next_field().await else {
-        return render_backups(None, Some("No file was uploaded.".to_string()))
+        return render_backups(&state, None, Some("No file was uploaded.".to_string()))
             .await
             .into_response();
     };
     let Ok(bytes) = field.bytes().await else {
-        return render_backups(None, Some("Couldn't read the uploaded file.".to_string()))
-            .await
-            .into_response();
+        return render_backups(
+            &state,
+            None,
+            Some("Couldn't read the uploaded file.".to_string()),
+        )
+        .await
+        .into_response();
     };
     if bytes.is_empty() {
-        return render_backups(None, Some("That file is empty.".to_string()))
+        return render_backups(&state, None, Some("That file is empty.".to_string()))
             .await
             .into_response();
     }
@@ -839,6 +935,7 @@ pub async fn upload_backup(mut multipart: axum::extract::Multipart) -> impl Into
 
     if !valid {
         return render_backups(
+            &state,
             None,
             Some(
                 "That doesn't look like a Kids Device MDM backup (couldn't find \
@@ -852,6 +949,7 @@ pub async fn upload_backup(mut multipart: axum::extract::Multipart) -> impl Into
 
     if tokio::fs::create_dir_all(BACKUP_DIR).await.is_err() {
         return render_backups(
+            &state,
             None,
             Some("Couldn't create the backups folder.".to_string()),
         )
@@ -873,5 +971,7 @@ pub async fn upload_backup(mut multipart: axum::extract::Multipart) -> impl Into
         "Couldn't save the uploaded file.".to_string()
     };
 
-    render_backups(Some(message), None).await.into_response()
+    render_backups(&state, Some(message), None)
+        .await
+        .into_response()
 }

@@ -246,10 +246,13 @@ pub fn reinstall_hint(repo: &str) -> String {
     )
 }
 
-/// Creates the first admin account from ADMIN_USERNAME/ADMIN_PASSWORD env
-/// vars if the admin_users table is empty - there's no self-registration, so
-/// this is the only way to get a first account onto a fresh install.
-pub async fn bootstrap_admin(db: &sqlx::SqlitePool) {
+/// Creates the first admin account if `admin_users` is empty - there's no self-registration, so
+/// this is the only way to get a first account onto a fresh install. The name is
+/// `ADMIN_USERNAME` (default "admin"); the password `ADMIN_PASSWORD`, else the file
+/// `ADMIN_PASSWORD_FILE` names, else a generated one written to `data/initial-admin-password`
+/// (0600, design 22 §6) - the log names the file, never the password. Either way it must be
+/// changed at the first sign-in.
+pub async fn bootstrap_admin(db: &sqlx::SqlitePool, data_dir: &std::path::Path) {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM admin_users")
         .fetch_one(db)
         .await
@@ -258,9 +261,39 @@ pub async fn bootstrap_admin(db: &sqlx::SqlitePool) {
         return;
     }
 
-    let username = std::env::var("ADMIN_USERNAME").unwrap_or_else(|_| "admin".to_string());
-    let password = std::env::var("ADMIN_PASSWORD")
-        .expect("ADMIN_PASSWORD must be set in .env to bootstrap the first admin account");
+    let username = std::env::var("ADMIN_USERNAME")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "admin".to_string());
+    let configured = std::env::var("ADMIN_PASSWORD")
+        .ok()
+        .filter(|v| !v.is_empty());
+    let from_file = || -> Option<String> {
+        let path = std::env::var("ADMIN_PASSWORD_FILE")
+            .ok()
+            .filter(|v| !v.trim().is_empty())?;
+        match std::fs::read_to_string(path.trim()) {
+            Ok(password) if !password.trim().is_empty() => Some(password.trim().to_string()),
+            Ok(_) => {
+                tracing::error!("ADMIN_PASSWORD_FILE {path} is empty");
+                std::process::exit(1);
+            }
+            Err(err) => {
+                tracing::error!("ADMIN_PASSWORD_FILE {path} can't be read: {err}");
+                std::process::exit(1);
+            }
+        }
+    };
+    let (password, generated) = match configured.or_else(from_file) {
+        Some(password) => (password, None),
+        None => match crate::startup::initial_admin_password(data_dir) {
+            Ok((password, path)) => (password, Some(path)),
+            Err(err) => {
+                tracing::error!("no ADMIN_PASSWORD, and {err}");
+                std::process::exit(1);
+            }
+        },
+    };
 
     let hash = hash_password(&password);
     sqlx::query(
@@ -272,7 +305,14 @@ pub async fn bootstrap_admin(db: &sqlx::SqlitePool) {
     .await
     .expect("failed to create bootstrap admin");
 
-    tracing::info!("bootstrapped initial admin account: {username}");
+    match generated {
+        Some(path) => tracing::warn!(
+            "created the first admin account {username:?}; its password is in {} - sign in, \
+             change it (the file is deleted then)",
+            path.display()
+        ),
+        None => tracing::info!("bootstrapped initial admin account: {username}"),
+    }
 }
 
 #[derive(Clone)]

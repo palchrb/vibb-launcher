@@ -122,7 +122,7 @@ pub(crate) struct AppUpdateScheduleConfig {
 }
 
 impl AppUpdateScheduleConfig {
-    fn defaults() -> Self {
+    pub(crate) fn defaults() -> Self {
         AppUpdateScheduleConfig {
             frequency: "daily".to_string(),
             day_of_week: "0".to_string(),

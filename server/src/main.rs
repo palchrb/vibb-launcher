@@ -28,6 +28,7 @@ mod play;
 mod retention;
 mod security;
 mod sound_mode;
+mod startup;
 mod streams;
 #[cfg(test)]
 mod tests;
@@ -115,7 +116,15 @@ pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt::init();
+    // `info` unless RUST_LOG says otherwise: the startup lines (where the server listens, the
+    // generated first password's file, the Storytel key) must reach the journal and `docker
+    // logs`. tracing-subscriber's own default is errors only.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     // Subcommands (design 22 §3.2.3, §6): run against the same .env and database, then exit.
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -145,11 +154,64 @@ async fn main() {
         std::process::exit(2);
     }
 
-    std::fs::create_dir_all("data").expect("failed to create data directory");
+    // data/ must be writable before anything else (design 22 §6: a bind mount isn't seeded from
+    // the image).
+    if let Err(err) = startup::check_data_writable(std::path::Path::new("data")) {
+        tracing::error!("{err}");
+        std::process::exit(1);
+    }
 
-    let db = connect_db(&database_url).await;
+    // A restore the PWA asked for in the container (no root helper there): applied before the
+    // database is opened, and undone if the restored one won't open.
+    let db_path = startup::sqlite_path(&database_url);
+    let restored = match &db_path {
+        Some(path) => match startup::apply_restore_request(std::path::Path::new("data"), path) {
+            Ok(restored) => restored,
+            Err(err) => {
+                tracing::error!("restore refused, the database is unchanged: {err}");
+                None
+            }
+        },
+        None => None,
+    };
+    let db = match try_connect_db(&database_url).await {
+        Ok(db) => db,
+        Err(err) => match (&restored, &db_path) {
+            (Some(restore), Some(path)) => {
+                tracing::error!(
+                    "the restored backup {} doesn't open ({err}) - putting the previous database \
+                     back",
+                    restore.filename
+                );
+                if let Err(undo) = startup::undo_restore(path, restore) {
+                    tracing::error!("{undo}");
+                    std::process::exit(1);
+                }
+                connect_db(&database_url).await
+            }
+            _ => {
+                tracing::error!("{err}");
+                std::process::exit(1);
+            }
+        },
+    };
+    if let Some(restore) = &restored {
+        tracing::info!("restored the backup {}", restore.filename);
+        security::record_security_event(
+            &db,
+            "backup_restored",
+            None,
+            None,
+            Some(&format!(
+                "{} (the previous database is in {})",
+                restore.filename,
+                restore.prerestore_dir.display()
+            )),
+        )
+        .await;
+    }
 
-    security::bootstrap_admin(&db).await;
+    security::bootstrap_admin(&db, std::path::Path::new("data")).await;
 
     let session_store = SqliteStore::new(db.clone());
     session_store
@@ -269,10 +331,14 @@ async fn main() {
     retention::remove_journal_media(std::path::Path::new(retention::JOURNAL_MEDIA_DIR)).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
-    tokio::task::spawn(handlers::backups::run_live_mirror(state.clone()));
-    tokio::task::spawn(handlers::system_update::run_scheduled_app_update_check(
-        state.clone(),
-    ));
+    // The live mirror feeds an external drive and the app-update schedule a root helper - neither
+    // exists in the container (design 22 §6: nothing writes update_requested there).
+    if state.net.deploy_kind == net::DeployKind::Systemd {
+        tokio::task::spawn(handlers::backups::run_live_mirror(state.clone()));
+        tokio::task::spawn(handlers::system_update::run_scheduled_app_update_check(
+            state.clone(),
+        ));
+    }
     // Partial downloads a crash left behind - before the scheduled sync can start a new one.
     handlers::tracked_apps::remove_partial_downloads(&state.tracked_apps_dir).await;
     // Hashes for cached files from before migration 0043 (design 13): the phones check them.
@@ -296,11 +362,35 @@ async fn main() {
 /// `kid_phone_server <command>`; the exit code.
 async fn run_command(command: &str, args: &[String]) -> i32 {
     match (command, args) {
+        ("healthcheck", []) => {
+            let bind_addr =
+                std::env::var("BIND_ADDR").unwrap_or_else(|_| net::DEFAULT_BIND_ADDR.into());
+            match startup::healthcheck(&bind_addr).await {
+                Ok(()) => 0,
+                Err(err) => {
+                    eprintln!("healthcheck: {err}");
+                    1
+                }
+            }
+        }
+        ("selftest-tls", []) => {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            match startup::selftest_tls().await {
+                Ok(message) => {
+                    println!("{message}");
+                    0
+                }
+                Err(err) => {
+                    eprintln!("selftest-tls: {err}");
+                    1
+                }
+            }
+        }
         ("reset-2fa", [username]) => {
             let _ = rustls::crypto::ring::default_provider().install_default();
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://data/kidphone.db".into());
-            if let Some(path) = sqlite_path(&database_url)
+            if let Some(path) = startup::sqlite_path(&database_url)
                 && !path.exists()
             {
                 eprintln!(
@@ -324,21 +414,12 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
         }
         _ => {
             eprintln!(
-                "usage: kid_phone_server [reset-2fa <user>]\n\
+                "usage: kid_phone_server [reset-2fa <user> | healthcheck | selftest-tls]\n\
                  With no arguments it runs the server."
             );
             2
         }
     }
-}
-
-/// The file behind a `sqlite://` URL (`None` for anything else, e.g. `:memory:`).
-fn sqlite_path(url: &str) -> Option<std::path::PathBuf> {
-    let path = url
-        .strip_prefix("sqlite://")
-        .or_else(|| url.strip_prefix("sqlite:"))?;
-    let path = path.split('?').next().unwrap_or(path);
-    (!path.is_empty() && path != ":memory:").then(|| std::path::PathBuf::from(path))
 }
 
 /// Both listeners (design 22 §2) until SIGTERM or Ctrl-C, then a graceful stop: no new
@@ -888,11 +969,32 @@ pub fn build_admin_router(
             "/backups/schedule",
             post(handlers::backups::save_backup_schedule),
         )
-        .route(
-            "/backups/format-drive",
-            post(handlers::backups::format_drive),
-        )
         .route("/updates", get(handlers::updates::show_updates_page))
+        .route("/security", get(handlers::admin::security_log))
+        .route("/security/unban", post(handlers::admin::unban_ip))
+        .route("/account", get(handlers::auth::account_page))
+        .route(
+            "/account/password",
+            post(handlers::auth::update_account_password),
+        )
+        .route("/account/reset-2fa", post(handlers::auth::reset_totp))
+        .route(
+            "/account/sign-out-everywhere",
+            post(handlers::auth::sign_out_everywhere),
+        )
+        .route(
+            "/account/dismiss-warning",
+            post(handlers::auth::dismiss_login_warning),
+        )
+        .layer(from_fn_with_state(
+            state.clone(),
+            security::require_full_auth,
+        ));
+
+    // Requests for the Pi's root helper (design 22 §6): the app update, restart and their
+    // schedule, OS and Tailscale updates, reboot, formatting a drive. The container has no helper
+    // and writes none of these files, so there the routes don't exist.
+    let host_routes = Router::new()
         .route(
             "/update/trigger",
             post(handlers::system_update::trigger_update),
@@ -925,21 +1027,9 @@ pub fn build_admin_router(
             "/system/schedule",
             post(handlers::system_maintenance::save_schedule),
         )
-        .route("/security", get(handlers::admin::security_log))
-        .route("/security/unban", post(handlers::admin::unban_ip))
-        .route("/account", get(handlers::auth::account_page))
         .route(
-            "/account/password",
-            post(handlers::auth::update_account_password),
-        )
-        .route("/account/reset-2fa", post(handlers::auth::reset_totp))
-        .route(
-            "/account/sign-out-everywhere",
-            post(handlers::auth::sign_out_everywhere),
-        )
-        .route(
-            "/account/dismiss-warning",
-            post(handlers::auth::dismiss_login_warning),
+            "/backups/format-drive",
+            post(handlers::backups::format_drive),
         )
         .layer(from_fn_with_state(
             state.clone(),
@@ -950,6 +1040,9 @@ pub fn build_admin_router(
         .merge(public_routes)
         .merge(onboarding_routes)
         .merge(admin_routes);
+    if state.net.deploy_kind == net::DeployKind::Systemd {
+        app = app.merge(host_routes);
+    }
     if state.net.admin_device_api {
         app = app.merge(device_routes::device_routes(state.clone()));
     }
@@ -965,10 +1058,23 @@ pub fn build_admin_router(
         .layer(from_fn_with_state(state, gate::admin_gate))
 }
 
-/// Opens the SQLite pool with this app's connection settings and runs all migrations.
+/// Every migration in `migrations/`, compiled in.
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// Opens the SQLite pool with this app's connection settings and runs all migrations; panics on
+/// failure (tests, subcommands). `main` uses [try_connect_db].
 pub async fn connect_db(database_url: &str) -> SqlitePool {
+    try_connect_db(database_url)
+        .await
+        .unwrap_or_else(|err| panic!("{err}"))
+}
+
+/// [connect_db] without the panic. With migrations pending on an existing database, it first
+/// takes `data/backups/pre-migrate-<from>-<to>.db` (`startup::pre_migration_backup`, design 22
+/// §6) - for every deploy kind - and refuses to migrate without it.
+pub async fn try_connect_db(database_url: &str) -> Result<SqlitePool, String> {
     let connect_options = SqliteConnectOptions::from_str(database_url)
-        .expect("invalid DATABASE_URL")
+        .map_err(|err| format!("invalid DATABASE_URL: {err}"))?
         .create_if_missing(true)
         .foreign_keys(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
@@ -981,16 +1087,30 @@ pub async fn connect_db(database_url: &str) -> SqlitePool {
     let db = SqlitePoolOptions::new()
         .connect_with(connect_options)
         .await
-        .expect("failed to connect to database");
+        .map_err(|err| format!("failed to connect to database: {err:?}"))?;
 
-    sqlx::migrate!("./migrations")
+    if let Some(path) = startup::sqlite_path(database_url) {
+        let latest = MIGRATOR
+            .iter()
+            .map(|migration| migration.version)
+            .max()
+            .unwrap_or(0);
+        if let Some(backup) = startup::pre_migration_backup(&db, &path, latest).await? {
+            tracing::info!(
+                "migrations pending - the database before them is in {}",
+                backup.display()
+            );
+        }
+    }
+
+    MIGRATOR
         .run(&db)
         .await
-        .expect("failed to run migrations");
+        .map_err(|err| format!("failed to run migrations: {err}"))?;
     // The old weekday/weekend/bedtime schedule becomes time rules, once per row (handy step 6).
     time_rules::migrate_legacy(&db)
         .await
-        .expect("failed to convert the old schedules into time rules");
+        .map_err(|err| format!("failed to convert the old schedules into time rules: {err}"))?;
 
-    db
+    Ok(db)
 }

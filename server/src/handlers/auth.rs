@@ -404,6 +404,11 @@ pub async fn change_password(
         .await
         .ok();
     signed_out_elsewhere(&state, &session, admin.id).await;
+    // A generated first password (design 22 §6) is spent now.
+    let _ = tokio::fs::remove_file(
+        std::path::Path::new("data").join(crate::startup::INITIAL_PASSWORD_FILE),
+    )
+    .await;
     security::record_security_event(
         &state.db,
         "password_changed",

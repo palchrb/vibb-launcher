@@ -37,8 +37,9 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # Tracked apps (handlers/tracked_apps.rs): an asset filter starting with "^" is a regular expression.
 regex = "1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "json", "gzip"] }
-# Free space before an own-file upload (statvfs, safe API); already in the tree through tempfile.
-rustix = { version = "1", features = ["fs"] }
+# Free space before an own-file upload (statvfs, safe API), and the uid in the "data/ not writable"
+# error (design 22); already in the tree through tempfile.
+rustix = { version = "1", features = ["fs", "process"] }
 # Not used directly (dns_engine.rs no longer runs a live TLS/DoT listener) - still a direct
 # dependency purely so main.rs can install a process-wide default CryptoProvider before anything
 # opens a connection. reqwest's own rustls backend needs one installed somewhere, and there's no

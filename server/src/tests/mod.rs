@@ -7,6 +7,7 @@ mod app_display;
 mod calls;
 mod cleanup;
 mod device_api;
+mod docker;
 mod edge;
 mod enrollment;
 mod hardening;

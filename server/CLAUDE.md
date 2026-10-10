@@ -590,6 +590,31 @@ needed to manage the phone, delete on a schedule, never store notification or me
   Provisioning: `GET /devices/{id}/provision` is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
   the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes).
   `security_events` pruned after 180 days (`retention::prune`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
+- **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
+  systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by
+  uid N", exit 1); `apply_restore_request` (the container's restore: `data/restore_request` written by
+  `backups::restore_in_container`, which exits 3 a second later for the restart policy; startup deletes the marker
+  first, checks the name/zip/`kidphone.db` like `actions.sh`, copies the DB + wal/shm to
+  `backups/prerestore-<ts>/`, swaps, and `undo_restore` puts it back if `try_connect_db` fails;
+  `backup_restored` event); `try_connect_db` = `connect_db` without the panic, taking
+  `<db dir>/backups/pre-migrate-<from>-<to>.db` (`VACUUM INTO`, 3 kept, a failure stops the start) when migrations
+  are pending on an existing DB (`MIGRATOR` static); `bootstrap_admin` takes `ADMIN_PASSWORD`, else
+  `ADMIN_PASSWORD_FILE`, else generates `data/initial-admin-password` (0600; the log names the file; deleted by the
+  forced password change). Logging defaults to `info` without `RUST_LOG` (tracing-subscriber's own default was
+  errors only, so the startup lines never reached the journal). Subcommands (`main::run_command`): `healthcheck`
+  (`/healthz` on `BIND_ADDR`, 0.0.0.0 -> 127.0.0.1, :: -> ::1, 3 s), `selftest-tls` (api.github.com through
+  reqwest/rustls, any status passes), `reset-2fa <user>`. In docker: the root-helper routes (`/update/*`,
+  `/system/*`, `/backups/format-drive`) aren't registered, the live mirror and app-update scheduler aren't
+  spawned, the Updates page (`updates::page`, pure) says "Set `HANDY_VERSION=X` in `.env`, then `docker compose pull
+  && docker compose up -d`" with no OS/Tailscale/helper cards, the Backups page has no external drive or mirror.
+  Image: distroless static nonroot (uid 65532) pinned by digest, a busybox stage seeds `data/` and `data/keys/`
+  (0700) owned by 65532, `BIND_ADDR=127.0.0.1:3100`, `HEALTHCHECK` = `healthcheck`. CI `server-image` (only when the
+  Dockerfile, `.dockerignore`, the smoke script or the workflow change) and the release's `server-release-image`
+  (push by digest, smoke amd64 + arm64 under QEMU, then tag `X.Y.Z`/`latest`, provenance attestation, release
+  published last; `workflow_dispatch` = dry run) run `deploy/image-smoke.sh`.
+- Tests: `src/tests/docker.rs` (the pre-migration backup once and 3 kept, from a real older DB; the restore marker
+  with a good zip, bad names, a zip without a DB, and a DB that won't open put back; the healthcheck; the Docker
+  Updates page; the host routes 404 and the drive features hidden in docker), `startup::tests`.
 - Tests: `src/tests/admin_auth.rs` (the lock and its doubling, the banner, no password lock, a code works once,
   pending expiry, the epoch on password change/2FA reset/sign out everywhere, `reset-2fa`, 20 parallel logins while
   an SSE keepalive keeps its 1 s beat, CSRF, headers and cache rules, the cookie, the write-only key, pruning, IPv6
