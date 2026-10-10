@@ -760,3 +760,13 @@ One line per finding:
   - Q1 is superseded by answer 1. Nothing is blocked in windows. Hotspot is open in windows and untethered at the
     relock. CA certificates are removed at the relock. There's a device check that no phone relies on one.
   - Q2-Q5 are agreed: Q3 is narrowed to the parent PIN, and Q2/Q4 are this note's Q3/Q4.
+
+## Open questions: resolved (2026-10-10)
+These follow from the user's earlier decisions (allowlist and kiosk, no Android screen lock, safe mode blocked by
+default), so the architect's recommendations are taken as the answers:
+1. Hotspot stays blocked outside windows on phones with managed apps: yes.
+2. A keyboard the parent installed but didn't allowlist is hidden: yes. The PWA says how to allow it.
+3. Any Android screen lock set during a window is removed at relock, including the parent's own: yes. The phone uses
+   the launcher's PIN lock, not Android's.
+4. Safe mode flips to blocked on every existing device once check 6 passes: yes (H4).
+The user can overturn any of these.
