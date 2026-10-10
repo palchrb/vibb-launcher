@@ -43,6 +43,8 @@ fun stateReport(
     entryErrors: List<EntryError>,
     itemErrors: List<ItemError>,
     downloads: List<DownloadState>,
+    /** The Storytel login on the phone: "ok" or "none". */
+    storytel: String? = null,
 ): JsonObject = buildJsonObject {
     put("version_code", versionCode)
     put("library_version", libraryVersion)
@@ -56,6 +58,7 @@ fun stateReport(
             add(buildJsonObject { put("entry", e.entry); put("version", e.version); put("item", e.item); put("error", e.error) })
         }
     })
+    put("storytel", storytel)
     put("downloads", buildJsonArray {
         for (d in downloads.take(DOWNLOADS_MAX)) {
             add(buildJsonObject {

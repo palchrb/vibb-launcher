@@ -45,8 +45,13 @@ class Store private constructor(context: Context) {
         return libraryState.value
     }
 
+    /** The launcher's `mobile_data` while the phone is managed (set by the bridge sync and the
+     * restrictions receiver); null = unmanaged, then the debug feed's setting. */
+    @Volatile var restrictedMobileData: Boolean? = null
+
+    /** May downloads and streams use mobile data (the parent's switch, 21 §1.1)? */
     var mobileData: Boolean
-        get() = prefs.getBoolean("mobile_data", false)
+        get() = restrictedMobileData ?: prefs.getBoolean("mobile_data", false)
         set(value) = prefs.edit().putBoolean("mobile_data", value).apply()
 
     private fun loadLibrary(): Library? = runCatching { libraryFile.readText() }.getOrNull()?.let(LibraryParser::parse)

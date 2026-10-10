@@ -226,6 +226,12 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     Log.w(LOG_TAG, "Boot cover report failed", e)
                     null
                 },
+                musicState = try {
+                    com.kidslauncher.mdm.music.MusicStatus.report(context)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Music report failed", e)
+                    null
+                },
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -258,6 +264,16 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         } catch (e: Exception) {
             android.util.Log.w("MdmSyncWorker", "Wallpaper sync failed", e)
         }
+    }
+
+    // Vibb music (design 21 §3): the library, listings, covers and own files for the music app, its
+    // managed config and the bridge's nudge. Never fails a sync.
+    try {
+        com.kidslauncher.mdm.music.MusicSync.sync(context, decision.policy, fetch = freshPolicy != null)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Music sync failed", e)
     }
 
     reportBlockedDnsEvents(context, api)

@@ -80,5 +80,8 @@ object PlayerHub {
     /** The live position (ms), read on the main thread; null without a live queue. */
     @Volatile internal var position: (() -> Long)? = null
 
+    /** Pauses the player (main thread); null without a player service. */
+    @Volatile internal var pause: (() -> Unit)? = null
+
     fun positionMs(): Long? = position?.invoke()
 }

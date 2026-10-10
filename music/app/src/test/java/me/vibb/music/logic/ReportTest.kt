@@ -79,11 +79,13 @@ class ReportTest {
             entryErrors = listOf(EntryError(3, "bad_listing")),
             itemErrors = listOf(ItemError(2, "0123456789abcdef", "k1", "http_404")),
             downloads = listOf(DownloadState(2, "0123456789abcdef", 1, 3, Waiting.WIFI), DownloadState(1, "v", 2, 2, null)),
+            storytel = "ok",
         )
         assertEquals(
-            setOf("version_code", "library_version", "cache_bytes", "downloads_waiting", "entry_errors", "item_errors", "downloads"),
+            setOf("version_code", "library_version", "cache_bytes", "downloads_waiting", "entry_errors", "item_errors", "downloads", "storytel"),
             report.keys,
         )
+        assertEquals("ok", report["storytel"]!!.jsonPrimitive.content)
         assertEquals(2, report["downloads_waiting"]!!.jsonPrimitive.int)
         val error = (report["item_errors"] as JsonArray).single().jsonObject
         assertEquals(setOf("entry", "version", "item", "error"), error.keys)

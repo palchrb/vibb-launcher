@@ -75,6 +75,8 @@ android {
     }
 
     buildFeatures {
+        // The launcher bridge's AIDL (design 21 §2), shared byte for byte with launcher/.
+        aidl = true
         buildConfig = true
         compose = true
     }

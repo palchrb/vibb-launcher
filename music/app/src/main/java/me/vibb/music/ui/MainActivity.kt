@@ -13,6 +13,7 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.playback.Commands
 import me.vibb.music.playback.PlaybackService
 import me.vibb.music.playback.PlayerHub
@@ -54,6 +55,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        LiveBridge.acquire(this)
         val f = MediaController.Builder(this, SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
         future = f
         f.addListener({
@@ -64,7 +66,21 @@ class MainActivity : ComponentActivity() {
         }, MoreExecutors.directExecutor())
     }
 
+    /** The player in front counts as the music app's time, not screen time (21 §3, QA #5): only
+     * as the top resumed activity, never in multi-window. */
+    override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+        super.onTopResumedActivityChanged(isTopResumedActivity)
+        LiveBridge.setForeground(isTopResumedActivity && !isInMultiWindowMode)
+    }
+
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        if (isInMultiWindowMode) LiveBridge.setForeground(false)
+    }
+
     override fun onStop() {
+        LiveBridge.setForeground(false)
+        LiveBridge.release(this)
         future?.let { MediaController.releaseFuture(it) }
         future = null
         controller = null

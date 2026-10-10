@@ -14,7 +14,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.Serializable
+import android.util.Log
 import me.vibb.music.BuildConfig
+import me.vibb.music.bridge.BridgeSync
+import me.vibb.music.bridge.StorytelLogin
 import me.vibb.music.data.ItemErrorRow
 import me.vibb.music.data.ItemRow
 import me.vibb.music.data.ListingRow
@@ -69,6 +72,8 @@ object Sync {
     }
 
     suspend fun run(context: Context) = withContext(Dispatchers.IO) {
+        // The bridge first (21 §4.5 as 21b §6 has it): what the launcher holds lands in the inbox.
+        runCatching { BridgeSync.pull(context) }.onFailure { Log.w("Sync", "The bridge part failed", it) }
         val store = Store.get(context)
         val dao = store.db
         val lib = store.reloadLibrary()
@@ -180,8 +185,12 @@ object Sync {
             readEntryErrors(store),
             errors,
             states,
+            if (StorytelLogin.has(context)) "ok" else "none",
         )
-        reportLock.withLock { Store.writeAtomic(store.reportFile, report.toString().toByteArray()) }
+        val text = report.toString()
+        reportLock.withLock { Store.writeAtomic(store.reportFile, text.toByteArray()) }
+        // To the launcher, for the status report (21 §2 `reportState`).
+        runCatching { BridgeSync.push(context, text) }.onFailure { Log.w("Sync", "The report didn't reach the launcher", it) }
     }
 
     /** The sync and the download job both write the report. */

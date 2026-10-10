@@ -166,6 +166,8 @@ object AppDownloads {
         FAILED,
         /** Our own update is being committed: nothing more in this process. */
         STOP,
+        /** The music app's update waits while it plays (design 21 §3): the run ends; its pause asks again. */
+        DEFER,
     }
 
     fun dir(context: Context): File = File(context.noBackupFilesDir, DIR).apply { mkdirs() }
@@ -192,6 +194,9 @@ object AppDownloads {
             }
         }
     }
+
+    /** A run is going (the music app's own files wait for the catalog's APKs, design 21 QA #8). */
+    fun busy(): Boolean = synchronized(this) { running }
 
     /** Starts a run through the anchor service (it also revives a dead anchor). */
     fun request(context: Context, reason: String) {
@@ -437,7 +442,7 @@ object AppDownloads {
                 when (attempt(app, next)) {
                     Outcome.PROGRESS -> failures = 0
                     Outcome.PAUSED -> {}
-                    Outcome.STOP -> break
+                    Outcome.STOP, Outcome.DEFER -> break
                     Outcome.FAILED -> {
                         if (failures >= RETRY_DELAYS_MS.size) {
                             Log.w(LOG_TAG, "Download keeps failing - waiting for the next trigger")
@@ -687,6 +692,10 @@ object AppDownloads {
     }
 
     private suspend fun install(app: Context, rec: DownloadRecord, file: File, api: MdmApi, current: Active): Outcome {
+        if (com.kidslauncher.mdm.music.MusicNowPlaying.deferInstall(app, file)) {
+            Log.i(LOG_TAG, "${rec.name}: the music app is playing - its update waits for the pause")
+            return Outcome.DEFER
+        }
         val key = rec.appId.toString()
         current.installing = true
         val started = installMutex.withLock {

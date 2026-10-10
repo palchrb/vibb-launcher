@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import me.vibb.music.R
+import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.data.BookmarkRow
 import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.NewsRow
@@ -163,6 +164,8 @@ class PlaybackService : MediaSessionService() {
         setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(this).build().also { it.setSmallIcon(R.drawable.music_glyph_music_note) })
         audio.registerAudioDeviceCallback(deviceCallback, handler)
         PlayerHub.position = { exo.currentPosition }
+        PlayerHub.pause = { exo.pause() }
+        LiveBridge.acquire(this)
         publish()
     }
 
@@ -178,7 +181,10 @@ class PlaybackService : MediaSessionService() {
         handler.removeCallbacksAndMessages(null)
         audio.unregisterAudioDeviceCallback(deviceCallback)
         PlayerHub.position = null
+        PlayerHub.pause = null
         PlayerHub.mutableState.value = PlayerHub.State()
+        LiveBridge.setNowPlaying(null)
+        LiveBridge.release(this)
         session?.release()
         session = null
         exo.release()
@@ -804,7 +810,39 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private var sentNowPlaying: Triple<Long?, String?, Boolean>? = null
+
+    /**
+     * What plays, to the launcher (21 §4.6 `setNowPlaying`: Home and the lock, never the server):
+     * on play/pause and item change, null at a queue's end. Art at most 64 KB.
+     */
+    private fun reportNowPlaying() {
+        val a = active
+        val item = a?.items?.getOrNull(exo.currentMediaItemIndex)
+        val playing = exo.playWhenReady && exo.playbackState != Player.STATE_ENDED
+        val key = Triple(a?.entry?.id, item?.key, playing)
+        if (key == sentNowPlaying) return
+        sentNowPlaying = key
+        if (a == null || item == null) {
+            LiveBridge.setNowPlaying(null)
+            return
+        }
+        val art = (item.artHash ?: a.entry.cover)?.let { a.art[it] }?.path?.let { File(it) }
+            ?.takeIf { it.isFile && it.length() <= 64 * 1024 }?.let { runCatching { it.readBytes() }.getOrNull() }
+        LiveBridge.setNowPlaying(
+            Bundle().apply {
+                putString("entry", a.entry.name)
+                putString("item", item.title)
+                putLong("position_ms", exo.currentPosition)
+                putLong("duration_ms", exo.duration.takeIf { it > 0 } ?: a.durations[item.key] ?: item.durationMs ?: 0)
+                putBoolean("playing", playing)
+                art?.let { putByteArray("art", it) }
+            },
+        )
+    }
+
     private fun publish() {
+        reportNowPlaying()
         val a = active
         val outputs = outputs()
         val output = outputs.firstOrNull { it.id == chosenOutput } ?: outputs.firstOrNull { it.kind != OutputKind.PHONE } ?: Output.PHONE
