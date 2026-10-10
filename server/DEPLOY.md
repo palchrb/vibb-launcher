@@ -15,23 +15,259 @@ This downloads the newest server release (the newest `server-vX.Y.Z` release of 
 
 The app only listens on the Pi itself (`127.0.0.1:3100`) by default — that's intentional for security.
 
-## 2. Make it reachable
+## 2. Choose how it's reachable (server >= 0.23.0)
 
-For plain tailnet access, visit `http://<pi-tailscale-ip>:3100` from any device on your tailnet - no further setup needed.
+The server never terminates TLS and never listens publicly by itself: it binds loopback, and a proxy you run (Caddy,
+or `tailscale serve`) brings HTTPS and decides who can reach it. Since 0.23.0 it has **two listeners**, so the admin
+pages and the phones' API can be exposed differently:
 
-For an HTTPS URL (required if you want the admin site to be installable as a PWA - plain HTTP doesn't qualify), use `tailscale serve`, **not** `tailscale funnel` (funnel makes it public on the internet, which you don't want for a parental-control panel):
+| `.env` setting | Default | What it does |
+|---|---|---|
+| `BIND_ADDR` | `127.0.0.1:3100` | The admin listener: the PWA, and the phones' API while `ADMIN_DEVICE_API` is on. |
+| `DEVICE_BIND_ADDR` | unset | The phone listener, e.g. `127.0.0.1:3101`: only the phones' API (`/api/devices/*`) and `/healthz`; every other path is a bare 404. |
+| `ADMIN_DEVICE_API` | `on` | The admin listener also serves the phones' API (the URLs phones set up before 0.23.0 use). `off` once every phone uses the phone listener. |
+| `ADMIN_PUBLIC` | `off` | The admin listener answers **only loopback and tailnet clients** (100.64.0.0/10, fd7a:115c:a1e0::/48); everyone else gets 403 (logged as `admin_refused` in the security log). `on` lets every client in - see (b) below. |
+| `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies (IPs or CIDRs) whose `X-Forwarded-For` is believed. Your proxy on the same box needs nothing here. |
+| `ADMIN_TAILSCALE_USERS` | unset | Only behind `tailscale serve`: the admin pages also need one of these Tailscale logins (comma list). Tagged phones carry no login, so a phone node can't open the admin even if a serve rule points it there. |
+| `SESSION_INACTIVITY_DAYS` | `30` | How long an admin session lasts without use. |
+
+The admin gate is on by default: a proxy rule meant for the phones, or a typo in a Caddyfile, can't put the PWA on the
+internet - it answers 403 to anything that isn't loopback or tailnet. `/healthz` (says `ok`) always answers.
+
+**Three ways to expose it**:
+- **(a) tailnet only** (default, and today's setup): admin and phones over Tailscale.
+- **(c) phones public, PWA tailnet-only**: a public HTTPS name for the phone listener, the admin stays on the tailnet.
+  For phones without Tailscale. Prefer this to (b).
+- **(b) all public**: `ADMIN_PUBLIC=on` and the admin behind a public HTTPS name too. **The PWA then rests on the
+  password and the 2FA code alone**, facing the whole internet (phishing, password guessing, any bug in a web page).
+  Set `SESSION_INACTIVITY_DAYS=7` as well.
+
+Which URL a phone uses is still set per phone for now - the setup QR's server URL (Settings > Provisioning) or the
+launcher's Settings > Server URL (behind the PIN). A phone set up with the embedded Tailscale key sends every request
+through Tailscale: give it the tailnet URL. A public URL is for a phone set up without a Tailscale key. Automatic
+switching and fallback between the two come with the Connection page and a launcher update (design 22, later steps).
+Phones that use the admin URL keep working while `ADMIN_DEVICE_API` is on.
+
+### With `tailscale serve` (tailnet only, the simplest)
 
 ```
 sudo tailscale serve --bg --https=443 http://127.0.0.1:3100
 ```
 
-This gives you `https://<hostname>.<tailnet>.ts.net`, reachable only from your own tailnet. If this Pi already serves something else on port 443 (e.g. `board-game-tracker`), use a different port instead, e.g. `--https=8443`.
+This gives you `https://<hostname>.<tailnet>.ts.net`, reachable only from your own tailnet (an HTTPS URL is what makes
+the admin installable as a PWA). If this Pi already serves something else on port 443, use another port, e.g.
+`--https=8443`. Plain `http://<tailscale-ip>:3100` doesn't work: the server only listens on 127.0.0.1.
+
+To give the phones their own port (so the tailnet policy can let phones reach that port only), add
+`DEVICE_BIND_ADDR=127.0.0.1:3101` to `.env`, restart, and:
+
+```
+sudo tailscale serve --bg --https=8444 http://127.0.0.1:3101
+```
+
+Then set the phones' server URL to `https://<hostname>.<tailnet>.ts.net:8444`, and once every phone uses it,
+`ADMIN_DEVICE_API=off`. Also set `ADMIN_TAILSCALE_USERS=you@example.com` (your Tailscale login; several separated by
+commas): `tailscale serve` passes the signed-in user, tagged phone nodes have none, so a serve rule pointed at the
+wrong port still can't open the admin for a phone.
+
+Use `tailscale serve`, **not** `tailscale funnel`, for the admin: Funnel makes it public (and the server refuses
+Funnel requests to the admin anyway).
+
+### With your own Caddy
+
+Caddy gets its own certificates and replaces any `X-Forwarded-For` a client sends (never set `trusted_proxies` in
+Caddy for this site). Don't add `encode`: the phones' event stream must not be compressed. Strip
+`Tailscale-User-Login` in every site, so nobody can send it through Caddy. Put `DEVICE_BIND_ADDR=127.0.0.1:3101` in
+`.env` and restart.
+
+```
+{
+	email parent@example.com
+	servers {
+		timeouts {
+			read_header 10s
+		}
+	}
+}
+
+# (c): a public DNS record -> the phone listener only
+phones.example.com {
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy 127.0.0.1:3101 {
+		header_up -Tailscale-User-Login
+	}
+}
+
+# a tailnet DNS entry -> the PWA, on the tailnet IP only
+pi.tail1234.ts.net {
+	bind 100.101.102.103
+	reverse_proxy 127.0.0.1:3100 {
+		header_up -Tailscale-User-Login
+	}
+}
+
+# the same tailnet entry -> the phones, on their own port (for the tailnet policy)
+pi.tail1234.ts.net:8444 {
+	bind 100.101.102.103
+	reverse_proxy 127.0.0.1:3101 {
+		header_up -Tailscale-User-Login
+	}
+}
+```
+
+Replace `100.101.102.103` with the box's own tailnet IP (`tailscale ip -4`).
+
+**A tailnet DNS entry** (the PWA, and phones over Tailscale): the site binds the tailnet IP only. The certificate:
+- for the `*.ts.net` name, Caddy fetches it from the local `tailscaled` by itself; tailscaled must allow it:
+  `TS_PERMIT_CERT_UID=caddy` in `/etc/default/tailscaled`, then `sudo systemctl restart tailscaled` (and "HTTPS
+  Certificates" turned on in the Tailscale admin console);
+- for your own domain pointing at the tailnet IP, Caddy needs the DNS-01 challenge (a Caddy build with your DNS
+  provider's module) - nothing on the internet can reach the site to check it otherwise.
+
+**A public DNS record** (the phones in (c)):
+1. A/AAAA records for `phones.example.com` -> your home IP (with dynamic DNS if it changes). Note that a public record
+   names your home IP, and with it your ISP and rough area; a tailnet entry doesn't.
+2. A CAA record, so only the two CAs Caddy uses can issue for the name: `0 issue "letsencrypt.org"` and
+   `0 issue "zerossl.com"`.
+3. On the router, forward TCP 443 (and 80, for the HTTP-01 challenge) to the box's fixed LAN IP. IPv6: allow inbound
+   443 to the box.
+4. Check for carrier-grade NAT first: if the router's WAN IP is in 100.64.0.0/10, or differs from what an IP-echo
+   site shows, no port forward can work - use Tailscale Funnel (below) or a VPS instead.
+5. Check from outside your network (mobile data):
+   - `curl -sI https://phones.example.com/devices` -> `404`;
+   - `curl -s https://phones.example.com/healthz` -> `ok`;
+   - `curl -sI https://phones.example.com/api/devices/policy` -> `401`;
+   - and if you ever pointed a public site at the admin port by mistake, it answers `403`.
+
+**(b), the admin public too**: a public site with `reverse_proxy 127.0.0.1:3100` and `ADMIN_PUBLIC=on` in `.env`.
+Read the warning above first.
+
+### Tailscale Funnel (behind carrier-grade NAT)
+
+Funnel gives the phone listener a public HTTPS URL without a port forward, DNS record or Caddy:
+
+```
+sudo tailscale funnel --bg --https=8443 http://127.0.0.1:3101
+```
+
+Funnel must be allowed for the node in the tailnet policy. Funnel's bandwidth is limited, which app and music
+downloads will feel.
+
+### Tailscale keys for the phones
+
+In every setup that gives phones a Tailscale key (tailnet only, or a phone listener with the tailnet as a second
+path): a reusable, **tagged** (`tag:kid`), pre-approved, non-ephemeral key, and a tailnet policy that lets
+`tag:kid` reach only the phones' port (`8444` above) on this box. Auth keys expire within 90 days; a phone already
+set up keeps working on its stored node state, the key only matters for setting up a phone. The key is write-only on
+Settings > Provisioning since 0.23.0.
+
+### Phones' long-lived connection through a proxy
 
 The phones hold a long-lived connection to `/api/devices/commands/stream` (server-sent events, the only way the server
-nudges a phone) that is quiet except for a keepalive every `SSE_KEEPALIVE_SECS` (240 s by default). `tailscale serve`
-passes it through unbuffered. **Any other proxy in front of the server needs a read timeout of at least 300 s** and no
-response buffering on that path - nginx's default 60 s `proxy_read_timeout` cuts every stream, so changes would only
-reach the phones at their 30-minute check-in.
+nudges a phone) that is quiet except for a keepalive every `SSE_KEEPALIVE_SECS` (240 s by default). Caddy and
+`tailscale serve` pass it through unbuffered as they are. **Any other proxy needs a read timeout of at least 300 s, no
+buffering and no compression on it** - for nginx `proxy_buffering off; proxy_read_timeout 330s; proxy_http_version
+1.1;`. Cloudflare's proxy cuts connections idle for 100 s: use DNS-only there, or `SSE_KEEPALIVE_SECS=90`.
+
+### Changing how it's exposed
+
+To stop the public phone URL: point the phones back at the tailnet URL first, then remove the Caddy site (or the
+Funnel), and finally the DNS record. Keep the CAA record as long as you own the domain.
+
+## Signing in and recovery (server >= 0.23.0)
+
+- Every sign-in is the password, then a 2FA code. A code works once. Wrong passwords never lock the account (only
+  the address that sent them, for an hour after 15); wrong 2FA codes do: 5 lock it for 15 minutes, every further lock
+  doubles, up to 24 hours. After a sign-in that followed wrong codes, the Devices page says how many and from where:
+  whoever typed them knew the password - change it.
+- Changing the password or resetting 2FA signs out every other session; Account > "Sign out everywhere" signs out
+  this one too.
+- **Lost the authenticator and signed out?** On the Pi:
+  `cd /opt/kid-phone-server && sudo -u kidphone ./kid_phone_server reset-2fa admin` (in Docker:
+  `docker compose exec handy /app/kid_phone_server reset-2fa admin`). It removes the 2FA setup, the lock and its
+  count, and signs out every session; the next sign-in with the password sets up a new authenticator.
+- Updating to 0.23.0 signs everyone out once (the session cookie is now `__Host-handy`; reopen the installed PWA on an
+  iPhone and sign in again), and enrollment codes that were open stop working: make a new one on the device page.
+
+## Docker (server >= 0.23.0)
+
+The server also ships as a multi-arch image (`linux/amd64`, `linux/arm64`): `ghcr.io/palchrb/handy-server:X.Y.Z`
+(and `latest`). The Pi Zero 2 W stays with the install script above; the image is for a home server or VPS. It runs
+as uid 65532 with no shell, keeps everything in `/app/data`, and listens on `127.0.0.1:3100` by default.
+
+**Recommended: the host's network, with the host's Tailscale and Caddy.** The proxies' defaults then hold, and Docker
+never hides the client's address. `compose.yaml`:
+
+```yaml
+services:
+  handy:
+    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes: [handy-data:/app/data, handy-keys:/app/data/keys]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+volumes: {handy-data: {}, handy-keys: {}}
+```
+
+`.env` next to it (the settings from section 2 and "Launcher provisioning settings" go here too):
+
+```
+HANDY_VERSION=0.23.0
+TZ=Europe/Oslo
+DEVICE_BIND_ADDR=127.0.0.1:3101
+LAUNCHER_SIGNATURE_CHECKSUM=...
+```
+
+`TZ` matters: backups and the update check run on local time, and the image is UTC otherwise. Then
+`docker compose up -d`. With no `ADMIN_PASSWORD` set, the first start writes a password to
+`/app/data/initial-admin-password` (the log names the file, never the password). The image has no shell, so copy it
+out: `docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm
+initial-admin-password`. Sign in as `admin` and change it - the server deletes its copy then.
+
+- **Volumes**: `/app/data` holds the database, backups and caches; `/app/data/keys` (the Storytel key) is its own
+  volume, so copies of the data volume don't carry it. Use named volumes: a bind-mounted directory isn't seeded from
+  the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
+  writable by uid 65532".
+- **Updating**: the Updates page says when a version is out. Set `HANDY_VERSION=X.Y.Z` in `.env`, then
+  `docker compose pull && docker compose up -d`. Before migrating the database, the new version copies it to
+  `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept).
+- **Rolling back**: set the old `HANDY_VERSION`, put the pre-migration copy back, start:
+
+  ```
+  docker compose stop handy
+  docker run --rm -v handy-data:/data busybox sh -c 'cp /data/backups/pre-migrate-<from>-<to>.db /data/kidphone.db && rm -f /data/kidphone.db-wal /data/kidphone.db-shm && chown 65532:65532 /data/kidphone.db'
+  docker compose up -d
+  ```
+
+  (The volume's name may carry the compose project's prefix: `docker volume ls`.)
+- **Restoring a backup** from the Backups page works in the container too: the server stops, swaps in the backup at
+  its next start (Docker's restart policy brings it back), and keeps the previous database in
+  `data/backups/prerestore-<time>/`; if the backup won't open, the previous database goes back.
+- The Updates page has no OS, Tailscale or reboot controls in the container, and the Backups page no external drive:
+  copy `data/backups` off the host yourself.
+- **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin`.
+
+**Bridge network instead**: inside the container set `BIND_ADDR=0.0.0.0:3100` (and `DEVICE_BIND_ADDR=0.0.0.0:3101`),
+and publish them only on the host's loopback (`ports: ["127.0.0.1:3100:3100", "127.0.0.1:3101:3101"]` - Docker's
+published ports bypass ufw). Give the network a fixed subnet and set `TRUSTED_PROXIES` to its gateway (plus Caddy's
+address if Caddy runs as a container too). Without that, every client looks like the gateway: the admin gate refuses
+them, and the server warns at startup.
+
+**Tailscale as a sidecar instead of on the host**: a `tailscale/tailscale` container with `TS_USERSPACE=false`,
+`/dev/net/tun` and the `NET_ADMIN` capability, and the server with `network_mode: service:tailscale`, so it becomes its
+own tailnet node. In Tailscale's default userspace mode the container has no tailnet IP, tailnet clients then arrive
+as 127.0.0.1, and the admin gate can't tell them from local tools.
+
+**Making the image public (once, for the repo owner)**: after the first `server-v*` release has pushed an image,
+GitHub may have created the package private. Open GitHub > your profile > Packages > `handy-server` > Package
+settings > Change visibility > Public. The release workflow tests every image (amd64 natively, arm64 under QEMU)
+before it gets a version tag, and publishes the GitHub release only after that.
 
 ## Updating
 
@@ -218,6 +454,20 @@ audio from the source.
 - Rolling back to 0.21 means restoring the `update.sh` backup: 0.21 refuses to start on a database with migration
   0051.
 
+## Server 0.23.0 (design 22): two listeners, the admin gate, Docker
+
+- **What changes for an existing Pi**: nothing has to be done - the admin keeps answering on `127.0.0.1:3100` behind
+  `tailscale serve`, and the phones keep their URLs. But the admin now refuses clients that aren't on the tailnet or
+  the box itself (`ADMIN_PUBLIC`, section 2): a setup that reached the admin from the home LAN (`BIND_ADDR` on a LAN
+  address) needs Tailscale, or `ADMIN_PUBLIC=on` knowingly.
+- Everyone is signed out once (the cookie's new name), and open enrollment codes stop working (only their hashes are
+  stored now; typed codes last 15 minutes, setup-QR codes 30). The provisioning page makes its QR code with a button
+  now, and the Tailscale key is no longer shown on Settings > Provisioning.
+- Limits on the phones' API: a phone's own token is never slowed by other clients; an address that keeps sending bad
+  tokens or wrong typed codes gets 429 for 10 minutes. The device page's Access card shows when and how each phone last
+  reached the server, and can revoke its access.
+- Rolling back to 0.22 means restoring the `update.sh` backup: 0.22 refuses a database with migration 0052 (and 0053).
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`
@@ -227,6 +477,14 @@ audio from the source.
 ## Backups
 
 Built in - see the **Backups** page under Settings in the admin UI. Create a backup on demand, set a schedule for automatic ones, and optionally mirror them live to an external drive plugged into the Pi. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
+
+- **Keep backups as safe as the admin password.** A backup (and a copy of the data volume or the live mirror) holds
+  everything: every location, the PIN hashes, the password hash - and the 2FA secret, which is kept unsealed on
+  purpose: sealing it would tie every sign-in to the key file in `data/keys/`, and losing that file would lock you out
+  of the admin (design 22).
+- Since 0.23.0 the server also copies the database to `data/backups/pre-migrate-<from>-<to>.db` before an update
+  changes it (the newest 3 are kept). Rolling back a Pi still uses the `update.sh` copy ("Rolling back the server");
+  the pre-migration copy is a second one.
 
 ## Removed: MollySocket and the launcher's UnifiedPush distributor
 

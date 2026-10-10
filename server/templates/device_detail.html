@@ -27,10 +27,12 @@
         <div class="error">{{ text }}</div>
         {% endif %}
         <p>Make a code and type it in the launcher's Settings ("Enroll now"), or set the phone up with a QR code. A code is shown once, works once and replaces the one before it.</p>
-        <form method="post" action="/devices/{{ device.id }}/regenerate-code">
-            <button type="submit" class="button-secondary">New code</button>
-        </form>
-        <a href="/devices/{{ device.id }}/provision" class="button-small">Provision by QR code instead</a>
+        <div class="admin-actions">
+            <form method="post" action="/devices/{{ device.id }}/regenerate-code">
+                <button type="submit" class="button-small button-secondary">New code</button>
+            </form>
+            <a href="/devices/{{ device.id }}/provision" class="button-small">Provision by QR code instead</a>
+        </div>
     </div>
     {% else %}
     <div class="card">
@@ -72,10 +74,12 @@
         <div class="error">{{ text }}</div>
         {% endif %}
         <p class="subtitle">A new code enrolls the phone again - after a reset, or with its access revoked. Using it disconnects the phone that is enrolled now.</p>
-        <form method="post" action="/devices/{{ device.id }}/regenerate-code">
-            <button type="submit" class="button-secondary">New code</button>
-        </form>
-        <a href="/devices/{{ device.id }}/provision" class="button-small">Provision by QR code</a>
+        <div class="admin-actions">
+            <form method="post" action="/devices/{{ device.id }}/regenerate-code">
+                <button type="submit" class="button-small button-secondary">New code</button>
+            </form>
+            <a href="/devices/{{ device.id }}/provision" class="button-small">Provision by QR code</a>
+        </div>
         {% if access.has_token %}
         <details>
             <summary class="button-danger" style="display:inline-block; cursor:pointer; list-style:none; margin-top:12px;">Revoke access&hellip;</summary>

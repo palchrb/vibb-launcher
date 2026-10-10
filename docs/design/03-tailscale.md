@@ -1,5 +1,10 @@
 # 03: Full Tailscale for the kid (Tailscale app mode)
 
+> **Superseded in part by design 22** (`22-connectivity-and-docker.md`): §6 (the server listener), §7 (the switch)
+> and the AdGuard Home choice are replaced there - two listeners with an admin gate (server 0.23.0), the switching
+> rules in `ConnectionPlan`, and the server's own tailnet resolver (S6). The facts table, §3 and §9 still hold for
+> mode 2.
+
 Status: design, 2026-10-04. Direction from PLAN.md "Full Tailscale for the kid". `L` = `kids-launcher-mdm` (paths under
 `app/src/main/java/com/kidslauncher/mdm/`), `S` = `kid-phone-server`, `TA` = `tailscale/tailscale-android@6d63d3e`
 (2026-10-01), `AOSP` = `aosp-mirror/platform_frameworks_base` `main`. Tags: **[verified: source]**, **[belief]**,

@@ -306,10 +306,7 @@ fn access_card(state: &AppState, device: &Device, notice: Option<&str>) -> Acces
 
 fn access_notice(code: &str) -> Option<&'static str> {
     Some(match code {
-        "access_revoked" => {
-            "Access revoked: the phone's token no longer works. It keeps enforcing its last \
-             policy and asks to be enrolled again - make a new code below."
-        }
+        "access_revoked" => "Access revoked.",
         "revoke_unconfirmed" => "Nothing revoked: tick the box first.",
         _ => return None,
     })

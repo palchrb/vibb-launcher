@@ -31,8 +31,13 @@ ADMIN_PASSWORD='change-me' BIND_ADDR=0.0.0.0:3100 INSECURE_COOKIES=true cargo ru
 Open `http://localhost:3100`, log in as `admin`, set a new password and 2FA.
 The emulator reaches the VM as `http://10.0.2.2:3100`.
 
+Since server 0.23.0 the admin listener answers only loopback and tailnet clients (design 22): the emulator's
+`10.0.2.2` arrives as the VM's loopback and passes, so does `localhost`. A browser or phone on the LAN gets 403 -
+add `ADMIN_PUBLIC=on` for such a dev setup. The startup warning about `0.0.0.0` with only loopback trusted is
+expected here. With `INSECURE_COOKIES` the session cookie is a plain `handy` (`__Host-handy` needs https).
+
 In the PWA, **before** enrolling the phone:
-1. Devices → New device (note the enrollment code).
+1. Devices → New device, then "New code" on its page (shown once, valid 15 minutes).
 2. On the device page: turn **"Block USB debugging" OFF** (otherwise adb dies on the first sync).
 3. Set an override PIN.
 

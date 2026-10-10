@@ -1,9 +1,11 @@
 {% if let Some(warning) = login_warning %}
 <div class="card" id="login-warning">
     <div class="error">{{ warning }}</div>
-    <a href="/account" class="button-small">Change the password</a>
-    <form method="post" action="/account/dismiss-warning" style="display:inline-block;">
-        <button type="submit" class="button-small button-secondary">Dismiss</button>
-    </form>
+    <div class="admin-actions">
+        <a href="/account" class="button-small">Change the password</a>
+        <form method="post" action="/account/dismiss-warning">
+            <button type="submit" class="button-small button-secondary">Dismiss</button>
+        </form>
+    </div>
 </div>
 {% endif %}

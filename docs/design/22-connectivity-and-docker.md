@@ -1132,3 +1132,59 @@ Missed, of the same kind (fold into S4 unless noted):
 5. **Hashed codes.** Agreed: plain SHA-256.
 6. **No rotation, no pinning, passkeys later, plus `reset-2fa`.** Agreed (#5).
 7. **Image public.** Agreed (U3).
+
+## Server implementation status (S0-S4, D1)
+
+Implemented 2026-10-10 as one series on `main` (server 0.23.0, R1; not tagged): S0 `5c93c3c0`, S1 `018b3119`, S2
+`4d7ec53c`, S3 `152ecc2c`, S4 `c433a95c`, D1 `c6706834`, then the version, DEPLOY and docs commit. Migrations: 0052
+(enrollment codes), 0053 (admin auth); S5 takes the next free number. Where this differs from the design, the code
+was followed and the reason is here.
+
+**Moved between steps**
+- S0: `device_routes(state)` takes the state (the token middleware needs it); the limit layers came with S2.
+- `TRUSTED_PROXIES`, the client-IP walk and `ADMIN_TAILSCALE_USERS` landed in S1, not S2: the gate is meaningless
+  without them. Login uses the walk from S1 on (§0 #1).
+- The device page's Access card (last access, New code, Provision, Revoke access) came with S2/S3; S5 turns it into
+  the Connection card.
+
+**Behaviour the design left open, or that differs**
+- The gate covers the whole admin listener - `/static`, unknown paths and the old device URLs included - except
+  `/healthz`; refused requests get an empty 403. With `ADMIN_TAILSCALE_USERS` set, `/api/devices/*` on the admin
+  listener skips the login check (tagged phones carry none) but keeps the IP rule, and loopback without a login is
+  refused (fails closed). The Funnel refusal applies only while `ADMIN_PUBLIC` is off.
+- The 512 in-flight memory guard and the 30 s timeout answer 503 + `Retry-After` (not 429). Enroll's cap of 8 covers
+  the check only, after the 4 KiB body is read, and waits up to 5 s for a slot (then 429): a slow body can't hold it.
+- A value that is neither QR- nor typed-shaped is refused at once and counts for nothing. Typed codes are shown as
+  `ABCD-EFGH` (the dash is stripped again). The typed pause counts UTC clock hours. "New code" still works during a
+  pause (the code page says it works after the pause). A new device has no code until "New code" or the QR page.
+- "One private IP" (§3.1): at startup no request has arrived yet, so startup warns about a non-loopback bind with only
+  loopback trusted; at run time an untrusted peer sending `X-Forwarded-For`, or two phones behind one private address,
+  is logged once and kept in `Limits::exposure_warning` for S5's Connection page.
+- Throttled events (`admin_refused`, `enroll_failed`, `device_auth_failed`, and `csrf_refused`): the first of a
+  minute is inserted at once, the count is written into its detail ("N times in a minute") every 30 s.
+- Login: the per-IP ban keys by IPv4 address or IPv6 /64 (unban moved to a form field). A correct password on an
+  account the 2FA lock holds is told so (`login_locked`, not counted toward the ban); a wrong one gets the usual
+  message, so the lock isn't revealed. Lock k lasts 15 min x 2^(k-1), at most 24 h; a replayed code counts as a
+  failure. The banner shows on Devices and Account until dismissed or the password is changed.
+- CSRF: any `Sec-Fetch-Site` other than `same-origin`/`none` is refused (`same-site` too). Without it, `Origin` may
+  also match `X-Forwarded-Host` from a trusted peer (a proxy that rewrites `Host`).
+- `no-store` also covers the code page (`/devices/{id}/regenerate-code`). Looking at the provision page makes no
+  code; without `LAUNCHER_SIGNATURE_CHECKSUM` the POST makes none either.
+- D1: the prerestore copy keeps `-wal`/`-shm` too; the container's restore closes the pool and exits 3. A failed
+  pre-migration backup stops the start. The generated first password's file is deleted by the forced password change.
+  In the container the root-helper routes (app update and restart, OS, Tailscale, reboot, format drive) aren't
+  registered. Logging now defaults to `info` without `RUST_LOG`: tracing-subscriber's default was errors only, so the
+  startup lines this design relies on (exposure, the password file) never reached the journal.
+- CI's `server-image` job also runs when `server/.dockerignore` or `server/deploy/image-smoke.sh` change; the release
+  workflow's `workflow_dispatch` on a branch builds and smoke-tests both platforms without pushing.
+
+**Not run here**: no Docker daemon in this sandbox, so the image was never built or smoke-tested (the Dockerfile, the
+smoke script and both workflows were checked with shellcheck and actionlint; the base digests were read from the
+registries); no musl cross build; the on-Pi checks of §8 (both listeners and the curl matrix behind Caddy, a failed
+login from a tailnet device logging its 100.x IP, the iOS Safari PWA after the cookie rename). The PWA pages changed
+here (login, lock, banner, access card, code page, provisioning, account) were checked in headless Chromium at 360 px,
+light and dark: no CSP violations, and revoke/provision keep the scroll position.
+
+**Still to come**: S5 (Connection page, policy `connection`, QR v2, `connection_state`), L1-L3, S6 + L2, S7. The
+600-request token bucket waits for the music implementer's measured first sync. The launcher's `CLAUDE.md` is left
+to the launcher wave.

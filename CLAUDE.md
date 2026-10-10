@@ -10,7 +10,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   since 2026-10-06 - the Kotlin namespace/class names stay `com.kidslauncher.mdm`). Was the
   `kids-launcher-mdm` fork. Details: `launcher/CLAUDE.md`.
 - `server/` - admin server + device API (Rust/Axum/SQLite). Was the `kid-phone-server` fork.
-  Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md`.
+  Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md` (Pi + systemd, and the Docker image
+  from `server/Dockerfile`).
 - `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
   `kid-phone-server` = `server/`, `L` = `kids-launcher-mdm` = `launcher/`, "branch `handy`" = what is
   now `main` here. `docs/testing/emulator.md` - the emulator test loop. `docs/setup/` - setup
@@ -46,8 +47,10 @@ music app keeps byte-identical copies once it exists (design 21b §4.5), and a c
 
 - `.github/workflows/launcher.yml` and `server-ci.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`) only runs when its own directory or workflow changed
-  (`launcher.yml` also on `.github/actions/build-tsnet/`). Require the always-running gate jobs
-  `launcher-ci` and `server-ci` in branch protection, not the build jobs.
+  (`launcher.yml` also on `.github/actions/build-tsnet/`; `server-ci.yml`'s `server-image` job only
+  when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or the workflow
+  changed). Require the always-running gate jobs `launcher-ci` and `server-ci` in branch protection,
+  not the build jobs.
 - `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
   release (`kids-launcher-mdm.apk`), versionCode `X*1_000_000 + Y*1_000 + Z` (RC: minus 1). Only
   stable launcher releases become GitHub's "latest", so
@@ -56,6 +59,10 @@ music app keeps byte-identical copies once it exists (design 21b §4.5), and a c
   design 19's launcher commit or later has been built (an older tag would still check them).
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
   then the aarch64 tarball and its `.sha256`, never "latest". The server's update check and `install.sh`/`update.sh` find it by tag.
+  Since 0.23.0 (design 22) the same run builds the multi-arch image `ghcr.io/<owner>/handy-server`,
+  pushes it by digest, smoke-tests it (amd64, arm64 under QEMU), then tags `X.Y.Z` and `latest`;
+  the GitHub release is published last. The GHCR package must be made public once by the owner
+  (server/DEPLOY.md, "Docker"). `workflow_dispatch` on a branch is a dry run.
 
 ## Licensing
 

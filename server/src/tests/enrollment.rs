@@ -385,7 +385,7 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
         .get_page(&format!("/devices/{id}?notice=access_revoked"), &cookie)
         .await
         .text();
-    assert!(page.contains("Access revoked: the phone"), "{page}");
+    assert!(page.contains("Access revoked."), "{page}");
     assert!(page.contains("access is revoked: it can"));
     let events: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE event_type = 'access_revoked'",

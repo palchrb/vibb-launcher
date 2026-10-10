@@ -411,4 +411,10 @@ builds (`cargo build` OK, 0 tests). Android needs JDK 17, SDK 36, AGP 8.13.
   phone that Tailscale DNS applies to all lookups without an exit node.
   Tailnet ACLs: kid's device reaches Immich and the server's device API, not
   the admin UI. Per-device switch between this and upstream's tsnet mode.
+  **Design 22 (2026-10-09)** settles the shape: per phone one of tsnet, the
+  Tailscale app (mode 2, launcher step L2 after design 03's spike) or direct
+  HTTPS; in mode 2 DNS filtering moves to the server's own tailnet resolver
+  (S6) instead of AdGuard Home. Server 0.23.0 already splits the admin and the
+  phones' API into two listeners (the admin answers only tailnet/loopback
+  unless `ADMIN_PUBLIC=on`), so the ACL can give `tag:kid` the phone port only.
 - Messaging: own Matrix homeserver so Element X contacts are enforced there?

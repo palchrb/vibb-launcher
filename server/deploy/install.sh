@@ -710,8 +710,8 @@ if [ "$PRINT_CREDENTIALS" -eq 1 ]; then
     echo ""
 fi
 echo "This only listens on the Pi itself (127.0.0.1) for security. To reach it"
-echo "from your phone or other devices, set up Tailscale (or Tailscale Funnel"
-echo "for a public URL) next - see DEPLOY.md."
+echo "from your phone or other devices, see \"Choose how it's reachable\" in"
+echo "DEPLOY.md (tailscale serve, or your own Caddy)."
 echo ""
 echo "Future updates, backups, and restarts can all be done from the app's"
 echo "Backups / Software updates pages once logged in - you shouldn't need to"
