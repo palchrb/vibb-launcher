@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
+use axum::Form;
+use axum::extract::{Path, State};
 use axum::http::{Method, StatusCode};
 use axum::response::IntoResponse;
 
@@ -12,9 +13,10 @@ use crate::AppState;
 use crate::config::ForkConfig;
 use crate::handlers::provisioning::{self, AdminExtras};
 
+/// The page after "Make QR code" (a POST since design 22).
 async fn provision_page(state: AppState, device_id: i64) -> String {
     let response =
-        provisioning::provision_form(State(state), Path(device_id), Query(Default::default()))
+        provisioning::provision_qr(State(state), Path(device_id), Form(Default::default()))
             .await
             .into_response();
     let res = read_response(response).await;

@@ -33,6 +33,34 @@ pub async fn settings_hub() -> impl IntoResponse {
 struct ProvisioningSettingsTemplate {
     title: String,
     settings: ProvisioningSettings,
+    /// The Tailscale key is write-only (design 22 §3.2.6): only "set (tskey-auth-...abcd)".
+    tailscale_key_hint: Option<String>,
+}
+
+/// "tskey-auth-...abcd": enough to tell keys apart, never the key.
+pub fn key_hint(key: &str) -> Option<String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    let tail: String = key
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let prefix = if key.starts_with("tskey-auth-") {
+        "tskey-auth-"
+    } else {
+        ""
+    };
+    Some(if key.chars().count() <= 8 {
+        "set".to_string()
+    } else {
+        format!("{prefix}...{tail}")
+    })
 }
 
 /// Single server_url/tailscale_auth_key pair, embedded verbatim into every device's QR
@@ -52,6 +80,7 @@ pub async fn provisioning_settings_form(State(state): State<AppState>) -> impl I
     Html(
         ProvisioningSettingsTemplate {
             title: "Provisioning".to_string(),
+            tailscale_key_hint: key_hint(&settings.tailscale_auth_key),
             settings,
         }
         .render()
@@ -64,10 +93,12 @@ pub async fn update_provisioning_settings(
     Form(form): Form<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let server_url = form.get("server_url").map(|s| s.trim()).unwrap_or("");
-    let tailscale_auth_key = form
+    // Write-only: an empty field keeps the stored key, "clear" removes it.
+    let new_key = form
         .get("tailscale_auth_key")
         .map(|s| s.trim())
         .unwrap_or("");
+    let clear_key = form.contains_key("clear_tailscale_auth_key");
     // Empty = not in the QR. Anything else must have the form Android expects, or nothing is
     // written (fix round 2026-10-06).
     let locale = form.get("locale").map(|s| s.trim()).unwrap_or("");
@@ -83,11 +114,14 @@ pub async fn update_provisioning_settings(
     }
 
     sqlx::query(
-        "UPDATE provisioning_settings SET server_url = ?, tailscale_auth_key = ?, locale = ?, \
-         time_zone = ?, updated_at = datetime('now') WHERE id = 1",
+        "UPDATE provisioning_settings SET server_url = ?, \
+         tailscale_auth_key = CASE WHEN ? THEN '' WHEN ? <> '' THEN ? ELSE tailscale_auth_key END, \
+         locale = ?, time_zone = ?, updated_at = datetime('now') WHERE id = 1",
     )
     .bind(server_url)
-    .bind(tailscale_auth_key)
+    .bind(clear_key)
+    .bind(new_key)
+    .bind(new_key)
     .bind(locale)
     .bind(time_zone)
     .execute(&state.db)

@@ -220,7 +220,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 
 ## Tests
 
-`cargo test` runs in-process tests in `src/tests/` (and in CI): `build_router` (split out of `main()` for this) is driven directly with `tower::ServiceExt::oneshot`, against a fresh migrated SQLite file in a temp dir per test - no network, no background tasks. `TestApp` (`src/tests/mod.rs`) has helpers to create and enroll a device and send JSON requests with or without a bearer token; handlers extracting `ConnectInfo` get a fixed loopback address. A test that documents a known bug is marked `#[ignore = "..."]` until the fix lands - run `cargo test -- --ignored` to see them fail. Admin handlers can be called directly with `TestApp::state` (skipping the session/2FA middleware), or through the real middleware: `TestApp::admin_cookie()` seeds an onboarded admin with a fixed TOTP secret, logs in via `/login` + `/auth/verify-2fa` and returns the session cookie for `request_form` (urlencoded POSTs) and `get_page`. `policy_json_keys_snapshot` is the contract with the launcher's `PolicyResponse` DTO - update both sides together.
+`cargo test` runs in-process tests in `src/tests/` (and in CI): `build_router` (split out of `main()` for this) is driven directly with `tower::ServiceExt::oneshot`, against a fresh migrated SQLite file in a temp dir per test - no network, no background tasks. `TestApp` (`src/tests/mod.rs`) has helpers to create and enroll a device and send JSON requests with or without a bearer token; handlers extracting `ConnectInfo` get a fixed loopback address. A test that documents a known bug is marked `#[ignore = "..."]` until the fix lands - run `cargo test -- --ignored` to see them fail. Admin handlers can be called directly with `TestApp::state` (skipping the session/2FA middleware), or through the real middleware: `TestApp::admin_cookie()` seeds an onboarded admin with a fixed TOTP secret, logs in via `/login` + `/auth/verify-2fa` (with a TOTP step not used yet - a code works once) and returns the session cookie for `request_form` (urlencoded POSTs) and `get_page`. Requests come from `LOOPBACK_PEER`; `send_via(router, peer, request)` sends from any peer to the admin router or `device_router()` (the phone listener), `with_env(&[...])` builds the app with other listener settings. `policy_json_keys_snapshot` is the contract with the launcher's `PolicyResponse` DTO - update both sides together.
 
 ## Non-obvious gotchas hit so far
 
@@ -236,7 +236,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 
 ## Data model (SQLite, see `migrations/`)
 
-- `admin_users` - parent login accounts, TOTP secret, forced-password-change flag
+- `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
 - `device_policy` - one row per device: allowlist JSON, `custom_schedule_enabled` (own time rules + `daily_budget_json` instead of the global ones), `location_mode`/`location_interval_minutes`, the frozen pre-step-6 schedule columns, `kiosk_desired` (always `1` now), `lock_task_features` (bitmask), `override_pin_hash`/`override_pin_salt`, `kid_pin_hash`/`kid_pin_salt`/`kid_pin_length` (step 10)
 - `global_schedule` - singleton (`id = 1`): the global `daily_budget_json` and the frozen pre-step-6 schedule; `time_rules` (device_id NULL = global) and `time_lifts` - see "Time rules" above
@@ -568,7 +568,33 @@ needed to manage the phone, delete on a schedule, never store notification or me
   Failures: throttled `enroll_failed`. Device page "Access" card (`#access`): last access, the live code's kind and
   expiry, New code (re-enroll: disconnects the enrolled phone), Provision, Revoke access (`POST
   /devices/{id}/revoke`, confirm box; `token_hash = NULL`, index, streams closed, `access_revoked`).
-- Tests: `src/tests/enrollment.rs` (QR once, no plaintext stored, a race of 8 gives one token, expiry, typed
+- **Admin auth** (S4, `src/admin_auth.rs`, migration `0053_admin_auth.sql`; no step-up, user decision U2): argon2
+  (verify and change) runs in `spawn_blocking` behind `AppState.passwords` (`PasswordGate`: 1 running, 4 queued, else
+  429), an unknown username verifies a dummy hash. Wrong passwords never lock the account (only the per-IP ban, now
+  keyed by `net::limit_key`; unban is `POST /security/unban` with an `ip` field since a key can be a /64). TOTP:
+  `check_totp` accepts a step within +-1 that is later than `admin_users.totp_last_step` (stored in the same UPDATE;
+  setup too); `record_totp_failure`: 5 failures lock 15 min, each further lock doubles (`lock_count`) up to 24 h, a
+  lock running out resets nothing, only a complete login does (`reset_after_login`); a correct password on a locked
+  account says so (`login_locked` event). The pending state (`pending_admin_id` + `pending_at`) lasts 5 min. After a
+  complete login with earlier failures the session carries a banner (`login_warning`, shown on Devices and Account
+  via `partials/login_warning.html`, `POST /account/dismiss-warning`). Sessions: `cycle_id()` after each step; the
+  session stores `session_epoch`, and a password change, a 2FA reset (other sessions) and `POST
+  /account/sign-out-everywhere` (all) bump it (`load_active_admin` compares); cookie `__Host-handy` (Secure, Path=/,
+  HttpOnly, Strict) or `handy` with `INSECURE_COOKIES` (`security::session_layer`); `SESSION_INACTIVITY_DAYS`
+  (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter
+  and bumps the epoch. `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
+  CSP phase 1 (`ADMIN_CSP`, inline JS still allowed until S7); HTML `private, no-cache`, `no_store_path` (locations
+  JSON, backups, provision, the code page, provisioning settings, account, auth) `no-store`. `csrf_guard` (unsafe
+  methods, not `/api/devices/`): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
+  `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
+  Provisioning: `GET /devices/{id}/provision` is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
+  the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes).
+  `security_events` pruned after 180 days (`retention::prune`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
+- Tests: `src/tests/admin_auth.rs` (the lock and its doubling, the banner, no password lock, a code works once,
+  pending expiry, the epoch on password change/2FA reset/sign out everywhere, `reset-2fa`, 20 parallel logins while
+  an SSE keepalive keeps its 1 s beat, CSRF, headers and cache rules, the cookie, the write-only key, pruning, IPv6
+  bans by /64), `admin_auth::tests`. `TestApp::next_totp_code` picks a step not used yet; `admin_cookie` uses it.
+  `src/tests/enrollment.rs` (QR once, no plaintext stored, a race of 8 gives one token, expiry, typed
   failures without a live typed code count for nothing, the pause with QR codes still enrolling after 200 junk QR
   codes, the shared failure bucket, New code once and replacing, revoke, the setup QR's kind), `enrollment::tests`.
   `src/tests/edge.rs` (a valid token behind a full failure bucket, IPv6 /64, throttled events; policy and

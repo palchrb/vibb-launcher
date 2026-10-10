@@ -9,7 +9,7 @@
     <div class="page-header">
         <h1>Provision {{ device.name }}</h1>
     </div>
-    <p class="subtitle">This QR code carries a fresh one-shot enrollment code for this device, plus your server URL and Tailscale key from <a href="/settings/provisioning">Provisioning settings</a> - scanning it does setup and enrollment in one step. It goes stale the moment you leave this page or generate another one, same as a plain enrollment code.</p>
+    <p class="subtitle">The QR code carries a fresh enrollment code for this device, plus your server URL and Tailscale key from <a href="/settings/provisioning">Provisioning settings</a> - scanning it does setup and enrollment in one step. The code is valid for 30 minutes and works once; making a new QR code (or a typed code on the device page) replaces it.</p>
 
     {% if missing_checksum %}
     <div class="card" style="border-color:#dc2626;">
@@ -31,23 +31,26 @@
         </ol>
     </div>
 
-    <div class="card">
-        <h2>WiFi (optional, native flow only)</h2>
-        <p class="subtitle">Only used by the stock-Android zero-touch flow, to join a network before the launcher downloads. Ignored by the in-app scanner, since the device is already online by that point.</p>
-        <form method="get" action="/devices/{{ device.id }}/provision">
+    <div class="card" id="make-qr">
+        <h2>Make the QR code</h2>
+        <p class="subtitle">Wi-Fi is optional and only used by the stock-Android zero-touch flow, to join a network before the launcher downloads. The in-app scanner ignores it, since the device is already online by then. The password goes into the QR code only - it isn't stored.</p>
+        <form method="post" action="/devices/{{ device.id }}/provision">
             <label for="wifi_ssid">Network name (SSID)</label>
             <input type="text" id="wifi_ssid" name="wifi_ssid" value="{{ wifi_ssid }}" autocomplete="off">
 
             <label for="wifi_password">Password</label>
-            <input type="text" id="wifi_password" name="wifi_password" autocomplete="off">
+            <input type="password" id="wifi_password" name="wifi_password" autocomplete="off">
 
-            <button type="submit">Regenerate QR code</button>
+            <button type="submit">{% if qr_svg.is_empty() %}Make QR code{% else %}Make a new QR code{% endif %}</button>
         </form>
     </div>
 
-    {% if !missing_checksum %}
-    <div class="card">
+    {% if !qr_svg.is_empty() %}
+    <div class="card" id="qr">
         <h2>Scan this</h2>
+        {% if let Some(until) = expires_at %}
+        <p class="subtitle">Valid until {{ until }} UTC, once.</p>
+        {% endif %}
         <div class="qr-code">{{ qr_svg|safe }}</div>
     </div>
     {% endif %}

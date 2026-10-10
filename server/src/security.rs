@@ -14,12 +14,9 @@ use crate::models::AdminUser;
 
 pub const MIN_PASSWORD_LEN: usize = 12;
 
-/// Failed *password or TOTP* attempts against one account before it locks.
-pub const MAX_FAILED_ATTEMPTS: i64 = 5;
-/// How long a locked account stays locked before auto-unlocking.
-pub const LOCKOUT_MINUTES: i64 = 15;
-/// Failed attempts from one IP (across any account) within the window below
-/// before that IP is banned from reaching the login page at all.
+/// Failed attempts from one client (`net::limit_key`: an IPv4 address or an IPv6 /64, across any
+/// account) within the window below before it is banned from reaching the login page at all.
+/// The account lock is the TOTP step's alone (`admin_auth`).
 pub const MAX_FAILED_PER_IP: i64 = 15;
 pub const IP_FAILURE_WINDOW_MINUTES: i64 = 15;
 /// How long an IP ban lasts before auto-expiring.
@@ -124,63 +121,6 @@ pub async fn check_and_ban_ip_if_needed(db: &sqlx::SqlitePool, ip: &str) {
         )
         .await;
     }
-}
-
-/// True if this account is currently locked out (and the lock hasn't expired).
-pub async fn is_account_locked(db: &sqlx::SqlitePool, admin_id: i64) -> bool {
-    sqlx::query_scalar::<_, bool>(
-        "SELECT locked_until IS NOT NULL AND locked_until > datetime('now') FROM admin_users WHERE id = ?",
-    )
-    .bind(admin_id)
-    .fetch_optional(db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(false)
-}
-
-/// Records one failed password/TOTP attempt against a known account, locking
-/// it once MAX_FAILED_ATTEMPTS is reached. Deliberately does nothing if the
-/// account is already locked, so repeated hammering can't extend the lockout
-/// and lock a legitimate user out indefinitely.
-pub async fn record_failed_login(db: &sqlx::SqlitePool, admin_id: i64) {
-    if is_account_locked(db, admin_id).await {
-        return;
-    }
-
-    sqlx::query(
-        "UPDATE admin_users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
-    )
-    .bind(admin_id)
-    .execute(db)
-    .await
-    .ok();
-
-    let attempts: i64 =
-        sqlx::query_scalar("SELECT failed_login_attempts FROM admin_users WHERE id = ?")
-            .bind(admin_id)
-            .fetch_one(db)
-            .await
-            .unwrap_or(0);
-
-    if attempts >= MAX_FAILED_ATTEMPTS {
-        sqlx::query("UPDATE admin_users SET locked_until = datetime('now', ?) WHERE id = ?")
-            .bind(format!("+{LOCKOUT_MINUTES} minutes"))
-            .bind(admin_id)
-            .execute(db)
-            .await
-            .ok();
-    }
-}
-
-pub async fn reset_failed_login(db: &sqlx::SqlitePool, admin_id: i64) {
-    sqlx::query(
-        "UPDATE admin_users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
-    )
-    .bind(admin_id)
-    .execute(db)
-    .await
-    .ok();
 }
 
 /// Builds a TOTP object for a given admin from a stored (or freshly
@@ -338,14 +278,42 @@ pub async fn bootstrap_admin(db: &sqlx::SqlitePool) {
 #[derive(Clone)]
 pub struct CurrentAdmin(pub AdminUser);
 
+/// The signed-in admin, if the session's epoch is still the account's (a password change, a 2FA
+/// reset or "Sign out everywhere" moved it on - design 22 QA a).
 async fn load_active_admin(state: &AppState, session: &Session) -> Option<AdminUser> {
     let admin_id: i64 = session.get("admin_id").await.ok().flatten()?;
+    let epoch: i64 = session
+        .get(crate::admin_auth::EPOCH_KEY)
+        .await
+        .ok()
+        .flatten()?;
     sqlx::query_as::<_, AdminUser>("SELECT * FROM admin_users WHERE id = ?")
         .bind(admin_id)
         .fetch_optional(&state.db)
         .await
         .ok()
         .flatten()
+        .filter(|admin| admin.session_epoch == epoch)
+}
+
+/// The admin session cookie (design 22 §3.2.2): `__Host-handy` (Secure, `Path=/`, no `Domain`,
+/// HttpOnly, SameSite=Strict); with `INSECURE_COOKIES` (the emulator loop over plain http) a
+/// plain `handy`, since browsers drop a `__Host-` cookie that isn't Secure. Sessions end after
+/// `inactivity_days` without use.
+pub fn session_layer(
+    store: tower_sessions_sqlx_store::SqliteStore,
+    insecure: bool,
+    inactivity_days: i64,
+) -> tower_sessions::SessionManagerLayer<tower_sessions_sqlx_store::SqliteStore> {
+    tower_sessions::SessionManagerLayer::new(store)
+        .with_name(if insecure { "handy" } else { "__Host-handy" })
+        .with_path("/")
+        .with_http_only(true)
+        .with_same_site(tower_sessions::cookie::SameSite::Strict)
+        .with_secure(!insecure)
+        .with_expiry(tower_sessions::Expiry::OnInactivity(
+            tower_sessions::cookie::time::Duration::days(inactivity_days),
+        ))
 }
 
 /// Requires a valid session, but does not enforce the forced-password-change

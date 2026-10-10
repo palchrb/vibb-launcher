@@ -4,7 +4,8 @@
 //! row written elsewhere in the app (see `security::record_security_event`).
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::Form;
+use axum::extract::State;
 use axum::response::{Html, IntoResponse};
 
 use crate::AppState;
@@ -50,12 +51,21 @@ pub async fn security_log(State(state): State<AppState>) -> impl IntoResponse {
     render_security_log(&state, None).await
 }
 
-pub async fn unban_ip(State(state): State<AppState>, Path(ip): Path<String>) -> impl IntoResponse {
+#[derive(serde::Deserialize)]
+pub struct UnbanForm {
+    ip: String,
+}
+
+/// A form field, not a path segment: a ban's key may be an IPv6 /64 ("2001:db8:1:2::/64").
+pub async fn unban_ip(
+    State(state): State<AppState>,
+    Form(form): Form<UnbanForm>,
+) -> impl IntoResponse {
     sqlx::query("DELETE FROM banned_ips WHERE ip_address = ?")
-        .bind(&ip)
+        .bind(&form.ip)
         .execute(&state.db)
         .await
         .ok();
 
-    render_security_log(&state, Some(format!("{ip} was unbanned."))).await
+    render_security_log(&state, Some(format!("{} was unbanned.", form.ip))).await
 }

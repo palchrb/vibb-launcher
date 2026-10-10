@@ -10,6 +10,8 @@
         <h1>Account</h1>
     </div>
 
+    {% include "partials/login_warning.html" %}
+
     {% if let Some(s) = success %}
     <div class="success">{{ s }}</div>
     {% endif %}
@@ -48,6 +50,15 @@
         {% else %}
         <p class="subtitle">Two-factor login isn't set up yet.</p>
         {% endif %}
+        <p class="subtitle">Locked out of the authenticator and signed out? On the server: <code>kid_phone_server reset-2fa {{ username }}</code> (DEPLOY.md, "Recovery").</p>
+    </div>
+
+    <div class="card" id="sessions">
+        <h2>Sessions</h2>
+        <p class="subtitle">Changing the password or resetting two-factor login signs out every other browser and phone. To sign out everywhere, this one included (a lost phone with the admin open):</p>
+        <form method="post" action="/account/sign-out-everywhere">
+            <button type="submit" class="button-secondary">Sign out everywhere</button>
+        </form>
     </div>
 </main>
 </body>

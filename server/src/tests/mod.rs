@@ -2,6 +2,7 @@
 //! test (a temp file, so WAL mode and multiple pool connections behave as in production), and
 //! requests sent straight to the router - no network, no background tasks.
 
+mod admin_auth;
 mod app_display;
 mod calls;
 mod cleanup;
@@ -30,7 +31,6 @@ use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
-use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
 use crate::config::ForkConfig;
@@ -129,8 +129,9 @@ impl TestApp {
             .migrate()
             .await
             .expect("failed to run session store migrations");
-        // Plain HTTP in tests, so cookies must not be Secure-only.
-        let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
+        // Plain HTTP in tests, so cookies must not be Secure-only (`INSECURE_COOKIES`: the
+        // cookie is a plain `handy`).
+        let session_layer = crate::security::session_layer(session_store, true, 30);
 
         let (command_notify, _) = tokio::sync::broadcast::channel(64);
         let fetch = std::sync::Arc::new(music::CannedFetch::default());
@@ -161,6 +162,7 @@ impl TestApp {
             limits: Default::default(),
             tokens: Default::default(),
             enrollment: Default::default(),
+            passwords: Default::default(),
         };
 
         TestApp {
@@ -224,6 +226,13 @@ impl TestApp {
             .oneshot(request)
             .await
             .expect("router returned an error")
+    }
+
+    /// The admin listener's router on a changed copy of the state (another config), with its own
+    /// session layer on the same database.
+    pub fn admin_router(&self, state: AppState) -> Router {
+        let store = SqliteStore::new(self.db.clone());
+        build_router(state, crate::security::session_layer(store, true, 30))
     }
 
     /// The phone listener's router (`DEVICE_BIND_ADDR`) on the same state.
@@ -304,9 +313,7 @@ impl TestApp {
         );
         let cookie = session_cookie(&login).expect("login set no session cookie");
 
-        let code = security::totp_for_secret(TOTP_SECRET, USERNAME)
-            .generate_current()
-            .expect("system clock before 1970");
+        let code = self.next_totp_code(USERNAME, TOTP_SECRET).await;
         let verify = self
             .request_form(
                 Method::POST,
@@ -317,6 +324,25 @@ impl TestApp {
             .await;
         assert_eq!(verify.location(), Some("/"), "{}", verify.text());
         session_cookie(&verify).unwrap_or(cookie)
+    }
+
+    /// A TOTP code the server accepts now: for the current step, or a later one when that step
+    /// was already used (a code works once - design 22 §3.2.1), waiting for it if needed.
+    pub async fn next_totp_code(&self, username: &str, secret: &str) -> String {
+        let last: Option<i64> =
+            sqlx::query_scalar("SELECT totp_last_step FROM admin_users WHERE username = ?")
+                .bind(username)
+                .fetch_one(&self.db)
+                .await
+                .expect("no such admin");
+        loop {
+            let now_step = (crate::admin_auth::now_secs() / 30) as i64;
+            let step = last.map_or(now_step, |last| now_step.max(last + 1));
+            if step <= now_step + 1 {
+                return security::totp_for_secret(secret, username).generate(step as u64 * 30);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
     }
 
     /// Inserts a device the way `handlers::devices::create_device` does (kiosk on, policy row

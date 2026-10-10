@@ -1,3 +1,4 @@
+mod admin_auth;
 mod app_display;
 mod app_downloads;
 mod app_icons;
@@ -43,9 +44,8 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
 use std::str::FromStr;
 use tower_http::services::ServeDir;
-use tower_sessions::cookie::time::Duration as CookieDuration;
+use tower_sessions::SessionManagerLayer;
 use tower_sessions::session_store::ExpiredDeletion;
-use tower_sessions::{Expiry, SessionManagerLayer};
 use tower_sessions_sqlx_store::SqliteStore;
 
 #[derive(Clone)]
@@ -106,6 +106,8 @@ pub struct AppState {
     pub tokens: std::sync::Arc<security::TokenIndex>,
     /// Whether a typed enrollment code is live, and the typed-code pause (`enrollment`).
     pub enrollment: std::sync::Arc<enrollment::Enrollment>,
+    /// argon2 off the async workers, one at a time with a short queue (`admin_auth`).
+    pub passwords: std::sync::Arc<admin_auth::PasswordGate>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -114,6 +116,13 @@ pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 async fn main() {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
+
+    // Subcommands (design 22 §3.2.3, §6): run against the same .env and database, then exit.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(command) = args.first() {
+        std::process::exit(run_command(command, &args[1..]).await);
+    }
+
     tracing::info!("Kids Device MDM {APP_VERSION} starting");
 
     // Rustls 0.23+ requires an explicit process-wide default crypto provider
@@ -164,9 +173,11 @@ async fn main() {
         );
     }
 
-    let session_layer = SessionManagerLayer::new(session_store)
-        .with_expiry(Expiry::OnInactivity(CookieDuration::days(30)))
-        .with_secure(!insecure_cookies);
+    let session_layer = security::session_layer(
+        session_store,
+        insecure_cookies,
+        net_config.session_inactivity_days,
+    );
 
     let fork_config = config::ForkConfig::from_env();
     if fork_config.launcher_signature_checksum.is_none() {
@@ -238,6 +249,7 @@ async fn main() {
         limits: Default::default(),
         tokens: Default::default(),
         enrollment: Default::default(),
+        passwords: Default::default(),
     };
     state
         .tokens
@@ -279,6 +291,54 @@ async fn main() {
     tokio::task::spawn(audit::run_flusher(state.clone()));
 
     serve(state, session_layer).await;
+}
+
+/// `kid_phone_server <command>`; the exit code.
+async fn run_command(command: &str, args: &[String]) -> i32 {
+    match (command, args) {
+        ("reset-2fa", [username]) => {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let database_url = std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "sqlite://data/kidphone.db".into());
+            if let Some(path) = sqlite_path(&database_url)
+                && !path.exists()
+            {
+                eprintln!(
+                    "reset-2fa: no database at {} - run this in the server's directory \
+                     (/opt/kid-phone-server, or /app in the container)",
+                    path.display()
+                );
+                return 1;
+            }
+            let db = connect_db(&database_url).await;
+            match admin_auth::reset_2fa(&db, username).await {
+                Ok(message) => {
+                    println!("{message}");
+                    0
+                }
+                Err(message) => {
+                    eprintln!("reset-2fa: {message}");
+                    1
+                }
+            }
+        }
+        _ => {
+            eprintln!(
+                "usage: kid_phone_server [reset-2fa <user>]\n\
+                 With no arguments it runs the server."
+            );
+            2
+        }
+    }
+}
+
+/// The file behind a `sqlite://` URL (`None` for anything else, e.g. `:memory:`).
+fn sqlite_path(url: &str) -> Option<std::path::PathBuf> {
+    let path = url
+        .strip_prefix("sqlite://")
+        .or_else(|| url.strip_prefix("sqlite:"))?;
+    let path = path.split('?').next().unwrap_or(path);
+    (!path.is_empty() && path != ":memory:").then(|| std::path::PathBuf::from(path))
 }
 
 /// Both listeners (design 22 §2) until SIGTERM or Ctrl-C, then a graceful stop: no new
@@ -515,7 +575,7 @@ pub fn build_admin_router(
         )
         .route(
             "/devices/{id}/provision",
-            get(handlers::provisioning::provision_form),
+            get(handlers::provisioning::provision_form).post(handlers::provisioning::provision_qr),
         )
         .route("/devices/{id}", get(handlers::devices::view_device))
         .route(
@@ -866,13 +926,21 @@ pub fn build_admin_router(
             post(handlers::system_maintenance::save_schedule),
         )
         .route("/security", get(handlers::admin::security_log))
-        .route("/security/unban/{ip}", post(handlers::admin::unban_ip))
+        .route("/security/unban", post(handlers::admin::unban_ip))
         .route("/account", get(handlers::auth::account_page))
         .route(
             "/account/password",
             post(handlers::auth::update_account_password),
         )
         .route("/account/reset-2fa", post(handlers::auth::reset_totp))
+        .route(
+            "/account/sign-out-everywhere",
+            post(handlers::auth::sign_out_everywhere),
+        )
+        .route(
+            "/account/dismiss-warning",
+            post(handlers::auth::dismiss_login_warning),
+        )
         .layer(from_fn_with_state(
             state.clone(),
             security::require_full_auth,
@@ -890,6 +958,9 @@ pub fn build_admin_router(
         .fallback(not_found)
         .with_state(state.clone())
         .layer(session_layer)
+        // Before the session is read: a cross-site form never acts (design 22 §3.2.5).
+        .layer(from_fn_with_state(state.clone(), admin_auth::csrf_guard))
+        .layer(axum::middleware::from_fn(admin_auth::admin_headers))
         // Outermost: a refused request never reaches the session store.
         .layer(from_fn_with_state(state, gate::admin_gate))
 }

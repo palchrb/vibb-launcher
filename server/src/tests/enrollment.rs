@@ -406,10 +406,26 @@ async fn the_setup_qr_carries_a_qr_code() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, old) = app.create_device("phone").await;
+    // Looking at the page makes no code (design 22 §0 #7) ...
     let page = app
         .get_page(&format!("/devices/{id}/provision"), &cookie)
         .await;
     assert_eq!(page.status, StatusCode::OK);
+    assert!(!page.text().contains("class=\"qr-code\""));
+    let res = enroll_from(&app, "203.0.113.7", &old).await;
+    assert_eq!(res.status, StatusCode::OK, "the old code still works");
+    let (id, old) = app.create_device("second").await;
+    // ... "Make QR code" does.
+    let page = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/provision"),
+            Some(&cookie),
+            &[("wifi_ssid", "home"), ("wifi_password", "secret")],
+        )
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.text().contains("class=\"qr-code\""));
     let kind: Option<String> =
         sqlx::query_scalar("SELECT enrollment_code_kind FROM devices WHERE id = ?")
             .bind(id)

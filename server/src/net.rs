@@ -178,6 +178,7 @@ fn parse_forwarded_entry(entry: &str) -> Option<IpAddr> {
 }
 
 pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:3100";
+pub const DEFAULT_SESSION_INACTIVITY_DAYS: i64 = 30;
 
 /// The listener settings (design 22 §2), read once at startup and kept in `AppState.net`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -198,6 +199,8 @@ pub struct NetConfig {
     /// `ADMIN_TAILSCALE_USERS`: when set, every admin request needs a tailnet client IP and a
     /// `Tailscale-User-Login` in this list (only behind `tailscale serve`, which sets the header).
     pub admin_tailscale_users: Option<Vec<String>>,
+    /// `SESSION_INACTIVITY_DAYS` (default 30, 1-365): an admin session's lifetime without use.
+    pub session_inactivity_days: i64,
 }
 
 impl Default for NetConfig {
@@ -263,6 +266,18 @@ impl NetConfig {
                 .filter(|login| !login.is_empty())
                 .collect::<Vec<_>>()
         });
+        let session_inactivity_days = match get("SESSION_INACTIVITY_DAYS") {
+            None => DEFAULT_SESSION_INACTIVITY_DAYS,
+            Some(value) => match value.parse::<i64>() {
+                Ok(days) if (1..=365).contains(&days) => days,
+                _ => {
+                    tracing::error!(
+                        "SESSION_INACTIVITY_DAYS={value:?} is not 1-365 - using {DEFAULT_SESSION_INACTIVITY_DAYS}"
+                    );
+                    DEFAULT_SESSION_INACTIVITY_DAYS
+                }
+            },
+        };
         NetConfig {
             bind_addr: get("BIND_ADDR").unwrap_or_else(|| DEFAULT_BIND_ADDR.to_string()),
             device_bind_addr: get("DEVICE_BIND_ADDR"),
@@ -271,6 +286,7 @@ impl NetConfig {
             trusted_proxies,
             // An empty list would refuse everyone; unset means "don't check".
             admin_tailscale_users: admin_tailscale_users.filter(|users| !users.is_empty()),
+            session_inactivity_days,
         }
     }
 
@@ -517,13 +533,16 @@ mod tests {
         assert!(net.admin_device_api);
         assert!(!net.admin_public);
         assert_eq!(net.admin_tailscale_users, None);
+        assert_eq!(net.session_inactivity_days, 30);
         let net = NetConfig::from_vars(&vars(&[
+            ("SESSION_INACTIVITY_DAYS", "7"),
             ("DEVICE_BIND_ADDR", "127.0.0.1:3101"),
             ("ADMIN_DEVICE_API", "off"),
             ("ADMIN_PUBLIC", "On"),
             ("ADMIN_TAILSCALE_USERS", "parent@example.com, other@github"),
         ]));
         assert_eq!(net.device_bind_addr.as_deref(), Some("127.0.0.1:3101"));
+        assert_eq!(net.session_inactivity_days, 7);
         assert!(!net.admin_device_api);
         assert!(net.admin_public);
         assert_eq!(
@@ -536,9 +555,11 @@ mod tests {
         // Invalid values keep the defaults (never "public").
         let net = NetConfig::from_vars(&vars(&[
             ("ADMIN_PUBLIC", "maybe"),
+            ("SESSION_INACTIVITY_DAYS", "0"),
             ("ADMIN_TAILSCALE_USERS", " , "),
         ]));
         assert!(!net.admin_public);
+        assert_eq!(net.session_inactivity_days, 30);
         assert_eq!(net.admin_tailscale_users, None);
     }
 }

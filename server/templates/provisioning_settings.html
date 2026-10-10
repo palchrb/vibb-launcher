@@ -18,8 +18,15 @@
             <p class="subtitle">The tailnet HTTPS URL devices use to reach this server - same value you'd otherwise type into the app's Settings &gt; Server URL by hand.</p>
 
             <label for="tailscale_auth_key">Tailscale auth key</label>
-            <input type="text" id="tailscale_auth_key" name="tailscale_auth_key" value="{{ settings.tailscale_auth_key }}" placeholder="tskey-auth-..." autocomplete="off">
-            <p class="subtitle">A <em>reusable</em> pre-auth key generated from your Tailscale admin console - one key enrolls every device via the embedded tsnet client. Leave blank to keep entering it by hand per device instead.</p>
+            <p>{% if let Some(hint) = tailscale_key_hint %}Set ({{ hint }}).{% else %}Not set.{% endif %}</p>
+            <input type="password" id="tailscale_auth_key" name="tailscale_auth_key" value="" placeholder="{% if tailscale_key_hint.is_some() %}Type a new key to replace it{% else %}tskey-auth-...{% endif %}" autocomplete="off">
+            {% if tailscale_key_hint.is_some() %}
+            <label class="checkbox-row">
+                <input type="checkbox" name="clear_tailscale_auth_key" value="on">
+                <span>Remove the stored key</span>
+            </label>
+            {% endif %}
+            <p class="subtitle">A <em>reusable</em>, tagged (<code>tag:kid</code>), pre-approved pre-auth key from your Tailscale admin console - one key enrolls every device via the embedded tsnet client. It is never shown again here; leave the field empty to keep it. Leave it unset to enter it by hand per device instead.</p>
 
             <label for="locale">Phone language</label>
             <input type="text" id="locale" name="locale" value="{{ settings.locale }}" placeholder="nb_NO" autocomplete="off">

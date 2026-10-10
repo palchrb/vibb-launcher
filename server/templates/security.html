@@ -36,7 +36,8 @@
                     <td>{{ b.banned_until }}</td>
                     <td>{% if let Some(r) = b.reason %}{{ r }}{% endif %}</td>
                     <td>
-                        <form method="post" action="/security/unban/{{ b.ip_address }}">
+                        <form method="post" action="/security/unban">
+                            <input type="hidden" name="ip" value="{{ b.ip_address }}">
                             <button type="submit" class="button-small">Unban</button>
                         </form>
                     </td>
@@ -50,7 +51,7 @@
 
     <div class="card">
         <h2>Recent activity</h2>
-        <p class="subtitle">Most recent 200 events. Failed logins, lockouts, IP bans, and successful sign-ins.</p>
+        <p class="subtitle">Most recent 200 events: sign-ins and failed ones, lockouts, IP bans, refused requests, enrollments. Kept 180 days. Floods (refused requests, failed enrollments and device logins) are one row per address per minute, with a count. An IPv6 address counts as its whole /64.</p>
         <div class="table-wrap">
         <table>
             <thead>

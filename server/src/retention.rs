@@ -20,6 +20,8 @@ pub const DEFAULT_LOCATION_RETENTION_DAYS: i64 = 7;
 pub const STATUS_HISTORY_DAYS: i64 = 30;
 /// Launcher crash reports, counted from when the phone last reported that crash.
 pub const CRASH_REPORT_DAYS: i64 = 30;
+/// The security log (`security_events`, design 22 QA c): sign-ins, refused requests, enrollments.
+pub const SECURITY_EVENT_DAYS: i64 = 180;
 /// How often [run_pruning] runs (and once at startup).
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -30,6 +32,7 @@ pub struct Pruned {
     pub locations: u64,
     pub status_reports: u64,
     pub crashes: u64,
+    pub security_events: u64,
 }
 
 /// One pruning pass:
@@ -39,7 +42,8 @@ pub struct Pruned {
 ///   except the newest fix per phone, which Find My Device shows as "last seen";
 /// - status reports older than [STATUS_HISTORY_DAYS], except the newest per phone and the newest
 ///   one that reported call enforcement (`call_policy_v1`);
-/// - crash reports not reported again for [CRASH_REPORT_DAYS].
+/// - crash reports not reported again for [CRASH_REPORT_DAYS];
+/// - security log entries older than [SECURITY_EVENT_DAYS].
 pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     let dns_events = sqlx::query(
         "DELETE FROM device_dns_events \
@@ -87,11 +91,19 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
+    let security_events = sqlx::query(
+        "DELETE FROM security_events WHERE created_at < datetime('now', '-' || ? || ' days')",
+    )
+    .bind(SECURITY_EVENT_DAYS)
+    .execute(db)
+    .await?
+    .rows_affected();
     Ok(Pruned {
         dns_events,
         locations,
         status_reports,
         crashes,
+        security_events,
     })
 }
 

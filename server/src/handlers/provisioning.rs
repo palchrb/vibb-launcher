@@ -1,5 +1,6 @@
 use askama::Template;
-use axum::extract::{Path, Query, State};
+use axum::Form;
+use axum::extract::{Path, State};
 use axum::response::{Html, IntoResponse};
 use qrcode::QrCode;
 use qrcode::render::svg;
@@ -91,67 +92,102 @@ pub(crate) fn valid_time_zone(zone: &str) -> bool {
 struct ProvisionQrTemplate {
     title: String,
     device: Device,
-    /// Empty when `missing_checksum` is set - no QR is rendered at all then.
+    /// Empty until the form is sent (and when `missing_checksum` is set) - no QR is rendered then.
     qr_svg: String,
     missing_server_url: bool,
     /// `LAUNCHER_SIGNATURE_CHECKSUM` isn't configured: the page shows a banner instead of a QR
     /// code, rather than falling back to any built-in (upstream's) checksum.
     missing_checksum: bool,
     wifi_ssid: String,
+    /// When the code in the QR expires (UTC), once it is made.
+    expires_at: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-pub struct ProvisionQueryParams {
+pub struct ProvisionForm {
     #[serde(default)]
     wifi_ssid: String,
     #[serde(default)]
     wifi_password: String,
 }
 
-/// Regenerates this device's enrollment code every time the page loads (same "always fresh"
-/// treatment `regenerate_code` already gives the plain-code flow) - simpler than reasoning about
-/// whether a previously-generated code is still unexpired, and this page has no reason to prefer
-/// reusing an old one. WiFi fields come in as query params from a plain GET form on the page
-/// itself (not a separate POST route) so filling them in and regenerating stays one handler.
-pub async fn provision_form(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Query(params): Query<ProvisionQueryParams>,
-) -> axum::response::Response {
-    let Some(device) = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+async fn load_device(state: &AppState, id: i64) -> Option<Device> {
+    sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
         .ok()
         .flatten()
-    else {
+}
+
+async fn load_settings(state: &AppState) -> ProvisioningSettings {
+    sqlx::query_as::<_, ProvisioningSettings>("SELECT * FROM provisioning_settings WHERE id = 1")
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+/// `GET /devices/{id}/provision`: the form only. No code is made by looking at the page (design
+/// 22 §0 #7); "Make the QR code" posts the form ([provision_qr]).
+pub async fn provision_form(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> axum::response::Response {
+    let Some(device) = load_device(&state, id).await else {
         return axum::http::StatusCode::NOT_FOUND.into_response();
     };
-    // A setup-QR code (design 22 §3.1): 130 bits, 30 minutes, once; only its hash is stored.
-    let code = match crate::enrollment::new_code(&state, id, crate::enrollment::Kind::Qr).await {
-        Ok((code, _)) => code,
-        Err(err) => {
-            tracing::error!(device_id = id, %err, "couldn't make an enrollment code");
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't make a code - check the server log.",
-            )
-                .into_response();
+    let settings = load_settings(&state).await;
+    Html(
+        ProvisionQrTemplate {
+            title: format!("Provision {}", device.name),
+            missing_server_url: settings.server_url.is_empty(),
+            missing_checksum: state.config.launcher_signature_checksum.is_none(),
+            wifi_ssid: String::new(),
+            device,
+            qr_svg: String::new(),
+            expires_at: None,
         }
-    };
-
-    let settings = sqlx::query_as::<_, ProvisioningSettings>(
-        "SELECT * FROM provisioning_settings WHERE id = 1",
+        .render()
+        .unwrap(),
     )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_default();
+    .into_response()
+}
 
-    let ssid = params.wifi_ssid.trim();
-    let password = params.wifi_password.trim();
+/// `POST /devices/{id}/provision`: a fresh setup-QR enrollment code (design 22 §3.1: 130 bits,
+/// valid 30 minutes, once; it replaces the device's live code) in a QR code with the provisioning
+/// settings and the optional Wi-Fi. A POST, so the Wi-Fi password never sits in a URL (proxy
+/// logs, history); the page is `no-store` (`admin_auth::no_store_path`).
+pub async fn provision_qr(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<ProvisionForm>,
+) -> axum::response::Response {
+    let Some(device) = load_device(&state, id).await else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let settings = load_settings(&state).await;
+    let ssid = form.wifi_ssid.trim();
+    let password = form.wifi_password.trim();
     let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string()));
+
+    // No code at all without a checksum: there would be no QR to carry it.
+    let (code, expires_at) = if state.config.launcher_signature_checksum.is_some() {
+        match crate::enrollment::new_code(&state, id, crate::enrollment::Kind::Qr).await {
+            Ok(made) => made,
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "couldn't make an enrollment code");
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Couldn't make a code - check the server log.",
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        (String::new(), String::new())
+    };
 
     let payload = provisioning_payload(
         &state.config,
@@ -187,6 +223,7 @@ pub async fn provision_form(
             wifi_ssid: ssid.to_string(),
             device,
             qr_svg,
+            expires_at: (!expires_at.is_empty()).then_some(expires_at),
         }
         .render()
         .unwrap(),

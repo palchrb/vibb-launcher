@@ -10,6 +10,8 @@ pub struct AdminUser {
     pub totp_enabled: bool,
     pub failed_login_attempts: i64,
     pub locked_until: Option<String>,
+    /// Bumped by a password change, a 2FA reset and "Sign out everywhere" (design 22 §3.2.2).
+    pub session_epoch: i64,
 }
 
 #[derive(sqlx::FromRow, Clone)]
