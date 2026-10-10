@@ -374,3 +374,242 @@ next free numbers.
 
 Not in scope: changing what a window opens, a server switch for each new restriction, notification-channel repair,
 special app access (overlay, usage access) for allowed apps, and the server-side hash exposure (review M2).
+
+## QA review (design)
+
+QA, 2026-10-10, against bb8ba7dc (design 24's gate as on `pin-24`). Read:
+- this design, design 24, the security review (M9, L6, H4 and the decisions), and `launcher/CLAUDE.md`;
+- launcher: `OfflineOverride`, `RestrictionsPause`/`BootClock`, `EnforcementPlan`, `AppEnforcer` (`apply`,
+  `inputMethodPackages`, the VPN, sideloading, hardening), `Hardening`, `PlayRuntime`, `TimeRuleAlarm`,
+  `TimeRulesRuntime.nextBoundary`, `PinLockStore`/`KidLockConfig`, `PinLockRuntime.configure`/`checkPin`,
+  `lockActivation`, `LocateCommands`, `MdmSyncWorker`, `ParentPin` (`pin-24`), and the two PIN dialog layouts;
+- server: `locate.rs::queue_command`, `admin_auth::csrf_guard`, the Status card in `device_detail.html`, and
+  `scroll-restore.js`.
+
+**Verdict:** the engine has the right shape: one marker, an idempotent check, the reset after `apply()`, a snapshot
+report, and a block where no reset works. §1.1 holds against the code.
+- One High: sideloading stays open in windows, and an app sideloaded under an allowlisted name survives the relock,
+  even as a permitted keyboard.
+- The Mediums:
+  - the threads `check` and `opened()` block;
+  - a proxy reset that fails silently;
+  - calls-only phones;
+  - the parent PIN's dependence on a keyboard;
+  - two vault problems.
+- S1-S4 take install mode and the second alarm out of the engine, drop the global proxy and, optionally, the vault.
+
+**§1.1 against the code: holds.**
+- `nextBoundary` returns null without a time policy, so no alarm fires at a window's end.
+- `reevaluateLockReasonFromCache` applies only on a changed key.
+- `neverRestrict` holds every enabled keyboard.
+- An offline sync still applies from the cache.
+
+### High
+
+1. **High (user decision) - an app sideloaded under an allowlisted package name survives the relock.**
+   - The allowlist is by package name, and sideloading is lifted in a window (§1.5, "Sideloaded apps").
+   - Scenario:
+     1. During a pause the kid uninstalls an allowlisted non-system app (App info -> Uninstall).
+     2. The kid sideloads any APK under that package name. Once the original is gone, no signature has to match. A
+        name that is allowlisted but not installed works without step 1.
+     3. At the relock, `apply()` leaves the app unhidden and pins it in kiosk.
+     4. The allowlist is also the keyboard and accessibility permit list (§1.5), so the app can be an enabled
+        keyboard. The next time the parent types the PIN into the Settings gate, the kid has it, and every later
+        window is the kid's.
+   - Review M10's server rule is a second way in: a missing catalog package name is learned from "the one new
+     package", and the sync that ends an override reports it.
+   - **Fix (recommended):** keep `DISALLOW_INSTALL_UNKNOWN_SOURCES`(`_GLOBALLY`) during windows: launcher-only and
+     never lifted, like `CONFIG_CREDENTIALS`.
+     - Play, install mode and our catalog installs don't go through it.
+     - The cost: no on-phone sideload of a fixed launcher during a pause. The fix goes out through the server's
+       self-update instead.
+   - **Alternative, keeping sideloading:**
+     - `opened()` snapshots the non-system packages (package -> signing-cert SHA-256).
+     - The relock hides every non-system package that is new or re-signed and whose installer isn't the Play Store or
+       us, whatever the allowlist says, and reports it (`sideloaded`).
+     - The parent allows it on the device page.
+
+### Medium
+
+2. **Medium - `check` and `opened()` can block the main thread, and a relock can eat a new window's marker.**
+   - **`check`:**
+     - §1.2 makes `check` synchronized and runs the relock under the same lock.
+     - `check` is called from `PinLockRuntime`'s screen-on/`USER_PRESENT` receiver, on the main thread.
+     - A relock waits on `AppEnforcer.apply`'s monitor, which a running sync's `apply` can hold.
+     - A screen-on during a timer relock can freeze the main thread past the ANR limit, and an ANR kills the call path.
+   - **`opened()`:**
+     - It runs inside `ParentPin.check` (`startWindow`), under `ParentPin`'s lock.
+     - If it takes the relock lock, the dialogs' `lockoutRemainingMs` pre-check waits for a whole relock. That
+       pre-check runs on the main thread; design 24 §2.3 accepted a wait of up to 0.5 s.
+   - **The race.** The parent taps "Lock again", then starts a pause within the relock's seconds. Step 5 clears the
+     pause's `pending`, so nothing relocks at its end.
+   - **Fix:**
+     - `check` only hands off to one IO worker (single flight) and returns.
+     - `opened()` takes no relock lock. It commits the marker with `gen + 1`.
+     - The relock clears `pending` only if `gen` hasn't changed. Test it.
+3. **Medium - the proxy reset fails with location off, and the APN proxy isn't covered.**
+   - **Location off.** `getConfiguredNetworks` needs location on and fine location granted (the Wi-Fi gotcha in
+     `launcher/CLAUDE.md`).
+     - A location policy "off" switches location off and never grants the permission (`LocateCommands`).
+     - "Lock location" can be off too.
+     - Either way the reset throws and the proxy stays.
+   - **The APN proxy** (SIM -> Access point names -> Proxy) is the same surface for mobile data. A device owner can only
+     replace the APNs wholesale (`addOverrideApn`).
+   - **Why it matters:** a proxy resolves names itself, so a browser behind one bypasses the DNS filter.
+   - **Fix:**
+     - Around the reset, switch location on and grant fine location as `WifiNetworksActivity` does, then restore both.
+       No fix is taken, so no indicator shows.
+     - `proxy_left` reads `getLinkProperties(n).httpProxy` on every network, Wi-Fi and cellular.
+     - The APN proxy is report-only, or `DISALLOW_CONFIG_MOBILE_NETWORKS` joins Q1's list.
+4. **Medium - the permit lists and the two new restrictions also hit calls-only phones.**
+   - "While managed" means `hardeningManaged`: an allowlist **or** managed calls.
+   - Scenario: on a phone whose apps the parent left unmanaged, Settings is open all the time. Yet no keyboard or
+     accessibility app from Play could be enabled, and hotspot is blocked with no switch.
+   - **Fix:**
+     - The two lists, `CONFIG_TETHERING` and `CONFIG_CREDENTIALS` apply only while `allowlist != null`.
+     - Otherwise the lists are `null` (all allowed), also when unmanaged.
+5. **Medium - the parent PIN depends on a keyboard the kid can take away.**
+   - All five entries type into an `EditText` with `numberPassword` (`dialog_offline_override_pin`,
+     `dialog_pin_parent_code`).
+   - Scenario:
+     1. In a window the kid disables the only system keyboard (App info -> Disable). Whether Settings allows that for
+        the current IME is [device].
+     2. After the relock no keyboard exists, and §1.5's fallback ("keep the current default") keeps nothing.
+     3. The parent can't type the PIN on the phone, so can't reach Android Settings to undo it.
+     4. `enableSystemApp` only re-installs a package for the user. It doesn't clear the user's disable [AOSP 14, check
+        15/16]. No other device-owner call re-enables the keyboard.
+   - This exists today too. 24b's IME rule is the place to close it.
+   - An allowlisted third-party keyboard also sees every parent PIN.
+   - **Fix:**
+     - The four parent-PIN dialogs and "Parent code" get our own digit keypad. `PinKeypadLayout` fits: the parent PIN is
+       6-10 digits.
+     - The IME rule is then just enabled ∩ (system ∪ allowlist), and the fallback goes (S5).
+     - Report the system apps disabled in the window (`apps_disabled`): keyboards, the dialer, the clock, cell
+       broadcast, and anything with a launcher icon. None of it can be undone.
+6. **Medium - the vault migration resets both lockouts.**
+   - Design 24's `pin_fp` and `PinLockStore`'s `HASH_FP` hold SHA-256(salt:hash). After S2 the fingerprints come from
+     the tag, so the first check after the update sees a "new PIN".
+   - `forParentPin` then resets failures, level, lockout and decay, and `backoffForHash` resets the kid's backoff. A
+     kid holding the parent PIN at a 24 h lockout gets 35 fresh tries at the update.
+   - **Fix:** in the migration, while the plain hash is still there, rewrite each stored fingerprint that equals the old
+     one to the new one, before the plain fields go. Test it.
+7. **Medium - a vault key failure locks the kid out too (Q3).**
+   - The kid PIN answers `Unusable` and the parent PIN `Unavailable`. `lockActivation` keeps the lock active
+     (`BAD_HASH`), so nobody can open it until a sync.
+   - With the Pi down, the phone is calls-only for as long as it's down. The only offline way out is a recovery wipe.
+   - The kid PIN's hash protects little at rest. These phones have no Android credential, so CE is decrypted at every
+     boot, and whoever extracts it already holds the phone.
+   - **Fix:** keep the kid PIN out of the vault, as today. A key failure then only makes the parent PIN unavailable
+     offline, like "no PIN set". Or drop the vault (S4).
+
+### Low
+
+8. **Low - `queue_command` (`locate.rs`) deletes every undelivered command before it inserts.**
+   - "Lock again" deletes an undelivered `wipe`, `lock` or `locate`.
+   - A "Lock" or "Update location now" pressed after it deletes `end_windows`, and the pause stays.
+   - **Fix:** `end_windows` gets its own insert and is never deleted by another command. After dispatching it, the
+     phone requests one more sync, so a second queued command follows within seconds.
+9. **Low - after a credential removal the kid's lock stays off until something re-runs `configure`.**
+   - §1.2 runs `apply()` (step 1) before the reset (step 2), so `configure` still sees `android_credential`.
+   - It then relies on `onPasswordChanged` firing for a token reset [device]. If it doesn't, the phone has a swipe
+     keyguard and no kid lock until the next apply.
+   - **Fix:** remove the credential before step 1, or re-run `PinLockRuntime.configure` after a removal.
+   - Also:
+     - Set the token only while `!isResetPasswordTokenActive`, not on every apply.
+     - Q2's text: a lock the parent sets during a window is removed too.
+     - A kid-set credential plus a reboot leaves the phone before first unlock until the kid unlocks it, because the
+       token is in CE. Accept that and say so.
+10. **Low - the boot witness's first run.**
+    - A missing `last_boot` (the first start of the S3 build) must count nothing. Otherwise every phone reports
+      `BOOT_COUNT - 1` unseen boots and logs `boot_unseen`. Add the case to `BootWitnessTest`.
+    - Write `last_boot` early in `onCreate` (wrapped, right after the call policy), so a crash later in `onCreate`
+      doesn't turn the next boot into a jump.
+    - Both warning variants should say "safe mode, or a start cut short (battery, a system update rolling back)".
+      An OTA rollback and a start that dies before `LOCKED_BOOT_COMPLETED` jump too.
+11. **Low - relock details.**
+    - Keep `pending` when step 1 (`apply`) throws. Otherwise the phone stays open, with no marker, until the next sync.
+    - While `pending` is set, `opened()` keeps `device_secure_at_start`. Scenario:
+      1. During an override the kid sets an Android PIN.
+      2. The parent starts a pause in the same unlocked session.
+      3. `device_secure_at_start` becomes `true`, so the kid's lock is kept.
+    - The report's `window` becomes `windows`, a list: an override and a pause can overlap, and so can install mode
+      and a pause.
+    - Store each step's findings as it completes. Then a re-run after a process death doesn't overwrite "1 certificate
+      removed" with 0.
+    - `HomeFront.bring` should skip whenever the self-update gate sees a live call (the VoIP exemption, `isInCall`,
+      the emergency flow), not only on `OngoingCalls.hasLiveCall`.
+    - The relock cancels the alarm.
+    - In `performMdmSync`, run `check` right after the sync's `apply` and before the status report, so the report
+      carries the relock. There it can skip its own step 1.
+12. **Low - other persistent changes §1.5 doesn't name.** A device owner can reset none of them. Name them in §1.5 as
+    report-only or accepted:
+    - **DND automatic rules,** which can silence calls every night. `interruption_filter` is already reported: warn on
+      the device page when it isn't `all`.
+    - **Notification access for an allowlisted app.** Report the non-system `enabled_notification_listeners`.
+    - **The rest:** user-disabled system apps (#5), screen pinning, overlay and usage access, and call forwarding (the
+      accepted MMI risk).
+13. **Low - PWA and texts.**
+    - **The button:**
+      - Its redirect goes back to `/devices/{id}` without a `#fragment`, so `scroll-restore.js` keeps the place.
+      - Its notice renders inside the Status card (design 24 QA #8), not at the page top.
+      - It is a plain form.
+      - The existing "The pause ends by itself" line names the button.
+    - **Texts:**
+      - "a screen lock the child had set" -> "an Android screen lock the child had set".
+      - §1.5 contradicts itself: the accessibility row reports "non-system services still on", while the last row says
+        `accessibility_enabled` lists system services too.
+14. **Low - vault claims and scans.**
+    - "Every guess needs this phone's Keystore and 0.5 s of PBKDF2" isn't right. The salt is known, so the PBKDF2 can be
+      precomputed off the phone. Only the HMAC needs this phone's Keystore, at milliseconds a call in a TEE. So a rooted
+      phone falls in hours, and a file copy not at all. Say that.
+    - The scan "`PinHash.verify(` only in `PinVault.kt`" isn't enough:
+      - Today `ParentPin.cachedPin`, `OfflineOverride.isConfigured`, `PlayRuntime.canStart`,
+        `KidLockConfig.usable`/`fingerprint` and `PinLockRuntime.configure` read the hash fields.
+      - A redacted `""` gives `BAD_HASH` or "not configured".
+      - Add a scan: `overridePinHash` and `kidLock.pinHash` are read only in `PinVault.kt` and the DTOs.
+
+### Simplification
+
+- **S1. Install mode stays out of `WindowRelock`.**
+  - It opens no Settings surface: the kiosk stays.
+  - Its ends already re-apply and bring Home: the alarm (`PlayRuntime.nextEdge`), "End now", a reboot, a time lock.
+  - Its notification already has "End now".
+  - `end_windows` calls `PlayRuntime.endInstallMode`.
+  - This removes the notification merge and a `window` value.
+- **S2. One alarm.**
+  - `TimeRuleAlarm.schedule` already takes the override and pause ends, but only through `nextBoundary`, which needs a
+    time policy.
+  - Add the window ends unconditionally, at the earlier of the wall end and now plus the elapsed time left.
+    `TimeRuleReceiver` already re-arms on a time change and at boot.
+  - Call `WindowRelock.check` from `TimeRulesRuntime.recheck`.
+  - No second alarm and no new request code.
+- **S3. Drop the global-proxy row and `global_proxy_cleared`.** Only adb or a device owner can set a global proxy.
+- **S4. Drop S2 (the vault), and record L6 as accepted.**
+  - The reasons: no backup, adb is blocked, CE is decrypted at boot on these phones, and the server still sends the
+    hash in every policy (M2).
+  - If the vault stays: the parent hash only (#7), and TEE only. StrongBox adds latency and transient errors for no
+    gain on an HMAC wrapper.
+- **S5. With #5's keypad:** no IME fallback, and no `input_methods_kept`.
+
+### Open questions
+
+1. **Launcher-only: agree.**
+   - The keyboard and accessibility blocks have a reason §8 doesn't state. The parent types the PIN during windows
+     (the Settings gate, a pause, install mode), so a keyboard or service the kid enabled then would see it.
+   - CA: keep the block. No emergency use needs it, and it avoids the screen-lock interplay. A CA installed on purpose
+     before 24b (a school EAP network) goes at the first relock and can't come back, so check the phones before S1a
+     ships.
+   - Hotspot: setting the restriction untethers. So hotspot could stay open in windows and be set at the relock, which
+     is the literal "opens fully". The block is fine too.
+   - Add sideloading (#1).
+   - The parent allows a keyboard or service by allowlisting its app. The app then also shows on Home if it has an
+     icon. A sync ends an override, so do this under a pause.
+2. **Yes**, with #9. Fall back to report-only if the token can't be activated.
+3. **Fail closed for the parent PIN only.** Never put the kid PIN in the vault (#7). S4 is better still.
+4. **Agree.**
+5. **Agree.**
+
+**Needs a user decision:**
+- #1: block sideloading during windows (recommended), or use the snapshot rule.
+- S4 / Q3: drop the vault, or keep it for the parent PIN only.
+- Q1: hotspot blocked during windows, or open and untethered at the relock.
