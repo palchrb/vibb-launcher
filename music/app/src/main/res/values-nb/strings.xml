@@ -47,6 +47,7 @@
     <string name="output_bluetooth_sub">Bluetooth · tilkoblet</string>
     <string name="output_wired">Hodetelefoner</string>
     <string name="output_wired_sub">Kablet · tilkoblet</string>
+    <string name="output_sonos">Sonos</string>
 
     <!-- Liste -->
     <string name="back_player">Tilbake til avspilling</string>

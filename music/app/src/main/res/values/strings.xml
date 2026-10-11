@@ -49,6 +49,7 @@
     <string name="output_bluetooth_sub">Bluetooth · connected</string>
     <string name="output_wired">Headphones</string>
     <string name="output_wired_sub">Wired · connected</string>
+    <string name="output_sonos">Sonos</string>
 
     <!-- List -->
     <string name="back_player">Back to the player</string>

@@ -163,13 +163,17 @@ private fun BarButton(
     }
 }
 
-fun outputIcon(output: Output): ImageVector = if (output.kind == OutputKind.PHONE) Icons.speaker else Icons.headphones
+fun outputIcon(output: Output): ImageVector = when (output.kind) {
+    OutputKind.PHONE, OutputKind.SONOS -> Icons.speaker
+    OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
+}
 
 @Composable
 fun outputName(output: Output): String = when (output.kind) {
     OutputKind.PHONE -> stringResource(R.string.output_phone)
     OutputKind.BLUETOOTH -> output.name ?: stringResource(R.string.output_bluetooth)
     OutputKind.WIRED -> output.name ?: stringResource(R.string.output_wired)
+    OutputKind.SONOS -> output.name ?: stringResource(R.string.output_sonos)
 }
 
 /** "Sov om": 15 / 30 / 45 min / Av. */
@@ -199,7 +203,7 @@ fun SleepSheet(current: Int?, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
 fun OutputSheet(outputs: List<Output>, current: Output, onPick: (Output) -> Unit, onDismiss: () -> Unit) {
     Sheet(stringResource(R.string.output), onDismiss, 8.dp) {
         for (o in outputs) {
-            val on = o.id == current.id
+            val on = o.key == current.key
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(16.dp)).background(if (on) Palette.selected else Palette.sheetRow)
                     .semantics { selected = on }.button(null) { onPick(o) }.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -207,7 +211,11 @@ fun OutputSheet(outputs: List<Output>, current: Output, onPick: (Output) -> Unit
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Box(Modifier.size(34.dp).clip(CircleShape).background(if (on) Palette.peach else Palette.track), contentAlignment = Alignment.Center) {
-                    Glyph(if (o.kind == OutputKind.PHONE) Icons.speakerSmall else Icons.headphones, 18.dp, if (on) Palette.bg else Palette.fg)
+                    val glyph = when (o.kind) {
+                        OutputKind.PHONE, OutputKind.SONOS -> Icons.speakerSmall
+                        OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
+                    }
+                    Glyph(glyph, 18.dp, if (on) Palette.bg else Palette.fg)
                 }
                 Column(Modifier.weight(1f)) {
                     Line(outputName(o), 15, 800, Palette.white)
@@ -217,6 +225,7 @@ fun OutputSheet(outputs: List<Output>, current: Output, onPick: (Output) -> Unit
                                 OutputKind.PHONE -> R.string.output_phone_sub
                                 OutputKind.BLUETOOTH -> R.string.output_bluetooth_sub
                                 OutputKind.WIRED -> R.string.output_wired_sub
+                                OutputKind.SONOS -> R.string.output_sonos
                             },
                         ),
                         12, 700, Palette.sub,

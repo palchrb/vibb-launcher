@@ -86,7 +86,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 )
                 when (vm.sheet) {
                     SheetKind.SLEEP -> SleepSheet(hub.sleepMinutes, { actions.sleep(it); vm.sheet = null }, { vm.sheet = null })
-                    SheetKind.OUTPUT -> OutputSheet(hub.outputs, hub.output, { actions.output(it.id); vm.sheet = null }, { vm.sheet = null })
+                    SheetKind.OUTPUT -> OutputSheet(hub.outputs, hub.output, { actions.output(it.key); vm.sheet = null }, { vm.sheet = null })
                     null -> Unit
                 }
             }

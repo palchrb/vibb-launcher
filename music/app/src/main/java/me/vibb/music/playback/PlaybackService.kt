@@ -145,7 +145,8 @@ class PlaybackService : MediaSessionService() {
     private var faultAt: Long? = null
     private var faultKey: String? = null
     private val faults = ArrayDeque<Long>()
-    private var chosenOutput: Int? = null
+    /** An [Output.key]; null = the system's routing. */
+    private var chosenOutput: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -260,7 +261,7 @@ class PlaybackService : MediaSessionService() {
                 Commands.RESTORE -> scope.launch { restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION)) }
                 Commands.SHUFFLE -> toggleShuffle()
                 Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
-                Commands.OUTPUT -> setOutput(args.getInt(Commands.ARG_OUTPUT, Output.PHONE_ID))
+                Commands.OUTPUT -> setOutput(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
                 else -> return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -572,13 +573,17 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun outputs(): List<Output> = listOf(Output.PHONE) + audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        .mapNotNull { d -> outputKind(d.type)?.let { Output(d.id, it, d.productName?.toString()?.takeIf { n -> n.isNotBlank() }) } }
+        .mapNotNull { d -> outputKind(d.type)?.let { Output(Output.deviceKey(d.id), it, d.productName?.toString()?.takeIf { n -> n.isNotBlank() }) } }
         .distinctBy { it.kind to it.name }
 
-    private fun setOutput(id: Int) {
+    private fun setOutput(key: String) {
         val devices = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        val device = if (id == Output.PHONE_ID) devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER } else devices.firstOrNull { it.id == id }
-        chosenOutput = if (device == null) null else id
+        val device = if (key == Output.PHONE_KEY) {
+            devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+        } else {
+            Output.deviceId(key)?.let { id -> devices.firstOrNull { it.id == id } }
+        }
+        chosenOutput = if (device == null) null else key
         exo.setPreferredAudioDevice(device)
         publish()
     }
@@ -587,7 +592,7 @@ class PlaybackService : MediaSessionService() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
             // Headphones arriving while the phone's speaker is chosen take the sound, as the system
             // would route it (qa-21-step2-code M3): a story never stays loud by an old choice.
-            if (chosenOutput == Output.PHONE_ID && addedDevices.any { outputKind(it.type) != null }) {
+            if (chosenOutput == Output.PHONE_KEY && addedDevices.any { outputKind(it.type) != null }) {
                 chosenOutput = null
                 exo.setPreferredAudioDevice(null)
             }
@@ -596,7 +601,7 @@ class PlaybackService : MediaSessionService() {
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
             // The chosen device went: back to system routing.
-            if (removedDevices.any { it.id == chosenOutput }) {
+            if (removedDevices.any { Output.deviceKey(it.id) == chosenOutput }) {
                 chosenOutput = null
                 exo.setPreferredAudioDevice(null)
             }
@@ -871,7 +876,7 @@ class PlaybackService : MediaSessionService() {
         reportNowPlaying()
         val a = active
         val outputs = outputs()
-        val output = outputs.firstOrNull { it.id == chosenOutput } ?: outputs.firstOrNull { it.kind != OutputKind.PHONE } ?: Output.PHONE
+        val output = outputs.firstOrNull { it.key == chosenOutput } ?: outputs.firstOrNull { it.kind != OutputKind.PHONE } ?: Output.PHONE
         PlayerHub.mutableState.value = PlayerHub.State(
             live = a != null && exo.mediaItemCount > 0,
             entryId = a?.entry?.id,

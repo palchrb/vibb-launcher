@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import me.vibb.music.sonos.Room
 
 /** The app's own session commands (only our own controller may send them). */
 object Commands {
@@ -20,6 +21,7 @@ object Commands {
     const val ARG_ENTRY = "entry"
     const val ARG_KEY = "key"
     const val ARG_MINUTES = "minutes"
+    /** An [Output.key] (a String since design 26a step 2). */
     const val ARG_OUTPUT = "output"
 
     /** [RESTORE]: the stored queue loaded paused, then this (one of the THEN_ values) - so the
@@ -37,20 +39,10 @@ object Commands {
     val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)
 }
 
-enum class OutputKind { PHONE, BLUETOOTH, WIRED }
-
-/** Where audio goes: the phone ([PHONE_ID]) or a connected device (`AudioDeviceInfo.id`). */
-data class Output(val id: Int, val kind: OutputKind, val name: String?) {
-    companion object {
-        const val PHONE_ID = -1
-        val PHONE = Output(PHONE_ID, OutputKind.PHONE, null)
-    }
-}
-
 /**
  * What the player service tells the screens (same process): the live queue, play state, the
- * sleep timer and outputs. While no service holds a queue the screens show the stored now-playing
- * row, paused (21 §4.4).
+ * sleep timer and outputs ([Output], [RendererState]: PlayerModel.kt). While no service holds a
+ * queue the screens show the stored now-playing row, paused (21 §4.4).
  */
 object PlayerHub {
     data class State(
@@ -69,6 +61,12 @@ object PlayerHub {
         val outputs: List<Output> = listOf(Output.PHONE),
         /** The output in use (the chosen one, else where the system routes). */
         val output: Output = Output.PHONE,
+        /** Design 26a step 3 (§3.3, §4.8); null on the phone. */
+        val rendererState: RendererState? = null,
+        /** Design 26a step 3: the Sonos rows of "Spill av på" (`RoomDirectory.state`). */
+        val rooms: List<Room> = emptyList(),
+        val roomsStale: Boolean = false,
+        val scanning: Boolean = false,
     )
 
     /** NOT_DOWNLOADED: not on the phone and no network to stream it; CANT_PLAY: it failed anyway. */

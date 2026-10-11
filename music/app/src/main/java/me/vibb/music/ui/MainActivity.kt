@@ -128,7 +128,7 @@ class MainActivity : ComponentActivity() {
         override fun seekTo(ms: Long) = if (PlayerHub.state.value.live) withController { it.seekTo(ms) } else restoreThen(Commands.THEN_SEEK, ms)
         override fun toggleShuffle() = if (PlayerHub.state.value.live) command(Commands.SHUFFLE) else restoreThen(Commands.THEN_SHUFFLE)
         override fun sleep(minutes: Int) = command(Commands.SLEEP, bundleOf(Commands.ARG_MINUTES to minutes))
-        override fun output(id: Int) = command(Commands.OUTPUT, bundleOf(Commands.ARG_OUTPUT to id))
+        override fun output(key: String) = command(Commands.OUTPUT, bundleOf(Commands.ARG_OUTPUT to key))
         override fun backHome() = finish()
     }
 }
@@ -143,6 +143,7 @@ interface Actions {
     fun seekTo(ms: Long)
     fun toggleShuffle()
     fun sleep(minutes: Int)
-    fun output(id: Int)
+    /** An `Output.key`. */
+    fun output(key: String)
     fun backHome()
 }
