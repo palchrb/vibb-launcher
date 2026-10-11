@@ -104,7 +104,7 @@ class MusicHomeCard(private val activity: Activity, private val view: ViewHomeMu
     private fun playPause() {
         val card = shown ?: return
         val reading = MusicSessions.reading
-        if (card.live) MusicSessions.playPause(reading.controller, reading.session) else openPlayer(resume = true)
+        if (card.live) MusicSessions.playPause(activity, reading.controller, reading.session) else openPlayer(resume = true)
     }
 
     private fun openPlayer(resume: Boolean) {

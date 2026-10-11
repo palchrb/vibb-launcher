@@ -67,8 +67,8 @@ class MusicLockPanel(
         media.lockMediaDate.format12Hour = datePattern
         media.lockMediaDate.format24Hour = datePattern
         media.lockMediaPlay.setOnClickListener { playPause() }
-        media.lockMediaPrevious.setOnClickListener { MusicSessions.previous(MusicSessions.reading.controller) }
-        media.lockMediaNext.setOnClickListener { MusicSessions.next(MusicSessions.reading.controller) }
+        media.lockMediaPrevious.setOnClickListener { MusicSessions.previous(activity, MusicSessions.reading.controller) }
+        media.lockMediaNext.setOnClickListener { MusicSessions.next(activity, MusicSessions.reading.controller) }
         media.lockMediaUnlock.setOnClickListener { toStage(LockStage.KEYPAD) }
         media.lockMediaEmergency.setOnClickListener { onEmergency() }
         back.setOnClickListener { toStage(LockStage.MEDIA) }
@@ -119,7 +119,7 @@ class MusicLockPanel(
         render(lookUp = false)
     }
 
-    private fun playPause() = MusicSessions.playPause(MusicSessions.reading.controller, session)
+    private fun playPause() = MusicSessions.playPause(activity, MusicSessions.reading.controller, session)
 
     private fun render(lookUp: Boolean = true) {
         handler.removeCallbacks(ticker)

@@ -184,9 +184,8 @@ val FREE_SCREENS = setOf(
  * over the lock must not be free) - unless one of [FREE_SCREENS]
  * is in front and not sharing the screen (split screen / picture-in-picture). A call doesn't stop
  * the count by itself - only our own in-call screen in front does (QA step 6 #1: otherwise a call
- * or any app claiming a VoIP audio mode made every app free). The Vibb music player in front never
- * counts either ([musicInFront], design 21 §3: its `setForeground`, the top resumed activity and
- * never in multi-window, cleared at screen-off and when its process dies).
+ * or any app claiming a VoIP audio mode made every app free). Listening to Vibb music never counts
+ * either ([musicListening]).
  */
 fun screenTimeCounts(
     interactive: Boolean,
@@ -195,8 +194,17 @@ fun screenTimeCounts(
     freeScreenSharesScreen: Boolean,
     pinLocked: Boolean = false,
     voipExempt: Boolean = false,
-    musicInFront: Boolean = false,
-): Boolean = interactive && !keyguardLocked && !(pinLocked && !voipExempt) && !(freeScreenInFront && !freeScreenSharesScreen) && !musicInFront
+    musicListening: Boolean = false,
+): Boolean = interactive && !keyguardLocked && !(pinLocked && !voipExempt) && !(freeScreenInFront && !freeScreenSharesScreen) && !musicListening
+
+/**
+ * "Listening never counts" (design 21 §3, the user's decision after qa-21-step4-code L2): the Vibb
+ * music player in front ([inFront]: its `setForeground` - the top resumed activity, never in
+ * multi-window, cleared at screen-off and when its process dies) while it plays ([playing]: the
+ * last `setNowPlaying`). Browsing the library with nothing playing counts, and so does a video in
+ * picture-in-picture over it (the video's sound pauses the story).
+ */
+fun musicListening(inFront: Boolean, playing: Boolean): Boolean = inFront && playing
 
 /**
  * The ledger to use when the stored one can't be read (QA step 6 #6): today counts as used up

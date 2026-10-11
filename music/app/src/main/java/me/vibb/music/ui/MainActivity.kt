@@ -14,6 +14,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import me.vibb.music.bridge.LiveBridge
+import me.vibb.music.logic.resumeRequested
 import me.vibb.music.playback.Commands
 import me.vibb.music.playback.PlaybackService
 import me.vibb.music.playback.PlayerHub
@@ -39,23 +40,30 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) open(intent)
+        open(intent, restored = savedInstanceState != null)
         setContent { MusicRoot(vm, actions) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        open(intent)
+        open(intent, restored = false)
     }
 
-    private fun open(intent: Intent?) {
-        when (intent?.getStringExtra(EXTRA_OPEN)) {
-            OPEN_NEWS -> vm.screen = Screen.NEWS
-            OPEN_PLAYER -> vm.screen = Screen.PLAYER
+    /** A new intent ([restored]: a recreated instance - its screen is already restored). */
+    private fun open(intent: Intent?, restored: Boolean) {
+        intent ?: return
+        if (!restored) {
+            when (intent.getStringExtra(EXTRA_OPEN)) {
+                OPEN_NEWS -> vm.screen = Screen.NEWS
+                OPEN_PLAYER -> vm.screen = Screen.PLAYER
+            }
         }
-        // The last item where it stopped (the stored queue after a restart), or play on - never a
-        // second start of what already plays.
-        if (intent?.getBooleanExtra(EXTRA_RESUME, false) == true) command(Commands.RESUME)
+        // Home's snapshot card: the last item where it stopped, or play on - once, as delivered;
+        // never from Recents or a restored instance (resumeRequested).
+        if (resumeRequested(intent.getBooleanExtra(EXTRA_RESUME, false), intent.flags, restored)) {
+            intent.removeExtra(EXTRA_RESUME)
+            command(Commands.RESUME)
+        }
     }
 
     override fun onStart() {

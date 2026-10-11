@@ -224,6 +224,7 @@ object MusicNowPlaying {
     fun store(context: Context, nowPlaying: Bundle?) {
         val prefs = MusicStore.prefs(context)
         val playing = nowPlaying?.getBoolean(PLAYING) == true
+        val wasPlaying = playing(context)
         val now = System.currentTimeMillis()
         prefs.edit().apply {
             if (nowPlaying == null) {
@@ -240,16 +241,33 @@ object MusicNowPlaying {
         }.apply()
         val art = nowPlaying?.getByteArray(ART)?.takeIf { it.size <= MAX_ART_BYTES }
         val artFile = MusicStore.nowPlayingArt(context)
-        if (art != null) runCatching { MusicStore.writeAtomic(artFile, art) } else artFile.delete()
+        // The 15 s position reports carry the same art: written only when it changed.
+        if (art == null) {
+            artFile.delete()
+        } else if (!(artFile.isFile && artFile.length() == art.size.toLong() && runCatching { artFile.readBytes() }.getOrNull()?.contentEquals(art) == true)) {
+            runCatching { MusicStore.writeAtomic(artFile, art) }
+        }
         if (!playing) releaseWaitingInstall(context)
+        if (playing != wasPlaying) listeningChanged(context)
         changed()
     }
 
     /** The music app's process died (its token): nothing plays any more; the snapshot stays (shown paused). */
     fun playerGone(context: Context) {
+        val wasPlaying = playing(context)
         MusicStore.prefs(context).edit().remove("playing_at").apply()
         releaseWaitingInstall(context)
+        if (wasPlaying) listeningChanged(context)
         changed()
+    }
+
+    /** The last `setNowPlaying` said "playing" (and the player's process lives): with the player in
+     * front, that is listening - never screen time (`musicListening`). */
+    fun playing(context: Context): Boolean = MusicStore.playingReportedAt(context) != null
+
+    private fun listeningChanged(context: Context) {
+        val app = context.applicationContext
+        main.post { com.kidslauncher.mdm.timerules.ScreenTimeTracker.update(app) }
     }
 
     private fun releaseWaitingInstall(context: Context) {
@@ -268,8 +286,8 @@ object MusicNowPlaying {
 
 /**
  * Whether the player is in front (21 §3 time rules): the music app sends it from
- * `onTopResumedActivityChanged`, false in multi-window (QA #5). Its time is never screen time
- * (`screenTimeCounts(musicInFront)`). Cleared at every screen-off ([screenOff]) and when the token
+ * `onTopResumedActivityChanged`, false in multi-window (QA #5). In front while it plays is listening,
+ * never screen time (`musicListening`, the user's decision after qa-21-step4-code L2). Cleared at every screen-off ([screenOff]) and when the token
  * dies with the music app's process (which also tells [onGone]); each change re-runs the screen-time
  * tracker.
  */

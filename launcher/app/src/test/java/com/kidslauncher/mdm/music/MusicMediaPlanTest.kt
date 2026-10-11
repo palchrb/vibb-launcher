@@ -114,3 +114,45 @@ class MusicMediaPlanTest {
         assertEquals(DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT, notificationGrantState(managed = false))
     }
 }
+
+/**
+ * A suspended music app is never played from a launcher surface (qa-21-step4-code M1; the music app
+ * refuses it too, `GuardsTest`): the controls look the app up at the tap, the surfaces re-render on
+ * suspension events, and `apply()` pauses before it suspends.
+ */
+class MusicSuspensionGuardTest {
+    private fun file(path: String) = listOf("src/main/java/com/kidslauncher/mdm/$path", "app/src/main/java/com/kidslauncher/mdm/$path")
+        .map { java.io.File(it) }.first { it.exists() }.readText()
+
+    private fun body(source: String, start: String): String = source.substringAfter(start).substringBefore("\n    }\n")
+
+    @Test
+    fun `play, next and previous look the app up at the tap, a pause always goes`() {
+        val sessions = file("music/MusicSessions.kt")
+        val playPause = body(sessions, "fun playPause(")
+        assertTrue(playPause.contains("session?.playing == true -> controls.pause()"))
+        assertTrue(playPause.contains("usable(context, c.packageName) -> controls.play()"))
+        for (name in listOf("next", "previous")) {
+            assertTrue(name, body(sessions, "fun $name(").contains("if (usable(context, c.packageName))"))
+        }
+    }
+
+    @Test
+    fun `a suspension or its end re-renders the surfaces`() {
+        val app = file("Application.kt")
+        for (callback in listOf("onPackagesSuspended", "onPackagesUnsuspended")) {
+            val code = app.substringAfter("override fun $callback(").substringBefore("loadApps()")
+            val changed = code.indexOf("MusicSessions.packagesChanged(packageNames?.toList())")
+            assertTrue(callback, changed in 0 until code.indexOf("CameraLock.ownChange"))
+        }
+    }
+
+    @Test
+    fun `apply pauses a playing music app before it suspends it`() {
+        val enforcer = file("server/AppEnforcer.kt")
+        val block = enforcer.substringAfter("if (shouldBeSuspended != currentlySuspended) {").substringBefore("if (shouldBeHidden != currentlyHidden)")
+        val pause = block.indexOf("MusicSessions.pauseBeforeSuspend(context, packageName)")
+        val suspend = block.indexOf("dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)")
+        assertTrue("pause at $pause, suspend at $suspend", pause in 0 until suspend)
+    }
+}

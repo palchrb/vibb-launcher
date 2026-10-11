@@ -137,18 +137,38 @@ object MusicSessions {
             .firstNotNullOfOrNull { runCatching { meta.getBitmap(it) }.getOrNull() }
     }
 
-    /** Play or pause the live session (its transport controls - nothing is opened). */
-    fun playPause(controller: MediaController?, session: MusicSession?) {
-        val controls = controller?.transportControls ?: return
-        runCatching { if (session?.playing == true) controls.pause() else controls.play() }
+    /**
+     * Play or pause the live session (its transport controls - nothing is opened). A pause always
+     * goes; play, next and previous only while the music app can be used, looked up at the tap
+     * (qa-21-step4-code M1: a time rule may have suspended it since the surface was drawn).
+     */
+    fun playPause(context: Context, controller: MediaController?, session: MusicSession?) {
+        val c = controller ?: return
+        val controls = c.transportControls
+        runCatching {
+            when {
+                session?.playing == true -> controls.pause()
+                usable(context, c.packageName) -> controls.play()
+            }
+        }
     }
 
-    fun next(controller: MediaController?) {
-        runCatching { controller?.transportControls?.skipToNext() }
+    fun next(context: Context, controller: MediaController?) {
+        val c = controller ?: return
+        if (usable(context, c.packageName)) runCatching { c.transportControls.skipToNext() }
     }
 
-    fun previous(controller: MediaController?) {
-        runCatching { controller?.transportControls?.skipToPrevious() }
+    fun previous(context: Context, controller: MediaController?) {
+        val c = controller ?: return
+        if (usable(context, c.packageName)) runCatching { c.transportControls.skipToPrevious() }
+    }
+
+    /**
+     * The launcher saw packages suspended or unsuspended (`LauncherApps.Callback`, main thread): a
+     * music app among them re-renders the shown surfaces, which look its state up again.
+     */
+    fun packagesChanged(packages: List<String>?) {
+        if (packages.orEmpty().any { it in MUSIC_PACKAGES } && listeners.isNotEmpty()) changed()
     }
 
     /**

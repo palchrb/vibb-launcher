@@ -202,11 +202,15 @@ class ScreenTimeTest {
     }
 
     @Test
-    fun `the Vibb music player in front never counts (design 21 step 4)`() {
-        assertFalse("the player in front", screenTimeCounts(true, false, false, false, musicInFront = true))
-        assertTrue("another app, Home or the player in the background", screenTimeCounts(true, false, false, false, musicInFront = false))
-        assertFalse("screen off", screenTimeCounts(false, false, false, false, musicInFront = false))
-        assertFalse("locked", screenTimeCounts(true, false, false, false, pinLocked = true, musicInFront = true))
+    fun `listening to Vibb music never counts, browsing it does (design 21, qa-21-step4-code L2)`() {
+        assertTrue("the player in front, playing", musicListening(inFront = true, playing = true))
+        assertFalse("browsing the library with nothing playing", musicListening(inFront = true, playing = false))
+        assertFalse("music in the background, another app in front", musicListening(inFront = false, playing = true))
+        assertFalse(screenTimeCounts(true, false, false, false, musicListening = true))
+        assertTrue(screenTimeCounts(true, false, false, false, musicListening = musicListening(inFront = true, playing = false)))
+        assertTrue(screenTimeCounts(true, false, false, false, musicListening = musicListening(inFront = false, playing = true)))
+        assertFalse("screen off", screenTimeCounts(false, false, false, false, musicListening = false))
+        assertFalse("locked", screenTimeCounts(true, false, false, false, pinLocked = true, musicListening = true))
     }
 
     @Test

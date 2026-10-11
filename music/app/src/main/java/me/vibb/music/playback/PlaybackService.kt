@@ -67,6 +67,7 @@ import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.nextAction
 import me.vibb.music.logic.overlapStart
 import me.vibb.music.logic.pickPlan
+import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.playability
 import me.vibb.music.logic.playedFromTray
 import me.vibb.music.logic.previousAction
@@ -201,8 +202,16 @@ class PlaybackService : MediaSessionService() {
         .setContentType(if (speech) C.AUDIO_CONTENT_TYPE_SPEECH else C.AUDIO_CONTENT_TYPE_MUSIC)
         .build()
 
+    /** This app is suspended now (a time rule, design 21 step 4): nothing may start playing. */
+    private fun suspendedNow(): Boolean = try {
+        packageManager.isPackageSuspended
+    } catch (e: Exception) {
+        false
+    }
+
     /** Previous/next follow vibb (wrapping, the long-form rule) for every controller - the app, the
-     * notification, headset and Bluetooth buttons. */
+     * notification, headset and Bluetooth buttons. Play is refused while the app is suspended
+     * (qa-21-step4-code M1: the launcher's lock view, a headset's play button). */
     private inner class KidPlayer(player: Player) : ForwardingPlayer(player) {
         private val extra = listOf(
             Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
@@ -220,6 +229,12 @@ class PlaybackService : MediaSessionService() {
         override fun seekToNextMediaItem() = skipNext()
         override fun seekToPrevious() = skipPrevious()
         override fun seekToPreviousMediaItem() = skipPrevious()
+        override fun play() {
+            if (playAllowed(suspendedNow())) super.play()
+        }
+        override fun setPlayWhenReady(playWhenReady: Boolean) {
+            if (!playWhenReady || playAllowed(suspendedNow())) super.setPlayWhenReady(playWhenReady)
+        }
     }
 
     private val callback = object : MediaSession.Callback {
@@ -235,6 +250,9 @@ class PlaybackService : MediaSessionService() {
             customCommand: SessionCommand,
             args: Bundle,
         ): ListenableFuture<SessionResult> {
+            if (customCommand.customAction in Commands.PLAYS && !playAllowed(suspendedNow())) {
+                return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+            }
             when (customCommand.customAction) {
                 Commands.PLAY_ENTRY -> scope.launch { playEntry(args.getLong(Commands.ARG_ENTRY)) }
                 Commands.PLAY_ITEM -> scope.launch { playItem(args.getLong(Commands.ARG_ENTRY), args.getString(Commands.ARG_KEY).orEmpty()) }
@@ -253,6 +271,7 @@ class PlaybackService : MediaSessionService() {
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            if (!playAllowed(suspendedNow())) return Futures.immediateFailedFuture(UnsupportedOperationException("suspended"))
             val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
             scope.launch {
                 val restored = restore()
@@ -590,6 +609,9 @@ class PlaybackService : MediaSessionService() {
     private val saveTick = object : Runnable {
         override fun run() {
             savePosition()
+            // The launcher's snapshot keeps the place too, so Home is right after a crash or a
+            // dead battery (qa-21-step4-code L4).
+            reportNowPlaying(refresh = true)
             handler.postDelayed(this, 15_000)
         }
     }
@@ -817,14 +839,15 @@ class PlaybackService : MediaSessionService() {
 
     /**
      * What plays, to the launcher (21 §4.6 `setNowPlaying`: Home and the lock, never the server):
-     * on play/pause and item change, null at a queue's end. Art at most 64 KB.
+     * on play/pause and item change, null at a queue's end; with [refresh] (the 15 s position save
+     * while playing) the position again. Art at most 64 KB.
      */
-    private fun reportNowPlaying(forcePaused: Boolean = false) {
+    private fun reportNowPlaying(forcePaused: Boolean = false, refresh: Boolean = false) {
         val a = active
         val item = a?.items?.getOrNull(exo.currentMediaItemIndex)
         val playing = !forcePaused && exo.playWhenReady && exo.playbackState != Player.STATE_ENDED
         val key = Triple(a?.entry?.id, item?.key, playing)
-        if (key == sentNowPlaying) return
+        if (key == sentNowPlaying && !refresh) return
         sentNowPlaying = key
         if (a == null || item == null) {
             LiveBridge.setNowPlaying(null)

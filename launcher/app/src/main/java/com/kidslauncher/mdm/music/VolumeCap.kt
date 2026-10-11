@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -34,8 +35,9 @@ private const val ROUTE_SETTLE_MS = 1_500L
 /**
  * The parent's volume cap (design 21 §3, user decision: off by default, Off/90/80/70/60 % per
  * phone, every app and every output): while managed and without the offline override or the
- * pause, `STREAM_MUSIC` above [volumeCapIndex] is set back at once, on every volume change and
- * whenever an output comes or goes. Never `DISALLOW_ADJUST_VOLUME` (it master-mutes the phone).
+ * pause, `STREAM_MUSIC` above [volumeCapIndex] is set back at once, on every volume change,
+ * whenever an output comes or goes, and whenever a player starts or moves to another output.
+ * Never `DISALLOW_ADJUST_VOLUME` (it master-mutes the phone).
  * The cap in force comes from `AppEnforcer.apply()` ([refresh]) - every sync, override and pause
  * edge - and from the cached policy at process start.
  */
@@ -55,10 +57,20 @@ object VolumeCap {
             IntentFilter(VOLUME_CHANGED_ACTION),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
-        app.getSystemService(AudioManager::class.java)?.registerAudioDeviceCallback(
+        val am = app.getSystemService(AudioManager::class.java)
+        am?.registerAudioDeviceCallback(
             object : AudioDeviceCallback() {
                 override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) = routeChanged(app)
                 override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) = routeChanged(app)
+            },
+            main,
+        )
+        // A player starting, or moving to another output that was already connected - the music
+        // app's own "Spill av på" picker routes explicitly, with no device coming or going and no
+        // volume change (qa-21-step4-code L1): each output keeps its own index.
+        am?.registerAudioPlaybackCallback(
+            object : AudioManager.AudioPlaybackCallback() {
+                override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) = routeChanged(app)
             },
             main,
         )
@@ -79,9 +91,14 @@ object VolumeCap {
         main.post { clamp(app) }
     }
 
+    private var settle: Runnable? = null
+
+    /** An output came, went or took a player: the cap now, and once more when it has settled (main thread). */
     private fun routeChanged(app: Context) {
         clamp(app)
-        main.postDelayed({ clamp(app) }, ROUTE_SETTLE_MS)
+        val again = settle ?: Runnable { clamp(app) }.also { settle = it }
+        main.removeCallbacks(again)
+        main.postDelayed(again, ROUTE_SETTLE_MS)
     }
 
     /** `STREAM_MUSIC` back to the cap when above it (main thread). */
