@@ -56,3 +56,7 @@ shared files in `src/test/resources/` must equal `server/testdata/music_{library
   signed like this app; honour `BRIDGE_CHANGED` only from a launcher. `mobile_data` is read live from the managed
   config. The AIDL is byte-identical with `launcher/` - append, never reorder; shared names are in
   `bridge_contract.json`.
+- The launcher's media surfaces (design 21 step 4) read the platform session and `setNowPlaying`; its Home card
+  opens `MainActivity` with `EXTRA_OPEN` = player and, on its snapshot, `EXTRA_RESUME` (the RESUME command: the
+  stored queue where it stopped, or play on). The player's time never counts as screen time, so the app never keeps
+  the screen on (`SourceScanTest`).
