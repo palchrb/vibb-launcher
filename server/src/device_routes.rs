@@ -6,8 +6,8 @@
 //! Enrollment is unauthenticated (the enrollment code itself is the one-shot credential); every
 //! other route requires the bearer token issued at enrollment (`security::require_device_token`,
 //! with the per-device limits of `limits`). Every route sits behind `limits::device_edge` (the
-//! in-flight guard, the timeout, the response headers) and a 512 KiB body limit (4 KiB on
-//! enroll).
+//! in-flight guard for requests without a valid token, the timeout, the response headers) and a
+//! 512 KiB body limit (enroll reads at most 4 KiB itself).
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -24,7 +24,8 @@ pub const ENROLL_BODY_LIMIT: usize = 4 * 1024;
 pub fn device_routes(state: AppState) -> Router<AppState> {
     let public_routes = Router::new().route(
         "/api/devices/enroll",
-        post(handlers::device_api::enroll).layer(DefaultBodyLimit::max(ENROLL_BODY_LIMIT)),
+        // The handler reads its own body: at most ENROLL_BODY_LIMIT, within 5 s, inside its cap.
+        post(handlers::device_api::enroll),
     );
 
     let authed_routes = Router::new()

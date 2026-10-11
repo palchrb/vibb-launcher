@@ -351,3 +351,88 @@ async fn the_device_page_shows_the_last_access() {
         "{text}"
     );
 }
+
+/// A request body that sends one byte and then nothing, forever.
+fn stalled_body() -> Body {
+    let stream = futures_stalled();
+    Body::from_stream(stream)
+}
+
+fn futures_stalled()
+-> impl tokio_stream::Stream<Item = Result<axum::body::Bytes, std::io::Error>> + Send + 'static {
+    use tokio_stream::StreamExt;
+    tokio_stream::once(Ok(axum::body::Bytes::from_static(b"{"))).chain(tokio_stream::pending())
+}
+
+/// QA 22 M2: slow enroll bodies from the internet hold only the guard for requests without a
+/// valid token; a phone's own requests never wait behind them.
+#[tokio::test]
+async fn stalled_enroll_bodies_never_keep_a_phone_out() {
+    let app = TestApp::new().await;
+    let (_, token) = app.enrolled_device("phone").await;
+    let router = app.device_router();
+    let mut stalled = Vec::new();
+    for n in 0..600u32 {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/devices/enroll")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(stalled_body())
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(peer(&format!(
+                "203.0.{}.{}",
+                n / 250,
+                n % 250 + 1
+            ))));
+        let router = router.clone();
+        stalled.push(tokio::spawn(async move {
+            tower::ServiceExt::oneshot(router, request).await
+        }));
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The phone gets its policy at once ...
+    let res = tokio::time::timeout(
+        Duration::from_secs(2),
+        app.send_via(
+            &router,
+            peer("198.51.100.7"),
+            device_request(Method::GET, "/api/devices/policy", Some(&token), ""),
+        ),
+    )
+    .await
+    .expect("the phone waited");
+    assert_eq!(res.status, StatusCode::OK);
+    // ... while another request without a valid token is turned away.
+    let res = app
+        .send_via(
+            &router,
+            peer("198.51.100.8"),
+            device_request(Method::GET, "/api/devices/policy", Some("guess"), ""),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    for task in stalled {
+        task.abort();
+    }
+}
+
+/// An enrollment whose body doesn't arrive gets 408 after `enrollment::BODY_TIMEOUT`, freeing its
+/// slot.
+#[tokio::test]
+async fn a_stalled_enroll_body_times_out() {
+    let app = TestApp::new().await;
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/devices/enroll")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(stalled_body())
+        .unwrap();
+    let started = std::time::Instant::now();
+    let res = app
+        .send_via(&app.device_router(), peer("203.0.113.9"), request)
+        .await;
+    assert_eq!(res.status, StatusCode::REQUEST_TIMEOUT);
+    assert!(started.elapsed() < Duration::from_secs(10));
+}

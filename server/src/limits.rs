@@ -11,7 +11,8 @@
 //!   out.
 //!
 //! There is no global bucket before auth (one internet host could otherwise starve every phone);
-//! [GLOBAL_IN_FLIGHT] is a memory guard only. Every map is capped at [MAX_KEYS] keys, the
+//! [UNAUTHENTICATED_IN_FLIGHT] is a memory guard for requests without a valid token only - a phone
+//! with one never waits behind it (QA 22 M2). Every map is capped at [MAX_KEYS] keys, the
 //! oldest dropped first. Nothing here touches the database.
 
 use std::collections::{HashMap, VecDeque};
@@ -29,7 +30,9 @@ pub const LONG_IN_FLIGHT: u32 = 4;
 pub const IP_FAILURES: u32 = 30;
 pub const IP_WINDOW: Duration = Duration::from_secs(10 * 60);
 pub const IP_BLOCK: Duration = Duration::from_secs(10 * 60);
-pub const GLOBAL_IN_FLIGHT: usize = 512;
+/// Requests without a valid token (enroll, bad or missing tokens) in flight at once, both listeners
+/// together: a memory guard. A valid token never counts here (QA 22 M2).
+pub const UNAUTHENTICATED_IN_FLIGHT: usize = 64;
 pub const MAX_KEYS: usize = 10_000;
 /// Device request bodies (status reports, DNS events, crash reports are far smaller).
 pub const DEVICE_BODY_LIMIT: usize = 512 * 1024;
@@ -102,15 +105,28 @@ pub enum Via {
     Public,
 }
 
-#[derive(Default)]
 pub struct Limits {
     buckets: Mutex<HashMap<i64, Bucket>>,
     in_flight: Mutex<HashMap<i64, InFlight>>,
     ip_failures: Mutex<HashMap<String, IpFailures>>,
     last_access: Mutex<HashMap<i64, (LastAccess, VecDeque<String>)>>,
-    /// The global in-flight guard; `None` until first use (a `Semaphore` has no `Default`).
-    global: std::sync::OnceLock<Arc<tokio::sync::Semaphore>>,
+    /// In flight at once for requests without a valid token (enroll, bad tokens) - a memory
+    /// guard that a phone with a valid token never waits behind (QA 22 M2).
+    unauthenticated: Arc<tokio::sync::Semaphore>,
     exposure: ExposureWatch,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            buckets: Default::default(),
+            in_flight: Default::default(),
+            ip_failures: Default::default(),
+            last_access: Default::default(),
+            unauthenticated: Arc::new(tokio::sync::Semaphore::new(UNAUTHENTICATED_IN_FLIGHT)),
+            exposure: Default::default(),
+        }
+    }
 }
 
 impl Limits {
@@ -229,12 +245,9 @@ impl Limits {
         false
     }
 
-    /// The memory guard over every device request (both listeners).
-    pub fn global(&self) -> Arc<tokio::sync::Semaphore> {
-        Arc::clone(
-            self.global
-                .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(GLOBAL_IN_FLIGHT))),
-        )
+    /// The guard over device requests without a valid token (both listeners).
+    pub fn unauthenticated(&self) -> Arc<tokio::sync::Semaphore> {
+        Arc::clone(&self.unauthenticated)
     }
 
     /// Notes a phone's authenticated request from `client` (`peer` is the TCP peer).
@@ -392,7 +405,9 @@ pub fn device_cache_control(existing: Option<&str>, has_etag: bool) -> String {
 }
 
 /// The outer layer of every device route (both listeners, enroll included):
-/// - [GLOBAL_IN_FLIGHT] requests at once, a memory guard only (503 past it);
+/// - a request without a valid token (looked up in memory: one SHA-256) takes one of
+///   [UNAUTHENTICATED_IN_FLIGHT] slots (503 past it); a valid token takes none, so slow junk from
+///   the internet can't keep phones out (QA 22 M2) - the per-token limits bound them instead;
 /// - [REQUEST_TIMEOUT] for everything but the SSE stream and file downloads;
 /// - the response headers: `Cache-Control` (`no-store` unless the route set one; an `ETag` route
 ///   gets `private, no-cache`; `private` is added to any other), `X-Content-Type-Options: nosniff`
@@ -406,12 +421,25 @@ pub async fn device_edge(
     use axum::http::{HeaderValue, StatusCode, header};
     use axum::response::IntoResponse;
 
-    let Ok(permit) = state.limits.global().try_acquire_owned() else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            [(header::RETRY_AFTER, "5")],
-        )
-            .into_response();
+    let valid_token = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .is_some_and(|token| state.tokens.lookup(token).is_some());
+    let permit = if valid_token {
+        None
+    } else {
+        match state.limits.unauthenticated().try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [(header::RETRY_AFTER, "5")],
+                )
+                    .into_response();
+            }
+        }
     };
     let class = route_class(request.uri().path());
     let mut response = if class == RouteClass::Long {

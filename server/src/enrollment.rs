@@ -15,7 +15,7 @@
 //! [TYPED_PAUSE_FAILURES] of them server-wide pause typed codes for the rest of that hour
 //! ([Enrollment]).
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
@@ -32,8 +32,10 @@ pub const QR_MINUTES: i64 = 30;
 /// Typed-shaped failures in one hour, server-wide, while a typed code is live, that pause typed
 /// codes until the hour ends.
 pub const TYPED_PAUSE_FAILURES: u32 = 20;
-/// Enrollment checks at once.
+/// Enrollments at once - reading the body included (QA 22 M2).
 pub const IN_FLIGHT: usize = 8;
+/// How long an enrollment's body may take to arrive, once it has a slot.
+pub const BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -136,10 +138,18 @@ pub async fn new_code(
 
 /// The server-wide typed-code state, in memory: until when a typed code is live (read from the
 /// database whenever codes change), and this hour's typed-shaped failures.
-#[derive(Default)]
 pub struct Enrollment {
     inner: Mutex<Inner>,
-    gate: OnceLock<Arc<tokio::sync::Semaphore>>,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+
+impl Default for Enrollment {
+    fn default() -> Self {
+        Enrollment {
+            inner: Default::default(),
+            gate: Arc::new(tokio::sync::Semaphore::new(IN_FLIGHT)),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -158,10 +168,7 @@ fn hour_of(now: DateTime<Utc>) -> i64 {
 impl Enrollment {
     /// At most [IN_FLIGHT] code checks at once.
     pub fn gate(&self) -> Arc<tokio::sync::Semaphore> {
-        Arc::clone(
-            self.gate
-                .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(IN_FLIGHT))),
-        )
+        Arc::clone(&self.gate)
     }
 
     /// Reads until when a typed code is live. A read error keeps the old value.

@@ -576,10 +576,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`SELECT 1`, "ok") skips every guard. Refused: empty 403 + `admin_refused` through `AppState.audit`
   (`src/audit.rs`: one row per kind and client key per minute, counts flushed into the detail every 30 s by
   `audit::run_flusher`).
-- **Device edge** (S2, on both listeners, in `device_routes()`): `limits::device_edge` (512 in flight, a memory guard
-  only - 503; 30 s timeout except the SSE stream and file downloads; `Cache-Control` `no-store` unless the route set
+- **Device edge** (S2, on both listeners, in `device_routes()`): `limits::device_edge` (a request without a valid token -
+  looked up in memory - takes one of 64 slots, 503 past it; a valid token takes none, QA 22 M2; 30 s timeout except the SSE stream and file downloads; `Cache-Control` `no-store` unless the route set
   one, `private, no-cache` for an `ETag` route, `private` added to anything else; `nosniff`; CSP `default-src 'none';
-  sandbox`), a 512 KiB body limit (4 KiB on enroll). `security::require_device_token`: the token is looked up in
+  sandbox`), a 512 KiB body limit (enroll reads its own body: at most 4 KiB, within 5 s, inside its cap of 8). `security::require_device_token`: the token is looked up in
   `AppState.tokens` (`TokenIndex`, `token_hash -> id`, rebuilt at start and by `refresh` after enroll and delete -
   never a DB query per request); `AuthedDevice` now carries only `DeviceRef { id }`. A bad or missing token counts
   against the client's failure bucket (`limits`, key `net::limit_key`: 30 per 10 min, then 429 for 10 min) and a
@@ -599,7 +599,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   typed-shaped -> 429 while paused or the client's failure bucket is full, 401 uncounted with no typed code live, a
   miss counts toward the bucket and `Enrollment::typed_failed` (20 an hour server-wide while a typed code is live
   pause typed codes until the hour ends: `enroll_typed_paused`, the device page offers the QR); QR-shaped always
-  checked. At most 8 checks at once (`Enrollment::gate`, after the body is read). Use = one `UPDATE ... WHERE
+  checked. At most 8 enrollments at once (`Enrollment::gate`, taken before the body is read; the body then has 5 s). Use = one `UPDATE ... WHERE
   enrollment_code_hash = ? AND not expired RETURNING`; then the token index, streams, `device_enrolled` (with IP).
   Failures: throttled `enroll_failed`. Device page "Access" card (`#access`): last access, the live code's kind and
   expiry, New code (re-enroll: disconnects the enrolled phone), Provision, Revoke access (`POST

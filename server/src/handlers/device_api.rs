@@ -28,14 +28,34 @@ use crate::time_rules::{LocationPolicy, TimePolicy};
 ///   401 at once, uncounted, when no typed code is live; a miss counts toward both.
 /// - QR-shaped: always checked (130 bits - guessing is hopeless), never paused.
 ///
-/// At most `enrollment::IN_FLIGHT` checks run at once (the body was already read); a failure is a
-/// throttled `enroll_failed` event, a success a `device_enrolled` event with the client's IP.
+/// At most `enrollment::IN_FLIGHT` enrollments run at once, reading the body included (within
+/// `enrollment::BODY_TIMEOUT`); a failure is a throttled `enroll_failed` event, a success a
+/// `device_enrolled` event with the client's IP.
 pub async fn enroll(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
-    Json(req): Json<EnrollRequest>,
+    body: axum::body::Body,
 ) -> axum::response::Response {
+    // One of 8 slots first, then the body within 5 s (QA 22 M2): a slow body holds an enroll
+    // slot for 5 s at most, never a phone's way in.
+    let gate = state.enrollment.gate();
+    let Ok(Ok(_slot)) = tokio::time::timeout(Duration::from_secs(5), gate.acquire()).await else {
+        return (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "5")]).into_response();
+    };
+    let bytes = match tokio::time::timeout(
+        crate::enrollment::BODY_TIMEOUT,
+        axum::body::to_bytes(body, crate::device_routes::ENROLL_BODY_LIMIT),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
+    };
+    let Ok(req) = serde_json::from_slice::<EnrollRequest>(&bytes) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
     use crate::enrollment::{self, Kind};
 
     let client = state.net.client(&headers, addr.ip());
@@ -72,11 +92,6 @@ pub async fn enroll(
             return unauthorized();
         }
     }
-
-    let gate = state.enrollment.gate();
-    let Ok(Ok(_slot)) = tokio::time::timeout(Duration::from_secs(5), gate.acquire()).await else {
-        return too_many(5);
-    };
 
     let token = security::generate_device_token();
     let token_hash = security::hash_token(&token);
