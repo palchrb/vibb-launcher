@@ -505,3 +505,303 @@ open %s"; `pin_lock_prompt_missed` "Skriv koden for å se tapte anrop" / "Enter 
 ## 10. Open questions
 
 None that a default can't settle - §6 lists the defaults this spec chose.
+
+## Design QA (2026-10-11)
+
+QA, 2026-10-11, against b1be8ace. Read:
+- this design, its mockup `LockGlance.dc.html`, design 21 §3 (step 4), design 24b, and the cited parts of 12, 15, 16 and
+  17; the root, launcher and server `CLAUDE.md`s;
+- launcher: `PinLockActivity`, `PinLockRuntime` (`dispatch`, `unlocked`, `afterUnlock`, `guardTripped`), `LockTaskRoot`,
+  `HomeFront`, `LockMedia`, `MusicLockPanel`, `activity_pin_lock.xml`, `view_lock_media.xml`, `BadgeListenerService`,
+  `ElementDmReader`, `MissedCallNotice`, `MissedCallNotifier`, `PhoneBookActivity.missedCallsIntent`, `VoipCalls.send`,
+  the options in `MusicSessions`, `KidAvatars.renderAppIcon`, `decideTimeLock`, `storeAcceptedPolicy`; and the tests
+  `LockMediaTest` (with `LockMediaGuardTest` and `LockMediaLayoutTest`), `PinLockLayoutTest` and `KidHeaderLayoutTest`;
+- server: `build_policy`, `PolicyResponse`, `policy_json_keys_snapshot`, `app_display_forms` and the Apps card, the
+  migrations (the highest is 0064), `record_security_event`, and the `scroll-restore.js` rule;
+- AOSP `android14/15/16-release`: `BackgroundActivityStartController`, `PendingIntentRecord`, `PendingIntent`,
+  `NotificationManagerService` (posting, hiding, redaction), `NotificationAttentionHelper`, `UiAutomation` and
+  `UiAutomationConnection`.
+
+**Verdict:** one implementer can build it, and I found no way past the code. There are three Mediums:
+- a suspended app's new notifications become rows;
+- the open runs inside the unlock dispatch without a guard;
+- under the screen-time budget a row never opens the conversation, although the app stays usable. This one needs a
+  user decision (Q1).
+
+The rest is Low: layout numbers, the PWA on phones without an allowlist, the meaning of "sender only", missed-call
+details, tests and device checks.
+
+**Checked and holds:**
+- **The send.** [AOSP 14] `checkPiBackgroundActivityStart` allows a sender that has a visible window. [AOSP 15]
+  `checkBackgroundActivityStartAllowedBySender` does the same, and HOME counts as app-switch-allowed. [AOSP 16]
+  `checkBackgroundActivityStartAllowedByRealCaller` runs only the visible checks under `ALLOW_IF_VISIBLE`, from
+  `VisibleActivityProcessTracker.hasVisibleActivity(uid)`. In all three, the device-owner and HOME exemptions belong to
+  the caller (here the creator). ASM [15/16] lets a NEW_TASK start with `BAL_ALLOW_VISIBLE_WINDOW` through.
+  - One nuance: after `HomeFront.bring`, Home (an opaque activity) can already cover the lock. Home has the same uid,
+    so the uid still has a visible activity. The claim holds for "our uid", not "the lock's window".
+- **Nothing opens before the code.**
+  - `pendingOpen` is set only in `unlock`, and `go` checks `UNLOCKED`.
+  - An `unlocked` that the runtime refuses (a screen-off during the check) still runs `leave`, but with mode LOCKED, so
+    nothing opens.
+  - The switch-off, crash-guard and `onResume` leaves have no `pendingOpen`.
+  - `wasRoot` must be read before `stopOwnLockTask()`, as the spec says: `stopLockTaskQuietly` clears
+    `startedLockTask`.
+- **Lock task.**
+  - A PendingIntent send has no source record, so the start is a NEW_TASK start.
+  - Kiosk on: only a package that lock task permits can start. An allowlisted task joins the lock task. Any other
+    package is refused, or gets BlockedAppActivity when the block bit is on.
+  - In the rare root case, `stopLockTask` clears the joined task (`clearLockedTask` -> `performClearTaskForReuse`), so
+    the kid lands on Home as stated.
+  - Kiosk off: the content intent runs as the ticked app's own identity. It reaches only what that app could start
+    itself after the unlock. A hidden or suspended app doesn't start.
+  - A trampoline into another app gains nothing that SystemUI's click wouldn't.
+- **Redaction** [AOSP 16 `redactStatusBarNotification`]: the title is the app's label, the text is the redacted
+  string, and the MessagingStyle's user and its only sender are an empty `Person`. The actions stay but are retitled,
+  and the content intent survives. "Nothing special" holds.
+- **The two tool claims.** `UiAutomationConnection` sets `setAccessibilityTool(true)`, so UI dumps see the
+  data-sensitive rows. §4's `ForeignAccess` row holds: with no Android keyguard, `isDeviceLocked` is false, and
+  `NotificationAttentionHelper`'s accessibility event carries the full notification today.
+- **What can be checked on a PendingIntent.** `PendingIntent.getIntent()` is hidden and `queryIntentComponents` is a
+  system API, so the target can't be checked. `isActivity()` and `getCreatorPackage()` are public.
+- **Server.** 0065 is the next migration on `main` (0058-0060 stay skipped). A redirect to `/devices/{id}` without a
+  fragment restores the scroll position. The trigger follows `devices_get_builtin_wallpapers`, and foreign keys are
+  on. `build_policy` already treats cosmetic parts as "an empty list and a log line" (wallpapers, app display).
+- **Widths.**
+  - The tile controls are 204 dp within the full tile's 260 dp.
+  - The compact tile's fixed parts are 144 dp, leaving 144 dp for text.
+  - A row's fixed parts leave >= 120 dp at 320 dp, also with the widest time label ("yesterday", about 60 dp at 12 sp,
+    so about 143 dp fixed) and at font scale 1.3.
+
+### Medium
+
+1. **Medium - a notification posted while its app is suspended becomes a row.**
+   - Where: §2.2 "Suspended" says the flag is "refreshed on every ranking update". §2.6 relies on it.
+   - Why [AOSP 16]:
+     - NMS calls `r.setHidden(isPackagePausedOrSuspended(..))` at enqueue.
+     - `prepareNotifyPostedLocked` skips only listeners that target below P. Our listener gets `onNotificationPosted`
+       for the hidden notification, with `isSuspended()` in the ranking map of that same post. No ranking update
+       follows.
+     - `getActiveNotificationsFromListener` (the connect sweep) returns hidden records too.
+     - Today `BadgeListenerService` overrides only the one-argument `onNotificationPosted`.
+   - Scenario:
+     1. Bedtime suspends Element X at 21:00.
+     2. At 21:30 Pappa writes. FCM wakes Element X, and Element X posts.
+     3. Until the rule ends, the bedtime lock shows "Pappa - Element X · 1 melding", with the text if the switch is on.
+     4. A process restart during bedtime does the same for every message already there.
+   - Fix:
+     - The reader reads the key's `Ranking` on every post (`onNotificationPosted(sbn, rankingMap)` or
+       `currentRanking`), in every sweep and on every ranking update, and keeps `isSuspended` with the facts.
+     - No ranking found counts as suspended (fail closed).
+     - Tests: a suspended post makes no row; the unsuspend ranking update makes the row.
+     - Device check: a message during bedtime shows no row, and it appears when the rule ends.
+2. **Medium - the open runs inside the unlock dispatch, and a throw there crashes the lock and counts for the crash guard.**
+   - Where: §1.4 `go(plan)` and the `GlanceOpener` table. §1.3 wraps only the render.
+   - The call path:
+     - `go()` runs from `PinLockActivity.modeListener`.
+     - `PinLockRuntime.dispatch(Unlocked)` calls that listener from the PIN check's coroutine, on the main thread.
+     - It runs after `HomeFront.bring`, before `finishAndRemoveTask()`, and before `afterUnlock`.
+   - Scenario:
+     1. The parent ticked an app whose content intent is a broadcast and which has no launcher activity, so
+        `getLaunchIntentForPackage` is null. The table has no row for that case. Or the launch throws
+        (`ActivityNotFoundException`, `SecurityException`).
+     2. The kid types the right code, and the exception leaves `go()`.
+     3. The process dies with `PinLockActivity.instances > 0`, so the crash guard counts it, and `afterUnlock` never
+        ran.
+     4. The new process starts LOCKED. Three such unlocks within 2 minutes trip the guard: the lock is off until a sync
+        re-arms it, 10 minutes later at the earliest.
+   - Other glance code has the same exposure:
+     - the reader catches `Exception` only;
+     - the icon render runs on a background thread (#6);
+     - the `MissedCallNotifier` listeners run on the main thread.
+   - Fix:
+     - `GlanceOpener.open` never throws. Every step is caught (`Throwable`, nothing rethrown) and logged by exception
+       class. Add a table row: "no launch intent -> nothing".
+     - Every glance entry point catches the same way: the reader per notification, the store and notifier listeners,
+       the icon job and the panel render.
+     - `LockGlanceGuardTest` checks each entry point is wrapped, and `glanceOpenStep` tests a null launch intent.
+3. **Medium (user decision, Q1) - under the screen-time budget a row never opens the conversation, although the app
+   stays usable.**
+   - Where: §1.4 "Not taken while a time rule locks the phone", §4's time-rule row, and §6's default 6.
+   - What stays usable (`decideTimeLock`):
+     - a used-up budget gives `SCREEN_TIME` with `usableApps = messagingApps + musicApps`;
+     - a school or bedtime rule keeps its `exemptApps`.
+     These apps aren't suspended, so their rows show.
+   - Scenario:
+     1. It is evening and the budget is used up, the usual state after school.
+     2. Pappa writes in Element X, and the kid taps the row. The prompt is the plain one.
+     3. After the code comes the time-rule screen. The kid taps Element X there and gets the room list, not the
+        conversation.
+     4. The user's decision ("after the right code the conversation ... opens directly") fails in the state where
+        messages matter most.
+     5. A missed call under a rule that allows calls goes the same way, although the time-rule screen has the phone
+        book.
+   - Fix (recommended):
+     - Take the target when the row's package is in the time lock's usable apps. Take a missed-call row's target when
+       the rule allows calls.
+     - After the code the time-rule screen comes first (`afterUnlock`). Then the content intent is sent over it from our
+       visible window, so Back lands on the time-rule screen. For example, `afterUnlock` hands the target to
+       `LockActivity` in memory, and the lock doesn't open anything itself in that case.
+     - Keep "nothing" for packages the rule suspends. They have no rows anyway (#1).
+
+### Low
+
+4. **Low - the expected fits assume 56 dp rows, but the spec's row is taller.**
+   - Where: §1.2. A row is "min 56, padding 10/12 dp", with a 15 sp title and a 13 sp subtitle.
+   - The heights:
+     - in `LockMediaLayoutTest`'s model a row is 21 + 18.2 + 20 = 59.2 dp;
+     - with Nunito's line of about 1.36 em it is about 58 dp on the phone;
+     - the spacing above the "more" line isn't given (mockup B puts it inside the 8 dp gap).
+   - Scenario:
+     - "3 rows + more, no music -> 1 (464)" needs 473.6 dp in the model, or 481.6 dp with the mockup's gap. That is
+       more than 473 dp, so `LockGlanceLayoutTest` as specified fails, or gets loosened.
+     - "music + 3 rows -> 5 with 2 rows + more" is 466 dp, or 474 dp with the gap. With the gap it falls to 1 row.
+     - The others hold with 3-7 dp less margin. Music + 1 row with 24 dp navigation is 495.8 of 497 dp.
+   - Fix:
+     - Give rows `paddingTop`/`paddingBottom` of 8 dp: 55.2 dp in the model and about 54 dp on the phone, so the 56 dp
+       minimum holds.
+     - The "more" line gets `minHeight` 24 dp instead of a fixed 24 dp (that clips 13 sp text above font scale
+       about 1.3), and 0 dp above it.
+     - The test model also reads `paddingVertical`.
+     - Say where `availableDp` comes from: the glance root's height after `KidInsets` padding. Re-run the fit on a
+       layout change (gesture <-> 3-button navigation), and never before the first layout.
+5. **Low - the keypad prompt can take three or more lines.**
+   - Where: §1.1, "the hint costs no height". The arrow is always there now, so the prompt has 288 - 2 x 48 = 192 dp.
+   - The label is long-capable: `AppDisplay.shownLabel` is the parent's label, up to 100 characters (the server's
+     clip).
+   - Measured with qa-21-step4-code L5's rate (28 characters = 213 dp at 16 sp):
+     - "Skriv koden for å åpne Meldinger fra familien" is about 340 dp: two lines at font scale 1.0, three at 1.3;
+     - "Only the parent code works right now" (283 dp) takes three lines from about 1.4.
+   - Scenario: with the compact music row at font scale 1.3, the keys drop below 52 dp, towards the 32 dp floor.
+   - Fix:
+     - Give the prompt `maxLines="2"` and `ellipsize="end"`.
+     - Cap the label in the hint before formatting, for example 20 characters plus "…".
+     - `PinLockLayoutTest` keeps counting two lines.
+6. **Low - the row icon is specified as `renderAppIcon`, which may only run off the main thread.**
+   - Where: §1.2 message row. `KidAvatars.renderAppIcon` is documented "off the main thread only".
+   - It is keyed by a serialized `AppInfo` key and the size. 36 dp isn't Home's size, so Home's cache never hits.
+   - Mockups A and B draw a rounded square; Home's icon is a circle.
+   - Scenario: the lock's render (main thread) loads an adaptive icon and runs a palette pass at a lock-up with new
+     rows. That is jank on the lock, and one more crash path (#2).
+   - Fix:
+     - The panel binds `cachedAppIcon`, with a placeholder tile when nothing is cached.
+     - One background job (wrapped as in #2) renders the missing icons and re-binds.
+     - Settle the shape: Home's circle is fine; update the mockup.
+7. **Low - on a phone without an app allowlist the parent can't untick Element X.**
+   - Where: §3.3, "the `display_forms` set: allowed ...".
+   - `app_display_forms` filters on `a.checked`. With `allowlist_json` NULL (apps unmanaged) no app is checked. A
+     calls-only phone has no allowlist but can still have a kid PIN, and so the lock.
+   - Scenario:
+     - A calls-only phone with a kid PIN gets the migration's Element X row, and its senders' names show on the lock.
+     - The subsection is empty, so there is nothing to untick.
+     - Also: an app the parent later disallows leaves the list but stays ticked. That is harmless, but invisible.
+   - Fix:
+     - With an allowlist, list the allowed apps. Without one, list every app the phone reports.
+     - Always add every ticked package not in that list, labelled "not allowed - ticked", so any tick can be removed.
+8. **Low - "sender only" means the title, and outside MessagingStyle the title is often the content.**
+   - Where: §2.2, "other styles: the title = `EXTRA_TITLE`" at `SENDER`.
+   - The PWA offers every allowed app, and what the title holds varies:
+     - Gmail's title is the sender;
+     - a calendar's is the event;
+     - a school app's may be "Karakter i matte: 3";
+     - a game's is a promotion.
+   - Scenario: the parent ticks the school app to see messages. With the text switch off, the lock shows grades to
+     anyone holding the phone.
+   - Fix:
+     - At `SENDER`, a notification that isn't MessagingStyle shows its title only when it has `CATEGORY_MESSAGE`,
+       `CATEGORY_EMAIL` or `CATEGORY_SOCIAL`, or a `Person` in `EXTRA_PEOPLE_LIST`. Otherwise it shows as `APP_ONLY`
+       ("<app> · N nye varsler").
+     - The PWA text says:
+       - names show to anyone holding the phone even with the switch off, missed-call names included;
+       - with the switch on, a ticked SMS app's login codes show too.
+9. **Low - missed-call rows: when they go, and what the type prints.**
+   - **When `current` clears.**
+     - `MissedCallNotifier.swiped` sets `lastPosted = null` without a cancel when the swipe covered the shown range.
+     - A notification snoozed from the shade, or cancelled by the system, never reaches our code.
+     - So `current` must also clear on the swipe and notify its listeners. With listener access, the listener seeing
+       our own id 1006 removed can clear it too.
+   - **One tap clears every missed-call row.**
+     - A row's tap opens the phone book or a sheet, and `PhoneBookActivity`'s resume `dismiss`es the whole notification
+       and marks its whole range read.
+     - So every missed-call row goes, not only the tapped one (§9 says "its row gone afterwards").
+     - That is right for design 12; state it.
+   - **What the type prints.** `MissedCallNotice` and the new `MissedContact` are data classes, and their `toString()`
+     carries names and numbers. They now live in the lock's panel, so redact them like the glance types (§2.3).
+10. **Low - "its creator can't be checked" should read "its target can't be checked".**
+    - Where: §1.4. `getCreatorPackage()` is public. What can't be checked is the intent inside the PendingIntent.
+    - A notification may carry a PendingIntent another app created: one it was handed, or a notification delegate's.
+      The send then runs as that creator, with our visibility.
+    - That is not a bypass (the kiosk and suspension still apply, and SystemUI's click would send it too), but it is
+      cheap to close.
+    - Fix: send only when `contentIntent.creatorPackage == sbn.packageName`; otherwise use the launch intent. Test it in
+      `glanceOpenStep`.
+11. **Low - after the launcher update the cached policy has no `lock_glance`, which reads as "an older server".**
+    - Why: `storeAcceptedPolicy` stores the DTO re-encoded by the build that stored it, so a cache written by a pre-25
+      build never has the key.
+    - Scenario:
+      1. The server is updated first, and the parent unticks Element X.
+      2. At the launcher update, the first start reads the old cache: Element X, sender only.
+      3. That lasts until the first sync: seconds to minutes, longer offline.
+    - Fix: a key missing from the cached policy means unknown (missed calls only). A key missing from a fresh policy
+      means the older server's default; the store keeps that in memory.
+12. **Low - the test list, the steps and the device checks.**
+    - **Tests that break and aren't named in §7:**
+      - `LockMediaLayoutTest`: it parses `view_lock_media.xml`. It also pins Home's music card and the keypad's compact
+        row at 320/360/411 dp; move those into `LockGlanceLayoutTest`.
+      - `LockMediaTest`'s stage tests (MEDIA only while playing).
+      - `KidHeaderLayoutTest`'s `allScreens` (`view_lock_media`).
+      - `PinLockLayoutTest`'s "the clock in the layout matches PinKeypadLayout".
+    - **Missing tests:** #1's suspended post, #2's throwing opener, #10's creator check, and `current` clearing on a
+      swipe (#9).
+    - **Step 3 holds too much:** the layouts, the panel, the open, `VisibleSender` and the smoke test. Split it so each
+      part is green on its own:
+      - 3a: stages, layouts, fit, `FLAG_SECURE` and the smoke test. Nothing opens yet.
+      - 3b: `GlanceOpener`, `VisibleSender` and the unlock path.
+    - **Device checks to add to §9:**
+      - a message while Element X is suspended (bedtime) shows no row;
+      - the kiosk-on root case: force the 1 s fallback; nothing opens, and the kid lands on Home;
+      - a ticked app's content intent into an app that isn't allowlisted: BlockedAppActivity with the kiosk on,
+        nothing with it off;
+      - the open on an API 34 or 35 emulator (`MODE_BACKGROUND_ACTIVITY_START_ALLOWED`). The Jelly Star is Android 16
+        and covers only `ALLOW_IF_VISIBLE`.
+    - **Threading:** say that `GlanceStore.refreshPolicy`, called from the sync thread, posts to the main thread.
+
+### §6 "Defaults chosen" - QA's view
+
+1. No glance page without a kid PIN: agree.
+2. The compact tile when rows compete for height: agree.
+3. Up to 3 rows plus "more", grouped per conversation: agree (with #4's numbers).
+4. `FLAG_SECURE` on the whole lock, always: agree.
+   - The cost is only QA screenshots. Use the emulator console [device]. The smoke test's `screencap` of the lock goes
+     black; its UI-dump checks are unaffected.
+5. `VISIBILITY_SECRET` as "app + count", and `VISIBILITY_PRIVATE` under the parent's switch: agree for messaging apps.
+   For other styles, see #8.
+6. No row opens anything while a time rule locks the phone: change it for apps the rule leaves usable (#3, Q1).
+7. An unknown policy shows missed calls only, and an older server means Element X, sender only: agree. For the cache
+   written before the update, see #11.
+8. Names are what the app gives: agree for this design.
+   - A Matrix display name is the sender's own choice, so a stranger can appear as "Pappa". Element X shows the same,
+     but the lock shows it out of context.
+   - Design 15's MXID -> phone-book mapping (the phone-book name for known contacts) is the right follow-up.
+
+### Questions for the user
+
+1. **Under a time rule that leaves the app usable, should a row open the conversation after the code?**
+   - When: the screen-time budget always keeps the contacts' messaging apps; a school or bedtime rule keeps its exempt
+     apps.
+   - **Recommendation: yes.** The time-rule screen comes first, and the conversation opens over it, so Back returns to
+     the time-rule screen.
+   - Apps the rule suspends keep opening nothing (they have no rows).
+   - A missed-call row opens the phone book when the rule allows calls.
+
+## Decisions after the design QA (orchestrator, 2026-10-11)
+
+- **All 12 findings are accepted** as the QA proposes them. The implementer builds them in, with their tests:
+  - **Medium 1:** read the ranking on every post and every sweep, and treat a missing ranking as suspended.
+  - **Medium 2:** a guarded opener, plus the "no launcher activity" row.
+  - **Lows 4-12:** as the QA proposes. For Low 8, in sender-only mode a notification that isn't MessagingStyle shows
+    the app name and count, never its title. For Low 10, send only when `creatorPackage` is the notification's app.
+- **Q1 / Medium 3 (time rules), decided by the existing rules, not a new choice:** the user's rule is that an app a
+  time rule leaves usable can be opened. So after the code, a row opens the conversation over the time-rule screen,
+  and Back returns there. Apps the rule suspends still open nothing. A missed-call row opens the phone book when the
+  rule allows calls. This replaces §6's "no row opens anything while a time rule locks the phone".
+- The other §6 defaults stand.
