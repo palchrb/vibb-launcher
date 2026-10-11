@@ -338,6 +338,10 @@ object AppEnforcer {
                 // partition system app that stayed reachable despite being correctly excluded
                 // from the allowlist, with nothing in logs to explain why.
                 if (shouldBeSuspended != currentlySuspended) {
+                    // Vibb music: a playing session is paused first (design 21 §3).
+                    if (com.kidslauncher.mdm.music.pauseBeforeSuspend(packageName, shouldBeSuspended, currentlySuspended)) {
+                        com.kidslauncher.mdm.music.MusicSessions.pauseBeforeSuspend(context, packageName)
+                    }
                     val notSuspended = dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)
                     if (!notSuspended.isNullOrEmpty()) {
                         Log.w(LOG_TAG, "Platform refused to ${if (shouldBeSuspended) "suspend" else "unsuspend"} $packageName (setPackagesSuspended)")
@@ -401,6 +405,9 @@ object AppEnforcer {
         )
 
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
+
+        // Vibb music's volume cap (design 21 §3): while managed, lifted by the override and the pause.
+        com.kidslauncher.mdm.music.VolumeCap.refresh(context, policy, managedForHardening, overrideActive)
 
         clearRadioRestrictions(dpm, admin)
 

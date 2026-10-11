@@ -39,17 +39,37 @@
         android:textColor="@color/kid_ink"
         android:textSize="15sp" />
 
-    <TextView
-        android:id="@+id/pin_prompt"
-        android:layout_width="wrap_content"
+    <!-- The prompt, with the way back to the media view at its start while a music session is
+         live (design 21 step 4, Lock.dc.html's keypad stage; the clock and date give way then). -->
+    <FrameLayout
+        android:id="@+id/pin_prompt_row"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:accessibilityLiveRegion="polite"
-        android:fontFamily="@font/nunito_bold"
-        android:gravity="center"
-        android:text="@string/pin_lock_prompt"
-        android:textColor="@color/kid_ink"
-        android:textSize="16sp" />
+        android:layout_marginTop="4dp">
+
+        <ImageButton
+            android:id="@+id/pin_media_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="start|center_vertical"
+            android:background="@drawable/bg_lock_media_back"
+            android:contentDescription="@string/lock_media_back"
+            android:src="@drawable/ic_kid_back"
+            android:tint="@color/kid_core"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/pin_prompt"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:accessibilityLiveRegion="polite"
+            android:fontFamily="@font/nunito_bold"
+            android:gravity="center"
+            android:text="@string/pin_lock_prompt"
+            android:textColor="@color/kid_ink"
+            android:textSize="16sp" />
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/pin_dots"
@@ -111,5 +131,11 @@
         android:text="@string/pin_lock_parent_code"
         android:textColor="@color/kid_ink"
         android:textSize="13sp" />
+
+    <!-- The compact now-playing row of the keypad stage (design 21 step 4). -->
+    <include
+        android:id="@+id/pin_media_row"
+        layout="@layout/view_lock_media_row"
+        android:visibility="gone" />
 
 </LinearLayout>

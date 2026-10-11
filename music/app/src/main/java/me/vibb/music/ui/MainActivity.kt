@@ -27,6 +27,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_OPEN = "me.vibb.music.extra.OPEN"
         const val OPEN_NEWS = "news"
         const val OPEN_PLAYER = "player"
+        /** The launcher's Home card on its snapshot (design 21 §3 step 4): continue, as the play button would. */
+        const val EXTRA_RESUME = "me.vibb.music.extra.RESUME"
     }
 
     private val vm: MusicViewModel by viewModels()
@@ -51,6 +53,9 @@ class MainActivity : ComponentActivity() {
             OPEN_NEWS -> vm.screen = Screen.NEWS
             OPEN_PLAYER -> vm.screen = Screen.PLAYER
         }
+        // The last item where it stopped (the stored queue after a restart), or play on - never a
+        // second start of what already plays.
+        if (intent?.getBooleanExtra(EXTRA_RESUME, false) == true) command(Commands.RESUME)
     }
 
     override fun onStart() {

@@ -327,4 +327,14 @@
     <string name="home_call_with">Call with %1$s</string>
     <string name="home_call_ongoing">Call in progress</string>
     <string name="home_call_back">Tap to go back</string>
+    <!-- Vibb music (design 21 step 4): Home's card, the lock's media view and its keypad stage. -->
+    <string name="music_now_playing">Now playing</string>
+    <string name="music_time_of">%1$s of %2$s</string>
+    <string name="music_card_description">Now playing: %1$s. %2$s</string>
+    <string name="music_play">Play</string>
+    <string name="music_pause">Pause</string>
+    <string name="music_previous">Previous</string>
+    <string name="music_next">Next</string>
+    <string name="lock_media_unlock">Unlock</string>
+    <string name="lock_media_back">Back to playback</string>
 </resources>

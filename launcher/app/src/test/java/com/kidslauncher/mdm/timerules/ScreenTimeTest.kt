@@ -202,6 +202,14 @@ class ScreenTimeTest {
     }
 
     @Test
+    fun `the Vibb music player in front never counts (design 21 step 4)`() {
+        assertFalse("the player in front", screenTimeCounts(true, false, false, false, musicInFront = true))
+        assertTrue("another app, Home or the player in the background", screenTimeCounts(true, false, false, false, musicInFront = false))
+        assertFalse("screen off", screenTimeCounts(false, false, false, false, musicInFront = false))
+        assertFalse("locked", screenTimeCounts(true, false, false, false, pinLocked = true, musicInFront = true))
+    }
+
+    @Test
     fun `an unreadable record fails closed`() {
         val lifts = listOf(Lift(40, TARGET_BUDGET, null, 30, 0), Lift(41, TARGET_RULE, 1, 30, 0))
         val ledger = unreadableLedger(clocks(wall(12), bootAt), zone, lifts)

@@ -75,6 +75,17 @@ class SourceScanTest {
         }
     }
 
+    /** The launcher counts no screen time while the player is in front (design 21 §3, QA #5): that is
+     * safe only because the auto-lock still ends a player left on - the app never keeps the screen on. */
+    @Test
+    fun `the app never keeps the screen on`() {
+        val banned = listOf("keepScreenOn", "KEEP_SCREEN_ON", "SCREEN_BRIGHT_WAKE_LOCK", "SCREEN_DIM_WAKE_LOCK", "FULL_WAKE_LOCK", "setTurnScreenOn", "turnScreenOn")
+        for (f in sources("src/main")) {
+            val text = code(f)
+            for (token in banned) if (text.contains(token)) fail("${f.name} references $token")
+        }
+    }
+
     // The debug feed (like the launcher's DebugHookAbsentTest); the built APKs are checked too
     // (checkReleaseHasNoDebugFeed, a dependency of assembleRelease).
 

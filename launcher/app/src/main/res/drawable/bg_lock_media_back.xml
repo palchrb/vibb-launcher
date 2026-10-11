@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The keypad's way back to the media view (mockup Lock.dc.html v12): a 44 dp #1B1B28 circle in a
+     48 dp touch target. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="2dp">
+    <ripple android:color="#33FFFFFF">
+        <item>
+            <shape android:shape="oval">
+                <solid android:color="@color/kid_music_tile" />
+            </shape>
+        </item>
+    </ripple>
+</inset>

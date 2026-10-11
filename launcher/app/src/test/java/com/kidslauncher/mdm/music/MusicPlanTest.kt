@@ -245,6 +245,17 @@ class MusicPlanTest {
             strings("now_playing"),
             listOf(MusicNowPlaying.ENTRY, MusicNowPlaying.ITEM, MusicNowPlaying.POSITION_MS, MusicNowPlaying.DURATION_MS, MusicNowPlaying.PLAYING, MusicNowPlaying.ART),
         )
+        // Home's card opens the player and continues (design 21 step 4).
+        val player = (contract["player"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content }
+        assertEquals(
+            player,
+            mapOf(
+                "activity" to MUSIC_PLAYER_ACTIVITY,
+                "extra_open" to MUSIC_EXTRA_OPEN,
+                "open_player" to MUSIC_OPEN_PLAYER,
+                "extra_resume" to MUSIC_EXTRA_RESUME,
+            ),
+        )
     }
 
     @Test

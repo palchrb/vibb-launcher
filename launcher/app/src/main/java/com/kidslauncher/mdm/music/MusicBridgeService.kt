@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -119,7 +121,7 @@ class MusicBridgeService : Service() {
             check()
             val app = applicationContext
             // The token dies with the music app's process: it isn't in front, and it doesn't play.
-            MusicForeground.set(token, inFront) { MusicNowPlaying.playerGone(app) }
+            MusicForeground.set(app, token, inFront) { MusicNowPlaying.playerGone(app) }
         }
 
         override fun listingVersion(entryId: Long): String? {
@@ -178,8 +180,9 @@ const val HELD_FILES = "held_files"
 const val HELD_SHA256 = "held_sha256"
 
 /**
- * What plays, from the music app's `setNowPlaying` (21 §3/§4.6): kept in CE prefs for Home and the
- * lock (step 4), never sent to the server; and whether a music app update must wait.
+ * What plays, from the music app's `setNowPlaying` (21 §3/§4.6): kept in CE prefs for Home's card
+ * (its snapshot, shown paused while no session is live), never sent to the server; and whether a
+ * music app update must wait.
  */
 object MusicNowPlaying {
     /** The Bundle's keys (shared with the music app: bridge_contract.json). */
@@ -194,6 +197,29 @@ object MusicNowPlaying {
     /** A music app update was deferred: the next pause (or the player's end) asks for a download run (S3). */
     @Volatile
     var installWaiting = false
+
+    private val main = Handler(Looper.getMainLooper())
+    /** Home's card while shown (main thread). */
+    private val listeners = mutableListOf<() -> Unit>()
+
+    fun addListener(listener: () -> Unit) {
+        listeners += listener
+    }
+
+    fun removeListener(listener: () -> Unit) {
+        listeners -= listener
+    }
+
+    private fun changed() = main.post { listeners.toList().forEach { it() } }
+
+    /** The last snapshot (entry, item, position, duration), or null at a queue's end or before any. */
+    fun snapshot(context: Context): NowPlayingSnapshot? {
+        val p = MusicStore.prefs(context)
+        val entry = p.getString("np_entry", null)
+        val item = p.getString("np_item", null)
+        if (entry == null && item == null) return null
+        return NowPlayingSnapshot(entry, item, p.getLong("np_position", 0), p.getLong("np_duration", 0))
+    }
 
     fun store(context: Context, nowPlaying: Bundle?) {
         val prefs = MusicStore.prefs(context)
@@ -216,12 +242,14 @@ object MusicNowPlaying {
         val artFile = MusicStore.nowPlayingArt(context)
         if (art != null) runCatching { MusicStore.writeAtomic(artFile, art) } else artFile.delete()
         if (!playing) releaseWaitingInstall(context)
+        changed()
     }
 
     /** The music app's process died (its token): nothing plays any more; the snapshot stays (shown paused). */
     fun playerGone(context: Context) {
         MusicStore.prefs(context).edit().remove("playing_at").apply()
         releaseWaitingInstall(context)
+        changed()
     }
 
     private fun releaseWaitingInstall(context: Context) {
@@ -239,15 +267,19 @@ object MusicNowPlaying {
 }
 
 /**
- * Whether the player is in front (21 §3 time rules, step 4 reads it): its token dies with the
- * music app's process, which clears it (and tells [onGone]). Screen-off and the time-rule wiring
- * come with step 4.
+ * Whether the player is in front (21 §3 time rules): the music app sends it from
+ * `onTopResumedActivityChanged`, false in multi-window (QA #5). Its time is never screen time
+ * (`screenTimeCounts(musicInFront)`). Cleared at every screen-off ([screenOff]) and when the token
+ * dies with the music app's process (which also tells [onGone]); each change re-runs the screen-time
+ * tracker.
  */
 object MusicForeground {
     @Volatile
     var inFront: Boolean = false
         private set
 
+    private val main = Handler(Looper.getMainLooper())
+    private var app: Context? = null
     private var token: IBinder? = null
     private var onGone: (() -> Unit)? = null
     private val death = IBinder.DeathRecipient {
@@ -257,21 +289,33 @@ object MusicForeground {
     }
 
     @Synchronized
-    fun set(newToken: IBinder?, front: Boolean, gone: () -> Unit) {
+    fun set(context: Context, newToken: IBinder?, front: Boolean, gone: () -> Unit) {
+        app = context.applicationContext
         onGone = gone
         if (newToken != token) {
             runCatching { token?.unlinkToDeath(death, 0) }
             token = newToken
             runCatching { newToken?.linkToDeath(death, 0) }.onFailure { token = null }
         }
-        inFront = front && token != null
+        changeTo(front && token != null)
     }
+
+    /** The screen went off: nothing is in front until the music app says so again. */
+    @Synchronized
+    fun screenOff() = changeTo(false)
 
     @Synchronized
     fun clear() {
         runCatching { token?.unlinkToDeath(death, 0) }
         token = null
-        inFront = false
+        changeTo(false)
+    }
+
+    private fun changeTo(front: Boolean) {
+        if (front == inFront) return
+        inFront = front
+        val context = app ?: return
+        main.post { com.kidslauncher.mdm.timerules.ScreenTimeTracker.update(context) }
     }
 }
 

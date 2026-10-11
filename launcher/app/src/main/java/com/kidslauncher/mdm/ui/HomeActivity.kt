@@ -127,9 +127,15 @@ class HomeActivity : UIObjectActivity() {
         val before = contentShown
         if (gate() && !before) {
             if (started) renderCallCard()
+            renderMusicCard()
             if (resumedNow) resumeContent()
         }
     }
+
+    /** Vibb music's "Spilles nå" card (design 21 step 4): active only while started with the content shown. */
+    private var musicCard: com.kidslauncher.mdm.music.MusicHomeCard? = null
+
+    private fun renderMusicCard() = musicCard?.setActive(contentShown && started)
 
     private val apps by lazy { (applicationContext as Application).apps }
     private val appsObserver = Observer<List<AbstractDetailedAppInfo>> { render() }
@@ -238,6 +244,7 @@ class HomeActivity : UIObjectActivity() {
     private fun showNight() {
         closeOverlays()
         contentShown = false
+        renderMusicCard()
         appsJob?.cancel()
         refreshHandler.removeCallbacks(badgeRender)
         refreshHandler.removeCallbacks(callTicker)
@@ -269,6 +276,7 @@ class HomeActivity : UIObjectActivity() {
                 KidAvatars.dp(this, GRID_ROW_GAP_DP.toFloat()),
             ) { gridLayout.spanCount }
         )
+        musicCard = com.kidslauncher.mdm.music.MusicHomeCard(this, binding.homeMusicCard)
         // Back to our call screen from the ongoing-call card.
         binding.homeCallCard.setOnClickListener {
             try {
@@ -376,6 +384,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         started = true
         renderCallCard()
+        renderMusicCard()
         try {
             contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callLogObserver)
         } catch (e: SecurityException) {
@@ -536,6 +545,7 @@ class HomeActivity : UIObjectActivity() {
         // Design 16e: something covers the mark - the boot's wait for it ends.
         PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false
+        renderMusicCard()
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)

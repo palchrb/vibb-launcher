@@ -316,6 +316,8 @@ class Application : android.app.Application() {
         // screen on/off/unlock receiver for the whole process (QA 10 #4) - screen time, time
         // rules and the Play window use it too.
         com.kidslauncher.mdm.lock.PinLockRuntime.init(this)
+        // Vibb music (design 21 step 4): the volume cap, and the player's "in front" ends at screen-off.
+        com.kidslauncher.mdm.music.MusicMedia.init(this)
 
         // The anchor service: every background sync and the SSE stream (the only nudge since
         // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.

@@ -33,6 +33,26 @@ class BadgeCountsTest {
     }
 
     @Test
+    fun `a media notification never counts, the music app's N nye notification counts its number`() {
+        // A paused player's notification is neither ongoing nor unread (design 21 QA #6).
+        val paused = NotificationInfo("me.vibb.music", ongoing = false, clearable = true, groupSummary = false, number = 0, mediaSession = true)
+        val playing = paused.copy(ongoing = true, clearable = false)
+        val news = NotificationInfo("me.vibb.music", ongoing = false, clearable = true, groupSummary = false, number = 2)
+        assertEquals(mapOf("me.vibb.music" to 2), badgeCounts(listOf(paused, news), "launcher"))
+        assertEquals(mapOf("me.vibb.music" to 2), badgeCounts(listOf(playing, news), "launcher"))
+        assertEquals(emptyMap<String, Int>(), badgeCounts(listOf(paused), "launcher"))
+        // Any app's media notification, the same.
+        assertEquals(emptyMap<String, Int>(), badgeCounts(listOf(paused.copy(packageName = "org.player", number = 4)), "launcher"))
+    }
+
+    @Test
+    fun `the media check looks only at the media-session key`() {
+        val file = listOf("src/main", "app/src/main").map { java.io.File("$it/java/com/kidslauncher/mdm/badges/MediaNotifications.kt") }.first { it.exists() }
+        val code = file.readText().lines().filterNot { it.trim().startsWith("*") || it.trim().startsWith("/**") }.joinToString("\n")
+        assertEquals(listOf("extras?.containsKey(Notification.EXTRA_MEDIA_SESSION)"), Regex("extras[^\\n]*?\\)").findAll(code).map { it.value }.toList())
+    }
+
+    @Test
     fun `nothing active, no badges`() {
         assertEquals(emptyMap<String, Int>(), badgeCounts(emptyList(), "launcher"))
     }

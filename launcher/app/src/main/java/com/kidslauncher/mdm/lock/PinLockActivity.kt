@@ -67,6 +67,11 @@ class PinLockActivity : AppCompatActivity() {
     /** [PinKeypadLayout.COMPACT_STEPS]: how much of the clock/date gave way to the keypad. */
     private var compactStep = 0
 
+    /** Vibb music's media view over the keypad, and the keypad's back arrow and compact row (design 21 step 4). */
+    private var music: com.kidslauncher.mdm.music.MusicLockPanel? = null
+    /** The keypad stage with a live music session: the clock and date give way to the arrow and the row. */
+    private var mediaKeypad = false
+
     private val modeListener: () -> Unit = {
         if (PinLockRuntime.mode != LockMode.LOCKED && !isFinishing) leave()
     }
@@ -150,6 +155,10 @@ class PinLockActivity : AppCompatActivity() {
         // The VoIP ring screen (design 17) lies over the keypad while an allowed app's call rings.
         val frame = FrameLayout(this)
         frame.addView(binding.root)
+        // The media view (design 21 step 4) between the keypad and the ring screen.
+        music = com.kidslauncher.mdm.music.MusicLockPanel(
+            this, frame, binding.root, binding.pinMediaBack, binding.pinMediaRow, ::setMediaKeypad,
+        ) { binding.pinEmergency.performClick() }
         voipRing = ViewVoipRingBinding.inflate(layoutInflater, frame, true)
         setContentView(frame)
         // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
@@ -253,6 +262,11 @@ class PinLockActivity : AppCompatActivity() {
         renderVoip()
     }
 
+    override fun onStart() {
+        super.onStart()
+        music?.start()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_ENTERED, entered)
@@ -266,6 +280,7 @@ class PinLockActivity : AppCompatActivity() {
             return
         }
         PinLockRuntime.onLockResumed(this)
+        music?.resume()
         ensureLockTask(fallbackDue = false)
         renderVoip()
         // Step 11: the lock in front ends the update fence in the new build (lock task not required).
@@ -289,11 +304,13 @@ class PinLockActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        music?.stop()
         PinLockRuntime.onLockStopped(isChangingConfigurations, isFinishing || finishingAfterUnlock)
         super.onStop()
     }
 
     override fun onDestroy() {
+        music?.stop()
         PinLockRuntime.removeModeListener(modeListener)
         PinLockRuntime.removeChromeListener(chromeListener)
         VoipCalls.removeListener(voipListener)
@@ -401,12 +418,13 @@ class PinLockActivity : AppCompatActivity() {
         if (keypadHeight <= 0) return
         val density = resources.displayMetrics.density
         var size = PinKeypadLayout.keySizePx(keypadHeight, binding.pinKeypad.width, density)
-        if (!PinKeypadLayout.fits(size, density) && compactStep < PinKeypadLayout.COMPACT_STEPS) {
+        // With the media keypad the clock and date are already gone: no step frees more room.
+        if (!PinKeypadLayout.fits(size, density) && compactStep < PinKeypadLayout.COMPACT_STEPS && !mediaKeypad) {
             compactStep++
             applyCompactStep()
             return
         }
-        size = PinKeypadLayout.finalKeySizePx(size, density, compactStep >= PinKeypadLayout.COMPACT_STEPS)
+        size = PinKeypadLayout.finalKeySizePx(size, density, compactStep >= PinKeypadLayout.COMPACT_STEPS || mediaKeypad)
         val changed = keys.filter { it.layoutParams.width != size }
         if (changed.isEmpty()) return
         binding.pinKeypad.post {
@@ -417,6 +435,13 @@ class PinLockActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** The keypad stage with a live music session (design 21 step 4): no clock or date (Lock.dc.html). */
+    private fun setMediaKeypad(on: Boolean) {
+        mediaKeypad = on
+        binding.pinClock.visibility = if (on || compactStep >= 3) View.GONE else View.VISIBLE
+        binding.pinDate.visibility = if (on || compactStep >= 1) View.GONE else View.VISIBLE
     }
 
     private fun applyCompactStep() {

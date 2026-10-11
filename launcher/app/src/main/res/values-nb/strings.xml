@@ -269,4 +269,14 @@
     <string name="home_call_with">Samtale med %1$s</string>
     <string name="home_call_ongoing">Samtale pågår</string>
     <string name="home_call_back">Trykk for å gå tilbake</string>
+    <!-- Vibb music (design 21 step 4): Home's card, the lock's media view and its keypad stage. -->
+    <string name="music_now_playing">Spilles nå</string>
+    <string name="music_time_of">%1$s av %2$s</string>
+    <string name="music_card_description">Spilles nå: %1$s. %2$s</string>
+    <string name="music_play">Spill</string>
+    <string name="music_pause">Pause</string>
+    <string name="music_previous">Forrige</string>
+    <string name="music_next">Neste</string>
+    <string name="lock_media_unlock">Lås opp</string>
+    <string name="lock_media_back">Tilbake til avspilling</string>
 </resources>

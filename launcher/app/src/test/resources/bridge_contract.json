@@ -15,5 +15,11 @@
     "storytel_generation": "int"
   },
   "report_state": ["report", "held_files", "held_sha256"],
-  "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art"]
+  "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art"],
+  "player": {
+    "activity": "me.vibb.music.ui.MainActivity",
+    "extra_open": "me.vibb.music.extra.OPEN",
+    "open_player": "player",
+    "extra_resume": "me.vibb.music.extra.RESUME"
+  }
 }

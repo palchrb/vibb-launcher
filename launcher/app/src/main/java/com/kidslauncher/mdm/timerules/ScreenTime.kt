@@ -184,7 +184,9 @@ val FREE_SCREENS = setOf(
  * over the lock must not be free) - unless one of [FREE_SCREENS]
  * is in front and not sharing the screen (split screen / picture-in-picture). A call doesn't stop
  * the count by itself - only our own in-call screen in front does (QA step 6 #1: otherwise a call
- * or any app claiming a VoIP audio mode made every app free).
+ * or any app claiming a VoIP audio mode made every app free). The Vibb music player in front never
+ * counts either ([musicInFront], design 21 §3: its `setForeground`, the top resumed activity and
+ * never in multi-window, cleared at screen-off and when its process dies).
  */
 fun screenTimeCounts(
     interactive: Boolean,
@@ -193,7 +195,8 @@ fun screenTimeCounts(
     freeScreenSharesScreen: Boolean,
     pinLocked: Boolean = false,
     voipExempt: Boolean = false,
-): Boolean = interactive && !keyguardLocked && !(pinLocked && !voipExempt) && !(freeScreenInFront && !freeScreenSharesScreen)
+    musicInFront: Boolean = false,
+): Boolean = interactive && !keyguardLocked && !(pinLocked && !voipExempt) && !(freeScreenInFront && !freeScreenSharesScreen) && !musicInFront
 
 /**
  * The ledger to use when the stored one can't be read (QA step 6 #6): today counts as used up
