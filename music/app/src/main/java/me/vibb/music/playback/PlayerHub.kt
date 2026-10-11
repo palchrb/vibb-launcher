@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import me.vibb.music.sonos.Room
+import me.vibb.music.sonos.RoomsView
 
 /** The app's own session commands (only our own controller may send them). */
 object Commands {
@@ -63,10 +63,8 @@ object PlayerHub {
         val output: Output = Output.PHONE,
         /** Design 26a step 3 (§3.3, §4.8); null on the phone. */
         val rendererState: RendererState? = null,
-        /** Design 26a step 3: the Sonos rows of "Spill av på" (`RoomDirectory.state`). */
-        val rooms: List<Room> = emptyList(),
-        val roomsStale: Boolean = false,
-        val scanning: Boolean = false,
+        /** Design 26a step 3: the Sonos rows of "Spill av på", stale and scanning (`RoomDirectory.state`). */
+        val rooms: RoomsView = RoomsView(emptyList(), stale = false, scanning = false),
     )
 
     /** NOT_DOWNLOADED: not on the phone and no network to stream it; CANT_PLAY: it failed anyway. */

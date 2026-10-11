@@ -148,8 +148,8 @@ internal class LocalRenderer(
         if (force) runBlocking(writer) { write() } else scope.launch(writer) { write() }
     }
 
-    override fun setVolume(volume: Float) {
-        exo.volume = volume
+    override fun setFadeGain(gain: Float) {
+        exo.volume = gain
     }
 
     override fun setAudioAttributes(attributes: AudioAttributes) = exo.setAudioAttributes(attributes, true)

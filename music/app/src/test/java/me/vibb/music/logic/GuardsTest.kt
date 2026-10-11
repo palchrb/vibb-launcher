@@ -40,13 +40,30 @@ class GuardsTest {
     }
 
     @Test
+    fun `the renderer changes in one place, which hands the service's events to the new one only`() {
+        // qa-26a-step2-code M1: the old renderer is saved and paused before it is detached.
+        val attach = service.substringAfter("private fun attach(next: Renderer) {").substringBefore("\n    }\n")
+        assertTrue(attach.contains("old.saveNow(force = true)"))
+        assertTrue(attach.indexOf("old.pause()") < attach.indexOf("old.onEvent = null"))
+        assertTrue(attach.indexOf("next.onEvent = { onRendererEvent(it) }") < attach.indexOf("renderer = next"))
+        assertTrue(attach.contains("session?.setPlayer(KidPlayer(next.player))"))
+        assertEquals("onEvent is set only in attach", 2, Regex("""\.onEvent = """).findAll(service).count())
+        assertEquals(2, Regex("""\.onEvent = """).findAll(attach).count())
+        assertEquals("renderer is assigned only in attach", 1, Regex("""\brenderer = """).findAll(service).count())
+        val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
+        assertTrue(onCreate.contains("attach(LocalRenderer("))
+    }
+
+    @Test
     fun `every command and playback resumption waits until the renderer is settled`() {
         // Design 26a §4.7: Home's RESUME after a restart must not start the phone under a playing speaker.
         val command = service.substringAfter("override fun onCustomCommand(").substringBefore("when (customCommand.customAction)")
         assertTrue(command.contains("scope.launch {\n                rendererReady.await()\n"))
         val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("val restored = restore()")
         assertTrue(resumption.contains("scope.launch {\n                rendererReady.await()\n"))
-        assertEquals("completed once, in onCreate", 1, Regex("""rendererReady\.complete\(""").findAll(service).count())
+        val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
+        assertTrue("completed in onCreate", onCreate.contains("rendererReady.complete(Unit)"))
+        assertEquals("and nowhere else", 1, Regex("""rendererReady\.complete\(""").findAll(service).count())
     }
 
     @Test
@@ -55,7 +72,21 @@ class GuardsTest {
         assertFalse(service.contains("exo."))
         assertFalse(service.contains("ExoPlayer"))
         assertFalse(service.contains("savePosition"))
-        assertFalse("the display position is never stored", Regex("""positionMs\(\)[^\n]*Row\(""").containsMatchIn(service))
+        // The display position is never stored (qa-26a-step2-code M2): its four readers are PlayerHub.position,
+        // previous's 3 s rule, the resume overlap and the launcher's setNowPlaying - no other.
+        assertEquals(4, Regex("""positionMs\(\)""").findAll(service).count())
+        assertTrue(service.contains("PlayerHub.position = { renderer.positionMs() }"))
+        assertTrue(service.contains("previousAction(renderer.currentIndex(), renderer.itemCount(), renderer.positionMs(), duration)"))
+        assertTrue(service.contains("renderer.seekTo(overlapStart(renderer.positionMs(), overlap))"))
+        assertTrue(service.contains("putLong(NowPlayingKeys.POSITION_MS, renderer.positionMs())"))
+        assertFalse(Regex("""\.(currentPosition|contentPosition)\b""").containsMatchIn(service))
+        // The service's own rows: the done mark (markDone) and the next item's bookmark at 0 (saveBookmark).
+        assertEquals(1, Regex("""PositionRow\(""").findAll(service).count())
+        assertTrue(service.substringAfter("private fun markDone(").substringBefore("\n    }\n").contains("PositionRow("))
+        assertEquals(1, Regex("""NowPlayingRow\(""").findAll(service).count())
+        assertEquals(1, Regex("""BookmarkRow\(""").findAll(service).count())
+        val saveBookmark = service.substringAfter("private fun saveBookmark(").substringBefore("\n    }\n")
+        assertTrue(saveBookmark.contains("NowPlayingRow(") && saveBookmark.contains("BookmarkRow(a.entry.key, item.key, 0, now)"))
         val local = code("src/main/java/me/vibb/music/playback/LocalRenderer.kt")
         assertTrue(local.substringAfter("override fun saveNow(force: Boolean)").contains("val pos = exo.currentPosition"))
     }

@@ -145,7 +145,9 @@ class PlaybackService : MediaSessionService() {
     private var lastIndex = -1
     private var sleepEndsAt: Long? = null
     private var sleepMinutes: Int? = null
-    private var sleepPausing = false
+    /** A pause the service makes itself (the sleep timer's end, a renderer switch): not the kid's, so it
+     * never cancels the sleep timer. */
+    private var selfPausing = false
     private var faultAt: Long? = null
     private var faultKey: String? = null
     private val faults = ArrayDeque<Long>()
@@ -155,8 +157,7 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         store = Store.get(this)
-        renderer = LocalRenderer(this, store, scope, writer) { active }
-        renderer.onEvent = { onRendererEvent(it) }
+        attach(LocalRenderer(this, store, scope, writer) { active })
         val open = PendingIntent.getActivity(
             this, 1,
             Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN, MainActivity.OPEN_PLAYER),
@@ -198,10 +199,23 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * The one place the session's player changes (design 26a §0, §4.6): whoever plays, the session
-     * wraps it in [KidPlayer]. Only the phone renders until step 3, which calls this.
+     * The one place the renderer changes (design 26a §0, §4.6), from [onCreate] (no old one, no session
+     * yet) and from step 3's switch. The old renderer is saved (force: the bookmark flush) and paused
+     * BEFORE it is detached, so its own events (the pause: a save, the 15 s tick dropped) are still
+     * handled while it is [renderer]; the pause is the service's own, so the sleep timer stays. Then
+     * only [next] reports to the service, and the session wraps it in [KidPlayer]. `next.player` must
+     * live on the main looper (`MediaSession.setPlayer` checks the application looper).
      */
-    private fun switchRenderer(next: Renderer) {
+    private fun attach(next: Renderer) {
+        if (::renderer.isInitialized) {
+            val old = renderer
+            old.saveNow(force = true)
+            selfPausing = true
+            old.pause()
+            selfPausing = false
+            old.onEvent = null
+        }
+        next.onEvent = { onRendererEvent(it) }
         renderer = next
         session?.setPlayer(KidPlayer(next.player))
     }
@@ -542,7 +556,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun setSleep(minutes: Int) {
         handler.removeCallbacks(sleepTick)
-        renderer.setVolume(1f)
+        renderer.setFadeGain(1f)
         if (minutes <= 0) {
             sleepEndsAt = null
             sleepMinutes = null
@@ -558,12 +572,12 @@ class PlaybackService : MediaSessionService() {
         override fun run() {
             val end = sleepEndsAt ?: return
             val left = end - SystemClock.elapsedRealtime()
-            renderer.setVolume(sleepVolume(left))
+            renderer.setFadeGain(sleepVolume(left))
             if (left <= 0) {
-                sleepPausing = true
+                selfPausing = true
                 renderer.pause()
-                sleepPausing = false
-                renderer.setVolume(1f)
+                selfPausing = false
+                renderer.setFadeGain(1f)
                 sleepEndsAt = null
                 sleepMinutes = null
                 renderer.saveNow()
@@ -591,7 +605,12 @@ class PlaybackService : MediaSessionService() {
         } else {
             Output.deviceId(key)?.let { id -> devices.firstOrNull { it.id == id } }
         }
-        chosenOutput = if (device == null) null else key
+        // Canonical keys only ("dev:07" names device 7 but would never match its key again).
+        chosenOutput = when {
+            device == null -> null
+            key == Output.PHONE_KEY -> key
+            else -> Output.deviceKey(device.id)
+        }
         renderer.setPreferredAudioDevice(device)
         publish()
     }
@@ -642,7 +661,7 @@ class PlaybackService : MediaSessionService() {
             is RendererEvent.Paused -> {
                 when (event.cause) {
                     PauseCause.FAULT -> markFault()
-                    PauseCause.USER -> if (!sleepPausing && sleepEndsAt != null) setSleep(0)
+                    PauseCause.USER -> if (!selfPausing && sleepEndsAt != null) setSleep(0)
                     PauseCause.OTHER -> Unit
                 }
                 renderer.saveNow()
@@ -855,7 +874,7 @@ class PlaybackService : MediaSessionService() {
         reportNowPlaying()
         val a = active
         val outputs = outputs()
-        val output = outputs.firstOrNull { it.key == chosenOutput } ?: outputs.firstOrNull { it.kind != OutputKind.PHONE } ?: Output.PHONE
+        val output = outputs.firstOrNull { it.key == chosenOutput } ?: outputs.firstOrNull { it.kind == OutputKind.BLUETOOTH || it.kind == OutputKind.WIRED } ?: Output.PHONE
         PlayerHub.mutableState.value = PlayerHub.State(
             live = a != null && renderer.itemCount() > 0,
             entryId = a?.entry?.id,

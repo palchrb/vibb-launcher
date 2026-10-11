@@ -18,6 +18,8 @@ class OutputKeyTest {
     fun `a device key carries its AudioDeviceInfo id and reads back`() {
         assertEquals("dev:7", Output.deviceKey(7))
         for (id in listOf(0, 7, 4711, Int.MAX_VALUE)) assertEquals(id, Output.deviceId(Output.deviceKey(id)))
+        // A non-canonical key still names its device; the service stores deviceKey(id) (qa-26a-step2-code L6).
+        for (key in listOf("dev:07", "dev:+7")) assertEquals("dev:7", Output.deviceId(key)?.let { Output.deviceKey(it) })
     }
 
     @Test

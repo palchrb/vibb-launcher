@@ -18,7 +18,13 @@ interface Renderer {
     val player: Player
     val kind: RendererKind
 
-    /** Where [RendererEvent]s go: called on the main thread, inside the call that caused them. */
+    /**
+     * Where [RendererEvent]s go, set only by the service and only on the current renderer (null once
+     * detached). Called on the main thread, synchronously: the local one from inside the ExoPlayer call
+     * that caused the event, a polled one from its main-thread post of a poll result. The service's
+     * handler may re-enter the renderer (seek, pause, play, prepare, save) from inside the call, so a
+     * renderer must tolerate that (step 3's `SimpleBasePlayer`: emit outside its own handler futures).
+     */
     var onEvent: ((RendererEvent) -> Unit)?
 
     /** A new queue at [startIndex], [startMs]; it plays only with [playNow]. */
@@ -32,6 +38,11 @@ interface Renderer {
 
     /** The current item's duration once the renderer knows it, else null. */
     fun durationMs(): Long?
+    /**
+     * Indexes the queue passed to [load] and [reorder], i.e. the service's `Active.items`: a renderer
+     * never filters it (the speaker-playable filter belongs where the queue is built, the renderer
+     * passed explicitly, design 26a §9).
+     */
     fun currentIndex(): Int
     fun itemCount(): Int
     fun play()
@@ -52,8 +63,9 @@ interface Renderer {
      */
     fun saveNow(force: Boolean = false)
 
-    /** The sleep timer's fade (0..1). */
-    fun setVolume(volume: Float)
+    /** The sleep timer's fade (0..1): a local gain only; a remote renderer ignores it (its fade is
+     * `fadeOutAndPause`, step 3a), so the speaker's volume never sees these steps. */
+    fun setFadeGain(gain: Float)
 
     // The phone's own player only; a remote renderer ignores them (design 26a §3.2).
     fun setAudioAttributes(attributes: AudioAttributes)
