@@ -518,3 +518,70 @@ fn an_unsigned_install_fails_early_and_clearly() {
         assert!(download.contains("aren't signed, and"), "{download}");
     }
 }
+
+/// Security review H1, run for real (QA of the security wave, missing tests): values injected
+/// into schedule.conf run nothing as root, and an invalid one falls back to its default.
+#[test]
+fn the_scheduler_never_runs_what_schedule_conf_says() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let log = root.join("actions.log");
+    std::fs::write(
+        root.join("actions.sh"),
+        format!(
+            "action_os_check() {{ echo os_check >> {log}; }}\n\
+             action_os_upgrade() {{ echo os_upgrade >> {log}; }}\n\
+             action_tailscale_update() {{ echo tailscale_update >> {log}; }}\n\
+             action_reboot() {{ echo reboot >> {log}; }}\n",
+            log = log.display()
+        ),
+    )
+    .unwrap();
+    let now = std::process::Command::new("date")
+        .arg("+%H:%M")
+        .output()
+        .unwrap();
+    let now = String::from_utf8(now.stdout).unwrap().trim().to_string();
+    let pwned = root.join("pwned");
+    std::fs::write(
+        root.join("schedule.conf"),
+        format!(
+            "FREQUENCY=daily\nCHECK_TIME={now}\n\
+             AUTO_APPLY_OS=true$(touch {p}1)\nAUTO_APPLY_TAILSCALE=true\n\
+             AUTO_REBOOT=`touch {p}2`\nDAY_OF_WEEK=0; touch {p}3\n",
+            p = pwned.display()
+        ),
+    )
+    .unwrap();
+    let status = run_root_script(
+        "SCHEDULER_EOF",
+        &[
+            (
+                "source /opt/kid-phone-server-updater/actions.sh",
+                &format!("source {}", root.join("actions.sh").display()),
+            ),
+            (
+                "/opt/kid-phone-server/data/schedule.conf",
+                root.join("schedule.conf").to_str().unwrap(),
+            ),
+            (
+                "/opt/kid-phone-server-updater/last_run_date",
+                root.join("last_run_date").to_str().unwrap(),
+            ),
+        ],
+        &[],
+        root,
+    );
+    assert!(status.success(), "{status:?}");
+    for n in 1..=3 {
+        assert!(
+            !root.join(format!("pwned{n}")).exists(),
+            "injection {n} ran"
+        );
+    }
+    // The time matched (it was valid); the injected AUTO_APPLY_OS fell back to false.
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "os_check\ntailscale_update\n"
+    );
+}
