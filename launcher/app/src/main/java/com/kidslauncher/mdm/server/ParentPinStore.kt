@@ -75,6 +75,18 @@ class ParentPinStore(
         false
     }
 
+    /**
+     * Design 24b §2 (QA #6): the stored state is about the same PIN under a new fingerprint (the
+     * vault's migration or a re-wrap) - it moves over, so a lockout keeps running. Only when the
+     * stored fingerprint is one of [from]; false otherwise or when the commit failed.
+     */
+    fun rewriteFingerprint(from: Set<String>, to: String): Boolean = try {
+        val stored = prefs.getString(PIN_FP, null)
+        stored != null && stored in from && prefs.edit().putString(PIN_FP, to).commit()
+    } catch (e: Exception) {
+        false
+    }
+
     /** Only the queue (the upload's removal, enrollment). */
     fun saveQueue(queue: List<ParentPinEvent>): Boolean = try {
         prefs.edit().putString(EVENTS, ServerJson.encodeToString(QUEUE, queue)).commit()

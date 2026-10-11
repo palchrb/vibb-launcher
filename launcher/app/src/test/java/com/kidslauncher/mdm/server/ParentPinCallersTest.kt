@@ -26,9 +26,12 @@ class ParentPinCallersTest {
     }.keys.map { File(it).name }.toSet()
 
     @Test
-    fun `only the gate and the kid lock hash a PIN`() {
+    fun `only the vault and the kid lock hash a PIN`() {
         assertTrue(sources.size > 100)
-        assertEquals(setOf("ParentPin.kt", "PinLockRuntime.kt"), callers("PinHash.verify("))
+        // Design 24b: the parent PIN through the vault (behind ParentPin's gate), the kid's lock on its own.
+        assertEquals(setOf("PinLockRuntime.kt"), callers("PinHash.verify("))
+        assertEquals(setOf("PinVault.kt"), callers("PinHash.derive("))
+        assertEquals(setOf("ParentPin.kt"), callers("PinVault.of("))
     }
 
     @Test

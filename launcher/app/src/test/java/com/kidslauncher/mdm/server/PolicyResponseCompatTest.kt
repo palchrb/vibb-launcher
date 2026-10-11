@@ -145,6 +145,19 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `a cache with a redacted override_pin_hash keeps the parent PIN configured (24b S2)`() {
+        val cached = decodeCached(serverResponse.replace(Regex("\"override_pin_hash\": \"[0-9a-f]+\""), "\"override_pin_hash\": \"\""))
+        assertTrue(cached is CachedPolicy.Ok)
+        val policy = (cached as CachedPolicy.Ok).policy
+        assertEquals("", policy.overridePinHash)
+        assertEquals("a3c1f0e2d4b6a8c0e2f4a6b8c0d2e4f6", policy.overridePinSalt)
+        // The cache round trip keeps it redacted, and the vault keeps its tag for it.
+        val encoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertTrue(encoded.contains("\"override_pin_hash\":\"\""))
+        assertEquals(policy, (decodeCached(encoded) as CachedPolicy.Ok).policy)
+    }
+
+    @Test
     fun `the two relock commands decode, and their answers`() {
         for (command in listOf("end_windows", "allow_blocked")) {
             val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "$command"}}""")

@@ -288,4 +288,5 @@
     <string name="home_window_open">Åpen til %1$s</string>
     <!-- Design 24b §1.8: foreldrekodens eget tastatur. -->
     <string name="parent_pin_keypad_dots">%1$d sifre tastet</string>
+    <string name="parent_pin_until_sync">Koden kan ikke sjekkes før telefonen når serveren.</string>
 </resources>

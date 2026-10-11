@@ -490,6 +490,7 @@
         <form method="post" action="/devices/{{ device.id }}/parent-pin">
             <label for="new_pin">New parent PIN (6-10 digits; birthdays and years are easy to guess)</label>
             <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password">
+            <p class="subtitle">8 or more digits are much harder to crack if this server is ever copied.</p>
             {% if parent_pin.pin_set %}
             <label class="checkbox-row">
                 <input type="checkbox" name="clear_pin" value="on">

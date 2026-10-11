@@ -94,6 +94,7 @@ object ParentPinDialog {
         val status = ParentPin.status(context)
         return when {
             !status.configured -> Opening(context.getString(notConfigured), okEnabled = false)
+            status.untilSync -> Opening(context.getString(R.string.parent_pin_until_sync), okEnabled = false)
             status.lockoutMs > 0L -> Opening(lockedOutText(context, lockedOut, status.lockoutMs), okEnabled = false)
             status.triesLeft == 1 ->
                 Opening(context.getString(R.string.parent_pin_one_try_left, duration(context, status.nextLockoutMs)), okEnabled = true)
@@ -113,8 +114,13 @@ object ParentPinDialog {
             is ParentPinResult.LockedOut -> lockedOutText(context, lockedOut, result.remainingMs)
             ParentPinResult.TooShort -> context.getString(R.string.parent_pin_too_short)
             ParentPinResult.NotConfigured -> context.getString(notConfigured)
-            is ParentPinResult.Unavailable ->
-                context.getString(if (result.storageFull) R.string.parent_pin_storage_full else R.string.parent_pin_unavailable)
+            is ParentPinResult.Unavailable -> context.getString(
+                when {
+                    result.untilSync -> R.string.parent_pin_until_sync
+                    result.storageFull -> R.string.parent_pin_storage_full
+                    else -> R.string.parent_pin_unavailable
+                },
+            )
         }
 
     /** OK stays usable after a wrong, too-short or uncounted try - not after a lockout or with no PIN. */

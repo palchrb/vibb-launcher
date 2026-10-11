@@ -106,7 +106,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 FreshOutcome.REJECTED_SUSPECT
             }
             FreshVerdict.ACCEPT -> {
-                freshPolicy = fetched.policy
+                // Design 24b §2: the parent PIN's hash goes into the vault; nothing caches it.
+                freshPolicy = ParentPin.acceptPolicy(context, fetched.policy)
                 FreshOutcome.ACCEPTED
             }
         }
@@ -124,11 +125,6 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.
         OfflineOverride.clear()
-        // Cache the hash+salt into their own preference slots (not just inside the serialized
-        // kid_mode_policy blob) - this is what lets OfflineOverride verify a locally-entered PIN
-        // with zero network at all, which is the entire point of the offline failsafe.
-        mdm.overridePinHash(freshPolicy.overridePinHash)
-        mdm.overridePinSalt(freshPolicy.overridePinSalt)
         // KidVpnService reads this cached value directly (it never talks to the network itself for
         // policy) - see DnsFilterEngine.resolveUpstream.
         mdm.dnsUpstreamProvider(freshPolicy.dnsUpstreamProvider)
@@ -795,7 +791,7 @@ private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
  * call prefs ([callPrefsUpdate]: `calls_managed_last` only from an explicit `managed`, and the last
  * managed call rules) in one synchronous `commit()` - they must never disagree, and the generated
  * preference setters only `apply()` asynchronously (see CLAUDE.md on writes racing a process death). */
-private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
+private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit = synchronized(POLICY_CACHE_LOCK) {
     val keys = LauncherPreferences.mdm().keys()
     val editor = PreferenceManager.getDefaultSharedPreferences(context).edit()
         .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), policy))
@@ -813,6 +809,10 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
     val ok = editor.commit()
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
 }
+
+/** The cached policy blob is written by the sync and once by the vault's migration
+ * ([redactCachedPolicy]) - never both at once (design 24b §2). */
+internal val POLICY_CACHE_LOCK = Any()
 
 /**
  * The last accepted policy, straight from the local cache - no network call. Feed it to

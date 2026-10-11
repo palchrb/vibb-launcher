@@ -5,7 +5,6 @@ import android.os.SystemClock
 import com.kidslauncher.mdm.lock.LockClocks
 import com.kidslauncher.mdm.play.INSTALL_MODE_DURATION_MS
 import com.kidslauncher.mdm.play.PlayRuntime
-import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.dto.ParentPinEvent
 import java.security.MessageDigest
 
@@ -22,17 +21,38 @@ import java.security.MessageDigest
  */
 object ParentPin {
 
-    /** PBKDF2 (~0.5 s): never on the main thread. */
+    /** The vault's migration ran in this process (it is idempotent anyway). */
+    @Volatile
+    private var vaultMigrated = false
+
+    /** The parent PIN's vault (design 24b §2), migrated from design 24's plain hash first. */
+    private fun vault(app: Context): PinVaultCore {
+        val vault = PinVault.of(app)
+        if (!vaultMigrated) {
+            vault.migrate(
+                rewriteFingerprint = { ParentPinStore.of(app).rewriteFingerprint(it.from, it.to) },
+                redactCache = { redactCachedPolicy(app) },
+            )
+            vaultMigrated = true
+        }
+        return vault
+    }
+
+    /** PBKDF2 (~0.5 s) and the vault's HMAC: never on the main thread. */
     @Synchronized
     fun check(context: Context, entry: ParentPinEntry, pin: String): ParentPinResult {
         val app = context.applicationContext
-        val (hash, salt) = cachedPin() ?: return ParentPinResult.NotConfigured
+        val vault = vault(app)
+        if (!vault.configured()) return ParentPinResult.NotConfigured
+        // The key failed: nothing can be checked (or counted) until the next sync re-wraps.
+        val fingerprint = vault.fingerprint()
+        if (vault.rewrapNeeded() || fingerprint == null) return ParentPinResult.Unavailable(storageFull = false, untilSync = true)
         return checkParentPin(
             store = ParentPinStore.of(app),
             entry = entry,
             pin = pin,
-            hashHex = hash,
-            saltHex = salt,
+            fingerprint = fingerprint,
+            verify = vault::verify,
             now = clocks(),
             newId = ::newPinEventId,
             storageFull = { storageFull(app) },
@@ -40,9 +60,6 @@ object ParentPin {
             startWindow = { start -> if (start != null) startWindow(app, entry, start) },
         )
     }
-
-    /** A usable parent PIN is cached - the one rule every pre-check and [check] use (qa-24-code S2). */
-    fun configured(): Boolean = cachedPin() != null
 
     /**
      * The one pre-check before a dialog opens (qa-24-code Low 1): whether a PIN is configured, the
@@ -52,8 +69,23 @@ object ParentPin {
      */
     @Synchronized
     fun status(context: Context): ParentPinStatus {
-        val (hash, salt) = cachedPin() ?: return ParentPinStatus.NOT_CONFIGURED
-        return parentPinStatus(ParentPinStore.of(context), parentPinFingerprint(hash, salt), clocks())
+        val app = context.applicationContext
+        val vault = vault(app)
+        if (!vault.configured()) return ParentPinStatus.NOT_CONFIGURED
+        val fingerprint = vault.fingerprint()
+        if (vault.rewrapNeeded() || fingerprint == null) return ParentPinStatus.NOT_CONFIGURED.copy(configured = true, untilSync = true)
+        return parentPinStatus(ParentPinStore.of(app), fingerprint, clocks())
+    }
+
+    /** An accepted fresh policy through the vault (design 24b §2) - the only reader of its
+     * `override_pin_hash`: the returned policy has none, and only it is cached or passed on. A
+     * lockout state carries over when the same PIN gets a new fingerprint (a re-wrap). */
+    @Synchronized
+    fun acceptPolicy(context: Context, fresh: com.kidslauncher.mdm.server.dto.PolicyResponse): com.kidslauncher.mdm.server.dto.PolicyResponse {
+        val app = context.applicationContext
+        val accepted = vault(app).accept(fresh)
+        accepted.change?.let { ParentPinStore.of(app).rewriteFingerprint(it.from, it.to) }
+        return accepted.policy
     }
 
     /** A snapshot of the queued events, for the upload. */
@@ -71,13 +103,6 @@ object ParentPin {
     @Synchronized
     fun clearEvents(context: Context) {
         ParentPinStore.of(context).saveQueue(emptyList())
-    }
-
-    private fun cachedPin(): Pair<String, String>? {
-        val mdm = LauncherPreferences.mdm()
-        val hash = mdm.overridePinHash()
-        val salt = mdm.overridePinSalt()
-        return if (hash != null && salt != null && PinHash.usable(hash, salt)) hash to salt else null
     }
 
     private fun clocks() = LockClocks(System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount())
@@ -111,8 +136,9 @@ internal fun removeSentPinEvents(store: ParentPinStore, ids: Set<String>) {
     store.saveQueue(store.queue().filter { it.id !in ids })
 }
 
-/** Which parent PIN a state is about, without a second copy of the hash (the kid lock's
- * `KidLockConfig.fingerprint` recipe). */
+/** Design 24's fingerprint of a parent PIN (the kid lock's `KidLockConfig.fingerprint` recipe) -
+ * since design 24b computed only from a hash in memory, to carry a lockout over to the vault's
+ * fingerprint ([PinVaultCore.fingerprint]). */
 internal fun parentPinFingerprint(hashHex: String, saltHex: String): String =
     MessageDigest.getInstance("SHA-256").digest("$saltHex:$hashHex".toByteArray())
         .take(8).joinToString("") { "%02x".format(it) }
@@ -138,8 +164,15 @@ internal fun prepareParentState(
     }
 }
 
-/** [ParentPin.status]: [lockoutMs] 0 = none; [triesLeft] before the next lockout of [nextLockoutMs]. */
-data class ParentPinStatus(val configured: Boolean, val lockoutMs: Long, val triesLeft: Int, val nextLockoutMs: Long) {
+/** [ParentPin.status]: [lockoutMs] 0 = none; [triesLeft] before the next lockout of [nextLockoutMs];
+ * [untilSync]: the vault's key failed - nothing can be checked until the phone reaches the server. */
+data class ParentPinStatus(
+    val configured: Boolean,
+    val lockoutMs: Long,
+    val triesLeft: Int,
+    val nextLockoutMs: Long,
+    val untilSync: Boolean = false,
+) {
     companion object {
         val NOT_CONFIGURED = ParentPinStatus(false, 0L, PARENT_FREE_TRIES, PARENT_LOCKOUT_BASE_MS)
     }
@@ -162,21 +195,23 @@ internal fun parentPinStatus(store: ParentPinStore, fingerprint: String, now: Lo
  * load and refresh; locked out (nothing counted, no event); too short (not counted); count first,
  * state and event in one commit (a failed commit restores the previous state, records nothing and
  * says so); PBKDF2; on a match back to the pre-attempt state with no failures - the level and its
- * decay stay - and the event becomes `unlocked`, committed before [startWindow] runs.
+ * decay stay - and the event becomes `unlocked`, committed before [startWindow] runs. [verify] is the
+ * vault's (design 24b §2): when its key fails the attempt is undone like a failed commit - a broken
+ * key never counts as a wrong try.
  */
 internal fun checkParentPin(
     store: ParentPinStore,
     entry: ParentPinEntry,
     pin: String,
-    hashHex: String,
-    saltHex: String,
+    fingerprint: String,
+    verify: (String) -> PinVerdict,
     now: LockClocks,
     newId: () -> String,
     storageFull: () -> Boolean,
     windowStart: () -> WindowStart?,
     startWindow: (WindowStart?) -> Unit,
 ): ParentPinResult {
-    val (pre, queue) = prepareParentState(store, parentPinFingerprint(hashHex, saltHex), now)
+    val (pre, queue) = prepareParentState(store, fingerprint, now)
         ?: return ParentPinResult.LockedOut(PARENT_LOCKOUT_BASE_MS)
     val remaining = parentLockoutRemaining(pre, now)
     if (remaining > 0L) return ParentPinResult.LockedOut(remaining)
@@ -189,8 +224,14 @@ internal fun checkParentPin(
         store.save(pre, queue)
         return ParentPinResult.Unavailable(storageFull())
     }
-    if (!PinHash.verify(pin, hashHex, saltHex)) {
-        return if (attempt.lockoutMs > 0L) ParentPinResult.LockedOut(attempt.lockoutMs) else wrongResult(attempt.state, now)
+    when (verify(pin)) {
+        PinVerdict.MATCH -> Unit
+        PinVerdict.NO_MATCH ->
+            return if (attempt.lockoutMs > 0L) ParentPinResult.LockedOut(attempt.lockoutMs) else wrongResult(attempt.state, now)
+        PinVerdict.UNAVAILABLE -> {
+            store.save(pre, queue)
+            return ParentPinResult.Unavailable(storageFull = false, untilSync = true)
+        }
     }
 
     val start = windowStart()
