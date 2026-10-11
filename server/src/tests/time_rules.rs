@@ -1144,3 +1144,38 @@ async fn the_phones_locate_answer_is_shown() {
     assert!(text.contains("location is off for this device"), "{text}");
     assert!(text.contains("Off - location switched off on the phone"));
 }
+
+/// Security review L5: a rule's name never lands inside script - it goes into a `data-` attribute
+/// (HTML-escaped) and the confirm reads it from there.
+#[tokio::test]
+async fn a_rule_name_is_never_script() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let name = "x');alert(1);('";
+    sqlx::query(
+        "INSERT INTO time_rules (id, device_id, name, kind, calls_allowed, days_json) \
+         VALUES (7, NULL, ?, 'school', 0, '[null,null,null,null,null,null,null]')",
+    )
+    .bind(name)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = app.get_page("/schedules", &cookie).await.text();
+    let form = page
+        .split("action=\"/schedules/rules/7/delete\"")
+        .nth(1)
+        .and_then(|rest| rest.split('>').next())
+        .expect("the delete form");
+    assert!(
+        form.contains(r#"onsubmit="return confirm('Delete ' + this.dataset.name + '?');""#),
+        "{form}"
+    );
+    assert!(
+        form.contains("data-name=\"x&#39;);alert(1);(&#39;\""),
+        "{form}"
+    );
+    assert!(
+        !page.contains("alert(1);('"),
+        "the raw name is nowhere in the page"
+    );
+}
