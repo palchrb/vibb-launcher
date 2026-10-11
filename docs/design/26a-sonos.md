@@ -592,9 +592,8 @@ Open after the QA review:
    tried handing the speaker the HLS manifest url as a plain `url` kind. If a Sonos (S2 firmware) plays and seeks an
    NRK series manifest directly, the whole service path goes (the serial lookup, the `<desc>`, the precondition).
    Against it: psapi manifest urls may carry expiring tokens the service handles itself, and HLS seek on Sonos is
-   unproven either way. **Device check, first thing in step 3a's rig session**: play one series episode as `url` with
-   the manifest url; if it plays, seeks and resumes from a 12-minute bookmark, drop `nrk_program` from the spec and
-   `PlayBody` (step 1 still builds it: it is 40 lines and the fixture exists). If not, the port stands.
+   unproven either way. **Answered (user, 2026-10-11, tested on a speaker): the split is necessary** - a Sonos does
+   not play an NRK series manifest handed over as a plain url. `nrk_program` stays as the port of what works.
 
 ## 11. QA review (2026-10-11, design QA of this spec)
 
@@ -633,8 +632,6 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
 ## Device checks (Jelly Star, real speakers; after step 3)
 - Picker: rooms and a group row; a renamed or re-addressed speaker (DHCP) heals on the next refresh; "Se etter
   høyttalere" after a cold cache; the cabin case (home rooms listed stale, nothing plays, no scan without Wi-Fi).
-- **First:** an NRK series episode handed over as a plain `url` (the HLS manifest): does it play, seek, resume (§10
-  item 7)? Then the same through `nrk_program`. The result decides whether the service path stays.
 - Play an RSS episode and an NRK series episode at 0 and from a 12-minute bookmark (the hush: no audible second from
   0:00); the Sonos app shows title/artist/art; `didl accepted` in logcat.
 - Pause/resume from the phone, from the Sonos app, and from the speaker's buttons; next/previous mash; seek drag.
