@@ -39,7 +39,7 @@ expected here. With `INSECURE_COOKIES` the session cookie is a plain `handy` (`_
 In the PWA, **before** enrolling the phone:
 1. Devices → New device, then "New code" on its page (shown once, valid 15 minutes).
 2. On the device page: turn **"Block USB debugging" OFF** (otherwise adb dies on the first sync).
-3. Set an override PIN.
+3. Set a parent PIN (the "Parent PIN" card, 6-10 digits).
 
 ## 3. Emulator: fresh start and snapshot
 
@@ -72,7 +72,7 @@ default `Europe/Oslo`). QR provisioning itself (the launcher now has the Android
 Jelly Star and stock GMS phones; adb above stays the fallback.
 
 Screen lock: since step 10 the phone has **no Android screen lock** - handy's own PIN lock
-replaces it (set the kid's PIN on the device page, "Screen lock" card; the unlock code must be set
+replaces it (set the kid's PIN on the device page, "Screen lock" card; the parent PIN must be set
 first). An Android PIN keeps handy's lock off (no double lock) and the device page says "Remove
 the Android screen lock". Remove one with `adb shell locksettings clear --old <PIN>` (or Settings ->
 Security -> Screen lock -> None). Only for the old keyguard tests (09 doc, B2:
@@ -256,7 +256,7 @@ Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d b
 
 ## 6c. Step 10: handy's own PIN lock and the call screens
 
-Setup: device page -> set an unlock code (offline override PIN, 6+ digits), then "Screen lock" ->
+Setup: device page -> set a parent PIN ("Parent PIN" card, 6-10 digits), then "Screen lock" ->
 kid's PIN (4-6 digits; the first one also turns "Block safe mode" on). Sync (or wait for the
 nudge). The emulator must have no Android screen lock:
 
@@ -282,7 +282,7 @@ screen-on must show the PIN lock straight away, never a frame of the app underne
 3. **Wrong PINs**: 4 wrong are free, the 5th starts "Try again in 0:30", then 1, 2, 5, 15 min.
    During the wait: `adb shell su 0 date ...` / Settings clock forward or back doesn't shorten it
    (date/time are locked while managed - test on a debug build with the restriction lifted),
-   `adb reboot` restarts the full wait. The Parent code link (the unlock code) opens the lock
+   `adb reboot` restarts the full wait. The Parent code link (the parent PIN) opens the lock
    during the wait, also in airplane mode.
 4. **Incoming call over the lock**: lock the screen, then `adb emu gsm call +4791234567`
    (allowed contact) -> the new incoming-call screen over the lock within a second; answer,

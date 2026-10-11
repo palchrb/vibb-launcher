@@ -12,7 +12,6 @@ import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.SettingsBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.ParentPin
 import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.ui.ParentPinDialog
@@ -73,11 +72,12 @@ class SettingsActivity : UIObjectActivity() {
 
     private fun currentAccess(): SettingsAccess {
         val mdm = LauncherPreferences.mdm()
+        val pin = ParentPin.status(this)
         return settingsAccess(
             // A cached policy also counts, for a phone whose cache predates the flag.
             policyEverApplied = mdm.policyEverApplied() || !mdm.kidModePolicy().isNullOrBlank(),
-            pinConfigured = OfflineOverride.isConfigured(),
-            lockedOut = ParentPin.lockoutRemainingMs(this) > 0L,
+            pinConfigured = pin.configured,
+            lockedOut = pin.lockoutMs > 0L,
         )
     }
 

@@ -20,7 +20,8 @@ interface LegacyParentPinCounter {
 
 /**
  * The parent PIN's lockout state and event queue (design 24 §2.2): credential-encrypted prefs
- * `parent_pin_state` (never device-protected storage; excluded from backup like everything else),
+ * `parent_pin_state` (never device-protected storage; excluded from backup like everything else;
+ * a `level` key from the first build is ignored),
  * every write a synchronous `commit()` of every key, state and queue together. Used only under
  * [ParentPin]'s lock.
  *
@@ -65,7 +66,6 @@ class ParentPinStore(
         val editor = prefs.edit()
             .putInt(VERSION, STATE_VERSION)
             .putInt(FAILURES, state.failures)
-            .putInt(LEVEL, state.level)
             .putString(PIN_FP, state.pinFingerprint)
             .putString(EVENTS, ServerJson.encodeToString(QUEUE, queue))
         putWindow(editor, state.lockout, LO_WALL, LO_ELAPSED, LO_BOOT, LO_DURATION)
@@ -94,12 +94,9 @@ class ParentPinStore(
         require(version == STATE_VERSION) { "unknown version $version" }
         val failures = int(FAILURES)
         require(failures in 0 until PARENT_FREE_TRIES) { "failures $failures" }
-        val level = int(LEVEL)
-        require(level in 0..PARENT_LEVEL_MAX) { "level $level" }
         val fingerprint = prefs.getString(PIN_FP, null) ?: error("no $PIN_FP")
         return ParentLockoutState(
             failures = failures,
-            level = level,
             lockout = window(LO_WALL, LO_ELAPSED, LO_BOOT, LO_DURATION, PARENT_LOCKOUT_CAP_MS),
             decay = window(DC_WALL, DC_ELAPSED, DC_BOOT, DC_DURATION, PARENT_LEVEL_MAX * PARENT_LEVEL_DECAY_MS),
             pinFingerprint = fingerprint,
@@ -136,7 +133,6 @@ class ParentPinStore(
 
         const val VERSION = "version"
         const val FAILURES = "failures"
-        const val LEVEL = "level"
         const val LO_WALL = "lo_wall"
         const val LO_ELAPSED = "lo_elapsed"
         const val LO_BOOT = "lo_boot"

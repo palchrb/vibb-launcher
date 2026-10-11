@@ -146,12 +146,13 @@ object PlayRuntime {
 
     /** Whether install mode may start now (the PIN is asked afterwards, by the caller). */
     fun canStart(context: Context): InstallModeStart {
+        val pin = ParentPin.status(context)
         val policy = currentPolicyDecision().policy
         val lock = TimeRulesRuntime.currentLock(context, policy, overrideActive())
         return canStartInstallMode(
             appsManaged = policy?.allowlist != null && !overrideActive(),
-            pinConfigured = OfflineOverride.isConfigured(),
-            pinLockedOut = ParentPin.lockoutRemainingMs(context) > 0L,
+            pinConfigured = pin.configured,
+            pinLockedOut = pin.lockoutMs > 0L,
             timeLocked = lock.locked,
             playStoreInstalled = playStoreInstalled(context),
         )

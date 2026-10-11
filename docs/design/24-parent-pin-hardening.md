@@ -165,7 +165,10 @@ fun levelNow(s: ParentLockoutState, now: LockClocks): Int =   // on a refreshed 
   This deliberately differs from the kid backoff (a full restart on every boot). At 24 h, a full restart would let
   daily reboots keep the parent out indefinitely. Carrying the wall clock over can only shorten a window if the wall
   clock jumps forward across a reboot. `DISALLOW_CONFIG_DATE_TIME` and auto time prevent that while managed. During
-  an override or pause they are lifted, which gives one extra round at most (QA's Q5). The level persists either way.
+  an override or pause they are lifted on a phone without managed calls or time rules (`EnforcementPlan.lockDateTime`).
+  The level's decay window carries over the same way, so a clock moved forward plus a reboot then also clears the
+  level: up to 35 fresh tries, not just one extra round (qa-24-code Low 5, correcting QA's Q5). It needs a window
+  the parent granted, so it stays an accepted residual.
 - **Bounds.**
   - Every lockout path is capped at 24 h. A new boot gives at most `duration`, and migration gives at most 15 min.
   - After a lockout the parent always gets 5 fresh tries.
@@ -566,6 +569,8 @@ its status field is an API change: launcher and server go in one commit.
   - After lockout 1 ends (wait, or move the date forward and reboot), 5 more wrong tries give "30 min".
   - A correct PIN, then 5 wrong, gives "1 h", because the level is kept.
   - Move the date 24 h forward and reboot: the next lockout is one step shorter.
+- **USB keyboard via OTG** against the five PIN dialogs (security review H3): fast typing hits the same count, and
+  Enter doesn't act as OK.
 - **Reboot during a lockout:** it still runs, for the wall-clock remainder. A date set back across a reboot gives at
   most one full duration.
 - **Upgrade with a running 15-minute lockout:** it continues and never gets longer.
@@ -906,17 +911,17 @@ One line per finding:
 
 ## Implementation status (2026-10-10)
 
-Built on branch `pin-24` as §6's steps, rebased onto main `112b68b3` (design 22 R1): 1a (launcher gate), 1b (19b
+Built on branch `pin-24` as §6's steps, rebased onto main `496909a4` (the Vibb music merge): 1a (launcher gate), 1b (19b
 phase 1, launcher + server), 2 (server card and warning), 3 (events, both sides), 4 (docs). Launcher
-`testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` green (773 tests, 732 at 99d88c61);
-server `cargo test` (454 tests), `fmt --check` and `clippy --all-targets` green with no new warnings. The PWA was
+`testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` green (801 tests with main's music work, 732 at 99d88c61);
+server `cargo test` (466 tests), `fmt --check` and `clippy --all-targets` green with no new warnings. The PWA was
 checked in headless Chromium at 360 px, light and dark: no horizontal scroll, the notices inside their cards, and
 the `#parent-pin`/`#screen-lock` redirects land at the card's top.
 
 **Deviations** (none changes a rule of the design):
 
 1. **Migration numbers:** main took 0052-0054 (design 22, security H2), so 19b's is `0055_battery_exemption.sql`,
-   then `0056_parent_pin_easy.sql` and `0057_device_pin_events.sql`.
+   then `0056_parent_pin_easy.sql` and `0057_device_pin_events.sql` (taken at the final rebase, qa-24-code High 1).
 2. **Server files:** to stay out of design 22's files the handlers live in `src/handlers/parent_pin.rs`
    (`update_parent_pin`, `pin_events`, the card) next to the pure `src/parent_pin.rs`, not in `devices.rs`/
    `device_api.rs`. The device route is in `device_routes.rs` (behind design 22's limits and body cap).
@@ -936,6 +941,24 @@ the `#parent-pin`/`#screen-lock` redirects land at the card's top.
     "1 wrong parent PIN was typed". The kid lock's saved/cleared notices are now success-style.
 12. **19b's row** decides by resolving Android's dialog (`dialogTarget`), not by reading
     `RestrictionsPause.isActive()`: the same result during the pause, and it also works during setup.
+
+**Fix round (`qa-24-code.md`, 2026-10-11):** all of it taken.
+- High 1: renumbered at the final rebase (deviation 1); every mention updated.
+- Low 1: one pre-check, `ParentPin.status` (configured, lockout left, tries left, next lockout), replaces
+  `lockoutRemainingMs`; a dialog opened after 4 wrong tries anywhere says "One more wrong try locks it for ...",
+  OK enabled. Store test added.
+- Low 2: the security log's detail says when it happened on the phone and dates the window's end
+  (`parent_pin::log_line`: `device 3, 2026-10-09 14:02 UTC: ..., until 9 Oct 16:02 UTC at the latest.`).
+- Low 3: "5 wrong parent PINs in a row (the last on the lock screen): ...".
+- Low 4: `device_policy.override_pin_set_at_ms` (in the easy-PIN migration, written on every save and removal):
+  the Status card's notices start after it, so a new PIN ends them; the card's list keeps everything.
+- Low 5: the residual in §2.1 corrected (a parent-granted window plus a clock jump and a reboot can clear the
+  level: up to 35 fresh tries); the security review's H3 row points here and §8 has the OTG keyboard check;
+  `emulator.md`, `PinBackoff.kt` and the 413 comment reworded; the clock-off note sits inside the sentence.
+- Low 6: `PolicyResponseCompatTest` pins `parent_pin_events_v1`.
+- S1: the stored `level` is gone (`levelNow` reads the decay window; an old `level` key is ignored).
+- S2: one rule for "a PIN is configured" (`ParentPin.configured`/`status`, `PinHash.usable` included);
+  `OfflineOverride.isConfigured` is gone.
 
 **Not done here:** design 24b (on main since `bb8ba7dc`) is a separate step. Pre-existing and unchanged: the phone's
 PIN fields take at most 10 digits, so a parent PIN of 11+ digits saved before the server's new 10-digit bound

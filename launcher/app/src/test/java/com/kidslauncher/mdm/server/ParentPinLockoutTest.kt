@@ -52,7 +52,6 @@ class ParentPinLockoutTest {
         val fifth = beginParentAttempt(state, now, ParentPinEntry.PAUSE, "w5")
         assertEquals(15 * min, fifth.lockoutMs)
         assertEquals(0, fifth.state.failures)
-        assertEquals(1, fifth.state.level)
         assertEquals(15 * min, parentLockoutRemaining(fifth.state, now))
         assertEquals(1, levelNow(fifth.state, now))
         assertEquals(PIN_EVENT_LOCKOUT, fifth.event.kind)
@@ -65,18 +64,18 @@ class ParentPinLockoutTest {
     fun `the next five wrong tries give level 2 - and after them the last try names 1 hour`() {
         var now = at(1_000_000L)
         var state = wrong(ParentLockoutState(pinFingerprint = fp), now, 5)
-        assertEquals(1, state.level)
+        assertEquals(1, levelNow(state, now))
         now = at(now.wallMs + 15 * min)
         assertEquals(0L, parentLockoutRemaining(state, now))
         state = wrong(state, now, 4)
         // The level is kept for the tries in between, so the last-try warning names the next one.
         assertEquals(ParentPinResult.Wrong(1, 30 * min), wrongResult(state, now))
         state = wrong(state, now, 1)
-        assertEquals(2, state.level)
+        assertEquals(2, levelNow(state, now))
         assertEquals(30 * min, parentLockoutRemaining(state, now))
         now = at(now.wallMs + 30 * min)
         state = wrong(state, now, 5)
-        assertEquals(3, state.level)
+        assertEquals(3, levelNow(state, now))
         assertEquals(hour, parentLockoutRemaining(state, now))
     }
 
@@ -84,11 +83,13 @@ class ParentPinLockoutTest {
     fun `the level stops at 8 and the lockout at 24 hours`() {
         var now = at(0L)
         var state = ParentLockoutState(pinFingerprint = fp)
+        var level = 0
         repeat(12) {
             state = wrong(state, now, 5)
+            level = levelNow(state, now)
             now = at(now.wallMs + parentLockoutRemaining(state, now))
         }
-        assertEquals(PARENT_LEVEL_MAX, state.level)
+        assertEquals(PARENT_LEVEL_MAX, level)
         assertEquals(24 * hour, state.lockout!!.durationMs)
         assertEquals(PARENT_LEVEL_MAX * day, state.decay!!.durationMs)
     }
@@ -105,7 +106,7 @@ class ParentPinLockoutTest {
     fun `the level decays one step per quiet 24 hours, and a wrong try restarts the decay`() {
         val start = at(10 * day)
         val level3 = ParentLockoutState(
-            level = 3, decay = BackoffWindow(start.wallMs, start.elapsedMs, start.bootCount, 3 * day), pinFingerprint = fp,
+            decay = BackoffWindow(start.wallMs, start.elapsedMs, start.bootCount, 3 * day), pinFingerprint = fp,
         )
         assertEquals(3, levelNow(level3, at(start.wallMs + 1)))
         assertEquals(3, levelNow(level3, at(start.wallMs + day - 1)))
@@ -116,7 +117,7 @@ class ParentPinLockoutTest {
         // A wrong try after 25 h: level 2 now, and its decay starts again (2 days).
         val later = at(start.wallMs + 25 * hour)
         val counted = beginParentAttempt(level3, later, ParentPinEntry.OVERRIDE, "id").state
-        assertEquals(2, counted.level)
+        assertEquals(2, levelNow(counted, later))
         assertEquals(2 * day, counted.decay!!.durationMs)
         assertEquals(2, levelNow(counted, at(later.wallMs + day - 1)))
         // Its next lockout is level 3's.
@@ -124,7 +125,7 @@ class ParentPinLockoutTest {
 
         // No level: no decay window at all.
         val fresh = beginParentAttempt(ParentLockoutState(pinFingerprint = fp), later, ParentPinEntry.OVERRIDE, "id").state
-        assertEquals(0, fresh.level)
+        assertEquals(0, levelNow(fresh, later))
         assertNull(fresh.decay)
     }
 
@@ -132,7 +133,6 @@ class ParentPinLockoutTest {
     fun `clock changes within a boot neither speed up the decay nor stretch a window`() {
         val start = at(wall = 100 * day, elapsed = 50 * hour)
         val state = ParentLockoutState(
-            level = 2,
             lockout = BackoffWindow(start.wallMs, start.elapsedMs, start.bootCount, 30 * min),
             decay = BackoffWindow(start.wallMs, start.elapsedMs, start.bootCount, 2 * day),
             pinFingerprint = fp,
@@ -155,7 +155,6 @@ class ParentPinLockoutTest {
     fun `a reboot carries each window over by the wall clock and re-anchors it`() {
         val start = at(wall = 100 * day, elapsed = 50 * hour, boot = 7)
         val state = ParentLockoutState(
-            level = 5,
             lockout = BackoffWindow(start.wallMs, start.elapsedMs, start.bootCount, 4 * hour),
             decay = BackoffWindow(start.wallMs, start.elapsedMs, start.bootCount, 5 * day),
             pinFingerprint = fp,
@@ -185,7 +184,7 @@ class ParentPinLockoutTest {
     fun `migration - a running lockout becomes level 1 for at most 15 minutes, and attempts carry over`() {
         val now = at(1_000 * day, elapsed = hour)
         val running = migrateParentLockout(failedAttempts = 0, lockedUntilWallMs = now.wallMs + 10 * min, now = now, fingerprint = fp)
-        assertEquals(1, running.level)
+        assertEquals(1, levelNow(running, now))
         assertEquals(10 * min, parentLockoutRemaining(running, now))
         assertEquals(day, running.decay!!.durationMs)
         assertEquals(fp, running.pinFingerprint)
@@ -203,7 +202,7 @@ class ParentPinLockoutTest {
         val now = at(3 * day)
         val state = unreadableParentState(now, fp)
         assertEquals(15 * min, parentLockoutRemaining(state, now))
-        assertEquals(1, state.level)
+        assertEquals(1, levelNow(state, now))
         assertEquals(0, state.failures)
         assertEquals(0L, parentLockoutRemaining(state, at(now.wallMs + 15 * min)))
     }

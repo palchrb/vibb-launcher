@@ -21,11 +21,6 @@ internal const val OVERRIDE_DURATION_MS = 2 * 60 * 60 * 1000L
  */
 object OfflineOverride {
 
-    fun isConfigured(): Boolean {
-        val mdm = LauncherPreferences.mdm()
-        return !mdm.overridePinHash().isNullOrEmpty() && !mdm.overridePinSalt().isNullOrEmpty()
-    }
-
     /** True while a locally-verified override is still within its time window - self-clears (and
      * returns false) once expired, so a stale flag can never linger past its own timeout even if
      * the device never manages to sync again. Checked by both [AppEnforcer] (to treat the policy

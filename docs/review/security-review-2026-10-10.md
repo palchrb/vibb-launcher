@@ -272,7 +272,7 @@ The review was made against 9cfb600 (2026-10-07). On main since then:
 
 | ID | Status |
 |---|---|
-| H3 | Hotfix ec58d6d9; the full fix is design 24 (branch `pin-24`, in progress). |
+| H3 | Fixed by design 24 (`docs/design/24-parent-pin-hardening.md`, branch `pin-24`): one gate with an escalating lockout for all five entries; the OTG keyboard check is in its §8. |
 | M1, M3 (part), L1, L2, L3, L4 (phase 1), L11 | Design 22 S2-S4 (in progress). The step-up was declined by the user; `session_epoch` and "sign out everywhere" are in. |
 | M7 | Design 22 S2 (limits, SSE cap) and S4 (security-log pruning). Check the field caps on `installed_apps_json` etc. |
 | M11 | Design 22 launcher steps L1/L3 (planned). |

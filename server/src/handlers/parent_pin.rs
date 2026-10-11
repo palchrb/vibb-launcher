@@ -43,7 +43,11 @@ pub async fn card(
         })
     });
     let shown = device_events(db, policy.device_id, i64::MIN, parent_pin::SHOWN).await;
-    let recent = device_events(db, policy.device_id, now_ms - 24 * 60 * 60 * 1000, 500).await;
+    // The notices: the last 24 hours, and only since the PIN was last saved - after a new PIN
+    // they stop telling the parent to change it (qa-24-code Low 4). The list keeps everything.
+    let since =
+        (now_ms - 24 * 60 * 60 * 1000).max(policy.override_pin_set_at_ms.unwrap_or(i64::MIN));
+    let recent = device_events(db, policy.device_id, since, 500).await;
     ParentPinCard {
         pin_set,
         easy: pin_set && policy.override_pin_easy == Some(true),
@@ -103,8 +107,10 @@ pub async fn update_parent_pin(
              override_pin_hash = CASE WHEN kid_pin_hash IS NOT NULL THEN override_pin_hash ELSE NULL END, \
              override_pin_salt = CASE WHEN kid_pin_hash IS NOT NULL THEN override_pin_salt ELSE NULL END, \
              override_pin_easy = CASE WHEN kid_pin_hash IS NOT NULL THEN override_pin_easy ELSE NULL END, \
+             override_pin_set_at_ms = CASE WHEN kid_pin_hash IS NOT NULL THEN override_pin_set_at_ms ELSE ? END, \
              updated_at = datetime('now') WHERE device_id = ? RETURNING override_pin_hash",
         )
+        .bind(chrono::Utc::now().timestamp_millis())
         .bind(id)
         .fetch_optional(&state.db)
         .await;
@@ -146,11 +152,13 @@ pub async fn update_parent_pin(
         };
         let result = sqlx::query(
             "UPDATE device_policy SET override_pin_hash = ?, override_pin_salt = ?, \
-             override_pin_easy = ?, updated_at = datetime('now') WHERE device_id = ?",
+             override_pin_easy = ?, override_pin_set_at_ms = ?, updated_at = datetime('now') \
+             WHERE device_id = ?",
         )
         .bind(&hash)
         .bind(&salt)
         .bind(easy)
+        .bind(chrono::Utc::now().timestamp_millis())
         .bind(id)
         .execute(&state.db)
         .await;
@@ -290,11 +298,7 @@ pub async fn pin_events(
                 };
                 sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
                     .bind(event_type)
-                    .bind(format!(
-                        "device {}: {}",
-                        device.id,
-                        parent_pin::event_line(&event)
-                    ))
+                    .bind(parent_pin::log_line(device.id, &event))
                     .execute(&mut *tx)
                     .await
                     .map(|_| ())

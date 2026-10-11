@@ -411,7 +411,8 @@ async fn the_literal_is_stored_once_with_one_security_row() {
     assert_eq!(
         details,
         vec![format!(
-            "device {id}: Restrictions lifted on the time-lock screen, until 10:53 UTC at the latest."
+            "device {id}, 2025-10-09 08:53 UTC: Restrictions lifted on the time-lock screen, until 9 \
+             Oct 10:53 UTC at the latest."
         )]
     );
     // A re-send (the phone never saw the 204) stores and logs nothing.
@@ -458,10 +459,11 @@ async fn wrong_tries_stay_off_the_security_log_and_lockouts_go_on_it() {
     let lockouts = security_details(&app, "parent_pin_lockout").await;
     assert_eq!(lockouts.len(), 1);
     assert!(
-        lockouts[0].starts_with(&format!(
-            "device {id}: 5 wrong parent PINs on the lock screen: the parent PIN is locked on the \
-             phone for 30 minutes, until "
-        )),
+        lockouts[0].starts_with(&format!("device {id}, "))
+            && lockouts[0].contains(
+                " UTC: 5 wrong parent PINs in a row (the last on the lock screen): the parent PIN \
+                 is locked on the phone for 30 minutes, until "
+            ),
         "{lockouts:?}"
     );
 }
@@ -632,4 +634,50 @@ async fn old_events_are_pruned_after_90_days() {
     let pruned = crate::retention::prune(&app.db).await.unwrap();
     assert_eq!(pruned.pin_events, 1);
     assert_eq!(stored_events(&app, id).await.len(), 1);
+}
+
+/// qa-24-code Low 4: once the parent saved a new PIN, the Status card stops telling them to - the
+/// card's list keeps every event.
+#[tokio::test]
+async fn a_new_pin_ends_the_notices_but_not_the_list() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    save(&app, &cookie, id, &[("new_pin", "583920")]).await;
+    let now = chrono::Utc::now().timestamp_millis();
+    let body = serde_json::json!({ "events": [
+        event(&hex_id(1), "wrong", "pin_lock", now + 1_000, serde_json::json!({ "failures": 1 })),
+        event(&hex_id(2), "lockout", "pin_lock", now + 2_000,
+            serde_json::json!({ "level": 1, "until_ms": now + 14 * 60_000 })),
+    ]})
+    .to_string();
+    assert_eq!(
+        post_events(&app, &token, &body).await,
+        StatusCode::NO_CONTENT
+    );
+    let page = || async {
+        app.get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text()
+    };
+    let notice = "The parent PIN was locked on the phone after repeated wrong tries";
+    assert!(page().await.contains(notice));
+
+    save(&app, &cookie, id, &[("new_pin", "4719305")]).await;
+    let html = page().await;
+    assert!(!html.contains(notice), "{html}");
+    assert!(
+        html.contains("5 wrong parent PINs in a row (the last on the lock screen)"),
+        "{html}"
+    );
+    // An event after the save shows again.
+    let body = serde_json::json!({ "events": [ event(&hex_id(3), "wrong", "settings",
+        chrono::Utc::now().timestamp_millis() + 3_000, serde_json::json!({ "failures": 1 })) ] })
+    .to_string();
+    post_events(&app, &token, &body).await;
+    assert!(
+        page()
+            .await
+            .contains("1 wrong parent PIN was typed on the phone")
+    );
 }

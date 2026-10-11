@@ -6,7 +6,6 @@ import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.ParentPin
 import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.ParentPinResult
@@ -55,9 +54,9 @@ object ParentPinDialog {
             error?.text = text
             error?.visibility = if (text == null) View.GONE else View.VISIBLE
         }
-        refusal(context, notConfigured, R.string.lock_unlock_code_locked_out)?.let {
-            showError(it)
-            ok.isEnabled = false
+        opening(context, notConfigured, R.string.lock_unlock_code_locked_out).let {
+            showError(it.text)
+            ok.isEnabled = it.okEnabled
         }
         // Set after show() so a wrong PIN keeps the dialog open.
         ok.setOnClickListener {
@@ -78,12 +77,24 @@ object ParentPinDialog {
         return dialog
     }
 
-    /** The dialog's state before any try: the refusal text (no PIN, a running lockout), or null.
-     * Main thread: no hashing, but it may wait for a running check. */
-    fun refusal(context: Context, notConfigured: Int, lockedOut: Int): String? {
-        if (!OfflineOverride.isConfigured()) return context.getString(notConfigured)
-        val remaining = ParentPin.lockoutRemainingMs(context)
-        return if (remaining > 0L) lockedOutText(context, lockedOut, remaining) else null
+    /** A dialog's state when it opens: its line (or none) and whether OK may be tapped. */
+    data class Opening(val text: String?, val okEnabled: Boolean)
+
+    /**
+     * The dialog's state before any try ([ParentPin.status]): no PIN or a running lockout - the
+     * refusal, OK disabled; one try left (4 wrong ones earlier, anywhere) - the warning with the
+     * next lockout's length, OK enabled (qa-24-code Low 1). Main thread: no hashing, but it may
+     * wait for a running check.
+     */
+    fun opening(context: Context, notConfigured: Int, lockedOut: Int): Opening {
+        val status = ParentPin.status(context)
+        return when {
+            !status.configured -> Opening(context.getString(notConfigured), okEnabled = false)
+            status.lockoutMs > 0L -> Opening(lockedOutText(context, lockedOut, status.lockoutMs), okEnabled = false)
+            status.triesLeft == 1 ->
+                Opening(context.getString(R.string.parent_pin_one_try_left, duration(context, status.nextLockoutMs)), okEnabled = true)
+            else -> Opening(null, okEnabled = true)
+        }
     }
 
     /** The error line for [result] (null for Ok). */

@@ -530,9 +530,9 @@ class PinLockActivity : AppCompatActivity() {
         dialog.show()
         trackDialog(dialog)
         val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-        ParentPinDialog.refusal(this, R.string.pin_lock_parent_not_set, R.string.pin_lock_parent_locked_out)?.let {
-            showError(it)
-            ok.isEnabled = false
+        ParentPinDialog.opening(this, R.string.pin_lock_parent_not_set, R.string.pin_lock_parent_locked_out).let {
+            showError(it.text)
+            ok.isEnabled = it.okEnabled
         }
         // Set after show() so a wrong code keeps the dialog open.
         ok.setOnClickListener {

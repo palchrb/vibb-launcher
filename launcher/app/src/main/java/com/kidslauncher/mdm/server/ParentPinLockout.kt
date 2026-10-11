@@ -68,11 +68,10 @@ const val PIN_EVENT_LOCKOUT = "lockout"
 data class ParentLockoutState(
     /** Wrong tries since the last lockout began (0..4); a correct PIN clears them. */
     val failures: Int = 0,
-    /** The escalation level as of the last wrong try (0..8). */
-    val level: Int = 0,
     /** The running (or last) lockout. */
     val lockout: BackoffWindow? = null,
-    /** From the last wrong try, [level] x 24 h long: what is left of it is the level now. */
+    /** From the last wrong try, (level then) x 24 h long: what is left of it is the level now
+     * ([levelNow]) - the level is never stored on its own (qa-24-code S1). */
     val decay: BackoffWindow? = null,
     /** Which parent PIN this is about ([parentPinFingerprint]). */
     val pinFingerprint: String? = null,
@@ -135,7 +134,6 @@ fun beginParentAttempt(state: ParentLockoutState, now: LockClocks, entry: Parent
         val duration = parentLockoutMs(next)
         val counted = state.copy(
             failures = 0,
-            level = next,
             lockout = backoffWindow(now, duration),
             decay = backoffWindow(now, next * PARENT_LEVEL_DECAY_MS),
         )
@@ -144,7 +142,6 @@ fun beginParentAttempt(state: ParentLockoutState, now: LockClocks, entry: Parent
     }
     val counted = state.copy(
         failures = failures,
-        level = level,
         decay = if (level > 0) backoffWindow(now, level * PARENT_LEVEL_DECAY_MS) else null,
     )
     return ParentAttempt(counted, ParentPinEvent(eventId, PIN_EVENT_WRONG, entry.wire, now.wallMs, null, failures, null), 0L)
@@ -159,7 +156,6 @@ fun wrongResult(counted: ParentLockoutState, now: LockClocks): ParentPinResult.W
  * starting now, then fresh tries - never a dead end.
  */
 fun unreadableParentState(now: LockClocks, fingerprint: String) = ParentLockoutState(
-    level = 1,
     lockout = backoffWindow(now, PARENT_LOCKOUT_BASE_MS),
     decay = backoffWindow(now, PARENT_LEVEL_DECAY_MS),
     pinFingerprint = fingerprint,
@@ -176,7 +172,6 @@ fun migrateParentLockout(failedAttempts: Int, lockedUntilWallMs: Long, now: Lock
     if (lockedUntilWallMs <= now.wallMs) return ParentLockoutState(failures = failures, pinFingerprint = fingerprint)
     return ParentLockoutState(
         failures = failures,
-        level = 1,
         lockout = backoffWindow(now, minOf(lockedUntilWallMs - now.wallMs, PARENT_LOCKOUT_BASE_MS)),
         decay = backoffWindow(now, PARENT_LEVEL_DECAY_MS),
         pinFingerprint = fingerprint,

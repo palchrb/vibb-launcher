@@ -119,8 +119,24 @@ class ParentPinStoreTest {
         // Even the right PIN: refused without hashing, nothing counted, no event.
         assertEquals(ParentPinResult.LockedOut(10 * min), check(pin, at(now.wallMs + 5 * min), ParentPinEntry.PIN_LOCK))
         assertEquals(before, prefs.map)
-        assertEquals(15 * min - min, parentLockoutRemainingMs(store, parentPinFingerprint(hash, salt), at(now.wallMs + min)))
+        assertEquals(15 * min - min, parentPinStatus(store, parentPinFingerprint(hash, salt), at(now.wallMs + min)).lockoutMs)
         assertTrue(started.isEmpty())
+    }
+
+    @Test
+    fun `the pre-check warns before the fifth try, whichever dialog had the four (qa-24-code Low 1)`() {
+        val fp = parentPinFingerprint(hash, salt)
+        var now = at(1_000_000L)
+        assertEquals(ParentPinStatus(true, 0L, 5, 15 * min), parentPinStatus(store, fp, now))
+        repeat(4) { check("000000", now, ParentPinEntry.OVERRIDE) }
+        // Days later, a dialog for Settings opens: one try left, and how long the next lockout is.
+        now = at(now.wallMs + 3 * 24 * 60 * min)
+        assertEquals(ParentPinStatus(true, 0L, 1, 15 * min), parentPinStatus(store, fp, now))
+        check("000000", now)
+        assertEquals(ParentPinStatus(true, 15 * min, 5, 30 * min), parentPinStatus(store, fp, now))
+        // Unreadable: a 15-minute lockout here too.
+        prefs.map[ParentPinStore.FAILURES] = "x"
+        assertEquals(15 * min, parentPinStatus(store, fp, now).lockoutMs)
     }
 
     @Test
@@ -138,7 +154,7 @@ class ParentPinStoreTest {
         repeat(5) { check("000000", now) }
         now = at(now.wallMs + 15 * min)
         val locked = state(now)
-        assertEquals(1, locked.level)
+        assertEquals(1, levelNow(locked, now))
         val window = WindowStart(now.wallMs + 120 * min, now.elapsedMs, 3)
         assertEquals(ParentPinResult.Ok, check(pin, now, ParentPinEntry.OVERRIDE, window = window))
         assertEquals(listOf(window), started)
@@ -185,7 +201,7 @@ class ParentPinStoreTest {
         assertEquals(ParentPinResult.LockedOut(15 * min), check(pin, now))
         assertTrue(logged.any { "unreadable" in it })
         // Rewritten with the right types: a normal state, level 1, the old queue kept.
-        assertEquals(1, state(now).level)
+        assertEquals(1, levelNow(state(now), now))
         assertEquals(listOf("wrong"), kinds())
         assertEquals(ParentPinResult.LockedOut(5 * min), check(pin, at(now.wallMs + 10 * min)))
         assertEquals(ParentPinResult.Ok, check(pin, at(now.wallMs + 15 * min)))
@@ -196,7 +212,7 @@ class ParentPinStoreTest {
         val now = at(1_000_000L)
         check("000000", now)
         for ((key, value) in listOf<Pair<String, Any?>>(
-            ParentPinStore.LEVEL to 9, ParentPinStore.FAILURES to 5, ParentPinStore.LO_DURATION to 25 * 60 * min,
+            ParentPinStore.FAILURES to 5, ParentPinStore.LO_DURATION to 25 * 60 * min,
             ParentPinStore.PIN_FP to null, ParentPinStore.DC_BOOT to null, ParentPinStore.VERSION to 2,
         )) {
             val good = prefs.map.toMap()
@@ -245,7 +261,7 @@ class ParentPinStoreTest {
         assertEquals(ParentPinResult.LockedOut(7 * min), check(pin, now))
         assertTrue(legacy.cleared)
         assertEquals(ParentPinStore.STATE_VERSION, prefs.map[ParentPinStore.VERSION])
-        assertEquals(1, state(now).level)
+        assertEquals(1, levelNow(state(now), now))
         // Never again: a later legacy value is not read.
         legacy.lockedUntil = now.wallMs + 99 * min
         assertEquals(ParentPinResult.Ok, check(pin, at(now.wallMs + 7 * min)))

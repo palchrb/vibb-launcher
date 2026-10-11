@@ -98,6 +98,12 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `the parent-PIN events capability is the string the server looks for (qa-24-code Low 6)`() {
+        assertEquals("parent_pin_events_v1", PARENT_PIN_EVENTS_CAPABILITY)
+        assertTrue(PARENT_PIN_EVENTS_CAPABILITY in STATUS_CAPABILITIES)
+    }
+
+    @Test
     fun `parent PIN events use the server's keys - design 24's literal`() {
         val batch = ParentPinEventBatch(
             listOf(ParentPinEvent("0123456789abcdef0123456789abcdef", "unlocked", "override", 1_760_000_000_000, 1_760_007_200_000, null, null)),

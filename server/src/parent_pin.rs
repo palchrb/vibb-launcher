@@ -199,8 +199,9 @@ pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
 // Events reported by the phone (design 24 §3, §5)
 // ------------------------------------------------------------------------------------------------
 
-/// At most this many events per `POST /api/devices/pin-events` (the launcher's queue holds as
-/// many; more gets 413 so the phone never deletes what wasn't stored).
+/// At most this many events per `POST /api/devices/pin-events` - the launcher's queue holds as
+/// many. More gets 413: a guard against a launcher that sends more than it should, which then
+/// drops that batch as refused (`pinEventsLeaveQueue`).
 pub const PIN_EVENTS_MAX: usize = 100;
 /// The launcher reports parent-PIN events (status `capabilities`).
 pub const PARENT_PIN_EVENTS_CAPABILITY: &str = "parent_pin_events_v1";
@@ -359,10 +360,10 @@ fn utc(ms: i64) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::from_timestamp_millis(ms)
 }
 
-/// "14:02 UTC" when on the same UTC day as `at_ms`, else "10 Oct 14:02 UTC".
-fn until_text(until_ms: i64, at_ms: i64) -> String {
+/// "14:02 UTC" when on the same UTC day as `at_ms` (and not `dated`), else "10 Oct 14:02 UTC".
+fn until_text(until_ms: i64, at_ms: i64, dated: bool) -> String {
     match (utc(until_ms), utc(at_ms)) {
-        (Some(until), Some(at)) if until.date_naive() == at.date_naive() => {
+        (Some(until), Some(at)) if !dated && until.date_naive() == at.date_naive() => {
             until.format("%H:%M UTC").to_string()
         }
         (Some(until), _) => until.format("%-d %b %H:%M UTC").to_string(),
@@ -393,10 +394,24 @@ fn ago(ms: i64, now_ms: i64) -> String {
 
 /// What the phone reported, as a sentence - built only from the checked enums and numbers.
 pub fn event_line(event: &PinEvent) -> String {
+    line(event, false)
+}
+
+/// The security log's detail for a use or lockout (qa-24-code Low 2): its row's own time is when
+/// it arrived, so the line says when it happened on the phone and dates the window's end -
+/// `device 3, 2026-10-09 14:02 UTC: ...`.
+pub fn log_line(device_id: i64, event: &PinEvent) -> String {
+    let at = utc(event.occurred_at_ms)
+        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("device {device_id}, {at}: {}", line(event, true))
+}
+
+fn line(event: &PinEvent, dated: bool) -> String {
     let until = event
         .until_ms
-        .map(|until| until_text(until, event.occurred_at_ms));
-    let mut line = match event.kind {
+        .map(|until| until_text(until, event.occurred_at_ms, dated));
+    let mut out = match event.kind {
         Kind::Unlocked => match (event.entry, until) {
             (Entry::Override, Some(until)) => {
                 format!("Restrictions lifted on the time-lock screen, until {until} at the latest.")
@@ -418,8 +433,9 @@ pub fn event_line(event: &PinEvent) -> String {
             None => format!("Wrong parent PIN {}.", event.entry.place()),
         },
         Kind::Lockout => {
+            // The 5 may come from different screens (qa-24-code Low 3).
             let mut text = format!(
-                "5 wrong parent PINs {}: the parent PIN is locked on the phone",
+                "5 wrong parent PINs in a row (the last {}): the parent PIN is locked on the phone",
                 event.entry.place()
             );
             if let Some(level) = event.level {
@@ -433,9 +449,13 @@ pub fn event_line(event: &PinEvent) -> String {
         }
     };
     if event.clock_off {
-        line.push_str(" (the phone's clock was off; time of arrival shown)");
+        // Inside the sentence, before its final period.
+        if out.ends_with('.') {
+            out.pop();
+        }
+        out.push_str(" (the phone's clock was off; time of arrival shown).");
     }
-    line
+    out
 }
 
 /// "2026-10-09 14:02 UTC (3 h ago)".
@@ -485,7 +505,7 @@ pub fn notices(events: &[PinEvent], now_ms: i64) -> Vec<Notice> {
     if let Some(lockout) = recent.iter().find(|e| e.kind == Kind::Lockout) {
         let until = lockout
             .until_ms
-            .map(|until| format!(" (until {})", until_text(until, now_ms)))
+            .map(|until| format!(" (until {})", until_text(until, now_ms, false)))
             .unwrap_or_default();
         out.push(Notice {
             text: format!(
@@ -741,8 +761,9 @@ mod tests {
                     until_ms: Some(NOW + 15 * 60_000),
                     ..ev(Kind::Lockout, Entry::Settings, NOW)
                 },
-                "5 wrong parent PINs for Settings: the parent PIN is locked on the phone for 15 \
-                 minutes, until 09:08 UTC. Saving a new parent PIN ends it once the phone checks in.",
+                "5 wrong parent PINs in a row (the last for Settings): the parent PIN is locked on the \
+                 phone for 15 minutes, until 09:08 UTC. Saving a new parent PIN ends it once the \
+                 phone checks in.",
             ),
             (
                 PinEvent {
@@ -750,22 +771,38 @@ mod tests {
                     until_ms: Some(NOW + 24 * H),
                     ..ev(Kind::Lockout, Entry::Pause, NOW)
                 },
-                "5 wrong parent PINs for pausing restrictions: the parent PIN is locked on the phone \
-                 for 24 hours, until 10 Oct 08:53 UTC. Saving a new parent PIN ends it once the \
-                 phone checks in.",
+                "5 wrong parent PINs in a row (the last for pausing restrictions): the parent PIN is \
+                 locked on the phone for 24 hours, until 10 Oct 08:53 UTC. Saving a new parent PIN \
+                 ends it once the phone checks in.",
             ),
             (
                 PinEvent {
                     clock_off: true,
                     ..ev(Kind::Wrong, Entry::Override, NOW)
                 },
-                "Wrong parent PIN on the time-lock screen. (the phone's clock was off; time of \
-                 arrival shown)",
+                "Wrong parent PIN on the time-lock screen (the phone's clock was off; time of \
+                 arrival shown).",
             ),
         ];
         for (event, line) in cases {
             assert_eq!(event_line(&event), line);
         }
+        // The security log says when it happened and dates the window's end (qa-24-code Low 2).
+        let override_use = unlocked(Entry::Override, until);
+        assert_eq!(
+            log_line(3, &override_use),
+            "device 3, 2025-10-09 08:53 UTC: Restrictions lifted on the time-lock screen, until 9 \
+             Oct 10:53 UTC at the latest."
+        );
+        let late = PinEvent {
+            clock_off: true,
+            ..ev(Kind::Unlocked, Entry::Settings, NOW)
+        };
+        assert_eq!(
+            log_line(3, &late),
+            "device 3, 2025-10-09 08:53 UTC: The launcher's Settings opened (the phone's clock was \
+             off; time of arrival shown)."
+        );
         assert_eq!(lockout_text(3), "1 hour");
         assert_eq!(lockout_text(5), "4 hours");
         assert_eq!(lockout_text(2), "30 minutes");

@@ -17,7 +17,7 @@ import java.security.MessageDigest
  * correct PIN starts its window (override, pause, install mode) here, after its `unlocked` event
  * is committed: no caller can start one without the gate, and no use goes unrecorded.
  *
- * One lock for everything ([check], [lockoutRemainingMs], the queue). [check] never takes another
+ * One lock for everything ([check], [status], the queue). [check] never takes another
  * lock while holding it; if anything is ever nested, this one comes first.
  */
 object ParentPin {
@@ -41,12 +41,19 @@ object ParentPin {
         )
     }
 
-    /** The lockout time left (0 = none, or no PIN). No hashing, but it may wait for a running
-     * [check] - the dialogs' pre-checks accept that. */
+    /** A usable parent PIN is cached - the one rule every pre-check and [check] use (qa-24-code S2). */
+    fun configured(): Boolean = cachedPin() != null
+
+    /**
+     * The one pre-check before a dialog opens (qa-24-code Low 1): whether a PIN is configured, the
+     * lockout time left, and how many tries are left before the next lockout and how long it is -
+     * so a dialog opened after 4 wrong tries warns before the 5th. No hashing, but it may wait for
+     * a running [check]; the pre-checks accept that.
+     */
     @Synchronized
-    fun lockoutRemainingMs(context: Context): Long {
-        val (hash, salt) = cachedPin() ?: return 0L
-        return parentLockoutRemainingMs(ParentPinStore.of(context), parentPinFingerprint(hash, salt), clocks())
+    fun status(context: Context): ParentPinStatus {
+        val (hash, salt) = cachedPin() ?: return ParentPinStatus.NOT_CONFIGURED
+        return parentPinStatus(ParentPinStore.of(context), parentPinFingerprint(hash, salt), clocks())
     }
 
     /** A snapshot of the queued events, for the upload. */
@@ -131,8 +138,24 @@ internal fun prepareParentState(
     }
 }
 
-internal fun parentLockoutRemainingMs(store: ParentPinStore, fingerprint: String, now: LockClocks): Long =
-    prepareParentState(store, fingerprint, now)?.let { parentLockoutRemaining(it.first, now) } ?: PARENT_LOCKOUT_BASE_MS
+/** [ParentPin.status]: [lockoutMs] 0 = none; [triesLeft] before the next lockout of [nextLockoutMs]. */
+data class ParentPinStatus(val configured: Boolean, val lockoutMs: Long, val triesLeft: Int, val nextLockoutMs: Long) {
+    companion object {
+        val NOT_CONFIGURED = ParentPinStatus(false, 0L, PARENT_FREE_TRIES, PARENT_LOCKOUT_BASE_MS)
+    }
+}
+
+/** An unreadable state becomes a committed 15-minute lockout here too (QA #2). */
+internal fun parentPinStatus(store: ParentPinStore, fingerprint: String, now: LockClocks): ParentPinStatus {
+    val state = prepareParentState(store, fingerprint, now)?.first
+        ?: return ParentPinStatus(true, PARENT_LOCKOUT_BASE_MS, PARENT_FREE_TRIES, parentLockoutMs(2))
+    return ParentPinStatus(
+        configured = true,
+        lockoutMs = parentLockoutRemaining(state, now),
+        triesLeft = PARENT_FREE_TRIES - state.failures,
+        nextLockoutMs = parentLockoutMs(levelNow(state, now) + 1),
+    )
+}
 
 /**
  * [ParentPin.check]'s steps (design 24 §2.1), against [store] - JVM-tested in ParentPinStoreTest:
