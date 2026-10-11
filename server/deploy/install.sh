@@ -558,7 +558,7 @@ action_restore_backup() {
     staged="$restore_tmp/kidphone.db"
     # Only kidphone.db, streamed: no other entry (a symlink, a path) is ever written anywhere, and
     # head stops a zip bomb at the limit (unzip then fails on the closed pipe).
-    if ! unzip -p "$backup_path" kidphone.db 2>/dev/null | head -c "$((RESTORE_MAX_BYTES + 1))" >"$staged"; then
+    if ! timeout 900 unzip -p "$backup_path" kidphone.db 2>/dev/null | head -c "$((RESTORE_MAX_BYTES + 1))" >"$staged"; then
         echo "restore_backup: couldn't read kidphone.db from '$backup_path' (missing, damaged or larger than $RESTORE_MAX_BYTES bytes)" >&2
         rm -rf "$restore_tmp"
         return 1
@@ -618,14 +618,16 @@ set -euo pipefail
 source /opt/kid-phone-server-updater/actions.sh
 
 FLAG_FILE="/opt/kid-phone-server/data/update_requested"
-# data/ belongs to the service user: a symlinked flag is never read (security review M4), and at
-# most one short line is.
-if [ -L "$FLAG_FILE" ]; then
+# data/ belongs to the service user: only a regular file is read (security review M4; a FIFO
+# would block the read, and with it every later request - QA of the security wave, Low 1), at most
+# one short line of it, and the read is bounded in time for a file swapped after the check.
+[ -e "$FLAG_FILE" ] || [ -L "$FLAG_FILE" ] || exit 0
+if [ -L "$FLAG_FILE" ] || [ ! -f "$FLAG_FILE" ]; then
     rm -f "$FLAG_FILE"
-    echo "The update request is a symlink - ignored" >&2
+    echo "The update request is not a regular file - ignored" >&2
     exit 1
 fi
-FLAG_CONTENT="$(head -c 256 "$FLAG_FILE" 2>/dev/null | head -n 1 || true)"
+FLAG_CONTENT="$(timeout 5 head -c 256 -- "$FLAG_FILE" 2>/dev/null | head -n 1 || true)"
 rm -f "$FLAG_FILE"
 
 # Most actions are a single word; format_drive/restore_backup additionally
@@ -684,7 +686,7 @@ fi
 # DEFAULT.
 setting() {
     local value
-    value="$(grep -m1 "^$1=" "$CONFIG_FILE" | cut -d= -f2- || true)"
+    value="$(timeout 5 grep -m1 "^$1=" -- "$CONFIG_FILE" | cut -d= -f2- || true)"
     if [[ "$value" =~ $3 ]]; then
         printf '%s\n' "$value"
     else
@@ -763,8 +765,8 @@ if [ -L "$DATA_DIR" ] || [ -L "$DATA_DIR/backups" ] || [ -L "$BACKUP_CONFIG_FILE
     exit 0
 fi
 
-EXTERNAL_COPY_ENABLED="$(grep -m1 '^EXTERNAL_COPY_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
-CONTINUOUS_MIRROR_ENABLED="$(grep -m1 '^CONTINUOUS_MIRROR_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
+EXTERNAL_COPY_ENABLED="$(timeout 5 grep -m1 '^EXTERNAL_COPY_ENABLED=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
+CONTINUOUS_MIRROR_ENABLED="$(timeout 5 grep -m1 '^CONTINUOUS_MIRROR_ENABLED=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
 
 # The copies hold the whole database: root's alone on the Pi (security review M2).
 chmod 700 "$EXTERNAL_MOUNT"
@@ -812,6 +814,9 @@ Description=Handle a pending Kid Phone Server update/restart request
 [Service]
 Type=oneshot
 ExecStart=/opt/kid-phone-server-updater/watcher.sh
+# A oneshot has no start timeout by default: a hung action would block every later request.
+# Long enough for an OS upgrade on a Pi Zero.
+TimeoutStartSec=2h
 SERVICE_EOF
 
 cat >/etc/systemd/system/kid-phone-server-scheduler.timer <<'TIMER_EOF'
@@ -833,6 +838,7 @@ Description=Apply the Kid Phone Server scheduled update/reboot, if due
 [Service]
 Type=oneshot
 ExecStart=/opt/kid-phone-server-updater/scheduler.sh
+TimeoutStartSec=2h
 SCHED_SERVICE_EOF
 
 cat >/etc/systemd/system/kid-phone-server-backup-sync.timer <<'BACKUP_TIMER_EOF'
@@ -854,6 +860,7 @@ Description=Mirror Kid Phone Server backups to the external drive, if enabled
 [Service]
 Type=oneshot
 ExecStart=/opt/kid-phone-server-updater/backup_sync.sh
+TimeoutStartSec=1h
 BACKUP_SERVICE_EOF
 
 systemctl daemon-reload

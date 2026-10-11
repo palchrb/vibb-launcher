@@ -400,3 +400,57 @@ fn the_backup_sync_never_follows_or_writes_through_links() {
         assert!(line.contains("--remove-destination"), "{line}");
     }
 }
+
+/// QA of the security wave, Low 1: a FIFO (or a symlink) at the flag never blocks the root
+/// watcher, and runs nothing; a regular flag still runs its action.
+#[test]
+fn the_watcher_reads_only_a_regular_flag() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let flag = root.join("update_requested");
+    let ran = root.join("ran");
+    std::fs::write(
+        root.join("actions.sh"),
+        format!(
+            "action_app_restart() {{ echo restart >> {ran}; }}\n\
+             action_app_update() {{ echo update >> {ran}; }}\n",
+            ran = ran.display()
+        ),
+    )
+    .unwrap();
+    let run = || {
+        run_root_script(
+            "WATCHER_EOF",
+            &[
+                (
+                    "source /opt/kid-phone-server-updater/actions.sh",
+                    &format!("source {}", root.join("actions.sh").display()),
+                ),
+                (
+                    "/opt/kid-phone-server/data/update_requested",
+                    flag.to_str().unwrap(),
+                ),
+            ],
+            &[],
+            root,
+        )
+    };
+
+    mkfifo(&flag);
+    assert!(!run().success());
+    assert!(
+        std::fs::symlink_metadata(&flag).is_err(),
+        "the FIFO is removed"
+    );
+    std::fs::write(root.join("target"), "restart\n").unwrap();
+    std::os::unix::fs::symlink(root.join("target"), &flag).unwrap();
+    assert!(!run().success());
+    assert!(!ran.exists(), "nothing ran");
+
+    std::fs::write(&flag, "restart\n").unwrap();
+    assert!(run().success());
+    assert_eq!(std::fs::read_to_string(&ran).unwrap(), "restart\n");
+    assert!(!flag.exists());
+    // No flag at all (the path unit raced a removal): nothing to do.
+    assert!(run().success());
+}
