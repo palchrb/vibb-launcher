@@ -892,3 +892,116 @@ For step 3a (QA's notes, not code here):
 
 Build: `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` green; 252 tests, 0 failures
 (+1); lint 0 errors.
+
+## Step 3a implementation status (2026-10-11)
+
+Built on branch `music-1b-sonos` in three code commits, each built and tested on its own (`833e8f8` the pure
+controller, `cd1fedf` the renderer, `5512865` the wiring and the UI), with the real Android build in the sandbox:
+`./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` green at each - **293,
+295, then 298 JVM tests, 0 failures** (252 before: +36 `SonosControllerTest`, +4 `SonosBookmarksTest`, +2
+`SonosActorTest`, +1 `PlayBodyTest`, +2 `GuardsTest`, +1 `FitTest`), lint 0 errors and the same 41 warnings;
+`python3 -I scripts/fake-sonos.py --selftest` OK. `SourceScanTest`, `ReportTest`, `BridgeTest` and
+`ContractFilesTest` are untouched and green; no launcher, AIDL, contract or server change. **Not run on an emulator
+or a phone** (no KVM here): §6g's 3a checks and §6f's smoke (the local sleep fade moved) are owed, listed below.
+
+- **The controller** (`M/sonos/SonosController.kt`, pure; `SonosBookmarks.kt`): main-thread state over an injected
+  actor (`SonosWork`), clock and bookmark store (`SonosStore`). `load`/`playTile`/`playPause` (§4.2, §4.5: the body
+  built once, `pending`/`optTr`, the seeded snapshot, the bounded hold, `seekAt` on a deliberate start), the failed
+  play (a start's -> `Lost`; a step's or an advance's dropped), the poll tick in §4.3's order, the one-age-term
+  position, `bookmarkNow` (§4.4, the only write), the ours-gated `pause`/`stop`, the coalesced step (latest wins, at
+  0) and seek (latest wins, 0.7 s, `optPos`, clamped to `dur - 5`, refused without a duration), the hand-off (§4.6:
+  live classify, bookmark, Stop), migration follow (adopt first), volume (clamped 0..100) and the sleep ramp.
+  `spec(now)` is §3.2's state table as data (`SonosSpec`: phase, playWhenReady, index, position anchored at
+  `measuredAt`, duration); `showsPlaying`/`rendererState` are §3.3's and §4.8's predicates.
+- **The renderer** (`SonosRenderer.kt`): a `SimpleBasePlayer` on the main looper whose `getState()` copies `spec`
+  (playlist from the service's MediaItems, `DeviceInfo(REMOTE, 0, 100)`, `deviceVolume`, the `SONOS_COMMANDS` list
+  of §3.2) with a `PositionSupplier` over the spec; handlers set intent and return `immediateVoidFuture()`, and the
+  `RendererEvent`s they cause are posted (emitted outside the handler); actor and poll results flush at once.
+  `SonosActor` (one Channel consumer on IO; each result posted to main before the next job runs, so a poll of the old
+  track can never land after the play that replaced it), `SonosPoller` (the session's cadence, woken by verbs),
+  `SonosHome` (Wi-Fi tracked by a `NetworkCallback`, every Soap socket bound to it; the cache, `RoomDirectory`, the
+  speakers, NRK, the probe, renderer.json). `SonosTransport.liveRefresh` is the 1.5 s `/state?live=1`.
+- **The renderer axis** (`M/playback/`): `Renderer` gains `showsPlaying`, `rendererState`, `room`, `fadeMs`,
+  `fadeOutAndPause(done)`/`cancelFade()` (replacing `setFadeGain`; the phone's 10 s fade moved into `LocalRenderer`)
+  and `RendererEvent.Lost`; both renderers persist through one `persistPlace`. `PlaybackService`: the OUTPUT gate,
+  `output`/`toRoom`/`toPhone`/`comeHome`/`lost` through `attach()`, `queueFor` + the filter in `activeFor`,
+  `ROOMS_REFRESH`/`ROOMS_RESCAN`, `publish`/`reportNowPlaying` through `showsPlaying`, `rooms` and `rendererState`
+  into `PlayerHub.State`, `Message.CANT_PLAY_ON_SONOS`.
+- **UI** (§5.1-5.2): the sheet's rooms (group labels, "Sonos · svarer ikke"), "Se etter høyttalere" / "Søker etter
+  høyttalere…" with a spinner, `ROOMS_REFRESH` when it opens; the bar's room highlighted; the state line under the
+  entry name; the message. Strings in `values` and `values-nb`.
+- **Media3 1.7.1 as found**: `invalidateState()` is ignored while a handler future is pending, so every handler returns
+  a completed one; `State` refuses an empty playlist outside IDLE/ENDED and checks the index, so the state falls back
+  to IDLE whenever the MediaItems and the queue differ. **The paused-FGS question (§3.2)**: `MediaNotificationManager`
+  already keeps the foreground for `DEFAULT_FOREGROUND_SERVICE_TIMEOUT_MS = 600_000` after the player stops being
+  "engaged" (playWhenReady and READY/BUFFERING) - the same 600 s as vibb's disarm - so no `onUpdateNotification`
+  override was needed; a [device check] confirms a paused Sonos session keeps its notification for 10 min.
+
+Choices made while building (each against the spec text, with its reason):
+1. **The bookmark is about the item actually on the speaker** (`Playing`: index, key, built uri from the play's
+   result) and needs the snapshot's uri to equal that uri, not `index`: vibb's url kind could write the old track's
+   position under the optimistic new index while a step was in flight (its `pending` only guarded the sharelink kind).
+2. **The seed of a play is never bookmarked** (it is the start position we asked for, not a measurement) and
+   **the pause freeze is a display hold** (`frozen`), not a patch of the snapshot as vibb's: a `saveNow` between the
+   pause and the next poll (the service saves on every pause) would otherwise persist an extrapolation (QA H3).
+3. **The age term is added only while the snapshot is fresh and PLAYING** (so at most the cadence + 10 s): a stale
+   PLAYING snapshot would otherwise add minutes of invented listening.
+4. **While a play is in flight the old track's polls are ignored entirely** (the seed stands), and `pending` expires
+   8 s after the play's **result**, not its submission: a hushed play with a settled seek takes up to ~10 s in the
+   actor, and the old track read as "not ours" would flash "taken over".
+5. **`playPause` (the player's play) and `playTile` (`Renderer.play`: the tile, RESUME, the first play after `load`)**:
+   the tile falls through to a full start while a press is settling (`sonos_same_tile.py` 4); the player's play does
+   nothing then (a play in flight is the answer; a second tap must not re-transfer). A pause pressed while a play is
+   in flight follows it through the actor and its intent is kept.
+6. **"Deliberate" is inferred**: `Renderer.load` has no such flag, so a start below the item's saved place (a pick
+   with resume off, a pre-start step or seek) stamps `seekAt`; steps and seeks always do. A cover tap resuming the
+   bookmark does not (the refused-seek hold covers it).
+7. **Steps start at 0** (vibb `_sonos_play_entry(want, 0.0)`, §4.5), unlike the phone's `goTo`, which resumes an item's
+   own place; the position the service passes is honoured only before a start. See the open questions.
+8. **A failed step or advance puts the index back** on what the speaker plays (vibb leaves the optimistic index
+   showing a track that isn't playing); a failed start is `Lost`: "Kan ikke spilles på Sonos", the phone paused, one
+   topology refresh.
+9. **Switch positions**: phone -> room starts at the item's saved place as `resumeFrom` gives it (after the phone's
+   forced save), no `seekGate` (vibb's `episode_pos`; the speaker seeks from 5 s); room -> phone rebuilds the entry's
+   play order rotated to the current item (as `pickPlan`), at the bookmark the hand-off just wrote, not the stored
+   row (that one holds only the speaker-playable keys). Picking the room we're on is the same-tile rule (vibb
+   re-transfers). Coming home also needs `playAllowed` (a suspended app never plays on).
+10. **The output axis stays the phone's**: `setPreferredAudioDevice` and the headset callbacks go to `LocalRenderer`
+    always, never through `renderer` (a headset never touches the renderer, `sonos_renderer.py` 5; pinned).
+    Rooms stay in `PlayerHub.State.rooms`; the current room is `renderer.room` (an `Output`, which the bar needs).
+11. **The sleep timer**: `fadeOutAndPause(done)` + `cancelFade()` + `fadeMs` (the service starts the fade that long
+    before the end: 10 s on the phone as before, 3 s on Sonos). The ramp's base volume is noted in renderer.json
+    (`volume`) and the next play puts it back if the process died mid-ramp. A pause we or the speaker made is
+    `PauseCause.USER` (it ends the timer, as a manual pause does; §5.2), a takeover or unreachable is `OTHER`.
+12. **The speaker glyph is drawn**, a stroked cabinet in `Icons` (`roomSpeaker`), not a Material Symbol from
+    `scripts/material-symbols.sh`: the bar and the sheet use the mockup's stroked set (a filled 24 px symbol stands
+    out there), and the script's music table is the category table that `SourceScanTest` pins to
+    `music_icons.json`. No third-party asset, no licence note needed.
+13. **3a's trivial startup**: `onCreate` resets a sonos renderer.json to the phone (vibb: no live remote session at
+    start -> the renderer reverts; nothing starts), `rendererReady` stays complete at once, and
+    `onPlaybackResumption` on Sonos fails for now. `onDestroy` only bookmarks (`saveNow(force)`): the speaker plays on
+    after the service goes, until 3b.
+14. The SimpleBasePlayer is never `release()`d (`COMMAND_RELEASE` isn't offered); `SonosRenderer.release()` stops the
+    poller and the actor and drops the posted callbacks.
+
+Owed checks: emulator §6g (now listing 3a's: the sheet, switch phone -> Stua -> Kjøkken -> phone with one Stop per
+room left, same tile, grouped-away, taken-over and migration scripts, the ramp, the volume keys, an own-files
+entry, a failed start; the image needs the emulated Wi-Fi) and §6f (the local sleep fade, now in `LocalRenderer`);
+the device checks above stand.
+
+For step 3b:
+- §4.7: adopt and the startup gate (`rendererReady` after one classify; drop `onCreate`'s reset), resumption on Sonos
+  starting the speaker (gated), the queue rebuilt with the filter and the index by uri equality.
+- §6.1 the suspension receiver and §6.2 `onDestroy`/`onTaskRemoved`'s full stop: `SonosRenderer.handOff()` (live
+  classify, bookmark, ours-gated Stop) is the building block; add the `x-rincon-queue:` park and the disarm.
+- §6.3 the wake lock and WifiLock: `SonosRenderer(onArmedPlaying = ...)` (from `SonosHost.armedPlaying`, true while a
+  session plays or a step/seek is in flight) is the seam; the service doesn't pass it yet.
+- §5.3 the cap: clamp in `SonosController.setVolume` to the cap in force (`adjustVolume` already builds on our own
+  last set), with the launcher's restriction and the contract.
+- §6.7 calls; the remaining `SonosRendererTest` rows (startup gate, adopt, suspension with and without the service,
+  wake locks, calls, the cap).
+
+Open questions: (a) steps on Sonos start at 0 (vibb, §4.5) while the phone's next/previous resume an item's own
+place - keep vibb's rule, or pass the phone's `startPos` through? (b) picking the room already playing re-transfers
+in vibb; here it is the same-tile rule. (c) Is Media3's 10-minute engaged timeout enough for §3.2's FGS rule, or should
+3b still override `onUpdateNotification` while armed?

@@ -541,7 +541,11 @@ t+15 volume 60
 - Step 1 (`sonos/` core) has no screen yet: check the selftest, the seeding and the cache file. With step 3a: the
   "Spill av på" sheet lists Stua and Kjøkken (stale + "Søker etter høyttalere…" when the fake is down), switch phone ->
   Stua -> Kjøkken -> phone (the fake's log shows one Stop per room left, a bookmark before it), the same tile, the
-  grouped-away, taken-over and migration scripts. With step 3b: kill and restart the app while the fake plays
+  grouped-away, taken-over and migration scripts, the sleep timer's 3-step ramp (three `SetVolume`, `Pause`, the volume
+  back), the volume keys (`SetVolume` 0..100), an own-files entry ("Kan ikke spilles på Sonos", the phone stays) and a
+  failed start (the fake stopped, a stale row picked: "Kan ikke spilles på Sonos", back to the phone, paused). The
+  app binds every Sonos socket to the Wi-Fi network: use an image with the emulated Wi-Fi (`AndroidWifi`); without
+  it every room reads stale and nothing is tried. With step 3b: kill and restart the app while the fake plays
   (adopt, no double playback), a time rule's suspension with and without the service (Stop, then
   `SetAVTransportURI x-rincon-queue:...`), the volume keys against the cap.
 - Real speakers stay a device check (design 26a, "Device checks"): SSDP, Wi-Fi binding, the NRK service, Doze.
