@@ -681,7 +681,8 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
 - Screen off 1 h in Doze while Sonos plays: poll timestamps in logcat every 15 s, the bookmark after a forced stop
   within 15 s of the truth, battery per hour; the sleep timer's fade and the volume restored after it.
 - Volume keys: ±3 per press, the slider, the cap holds, a louder speaker set from the Sonos app is left alone.
-- An incoming call during Sonos playback (per the user's answer to §10 item 6).
+- An incoming phone call and an Element X voice/video call during Sonos playback and during local playback: paused
+  at the ring, played again after only when it was playing; the kid's own pause during the call stays.
 - VPN filter on: discovery and control still work.
 
 ## Step 1 implementation status (2026-10-11)
@@ -1045,3 +1046,126 @@ selftest OK.
 QA's view of the 14 choices: accepted, except #8 for a START (now H2) and #13's side effects (L1 fixed; `onDestroy`
 reporting paused while the speaker plays on stays with 3b's §6.2).
 
+
+## Step 3b implementation status (2026-10-11)
+
+Built on branch `music-1b-sonos` in three code commits, each built and tested on its own with the real Android
+build in the sandbox (`7f11626` the lifecycle, `b9f907c` the volume cap, `9bf0487` calls). Music app:
+`assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` green at each - **334, 339, then
+346 JVM tests, 0 failures** (317 before: +15 `SonosLifecycleTest`, +2 `GuardsTest`; +3 `SonosLifecycleTest`,
++1 `BridgeTest`, +1 `GuardsTest`; +6 `CallPauseTest`, +1 `GuardsTest`), lint 0 errors and the same 41 warnings.
+Launcher: `assembleDebug testDebugUnitTest` (the tsnet stub) green at the two commits that touch it - **832, then 839
+tests, 0 failures** (830 before: +2 `MusicPlanTest`; +6 `MusicMediaPlanTest`, +1 `MusicSuspensionGuardTest`).
+`python3 -I scripts/fake-sonos.py --selftest` OK. Two mutations (the adopt decision without the PLAYING/PAUSED
+check, the locks without the verb window) turned 3 lifecycle tests red. **Not run on an emulator or a phone** (no
+KVM here): the checks below are owed.
+
+- **Adopt and the startup gate (§4.7)**: `onCreate`'s renderer.json reset is gone. `rendererReady` completes at once
+  when renderer.json says the phone; else `adopt()` runs first (under the switch lock): a `SonosRenderer` for the
+  stored room, `probe()` - `SonosHome.awaitWifi` (the network callback answers within a moment of the start), then
+  in the room's actor `SonosTransport.adoptLive`: vibb's `adopt` bookkeeping (zero transport commands) and one
+  classify within `LIVE_BUDGET_MS`, published; `ourLiveSession` (pure: measured just now, the stored room, `normUri`
+  equality with the stored built uri, PLAYING or PAUSED) keeps it (the poller runs on) or disarms it. Kept: the
+  stored entry's queue rebuilt through `activeFor(..., SONOS)` (the speaker-playable filter), `adoptIndex` (uri
+  equality, vibb's `e["url"] == uri`; an NRK series by its program's service uri rebuilt with the stored serial),
+  `attach(sonos)`, `SonosController.adopt` (the classify accepted with the duration carry: the listing's with
+  `durFromListing` when the speaker reads 0). Not kept: the room released, renderer.json back to the phone, nothing
+  starts, the bar paused from `NowPlayingRow`. `rendererReady` completes in a `finally`. Playback resumption on a
+  room calls `resumeLast()` (the held queue, else the stored one, on the speaker: `playAllowed` first, the
+  controller's `mayPlay` before any SOAP) and fails the future ("no local items"; Media3 1.7.1 then logs and calls
+  `Util.handlePlayButtonAction` on the session's player - `KidPlayer`'s gate, then a play already in flight on the
+  room: nothing more is sent).
+- **The suspension (§6.1)**: `SuspendedReceiver` (`MY_PACKAGE_SUSPENDED` only) `goAsync()`s for 9 s. With the
+  service up, `PlayerHub.suspendStop` starts the service's `suspendStop()` in its own scope (after `rendererReady`,
+  under the switch lock): on a room `SonosRenderer.park()` = `handOff(park = true)` - the live classify (also of a
+  stood-down session: `liveRefresh(armedOnly = false)`), the bookmark at that second, then for our stream PLAYING or
+  PAUSED (a play of ours in flight counts) `SonosTransport.park`: Stop, `SetAVTransportURI("x-rincon-queue:<uid>#0",
+  "")`, disarmed - then `comeHome(play = false)` (renderer.json local, the phone paused); on the phone the pause as
+  before. Without the service, `SonosSuspension.standalone` (a `SonosHome`, a fresh `SonosSession`/`SonosTransport`)
+  runs `suspensionStop`: `adoptLive` (kept never), `ourLiveSession`, the bookmark (`suspensionBookmark`: the measured
+  second through `SonosBookmarks.decide`, no hold, no age term; written to the position, the bookmark and the stored
+  queue's row when it is on that item), `park`; renderer.json back to the phone in every case. `PlayerHub.pause` is
+  gone (the receiver was its only reader).
+- **The service going (§6.2)**: `onDestroy` on a room skips the immediate save and runs the hand-off (live classify,
+  bookmark, ours-gated Stop; `abandon()` past `HANDOFF_MS`) in a scope of its own after the service; the room, the
+  household and the writer are released after it. renderer.json is left as it is (a Stop that didn't land leaves
+  the next start to adopt; a stopped speaker isn't adopted). A crash still leaves the speaker playing until the next
+  start adopts it or a suspension edge stops it.
+- **Wake locks (§6.3)**: `SonosLocks` - `PARTIAL_WAKE_LOCK` "vibb:sonos" taken with a 10-minute timeout and renewed
+  every 5 minutes while held, and a `WIFI_MODE_FULL_LOW_LATENCY` lock - follow `SonosController.armedPlaying(spec,
+  now)`: a driven session that is not closed AND (the player shows playWhenReady - PLAYING, or held through the first
+  failed polls - or a play, step or seek in flight, or our own verb or play less than `VERB_FAST_MS` = 30 s ago). The
+  tail's fast window is PLAYING's own. False on PAUSED once the verb window is over, stopped, ended, unreachable past
+  the transient, disarmed; the hand-off, `abandon()`, `close()` and `release()` report false at once. `SourceScanTest`
+  is untouched and green (no screen wake lock); `WAKE_LOCK` was already in the manifest.
+- **The volume cap (§5.3)**: the launcher's `restrictionsFor(..., volumeCapPct)` writes `volume_cap_pct` =
+  `volumeCapRestriction(capPctInForce)` (1..99, else 0); `VolumeCap.refresh` (every `AppEnforcer.apply` edge and the
+  cached policy at process start) calls `MusicSync.capChanged` when the cap in force changed (and once per process),
+  which writes the managed config on IO (`writeRestrictions` synchronized) and nudges. Both `bridge_contract.json`
+  copies, `MusicRestrictions`/`RestrictionKeys` and both contract tests changed in the one commit. The music app reads
+  `BridgeConfig.volumeCapPct` live; `SonosController.setVolume` sends `volumeTarget(v, cap)`; `adjustVolume` keeps
+  3a's base (our own last set, else the last read, else 50) and +-3.
+- **Calls (§6.7)**: launcher `MusicCalls` (from `MusicMedia.init`): re-read on every `VoipCalls` pass, every
+  `OngoingCalls` change and every audio-mode change; a call = `musicCallActive(VoipCalls.phase,
+  OngoingCalls.hasLiveCall, managedCallActive(isInManagedCall, mode))`; `callHoldStep` decides; the music session is
+  looked up at each edge and watched (its `MediaController.Callback`) only during a call. `VoipCalls`, `OngoingCalls`
+  and `VoipCallPlan` are only used (public listeners, `managedCallActive`), not changed. Music app: no audio focus
+  while a room renders (`LocalRenderer.standDown()` on the switch), and the service's `OnModeChangedListener`
+  backstop runs `callPauseStep` (the same rule) for MODE_IN_CALL / MODE_RINGTONE while a room renders.
+
+Choices made while building (each against the spec text, with its reason):
+1. **Adopt's queue order is the stored queue's when it is the stored entry's** (`NowPlayingRow.keys`, its shuffle
+   flag), else the entry's play order: §4.7 says "from the stored entry"; the stored row is that entry's queue as the
+   kid left it (a shuffled order included), filtered again.
+2. **An adopted stream whose item left the library is not adopted** (no index): vibb adopts with a `None` index,
+   which silently disables bookmarks and the advance for the session; here the phone renders and the speaker plays
+   on unowned until the kid picks the room (the same tile: a full start from the bookmark).
+3. **`onTaskRemoved` has no stop of its own**: Media3 1.7.1's `onTaskRemoved` already pauses every player and stops
+   the service unless one plays, so a swipe while paused reaches `onDestroy`'s full stop, and a swipe while a room
+   plays leaves it playing - as the phone's own playback after a swipe. §6.2 lists `onTaskRemoved` beside
+   `onDestroy`; a Stop there would make a swipe stop the speaker but not the phone.
+4. **The destroy-time stop runs after the service, not inside `onDestroy`**: the hand-off's results come back
+   through main-thread posts, so `onDestroy` can't block on it; the writer and the household stay open until it is
+   done (bounded by `HANDOFF_MS` and the actor's 30 s drain).
+5. **The suspension writes renderer.json back to the phone in every case**, a speaker that didn't answer included
+   (§6.1's order); with the service up the phone then holds the queue, paused.
+6. **The park gate is "ours and PLAYING/PAUSED, or a play of ours in flight"**, and with the service up it also
+   reads a session the poller stood down (a speaker paused for ten minutes still replays our episode from its own
+   Play button).
+7. **A failed bookmark write never stops the Stop** (standalone path); a refused queue uri still leaves the Stop
+   done (logged).
+8. **The wake lock is timed (10 min, renewed every 5 min while held)**, not held without a timeout: a missed release
+   (a bug) can't keep the CPU awake for longer than that; the hook still reports only changes.
+9. **An up press at or above the cap sends nothing**, a press down from above the cap (a louder speaker set from the
+   Sonos app) lands at most at the cap, and the slider is clamped: §5.3's "every set is clamped" for our own sets,
+   while an up press must not pull a speaker down. The sleep ramp's restore and the restart's `restoreVolume` are
+   not clamped: they put back a volume the speaker already had.
+10. **The cap is re-pushed only when the cap in force changed** (and once per process), not on every `apply()`:
+    `writeRestrictions` writes only when the bundle differs anyway; the first push covers a cap changed while the
+    launcher's process was dead.
+11. **The call rule remembers an unconfirmed pause** (`pauseSent`): right after our pause the session can still read
+    PLAYING for a moment, which must not count as the kid's play; the music app's backstop uses the same rule.
+12. **"No audio focus while Sonos renders" is a stand-down to IDLE** (`exo.stop()` + clear) on the switch to a room
+    instead of 3a's `clearMediaItems()`: Media3 1.7.1's `AudioFocusManager` abandons focus only in IDLE, so a paused
+    prepared player kept the focus it had. The next `load` prepares it again.
+13. **`SuspendedReceiver` checks its action**: it now does real work (lint's `UnsafeProtectedBroadcastReceiver`).
+14. 3a's open question (c): no `onUpdateNotification` override - Media3's 600 s engaged timeout matches vibb's
+    disarm; the FGS-timeout check below confirms it.
+
+Owed checks:
+- Emulator (§6g, now listing 3b's): adopt after a kill while the fake plays (reads only, the right item, Home's RESUME
+  starts nothing twice), a stopped or taken-over fake at start (the phone, paused), `MEDIA_PLAY` on a room with no
+  queue, suspension with and without the service (`stop` then `seturi x-rincon-queue:`), the swipe while paused (one
+  Stop), the volume keys against the cap and the override, `gsm call` / `gsm cancel`, the locks in `dumpsys power`.
+- Device (Jelly Star, real speakers; the list above stands): **Doze 1 h** screen off while a room plays - polls every
+  15 s in logcat (`VibbSonos`), the bookmark after a forced stop within 15 s of the truth, `vibb:sonos` held in
+  `dumpsys power`, battery per hour, and whether the low-latency Wi-Fi lock holds with the screen off (if Doze still
+  defers the polls, the launcher grants the battery exemption, §6.3); the **FGS timeout** - a paused room keeps its
+  notification for 10 minutes, then Media3 lets the service go and `onDestroy`'s full stop stops the paused speaker
+  (box off = music off); a bedtime edge with and without the app (the speaker's own Play button plays nothing); an
+  Element X ring and call and a phone call during room and phone playback; adopt after a real process kill.
+
+Open questions: (a) when Media3 ends a service paused for 10 minutes, `onDestroy` stops the paused speaker (vibb's
+TERM rule; the speaker kept the episode at the pause) - wanted, or should a paused room only be let go? (b) the 3a
+questions (a) and (b) stand. (c) `launcher/CLAUDE.md` names the new restriction only; a line for `MusicCalls` (the
+launcher pausing music on calls) belongs with step 4's docs.

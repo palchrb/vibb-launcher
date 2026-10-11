@@ -53,9 +53,9 @@ shared files in `src/test/resources/` must equal `server/testdata/music_{library
   in every sync (library, changed listings, covers, own files copied + checked + released, the Storytel login sealed
   under a Keystore key) and `push` sends the report (with the own files held) at its end; `LiveBridge` sends
   `setNowPlaying`/`setForeground` and retries a bind. Bind only the restrictions' launcher, and only when it is
-  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. `mobile_data` is read live from the managed
-  config. The AIDL is byte-identical with `launcher/` - append, never reorder; shared names are in
-  `bridge_contract.json`.
+  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. `mobile_data` and `volume_cap_pct` (the
+  parent's cap on our own Sonos volume sets, design 26a §5.3) are read live from the managed config. The AIDL is
+  byte-identical with `launcher/` - append, never reorder; shared names are in `bridge_contract.json`.
 - The launcher's media surfaces (design 21 step 4) read the platform session and `setNowPlaying` (also sent with
   every 15 s position save while playing); its Home card opens `MainActivity` with `EXTRA_OPEN` = player and, on its
   snapshot, `EXTRA_RESUME` (the RESUME command: the stored queue where it stopped, or play on) - honoured once, never

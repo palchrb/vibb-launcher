@@ -545,9 +545,15 @@ t+15 volume 60
   back), the volume keys (`SetVolume` 0..100), an own-files entry ("Kan ikke spilles på Sonos", the phone stays) and a
   failed start (the fake stopped, a stale row picked: "Kan ikke spilles på Sonos", back to the phone, paused). The
   app binds every Sonos socket to the Wi-Fi network: use an image with the emulated Wi-Fi (`AndroidWifi`); without
-  it every room reads stale and nothing is tried. With step 3b: kill and restart the app while the fake plays
-  (adopt, no double playback), a time rule's suspension with and without the service (Stop, then
-  `SetAVTransportURI x-rincon-queue:...`), the volume keys against the cap.
+  it every room reads stale and nothing is tried. With step 3b: kill and restart the app while the fake plays (adopt:
+  only reads in the fake's log - no SetAVTransportURI, Play or Seek - the right item, Home's RESUME starts nothing
+  twice; a stopped or taken-over fake: the phone, paused), a Bluetooth play (`adb shell input keyevent MEDIA_PLAY`)
+  with a room and no queue (the speaker starts, Exo doesn't), a time rule's suspension with and without the service
+  (Stop, then `SetAVTransportURI x-rincon-queue:...`; `adb shell pm suspend` reaches `MY_PACKAGE_SUSPENDED` too), the
+  service going (the task swiped while paused: one Stop), the volume keys against the cap (set on the device page: no
+  `SetVolume` above it, the override lifts it at once; a `volume 90` script line is left alone), a call (`gsm call
+  <number>` in the emulator console: Pause, and Play after `gsm cancel` only when it played) and the locks (`adb shell
+  dumpsys power | grep vibb:sonos` while playing, gone 30 s after a pause).
 - Real speakers stay a device check (design 26a, "Device checks"): SSDP, Wi-Fi binding, the NRK service, Doze.
 
 ## 6b. Step 7: Play (optional)
