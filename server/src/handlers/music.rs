@@ -2793,6 +2793,14 @@ pub(crate) async fn device_card(
                 ));
             }
         }
+        // A launcher with the bridge sends no `music_state` without the music app (qa-21-step3-code L13).
+        None if capable
+            && !installed
+                .iter()
+                .any(|a| crate::music::MUSIC_PACKAGES.contains(&a.package_name.as_str())) =>
+        {
+            lines.push("Music app not installed.".to_string())
+        }
         None if capable => lines.push("The phone hasn't reported on music yet.".to_string()),
         None => {}
     }

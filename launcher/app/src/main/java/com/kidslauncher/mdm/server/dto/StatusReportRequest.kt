@@ -56,6 +56,9 @@ data class StatusReportRequest(
     val appDownloads: AppDownloadsReport? = null,
     /** The boot cover (design 16b) - see [BootCoverReport]. */
     val bootCover: BootCoverReport? = null,
+    /** Vibb music (design 21 §1.3, capability `music_v1`): the music app's last report and the
+     * bridge; null without a music app. */
+    val musicState: kotlinx.serialization.json.JsonObject? = null,
 )
 
 /**

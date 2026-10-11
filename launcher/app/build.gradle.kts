@@ -157,6 +157,8 @@ android {
         allWarningsAsErrors = providers.gradleProperty("warningsAsErrors").orNull == "true"
     }
     buildFeatures {
+        // The music bridge's AIDL (design 21 §2), shared byte for byte with music/.
+        aidl = true
         buildConfig = true
         compose = false
         dataBinding = true

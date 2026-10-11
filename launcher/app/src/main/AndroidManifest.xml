@@ -81,6 +81,12 @@
          doesn't apply to this sideloaded device-owner app. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- Vibb music (design 21 §2): only an app signed like this launcher may bind the bridge; the
+         music app requests both build names' permission. -->
+    <permission
+        android:name="${applicationId}.permission.MUSIC_BRIDGE"
+        android:protectionLevel="signature" />
+
     <application
         android:name=".Application"
         android:appComponentFactory="com.kidslauncher.mdm.KidAppComponentFactory"
@@ -484,5 +490,10 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Local ad/content DNS filtering VPN" />
         </service>
+        <!-- The music app's bridge (design 21 §2): a bound service, checked per call too. -->
+        <service
+            android:name="com.kidslauncher.mdm.music.MusicBridgeService"
+            android:exported="true"
+            android:permission="${applicationId}.permission.MUSIC_BRIDGE" />
     </application>
 </manifest>

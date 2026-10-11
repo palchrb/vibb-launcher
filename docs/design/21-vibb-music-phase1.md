@@ -77,13 +77,14 @@ The server is reachable only over the launcher's tsnet, so the launcher is the c
   caller uid `me.vibb.music[.debug]`. The music app binds its restrictions' package after `hasSigningCertificate`.
 - **AIDL** `me/vibb/bridge/IMusicBridge.aidl`, byte-identical in both apps (both suites compare): `version()`;
   `openLibrary(haveVersion)`, `openCover(hash)`, `openFile(id)` -> read-only `ParcelFileDescriptor` or null; `oneway`
-  `releaseFile(id, sha256)`, `wantFiles(ids)`, `getStorytelLogin(haveGeneration, IStorytelCallback)`,
+  `releaseFile(id, sha256)`, `getStorytelLogin(haveGeneration, IStorytelCallback)`,
   `reportState(Bundle)`, `setNowPlaying(Bundle?)`, `setForeground(IBinder token, inFront)`. Off the main thread.
 - **Nudge**: the explicit broadcast `me.vibb.music.action.BRIDGE_CHANGED` carries nothing; its receiver only enqueues
   the sync work. A running app registers for `ACTION_APPLICATION_RESTRICTIONS_CHANGED` and re-reads at every sync.
 - **Own files**: the launcher downloads every listed file not handed over; the music app copies it from `openFile`,
-  checks size + SHA-256, closes the fd, calls `releaseFile`; the launcher deletes its copy and remembers `id:sha`;
-  `wantFiles` (wiped data, reinstall) clears the marks.
+  checks size + SHA-256, closes the fd, calls `releaseFile`; the launcher deletes its copy and remembers `id:sha`.
+  The music app's `reportState` names the files it holds, which replace those marks (wiped data, a reinstall: the
+  missing ones are fetched again). `wantFiles` was dropped in step 3's fix round (qa-21-step3-code S1).
 - **Storytel**: on `getStorytelLogin` with an older generation the launcher fetches it over tsnet and answers through
   the callback, in memory only. The music app keeps it AES-GCM-encrypted under an Android Keystore key in
   `noBackupFilesDir`, never logged; generation 0 deletes it (phase 2 also the books, vibb `forget_downloads`).
@@ -92,10 +93,13 @@ The server is reachable only over the launcher's tsnet, so the launcher is the c
 
 ## 3. Launcher
 - **Catalog**: the music row is an ordinary catalog app (install + allowlist via the device card, kiosk pin, badge).
-- **Sync** (`MusicSync`, after `WallpaperStore.sync`, only with a music package installed): a new `library_version` ->
-  GET (If-None-Match, <= 4 MB, `v == 1`; the launcher reads only `v`, `covers`, `files[].{id,size,sha256}`) stored
-  atomically as `filesDir/music/library.json`; covers prefetched like wallpapers; then restrictions and the nudge.
-  Failures retry next sync and never touch policy acceptance; `PolicyResponse.music` is nullable (older server).
+- **Sync** (`MusicSync`, after `WallpaperStore.sync`, only with a music package installed): inside the sync only the
+  managed config (no network) and its nudge. The fetch runs after the sync in its own one-at-a-time runner
+  (`MusicCourier`, changed 2026-10-11 after qa-21-step3-code M5: a big first fill must never hold a parent's lock or
+  ring behind the sync lock): a new `library_version` -> GET (If-None-Match, <= 4 MB, `v == 1`; the launcher reads
+  only `v`, `covers`, `files[].{id,size,sha256}`, `entries[].{id,items}`) stored atomically as
+  `filesDir/music/library.json`; the changed listings; covers; then the nudge and the own files. Failures retry after
+  the next sync and never touch policy acceptance; `PolicyResponse.music` is nullable (older server).
 - **Own-file downloads** reuse design 13's runner: `DownloadRecord.kind` APK | MUSIC_FILE, the same Range/If-Match/
   ETag/412/416/404/backoff/hash rules, `noBackupFilesDir/music_files/`, its gate with NOT_METERED unless
   `music.mobile_data`; done = READY. **Sessions** (`MusicSessions`): `MediaSessionManager.getActiveSessions(
@@ -309,3 +313,204 @@ Choices made while building (none changes a decision above):
    embedded art and the parent's covers are 512 px square JPEGs (`photos::process`, as contact photos).
 7. The 3 MB guard covers ticks (refused, `?music_notice=too_big#music`) and uploads (the new files are taken back);
    renaming a category or an entry isn't checked (a few bytes).
+
+## Step 2 implementation status (2026-10-09)
+
+Built and tested in the sandbox on branch `music-step2` (`music/`, `.github/workflows/music.yml`); not run on an
+emulator or a phone yet (no KVM here). `music/CLAUDE.md` describes the code.
+- **In**: the library and listing model (lenient, from the shared JSON), Room (listings, positions, bookmarks, Nytt,
+  seen keys, downloads, item errors, shuffle, the last queue), the sync and downloads as WorkManager jobs, keep/prune
+  on the server's lists (21b §6), NY/Nytt and the "N nye i Musikk" notification, the report for step 3
+  (`filesDir/music/report.json`: `version_code`, `library_version`, `cache_bytes`, `downloads_waiting`,
+  `entry_errors`, `item_errors`, `downloads`), the player service (Media3 session, focus, noisy, buttons, sleep,
+  outputs, stream errors, the queue rules), the screens of `Main.dc.html` v12 in nb/en, the debug feed
+  (`src/debug`, docs/testing/emulator.md §6f) and its release check, `music.yml`.
+- **Tests**: 106 JVM tests - the three shared files byte-identical and parsed; vibb's episode_resume, resume_overlap
+  (case 4), new_badge, cache_prune, offline_browse, offline_keep_all, now_playing (1-5, 8-12), prev_long_form,
+  mpv_next_wrap, mpv_prev, session_window (the phone's part), ui_carousel_slide (the index rules) and cat_carousel
+  ported; keep/prune with withdrawn copies and the bookmark; item errors from downloads and streams; the gate, HLS
+  keys, the address guard; translations, the escape scan, the debug feed outside `src/debug`, the glyphs.
+- **Checks done**: `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` and
+  `./gradlew build` (lint: 0 errors); the release APK is 4.6 MB, R8-minified, without the debug feed or Google
+  services. `scripts/material-symbols.sh` now also writes the music app's glyphs (no change elsewhere).
+
+Readings and deviations:
+1. **Compose** (foundation only, no Material), as §4.1 says - the launcher uses Views, but the specified carousel is a
+   `HorizontalPager` with `graphicsLayer`.
+2. **Downloads** run Media3's `ProgressiveDownloader`/`HlsDownloader` item by item inside the WorkManager job (QA #1),
+   not `DownloadManager`; Room's `downloads` is the index. An HLS item fetches one rendition (the best up to
+   192 kbit/s, else the lowest) and plays its copy with the same stream key; its cache key is the item plus the
+   resource's path relative to the playlist, so a re-resolved URL hits (QA #2).
+3. **Shuffle** keeps the permutation as the stored queue (Room's now-playing row) instead of ExoPlayer's shuffle mode
+   with `DefaultShuffleOrder`: the same behaviour, and it survives a restart. A cover tap on a shuffled entry starts
+   a new permutation; a list pick continues in the shown order.
+4. **Art**: the session carries `artworkUri` to a ≤ 300 px JPEG in the cache dir, not inline `artworkData` (the
+   session sends the whole queue's metadata to controllers; Media3 loads the bitmap for the platform session the
+   launcher reads). Episode art URLs aren't fetched: the entry's cover (or an own file's embedded art) everywhere,
+   else the category colour with its glyph.
+5. **Keep set**: the bookmarked item and the next one are kept at every depth above 0. **Depth 0 ("Ingen") keeps
+   nothing** - everything streams, the item in progress too (the user's decision after QA, as vibb's cache 0; this
+   reverses the first reading, "plus" even at 0).
+6. **Queue ends**: next at the last item wraps to the first (vibb), but a queue played to its end stops, drops the
+   bookmark and the partial positions (vibb's `clear_state`) and hides the now-playing bar. A tap on the cover of the
+   entry already playing or paused in this session continues it, resume off included (the user's decision, as vibb's
+   tile press); resume off applies when the entry starts fresh (after another entry, or after a restart).
+7. **Errors**: every failed download or stream of a listed url is recorded (`http_<code>`, `bad_media` for an HTML
+   answer or unparsable media, else `network`): the latest per item, at most 50, cleared when the item plays or
+   downloads, its listing version changes or its entry leaves. Retries are per item: a new url at once, a 4xx (not
+   408/429) after a day and then daily, anything else after 2 min doubling to 6 h. "Ikke lastet ned - trenger
+   Wi-Fi" when there is no network for a stream, else "Kan ikke spilles nå"; the queue moves on.
+8. **Address guard** (QA Low 14 of step 1c, 21b §2.7): audio goes through OkHttp; for a public-only entry its DNS
+   drops private answers and a network interceptor refuses a private connected address, on every redirect hop;
+   a refusal is the existing code `network`. Every entry is public-only unless the library marks it `lan` (an RSS
+   feed on the LAN or tailnet; added to the contract in the fix round, the user's decision).
+9. Until step 3, `mobile_data` comes from the debug feed's `config.json` and the language from the system (or
+   `cmd locale set-app-locales`). "Ingen bibliotek" also shows when no entry has anything to play.
+10. More than 20 entries show a window of 20 equal dots around the current one.
+
+Emulator (21 §6 step 2, emulator.md §6f): every screen at 320x569 dp in nb and en; the carousel (drag, snap, a
+neighbour tap, a tap during a slide, "Remove animations"); resume, shuffle, sleep (fade, a manual pause cancels it);
+airplane mode; restart -> the bar back paused, one tap continues; that `adb push` into the app's external dir
+works; Nytt and its notification; the output sheet. **Jelly Star**: 1 h screen off in Doze; a call pauses and
+resumes (with the 3 s overlap); unplugging pauses; BT buttons, also play after a restart (playback resumption);
+speaker vs BT; downloads wait on mobile data; an NRK serie (HLS) downloaded and played offline; battery and MB/h.
+
+The `release` environment's deployment rule must allow `music-v*` tags before the first music release.
+
+### Fix round after QA's code review (`qa-21-step2-code.md`, 2026-10-09)
+
+All findings are fixed except as noted; 117 JVM tests (11 new), the server's 361 with `lan`.
+- **User decisions**: the library entries carry `lan` (server and app in one commit, both snapshots); depth 0 keeps
+  nothing; a cover tap on the loaded entry continues it (readings 5, 6 and 8 above).
+- **H1**: an entry or file counts as removed only when the library no longer names its id; one the app can't read is
+  hidden with its state kept, and fields degrade (an unknown order is `auto`, a bad cover or version none). Positions
+  and bookmarks are never pruned (vibb keeps its state files).
+- **M1/M4**: per-item retries (above); the download job re-plans until nothing new is wanted, ends without a backoff
+  when the network goes (its successor waits on the constraints), and a sync replaces a waiting job or follows a
+  running one. A 416 drops the partial copy and fetches once more from the start.
+- **M2**: `KidMediaButtonReceiver` starts the service for a media button only when a stored queue exists (a pref
+  written with the now-playing row). **M3**: headphones arriving while the phone's speaker is chosen take the sound.
+  **M5**: a listing without an `items` array, or with fewer than half its items readable, is refused (`bad_listing`,
+  the old one stays). **M6**: next, previous, seek and shuffle before play load the stored queue paused first.
+- **Low**: done marks from the player's duration, and the bookmark moves on when the next item can't play (1);
+  `clear_state` at a queue's end (2); the resume overlap only on the interrupted item, the music beat for resume-off
+  entries (3); the Nytt notification posted again when the system no longer shows it, a swipe recorded by its delete
+  intent (5); one cache-key factory per item (6, S3); a partial copy from another url starts over (7); a broken copy
+  is dropped so the next sync fetches it (8); item errors cleared (9); NRK/RSS audio reads http(s) only (10); the
+  snapshot built off the main thread, art made on the writer thread, `WhileSubscribed`, the position tick only while
+  the screen is up, no library parse in a constructor (11); the seek thumb holds after a release, slider semantics
+  (12); the title fades only on another entry (13); no play circle in Nytt (14); "Kan ikke spilles nå" (15); back from
+  the player lands on the playing entry and its category (16); unique temp files and a lock for the report (17);
+  `WAKE_MODE_LOCAL` for copies, `CONTENT_TYPE_SPEECH` for resume entries (18); vibb's MIT text in
+  `assets/licenses/MIT-vibb.txt`, NOTICE's icon line, the debug feed's test name (19).
+- **Simplifications** accepted: S1 (no position settle - ExoPlayer reports the seek target at once), S2 (no sync
+  counter; the latest error per item), S3 (above), S4 (`playedFromTray` is what the player uses).
+- **Tests added for QA's gaps**: what a save, a natural end and a queue end store (incl. no listed duration), the
+  carousel tap rule, the guard on a local socket (a rebinding name, an IP literal, a LAN client), unknown fields,
+  degraded fields, refused listings and libraries, a hidden entry keeping its copies.
+- **Not done, with reason**: now_playing case 12's 12 s bound on "playing" (Media3 reports buffering itself; the
+  button shows the intent); the service's transition wiring stays untested on the JVM (its decisions are pure and
+  tested; the wiring is for the emulator). `isReturnDefaultValues` stays: ReportTest builds a `PlaybackException`.
+- The Room schema stays version 1, changed in place: no build of the app was installed anywhere yet.
+- Device checks added: BT/car-kit PLAY after a queue ended does nothing (no crash); choose "Telefonen", then plug in
+  headphones; seek/next before play after a restart; the Nytt notification after a reboot.
+
+## Step 3 implementation status (2026-10-10)
+
+Built and tested in the sandbox on `music-step2` (launcher, music app; no server change); not run on an emulator or a
+phone. The launcher's part is a new package `com.kidslauncher.mdm.music` with small hooks elsewhere (the sync, the
+status DTO and capability `music_v1`, the manifest, one check in `AppDownloads`).
+- **Bridge (§2, 21b §5)**: `me/vibb/bridge/IMusicBridge.aidl` and `IStorytelCallback.aidl`, byte-identical in both
+  apps (both suites compare), all of §2's methods plus `listingVersion`/`openListing` at the end. The launcher's
+  `MusicBridgeService` is exported behind its own signature permission `<applicationId>.permission.MUSIC_BRIDGE`
+  and checks the caller's package on every call; the music app requests both build names' permission, has
+  `<queries>` for both launchers, and binds only the restrictions' launcher when it is a launcher name signed with
+  its own certificate (`hasSigningCertificate`).
+- **Launcher sync (§3, 21b §5)**: `MusicSync` after the wallpapers, only with a music app installed: the library on
+  a new `library_version` (If-None-Match, ≤ 4 MB, `v == 1`), the listings whose version changed (≤ 2 MB, any version
+  stored, the unnamed ones deleted), covers (hash-checked), own files queued, then the managed config (`v`,
+  `managed`, `launcher_package`, `language`, `mobile_data`, `library_version`, `storytel_generation`; written when it
+  differs, cleared without a policy) and one nudge (`BRIDGE_CHANGED`) when anything changed. A failure keeps what
+  is stored; `PolicyResponse.music` stays raw and nullable.
+- **Own files**: one ahead of the handover, after the catalog's APKs, design 13's rules (Range + the first ETag as
+  If-Match, 412/416/404, size + SHA-256, NOT_METERED unless `music.mobile_data`, never roaming, room); the music app
+  copies from `openFile`, checks size and SHA-256, closes, `releaseFile`s; its report names the files it holds.
+- **Storytel**: the launcher fetches the login when the music app's generation isn't the policy's (`!=`) and
+  answers through the callback in memory only (404 = generation 0); the music app keeps it AES-GCM-sealed under an
+  Android Keystore key in noBackupFilesDir, deletes it at generation 0, and reports `storytel` "ok"/"none".
+- **Updates and status**: a music app update waits while the last `setNowPlaying` says "playing" (a `DEFER` outcome
+  in `AppDownloads`' install; the pause asks for a run); `music_state` = the music app's last `reportState` (known
+  keys) + the package, version code and `bridge` ("bound" while reports arrive, else "unbound").
+- **Music app**: the bridge part runs first in the sync and the report goes back at its end; the managed config sets
+  the language (`LocaleManager`) and mobile data; `BRIDGE_CHANGED` and the restrictions-changed broadcast start a
+  sync; `LiveBridge` (held by the player and the screens, rebound after the launcher's own update) sends
+  `setNowPlaying` (play/pause/item change, art ≤ 64 KB, null at a queue's end) and `setForeground` (the top resumed
+  activity, never in multi-window, its token dying with the process); `MY_PACKAGE_SUSPENDED` pauses (QA #8's
+  fallback). The debug feed still works and doesn't need the launcher.
+- **Tests**: launcher `MusicPlanTest` (AIDL identity, the signature permission, the caller check, policy and library
+  reading on the shared snapshots, listings, one-ahead own files, the managed config's keys, the deferral,
+  `music_state`); music `BridgeTest` (AIDL identity, the config, another signer refused, nothing ticked, listings,
+  the sealed login) and the report's `storytel`.
+
+Readings and deviations:
+1. **Own files have their own small runner** (`MusicFileDownloads`) built on design 13's pure rules, not new
+   `DownloadRecord` kinds inside `AppDownloads`: design 22 L1 rewrites that runner's transport, and the music files
+   need neither installs nor release tags. It has no network callback: a run starts at each sync, handover or
+   `wantFiles`, and stops when the network stops qualifying. Its room check is design 13's (twice the file). (The
+   fix round adds the gate during the copy, the hash-failure limit and the wake-lock renewal; `wantFiles` is gone.)
+2. **All music server calls sit behind `MusicServer`** (Retrofit over the tsnet proxy, the bearer), for L1.
+3. **`reportState` also names the own files the music app holds** (`held_files`, `held_sha256`; never sent to the
+   server). They replace the launcher's handed-over marks, so a launcher reinstall or files fed another way never
+   cause a second download. (Corrected in the fix round: the first version didn't do what it claimed for a stale
+   "ready" file - QA M1; now a ready file the app holds is deleted at the report and never blocks the next one.)
+4. **The nudge goes only when something changed** (library, listing, cover, the managed config, a file ready), not at
+   every sync.
+5. **Nothing ticked**: the launcher deletes its library and the managed config says `library_version` ""; the music app
+   then applies an empty library (the parent's explicit choice; an unmanaged phone never does).
+6. **The managed config is written by `MusicSync`** (after the library, from the enforced policy), not inside
+   `AppEnforcer.apply()`: one place, and `apply()` stays untouched.
+7. The launcher stores `setForeground` and `setNowPlaying` now; their readers (screen time, the Home card, the lock
+   view) and QA #6 (the badge, the POST_NOTIFICATIONS grant) are step 4.
+8. Local build note: the sandbox's SDK `aidl` is x86_64 only; it now uses the aarch64 `aidl` from the same third-party
+   tools as the aapt2 override (not in the repo; CI's x86_64 runners are unaffected).
+
+Device checks (21 §6 step 3): a catalog install of the music app and its kiosk pin; a language change in the PWA reaching
+the music app; a music app signed with another key isn't bound; own files over an interrupted Wi-Fi (resumed, one
+ahead of the handover); a Storytel login set -> stored ("ok" on the card) / cleared -> deleted; a launcher self-update
+while playing (the music keeps playing, the bridge comes back); a music update deferred while playing and installed
+after the pause; `BRIDGE_CHANGED` and a restrictions change start a sync; the device card shows the music app with no
+bridge warning.
+
+### Fix round after QA's code review (`qa-21-step3-code.md`, 2026-10-11)
+
+All findings are fixed; launcher 18 + 8 music tests (`MusicPlanTest`, `MusicFileDownloadsTest`), music 8 in
+`BridgeTest`, server +2 (`music_state` end to end, "Music app not installed").
+- **H1**: the managed config holds only Boolean, Int and String - `storytel_generation` is an Int (clamped), and
+  writing anything else throws. A test checks every value `restrictionsFor` produces; `BridgeTest` feeds Ints.
+- **H2**: the own-file copy asks the gate again every 1 MB (`OwnFileFetch`): a download started on Wi-Fi stops on
+  mobile data or while roaming, keeping its partial and ETag; the wake lock is renewed in the same loop.
+- **M1**: a ready file the music app reports as held is deleted and never blocks the next (`nextOwnFile`,
+  `reportState`). **M2**: a deferred music update is skipped for the run (`nextDownload`), the others go on.
+  **M3**: listing versions come from an index the courier writes with each listing, never from parsing them.
+  **M4**: only a JSON `null` `library_version` means "nothing ticked"; any malformed `music` field keeps what is there.
+  **M5**: the fetch left the sync lock (§3 above).
+- **Low**: two hash failures skip a file for a day (1); "playing" is measured from the last `setNowPlaying` and
+  cleared when the player's process dies (2); the player's end of life sends its snapshot paused, not null (3);
+  `LiveBridge` retries a bind (2 s, 10 s, 60 s) and on a config change (4); a deferred install clears its
+  "Installing" notice (5); a nudge never cancels a running sync and cancellations are rethrown (6); the suspended
+  receiver isn't exported and the nudge is honoured only from a launcher (`setShareIdentityEnabled`,
+  `sentFromPackage`) (7); `@Streaming` for the library and listings (8); one failed request no longer stops the fetch
+  (9); a new music app gets a sync at once and the nudge reaches a never-opened app (10); `mobile_data` is read live
+  (11); the launcher deletes its music files when no music app is installed (12); the device card says "Music app
+  not installed." (13, server).
+- **Simplifications** accepted: `wantFiles` dropped from both apps and the AIDL (1), `mobile_data` read live and the
+  language applied in one place (2), a pause asks for a download run only when an install waits (3).
+- **Test gaps closed**: the config's value types; `OwnFileFetch` with a fake `MusicServer` (200/206/412/416/404/5xx,
+  the hash, resume, the gate mid-copy); a handed-over ready file; DEFER letting the next record run; malformed versus
+  null; a scan that every bridge method calls `check()` first; the cross-app names in one shared file
+  (`bridge_contract.json`, byte-identical in both apps); `music_state` end to end on `server/testdata/music_state.json`
+  (the server keeps every field, the launcher keeps the app's, the app sends exactly those).
+- Device checks added: after a sync, `dpm.getApplicationRestrictions` for the music app equals what was written; an
+  own-file download moving from Wi-Fi to mobile data stops; BT-less sleep music for hours keeps an update waiting;
+  a never-opened music app gets its first own file; install the music app first, then the step-3 launcher.
+

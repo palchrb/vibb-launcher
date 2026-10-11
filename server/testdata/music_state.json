@@ -1,0 +1,32 @@
+{
+  "package": "me.vibb.music",
+  "version_code": 1000000,
+  "bridge": "bound",
+  "library_version": "0123456789abcdef",
+  "cache_bytes": 123456789,
+  "downloads_waiting": 2,
+  "entry_errors": [
+    {
+      "entry": 3,
+      "error": "bad_listing"
+    }
+  ],
+  "storytel": "ok",
+  "item_errors": [
+    {
+      "entry": 2,
+      "version": "0123456789abcdef",
+      "item": "c2a6b03f190d",
+      "error": "http_404"
+    }
+  ],
+  "downloads": [
+    {
+      "entry": 2,
+      "version": "0123456789abcdef",
+      "have": 1,
+      "want": 3,
+      "waiting": "wifi"
+    }
+  ]
+}

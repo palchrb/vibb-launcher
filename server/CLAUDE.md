@@ -492,7 +492,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   newest/first, cover, RSS validators + `parser`, `version`, stamps, `failures`), `music_items` (`seq` oldest first,
   `state` ok/pending/gone, keys checked). Stamps are UTC text from the caller's `now` (tests drive a fake clock).
   Triggers on both tables move `music_library_revision` (the library names `items` = the listing version, falls back
-  to the listing's cover, and plays an `auto` NRK series that keeps its newest 100 `newest_first`).
+  to the listing's cover, and plays an `auto` NRK series that keeps its newest 100 `newest_first`). Each library
+  entry also says `lan` (true only for an RSS feed whose first check found it on the LAN or tailnet, written in the
+  same update as its first version): the music app refuses private addresses for every other entry's audio
+  (qa-21b-step1c-code #14).
 - **Fetching** (`music_net`): every source request (add check, sweep, covers) through `AppState.music_fetch` =
   `Gated(HttpSource)` - one request in flight server-wide, starts 200 ms apart; caps/timeouts per `Kind` (page 2 MB /
   30 s, manifest 256 KB / 15 s, feed 20 MB / 120 s, image 10 MB / 60 s; 10 s connect, 30 s without data), gzip, no

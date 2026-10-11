@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose draws everything; the window is the night ground, edge to edge. -->
+    <style name="Theme.VibbMusic" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/vibb_night</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

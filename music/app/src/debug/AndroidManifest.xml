@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug build only: the step-2 debug feed (design 21 §6, docs/testing/emulator.md). Merged into
+     the debug manifest; the release build never sees this file (checkReleaseHasNoDebugFeed,
+     SourceScanTest). Exported for `adb shell am broadcast -n`, guarded by DUMP (the shell
+     holds it, apps don't). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name="me.vibb.music.debugfeed.DebugFeedReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

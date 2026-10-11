@@ -372,6 +372,9 @@ to the top.
 - `items` is part of the hashed body. A new episode therefore changes the library version of exactly the phones that
   have the entry, and the policy's `library_version` plus the nudge carry it.
 - `cover` falls back to the source's cover.
+- `lan` (added 2026-10-09, the user's decision on qa-21b-step1c-code #14): true for an RSS entry whose first check
+  found it on the home LAN or the tailnet (§2.7), else false. The music app refuses private addresses for the audio
+  of every entry with `lan: false` (it resolves the names itself, so the server's one-time check can't cover it).
 - The field adds about 30 bytes per entry, so `MAX_LIBRARY_BYTES` is unchanged. `tick_fits` gains the listing budget
   (§1). The policy shape is unchanged.
 

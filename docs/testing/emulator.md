@@ -449,6 +449,47 @@ adb logcat -s LockTaskDebug LockTaskChrome
 - Only shell can send it: the receiver needs `android.permission.DUMP`. Never on a kid's phone: release builds don't
   have it.
 
+## 6f. Vibb music (design 21 steps 2-3): the bridge, or the debug feed
+
+With the debug launcher as device owner and the server's music library ticked for the phone, the debug music app
+gets everything through the launcher's bridge (step 3): install both debug APKs (the same debug key on one machine -
+CI's debug APKs differ in key, QA #7), sync the launcher, and the music app follows on the `BRIDGE_CHANGED` nudge
+(`adb logcat -s MusicSync MusicFiles MusicBridge BridgeSync`). Without a launcher, the music app takes a library from a
+debug-only receiver (`src/debug`, `checkReleaseHasNoDebugFeed`, `SourceScanTest`). Build with
+`cd music && ./gradlew assembleDebug` (-> `music/app/build/outputs/apk/debug/app-debug.apk`) and install it
+next to the launcher; no device owner or server is needed for these checks.
+
+```
+# A local folder debug-feed/ with the library, listings, own files' audio and covers - the server's own
+# answers, or server/testdata's snapshots edited by hand. With a server that has entries ticked for a
+# phone (TOKEN = that phone's bearer):
+#   curl -sH "Authorization: Bearer $TOKEN" $SERVER/api/devices/music/library > debug-feed/library.json
+#   curl -sH "Authorization: Bearer $TOKEN" $SERVER/api/devices/music/entries/12/items > debug-feed/items/12.json
+#   curl -sH "Authorization: Bearer $TOKEN" $SERVER/api/devices/music/files/5 > debug-feed/files/5
+#   curl -sH "Authorization: Bearer $TOKEN" $SERVER/api/devices/music/covers/$HASH > debug-feed/covers/$HASH
+# Optional debug-feed/config.json: {"mobile_data": true}
+R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
+adb shell am broadcast -n $R        # once: the app creates its (empty) debug-feed folder
+adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
+adb shell am broadcast -n $R
+adb logcat -s VibbMusicDebugFeed WM-WorkerWrapper ExoPlayerImpl
+# The Nytt notification needs the permission the device owner grants on a phone:
+adb shell pm grant me.vibb.music.debug android.permission.POST_NOTIFICATIONS
+# Language: the app follows the system, or per app:
+adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
+```
+- Own files are checked against the library's size and SHA-256 and covers against their hash; a mismatch is
+  logged and skipped. A listing that doesn't parse becomes the report's `bad_listing`. The sync runs at once
+  (the bridge's nudge waits 15 s). Push a changed feed and broadcast again to test NY/Nytt (the first listing of
+  an entry is never new; a later one with a new key is).
+- What to check (21 §6 step 2): every screen at 320x569 dp in nb and en; the carousel (drag, the spring snap,
+  a tap on a neighbour, a tap during a slide, "Remove animations" on: it jumps); resume (a cover tap continues,
+  the list shows ✓ for heard items), shuffle on an own-files entry with resume off, the sleep timer (fade and
+  pause; a manual pause cancels it); airplane mode (downloaded items play, others say "Ikke lastet ned - trenger
+  Wi-Fi" and the queue moves on); restart (`adb shell am force-stop`, or a reboot): the now-playing bar is back,
+  paused, and one tap continues. The report the step-3 bridge will send is
+  `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and

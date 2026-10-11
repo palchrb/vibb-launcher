@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Vibb music (design 21 §4): one activity (the kid's screens), the player service, and
+     WorkManager's jobs for the sync and downloads. No settings, links, share or web views. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- The device owner grants it (QA #6); the app never asks the kid. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The launcher's bridge (design 21 §2): a signature permission, both launcher build names
+         (a debug/release mix then fails to bind, not to install). -->
+    <uses-permission android:name="me.vibb.launcher.permission.MUSIC_BRIDGE" />
+    <uses-permission android:name="me.vibb.launcher.debug.permission.MUSIC_BRIDGE" />
+
+    <queries>
+        <package android:name="me.vibb.launcher" />
+        <package android:name="me.vibb.launcher.debug" />
+    </queries>
+
+    <application
+        android:name=".MusicApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.VibbMusic">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".sync.NewNotifier$Dismissed"
+            android:exported="false" />
+
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
+        <!-- The launcher's nudge: it only starts the sync. -->
+        <receiver
+            android:name=".BridgeChangedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="me.vibb.music.action.BRIDGE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Suspended by the launcher (a time rule): pause (QA #8's fallback). -->
+        <receiver
+            android:name=".SuspendedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_SUSPENDED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Media3's receiver, but a press with nothing to resume never starts the service (M2). -->
+        <receiver
+            android:name=".playback.KidMediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

@@ -1,0 +1,19 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Gradle and Kotlin
+.gradle/
+.kotlin/
+build/
+
+# Local configuration file (sdk path)
+local.properties
+
+# IDE
+.idea/
+*.iml

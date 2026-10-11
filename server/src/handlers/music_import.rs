@@ -465,6 +465,7 @@ pub async fn confirm(
                 resume: candidate.resume,
                 cover: None,
                 items: None,
+                lan: false,
                 sort,
             };
             added.push((entry, candidate.name.clone()));
