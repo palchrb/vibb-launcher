@@ -770,3 +770,52 @@ default), so the architect's recommendations are taken as the answers:
    the launcher's PIN lock, not Android's.
 4. Safe mode flips to blocked on every existing device once check 6 passes: yes (H4).
 The user can overturn any of these.
+
+## Implementation status (2026-10-11)
+
+Built on branch `relock-24b` as §5's steps: S1a (launcher), S1b (both), S2 (launcher, plus the PWA's advice line),
+S3 (both), docs. S4, the safe-mode default, is built on its own branch `relock-24b-s4` on top and **merges only after
+device check 6** (design 04) is ticked there. On main `2481de32`: launcher
+`testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` green (848 tests); server `cargo test`
+(497 tests), `fmt --check` and `clippy --all-targets` green with no new warnings. The PWA was checked in headless
+Chromium at 360 px, light and dark: no horizontal scroll, the warnings and buttons in the Status card, and after
+"Lock the phone again now" or "Allow these apps" the page comes back at the same place with the notice right above
+the buttons.
+
+**Deviations** (none changes a rule of the design):
+
+1. **Migration numbers:** taken after the final rebase onto main as the next free ones after main's 0062:
+   `0063_window_relock.sql`, `0064_unseen_boots.sql`; S4's is `0065_safe_boot_default.sql` on its branch (renumber it
+   if main moves first).
+2. **`opened()` lifts the window itself.** The starters pass their flag writes as a lambda that runs under the
+   marker's lock right after the marker's commit. Otherwise a relock starting in the snapshot's ~300 ms could see
+   the new marker with no window open, clear it, and leave the window without one.
+3. **Adoption:** a window an older build opened (no marker) gets one at the next check or "Lock again" and relocks
+   without a start snapshot (no signer check, no credential removal).
+4. **The sync's relock** skips `apply()` only when steps 1-2 changed nothing; after a removed credential or a new
+   block it runs again, or the kid's lock and the hiding would wait for the next apply.
+5. **Home after a relock** is not brought to the front at a process start (`boot`): the boot brings Home itself
+   (design 16).
+6. **Signers** match when the installed set shares a certificate with the expected one (a key rotation keeps the old
+   one in its history), as the self-update's `signerMatches`. A block with no known signer also clears when the app
+   comes back from Play or us.
+7. **`relock.blocked`** lists the blocked apps and, per §1.6, new apps that aren't allowlisted. The server shows
+   "Allow these apps" only when a blocked app is on the allowed list, and says the others need a tick under Apps.
+8. **The location permission** self-granted for the proxy reset stays granted (revoking a runtime permission kills
+   our process); its policy state goes back. Location itself is switched off again.
+9. **`failures`** names: `credential, signer_check, apply, permitted_lists, proxies, ca_certs, notifications,
+   detections, finish`.
+10. **The tethering and list tests** live in `EnforcementPlanTest` (they are plan fields, lifted in windows, not
+    hardening switches).
+11. **Do Not Disturb:** design 18's existing line ("Do Not Disturb at the last sync: on (...) - calls don't ring")
+    is shown in the warning style instead of a second line.
+12. **The vault** also carries a lockout over at a re-wrap of the same PIN (same salt: the server makes a new one
+    for every save), not only at the migration; a new PIN still resets it. Its cache redaction and the sync's cache
+    write share one lock, so a newer policy is never overwritten. A key failure undoes the counted try, like a
+    failed commit.
+13. **Debug-only hook** `PinVaultKeyReceiver` (src/debug, DUMP) deletes the vault key for §7's check; the release
+    build check (`checkReleaseHasNoDebugHook`) covers it.
+
+**Device checks (emulator, then the Jelly Star):** §7 as written. Before S1a reaches a phone: check that no phone
+relies on a user CA certificate (a school EAP network) - it goes at the first relock. For S4: check 6 in design 04
+first.

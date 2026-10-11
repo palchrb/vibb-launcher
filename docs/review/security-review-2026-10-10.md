@@ -278,6 +278,9 @@ The review was made against 9cfb600 (2026-10-07). On main since then:
 | M11 | Design 22 launcher steps L1/L3 (planned). |
 | M12 | Design 22 S1 (separate device port) and S3 (hashed, atomic enrollment, revoke). The Tailscale-key part is open. |
 | L10 | `master` -> `main` fixed (72240eb3); the rest is open. |
+| M9 | Design 24b (`docs/design/24b-override-relock.md`, branch `relock-24b`): windows lock again by themselves (timer, boot, screen on, sync), "Lock again" on the phone and in the PWA, the relock resets what the device owner can and reports the rest. |
+| L6 | Design 24b S2: the parent PIN's hash is replaced by a Keystore HMAC tag (the kid's PIN stays as it was, by decision). |
+| H4 | Design 24b S3 reports boots the launcher didn't see; S4 (`DISALLOW_SAFE_BOOT` by default, migration of existing devices) is built on `relock-24b-s4` and waits for device check 6. |
 
 User decisions:
 - **H4 (safe mode):** yes. `DISALLOW_SAFE_BOOT` on by default after device check 6 on the Jelly Star (design 04).

@@ -33,7 +33,10 @@ Already there (from the code, more than the README says):
   PackageInstaller, incl. the launcher's own self-update.
 - Offline override PIN (PBKDF2, verified on the phone), PIN-gated settings. Since design 24 the "parent
   PIN": one gate on the phone with an escalating lockout (15 min up to 24 h), every use, wrong try
-  and lockout reported to the PWA, its own card there with an easy-PIN warning.
+  and lockout reported to the PWA, its own card there with an easy-PIN warning. Since design 24b a window the
+  parent PIN opens (override, pause) locks again by itself and is reset or reported at the relock, "Lock again"
+  on the phone and in the PWA, the parent PIN is kept as a Keystore HMAC, and boots without the launcher are
+  reported (safe mode blocked by default after device check 6).
 - Tailscale embedded in the launcher (`tsnet.aar`), no Tailscale app needed.
 - DNS filtering via the launcher's own `VpnService` + blocklists from the
   server, private DNS lock, DNS log.

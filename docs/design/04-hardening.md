@@ -35,7 +35,9 @@ Already set (unchanged): `CONFIG_DATE_TIME` + auto time, `CONFIG_PRIVATE_DNS`, `
 - **Safe boot off by default (decision, corrected after QA #6).** Safe mode disables the launcher (bypass vector #1).
   It is **not** a repair path: restrictions, suspension, blocked adb/factory reset and unknown sources all persist
   there - it only gives a usable phone without the launcher. Kept off only until device check 6 passes on the Jelly
-  Star (untested OEM behaviour); then it can default on. Parent recovery paths: see the runbook below.
+  Star (untested OEM behaviour); then it can default on (design 24b S4, held on its own branch until check 6 is
+  ticked below; design 24b S3 already reports boots the launcher didn't see). Parent recovery paths: see the runbook
+  below.
 
 **2. Launcher Settings never open without the PIN (L, QA #12, qa-security #5).** Pure `settingsAccess(policyEverApplied,
 pinConfigured, lockedOut)`: OPEN only before any policy was applied (setup: server URL, enroll, scan QR); otherwise
@@ -149,6 +151,10 @@ Device checklist (Jelly Star, release build; follow the runbook above first; in 
    `no_config_vpn` set. Location is on and its tile/setting is blocked; Quick Controls → Wi-Fi networks still scans.
 6. Safe boot on (only after 1-5 pass, with adb still allowed): long-press power-off → no safe-mode prompt; hardware
    key combo boots normally. Off again afterwards unless the build is trusted.
+   Design 24b adds: with the switch off, a safe-mode boot followed by a normal boot raises the device page's
+   "started without the launcher" count (`unseen_boots`) by one; a first boot of that build reports 0. When this
+   check passes, tick it here with the date and the build: that unblocks design 24b S4 (branch `relock-24b-s4`),
+   which makes "Block safe mode" the default for the launcher, new devices and every existing one.
 7. Bedtime starts while inside an allowed app: within a minute (screen on) the app is closed as "paused" and
    LockActivity shows; Recents and a notification tap don't open any app; a new install during bedtime stays suspended.
 8. During bedtime: "Emergency call" on LockActivity reaches 112 (test mode) with calls unmanaged, managed, and with a
