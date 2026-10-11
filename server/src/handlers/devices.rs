@@ -1152,7 +1152,8 @@ async fn render_device(
         .collect();
 
     // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
-    // A fresh progress row above still wins for the live percentage.
+    // A fresh progress row above still wins for the live percentage - but not over a release the
+    // phone refused (security review M10): its reason beats "Install failed".
     let downloads = crate::app_downloads::parse(
         latest_status
             .as_ref()
@@ -1162,7 +1163,9 @@ async fn render_device(
         downloads
             .as_ref()
             .and_then(|d| d.entry(tracked_app_id))
-            .filter(|_| !install_progress.contains_key(&tracked_app_id))
+            .filter(|e| {
+                crate::app_downloads::refused(e) || !install_progress.contains_key(&tracked_app_id)
+            })
     };
 
     let mut apps: Vec<UnifiedAppRow> = Vec::new();
@@ -1190,7 +1193,8 @@ async fn render_device(
                 "Installed".to_string()
             },
             is_installing: false,
-            install_failed: false,
+            // An update the phone refused (security review M10) shows like a failed install.
+            install_failed: update.is_some_and(crate::app_downloads::refused),
             checked: allowed.contains(&app.package_name),
             tracked_app_id: tracked_match.map(|t| t.id),
             show_no_release_hint: false,
@@ -1213,13 +1217,14 @@ async fn render_device(
         }
         let has_release = t.latest_release_tag.is_some();
         let progress = install_progress.get(&t.id).copied();
-        let (status_label, is_installing, install_failed) = match progress {
-            Some((_, true)) => ("Install failed".to_string(), false, true),
-            Some((percent, false)) => (format!("Installing {percent}%"), true, false),
-            None => match download_of(t.id) {
-                Some(download) => (crate::app_downloads::new_app_label(download), false, false),
-                None => ("Not installed".to_string(), false, false),
-            },
+        let (status_label, is_installing, install_failed) = match (progress, download_of(t.id)) {
+            (_, Some(download)) if crate::app_downloads::refused(download) => {
+                (crate::app_downloads::new_app_label(download), false, true)
+            }
+            (Some((_, true)), _) => ("Install failed".to_string(), false, true),
+            (Some((percent, false)), _) => (format!("Installing {percent}%"), true, false),
+            (None, Some(download)) => (crate::app_downloads::new_app_label(download), false, false),
+            (None, None) => ("Not installed".to_string(), false, false),
         };
         apps.push(UnifiedAppRow {
             status_label,

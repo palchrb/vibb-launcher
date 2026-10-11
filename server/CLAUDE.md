@@ -96,8 +96,11 @@ No prior programming experience - build features directly rather than explaining
   anything by itself**: `device_api::allow_installed_catalog_apps` (every status report) allows, on that phone only,
   a checked catalog app's pinned package once the phone reports it installed by the launcher, and nudges it; checking
   the app with a known package (`toggle_app`) allows it as before. "Forget the package and key" on the app's page clears both. `TrackedAppUpdate` carries
-  `package_name` and `signer_sha256` (launcher DTO `signerSha256`, `PolicyResponseCompatTest`); the phone's own check
-  (`getPackageArchiveInfo`, `setAppPackageName`, `signerMatches`) is the launcher's security wave. A phone's report
+  `package_name` and `signer_sha256` (launcher DTO `signerSha256`, `PolicyResponseCompatTest`). The phone checks the
+  APK itself before installing (launcher security wave, `CatalogApkCheck.kt`): the package and the pinned key in the
+  APK's verified signers or their lineage (a v3.1 rotation the server doesn't read), the session held to the package
+  (`setAppPackageName`); an app without both pins isn't downloaded at all. A refusal comes back in `app_downloads`
+  (state `refused_package`/`refused_signer`/`refused_unreadable`/`refused_unpinned`, below). A phone's report
   never sets a catalog app's package (QA Low 4: the `installer` it names is its own claim): for an app whose APK
   didn't give one, the app's page lists what the launcher installed on its phones (`package_candidates`) and the
   parent confirms one (`confirm_package`). A new phone's first report
@@ -468,10 +471,13 @@ needed to manage the phone, delete on a schedule, never store notification or me
   since_ms, any_network_at_ms}}`, a full snapshot) -> `device_status.app_downloads_json` (`src/app_downloads.rs`: known
   fields only, capped). The app rows show it ("Waiting for Wi-Fi since 6 Oct · 120 of 326 MB", "Installed · update
   waiting for Wi-Fi since ...", the launcher's "Installed · 0.32.0 waits for Wi-Fi, any network from 9 Oct") plus a line
-  about the phone's network; a fresh progress row (< 10 min) still wins for the live percentage.
+  about the phone's network; a fresh progress row (< 10 min) still wins for the live percentage - except over a
+  release the phone refused (`refused_*`, security review M10: "Refused - signed with another key than this app's",
+  "Installed · update refused - ...", styled as failed), which it reports until the server lists another release.
+  Status pills wrap when long (`.app-status`, `style.css?v=7`).
 - Tests: `app_downloads::tests`, `src/tests/tracked_apps.rs` (`downloads_resume_with_range_and_if_match`,
   `only_this_devices_apps_download`, `the_list_carries_each_files_hash`, `the_app_update_switch_saves_and_reaches_the_phone`,
-  `app_downloads_are_stored_and_shown`).
+  `app_downloads_are_stored_and_shown`, `a_refused_release_says_why_on_the_device_page`).
 
 ## App names and icons (design 14, `docs/design/14-app-display.md`, migration `0044_app_display.sql`)
 

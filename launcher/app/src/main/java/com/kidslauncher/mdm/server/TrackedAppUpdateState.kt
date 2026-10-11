@@ -103,8 +103,9 @@ object TrackedAppUpdateState {
         save(context, state)
     }
 
-    /** The launcher's [releaseTag] is refused for good (until the server advertises another): the
-     * pending APK is dropped (the caller deletes the file). */
+    /** [releaseTag] is refused for good (until the server advertises another): our own update's
+     * pending APK is dropped, a catalog APK that failed its check is never downloaded again (the
+     * caller deletes the file). */
     @Synchronized
     fun recordRefused(context: Context, appKey: String, releaseTag: String) {
         val state = load().toMutableMap()

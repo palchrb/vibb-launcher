@@ -510,7 +510,15 @@ Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - 
    server, `UPDATE device_commands SET received_at = NULL, acknowledged_at = NULL, result = NULL, delivered_at =
    datetime('now', '-3 minutes') WHERE id = <the lock's id>`, then "Sync now" on the phone: the log says "delivered
    again - confirmed, not run twice", the screen doesn't lock again, and the row reads "Received ...".
-3. **Call screening without the phone-app role (L7)**, calls managed, `CALL_SCREENING` granted (§4): `adb shell cmd
+3. **Catalog APK check (M10)**: a catalog app from a manual upload (Apps page), checked for the phone: it installs.
+   The server refuses a release with another key itself, so to see the phone's check, change the pin under the cached
+   release (no "Check now" - that would re-check the file): `UPDATE tracked_apps SET signer_sha256 = '<64 other hex>'`
+   for a new upload of the app that isn't installed yet. The phone downloads it, logs "refused before installing:
+   WRONG_SIGNER", doesn't install it, and the device page's row says "Refused - signed with another key than this
+   app's"; the same with `package_name = 'org.example.other'` says "another Android package". With
+   `signer_sha256 = NULL` the phone doesn't download it ("no package and signing key"). A key-rotated APK of a pinned
+   app (`apksigner rotate`, `--rotation-min-sdk-version 33`) installs on API 33+: the pin is the old key, in the lineage.
+4. **Call screening without the phone-app role (L7)**, calls managed, `CALL_SCREENING` granted (§4): `adb shell cmd
    role get-role-holders android.app.role.CALL_SCREENING` lists the launcher. Device page -> Calls: no role warning.
    Then `adb shell cmd role remove-role-holder android.app.role.CALL_SCREENING $P`: after the next sync the page says
    "Call-screening role not active". Add it back, take the dialer role away (Calls unmanaged and managed again won't

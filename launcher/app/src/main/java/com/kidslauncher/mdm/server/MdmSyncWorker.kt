@@ -512,6 +512,9 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
     val (launcherUpdates, otherUpdates) = updates.partition { it.isLauncher }
     val state = TrackedAppUpdateState.load()
     val wanted = mutableListOf<WantedDownload>()
+    // Security review M10: a catalog app the server has no package or signing key for is never
+    // downloaded - there would be nothing to check its APK against. Reported as refused.
+    val unpinned = mutableMapOf<Long, String>()
     val now = System.currentTimeMillis()
     for (update in otherUpdates) {
         val key = update.id.toString()
@@ -526,6 +529,11 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
         }
         val known = state[key]
         if (update.releaseTag == known?.lastInstalledTag) {
+            continue
+        }
+        if (!catalogPinned(update.packageName, update.signerSha256)) {
+            Log.w(LOG_TAG, "Skipping ${update.name}: the server has no package and signing key to check it against")
+            unpinned[update.id] = update.releaseTag
             continue
         }
         val failedAt = known?.lastFailedAtMs
@@ -550,7 +558,7 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
     // window (step 11).
     handleLauncherUpdate(context, launcherUpdates.firstOrNull())?.let { wanted += it.wanted() }
     try {
-        AppDownloads.reconcile(context, wanted)
+        AppDownloads.reconcile(context, wanted, otherUpdates.associate { it.id to it.releaseTag }, unpinned)
         AppDownloads.request(context, "sync")
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Queueing the downloads failed", e)
@@ -565,6 +573,8 @@ private fun TrackedAppUpdate.wanted() = WantedDownload(
     isLauncher = isLauncher,
     downloadUrl = downloadUrl,
     sha256 = sha256,
+    packageName = packageName,
+    signerSha256 = normalizedSigner(signerSha256),
 )
 
 /**
@@ -718,6 +728,8 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
         },
         commitFailed = { UpdateFence.commitFailed(context) },
         deleteOnFailure = false,
+        // Our own package only (pendingApkCheck checked it; the session holds it to that too).
+        expectedPackage = context.packageName,
         )
     }
     when (started) {
