@@ -8,6 +8,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 import javax.crypto.AEADBadTagException
 import javax.crypto.KeyGenerator
@@ -34,7 +38,7 @@ class BridgeTest {
         val config = bridgeConfig(
             mapOf(
                 "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb",
-                "mobile_data" to true, "library_version" to "0123456789abcdef", "storytel_generation" to 3L,
+                "mobile_data" to true, "library_version" to "0123456789abcdef", "storytel_generation" to 3,
             ),
         )
         assertEquals(BridgeConfig(true, "me.vibb.launcher", "nb", true, "0123456789abcdef", 3), config)
@@ -65,6 +69,51 @@ class BridgeTest {
     fun `listings asked for - changed ones, whatever their version, not never-listed ones`() {
         assertEquals(listOf(1L, 3L), listingsWanted(mapOf(1L to "a", 2L to null, 3L to "c"), mapOf(3L to "b")))
         assertEquals(emptyList<Long>(), listingsWanted(mapOf(1L to "a"), mapOf(1L to "a")))
+    }
+
+    private val contract by lazy {
+        me.vibb.music.model.JSON.parseToJsonElement(me.vibb.music.Fixtures.resource("bridge_contract.json")).jsonObject
+    }
+
+    private fun strings(key: String) = (contract[key] as JsonArray).map { (it as JsonPrimitive).content }
+
+    @Test
+    fun `the bridge's names match the shared contract`() {
+        assertEquals("the launcher's copy", repo("launcher/app/src/test/resources/bridge_contract.json").readText(), me.vibb.music.Fixtures.resource("bridge_contract.json"))
+        assertEquals((contract["bridge_service"] as JsonPrimitive).content, BRIDGE_SERVICE)
+        assertEquals((contract["action_bridge_changed"] as JsonPrimitive).content, ACTION_BRIDGE_CHANGED)
+        assertEquals(strings("launcher_packages"), LAUNCHER_PACKAGES)
+        val manifest = moduleFile("src/main/AndroidManifest.xml").readText()
+        for (pkg in LAUNCHER_PACKAGES) assertTrue(manifest.contains(pkg + (contract["permission_suffix"] as JsonPrimitive).content))
+        assertTrue(manifest.contains("android:name=\"" + (contract["action_bridge_changed"] as JsonPrimitive).content))
+        // The managed config: these keys with these types are what bridgeConfig reads.
+        val types = (contract["restrictions"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
+        val keys = listOf(
+            RestrictionKeys.V, RestrictionKeys.MANAGED, RestrictionKeys.LAUNCHER_PACKAGE, RestrictionKeys.LANGUAGE,
+            RestrictionKeys.MOBILE_DATA, RestrictionKeys.LIBRARY_VERSION, RestrictionKeys.STORYTEL_GENERATION,
+        )
+        assertEquals(types.keys, keys.toSet())
+        val sample: Map<String, Any> = types.mapValues { (key, type) ->
+            when (type) {
+                "int" -> if (key == RestrictionKeys.V) 1 else 7
+                "boolean" -> true
+                else -> if (key == RestrictionKeys.LAUNCHER_PACKAGE) "me.vibb.launcher" else "nb"
+            }
+        }
+        val read = bridgeConfig(sample)
+        assertTrue(read.managed && read.mobileData && read.launcherPackage == "me.vibb.launcher" && read.storytelGeneration == 7L && read.language == "nb")
+        assertEquals(strings("report_state"), listOf(REPORT_KEY, HELD_FILES_KEY, HELD_SHA256_KEY))
+        assertEquals(
+            strings("now_playing"),
+            listOf(NowPlayingKeys.ENTRY, NowPlayingKeys.ITEM, NowPlayingKeys.POSITION_MS, NowPlayingKeys.DURATION_MS, NowPlayingKeys.PLAYING, NowPlayingKeys.ART),
+        )
+    }
+
+    @Test
+    fun `the report's keys are the shared music_state fixture's, less the launcher's own`() {
+        val fixture = me.vibb.music.model.JSON.parseToJsonElement(repo("server/testdata/music_state.json").readText()).jsonObject
+        val report = me.vibb.music.logic.stateReport(1, "0123456789abcdef", 0, emptyList(), emptyList(), emptyList(), "ok")
+        assertEquals(fixture.keys - setOf("package", "bridge"), report.keys)
     }
 
     @Test

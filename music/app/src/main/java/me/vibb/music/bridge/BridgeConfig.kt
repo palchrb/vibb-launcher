@@ -14,6 +14,32 @@ const val BRIDGE_SERVICE = "com.kidslauncher.mdm.music.MusicBridgeService"
 /** The launcher's nudge: carries nothing, only starts the sync. */
 const val ACTION_BRIDGE_CHANGED = "me.vibb.music.action.BRIDGE_CHANGED"
 
+/** `reportState`'s Bundle keys (bridge_contract.json, compared with the launcher's). */
+const val REPORT_KEY = "report"
+const val HELD_FILES_KEY = "held_files"
+const val HELD_SHA256_KEY = "held_sha256"
+
+/** `setNowPlaying`'s Bundle keys. */
+object NowPlayingKeys {
+    const val ENTRY = "entry"
+    const val ITEM = "item"
+    const val POSITION_MS = "position_ms"
+    const val DURATION_MS = "duration_ms"
+    const val PLAYING = "playing"
+    const val ART = "art"
+}
+
+/** The managed config's keys. */
+object RestrictionKeys {
+    const val V = "v"
+    const val MANAGED = "managed"
+    const val LAUNCHER_PACKAGE = "launcher_package"
+    const val LANGUAGE = "language"
+    const val MOBILE_DATA = "mobile_data"
+    const val LIBRARY_VERSION = "library_version"
+    const val STORYTEL_GENERATION = "storytel_generation"
+}
+
 data class BridgeConfig(
     /** The launcher manages this phone (v1 config present). */
     val managed: Boolean,
@@ -33,14 +59,14 @@ data class BridgeConfig(
 
 /** The config from the restrictions' values (`RestrictionsManager.getApplicationRestrictions`). */
 fun bridgeConfig(values: Map<String, Any?>): BridgeConfig {
-    if ((values["v"] as? Int) != 1 || values["managed"] != true) return BridgeConfig.UNMANAGED
+    if ((values[RestrictionKeys.V] as? Int) != 1 || values[RestrictionKeys.MANAGED] != true) return BridgeConfig.UNMANAGED
     return BridgeConfig(
         managed = true,
-        launcherPackage = (values["launcher_package"] as? String)?.takeIf { it in LAUNCHER_PACKAGES },
-        language = (values["language"] as? String)?.takeIf { it in setOf("nb", "en") }.orEmpty(),
-        mobileData = values["mobile_data"] == true,
-        libraryVersion = values["library_version"] as? String,
-        storytelGeneration = (values["storytel_generation"] as? Long) ?: (values["storytel_generation"] as? Int)?.toLong() ?: 0,
+        launcherPackage = (values[RestrictionKeys.LAUNCHER_PACKAGE] as? String)?.takeIf { it in LAUNCHER_PACKAGES },
+        language = (values[RestrictionKeys.LANGUAGE] as? String)?.takeIf { it in setOf("nb", "en") }.orEmpty(),
+        mobileData = values[RestrictionKeys.MOBILE_DATA] == true,
+        libraryVersion = values[RestrictionKeys.LIBRARY_VERSION] as? String,
+        storytelGeneration = (values[RestrictionKeys.STORYTEL_GENERATION] as? Int)?.toLong() ?: 0,
     )
 }
 

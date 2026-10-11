@@ -104,25 +104,47 @@ object Bridge {
 
 /**
  * A bridge held while the player or the screens live: `setNowPlaying` and `setForeground` go out
- * at once, and are sent again after a rebind (the launcher's own update ends the binding, QA #7).
+ * at once, and are sent again after a rebind. A bind that didn't happen (no config yet, the
+ * launcher mid-update) is tried again after 2 s, 10 s and 60 s, and whenever the managed config
+ * changes ([refresh]) - qa-21-step3-code L4. Main thread.
  */
 object LiveBridge {
     private val main = Handler(Looper.getMainLooper())
-    private val token = Binder() // dies with this process: the launcher clears "in front"
+    private val token = Binder() // dies with this process: the launcher clears "in front" and "playing"
+    private val retries = listOf(2_000L, 10_000L, 60_000L)
     private var users = 0
+    private var attempt = 0
+    private var app: Context? = null
     private var bridge: IMusicBridge? = null
     private var connection: ServiceConnection? = null
     private var nowPlaying: Bundle? = null
     private var inFront = false
 
-    /** A user (the player service, the activity) starts needing the bridge. Main thread. */
+    /** A user (the player service, the activity) starts needing the bridge. */
     fun acquire(context: Context) {
-        if (users++ == 0) bind(context.applicationContext)
+        app = context.applicationContext
+        if (users++ == 0) {
+            attempt = 0
+            bind()
+        }
     }
 
     fun release(context: Context) {
         if (users == 0) return
-        if (--users == 0) unbind(context.applicationContext)
+        if (--users == 0) {
+            main.removeCallbacks(retry)
+            unbind(context.applicationContext)
+        }
+    }
+
+    /** The managed config changed: bind now if a user needs the bridge and it isn't bound. */
+    fun refresh(context: Context) {
+        app = context.applicationContext
+        if (users > 0 && connection == null) {
+            attempt = 0
+            main.removeCallbacks(retry)
+            bind()
+        }
     }
 
     fun setNowPlaying(state: Bundle?) {
@@ -145,10 +167,19 @@ object LiveBridge {
         }
     }
 
-    private fun bind(app: Context) {
-        val pkg = Bridge.launcher(app) ?: return
+    private val retry = Runnable { if (users > 0 && connection == null) bind() }
+
+    private fun scheduleRetry() {
+        if (users == 0 || attempt >= retries.size) return
+        main.postDelayed(retry, retries[attempt++])
+    }
+
+    private fun bind() {
+        val app = app ?: return
+        val pkg = Bridge.launcher(app) ?: return scheduleRetry()
         val conn = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                attempt = 0
                 bridge = service?.let { IMusicBridge.Stub.asInterface(it) }
                 call { it.setNowPlaying(nowPlaying) }
                 call { it.setForeground(token, inFront) }
@@ -159,9 +190,10 @@ object LiveBridge {
             }
 
             override fun onBindingDied(name: ComponentName?) {
-                // The launcher was updated: bind again in a moment.
+                // The launcher was updated: bind again, with the retries.
                 unbind(app)
-                main.postDelayed({ if (users > 0 && connection == null) bind(app) }, 2_000)
+                attempt = 0
+                scheduleRetry()
             }
         }
         val ok = try {
@@ -169,7 +201,12 @@ object LiveBridge {
         } catch (e: SecurityException) {
             false
         }
-        if (ok) connection = conn else runCatching { app.unbindService(conn) }
+        if (ok) {
+            connection = conn
+        } else {
+            runCatching { app.unbindService(conn) }
+            scheduleRetry()
+        }
     }
 
     private fun unbind(app: Context) {

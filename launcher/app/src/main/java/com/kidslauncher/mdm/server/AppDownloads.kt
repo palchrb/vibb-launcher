@@ -166,7 +166,7 @@ object AppDownloads {
         FAILED,
         /** Our own update is being committed: nothing more in this process. */
         STOP,
-        /** The music app's update waits while it plays (design 21 §3): the run ends; its pause asks again. */
+        /** The music app's update waits while it plays (design 21 §3): skipped for this run; the pause asks again. */
         DEFER,
     }
 
@@ -395,6 +395,8 @@ object AppDownloads {
         var failures = 0
         var steps = 0
         var rechecks = 0
+        // Music app updates waiting for the pause in this run: skipped, the others go on.
+        val deferred = mutableSetOf<Long>()
         try {
             while (true) {
                 synchronized(this) { again = false }
@@ -414,7 +416,7 @@ object AppDownloads {
                     val have = if (file.isFile) file.length() else 0L
                     record.appId to downloadGate(caps, wifiOnly, anyNetworkAtMs(record.isLauncher, record.firstSeenMs), now, have, record.total, allocatable)
                 }
-                val next = downloadOrder(records).firstOrNull { gates[it.appId] == DownloadGate.GO }
+                val next = nextDownload(records, gates, deferred)
                 anyGoLast = next != null
                 if (next == null) {
                     // A network that began to qualify after the caps were read left the callback no
@@ -442,7 +444,8 @@ object AppDownloads {
                 when (attempt(app, next)) {
                     Outcome.PROGRESS -> failures = 0
                     Outcome.PAUSED -> {}
-                    Outcome.STOP, Outcome.DEFER -> break
+                    Outcome.STOP -> break
+                    Outcome.DEFER -> deferred += next.appId
                     Outcome.FAILED -> {
                         if (failures >= RETRY_DELAYS_MS.size) {
                             Log.w(LOG_TAG, "Download keeps failing - waiting for the next trigger")
@@ -694,6 +697,8 @@ object AppDownloads {
     private suspend fun install(app: Context, rec: DownloadRecord, file: File, api: MdmApi, current: Active): Outcome {
         if (com.kidslauncher.mdm.music.MusicNowPlaying.deferInstall(app, file)) {
             Log.i(LOG_TAG, "${rec.name}: the music app is playing - its update waits for the pause")
+            // No "Installing" notice in the shade while the kid listens.
+            notifyAppInstallResult(app, rec.appId, rec.name, success = true)
             return Outcome.DEFER
         }
         val key = rec.appId.toString()

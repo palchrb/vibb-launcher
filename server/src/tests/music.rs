@@ -2332,6 +2332,41 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
         "{card}"
     );
 
+    // A launcher with the bridge but no music app: it sends no music_state (qa-21-step3-code L13).
+    let report_without_state = |apps: serde_json::Value| json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": ["music_v1"], "installed_apps": apps});
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&token),
+        Some(report_without_state(
+            json!([{"package_name": "com.example.game", "label": "Game"}]),
+        )),
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("Music app not installed."), "{page}");
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&token),
+        Some(report_without_state(
+            json!([{"package_name": "me.vibb.music", "label": "Musikk"}]),
+        )),
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains("hasn&#39;t reported on music yet")
+            || page.contains("hasn't reported on music yet"),
+        "{page}"
+    );
+
     // A launcher without music_v1 while entries are ticked: a warning.
     app.request(
         Method::POST,

@@ -6,8 +6,10 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -56,8 +58,25 @@ object Sync {
      * storage-not-low constraint holds them back). */
     private const val LOW_STORAGE_BYTES = 500L * 1024 * 1024
 
-    /** The bridge's nudge: sync after the settle (a burst of nudges is one sync). */
-    fun nudge(context: Context, settleS: Long = SETTLE_S) = enqueue(context, settleS, ExistingWorkPolicy.REPLACE)
+    /**
+     * The bridge's nudge: sync after the settle. A nudge never cancels a running sync - it gets
+     * one more after it (qa-21-step3-code L6) - and one waiting already covers a burst. Off the main
+     * thread (it asks WorkManager what runs).
+     */
+    fun nudge(context: Context, settleS: Long = SETTLE_S) {
+        val app = context.applicationContext
+        nudger.execute {
+            val states = runCatching { WorkManager.getInstance(app).getWorkInfosForUniqueWork(WORK).get() }.getOrDefault(emptyList()).map { it.state }
+            val policy = when {
+                states.any { it == WorkInfo.State.ENQUEUED || it == WorkInfo.State.BLOCKED } -> ExistingWorkPolicy.KEEP
+                states.any { it == WorkInfo.State.RUNNING } -> ExistingWorkPolicy.APPEND_OR_REPLACE
+                else -> ExistingWorkPolicy.REPLACE
+            }
+            enqueue(app, settleS, policy)
+        }
+    }
+
+    private val nudger = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     /** At process start: once, if no sync is pending. */
     fun atStart(context: Context) {
@@ -73,7 +92,13 @@ object Sync {
 
     suspend fun run(context: Context) = withContext(Dispatchers.IO) {
         // The bridge first (21 §4.5 as 21b §6 has it): what the launcher holds lands in the inbox.
-        runCatching { BridgeSync.pull(context) }.onFailure { Log.w("Sync", "The bridge part failed", it) }
+        try {
+            BridgeSync.pull(context)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("Sync", "The bridge part failed", e)
+        }
         val store = Store.get(context)
         val dao = store.db
         val lib = store.reloadLibrary()
@@ -190,7 +215,13 @@ object Sync {
         val text = report.toString()
         reportLock.withLock { Store.writeAtomic(store.reportFile, text.toByteArray()) }
         // To the launcher, for the status report (21 §2 `reportState`).
-        runCatching { BridgeSync.push(context, text) }.onFailure { Log.w("Sync", "The report didn't reach the launcher", it) }
+        try {
+            BridgeSync.push(context, text)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("Sync", "The report didn't reach the launcher", e)
+        }
     }
 
     /** The sync and the download job both write the report. */

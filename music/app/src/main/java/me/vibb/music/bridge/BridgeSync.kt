@@ -25,8 +25,6 @@ object BridgeSync {
     suspend fun pull(context: Context) {
         val store = Store.get(context)
         val config = Bridge.config(context)
-        store.restrictedMobileData = if (config.managed) config.mobileData else null
-        Bridge.applyLanguage(context, config)
         if (!config.managed) return
         Bridge.withBridge(context) { bridge ->
             pullLibrary(store, bridge, config)
@@ -66,22 +64,17 @@ object BridgeSync {
         }
     }
 
-    /** Own files (21 §2): copy, check size and SHA-256, close, release; ask again for any the launcher hasn't. */
+    /** Own files (21 §2): copy, check size and SHA-256, close, release. The report at the end of the
+     * sync names the files held, so the launcher fetches the missing ones (and only those). */
     private fun pullFiles(store: Store, bridge: IMusicBridge) {
         val lib = store.library() ?: return
         val copies = store.ownCopies()
-        val lacking = mutableListOf<Long>()
         for (file in lib.files) {
             if (file.id in copies) continue
-            val pfd = bridge.openFile(file.id)
-            if (pfd == null) {
-                if (!file.missing) lacking += file.id
-                continue
-            }
+            val pfd = bridge.openFile(file.id) ?: continue
             val ok = ParcelFileDescriptor.AutoCloseInputStream(pfd).use { Inbox.putOwnFile(store, file, it) }
             if (ok) bridge.releaseFile(file.id, file.sha256) else Log.w(LOG_TAG, "Own file ${file.id} didn't match its size or SHA-256")
         }
-        if (lacking.isNotEmpty()) bridge.wantFiles(lacking.toLongArray())
     }
 
     /** The Storytel login when the launcher's generation isn't ours (`!=`, QA #7). */
@@ -106,9 +99,9 @@ object BridgeSync {
         val copies = store.ownCopies()
         val held = lib?.files.orEmpty().filter { it.id in copies }
         val state = Bundle().apply {
-            putString("report", report)
-            putLongArray("held_files", held.map { it.id }.toLongArray())
-            putStringArray("held_sha256", held.map { it.sha256 }.toTypedArray())
+            putString(REPORT_KEY, report)
+            putLongArray(HELD_FILES_KEY, held.map { it.id }.toLongArray())
+            putStringArray(HELD_SHA256_KEY, held.map { it.sha256 }.toTypedArray())
         }
         Bridge.withBridge(context) { it.reportState(state) }
     }

@@ -77,13 +77,14 @@ The server is reachable only over the launcher's tsnet, so the launcher is the c
   caller uid `me.vibb.music[.debug]`. The music app binds its restrictions' package after `hasSigningCertificate`.
 - **AIDL** `me/vibb/bridge/IMusicBridge.aidl`, byte-identical in both apps (both suites compare): `version()`;
   `openLibrary(haveVersion)`, `openCover(hash)`, `openFile(id)` -> read-only `ParcelFileDescriptor` or null; `oneway`
-  `releaseFile(id, sha256)`, `wantFiles(ids)`, `getStorytelLogin(haveGeneration, IStorytelCallback)`,
+  `releaseFile(id, sha256)`, `getStorytelLogin(haveGeneration, IStorytelCallback)`,
   `reportState(Bundle)`, `setNowPlaying(Bundle?)`, `setForeground(IBinder token, inFront)`. Off the main thread.
 - **Nudge**: the explicit broadcast `me.vibb.music.action.BRIDGE_CHANGED` carries nothing; its receiver only enqueues
   the sync work. A running app registers for `ACTION_APPLICATION_RESTRICTIONS_CHANGED` and re-reads at every sync.
 - **Own files**: the launcher downloads every listed file not handed over; the music app copies it from `openFile`,
-  checks size + SHA-256, closes the fd, calls `releaseFile`; the launcher deletes its copy and remembers `id:sha`;
-  `wantFiles` (wiped data, reinstall) clears the marks.
+  checks size + SHA-256, closes the fd, calls `releaseFile`; the launcher deletes its copy and remembers `id:sha`.
+  The music app's `reportState` names the files it holds, which replace those marks (wiped data, a reinstall: the
+  missing ones are fetched again). `wantFiles` was dropped in step 3's fix round (qa-21-step3-code S1).
 - **Storytel**: on `getStorytelLogin` with an older generation the launcher fetches it over tsnet and answers through
   the callback, in memory only. The music app keeps it AES-GCM-encrypted under an Android Keystore key in
   `noBackupFilesDir`, never logged; generation 0 deletes it (phase 2 also the books, vibb `forget_downloads`).
@@ -92,10 +93,13 @@ The server is reachable only over the launcher's tsnet, so the launcher is the c
 
 ## 3. Launcher
 - **Catalog**: the music row is an ordinary catalog app (install + allowlist via the device card, kiosk pin, badge).
-- **Sync** (`MusicSync`, after `WallpaperStore.sync`, only with a music package installed): a new `library_version` ->
-  GET (If-None-Match, <= 4 MB, `v == 1`; the launcher reads only `v`, `covers`, `files[].{id,size,sha256}`) stored
-  atomically as `filesDir/music/library.json`; covers prefetched like wallpapers; then restrictions and the nudge.
-  Failures retry next sync and never touch policy acceptance; `PolicyResponse.music` is nullable (older server).
+- **Sync** (`MusicSync`, after `WallpaperStore.sync`, only with a music package installed): inside the sync only the
+  managed config (no network) and its nudge. The fetch runs after the sync in its own one-at-a-time runner
+  (`MusicCourier`, changed 2026-10-11 after qa-21-step3-code M5: a big first fill must never hold a parent's lock or
+  ring behind the sync lock): a new `library_version` -> GET (If-None-Match, <= 4 MB, `v == 1`; the launcher reads
+  only `v`, `covers`, `files[].{id,size,sha256}`, `entries[].{id,items}`) stored atomically as
+  `filesDir/music/library.json`; the changed listings; covers; then the nudge and the own files. Failures retry after
+  the next sync and never touch policy acceptance; `PolicyResponse.music` is nullable (older server).
 - **Own-file downloads** reuse design 13's runner: `DownloadRecord.kind` APK | MUSIC_FILE, the same Range/If-Match/
   ETag/412/416/404/backoff/hash rules, `noBackupFilesDir/music_files/`, its gate with NOT_METERED unless
   `music.mobile_data`; done = READY. **Sessions** (`MusicSessions`): `MediaSessionManager.getActiveSessions(
@@ -430,7 +434,7 @@ status DTO and capability `music_v1`, the manifest, one check in `AppDownloads`)
   is stored; `PolicyResponse.music` stays raw and nullable.
 - **Own files**: one ahead of the handover, after the catalog's APKs, design 13's rules (Range + the first ETag as
   If-Match, 412/416/404, size + SHA-256, NOT_METERED unless `music.mobile_data`, never roaming, room); the music app
-  copies from `openFile`, checks size and SHA-256, closes, `releaseFile`s; `wantFiles` asks again.
+  copies from `openFile`, checks size and SHA-256, closes, `releaseFile`s; its report names the files it holds.
 - **Storytel**: the launcher fetches the login when the music app's generation isn't the policy's (`!=`) and
   answers through the callback in memory only (404 = generation 0); the music app keeps it AES-GCM-sealed under an
   Android Keystore key in noBackupFilesDir, deletes it at generation 0, and reports `storytel` "ok"/"none".
@@ -452,11 +456,13 @@ Readings and deviations:
 1. **Own files have their own small runner** (`MusicFileDownloads`) built on design 13's pure rules, not new
    `DownloadRecord` kinds inside `AppDownloads`: design 22 L1 rewrites that runner's transport, and the music files
    need neither installs nor release tags. It has no network callback: a run starts at each sync, handover or
-   `wantFiles`, and stops when the network stops qualifying. Its room check is design 13's (twice the file).
+   `wantFiles`, and stops when the network stops qualifying. Its room check is design 13's (twice the file). (The
+   fix round adds the gate during the copy, the hash-failure limit and the wake-lock renewal; `wantFiles` is gone.)
 2. **All music server calls sit behind `MusicServer`** (Retrofit over the tsnet proxy, the bearer), for L1.
 3. **`reportState` also names the own files the music app holds** (`held_files`, `held_sha256`; never sent to the
    server). They replace the launcher's handed-over marks, so a launcher reinstall or files fed another way never
-   cause a second download, and a stale "ready" file can't block the one-ahead rule.
+   cause a second download. (Corrected in the fix round: the first version didn't do what it claimed for a stale
+   "ready" file - QA M1; now a ready file the app holds is deleted at the report and never blocks the next one.)
 4. **The nudge goes only when something changed** (library, listing, cover, the managed config, a file ready), not at
    every sync.
 5. **Nothing ticked**: the launcher deletes its library and the managed config says `library_version` ""; the music app
@@ -474,3 +480,37 @@ ahead of the handover); a Storytel login set -> stored ("ok" on the card) / clea
 while playing (the music keeps playing, the bridge comes back); a music update deferred while playing and installed
 after the pause; `BRIDGE_CHANGED` and a restrictions change start a sync; the device card shows the music app with no
 bridge warning.
+
+### Fix round after QA's code review (`qa-21-step3-code.md`, 2026-10-11)
+
+All findings are fixed; launcher 18 + 8 music tests (`MusicPlanTest`, `MusicFileDownloadsTest`), music 8 in
+`BridgeTest`, server +2 (`music_state` end to end, "Music app not installed").
+- **H1**: the managed config holds only Boolean, Int and String - `storytel_generation` is an Int (clamped), and
+  writing anything else throws. A test checks every value `restrictionsFor` produces; `BridgeTest` feeds Ints.
+- **H2**: the own-file copy asks the gate again every 1 MB (`OwnFileFetch`): a download started on Wi-Fi stops on
+  mobile data or while roaming, keeping its partial and ETag; the wake lock is renewed in the same loop.
+- **M1**: a ready file the music app reports as held is deleted and never blocks the next (`nextOwnFile`,
+  `reportState`). **M2**: a deferred music update is skipped for the run (`nextDownload`), the others go on.
+  **M3**: listing versions come from an index the courier writes with each listing, never from parsing them.
+  **M4**: only a JSON `null` `library_version` means "nothing ticked"; any malformed `music` field keeps what is there.
+  **M5**: the fetch left the sync lock (§3 above).
+- **Low**: two hash failures skip a file for a day (1); "playing" is measured from the last `setNowPlaying` and
+  cleared when the player's process dies (2); the player's end of life sends its snapshot paused, not null (3);
+  `LiveBridge` retries a bind (2 s, 10 s, 60 s) and on a config change (4); a deferred install clears its
+  "Installing" notice (5); a nudge never cancels a running sync and cancellations are rethrown (6); the suspended
+  receiver isn't exported and the nudge is honoured only from a launcher (`setShareIdentityEnabled`,
+  `sentFromPackage`) (7); `@Streaming` for the library and listings (8); one failed request no longer stops the fetch
+  (9); a new music app gets a sync at once and the nudge reaches a never-opened app (10); `mobile_data` is read live
+  (11); the launcher deletes its music files when no music app is installed (12); the device card says "Music app
+  not installed." (13, server).
+- **Simplifications** accepted: `wantFiles` dropped from both apps and the AIDL (1), `mobile_data` read live and the
+  language applied in one place (2), a pause asks for a download run only when an install waits (3).
+- **Test gaps closed**: the config's value types; `OwnFileFetch` with a fake `MusicServer` (200/206/412/416/404/5xx,
+  the hash, resume, the gate mid-copy); a handed-over ready file; DEFER letting the next record run; malformed versus
+  null; a scan that every bridge method calls `check()` first; the cross-app names in one shared file
+  (`bridge_contract.json`, byte-identical in both apps); `music_state` end to end on `server/testdata/music_state.json`
+  (the server keeps every field, the launcher keeps the app's, the app sends exactly those).
+- Device checks added: after a sync, `dpm.getApplicationRestrictions` for the music app equals what was written; an
+  own-file download moving from Wi-Fi to mobile data stops; BT-less sleep music for hours keeps an update waiting;
+  a never-opened music app gets its first own file; install the music app first, then the step-3 launcher.
+

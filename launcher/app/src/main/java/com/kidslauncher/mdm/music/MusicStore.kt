@@ -52,12 +52,37 @@ object MusicStore {
     @Synchronized
     fun head(context: Context): LibraryHead? = runCatching { libraryFile(context).readText() }.getOrNull()?.let(::libraryHead)
 
-    /** Entry id -> the version of the listing held. */
-    fun listings(context: Context): Map<Long, String> = itemsDir(context).listFiles().orEmpty().mapNotNull { f ->
-        val id = f.name.removeSuffix(".json").toLongOrNull() ?: return@mapNotNull null
-        val version = runCatching { listingVersionOf(f.readText()) }.getOrNull() ?: return@mapNotNull null
-        id to version
-    }.toMap()
+    /**
+     * Entry id -> the version of the listing held: an index kept next to the files by their one
+     * writer ([putListing], [deleteListing]), so answering the music app never parses listings
+     * (qa-21-step3-code M3). Rebuilt from the files once if it is missing.
+     */
+    @Synchronized
+    fun listings(context: Context): Map<Long, String> {
+        if (prefs(context).contains("listing_index")) {
+            return map(context, "listing_index").filterKeys { listingFile(context, it).isFile }
+        }
+        val scanned = itemsDir(context).listFiles().orEmpty().mapNotNull { f ->
+            val id = f.name.removeSuffix(".json").toLongOrNull() ?: return@mapNotNull null
+            val version = runCatching { listingVersionOf(f.readText()) }.getOrNull() ?: return@mapNotNull null
+            id to version
+        }.toMap()
+        putMap(context, "listing_index", scanned)
+        return scanned
+    }
+
+    @Synchronized
+    fun putListing(context: Context, entryId: Long, version: String, bytes: ByteArray) {
+        writeAtomic(listingFile(context, entryId), bytes)
+        putMap(context, "listing_index", listings(context) + (entryId to version))
+    }
+
+    @Synchronized
+    fun deleteListing(context: Context, entryId: Long): Boolean {
+        val deleted = listingFile(context, entryId).delete()
+        putMap(context, "listing_index", listings(context) - entryId)
+        return deleted
+    }
 
     private fun map(context: Context, key: String): Map<Long, String> =
         prefs(context).getString(key, null)?.let { runCatching { json.decodeFromString(longMap, it) }.getOrNull() }.orEmpty()
@@ -106,8 +131,34 @@ object MusicStore {
         prefs(context).edit().putString("report", report).putLong("report_at", atMs).apply()
     }
 
-    /** When the last `setNowPlaying` said "playing" (null = not playing). */
-    fun playingSince(context: Context): Long? = prefs(context).getLong("playing_since", -1).takeIf { it >= 0 }
+    /** When the last `setNowPlaying` said "playing" (null = not playing, or the player's process died). */
+    fun playingReportedAt(context: Context): Long? = prefs(context).getLong("playing_at", -1).takeIf { it >= 0 }
+
+    /** Hash failures of an own file (its SHA-256 -> count, last time). */
+    fun hashFailures(context: Context, id: Long, sha256: String): Pair<Int, Long> {
+        val raw = prefs(context).getString("hashfail_$id", null)?.split(':') ?: return 0 to 0L
+        return if (raw.size == 3 && raw[0] == sha256) (raw[1].toIntOrNull() ?: 0) to (raw[2].toLongOrNull() ?: 0L) else 0 to 0L
+    }
+
+    fun recordHashFailure(context: Context, id: Long, sha256: String, nowMs: Long) {
+        val (count, _) = hashFailures(context, id, sha256)
+        prefs(context).edit().putString("hashfail_$id", "$sha256:${count + 1}:$nowMs").apply()
+    }
+
+    fun clearHashFailures(context: Context, id: Long) {
+        prefs(context).edit().remove("hashfail_$id").apply()
+    }
+
+    /** No music app any more (qa-21-step3-code L12): everything the launcher kept for it goes, once. */
+    fun clearAll(context: Context) {
+        val app = context.applicationContext
+        val music = File(app.filesDir, "music")
+        val files = File(app.noBackupFilesDir, "music_files")
+        if (!music.exists() && !files.exists() && prefs(app).all.isEmpty()) return
+        music.deleteRecursively()
+        files.deleteRecursively()
+        prefs(app).edit().clear().commit()
+    }
 
     /** Write [bytes] to [file] atomically (a temp file of its own, renamed over it). */
     fun writeAtomic(file: File, bytes: ByteArray) {

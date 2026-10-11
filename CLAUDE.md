@@ -47,8 +47,10 @@ directories in the same commit. The music library and an entry's episode list ar
 `music_listing_snapshot`, regenerated with `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` / `MUSIC_LISTING_SNAPSHOT_WRITE=1`); the
 music app keeps byte-identical copies in `music/app/src/test/resources/` (with `music_icons.json`;
 `ContractFilesTest`), and a change goes into both in one commit. The launcher-music bridge's AIDL
-(`*/app/src/main/aidl/me/vibb/bridge/`) is byte-identical in `launcher/` and `music/` (`MusicPlanTest`,
-`BridgeTest`); new methods are appended.
+(`*/app/src/main/aidl/me/vibb/bridge/`) and the names both apps spell (`bridge_contract.json` in both apps'
+test resources) are byte-identical in `launcher/` and `music/` (`MusicPlanTest`, `BridgeTest`); new methods are
+appended. `server/testdata/music_state.json` is every `music_state` field: the server keeps them all, the launcher
+keeps the music app's, the music app sends exactly those.
 
 ## CI and releases
 

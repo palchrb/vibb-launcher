@@ -1,0 +1,19 @@
+{
+  "comment": "The launcher-music bridge's names (design 21 §2), spelled once here: byte-identical in launcher/ and music/ test resources; MusicPlanTest and BridgeTest check their constants against it.",
+  "bridge_service": "com.kidslauncher.mdm.music.MusicBridgeService",
+  "permission_suffix": ".permission.MUSIC_BRIDGE",
+  "action_bridge_changed": "me.vibb.music.action.BRIDGE_CHANGED",
+  "launcher_packages": ["me.vibb.launcher", "me.vibb.launcher.debug"],
+  "music_packages": ["me.vibb.music", "me.vibb.music.debug"],
+  "restrictions": {
+    "v": "int",
+    "managed": "boolean",
+    "launcher_package": "string",
+    "language": "string",
+    "mobile_data": "boolean",
+    "library_version": "string",
+    "storytel_generation": "int"
+  },
+  "report_state": ["report", "held_files", "held_sha256"],
+  "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art"]
+}

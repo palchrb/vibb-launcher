@@ -63,8 +63,10 @@ class Application : android.app.Application() {
                     try {
                         val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName)
                         // A new app the parent hasn't allowed (e.g. from Play): report it now, so
-                        // the device page lists it for allowlisting (handy step 7).
-                        if (blocked) com.kidslauncher.mdm.push.SyncRunner.request(this@Application, "package_added")
+                        // the device page lists it for allowlisting (handy step 7). The music app
+                        // gets its managed config and library at once (design 21 §3).
+                        val music = packageName in com.kidslauncher.mdm.music.MUSIC_PACKAGES
+                        if (blocked || music) com.kidslauncher.mdm.push.SyncRunner.request(this@Application, "package_added")
                     } catch (e: Exception) {
                         android.util.Log.w("Application", "New-package enforcement failed for $packageName", e)
                     }

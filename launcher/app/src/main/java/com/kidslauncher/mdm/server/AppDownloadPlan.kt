@@ -241,6 +241,11 @@ fun legacyCacheFilesToDelete(files: List<Pair<String, Long>>, nowMs: Long): List
 /** The order the runner takes GO downloads in: catalog apps first, our own update last. */
 fun downloadOrder(records: List<DownloadRecord>): List<DownloadRecord> = records.sortedBy { it.isLauncher }
 
+/** The next download of a run: the first GO one in [downloadOrder], skipping the ones [deferred] in
+ * this run (a music app update waiting for the pause, design 21 §3 - the others go on). */
+fun nextDownload(records: List<DownloadRecord>, gates: Map<Long, DownloadGate>, deferred: Set<Long>): DownloadRecord? =
+    downloadOrder(records).firstOrNull { gates[it.appId] == DownloadGate.GO && it.appId !in deferred }
+
 /** A finished file that failed its hash this often waits out the failed-release backoff instead
  * of being downloaded again at once (design 13 §5 allows one immediate restart). Counted per
  * release, across records and backoffs (qa-13-code #4). */

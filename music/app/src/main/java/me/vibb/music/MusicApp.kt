@@ -10,7 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import me.vibb.music.bridge.Bridge
-import me.vibb.music.data.Store
+import me.vibb.music.bridge.LiveBridge
+import me.vibb.music.bridge.LAUNCHER_PACKAGES
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.Sync
 
@@ -39,16 +40,18 @@ class MusicApp : Application() {
         )
     }
 
+    /** The one place the managed config's language is applied (S2); the player rebinds a bridge it lacked (L4). */
     private fun applyConfig(context: Context) {
-        val config = Bridge.config(context)
-        Store.get(context).restrictedMobileData = if (config.managed) config.mobileData else null
-        Bridge.applyLanguage(context, config)
+        Bridge.applyLanguage(context, Bridge.config(context))
+        android.os.Handler(android.os.Looper.getMainLooper()).post { LiveBridge.refresh(context) }
     }
 }
 
-/** The launcher's nudge (`me.vibb.music.action.BRIDGE_CHANGED`): carries nothing, only starts the sync. */
+/** The launcher's nudge (`me.vibb.music.action.BRIDGE_CHANGED`): carries nothing, only starts the
+ * sync - and only from a launcher (it shares its identity, qa-21-step3-code L7). */
 class BridgeChangedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (sentFromPackage !in LAUNCHER_PACKAGES) return
         Sync.nudge(context)
     }
 }

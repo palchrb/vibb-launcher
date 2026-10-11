@@ -81,13 +81,6 @@ class MusicBridgeService : Service() {
             MusicFileDownloads.request(app)
         }
 
-        override fun wantFiles(ids: LongArray?) {
-            check()
-            val app = this@MusicBridgeService
-            MusicStore.setHandedOver(app, MusicStore.handedOver(app) - (ids ?: LongArray(0)).toSet())
-            MusicFileDownloads.request(app)
-        }
-
         override fun getStorytelLogin(haveGeneration: Long, callback: IStorytelCallback?) {
             check()
             callback ?: return
@@ -97,14 +90,22 @@ class MusicBridgeService : Service() {
         override fun reportState(state: Bundle?) {
             check()
             val app = this@MusicBridgeService
-            val report = state?.getString("report") ?: return
+            val report = state?.getString(REPORT) ?: return
             MusicStore.setReport(app, report, System.currentTimeMillis())
-            // The files the music app holds are handed over, whatever this launcher remembers (a
-            // reinstall of the launcher, files fed another way).
-            val ids = state.getLongArray("held_files")
-            val shas = state.getStringArray("held_sha256")
+            // The files the music app holds replace the handed-over marks (a launcher reinstall, files
+            // fed another way, a lost releaseFile), and a ready copy of one of them goes (qa-21-step3-code
+            // M1); a file it lost isn't held any more, so it is fetched again.
+            val ids = state.getLongArray(HELD_FILES)
+            val shas = state.getStringArray(HELD_SHA256)
             if (ids != null && shas != null && ids.size == shas.size) {
-                MusicStore.setHandedOver(app, ids.indices.associate { ids[it] to shas[it] })
+                val held = ids.indices.associate { ids[it] to shas[it] }
+                MusicStore.setHandedOver(app, held)
+                val ready = MusicStore.ready(app)
+                val gone = ready.filter { (id, sha) -> held[id] == sha }.keys
+                if (gone.isNotEmpty()) {
+                    gone.forEach { MusicStore.readyFile(app, it).delete() }
+                    MusicStore.setReady(app, ready - gone)
+                }
                 MusicFileDownloads.request(app)
             }
         }
@@ -116,7 +117,9 @@ class MusicBridgeService : Service() {
 
         override fun setForeground(token: IBinder?, inFront: Boolean) {
             check()
-            MusicForeground.set(token, inFront)
+            val app = applicationContext
+            // The token dies with the music app's process: it isn't in front, and it doesn't play.
+            MusicForeground.set(token, inFront) { MusicNowPlaying.playerGone(app) }
         }
 
         override fun listingVersion(entryId: Long): String? {
@@ -169,12 +172,17 @@ class MusicBridgeService : Service() {
     }
 }
 
+/** The Bundle keys of `reportState` (shared with the music app: bridge_contract.json). */
+const val REPORT = "report"
+const val HELD_FILES = "held_files"
+const val HELD_SHA256 = "held_sha256"
+
 /**
  * What plays, from the music app's `setNowPlaying` (21 §3/§4.6): kept in CE prefs for Home and the
  * lock (step 4), never sent to the server; and whether a music app update must wait.
  */
 object MusicNowPlaying {
-    /** The Bundle's keys. */
+    /** The Bundle's keys (shared with the music app: bridge_contract.json). */
     const val ENTRY = "entry"
     const val ITEM = "item"
     const val POSITION_MS = "position_ms"
@@ -183,10 +191,14 @@ object MusicNowPlaying {
     const val ART = "art"
     private const val MAX_ART_BYTES = 64 * 1024
 
+    /** A music app update was deferred: the next pause (or the player's end) asks for a download run (S3). */
+    @Volatile
+    var installWaiting = false
+
     fun store(context: Context, nowPlaying: Bundle?) {
         val prefs = MusicStore.prefs(context)
-        val wasPlaying = prefs.getLong("playing_since", -1) >= 0
         val playing = nowPlaying?.getBoolean(PLAYING) == true
+        val now = System.currentTimeMillis()
         prefs.edit().apply {
             if (nowPlaying == null) {
                 remove("np_entry"); remove("np_item"); remove("np_position"); remove("np_duration")
@@ -196,28 +208,40 @@ object MusicNowPlaying {
                 putLong("np_position", nowPlaying.getLong(POSITION_MS))
                 putLong("np_duration", nowPlaying.getLong(DURATION_MS))
             }
-            if (playing && !wasPlaying) putLong("playing_since", System.currentTimeMillis())
-            if (!playing) remove("playing_since")
-            putLong("np_at", System.currentTimeMillis())
+            // Refreshed by every "playing" report (L2): hours of play keep holding the update.
+            if (playing) putLong("playing_at", now) else remove("playing_at")
+            putLong("np_at", now)
         }.apply()
         val art = nowPlaying?.getByteArray(ART)?.takeIf { it.size <= MAX_ART_BYTES }
         val artFile = MusicStore.nowPlayingArt(context)
         if (art != null) runCatching { MusicStore.writeAtomic(artFile, art) } else artFile.delete()
-        // A music app update waited for the pause (21 §3).
-        if (wasPlaying && !playing) AppDownloads.request(context, "music paused")
+        if (!playing) releaseWaitingInstall(context)
+    }
+
+    /** The music app's process died (its token): nothing plays any more; the snapshot stays (shown paused). */
+    fun playerGone(context: Context) {
+        MusicStore.prefs(context).edit().remove("playing_at").apply()
+        releaseWaitingInstall(context)
+    }
+
+    private fun releaseWaitingInstall(context: Context) {
+        if (!installWaiting) return
+        installWaiting = false
+        AppDownloads.request(context, "music paused")
     }
 
     /** Must the APK [file] wait (it is the music app's, and the music app plays)? */
     fun deferInstall(context: Context, file: File): Boolean {
-        val playingSince = MusicStore.playingSince(context) ?: return false
+        val playingAt = MusicStore.playingReportedAt(context) ?: return false
         val pkg = runCatching { context.packageManager.getPackageArchiveInfo(file.path, 0)?.packageName }.getOrNull()
-        return installDeferredForPlayback(pkg, playingSince, System.currentTimeMillis())
+        return installDeferredForPlayback(pkg, playingAt, System.currentTimeMillis()).also { if (it) installWaiting = true }
     }
 }
 
 /**
  * Whether the player is in front (21 §3 time rules, step 4 reads it): its token dies with the
- * music app's process, which clears it. Screen-off and the time-rule wiring come with step 4.
+ * music app's process, which clears it (and tells [onGone]). Screen-off and the time-rule wiring
+ * come with step 4.
  */
 object MusicForeground {
     @Volatile
@@ -225,10 +249,16 @@ object MusicForeground {
         private set
 
     private var token: IBinder? = null
-    private val death = IBinder.DeathRecipient { clear() }
+    private var onGone: (() -> Unit)? = null
+    private val death = IBinder.DeathRecipient {
+        val gone = synchronized(this) { onGone }
+        clear()
+        gone?.invoke()
+    }
 
     @Synchronized
-    fun set(newToken: IBinder?, front: Boolean) {
+    fun set(newToken: IBinder?, front: Boolean, gone: () -> Unit) {
+        onGone = gone
         if (newToken != token) {
             runCatching { token?.unlinkToDeath(death, 0) }
             token = newToken

@@ -44,6 +44,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import me.vibb.music.R
 import me.vibb.music.bridge.LiveBridge
+import me.vibb.music.bridge.NowPlayingKeys
 import me.vibb.music.data.BookmarkRow
 import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.NewsRow
@@ -183,7 +184,8 @@ class PlaybackService : MediaSessionService() {
         PlayerHub.position = null
         PlayerHub.pause = null
         PlayerHub.mutableState.value = PlayerHub.State()
-        LiveBridge.setNowPlaying(null)
+        // Not null (that is a queue's end): Home keeps showing it paused (qa-21-step3-code L3).
+        reportNowPlaying(forcePaused = true)
         LiveBridge.release(this)
         session?.release()
         session = null
@@ -384,20 +386,21 @@ class PlaybackService : MediaSessionService() {
 
     private fun hasCopy(a: Active, item: PlayItem) = item.fileId != null || item.key in a.copies
 
-    private fun playable(a: Active, index: Int, caps: NetCaps? = netCaps(this)): Boolean {
+    private fun playable(a: Active, index: Int, caps: NetCaps? = netCaps(this), mobileData: Boolean = store.mobileData): Boolean {
         val item = a.items[index]
-        return playability(hasCopy(a, item), item.url != null, caps, store.mobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
+        return playability(hasCopy(a, item), item.url != null, caps, mobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
     }
 
     /** The first index from [index] on (or back) that can play now; null when none. */
     private fun playableFrom(a: Active, index: Int, forward: Boolean, wrap: Boolean): Int? {
         val n = a.items.size
         val caps = netCaps(this)
+        val mobileData = store.mobileData
         for (step in 0 until n) {
             val i = if (forward) index + step else index - step
             val j = if (wrap) i.mod(n) else i
             if (j !in 0 until n) return null
-            if (playable(a, j, caps)) return j
+            if (playable(a, j, caps, mobileData)) return j
         }
         return null
     }
@@ -816,10 +819,10 @@ class PlaybackService : MediaSessionService() {
      * What plays, to the launcher (21 §4.6 `setNowPlaying`: Home and the lock, never the server):
      * on play/pause and item change, null at a queue's end. Art at most 64 KB.
      */
-    private fun reportNowPlaying() {
+    private fun reportNowPlaying(forcePaused: Boolean = false) {
         val a = active
         val item = a?.items?.getOrNull(exo.currentMediaItemIndex)
-        val playing = exo.playWhenReady && exo.playbackState != Player.STATE_ENDED
+        val playing = !forcePaused && exo.playWhenReady && exo.playbackState != Player.STATE_ENDED
         val key = Triple(a?.entry?.id, item?.key, playing)
         if (key == sentNowPlaying) return
         sentNowPlaying = key
@@ -831,12 +834,12 @@ class PlaybackService : MediaSessionService() {
             ?.takeIf { it.isFile && it.length() <= 64 * 1024 }?.let { runCatching { it.readBytes() }.getOrNull() }
         LiveBridge.setNowPlaying(
             Bundle().apply {
-                putString("entry", a.entry.name)
-                putString("item", item.title)
-                putLong("position_ms", exo.currentPosition)
-                putLong("duration_ms", exo.duration.takeIf { it > 0 } ?: a.durations[item.key] ?: item.durationMs ?: 0)
-                putBoolean("playing", playing)
-                art?.let { putByteArray("art", it) }
+                putString(NowPlayingKeys.ENTRY, a.entry.name)
+                putString(NowPlayingKeys.ITEM, item.title)
+                putLong(NowPlayingKeys.POSITION_MS, exo.currentPosition)
+                putLong(NowPlayingKeys.DURATION_MS, exo.duration.takeIf { it > 0 } ?: a.durations[item.key] ?: item.durationMs ?: 0)
+                putBoolean(NowPlayingKeys.PLAYING, playing)
+                art?.let { putByteArray(NowPlayingKeys.ART, it) }
             },
         )
     }

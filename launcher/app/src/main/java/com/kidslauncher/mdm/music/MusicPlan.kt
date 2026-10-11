@@ -47,17 +47,27 @@ private val VERSION = Regex("[0-9a-f]{16}")
 /** The policy's `music` object (21 §1.3). [libraryVersion] null = nothing ticked on this phone. */
 data class MusicPolicy(val libraryVersion: String?, val mobileData: Boolean, val volumeCapPct: Int?, val storytelGeneration: Long)
 
-/** `PolicyResponse.music` read leniently; null when it isn't an object (an older server, or the
- * server couldn't build it: the music app then keeps what it has). */
+/**
+ * `PolicyResponse.music`; null when it isn't an object or any field isn't what 21 §1.3 sends (an
+ * older or newer server, or one that couldn't build it): the launcher and the music app then keep
+ * what they have. Only a JSON `null` `library_version` means "nothing ticked" - a value the launcher
+ * can't read never wipes the kid's downloads or login (qa-21-step3-code M4).
+ */
 fun musicPolicy(element: JsonElement?): MusicPolicy? {
     val o = element as? JsonObject ?: return null
-    fun p(key: String) = o[key] as? JsonPrimitive
-    return MusicPolicy(
-        libraryVersion = p("library_version")?.takeIf { it.isString }?.content?.takeIf { VERSION.matches(it) },
-        mobileData = p("mobile_data")?.booleanOrNull ?: false,
-        volumeCapPct = p("volume_cap_pct")?.intOrNull,
-        storytelGeneration = p("storytel_generation")?.longOrNull ?: 0,
-    )
+    val version = when (val v = o["library_version"]) {
+        is JsonNull -> null
+        is JsonPrimitive -> v.takeIf { it.isString }?.content?.takeIf { VERSION.matches(it) } ?: return null
+        else -> return null
+    }
+    val mobileData = (o["mobile_data"] as? JsonPrimitive)?.booleanOrNull ?: return null
+    val cap = when (val c = o["volume_cap_pct"]) {
+        null, is JsonNull -> null
+        is JsonPrimitive -> c.intOrNull ?: return null
+        else -> return null
+    }
+    val generation = (o["storytel_generation"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull?.takeIf { it >= 0 } ?: return null
+    return MusicPolicy(version, mobileData, cap, generation)
 }
 
 /** What the launcher reads of the library (21 §3): its version, covers, own files and listings. */
@@ -110,21 +120,36 @@ fun listingsToDelete(head: LibraryHead?, stored: Set<Long>): Set<Long> =
 
 /**
  * The own files to download now (21 §2/§3, QA #8): one ahead of the handover - nothing while a
- * downloaded file waits for the music app - and never one the music app has (its id and hash were
- * handed over) or the server lost (`missing`). [handedOver]: id -> SHA-256 released by the music app.
+ * downloaded file waits for the music app - and never one the music app has (its id and hash are
+ * in its last report, [handedOver]), the server lost (`missing`), or one waiting out its hash
+ * failures ([skip]). A ready file the music app already holds doesn't wait for anything
+ * (qa-21-step3-code M1: its `releaseFile` was lost) - [readyFilesToDelete] removes it.
  */
-fun nextOwnFile(head: LibraryHead, handedOver: Map<Long, String>, ready: Set<Long>): LibraryFile? {
-    if (ready.isNotEmpty()) return null
-    return head.files.firstOrNull { f -> !f.missing && handedOver[f.id] != f.sha256 }
+fun nextOwnFile(head: LibraryHead, handedOver: Map<Long, String>, ready: Map<Long, String>, skip: Set<Long> = emptySet()): LibraryFile? {
+    if (ready.any { (id, sha) -> handedOver[id] != sha }) return null
+    return head.files.firstOrNull { f -> !f.missing && handedOver[f.id] != f.sha256 && f.id !in skip }
 }
 
-/** Ready files the library no longer lists (or lists with another hash): deleted. */
-fun readyFilesToDelete(head: LibraryHead?, ready: Map<Long, String>): Set<Long> {
+/** Ready files to delete: ones the library no longer lists (or lists with another hash), and ones the
+ * music app already holds. */
+fun readyFilesToDelete(head: LibraryHead?, ready: Map<Long, String>, handedOver: Map<Long, String> = emptyMap()): Set<Long> {
     val listed = head?.files?.associate { it.id to it.sha256 }.orEmpty()
-    return ready.filter { (id, sha) -> listed[id] != sha }.keys.toSet()
+    return ready.filter { (id, sha) -> listed[id] != sha || handedOver[id] == sha }.keys.toSet()
 }
 
-/** The managed config for the music app (21 §2): written when it differs, cleared when unmanaged. */
+/** A file whose download failed its size or SHA-256 this often waits a day (design 13's `MAX_HASH_FAILURES`). */
+const val OWN_FILE_MAX_HASH_FAILURES = 2
+const val OWN_FILE_HASH_BACKOFF_MS = 24 * 3_600_000L
+
+/** Is a file that failed its hash [failures] times, last at [lastAt], still skipped at [nowMs]? */
+fun hashFailureSkips(failures: Int, lastAt: Long, nowMs: Long): Boolean =
+    failures >= OWN_FILE_MAX_HASH_FAILURES && nowMs - lastAt in 0 until OWN_FILE_HASH_BACKOFF_MS
+
+/**
+ * The managed config for the music app (21 §2): written when it differs, cleared when unmanaged.
+ * Only Boolean, Int and String values: the platform's store (`UserManagerService.writeBundle`)
+ * drops the whole bundle for anything else, a Long included (qa-21-step3-code H1).
+ */
 fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: String): Map<String, Any> = linkedMapOf(
     MusicRestrictions.V to 1,
     MusicRestrictions.MANAGED to true,
@@ -132,21 +157,25 @@ fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: Stri
     MusicRestrictions.LANGUAGE to language,
     MusicRestrictions.MOBILE_DATA to policy.mobileData,
     MusicRestrictions.LIBRARY_VERSION to policy.libraryVersion.orEmpty(),
-    MusicRestrictions.STORYTEL_GENERATION to policy.storytelGeneration,
+    MusicRestrictions.STORYTEL_GENERATION to policy.storytelGeneration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
 )
+
+/** The value types `setApplicationRestrictions` stores for a device owner (besides nested bundles and arrays). */
+fun restrictionValueStorable(value: Any?): Boolean = value is Boolean || value is Int || value is String
 
 /** Only the music app's two build names may use the bridge (on top of the signature permission). */
 fun callerAllowed(callerPackages: List<String>?): Boolean = callerPackages.orEmpty().any { it in MUSIC_PACKAGES }
 
-/** A playing snapshot older than this no longer holds an update back (a crashed player). */
+/** A "playing" with no `setNowPlaying` for this long no longer holds an update back (a stuck player). */
 const val PLAYING_STALE_MS = 6 * 3_600_000L
 
 /**
  * A music app update waits while it plays (21 §3, QA #8): [apkPackage] is the APK's package,
- * [playingSince] when the last `setNowPlaying` said "playing" (null = not playing).
+ * [playingReportedAt] when the last `setNowPlaying` said "playing" (null = not playing, or the
+ * player's process died). Measured from the last report, so hours of play keep holding it.
  */
-fun installDeferredForPlayback(apkPackage: String?, playingSince: Long?, nowMs: Long): Boolean =
-    apkPackage in MUSIC_PACKAGES && playingSince != null && nowMs - playingSince in 0 until PLAYING_STALE_MS
+fun installDeferredForPlayback(apkPackage: String?, playingReportedAt: Long?, nowMs: Long): Boolean =
+    apkPackage in MUSIC_PACKAGES && playingReportedAt != null && nowMs - playingReportedAt in 0 until PLAYING_STALE_MS
 
 /** The report has gone stale: the bridge isn't reached any more. */
 const val REPORT_STALE_MS = 26 * 3_600_000L

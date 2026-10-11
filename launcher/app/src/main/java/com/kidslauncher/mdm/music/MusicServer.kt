@@ -35,9 +35,12 @@ interface MusicServer {
 }
 
 private interface MusicApi {
+    // @Streaming: the size caps are applied while reading, so a huge body never lands in the heap (L8).
+    @Streaming
     @GET("api/devices/music/library")
     suspend fun library(@Header("If-None-Match") ifNoneMatch: String?): Response<ResponseBody>
 
+    @Streaming
     @GET("api/devices/music/entries/{id}/items")
     suspend fun listing(@Path("id") entryId: Long, @Header("If-None-Match") ifNoneMatch: String?): Response<ResponseBody>
 

@@ -22,13 +22,11 @@ interface IMusicBridge {
     /** The music app has its copy of file [id] (checked against [sha256]): the launcher deletes its own. */
     oneway void releaseFile(long id, String sha256);
 
-    /** The music app lacks these files (wiped data, a reinstall): the launcher fetches them again. */
-    oneway void wantFiles(in long[] ids);
-
     /** The Storytel login, through [callback], when the launcher's generation isn't [haveGeneration]. */
     oneway void getStorytelLogin(long haveGeneration, IStorytelCallback callback);
 
-    /** The music app's state for the status report (`music_state`): key "report", a JSON object. */
+    /** The music app's state: key "report" (a JSON object, for `music_state`), and "held_files" /
+     *  "held_sha256" (the own files it holds: the launcher never fetches those again). */
     oneway void reportState(in Bundle state);
 
     /** What plays (for Home and the lock, never the server); null when nothing does. */

@@ -1241,6 +1241,9 @@ pub struct Download {
     pub waiting: Option<String>,
 }
 
+/// The music app's two package names (release, debug).
+pub const MUSIC_PACKAGES: [&str; 2] = ["me.vibb.music", "me.vibb.music.debug"];
+
 /// `StatusReportRequest.music_state` (capability `music_v1`): the last state the music app reported
 /// through the launcher plus the launcher's own view. Never positions or what is playing.
 #[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
@@ -1609,6 +1612,17 @@ mod tests {
             Library::build(vec![category], vec![renamed], vec![]).version,
             a.version
         );
+    }
+
+    /// `testdata/music_state.json` is every field the launcher and the music app send (both apps'
+    /// tests read it): the sanitizer keeps them all, unchanged.
+    #[test]
+    fn music_state_keeps_every_field_the_phone_sends() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/music_state.json")).unwrap();
+        let stored = sanitize_music_state(&fixture).unwrap();
+        let kept: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(kept, fixture);
     }
 
     #[test]
