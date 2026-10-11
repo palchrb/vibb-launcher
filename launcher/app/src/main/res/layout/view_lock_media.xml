@@ -3,7 +3,8 @@
      music.MusicLockPanel, pure lock.LockMedia): over the keypad when the lock comes up while the music
      app plays - clock, date, a tile (72 dp art, item, entry, 5 dp progress, previous / play-pause /
      next), "Lås opp" to the keypad and the lock's emergency call. Part of the lock: nothing here
-     opens an app, a setting or a notification. Fits 320x569 dp with both bars at 48 dp
+     opens an app, a setting or a notification. The root only blocks touches to the keypad below - no
+     node for TalkBack (qa-21-step4-code L7). Fits 320x569 dp with both bars at 48 dp
      (LockMediaLayoutTest). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/lock_media_root"
@@ -11,8 +12,9 @@
     android:layout_height="match_parent"
     android:background="@color/kid_ground"
     android:clickable="true"
-    android:focusable="true"
+    android:focusable="false"
     android:gravity="center_horizontal"
+    android:importantForAccessibility="no"
     android:orientation="vertical"
     android:paddingStart="20dp"
     android:paddingTop="8dp"

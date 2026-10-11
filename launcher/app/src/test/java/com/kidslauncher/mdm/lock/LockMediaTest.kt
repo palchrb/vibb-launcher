@@ -93,7 +93,9 @@ class LockMediaGuardTest {
             setOf("lock_media_root", "lock_media_previous", "lock_media_play", "lock_media_next", "lock_media_unlock", "lock_media_emergency"),
             touchable,
         )
-        // The root only blocks touches to the keypad below; every control has its listener.
+        // The root only blocks touches to the keypad below - no TalkBack node (qa-21-step4-code L7);
+        // every control has its listener.
+        assertEquals("no", root.getAttributeNS(ns, "importantForAccessibility"))
         for (id in touchable - "lock_media_root") {
             val binding = id.split('_').mapIndexed { i, w -> if (i == 0) w else w.replaceFirstChar(Char::uppercase) }.joinToString("")
             assertTrue("$binding is wired", panel.contains("media.$binding.setOnClickListener"))
@@ -133,6 +135,32 @@ class LockMediaLayoutTest {
             else -> e.dim("textSize") * 1.4f * (e.getAttributeNS(ns, "maxLines").toIntOrNull() ?: 1)
         }
         return maxOf(padding + content, e.dim("minHeight"))
+    }
+
+    private fun parse(name: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        .newDocumentBuilder().parse(file("res/layout/$name.xml")).documentElement
+
+    private fun Element.all(): List<Element> = listOf(this) + kids().flatMap { it.all() }
+
+    /** The width of a horizontal row's fixed children with their margins (dp). */
+    private fun fixedWidth(row: Element): Float = row.dim("paddingStart") + row.dim("paddingEnd") + 2 * row.dim("padding") +
+        row.kids().sumOf { (it.dim("layout_marginStart") + it.dim("layout_marginEnd") + it.dim("layout_width")).toDouble() }.toFloat()
+
+    @Test
+    fun `nothing is squeezed at 320, 360 and 411 dp - the tile's controls, Home's card, the compact row`() {
+        for (screen in listOf(320f, 360f, 411f)) {
+            // The tile's previous / play / next, inside the view's and the tile's padding.
+            val tile = root.all().first { it.getAttributeNS(ns, "id") == "@+id/lock_media_tile" }
+            val controls = root.all().first { it.getAttributeNS(ns, "id") == "@+id/lock_media_play" }.parentNode as Element
+            val room = screen - root.dim("paddingStart") - root.dim("paddingEnd") - 2 * tile.dim("padding")
+            assertTrue("$screen: controls ${fixedWidth(controls)} in $room", fixedWidth(controls) <= room)
+            // Home's card (16 dp sides on Home) and the keypad's compact row (16 dp sides on the lock) keep
+            // at least 120 dp for their text.
+            for (layout in listOf("view_home_music_card", "view_lock_media_row")) {
+                val card = parse(layout)
+                assertTrue("$screen: $layout", screen - 32f - fixedWidth(card) >= 120f)
+            }
+        }
     }
 
     @Test

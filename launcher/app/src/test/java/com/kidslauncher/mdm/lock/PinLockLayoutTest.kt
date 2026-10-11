@@ -56,9 +56,10 @@ class PinLockLayoutTest {
             if (id(child) == "pin_keypad") continue
             val explicit = child.getAttributeNS(ns, "layout_height").takeIf { it.endsWith("dp") }
             val text = child.dim("textSize") * 1.4f
+            // On the music keypad stage the prompt wraps between the arrow's columns: two lines.
             val inner = (0 until child.childNodes.length).map { child.childNodes.item(it) }.filterIsInstance<Element>()
                 .filter { shown(it, media) }
-                .maxOfOrNull { maxOf(it.dim("textSize") * 1.4f, it.dim("layout_height")) } ?: 0f
+                .maxOfOrNull { maxOf(it.dim("textSize") * 1.4f * (if (media && id(it) == "pin_prompt") 2 else 1), it.dim("layout_height")) } ?: 0f
             total += explicit?.removeSuffix("dp")?.toFloat() ?: maxOf(text, inner, child.dim("minHeight"))
         }
         return total
@@ -90,6 +91,11 @@ class PinLockLayoutTest {
         }
         val ids = children().map(::id)
         assertEquals("the compact row is the last thing on the lock", "pin_media_row", ids.last())
+        // The prompt keeps clear of the arrow on both sides (qa-21-step4-code L5).
+        val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
+        val stage = activity.substringAfter("private fun setMediaKeypad(on: Boolean) {").substringBefore("\n    }\n")
+        assertTrue(stage.contains("val side = if (on) binding.pinMediaBack.layoutParams.width else 0"))
+        assertTrue(stage.contains("marginStart = side") && stage.contains("marginEnd = side"))
         assertEquals("the arrow sits in the prompt's row", "pin_prompt_row", id(root.getElementsByTagName("ImageButton").item(0).parentNode as Element))
     }
 

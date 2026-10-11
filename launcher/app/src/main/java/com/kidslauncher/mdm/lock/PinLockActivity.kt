@@ -437,11 +437,18 @@ class PinLockActivity : AppCompatActivity() {
         }
     }
 
-    /** The keypad stage with a live music session (design 21 step 4): no clock or date (Lock.dc.html). */
+    /** The keypad stage with a live music session (design 21 step 4): no clock or date (Lock.dc.html),
+     * and the prompt keeps clear of the back arrow on both sides - a long one wraps between them
+     * (qa-21-step4-code L5). */
     private fun setMediaKeypad(on: Boolean) {
         mediaKeypad = on
         binding.pinClock.visibility = if (on || compactStep >= 3) View.GONE else View.VISIBLE
         binding.pinDate.visibility = if (on || compactStep >= 1) View.GONE else View.VISIBLE
+        val side = if (on) binding.pinMediaBack.layoutParams.width else 0
+        binding.pinPrompt.layoutParams = (binding.pinPrompt.layoutParams as android.view.ViewGroup.MarginLayoutParams).apply {
+            marginStart = side
+            marginEnd = side
+        }
     }
 
     private fun applyCompactStep() {
