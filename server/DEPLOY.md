@@ -539,7 +539,8 @@ audio from the source.
 
 ## Server 0.24.0 (security review, server part)
 
-- **Everyone is signed out once**: sessions from before the update are ended, since older backups hold their ids (M2).
+- **Everyone is signed out once**, the parent who pressed "Update now" too: sessions from before the update are ended,
+  since older backups hold their ids (M2).
 - `data/` and everything in it become readable by the service user only; the service runs with `UMask=0077` (the
   update adds it as a drop-in). A restore signs everyone out.
 - The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, also across a restart
@@ -573,8 +574,9 @@ Built in - see the **Backups** page under Settings in the admin UI. Create a bac
   everything: every location, the PIN hashes, the password hash - and the 2FA secret, which is kept unsealed on
   purpose: sealing it would tie every sign-in to the key file in `data/keys/`, and losing that file would lock you out
   of the admin (design 22).
-- Since 0.24.0 a backup (and the live mirror, and the pre-migration copy) holds **no admin sessions**, so a stolen copy
-  signs no one in, and a restore signs everyone out. Everything in `data/` is readable by the service user only, and the
+- Since 0.24.0 a backup (and the live mirror, and the pre-migration copy) holds **no admin sessions** and **no
+  Tailscale key for the phones**, so a stolen copy signs no one in and joins nothing to the tailnet; a restore signs
+  everyone out, and the next phone's setup needs a new key in Settings > Provisioning (it is one-time anyway). Everything in `data/` is readable by the service user only, and the
   copies on the external drive by root only. The drive itself isn't encrypted: keep it at home, or use an encrypted
   one.
 - Restoring a backup on the Pi keeps the database it replaces in `/var/backups/kid-phone-server-prerestore/<time>/`

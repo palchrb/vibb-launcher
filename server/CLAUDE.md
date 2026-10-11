@@ -306,7 +306,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `tests::deploy_scripts::run_root_script` runs a root heredoc under bash in a sandbox, with stubs.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
   `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, which
-  `backup_sync.sh` copies to the drive), `DELETE FROM tower_sessions` with `secure_delete` and the journal in memory,
+  `backup_sync.sh` copies to the drive), `DELETE FROM tower_sessions` and a blanked
+  `provisioning_settings.tailscale_auth_key` (`strip_secrets_in`) with `secure_delete` and the journal in memory,
   then a rename - backup zips, the live mirror and `pre-migrate-*.db`. A restore forgets every session at the next
   start (the container's `apply_restore_request`, or `data/restore_applied` that `actions.sh` leaves,
   `startup::take_restore_applied`, logged `backup_restored`); migration 0061 bumped every `session_epoch` once, for the
@@ -316,6 +317,10 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   2FA secret stays unsealed (design 22 §3.2.8). A new copy of the database anywhere goes through `snapshot`.
 
 ## Data model (SQLite, see `migrations/`)
+
+**Migration numbers 0058-0060 are skipped on `main`** (the wave took 0061/0062 while a branch held them). Never fill
+them: sqlx would apply them out of order on a 0.24 database, and `startup::pre_migration_backup` (`MAX(version) <
+latest`) would take no backup first. A new migration takes the next number after the highest one on `main`.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
