@@ -424,9 +424,25 @@ launcher change and a contract change: both `bridge_contract.json` copies, `Musi
 (QA H6). The speaker already above the cap is **not** pulled down (vibb never fights external changes, 995-998); only
 our own sets are clamped.
 
-### 5.4 No server change
-NRK series items carry their program id as the item key (§2.5), so the listing contract stays. The report stays as it
-is (the server sees no now-playing, design 20 decision 5).
+### 5.4 No server change for playback
+NRK series items carry their program id as the item key (§2.5), so the listing contract stays. The server sees no
+now-playing (design 20 decision 5).
+
+### 5.5 Room scoping (user, 2026-10-11: every room allowed by default; the parent may restrict to specific speakers)
+Step 3c, after 3b; the one change that touches the server, launcher and music app, in one commit:
+- **The phone reports the rooms it knows**: `music_state` gains `sonos_rooms: [{uid, name}]` (<= 32 rows, names <= 40
+  chars, uids `RINCON_[A-Z0-9]{12,20}`), from the speaker cache, refreshed with every report. Server `MusicState` +
+  `sanitize_music_state`, `server/testdata/music_state.json`, the launcher's key list (`MusicPlan.kt`), `ReportTest`/
+  `BridgeTest` (root CLAUDE.md: the fixture is every field).
+- **The parent picks**: the device page's Music card lists the reported rooms with a switch "Alle rom" (default on)
+  and, when off, one checkbox per room; stored as `device_policy.music_sonos_rooms_json` (NULL = all), migration
+  numbered after the final rebase, `security_events` `music_sonos_rooms_changed`.
+- **The phone obeys**: the per-phone library JSON (`GET /api/devices/music/library`, already per phone, hashed into
+  `library_version`) carries `sonos_rooms: null | ["RINCON_…", …]`; `Library.sonosRooms` lenient (absent = all). The
+  sheet lists only allowed rooms (a group row only if its coordinator is allowed); `start()` refuses a uid outside the
+  list (`Message.CANT_PLAY_ON_SONOS`); a running session on a room that becomes disallowed is stopped at the next
+  sync (bookmark first). `music_library.json` snapshot and the music app's copy change together (`ContractFilesTest`).
+- A room never seen by the phone can't be restricted: the PWA says so ("Telefonen har ikke sett noen høyttalere ennå").
 
 ## 6. Phone-specific rules
 
@@ -462,10 +478,11 @@ is (the server sees no now-playing, design 20 decision 5).
 6. **Kiosk.** Nothing opens: no Sonos app, no links (`SourceScanTest`). The NRK service precondition is the
    household's, set once from a parent's Sonos app, not from the phone. The speaker resolves hosts outside the
    phone's DNS filter; acceptable for a parent-curated library (design 20).
-7. **Calls (QA M6, pending the user, §10).** vibb has no phone. Today a call pauses local playback through audio
-   focus; on Sonos nothing holds focus. Proposal: hold no focus while Sonos renders; on `AudioManager`'s
-   `OnModeChangedListener` (`MODE_IN_CALL` / `MODE_IN_COMMUNICATION`, no permission) pause if ours and PLAYING, and
-   resume afterwards only if we paused it.
+7. **Calls (QA M6; user 2026-10-11: yes).** vibb has no phone. Today a call pauses local playback through audio
+   focus; on Sonos nothing holds focus. So: hold no focus while Sonos renders; on `AudioManager`'s
+   `OnModeChangedListener` (`MODE_IN_CALL` / `MODE_IN_COMMUNICATION` / `MODE_RINGTONE`, no permission) pause if ours
+   and PLAYING, remember that we did, and resume when the mode returns to normal only then (a kid who paused during
+   the call stays paused).
 
 ## 7. Tests (JVM; vibb's tests ported, one line each)
 
@@ -539,6 +556,8 @@ is (the server sees no now-playing, design 20 decision 5).
    locks), §6.7 (calls, after the user's answer), §5.3 (volume: music app + launcher restriction + contract, one
    commit); the remaining `SonosRendererTest` rows; emulator: restart adopt, suspension stop with and without the
    service, volume keys.
+   **c. Room scoping** (§5.5): server + launcher + music app in one commit, its tests on all three sides, the PWA
+   card; emulator: a restricted room refused, a group with a disallowed coordinator hidden.
 4. **Docs and release**: `music/CLAUDE.md` (the renderer axis, the Sonos rules, the fixtures), `launcher/CLAUDE.md`
    (the restriction), NOTICE.md (the `sonosd.py`/`daemon.py` port and the fake, as the existing vibb paragraph),
    design 21's "Sonos is 1b" note -> points here, `docs/design/26` status. Then `music-v0.2.0-rc.1`.
@@ -581,12 +600,11 @@ Answered 2026-10-11:
    vibb's, a bookmark on every poll, the UI idles (§4.4, §6.3). If Doze defers the polls, the launcher grants the
    battery exemption rather than the bookmarks getting coarser.
 
-Open after the QA review:
-5. **Rooms (QA M5):** the kid can pick *any* room the household has, the parents' bedroom at 6 am included. Should the
-   PWA let the parent choose which rooms the phone may use (a per-phone room list, a small server change), or is every
-   room fine?
-6. **Calls (QA M6):** when the phone rings or a call starts while Sonos plays, should the speaker pause (and resume
-   after the call if we paused it), or keep playing in the room? Proposal: pause.
+Answered 2026-10-11, after the QA review:
+5. **Rooms (QA M5):** every room allowed by default; the parent may restrict the phone to specific speakers -> §5.5,
+   step 3c.
+6. **Calls (QA M6):** supported: the speaker pauses on a call and resumes afterwards only if we paused it -> §6.7,
+   step 3b.
 7. **Is `nrk_program` needed at all? (user, 2026-10-11)** vibb's recipe is inherited from the user's older
    sonos-remotes project and was committed "unverified until the rig" (`0255dc3`, 2026-08-09); nothing in vibb ever
    tried handing the speaker the HLS manifest url as a plain `url` kind. If a Sonos (S2 firmware) plays and seeks an
