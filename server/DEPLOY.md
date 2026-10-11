@@ -538,7 +538,8 @@ audio from the source.
   shows each feed's state.
 - **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
   (releases already cached are pinned at the first start): a later release of another package or signed with another
-  key is refused, and the app's page says so. If the developer really changed keys, "Forget the package and key" on
+  key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone
+  already has from Play or as a system app. A phone allows a catalog app once the launcher has installed it there. If the developer really changed keys, "Forget the package and key" on
   the app's page lets the next release set them again.
 - **A new phone starts with only its clock, calculator, camera and Vibb Music allowed** (never Settings, a browser or a
   file manager); allow the rest on its page. Phones already set up keep their lists.

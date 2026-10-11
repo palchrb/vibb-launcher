@@ -277,6 +277,18 @@ mod tests {
             read("other-package-key1.apk").package.as_deref(),
             Some("me.vibb.otherfixture")
         );
+        assert_eq!(
+            read("firefox-package-key1.apk").package.as_deref(),
+            Some("org.mozilla.firefox")
+        );
+        // JAR (v1) signing only: no signer read, the package still is.
+        assert_eq!(
+            read("fixture-key1-v1-only.apk"),
+            ApkIdentity {
+                package: Some("me.vibb.testfixture".to_string()),
+                signer_sha256: None,
+            }
+        );
     }
 
     #[test]

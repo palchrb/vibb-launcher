@@ -287,13 +287,13 @@ async fn the_cached_apk_is_streamed_with_its_length() {
     assert_eq!(gone.status, StatusCode::NOT_FOUND);
 }
 
-/// A catalog app without a package name is matched to the package that newly appeared in the
-/// status report; it is allowlisted and the phone is nudged at once, so it doesn't stay hidden
-/// and suspended until the next backstop sync. Only a package the launcher installed counts
-/// (security review M10).
+/// QA of the security wave, Low 4: a phone's report never sets a catalog app's package, whatever
+/// installer it claims. For an app whose APK didn't give one, the page offers what the launcher
+/// installed on its phones, and the parent confirms; then the phone allows it and is nudged.
 #[tokio::test]
-async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
+async fn only_the_parent_confirms_a_package_a_phone_reports() {
     let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     let tracked = insert_app(&app, "Element X", Some(r"^\d+\.apk$")).await;
     sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
@@ -333,39 +333,62 @@ async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
             assert!(res.status.is_success(), "{}", res.text());
         }
     };
+    let catalog_package = || async {
+        sqlx::query_scalar::<_, String>("SELECT package_name FROM tracked_apps WHERE id = ?")
+            .bind(tracked)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
 
-    // Two apps on the first report, so nothing is "the one new package" yet.
     post(report(&["org.example.clock", "org.example.notes"])).await;
     let mut nudges = app.state.command_notify.subscribe();
-    // One new package that the launcher didn't install (none named, or Play): never taken.
-    for claimed in [
-        "com.android.settings",
-        "com.android.settings from com.android.vending",
-    ] {
-        post(report(&["org.example.clock", "org.example.notes", claimed])).await;
-        post(report(&["org.example.clock", "org.example.notes"])).await;
-    }
-    let package: String = sqlx::query_scalar("SELECT package_name FROM tracked_apps WHERE id = ?")
-        .bind(tracked)
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
-    assert_eq!(package, "");
-    assert!(nudges.try_recv().is_err());
+    // A fake phone's claims: a system package "from the launcher", and a real-looking new one.
     post(report(&[
         "org.example.clock",
-        "org.example.notes",
+        "com.android.settings from me.vibb.launcher",
         "io.element.android.x from me.vibb.launcher",
     ]))
     .await;
-    assert_eq!(nudges.try_recv().ok(), Some(id));
+    assert_eq!(
+        catalog_package().await,
+        "",
+        "a report never sets the package"
+    );
     assert!(nudges.try_recv().is_err());
-    let package: String = sqlx::query_scalar("SELECT package_name FROM tracked_apps WHERE id = ?")
-        .bind(tracked)
-        .fetch_one(&app.db)
+
+    let page = app
+        .get_page(&format!("/apps/tracked/{tracked}"), &cookie)
         .await
-        .unwrap();
-    assert_eq!(package, "io.element.android.x");
+        .text();
+    assert!(
+        page.contains(r#"name="package" value="io.element.android.x""#),
+        "{page}"
+    );
+    assert!(!page.contains(r#"value="com.android.settings""#));
+    let confirm = |package: &'static str| {
+        let app = &app;
+        let cookie = cookie.clone();
+        async move {
+            app.request_form(
+                Method::POST,
+                &format!("/apps/tracked/{tracked}/confirm-package"),
+                Some(&cookie),
+                &[("package", package)],
+            )
+            .await
+        }
+    };
+    assert_eq!(
+        confirm("com.android.settings").await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(catalog_package().await, "");
+
+    let confirmed = confirm("io.element.android.x").await;
+    assert!(confirmed.status.is_redirection(), "{}", confirmed.text());
+    assert_eq!(catalog_package().await, "io.element.android.x");
+    assert_eq!(nudges.try_recv().ok(), Some(id));
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await
@@ -375,15 +398,7 @@ async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
         allowlist.contains(&serde_json::json!("io.element.android.x")),
         "{allowlist:?}"
     );
-
-    // Nothing new on the next report: no backfill, no nudge.
-    post(report(&[
-        "org.example.clock",
-        "org.example.notes",
-        "io.element.android.x from me.vibb.launcher",
-    ]))
-    .await;
-    assert!(nudges.try_recv().is_err());
+    assert!(!allowlist.contains(&serde_json::json!("com.android.settings")));
 }
 
 /// One sync per app (qa-catalog #1): "Check now" while a sync of the app runs starts no second

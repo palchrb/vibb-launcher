@@ -86,12 +86,19 @@ No prior programming experience - build features directly rather than explaining
   an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate in the v3, else v2,
   signing block - what `apksigner --print-certs` and the launcher's `SelfUpdate.signers` give). `tracked_apps`
   `sync_one_app` and the manual upload refuse a release whose package differs from `package_name` or whose signer
-  differs from `signer_sha256` (migration 0062), and pin what the first release has (`store_pins`; a package learned
-  this way is allowlisted where the app is checked); `backfill_pins` (after the hash backfill at startup) pins
-  releases cached before. "Forget the package and key" on the app's page clears both. `TrackedAppUpdate` carries
+  differs from `signer_sha256` (migration 0062), and pin what the first release has (`store_pins`); a first package
+  that a catalog app can never be (`never_a_catalog_package`: `android`, `com.android.*`, Play core) or that a phone
+  has as a system app or from another installer (`foreign_on_a_phone`) is refused (QA of the security wave,
+  Medium 2); a manifest that can't be read is refused once a package is pinned, like the signer. `backfill_pins`
+  (after the hash backfill at startup) pins releases cached before, with the same checks. **A release never allows
+  anything by itself**: `device_api::allow_installed_catalog_apps` (every status report) allows, on that phone only,
+  a checked catalog app's pinned package once the phone reports it installed by the launcher, and nudges it; checking
+  the app with a known package (`toggle_app`) allows it as before. "Forget the package and key" on the app's page clears both. `TrackedAppUpdate` carries
   `package_name` and `signer_sha256` (launcher DTO `signerSha256`, `PolicyResponseCompatTest`); the phone's own check
-  (`getPackageArchiveInfo`, `setAppPackageName`, `signerMatches`) is the launcher's security wave. The package-name
-  guess from a status report needs `installer` = the launcher (`installed_by_launcher`). A new phone's first report
+  (`getPackageArchiveInfo`, `setAppPackageName`, `signerMatches`) is the launcher's security wave. A phone's report
+  never sets a catalog app's package (QA Low 4: the `installer` it names is its own claim): for an app whose APK
+  didn't give one, the app's page lists what the launcher installed on its phones (`package_candidates`) and the
+  parent confirms one (`confirm_package`). A new phone's first report
   allowlists only `device_api::SAFE_DEFAULT_APPS` it has (clock, calculator, camera, Vibb music) - never everything
   installed. Fixtures: `testdata/apk/` (aapt2 + apksigner, throwaway keys, no code).
 - **`GET /api/devices/policy` never answers with a default policy** (`handlers::device_api::build_policy`): a missing `device_policy` row, an unparseable `allowlist_json`, or any DB error is an empty 500 (logged). The launcher treats non-2xx as "no fresh policy" and keeps enforcing its cache. A `NULL` allowlist is still served as `null` (a new device before its first heartbeat); `"[]"` is served as `[]` and means "nothing allowed" on the launcher. Upstream returned `DevicePolicy::default()` (kiosk off, no allowlist) on these errors, which unlocked the phone.
@@ -420,10 +427,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `ringer_mode` / `interruption_filter` (`#[serde(default)] Option<String>`, only known values stored, else NULL) ->
   `device_status`, shown in the Status card "at the last sync" (DND only while on). Policy shape unchanged. Tests:
   `sound_mode::tests`, `src/tests/sound_mode.rs`.
-- **Package-name backfill** (`device_api::status`): after allowlisting the backfilled app it nudges the phone
-  (`command_notify`, the SSE stream), which otherwise kept the app hidden and suspended until its next backstop sync
-  (found on the emulator). It compares with the previous report read before this one is stored (the same `previous`
-  the security log uses).
+- **A catalog app installed on a phone is allowed and the phone nudged** (`device_api::allow_installed_catalog_apps`,
+  every status report; it replaced the package-name backfill, which guessed the package from the one new package in a
+  report): the nudge (`command_notify`, the SSE stream) matters, the phone otherwise kept the app hidden and suspended
+  until its next backstop sync (found on the emulator).
 - Tests: `tracked_apps::tests`, `src/tests/tracked_apps.rs`, `a_new_device_starts_with_all_kid_settings_on`.
 
 ## App downloads: Wi-Fi only, resumable (design 13, `docs/design/13-app-downloads.md`, migration `0043_app_downloads.sql`)

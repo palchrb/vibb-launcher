@@ -41,6 +41,47 @@ async fn upload(app: &TestApp, cookie: &str, id: i64, label: &str, bytes: &[u8])
     .await
 }
 
+/// The phone's status report: `(package, installer)` installed.
+async fn report(app: &TestApp, token: &str, installed: &[(&str, Option<&str>)]) {
+    let installed: Vec<serde_json::Value> = installed
+        .iter()
+        .map(|(package, installer)| {
+            serde_json::json!({ "package_name": package, "label": package, "installer": installer })
+        })
+        .collect();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(token),
+            Some(serde_json::json!({
+                "lock_reason": "none", "kiosk_engaged": true, "installed_apps": installed,
+            })),
+        )
+        .await;
+    assert!(res.status.is_success(), "{}", res.text());
+}
+
+/// Whether the phone's policy allows `package`.
+async fn allowed(app: &TestApp, token: &str, package: &str) -> bool {
+    app.request(Method::GET, "/api/devices/policy", Some(token), None)
+        .await
+        .json()["allowlist"]
+        .as_array()
+        .is_some_and(|list| list.contains(&serde_json::json!(package)))
+}
+
+async fn manual_app(app: &TestApp, name: &str) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, source_type) \
+         VALUES (?, '', '', 'manual') RETURNING id",
+    )
+    .bind(name)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
 async fn pins(app: &TestApp, id: i64) -> (String, Option<String>, Option<String>) {
     sqlx::query_as(
         "SELECT package_name, signer_sha256, latest_release_tag FROM tracked_apps WHERE id = ?",
@@ -91,18 +132,26 @@ async fn the_first_release_pins_the_app_and_a_different_one_is_refused() {
             Some("1.0".to_string())
         )
     );
-    // The package learned from the APK is allowed where the app is checked, and the phone told.
+    // A release allows nothing by itself (QA of the security wave, Medium 2): only once the
+    // launcher has installed the pinned package on the phone, never from another installer.
+    assert!(nudges.try_recv().is_err());
+    assert!(!allowed(&app, &token, "me.vibb.testfixture").await);
+    report(
+        &app,
+        &token,
+        &[("me.vibb.testfixture", Some("com.android.vending"))],
+    )
+    .await;
+    assert!(!allowed(&app, &token, "me.vibb.testfixture").await);
+    assert!(nudges.try_recv().is_err());
+    report(
+        &app,
+        &token,
+        &[("me.vibb.testfixture", Some("me.vibb.launcher"))],
+    )
+    .await;
+    assert!(allowed(&app, &token, "me.vibb.testfixture").await);
     assert_eq!(nudges.try_recv().ok(), Some(device));
-    let policy = app
-        .request(Method::GET, "/api/devices/policy", Some(&token), None)
-        .await
-        .json();
-    assert!(
-        policy["allowlist"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("me.vibb.testfixture"))
-    );
     // The phones get both pins with the app list.
     let listed = app
         .request(Method::GET, "/api/devices/apps", Some(&token), None)
@@ -247,4 +296,98 @@ async fn a_new_phone_starts_with_the_safe_defaults_only() {
     ] {
         assert!(!crate::handlers::device_api::SAFE_DEFAULT_APPS.contains(&never));
     }
+}
+
+/// QA of the security wave, Medium 2 (its probe): a release whose manifest names an app the phone
+/// already has from Play - or a system package - is refused, and allows nothing.
+#[tokio::test]
+async fn a_release_naming_an_app_from_elsewhere_or_the_system_is_refused() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    report(
+        &app,
+        &token,
+        &[
+            ("com.google.android.deskclock", None),
+            ("org.mozilla.firefox", Some("com.android.vending")),
+        ],
+    )
+    .await;
+    assert!(!allowed(&app, &token, "org.mozilla.firefox").await);
+    let id = manual_app(&app, "Totally a game").await;
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(device)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    let refused = upload(
+        &app,
+        &cookie,
+        id,
+        "1.0",
+        &fixture("firefox-package-key1.apk"),
+    )
+    .await;
+    assert!(
+        refused
+            .text()
+            .contains("org.mozilla.firefox, which phone already has"),
+        "{}",
+        refused.text()
+    );
+    assert_eq!(pins(&app, id).await, (String::new(), None, None));
+    assert!(!allowed(&app, &token, "org.mozilla.firefox").await);
+
+    for system in ["com.android.settings", "android", "com.google.android.gms"] {
+        assert!(
+            crate::handlers::tracked_apps::never_a_catalog_package(system),
+            "{system}"
+        );
+    }
+    assert!(!crate::handlers::tracked_apps::never_a_catalog_package(
+        "me.vibb.testfixture"
+    ));
+}
+
+/// The signer and the package fail closed once pinned: a release without a v2/v3 signature, or
+/// whose manifest can't be read, is refused.
+#[tokio::test]
+async fn a_pinned_app_refuses_what_it_cant_check() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id = manual_app(&app, "Fixture").await;
+    let first = upload(&app, &cookie, id, "1.0", &fixture("fixture-key1.apk")).await;
+    assert!(first.status.is_redirection());
+    let v1_only = upload(
+        &app,
+        &cookie,
+        id,
+        "1.1",
+        &fixture("fixture-key1-v1-only.apk"),
+    )
+    .await;
+    assert!(
+        v1_only
+            .text()
+            .contains("no APK Signature Scheme v2/v3 signature"),
+        "{}",
+        v1_only.text()
+    );
+    assert_eq!(pins(&app, id).await.2.as_deref(), Some("1.0"));
+
+    let pinned =
+        sqlx::query_as::<_, crate::models::TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let unreadable = crate::apk::ApkIdentity {
+        package: None,
+        signer_sha256: Some(KEY1.to_string()),
+    };
+    let refused = crate::handlers::tracked_apps::check_pins(&pinned, &unreadable).unwrap_err();
+    assert!(refused.contains("can't be read"), "{refused}");
 }

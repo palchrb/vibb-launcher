@@ -503,18 +503,28 @@ async fn apk_identity(path: &str) -> Result<crate::apk::ApkIdentity, String> {
 }
 
 /// A release must be the app the catalog already knows (security review M10): the same package
-/// (when the catalog has one and the manifest could be read) and the pinned signing key (when one
-/// is pinned - then it must be readable). The first release pins what it has.
-fn check_pins(app: &TrackedApp, identity: &crate::apk::ApkIdentity) -> Result<(), String> {
-    if let Some(package) = &identity.package
-        && !app.package_name.is_empty()
-        && *package != app.package_name
-    {
-        return Err(format!(
-            "refused: the release is the Android package {package}, this app is {} (if the \
-             catalog has it wrong, forget the package name and signing key below)",
-            app.package_name
-        ));
+/// and the pinned signing key, each readable from the APK once it is pinned (fail closed, like the
+/// signer - QA of the security wave). The first release pins what it has.
+pub(crate) fn check_pins(
+    app: &TrackedApp,
+    identity: &crate::apk::ApkIdentity,
+) -> Result<(), String> {
+    match (&identity.package, app.package_name.is_empty()) {
+        (Some(package), false) if *package != app.package_name => {
+            return Err(format!(
+                "refused: the release is the Android package {package}, this app is {} (if the \
+                 catalog has it wrong, forget the package name and signing key below)",
+                app.package_name
+            ));
+        }
+        (None, false) => {
+            return Err(
+                "refused: the release's Android package can't be read from its APK, so it can't \
+                 be checked against this app's"
+                    .to_string(),
+            );
+        }
+        _ => {}
     }
     match (&app.signer_sha256, &identity.signer_sha256) {
         (Some(pinned), Some(signer)) if pinned != signer => Err(
@@ -532,35 +542,85 @@ fn check_pins(app: &TrackedApp, identity: &crate::apk::ApkIdentity) -> Result<()
     }
 }
 
-/// Once an app's package is known (from its APK), every phone that has the app checked gets it on
-/// its allowlist, as checking it with a known package does - else it would install and stay
-/// suspended. Nudges those phones.
-async fn allow_on_selected_phones(state: &AppState, app_id: i64, package: &str) {
-    let devices: Vec<i64> = match sqlx::query_scalar(
-        "SELECT device_id FROM device_tracked_apps WHERE tracked_app_id = ?",
+/// Packages a catalog app can never be: the Android system's own (`android`, `com.android.*` -
+/// Settings, the package installer, the AOSP browser and files apps) and Play's core.
+pub(crate) fn never_a_catalog_package(package: &str) -> bool {
+    package == "android"
+        || package.starts_with("com.android.")
+        || crate::play::is_play_core(package)
+}
+
+/// The phone (by name) whose latest report has `package` as a system app or from an installer
+/// other than the launcher (Play, another store); a sideloaded copy (no installer) doesn't count.
+async fn foreign_on_a_phone(
+    state: &AppState,
+    package: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let latest: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT d.name, s.installed_apps_json FROM devices d JOIN device_status s ON s.id = \
+         (SELECT id FROM device_status WHERE device_id = d.id ORDER BY reported_at DESC, id DESC \
+          LIMIT 1)",
     )
-    .bind(app_id)
     .fetch_all(&state.db)
-    .await
-    {
-        Ok(devices) => devices,
-        Err(err) => {
-            tracing::error!(app_id, %err, "can't list the phones that have the app");
-            return;
-        }
+    .await?;
+    Ok(latest.into_iter().find_map(|(name, json)| {
+        let installed: Vec<crate::models::InstalledApp> = json
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        installed
+            .iter()
+            .any(|app| {
+                app.package_name == package
+                    && (app.preinstalled
+                        || app.installer.as_deref().is_some_and(|installer| {
+                            !crate::handlers::device_api::installed_by_launcher(
+                                state,
+                                Some(installer),
+                            )
+                        }))
+            })
+            .then_some(name)
+    }))
+}
+
+/// A release that would give the app its package (it had none) must not name one a catalog app
+/// can't be, or one a phone already has from elsewhere (QA of the security wave, Medium 2: a
+/// release naming Settings or a Play-installed browser). Allowing never follows from a release
+/// anyway (`device_api::allow_installed_catalog_apps`), but a pinned package is what checking the
+/// app on another phone allows.
+async fn check_new_package(
+    state: &AppState,
+    app: &TrackedApp,
+    identity: &crate::apk::ApkIdentity,
+) -> Result<(), String> {
+    let Some(package) = identity
+        .package
+        .as_deref()
+        .filter(|_| app.package_name.is_empty())
+    else {
+        return Ok(());
     };
-    for device_id in devices {
-        match crate::handlers::devices::add_to_allowlist(state, device_id, package).await {
-            Ok(()) => {
-                let _ = state.command_notify.send(device_id);
-            }
-            Err(err) => tracing::error!(device_id, app_id, %err, "can't allowlist the app"),
-        }
+    if never_a_catalog_package(package) {
+        return Err(format!(
+            "refused: the release is the Android package {package}, which belongs to the system - \
+             a catalog app can't be it"
+        ));
+    }
+    match foreign_on_a_phone(state, package).await {
+        Ok(None) => Ok(()),
+        Ok(Some(phone)) => Err(format!(
+            "refused: the release is the Android package {package}, which {phone} already has as \
+             a system app or from another store - a catalog app can't take it over"
+        )),
+        Err(err) => Err(format!("refused: couldn't check the phones' apps ({err})")),
     }
 }
 
 /// Stores the pins a release brought, where the app had none: the package only when the catalog
-/// had none (then allowlisted where the app is checked), the signer only when none is pinned.
+/// had none, the signer only when none is pinned. Nothing is allowed by this: a phone allows the
+/// app once the launcher has installed it there (`device_api::allow_installed_catalog_apps`), or
+/// when the parent checks it.
 async fn store_pins(state: &AppState, app: &TrackedApp, identity: &crate::apk::ApkIdentity) {
     let new_package = identity
         .package
@@ -583,13 +643,8 @@ async fn store_pins(state: &AppState, app: &TrackedApp, identity: &crate::apk::A
     .bind(app.id)
     .execute(&state.db)
     .await;
-    match stored {
-        Ok(_) => {
-            if let Some(package) = new_package {
-                allow_on_selected_phones(state, app.id, package).await;
-            }
-        }
-        Err(err) => tracing::error!(app_id = app.id, %err, "can't store the app's pins"),
+    if let Err(err) = stored {
+        tracing::error!(app_id = app.id, %err, "can't store the app's pins");
     }
 }
 
@@ -626,6 +681,10 @@ async fn backfill_pins(state: &AppState) {
                         "the cached APK is {package}, the catalog says {} - not pinned",
                         app.package_name
                     );
+                    continue;
+                }
+                if let Err(err) = check_new_package(state, &app, &identity).await {
+                    tracing::warn!(app_id = app.id, "the cached APK isn't pinned: {err}");
                     continue;
                 }
                 store_pins(state, &app, &identity).await;
@@ -797,6 +856,10 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
             return Err(err);
         }
     };
+    if let Err(err) = check_new_package(state, &app, &identity).await {
+        tokio::fs::remove_file(&file_path).await.ok();
+        return Err(err);
+    }
 
     let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = ?, \
@@ -1055,6 +1118,8 @@ struct TrackedAppDetailTemplate {
     /// "Show on the kid's phones as" (design 14): the default for every phone with the app
     /// (`partials/app_display_form.html` reads `form`).
     form: crate::app_display::AppDisplayForm,
+    /// For an app without a package: what the parent may confirm as its package ([package_candidates]).
+    package_candidates: Vec<String>,
 }
 
 /// What the Details form shows: the saved values, or - when a save was refused - what was
@@ -1118,6 +1183,11 @@ async fn render_detail_full(
         error_field: "",
     });
     let sync = state.app_syncs.status(id);
+    let package_candidates = if app.package_name.is_empty() {
+        package_candidates(state, id).await
+    } else {
+        Vec::new()
+    };
     let current = crate::app_display::DisplayValues {
         label: app.display_label.clone(),
         icon: app.display_icon.clone(),
@@ -1140,6 +1210,7 @@ async fn render_detail_full(
             details,
             sync_running_since: sync.running_since,
             sync_failure: sync.last_error,
+            package_candidates,
         }
         .render()
         .unwrap(),
@@ -1267,6 +1338,10 @@ pub async fn upload_tracked_app_release(
             return render_detail(&state, id, Some(err)).await;
         }
     };
+    if let Err(err) = check_new_package(&state, &app, &identity).await {
+        tokio::fs::remove_file(&file_path).await.ok();
+        return render_detail(&state, id, Some(err)).await;
+    }
 
     let sha256 = hex_digest(Sha256::digest(&apk_bytes));
     let stored = sqlx::query(
@@ -1490,6 +1565,115 @@ pub async fn set_enabled(
         .ok();
 
     Redirect::to(&format!("/apps/tracked/{id}"))
+}
+
+/// Packages the launcher installed on a phone that has this app checked and that no catalog app is
+/// yet: what the app's page offers the parent to confirm as the app's package when its APK didn't
+/// give one (QA of the security wave, Low 4: a phone's report never sets a package by itself - it
+/// could be any phone's claim). Never a system or Play package, nor the launcher itself.
+async fn package_candidates(state: &AppState, app_id: i64) -> Vec<String> {
+    let reports: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT s.installed_apps_json FROM device_tracked_apps dta JOIN device_status s ON s.id = \
+         (SELECT id FROM device_status WHERE device_id = dta.device_id \
+          ORDER BY reported_at DESC, id DESC LIMIT 1) \
+         WHERE dta.tracked_app_id = ?",
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let known: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT package_name FROM tracked_apps WHERE package_name != ''")
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+    let mut candidates: Vec<String> = reports
+        .iter()
+        .flatten()
+        .filter_map(|json| serde_json::from_str::<Vec<crate::models::InstalledApp>>(json).ok())
+        .flatten()
+        .filter(|app| {
+            crate::handlers::device_api::installed_by_launcher(state, app.installer.as_deref())
+                && !crate::handlers::device_api::installed_by_launcher(
+                    state,
+                    Some(&app.package_name),
+                )
+                && !never_a_catalog_package(&app.package_name)
+                && !known.contains(&app.package_name)
+        })
+        .map(|app| app.package_name)
+        .collect();
+    candidates.sort();
+    candidates.dedup();
+    candidates.truncate(10);
+    candidates
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmPackageForm {
+    package: String,
+}
+
+/// `POST /apps/tracked/{id}/confirm-package`: the parent confirms which package an app without
+/// one is, out of [package_candidates]. Then every phone that has the app checked and the launcher
+/// installed it on allows it ([crate::handlers::device_api::allow_installed_catalog_apps]).
+pub async fn confirm_package(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<ConfirmPackageForm>,
+) -> Response {
+    if !package_candidates(&state, id).await.contains(&form.package) {
+        return (
+            StatusCode::BAD_REQUEST,
+            render_detail(
+                &state,
+                id,
+                Some(format!(
+                    "{} isn't an app the launcher installed on a phone that has this app - \
+                     nothing was changed.",
+                    form.package
+                )),
+            )
+            .await,
+        )
+            .into_response();
+    }
+    if let Err(err) =
+        sqlx::query("UPDATE tracked_apps SET package_name = ? WHERE id = ? AND package_name = ''")
+            .bind(&form.package)
+            .bind(id)
+            .execute(&state.db)
+            .await
+    {
+        tracing::error!(app_id = id, %err, "can't store the confirmed package");
+        return render_detail(
+            &state,
+            id,
+            Some("Couldn't save - nothing was changed.".into()),
+        )
+        .await;
+    }
+    let reports: Vec<(i64, Option<String>)> = sqlx::query_as(
+        "SELECT dta.device_id, s.installed_apps_json FROM device_tracked_apps dta \
+         JOIN device_status s ON s.id = (SELECT id FROM device_status \
+         WHERE device_id = dta.device_id ORDER BY reported_at DESC, id DESC LIMIT 1) \
+         WHERE dta.tracked_app_id = ?",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for (device_id, json) in reports {
+        let installed: Vec<crate::models::InstalledApp> = json
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        crate::handlers::device_api::allow_installed_catalog_apps(&state, device_id, &installed)
+            .await;
+    }
+    Redirect::to(&format!("/apps/tracked/{id}")).into_response()
 }
 
 /// Forgets the app's pins - its package name and signing key (security review M10) - so the next

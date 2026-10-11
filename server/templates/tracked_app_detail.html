@@ -73,8 +73,17 @@
         {% endif %}
         {% if app.package_name.is_empty() %}
         <p class="subtitle">Android package: not known yet - read from the next release's APK.</p>
+        {% if !package_candidates.is_empty() %}
+        <p class="subtitle">The release's APK didn't say. The launcher installed these on a phone that has this app, and no catalog app is them yet - if one of them is this app, confirm it, and the phones that have it allow it:</p>
+        {% for candidate in package_candidates %}
+        <form method="post" action="/apps/tracked/{{ app.id }}/confirm-package" style="margin-bottom:8px;">
+            <input type="hidden" name="package" value="{{ candidate }}">
+            <button type="submit" class="button-secondary"><span style="overflow-wrap:anywhere;">{{ candidate }}</span> is this app</button>
+        </form>
+        {% endfor %}
+        {% endif %}
         {% else %}
-        <p>Android package: <strong>{{ app.package_name }}</strong> <span class="subtitle">(from the APK, never typed in)</span></p>
+        <p>Android package: <strong>{{ app.package_name }}</strong> <span class="subtitle">(from the APK, or confirmed by you - never typed in)</span></p>
         {% endif %}
         {% if let Some(signer) = app.signer_sha256 %}
         <p>Signing key (SHA-256): <code style="overflow-wrap:anywhere;">{{ signer }}</code></p>

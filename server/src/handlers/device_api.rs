@@ -578,6 +578,70 @@ fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
     capped
 }
 
+/// Allows on this phone every catalog app the parent checked for it whose pinned package the
+/// launcher installed here (`installed` is the phone's report), and nudges it when that changed
+/// the allowlist. An app installed from anywhere else, or a package that isn't the pin, never is.
+pub(crate) async fn allow_installed_catalog_apps(
+    state: &AppState,
+    device_id: i64,
+    installed: &[InstalledApp],
+) {
+    let by_launcher: std::collections::HashSet<&str> = installed
+        .iter()
+        .filter(|app| installed_by_launcher(state, app.installer.as_deref()))
+        .map(|app| app.package_name.as_str())
+        .collect();
+    if by_launcher.is_empty() {
+        return;
+    }
+    let checked: Vec<String> = match sqlx::query_scalar(
+        "SELECT ta.package_name FROM tracked_apps ta \
+         JOIN device_tracked_apps dta ON dta.tracked_app_id = ta.id \
+         WHERE dta.device_id = ? AND ta.package_name != ''",
+    )
+    .bind(device_id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(checked) => checked,
+        Err(err) => {
+            tracing::error!(device_id, %err, "can't read the phone's catalog apps");
+            return;
+        }
+    };
+    let allowlist: Vec<String> = match sqlx::query_scalar::<_, Option<String>>(
+        "SELECT allowlist_json FROM device_policy WHERE device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(json) => json
+            .flatten()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default(),
+        Err(err) => {
+            tracing::error!(device_id, %err, "can't read the phone's allowlist");
+            return;
+        }
+    };
+    let mut changed = false;
+    for package in checked
+        .iter()
+        .filter(|package| by_launcher.contains(package.as_str()) && !allowlist.contains(package))
+    {
+        match crate::handlers::devices::add_to_allowlist(state, device_id, package).await {
+            Ok(()) => changed = true,
+            Err(err) => tracing::error!(device_id, %err, "can't allow an installed catalog app"),
+        }
+    }
+    // The phone keeps a new app hidden and suspended until it re-fetches the policy - nudged now,
+    // not at the next backstop sync up to 30 min later.
+    if changed {
+        let _ = state.command_notify.send(device_id);
+    }
+}
+
 /// What a new phone's allowlist starts with, where it has them (security review M10): a clock, a
 /// calculator, a camera and the Vibb music app. Never Settings, a browser, a file manager or a
 /// store; the parent allows the rest on the phone's page.
@@ -596,7 +660,7 @@ pub(crate) const SAFE_DEFAULT_APPS: [&str; 10] = [
 
 /// The launcher's application ids (the configured admin component's, and the release and debug
 /// builds'): what an app it installed - a catalog app - names as its installer.
-fn installed_by_launcher(state: &AppState, installer: Option<&str>) -> bool {
+pub(crate) fn installed_by_launcher(state: &AppState, installer: Option<&str>) -> bool {
     let Some(installer) = installer else {
         return false;
     };
@@ -931,9 +995,6 @@ pub async fn status(
         }
     }
 
-    // The package-name backfill below compares against the same previous report (read before
-    // this one was stored, so a failed INSERT or two reports in one second can't confuse it).
-    let previous_apps_json: Option<String> = previous.as_ref().and_then(|(apps, _)| apps.clone());
     log_play_events(&state, device.id, &report, previous).await;
 
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now') WHERE id = ?")
@@ -1005,77 +1066,12 @@ pub async fn status(
         }
     }
 
-    // Backfills tracked_apps.package_name for a catalog app that doesn't have one on file yet
-    // (a real, supported state - see tracked_app_detail.html, "Android package name (optional)" -
-    // PackageInstaller determines the real package from the APK's own signed manifest, not this
-    // field), the moment it becomes knowable from what's newly installed on this device.
-    //
-    // Without this, a no-package-name catalog app that gets pushed and installed shows up as BOTH
-    // a real "Installed" row (under its real package name, with no way to associate it back to
-    // its catalog entry) *and* a permanent phantom "Not installed" row (the catalog entry itself,
-    // which can never match anything by package name) - confirmed live. Worse, it silently never
-    // gets allowlisted either: `toggle_app`'s add_to_allowlist call at check-time is a no-op
-    // without a package name, so the app installs successfully and is then immediately suspended
-    // by the kid's own device under kiosk mode, with nothing on the admin site showing why.
-    //
-    // Heuristic, not exact - only fires when this device has exactly one catalog app selected with
-    // no package name on file, and exactly one package newly appeared since its last heartbeat,
-    // installed by the launcher itself (security review M10: a phone's report alone - a fake phone
-    // naming com.android.settings - must never put a package on the catalog and every allowlist).
-    // The catalog normally has the package from the APK by then (`tracked_apps::store_pins`); this
-    // covers an APK whose manifest couldn't be read.
+    // Catalog apps checked for this phone that the launcher has installed here are allowed here
+    // (QA of the security wave, Medium 2): the phone's evidence, never a release by itself. The
+    // package must be the one pinned for the catalog app; a phone's report never sets it (Low 4 -
+    // the app's page lets the parent confirm one when the APK didn't give it).
     if let Some(installed) = &report.installed_apps {
-        let awaiting_package_name: Vec<i64> = sqlx::query_scalar(
-            "SELECT ta.id FROM tracked_apps ta \
-             JOIN device_tracked_apps dta ON dta.tracked_app_id = ta.id \
-             WHERE dta.device_id = ? AND ta.package_name = ''",
-        )
-        .bind(device.id)
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
-
-        if let [tracked_app_id] = awaiting_package_name.as_slice() {
-            let previously_installed: std::collections::HashSet<String> = previous_apps_json
-                .as_deref()
-                .and_then(|j| serde_json::from_str::<Vec<InstalledApp>>(j).ok())
-                .unwrap_or_default()
-                .into_iter()
-                .map(|a| a.package_name)
-                .collect();
-            let newly_appeared: Vec<&InstalledApp> = installed
-                .iter()
-                .filter(|a| !previously_installed.contains(&a.package_name))
-                .collect();
-
-            if let [app] = newly_appeared.as_slice()
-                && installed_by_launcher(&state, app.installer.as_deref())
-            {
-                sqlx::query("UPDATE tracked_apps SET package_name = ? WHERE id = ?")
-                    .bind(&app.package_name)
-                    .bind(*tracked_app_id)
-                    .execute(&state.db)
-                    .await
-                    .ok();
-                match crate::handlers::devices::add_to_allowlist(
-                    &state,
-                    device.id,
-                    &app.package_name,
-                )
-                .await
-                {
-                    // The phone keeps the new app hidden and suspended until it re-fetches the
-                    // policy - nudged now over the SSE stream, not at the next backstop sync up to
-                    // 30 min later.
-                    Ok(()) => {
-                        let _ = state.command_notify.send(device.id);
-                    }
-                    Err(err) => {
-                        tracing::error!(device_id = device.id, %err, "failed to allowlist a backfilled app");
-                    }
-                }
-            }
-        }
+        allow_installed_catalog_apps(&state, device.id, installed).await;
     }
 
     // Attached on every regular heartbeat when the device has a location

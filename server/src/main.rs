@@ -834,6 +834,10 @@ pub fn build_admin_router(
             post(handlers::tracked_apps::forget_package_name),
         )
         .route(
+            "/apps/tracked/{id}/confirm-package",
+            post(handlers::tracked_apps::confirm_package),
+        )
+        .route(
             "/apps/tracked/{id}/delete",
             post(handlers::tracked_apps::delete_tracked_app),
         )
