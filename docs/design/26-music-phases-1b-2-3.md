@@ -99,6 +99,11 @@ Read before the 1b spec: the brief, designs 20/21/21b, `music/` on `main` (`cdf0
 `pi/daemon.py`, `pi/vibb/{renderer,storytel}.py`, `tests/sonos_*.py`, `tests/storytel_*.py`). The order 1b -> 2 -> 3 and
 "ports, not designs" hold. Five corrections, two of them decisions for the user.
 
+**vibb's branch (user, 2026-10-11):** the live line is `pipewire` (`1fcadac`, 2026-09-21, 101 commits past GitHub's
+default `main` `22bdc38`, which is its direct ancestor). Every phase reads `pipewire`. For 1b the difference is one
+`sonosd.py` behaviour (the background SSDP round, design 26a §2.1); `storytel.py` and `bookmarks.py` are identical on
+both, so phase 2's inventory can cite either. The `storytel` branch is older than `main` and is not a source.
+
 1. **Sonos is two ports, not one.** `sonosd.py` (1115 lines) is only the sidecar: the SOAP calls, the poller and the
    uid -> ip cache. The controller lives in `daemon.py`: about twenty `_sonos_*` methods (lines 1085-2100, `_sonos_poller`
    at 4254, `_sonos_on_term` at 5340, the fields at 350-420) with the queue mapping, bookmark throttling, stall and

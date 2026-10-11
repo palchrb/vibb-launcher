@@ -1,10 +1,14 @@
 # 26a - Vibb music phase 1b: Sonos (buildable spec)
 
 Architect draft (2026-10-11), the first step of design 26's phase 1b. Inputs: design 26 (the brief and its review),
-design 20 "Outputs", design 21 (§4.6, QA #12, the user's answer on own files), `music/CLAUDE.md`, and vibb `22bdc38`:
-`pi/sonosd.py` (the sidecar), `pi/vibb/renderer.py`, the `_sonos_*` controller in `pi/daemon.py` (lines 350-420,
-1083-2126, 2599-2653, 4254-4530, 5340-5364), and `tests/sonos_{contract,renderer,groups,grouped,migrate,migrate_probe,
-same_tile,hush}.py` and `storytel_sonos.py`. **This is a port**: every behaviour below names its vibb source, and a
+design 20 "Outputs", design 21 (§4.6, QA #12, the user's answer on own files), `music/CLAUDE.md`, and vibb. **vibb's
+live line is the `pipewire` branch** (`1fcadac`, 2026-09-21; user 2026-10-11), not GitHub's default `main` (`22bdc38`,
+2026-09-03, its direct ancestor). Line numbers below cite `22bdc38`, where the Sonos code is identical except for the
+one `pipewire` change noted in §2.1 (`sonosd.py` `rescan_in_background`, `tests/sonos_hold_scan.py`; `daemon.py`'s
+`pipewire` diff is Soloist/PipeWire work and only adds log lines to the Sonos paths; `storytel.py` is unchanged).
+Sources: `pi/sonosd.py` (the sidecar), `pi/vibb/renderer.py`, the `_sonos_*` controller in `pi/daemon.py` (lines
+350-420, 1083-2126, 2599-2653, 4254-4530, 5340-5364), and `tests/sonos_{contract,renderer,groups,grouped,migrate,
+migrate_probe,same_tile,hush,hold_scan}.py` and `storytel_sonos.py`. **This is a port**: every behaviour below names its vibb source, and a
 deviation is listed in §9 with its reason. `M/` = `music/app/src/main/java/me/vibb/music/`, `L/` =
 `launcher/app/src/main/java/com/kidslauncher/mdm/`. [device check] = needs the Jelly Star and a real speaker.
 
@@ -79,7 +83,10 @@ The Pi keeps two axes apart (`renderer.py:1-13`): `output` (local|bt: where *our
   a speaker never deletes the row the kid aimed at, 143-146), groups **replace** (176-179). Garbage -> empty.
 - **When discovery runs** (23-26): a cache miss, the picker's "Se etter høyttalere" row, or a failed play. Never on a
   timer. Opening the picker runs one topology refresh (~200 ms on a LAN); nobody answering serves the cache marked
-  `stale` and the sheet says so (1047-1057, §5).
+  `stale` and the sheet says so (1047-1057, §5), **and starts one SSDP round in the background** (`pipewire`
+  `rescan_in_background`/`scanning`, `sonosd.py:164-190, 1088-1097`; owner 2026-09-05: "the list fills itself"): the
+  sheet opens at once with the old rows, shows "Søker etter høyttalere…", a second open while the round runs starts
+  nothing, and the rows refresh when it ends. One round in flight at a time.
 - **Picker rows** (`players_payload`, 230-243; ui.py:2614-2640 via `sonos_groups.py:120-136`): players sorted by
   name; a group with 2+ members is one row named `"<coordinator> + <member>"`, selecting it targets the coordinator;
   absorbed members don't repeat; a group naming an unknown uid gives no row. Never an ip in the UI.
@@ -371,6 +378,10 @@ No other server change in 1b: the report stays as it is (the server sees no now-
 - `TopologyTest` (`sonos_groups.py:77-108, 120-136`): ip/name healed, invisible dropped, groups replaced coordinator-first,
   nobody answering -> stale cache, picker rows ("Kjøkken + Stua" -> coordinator, absorbed members not repeated, unknown
   member -> no row).
+- `SpeakerCacheTest` (`sonos_hold_scan.py:71-99`, `pipewire`): nobody answering -> the old rows at once, `stale`, one
+  background scan started and `scanning` true, the call returns in under 2 s; a second refresh while it runs starts no
+  second scan; after the round the new rows show and `scanning` is false; a later refresh that fails again keeps the
+  rows and scans once more.
 - `SonosSessionTest` (`sonos_grouped.py:242-260`, `sonos_migrate_probe.py:200-307`): x-rincon -> grouped away on the same
   poll, mp3radio not grouped, empty uri keeps, own uri clears; no probe for STOPPED+x-rincon / uri retained / PLAYING+empty
   / window past; url match by `normUri` against a live candidate, hint carries the session uri and rides every publish;
