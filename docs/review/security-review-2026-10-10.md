@@ -296,3 +296,33 @@ Plan:
   (server part), M7 leftovers, L5, L9 (server), L10 and L12 (server part).
 - **Launcher:** M8, M10 (phone part), L7, L8, L12 (phone part) and L13 after `pin-24` and music step 3 merge.
 - **Design 24b:** M9 and L6, by the design 24 implementer.
+
+## Server security wave status (2026-10-11)
+
+Done on `main` by design 22's implementer, each finding checked against the code of the day first, with the tests the
+review asks for. Server 0.24.0 (not tagged).
+
+| ID | Commit | What was done |
+|---|---|---|
+| H1 | `06cd48d7` | `scheduler.sh` reads `schedule.conf` key by key with checked values (never `source`); every schedule form takes `HH:MM` only; `update.sh` rewrites all four root scripts on every update. |
+| H2 | `7e9fe55e` | A location is stored only when its time is RFC 3339 and its numbers are on Earth (normalised); the locate page uses `textContent` and `js_string`; migration 0054 removed bad rows. |
+| M4 | `f952f67b` | The root restore reads only the zip's `kidphone.db` (`unzip -p`, 1 GiB, SQLite header), keeps the old one in root-owned `/var/backups/...-prerestore/`, and renames into place; the watcher and backup sync ignore symlinks in `data/`. |
+| M2 | `cd5e8216` | Every copy of the database (backup zip, live mirror, pre-migrate) has no `tower_sessions` rows (`secure_delete`); a restore signs everyone out; migration 0061 ended the sessions in older backups. umask 077 in the process, `UMask=0077` in the unit (a drop-in on update), `data/` 700 and its files 600 (fixed on update, as the service user), the drive's copies root-only. The 2FA secret stays unsealed (design 22 §3.2.8). The external copy is not encrypted: DEPLOY says to keep the drive at home or use an encrypted one. |
+| M6 | `2481de32` | Per feed: `error_for_status`, a 32 MB cap and "no domains" all keep the previous domains; 503 to a phone while a feed it uses hasn't loaded since the start; 500 on DB errors; the DNS page shows each feed's state; retry after 5 min. |
+| M10 (server) | `9325eadf` | Package and signing-cert SHA-256 read from the APK (`src/apk.rs`), pinned from the first release (migration 0062), a different release refused, sent in `TrackedAppUpdate` (launcher DTO and compat test in the same commit). No package guess unless `installer` is the launcher. A new phone starts with only a clock, calculator, camera and Vibb Music. |
+| M5 | `5cbf69c7`, `0475158d` | minisign: `install.sh`, `update.sh` and `actions.sh` pin the public key and refuse a tarball or `update.sh` without a good signature whose trusted comment is "file tag"; `actions.sh` takes `update.sh` from the signed release assets; the release job signs with the `SERVER_MINISIGN_KEY` secret and refuses to publish without it. |
+| M7 (rest) | `e4f942f6` | Status reports: at most 1500 apps, real package names, labels 100 chars, `lock_reason`/`app_version` clipped. `/security` pages back (`?before=`). (The `/login` username cap and body limit: QA 22 Low 1.) |
+| L5 | `952b4ed1` | The rule name goes into `data-name`; the confirm reads `this.dataset.name`. |
+| L9 (server) | `ff6692bd` | Rust 1.99.0 and cross 0.2.5 pinned in `server-ci.yml` and `server-release.yml`, kept by a test. |
+| L10 (rest) | `41849523` | `main` instead of `master` in the re-install hint and README; no curl piped into `sudo bash` anywhere (download, read, run); keystores, `*.p12`, `*.pk8` and `*.key` in the root `.gitignore`. |
+| L12 (server) | `908757f0` | A fetched command reads "not confirmed yet", after 10 minutes "never confirmed - send it again"; a wipe can't confirm. |
+
+Needs the repo owner (M5), before tagging server 0.24.0:
+- Create the minisign key pair, add the `SERVER_MINISIGN_KEY` secret and pin the public key in `server/deploy/install.sh`
+  and `update.sh` (server/DEPLOY.md, "Release signing", has the exact steps). Until then the scripts refuse every
+  release and the release job refuses to publish.
+- Optional: immutable releases, and the secret in an environment with required reviewers.
+
+Left for the launcher wave: M10's phone side (`getPackageArchiveInfo` against `package_name` and `signer_sha256`,
+`setAppPackageName`, `signerMatches`), L9's Gradle side, L12's explicit receipt; and deleting the Tailscale key after
+the first connect (M12).
