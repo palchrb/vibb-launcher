@@ -601,6 +601,7 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
 | uid mismatch 404 triggers nothing (docstring says rescan) | a failed play reverts to local and refreshes the topology | the code's actual behaviour, made visible and useful |
 | process death keeps polling (sidecar) | the speaker plays on until the next start adopts or a suspension edge stops it | no sidecar (§6.2) |
 | no phone, no calls | pause on a call, resume only if we paused (§6.7, pending the user) | the phone rings |
+| the bookmark adds the sidecar's `stale_s` (a poll's measurement lag, <= 5 s) | the one age term from `measuredAt`, capped at 5 s (`BOOKMARK_AGE_MAX_MS`) | qa-26a-step3a-code L4: at a 15 s cruise the uncapped age reached 25 s at a save tick, pause or hand-off; a speaker paused from the Sonos app would get a bookmark that far ahead |
 
 ## 10. User answers and open questions
 
@@ -1005,3 +1006,42 @@ Open questions: (a) steps on Sonos start at 0 (vibb, §4.5) while the phone's ne
 place - keep vibb's rule, or pass the phone's `startPos` through? (b) picking the room already playing re-transfers
 in vibb; here it is the same-tile rule. (c) Is Media3's 10-minute engaged timeout enough for §3.2's FGS rule, or should
 3b still override `onUpdateNotification` while armed?
+
+### Fix round after QA's code review (qa-26a-step3a-code, 2026-10-11)
+
+QA (`docs/design/qa-26a-step3a-code.md`: 2 High, 3 Medium, 6 Low) built 298/0 with clean lint; every finding is
+fixed in one commit, none skipped. Build: `assembleDebug assembleRelease testDebugUnitTest lintDebug
+-PwarningsAsErrors=true` green, **317 tests, 0 failures** (+19), lint 0 errors and the same 41 warnings; the fake's
+selftest OK.
+- **H1** a skip on a paused (or stopped, stale, not-yet-started) speaker, or while `playAllowed` says no, only moves
+  where the next play starts (`startPending`: the index and the service's start position); the next play starts
+  that item there. Every play the controller sends asks `mayPlay` first (`SonosRenderer` passes
+  `playAllowed(suspendedNow())`): a start, a resume, a step, a natural advance (which then waits at the next item).
+- **H2** a play generation (`gen`), bumped by a load, a clear, a step and every play: a result of an older generation
+  only records what the speaker now holds (`playing`, `ownsSpeaker`), never the index, `pending`, the session, `Lost`
+  or renderer.json. `load` keeps what the speaker holds (re-indexed in the new queue, or "another entry"). A start
+  that fails while our stream plays on this uid is refused like a failed step - "Kan ikke spilles på Sonos", the index
+  back, the renderer stays; only a first start is `Lost`, and `lost()` hands off (an ours-gated Stop) before coming
+  home.
+- **M1** `SonosActor.close()` drains the queued jobs (30 s at most) before cancelling; a hand-off past `HANDOFF_MS`
+  (now 15 s, sized from the budgets queued ahead of it) calls `abandon()`: the bookmark from the last poll and an
+  ours-gated Stop queued behind the busy actor.
+- **M2** one `Mutex` (`switching`) around the command coroutine's dispatch, playback resumption and `lost()`;
+  `toRoom`/`comeHome` also bail out when `renderer` changed under them. The switching decisions are pure
+  (`storedPlan`, `homePlan` in `logic/Queue.kt`, tested).
+- **M3** a cancelled ramp never calls `done` (a timer set during the ramp survives it); the phone's never did.
+- **L1** renderer.json keeps a cut ramp's `volume` with its room (`volume_uid`) across a switch home and the restart
+  reset (`RendererChoice.local`); a room restores only its own.
+- **L2** a refused same-tile resume falls through to the full start. **L3** a play pressed after a pause while a play
+  is in flight queues a resume (the last intent wins). **L4** the bookmark's age term is capped at 5 s (the §9 row
+  above). **L5** the hand-off's `wasPlaying` reads the effective transport (our own pause counts).
+- **L6** tests: TRANSITIONING -> BUFFERING; a disarm -> IDLE and the next play from the bookmark; the player's
+  playlist preconditions as a pure `playlistPlan` (unique uids, the index, an empty playlist only IDLE/ENDED), used by
+  `getState`; `FitTest` measures the room labels (142.5 and 184.7 dp) and fits the four state lines (en and nb,
+  Nunito Bold 12 sp) in the header at 320/360/411 dp; H1, H2 (a/b/c), M1 (the abandon, the actor's drain), M3, L1-L5
+  each have a test; `GuardsTest` pins the paused-skip branch, `mayPlay` before any send, the switch lock and the
+  abandon/drain.
+
+QA's view of the 14 choices: accepted, except #8 for a START (now H2) and #13's side effects (L1 fixed; `onDestroy`
+reporting paused while the speaker plays on stays with 3b's §6.2).
+
