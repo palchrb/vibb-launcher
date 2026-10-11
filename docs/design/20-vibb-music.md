@@ -231,8 +231,12 @@ Also, before any `music-v*` release: the launcher's catalog row must only consid
 - **After an app or phone restart** (user, 2026-10-09; as on the Pi):
   - The last played item and its exact position are remembered, and the "Spilles nå" bar under the carousel and on
     launcher Home is back at once, paused. One tap continues.
-  - No automatic playback on a phone restart: a phone in a pocket must not start making noise. The Pi auto-resumes
-    because powering it on means "play".
+  - No automatic playback on a phone restart: a phone in a pocket must not start making noise. The Pi agrees since
+    2026-08-20 (vibb's owner rule of 2026-08-18): a reboot lands paused on its now-playing screen, and one tap
+    continues. Its one automatic start, the mid-session Bluetooth "blip resume" (vibb `BT_RESUME_S`), is **not**
+    ported (user, 2026-10-11): on the phone the output going pauses and stays paused; headsets that send PLAY when
+    they reconnect resume through the media session as any button would. A review found the rule's edge cases
+    surprise-play after a pause, and the Pi's Bluetooth hardening is a platform workaround Android doesn't need.
 - **Carousel dots**: all the same size, and the current one only changes colour.
 - **Header** (user, 2026-10-09): no "Musikk" title. On the right are two round buttons in the same style: **search** and
   the **bell**.

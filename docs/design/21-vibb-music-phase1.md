@@ -414,6 +414,11 @@ All findings are fixed except as noted; 117 JVM tests (11 new), the server's 361
 - The Room schema stays version 1, changed in place: no build of the app was installed anywhere yet.
 - Device checks added: BT/car-kit PLAY after a queue ended does nothing (no crash); choose "Telefonen", then plug in
   headphones; seek/next before play after a restart; the Nytt notification after a reboot.
+- Device checks added (2026-10-11, from the vibb `pipewire` drift check):
+  - **downloads while playing over Bluetooth on the Jelly Star: listen for stutter.** vibb holds off downloads while
+    anything plays (radio contention on the Pi Zero); if the phone stutters, that is the fallback.
+  - **a Bluetooth headset that drops out mid-play and comes back**: playback stays paused, unless the headset itself
+    sends PLAY on reconnect (then it resumes like a button press). No automatic resume of our own (design 20).
 
 ## Step 3 implementation status (2026-10-10)
 
