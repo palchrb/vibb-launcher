@@ -376,6 +376,9 @@ pub struct TrackedApp {
     /// launcher, `music-v` for the music app. `None` = every release but the monorepo's `server-v*`
     /// and `music-v*` ones (`tracked_apps::newest_matching_release`).
     pub release_tag_prefix: Option<String>,
+    /// SHA-256 (lower-case hex) of the signing certificate, pinned from the first release
+    /// (migrations/0062, security review M10); `None` until then.
+    pub signer_sha256: Option<String>,
 }
 
 impl TrackedApp {
@@ -854,4 +857,9 @@ pub struct TrackedAppUpdate {
     /// SHA-256 (hex) of the file `download_url` serves (design 13 QA #2), `null` until the server
     /// has computed it: the phone checks the whole download against it before installing.
     pub sha256: Option<String>,
+    /// SHA-256 (lower-case hex) of the certificate the app is signed with, pinned from its first
+    /// release (security review M10); `null` until then. With [package_name] (also pinned from
+    /// the APK when the catalog didn't have it), what the phone checks the APK against before it
+    /// installs it (the launcher's side comes with its security wave).
+    pub signer_sha256: Option<String>,
 }

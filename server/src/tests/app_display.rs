@@ -12,6 +12,8 @@ async fn app_display(app: &TestApp, token: &str) -> serde_json::Value {
 }
 
 /// A status report saying these packages are installed (so the device page lists them).
+/// The phone reports `packages` installed, and the parent allows them all (a new phone starts
+/// with only the safe defaults, security review M10).
 async fn report_installed(app: &TestApp, token: &str, packages: &[&str]) {
     let installed: Vec<serde_json::Value> = packages
         .iter()
@@ -28,6 +30,11 @@ async fn report_installed(app: &TestApp, token: &str, packages: &[&str]) {
         )
         .await;
     assert!(res.status.is_success());
+    sqlx::query("UPDATE device_policy SET allowlist_json = ?")
+        .bind(serde_json::to_string(packages).unwrap())
+        .execute(&app.db)
+        .await
+        .unwrap();
 }
 
 /// A catalog row for `package`; returns its id.
@@ -196,7 +203,7 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    // The first report allowlists everything installed: both get a form.
+    // Both allowed: both get a form.
     assert!(page.contains(r#"id="app-com.spotify.music""#), "{page}");
     assert!(page.contains(r#"id="app-org.example.clock""#));
     assert!(page.contains("/static/app-display.js"));

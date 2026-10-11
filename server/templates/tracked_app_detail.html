@@ -72,11 +72,19 @@
         <p class="subtitle">No release synced yet.</p>
         {% endif %}
         {% if app.package_name.is_empty() %}
-        <p class="subtitle">Android package: not detected yet - fills in automatically the first time a device reports this app newly installed.</p>
+        <p class="subtitle">Android package: not known yet - read from the next release's APK.</p>
         {% else %}
-        <p>Android package: <strong>{{ app.package_name }}</strong> <span class="subtitle">(detected automatically, not typed in)</span></p>
+        <p>Android package: <strong>{{ app.package_name }}</strong> <span class="subtitle">(from the APK, never typed in)</span></p>
+        {% endif %}
+        {% if let Some(signer) = app.signer_sha256 %}
+        <p>Signing key (SHA-256): <code style="overflow-wrap:anywhere;">{{ signer }}</code></p>
+        <p class="subtitle">Pinned from the first release: a release of another package, or signed with another key, is refused. The phones get both with the app list.</p>
+        {% else %}
+        <p class="subtitle">Signing key: not pinned yet - taken from the next release.</p>
+        {% endif %}
+        {% if !app.package_name.is_empty() || app.signer_sha256.is_some() %}
         <form method="post" action="/apps/tracked/{{ app.id }}/forget-package-name" style="display:inline;">
-            <button type="submit" class="button-secondary">Wrong app? Forget detected package</button>
+            <button type="submit" class="button-secondary">Wrong app, or its developer changed keys? Forget the package and key</button>
         </form>
         {% endif %}
         {% if let Some(checked) = app.last_checked_at %}

@@ -289,7 +289,8 @@ async fn the_cached_apk_is_streamed_with_its_length() {
 
 /// A catalog app without a package name is matched to the package that newly appeared in the
 /// status report; it is allowlisted and the phone is nudged at once, so it doesn't stay hidden
-/// and suspended until the next backstop sync.
+/// and suspended until the next backstop sync. Only a package the launcher installed counts
+/// (security review M10).
 #[tokio::test]
 async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
     let app = TestApp::new().await;
@@ -304,7 +305,12 @@ async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
     let report = |packages: &[&str]| {
         let installed: Vec<serde_json::Value> = packages
             .iter()
-            .map(|p| serde_json::json!({ "package_name": p, "label": p }))
+            .map(|p| match p.split_once(" from ") {
+                Some((p, installer)) => {
+                    serde_json::json!({ "package_name": p, "label": p, "installer": installer })
+                }
+                None => serde_json::json!({ "package_name": p, "label": p }),
+            })
             .collect();
         serde_json::json!({
             "lock_reason": "none",
@@ -331,10 +337,25 @@ async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
     // Two apps on the first report, so nothing is "the one new package" yet.
     post(report(&["org.example.clock", "org.example.notes"])).await;
     let mut nudges = app.state.command_notify.subscribe();
+    // One new package that the launcher didn't install (none named, or Play): never taken.
+    for claimed in [
+        "com.android.settings",
+        "com.android.settings from com.android.vending",
+    ] {
+        post(report(&["org.example.clock", "org.example.notes", claimed])).await;
+        post(report(&["org.example.clock", "org.example.notes"])).await;
+    }
+    let package: String = sqlx::query_scalar("SELECT package_name FROM tracked_apps WHERE id = ?")
+        .bind(tracked)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(package, "");
+    assert!(nudges.try_recv().is_err());
     post(report(&[
         "org.example.clock",
         "org.example.notes",
-        "io.element.android.x",
+        "io.element.android.x from me.vibb.launcher",
     ]))
     .await;
     assert_eq!(nudges.try_recv().ok(), Some(id));
@@ -359,7 +380,7 @@ async fn a_backfilled_app_is_allowlisted_and_the_phone_nudged() {
     post(report(&[
         "org.example.clock",
         "org.example.notes",
-        "io.element.android.x",
+        "io.element.android.x from me.vibb.launcher",
     ]))
     .await;
     assert!(nudges.try_recv().is_err());
@@ -426,7 +447,7 @@ async fn upload_replaces_the_file_after_the_update_and_delete_removes_the_dir() 
     .unwrap();
     let app_dir = app.state.tracked_apps_dir.join(id.to_string());
 
-    let upload = |label: &'static str, bytes: &'static [u8]| {
+    let upload = |label: &'static str, bytes: &[u8]| {
         let boundary = "XBOUNDARYX";
         let mut body = Vec::new();
         body.extend_from_slice(
@@ -451,7 +472,9 @@ async fn upload_replaces_the_file_after_the_update_and_delete_removes_the_dir() 
             .unwrap()
     };
 
-    let first = app.send(upload("1.0", b"PK\x03\x04first")).await;
+    let first_apk = std::fs::read("testdata/apk/fixture-key1.apk").unwrap();
+    let second_apk = std::fs::read("testdata/apk/fixture-key1-v2.apk").unwrap();
+    let first = app.send(upload("1.0", &first_apk)).await;
     assert_eq!(
         first.location(),
         Some(format!("/apps/tracked/{id}").as_str()),
@@ -465,9 +488,9 @@ async fn upload_replaces_the_file_after_the_update_and_delete_removes_the_dir() 
             .await
             .unwrap();
     assert!(std::path::Path::new(&first_path).starts_with(&app_dir));
-    assert_eq!(std::fs::read(&first_path).unwrap(), b"PK\x03\x04first");
+    assert_eq!(std::fs::read(&first_path).unwrap(), first_apk);
 
-    let second = app.send(upload("1.1", b"PK\x03\x04second!")).await;
+    let second = app.send(upload("1.1", &second_apk)).await;
     assert!(second.status.is_redirection(), "{}", second.text());
     let (path, name, size): (String, Option<String>, Option<i64>) = sqlx::query_as(
         "SELECT latest_release_file_path, latest_release_asset_name, latest_release_asset_size \
@@ -477,7 +500,10 @@ async fn upload_replaces_the_file_after_the_update_and_delete_removes_the_dir() 
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!((name.as_deref(), size), (Some("notes-1.1.apk"), Some(11)));
+    assert_eq!(
+        (name.as_deref(), size),
+        (Some("notes-1.1.apk"), Some(second_apk.len() as i64))
+    );
     // The phones check the whole download against this (design 13 QA #2).
     let sha256: Option<String> =
         sqlx::query_scalar("SELECT latest_release_sha256 FROM tracked_apps WHERE id = ?")
@@ -487,11 +513,11 @@ async fn upload_replaces_the_file_after_the_update_and_delete_removes_the_dir() 
             .unwrap();
     let expected = {
         use sha2::Digest;
-        hex::encode(sha2::Sha256::digest(b"PK\x03\x04second!"))
+        hex::encode(sha2::Sha256::digest(&second_apk))
     };
     assert_eq!(sha256, Some(expected));
     assert!(!std::path::Path::new(&first_path).exists());
-    assert_eq!(std::fs::read(&path).unwrap(), b"PK\x03\x04second!");
+    assert_eq!(std::fs::read(&path).unwrap(), second_apk);
     let page = app
         .get_page(&format!("/apps/tracked/{id}"), &cookie)
         .await

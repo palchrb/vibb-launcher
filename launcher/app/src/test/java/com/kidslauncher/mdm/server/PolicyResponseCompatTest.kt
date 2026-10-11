@@ -324,6 +324,15 @@ class PolicyResponseCompatTest {
             """{"id":4,"name":"Element X","package_name":"","release_tag":"v1@14","download_url":"/x","is_launcher":false}""",
         )
         assertNull(old.sha256)
+        assertNull(old.signerSha256)
+        // Security review M10: the pinned signing key (lower-case hex), null when not pinned.
+        val pinned = ServerJson.decodeFromString(
+            com.kidslauncher.mdm.server.dto.TrackedAppUpdate.serializer(),
+            """{"id":4,"name":"Fixture","package_name":"me.vibb.testfixture","release_tag":"1.0","download_url":"/x","is_launcher":false,"sha256":"ab","signer_sha256":"0796f1809e476a2ce724f1341bcb32d03185b7a202c3469787c5775d65ef4be3"}""",
+        )
+        assertEquals("0796f1809e476a2ce724f1341bcb32d03185b7a202c3469787c5775d65ef4be3", pinned.signerSha256)
+        assertEquals("me.vibb.testfixture", pinned.packageName)
+        assertNull(listed.signerSha256)
         val report = StatusReportRequest(
             lockReason = "NONE",
             kioskEngaged = true,

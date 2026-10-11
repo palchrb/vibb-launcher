@@ -6,6 +6,7 @@ mod admin_auth;
 mod app_display;
 mod backup_secrets;
 mod calls;
+mod catalog_pins;
 mod cleanup;
 mod deploy_scripts;
 mod device_api;

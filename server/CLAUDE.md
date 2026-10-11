@@ -77,6 +77,18 @@ No prior programming experience - build features directly rather than explaining
 
 ## Fail closed
 
+- **A catalog app is pinned to its package and signing key (security review M10, server part).** `src/apk.rs` reads
+  an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate in the v3, else v2,
+  signing block - what `apksigner --print-certs` and the launcher's `SelfUpdate.signers` give). `tracked_apps`
+  `sync_one_app` and the manual upload refuse a release whose package differs from `package_name` or whose signer
+  differs from `signer_sha256` (migration 0062), and pin what the first release has (`store_pins`; a package learned
+  this way is allowlisted where the app is checked); `backfill_pins` (after the hash backfill at startup) pins
+  releases cached before. "Forget the package and key" on the app's page clears both. `TrackedAppUpdate` carries
+  `package_name` and `signer_sha256` (launcher DTO `signerSha256`, `PolicyResponseCompatTest`); the phone's own check
+  (`getPackageArchiveInfo`, `setAppPackageName`, `signerMatches`) is the launcher's security wave. The package-name
+  guess from a status report needs `installer` = the launcher (`installed_by_launcher`). A new phone's first report
+  allowlists only `device_api::SAFE_DEFAULT_APPS` it has (clock, calculator, camera, Vibb music) - never everything
+  installed. Fixtures: `testdata/apk/` (aapt2 + apksigner, throwaway keys, no code).
 - **`GET /api/devices/policy` never answers with a default policy** (`handlers::device_api::build_policy`): a missing `device_policy` row, an unparseable `allowlist_json`, or any DB error is an empty 500 (logged). The launcher treats non-2xx as "no fresh policy" and keeps enforcing its cache. A `NULL` allowlist is still served as `null` (a new device before its first heartbeat); `"[]"` is served as `[]` and means "nothing allowed" on the launcher. Upstream returned `DevicePolicy::default()` (kiosk off, no allowlist) on these errors, which unlocked the phone.
 - **The launcher reports what it did with the policy** (`StatusReportRequest.policy_state`, migration `0021`): `"ok"`, `"cache_corrupt"`, `"rejected_suspect"`, `"fresh_decode_failed"` or `"server_error"` (this server answered 5xx) - anything but `"ok"` (or `NULL` from an older launcher) shows a warning on the device page. `restrictions_paused` reports the launcher's PIN-gated, time-limited "pause all restrictions" switch, also shown as a warning.
 - **Allowlist writes never guess**: `devices::add_to_allowlist`/`remove_from_allowlist` read-modify-write in one transaction (`edit_allowlist`) and return an error on a DB error, a missing policy row or a stored allowlist that isn't valid JSON - `toggle_app` then answers 500 and writes nothing. The first-heartbeat bootstrap in `device_api::status` is one `UPDATE ... WHERE allowlist_json IS NULL`, so a read error can't make it overwrite a parent's list.

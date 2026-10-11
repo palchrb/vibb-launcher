@@ -675,10 +675,17 @@ async fn toggle_app_with_corrupt_allowlist_fails_without_writing() {
 async fn heartbeat_bootstraps_only_a_null_allowlist() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let apps = json!({ "installed_apps": [{ "package_name": "a", "label": "A" }] });
+    // Only the safe defaults among the installed apps (security review M10).
+    let apps = json!({ "installed_apps": [
+        { "package_name": "a", "label": "A" },
+        { "package_name": "com.android.deskclock", "label": "Clock" },
+    ] });
 
     post_status(&app, &token, apps.clone()).await;
-    assert_eq!(allowlist_json(&app, id).await.as_deref(), Some(r#"["a"]"#));
+    assert_eq!(
+        allowlist_json(&app, id).await.as_deref(),
+        Some(r#"["com.android.deskclock"]"#)
+    );
 
     set_allowlist_json(&app, id, Some("[]")).await;
     post_status(&app, &token, apps).await;

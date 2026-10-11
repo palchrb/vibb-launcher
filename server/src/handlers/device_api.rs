@@ -535,6 +535,37 @@ async fn compute_dns_filter_version(
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// What a new phone's allowlist starts with, where it has them (security review M10): a clock, a
+/// calculator, a camera and the Vibb music app. Never Settings, a browser, a file manager or a
+/// store; the parent allows the rest on the phone's page.
+pub(crate) const SAFE_DEFAULT_APPS: [&str; 10] = [
+    "com.google.android.deskclock",
+    "com.android.deskclock",
+    "com.google.android.calculator",
+    "com.android.calculator2",
+    "com.google.android.GoogleCamera",
+    "com.android.camera2",
+    "app.grapheneos.camera",
+    "org.lineageos.aperture",
+    "me.vibb.music",
+    "me.vibb.music.debug",
+];
+
+/// The launcher's application ids (the configured admin component's, and the release and debug
+/// builds'): what an app it installed - a catalog app - names as its installer.
+fn installed_by_launcher(state: &AppState, installer: Option<&str>) -> bool {
+    let Some(installer) = installer else {
+        return false;
+    };
+    let configured = state
+        .config
+        .launcher_admin_component
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    installer == configured || ["me.vibb.launcher", "me.vibb.launcher.debug"].contains(&installer)
+}
+
 /// This device's fully-resolved effective blocklist: every feed the global
 /// default has on (minus this device's overrides that turn one off), plus
 /// any feed this device's override turns on even if the global default has
@@ -887,14 +918,13 @@ pub async fn status(
         }
     }
 
-    // Bootstraps a brand-new device's allowlist to a snapshot of whatever it reports installed on
-    // its very first heartbeat - kiosk_desired is mandatory for every device now (see
-    // handlers::devices), but engaging kiosk still requires a non-empty allowlist
-    // (AppEnforcer.apply's shouldEngageKiosk check client-side), so without this a freshly
-    // enrolled device would sit fully unpinned until an admin manually checked boxes on the Apps
-    // page. Only ever fires once per device - `allowlist_json` being non-null (even "[]") means an
-    // admin or an earlier toggle has already taken ownership of it, so this never overwrites a
-    // real, intentional selection.
+    // A brand-new device's allowlist starts on its first heartbeat (a NULL allowlist is an
+    // unmanaged phone), with only the safe defaults it has ([SAFE_DEFAULT_APPS], security review
+    // M10) - never everything installed, which let in Settings, the browser and the file manager
+    // (and whatever a fake phone claimed to have). "[]" is fine: the launcher pins only itself in
+    // kiosk then. Only ever fires once per device - `allowlist_json` being non-null (even "[]")
+    // means an admin or an earlier toggle has already taken ownership of it, so this never
+    // overwrites a real, intentional selection.
     // One conditional UPDATE, not read-then-write: a read error used to count as "not set" and
     // overwrite the parent's allowlist with every installed app, and a separate read and write
     // raced `toggle_app`.
@@ -903,11 +933,10 @@ pub async fn status(
         .as_ref()
         .filter(|apps| !apps.is_empty())
     {
-        // Play Store/services/GSF are never the parent's to allow (handy step 7, `play`).
         let package_names: Vec<&str> = installed
             .iter()
             .map(|a| a.package_name.as_str())
-            .filter(|p| !crate::play::is_play_core(p))
+            .filter(|p| SAFE_DEFAULT_APPS.contains(p))
             .collect();
         let json =
             serde_json::to_string(&package_names).expect("a list of strings always serializes");
@@ -938,10 +967,11 @@ pub async fn status(
     // by the kid's own device under kiosk mode, with nothing on the admin site showing why.
     //
     // Heuristic, not exact - only fires when this device has exactly one catalog app selected with
-    // no package name on file, and exactly one package newly appeared since its last heartbeat.
-    // Ambiguous if more than one no-package app is mid-install for the same device at once (rare -
-    // an admin adds one, waits for it to land, then adds the next), but even a wrong guess there is
-    // strictly better than the guaranteed-wrong permanent duplicate this replaces.
+    // no package name on file, and exactly one package newly appeared since its last heartbeat,
+    // installed by the launcher itself (security review M10: a phone's report alone - a fake phone
+    // naming com.android.settings - must never put a package on the catalog and every allowlist).
+    // The catalog normally has the package from the APK by then (`tracked_apps::store_pins`); this
+    // covers an APK whose manifest couldn't be read.
     if let Some(installed) = &report.installed_apps {
         let awaiting_package_name: Vec<i64> = sqlx::query_scalar(
             "SELECT ta.id FROM tracked_apps ta \
@@ -966,7 +996,9 @@ pub async fn status(
                 .filter(|a| !previously_installed.contains(&a.package_name))
                 .collect();
 
-            if let [app] = newly_appeared.as_slice() {
+            if let [app] = newly_appeared.as_slice()
+                && installed_by_launcher(&state, app.installer.as_deref())
+            {
                 sqlx::query("UPDATE tracked_apps SET package_name = ? WHERE id = ?")
                     .bind(&app.package_name)
                     .bind(*tracked_app_id)
@@ -1267,6 +1299,7 @@ pub async fn tracked_app_updates(
                 download_url: format!("/api/devices/apps/{}/download", app.id),
                 is_launcher: app.is_launcher,
                 sha256: app.latest_release_sha256,
+                signer_sha256: app.signer_sha256,
             })
         })
         .collect();

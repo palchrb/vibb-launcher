@@ -475,6 +475,7 @@ pub async fn backfill_release_hashes(state: AppState) {
             tracing::warn!(app_id = id, %err, "can't store the cached file's hash");
         }
     }
+    backfill_pins(&state).await;
 }
 
 /// SHA-256 (lower-case hex) of a file, read in 64 KiB pieces. Blocking.
@@ -491,6 +492,147 @@ fn sha256_of_file(path: &std::path::Path) -> std::io::Result<String> {
         digest.update(&buffer[..read]);
     }
     Ok(hex_digest(digest.finalize()))
+}
+
+/// The cached APK's package and signer ([crate::apk]), read off the async threads.
+async fn apk_identity(path: &str) -> Result<crate::apk::ApkIdentity, String> {
+    let path = std::path::PathBuf::from(path);
+    tokio::task::spawn_blocking(move || crate::apk::read_identity(&path))
+        .await
+        .map_err(|err| format!("reading the APK failed: {err}"))?
+}
+
+/// A release must be the app the catalog already knows (security review M10): the same package
+/// (when the catalog has one and the manifest could be read) and the pinned signing key (when one
+/// is pinned - then it must be readable). The first release pins what it has.
+fn check_pins(app: &TrackedApp, identity: &crate::apk::ApkIdentity) -> Result<(), String> {
+    if let Some(package) = &identity.package
+        && !app.package_name.is_empty()
+        && *package != app.package_name
+    {
+        return Err(format!(
+            "refused: the release is the Android package {package}, this app is {} (if the \
+             catalog has it wrong, forget the package name and signing key below)",
+            app.package_name
+        ));
+    }
+    match (&app.signer_sha256, &identity.signer_sha256) {
+        (Some(pinned), Some(signer)) if pinned != signer => Err(
+            "refused: the release is signed with a different key than this app's earlier \
+             releases (if its developer really changed keys, forget the package name and signing \
+             key below)"
+                .to_string(),
+        ),
+        (Some(_), None) => Err(
+            "refused: the release has no APK Signature Scheme v2/v3 signature to check against \
+             this app's signing key"
+                .to_string(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// Once an app's package is known (from its APK), every phone that has the app checked gets it on
+/// its allowlist, as checking it with a known package does - else it would install and stay
+/// suspended. Nudges those phones.
+async fn allow_on_selected_phones(state: &AppState, app_id: i64, package: &str) {
+    let devices: Vec<i64> = match sqlx::query_scalar(
+        "SELECT device_id FROM device_tracked_apps WHERE tracked_app_id = ?",
+    )
+    .bind(app_id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(devices) => devices,
+        Err(err) => {
+            tracing::error!(app_id, %err, "can't list the phones that have the app");
+            return;
+        }
+    };
+    for device_id in devices {
+        match crate::handlers::devices::add_to_allowlist(state, device_id, package).await {
+            Ok(()) => {
+                let _ = state.command_notify.send(device_id);
+            }
+            Err(err) => tracing::error!(device_id, app_id, %err, "can't allowlist the app"),
+        }
+    }
+}
+
+/// Stores the pins a release brought, where the app had none: the package only when the catalog
+/// had none (then allowlisted where the app is checked), the signer only when none is pinned.
+async fn store_pins(state: &AppState, app: &TrackedApp, identity: &crate::apk::ApkIdentity) {
+    let new_package = identity
+        .package
+        .as_deref()
+        .filter(|_| app.package_name.is_empty());
+    let new_signer = identity
+        .signer_sha256
+        .as_deref()
+        .filter(|_| app.signer_sha256.is_none());
+    if new_package.is_none() && new_signer.is_none() {
+        return;
+    }
+    let stored = sqlx::query(
+        "UPDATE tracked_apps SET \
+         package_name = CASE WHEN package_name = '' THEN COALESCE(?, '') ELSE package_name END, \
+         signer_sha256 = COALESCE(signer_sha256, ?) WHERE id = ?",
+    )
+    .bind(new_package)
+    .bind(new_signer)
+    .bind(app.id)
+    .execute(&state.db)
+    .await;
+    match stored {
+        Ok(_) => {
+            if let Some(package) = new_package {
+                allow_on_selected_phones(state, app.id, package).await;
+            }
+        }
+        Err(err) => tracing::error!(app_id = app.id, %err, "can't store the app's pins"),
+    }
+}
+
+/// Pins the package and signer of releases cached before migration 0062, from the cached file
+/// (what the phones have installed). A catalog package that differs from the file's is left as it
+/// is and logged: the next release is then refused until the parent forgets it. Run once at
+/// startup after the hash backfill; best-effort.
+async fn backfill_pins(state: &AppState) {
+    let apps = match sqlx::query_as::<_, TrackedApp>(
+        "SELECT * FROM tracked_apps \
+         WHERE latest_release_file_path IS NOT NULL AND signer_sha256 IS NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(apps) => apps,
+        Err(err) => {
+            tracing::warn!(%err, "can't list the cached files to pin");
+            return;
+        }
+    };
+    for app in apps {
+        let Some(path) = app.latest_release_file_path.as_deref() else {
+            continue;
+        };
+        match apk_identity(path).await {
+            Ok(identity) => {
+                if let Some(package) = &identity.package
+                    && !app.package_name.is_empty()
+                    && *package != app.package_name
+                {
+                    tracing::warn!(
+                        app_id = app.id,
+                        "the cached APK is {package}, the catalog says {} - not pinned",
+                        app.package_name
+                    );
+                    continue;
+                }
+                store_pins(state, &app, &identity).await;
+            }
+            Err(err) => tracing::warn!(app_id = app.id, %err, "can't read the cached APK"),
+        }
+    }
 }
 
 /// Which apps are syncing right now, and how each one's last sync ended (shown on its page). One
@@ -645,6 +787,16 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
                     DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
                 )
             })??;
+    let identity = match apk_identity(&file_path)
+        .await
+        .and_then(|identity| check_pins(&app, &identity).map(|()| identity))
+    {
+        Ok(identity) => identity,
+        Err(err) => {
+            tokio::fs::remove_file(&file_path).await.ok();
+            return Err(err);
+        }
+    };
 
     let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = ?, \
@@ -671,6 +823,7 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
     if !stored {
         return Err("the app was removed during the download".to_string());
     }
+    store_pins(state, &app, &identity).await;
     Ok(())
 }
 
@@ -1104,6 +1257,17 @@ pub async fn upload_tracked_app_release(
         .await;
     }
 
+    let identity = match apk_identity(&file_path)
+        .await
+        .and_then(|identity| check_pins(&app, &identity).map(|()| identity))
+    {
+        Ok(identity) => identity,
+        Err(err) => {
+            tokio::fs::remove_file(&file_path).await.ok();
+            return render_detail(&state, id, Some(err)).await;
+        }
+    };
+
     let sha256 = hex_digest(Sha256::digest(&apk_bytes));
     let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = NULL, \
@@ -1129,6 +1293,7 @@ pub async fn upload_tracked_app_release(
         )
         .await;
     }
+    store_pins(&state, &app, &identity).await;
 
     // Back to the app's page (its own path, so the scroll position is kept and a reload doesn't
     // post the file again).
@@ -1327,15 +1492,15 @@ pub async fn set_enabled(
     Redirect::to(&format!("/apps/tracked/{id}"))
 }
 
-/// Resets a wrongly-detected package name back to empty, letting device_api::status's
-/// auto-backfill try again from the next device that reports this app newly installed - the
-/// escape hatch for update_tracked_app no longer accepting manual package name entry at all (see
-/// that handler's own doc comment for why).
+/// Forgets the app's pins - its package name and signing key (security review M10) - so the next
+/// release (or "Check now") sets them again from its APK: the escape hatch for a wrong package
+/// name and for a developer who really changed keys (update_tracked_app doesn't take a typed
+/// package name - see that handler's own doc comment for why).
 pub async fn forget_package_name(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    sqlx::query("UPDATE tracked_apps SET package_name = '' WHERE id = ?")
+    sqlx::query("UPDATE tracked_apps SET package_name = '', signer_sha256 = NULL WHERE id = ?")
         .bind(id)
         .execute(&state.db)
         .await

@@ -496,6 +496,12 @@ audio from the source.
 - The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, and until a feed has
   loaded once after a start (no internet at boot), phones that use it keep the list they have. The DNS/Filters page
   shows each feed's state.
+- **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
+  (releases already cached are pinned at the first start): a later release of another package or signed with another
+  key is refused, and the app's page says so. If the developer really changed keys, "Forget the package and key" on
+  the app's page lets the next release set them again.
+- **A new phone starts with only its clock, calculator, camera and Vibb Music allowed** (never Settings, a browser or a
+  file manager); allow the rest on its page. Phones already set up keep their lists.
 - Rolling back to 0.23 means restoring the `update.sh` backup: 0.23 refuses a database with migration 0061.
 
 ## Useful commands on the Pi

@@ -1,4 +1,5 @@
 mod admin_auth;
+mod apk;
 mod app_display;
 mod app_downloads;
 mod app_icons;

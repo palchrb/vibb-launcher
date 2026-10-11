@@ -286,18 +286,19 @@ async fn play_core_is_never_in_the_allowlist_ui() {
             { "package_name": "com.android.vending", "label": "Play Store", "preinstalled": true },
             { "package_name": "com.google.android.gms", "label": "Play services", "preinstalled": true },
             { "package_name": "com.google.android.gsf", "label": "GSF", "preinstalled": true },
-            { "package_name": "org.example.app", "label": "Example", "preinstalled": false }
+            { "package_name": "org.example.app", "label": "Example", "preinstalled": false },
+            { "package_name": "com.android.deskclock", "label": "Clock", "preinstalled": true }
         ] }),
     )
     .await;
-    // The first-heartbeat bootstrap leaves them out.
+    // The first-heartbeat bootstrap leaves them out (it takes only the safe defaults).
     let allowlist: Option<String> =
         sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
             .bind(id)
             .fetch_one(&app.db)
             .await
             .unwrap();
-    assert_eq!(allowlist.as_deref(), Some(r#"["org.example.app"]"#));
+    assert_eq!(allowlist.as_deref(), Some(r#"["com.android.deskclock"]"#));
 
     let page = device_page(&app, id).await;
     assert!(page.contains("org.example.app"));
@@ -328,7 +329,7 @@ async fn play_core_is_never_in_the_allowlist_ui() {
             .fetch_one(&app.db)
             .await
             .unwrap();
-    assert_eq!(allowlist.as_deref(), Some(r#"["org.example.app"]"#));
+    assert_eq!(allowlist.as_deref(), Some(r#"["com.android.deskclock"]"#));
     let pending: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_pending_uninstalls")
         .fetch_one(&app.db)
         .await
