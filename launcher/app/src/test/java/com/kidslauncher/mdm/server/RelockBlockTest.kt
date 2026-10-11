@@ -81,6 +81,9 @@ class RelockBlockTest {
         assertEquals(mapOf(CHAT to setOf(REAL)), check.blocked)
         assertEquals(setOf(CHAT), check.newlyBlocked)
         assertEquals(setOf(CHAT, "com.example.game"), check.reported)
+        // Apps unmanaged (calls-only phone): nothing is hidden, so nothing is blocked or reported.
+        val unmanaged = signerCheck(listOf(pkg(signers = setOf(EVIL), installer = SIDELOAD)), emptyMap(), null, emptyMap(), trusted)
+        assertTrue(unmanaged.blocked.isEmpty() && unmanaged.reported.isEmpty())
         // No snapshot (an adopted window): nothing new is judged.
         assertTrue(signerCheck(listOf(pkg(signers = setOf(EVIL))), null, listOf(CHAT), emptyMap(), trusted).blocked.isEmpty())
     }

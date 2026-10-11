@@ -195,7 +195,8 @@ fun sameSigner(expected: Set<String>, now: Set<String>): Boolean = now.any { it 
 /**
  * Step 2 for every non-system package [installed] now. [snapshot] `null` = none was taken (an
  * adopted window): only the existing blocks are re-checked. [lockedSigners]: M10's per-package
- * signer (none yet); it wins over the snapshot's and a block's.
+ * signer (none yet); it wins over the snapshot's and a block's. [allowlist] `null` = apps aren't
+ * managed: nothing is hidden there, so nothing is blocked or reported.
  */
 fun signerCheck(
     installed: List<InstalledPackage>,
@@ -205,7 +206,8 @@ fun signerCheck(
     trustedInstallers: Set<String>,
     lockedSigners: Map<String, Set<String>> = emptyMap(),
 ): SignerCheck {
-    val allowed = allowlist.orEmpty().toSet()
+    if (allowlist == null) return SignerCheck(blockedBefore, emptySet(), emptySet())
+    val allowed = allowlist.toSet()
     val blocked = mutableMapOf<String, Set<String>?>()
     val newly = mutableSetOf<String>()
     val reported = mutableSetOf<String>()
