@@ -49,11 +49,58 @@ object MissedCallNotifier {
     private val lock = Any()
     private var queued = false
     private var queuedMayPost = false
+    private var queuedMayClear = false
     private val waiting = mutableListOf<() -> Unit>()
 
-    /** What ours shows now (only this thread writes it); `null` after a cancel or a restart. */
+    /** What ours shows now (only this thread writes it); `null` after a cancel or a restart. The
+     * lock's glance page shows exactly this (design 25 §2.4): every change goes to [listeners]. */
     @Volatile
     private var lastPosted: MissedCallNotice? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            main.post { listeners.forEach { guarded(it) } }
+        }
+
+    /** What ours shows now: set on a post, cleared on every cancel, swipe or removal (design 25). */
+    val current: MissedCallNotice? get() = lastPosted
+
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val listeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+
+    /** [listener] runs on the main thread after every change of [current]. */
+    fun addListener(listener: () -> Unit) = listeners.add(listener)
+    fun removeListener(listener: () -> Unit) = listeners.remove(listener)
+
+    /** A glance fault must never crash the process (design 25 QA Medium 2): every listener is caught. */
+    private fun guarded(listener: () -> Unit) {
+        try {
+            listener()
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "A missed-call listener failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * A new process (design 25 §2.4): one recompute that never posts anew and never clears - a
+     * notification still on screen is re-posted silently ([noticeStep]: shown, nothing remembered)
+     * and so known again as [current]; one the current view wouldn't show (a no-calls time rule) is
+     * left as it is. From `Application.initRest`.
+     */
+    fun refreshAtStart(context: Context) = recompute(context, mayPost = false, mayClear = false)
+
+    /**
+     * Ours left the shade without our code knowing (QA Low 9: snoozed from the shade, cancelled by
+     * the system): our notification listener saw id [MISSED_CALL_NOTIFICATION_ID] removed. On this
+     * thread, after anything queued: [current] goes only when ours really isn't shown any more (a
+     * removal can trail our own re-post).
+     */
+    fun removedFromShade(context: Context) {
+        val app = context.applicationContext
+        runThenDone(null) {
+            if (!shown(app)) lastPosted = null
+        }
+    }
 
     /** Telecom's broadcast: [count] 0 = its count was cleared, anything else = look at the call log
      * again. [done] finishes the receiver's `goAsync` once the work for it has run. */
@@ -133,26 +180,30 @@ object MissedCallNotifier {
         }
     }
 
-    private fun recompute(context: Context, mayPost: Boolean, done: (() -> Unit)? = null) {
+    private fun recompute(context: Context, mayPost: Boolean, done: (() -> Unit)? = null, mayClear: Boolean = true) {
         val app = context.applicationContext
         synchronized(lock) {
             if (done != null) waiting += done
             queuedMayPost = queuedMayPost || mayPost
+            queuedMayClear = queuedMayClear || mayClear
             if (queued) return
             queued = true
         }
         executor.execute {
             val callbacks: List<() -> Unit>
             val post: Boolean
+            val clear: Boolean
             synchronized(lock) {
                 queued = false
                 post = queuedMayPost
                 queuedMayPost = false
+                clear = queuedMayClear
+                queuedMayClear = false
                 callbacks = waiting.toList()
                 waiting.clear()
             }
             try {
-                recomputeNow(app, post)
+                recomputeNow(app, post, clear)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Missed-call recompute failed", e)
             } finally {
@@ -161,7 +212,7 @@ object MissedCallNotifier {
         }
     }
 
-    private fun recomputeNow(context: Context, mayPost: Boolean) {
+    private fun recomputeNow(context: Context, mayPost: Boolean, mayClear: Boolean) {
         // The in-call service runs before the first unlock too: no call log, no CE prefs then.
         if (!CallPolicyStore.userUnlocked(context)) return
         CallPolicyStore.ensureLoaded(context)
@@ -182,6 +233,7 @@ object MissedCallNotifier {
             notice = notice,
             mayMarkRead = rules?.callsEnabled == true,
             mayPost = mayPost,
+            mayClear = mayClear,
             shown = shown(context),
             lastPosted = lastPosted,
             unreadUpToId = unread.newestId,

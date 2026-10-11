@@ -14,8 +14,11 @@ import android.util.Log
  * messaging person's key and the senders' keys (MXIDs) and the group flag, to learn a phone-book
  * contact's DM room - kept only in CE prefs ([com.kidslauncher.mdm.calls.ElementRoomStore]).
  * Since design 17 [VoipCallReader] reads call-shaped notifications (category, channel, flags and
- * the call intents, never text) for VoIP calls over the PIN lock.
- * Never titles, names or message bodies, and no key, tag or MXID is ever logged or reported
+ * the call intents, never text) for VoIP calls over the PIN lock. Since design 25 [GlanceReader] -
+ * the one reader of names and texts, only of the apps the parent ticked for the lock's glance page,
+ * kept in memory only ([GlanceStore]) - gets every post with its ranking, every removal, ranking
+ * update, connect and disconnect; this class itself still reads none of it.
+ * Here: never titles, names or message bodies, and no key, tag or MXID is ever logged or reported
  * ([NotificationRuleRuntime] keeps package + channel counts only). Needs notification-listener
  * access, granted with adb at provisioning (see [BadgeStore.accessGranted]); without it Android
  * never binds this service: no badges, no auto-cancel, no learned rooms. Not direct-boot-aware.
@@ -25,12 +28,14 @@ class BadgeListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         NotificationRuleRuntime.attach(this)
         sweep()
+        GlanceReader.connected(this)
     }
 
     override fun onListenerDisconnected() {
         NotificationRuleRuntime.detach(this)
         BadgeStore.update(emptyMap())
         VoipCallReader.disconnected(this)
+        GlanceReader.disconnected()
     }
 
     override fun onDestroy() {
@@ -47,9 +52,30 @@ class BadgeListenerService : NotificationListenerService() {
         recount()
     }
 
+    /** The framework calls this one (its default calls the one-argument form above); the glance
+     * reader gets the ranking of the same post - a suspended app's new notification is no row (QA
+     * Medium 1). */
+    override fun onNotificationPosted(sbn: StatusBarNotification?, rankingMap: RankingMap?) {
+        super.onNotificationPosted(sbn, rankingMap)
+        sbn?.let { GlanceReader.posted(this, it, rankingMap) }
+    }
+
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        sbn?.let { VoipCallReader.removed(this, it) }
+        sbn?.let {
+            VoipCallReader.removed(this, it)
+            GlanceReader.removed(it)
+            // Our missed-call notification left the shade (snoozed, cancelled by the system): the
+            // glance page shows what it shows (design 25 QA Low 9).
+            if (it.packageName == packageName && it.id == com.kidslauncher.mdm.MISSED_CALL_NOTIFICATION_ID) {
+                com.kidslauncher.mdm.calls.MissedCallNotifier.removedFromShade(this)
+            }
+        }
         recount()
+    }
+
+    override fun onNotificationRankingUpdate(rankingMap: RankingMap?) {
+        super.onNotificationRankingUpdate(rankingMap)
+        GlanceReader.rankingUpdate(rankingMap)
     }
 
     /** Learns from and applies the rule to every active notification (connect, and after a

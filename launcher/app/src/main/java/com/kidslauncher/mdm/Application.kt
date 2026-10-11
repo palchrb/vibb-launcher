@@ -356,6 +356,10 @@ class Application : android.app.Application() {
         com.kidslauncher.mdm.lock.PinLockRuntime.init(this)
         // Vibb music (design 21 step 4): the volume cap, and the player's "in front" ends at screen-off.
         com.kidslauncher.mdm.music.MusicMedia.init(this)
+        // The lock's glance page (design 25): the parent's choice from the cached policy (off the
+        // main thread), and our missed-call notification known again if it is still on screen.
+        com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()
+        com.kidslauncher.mdm.calls.MissedCallNotifier.refreshAtStart(this)
 
         // The anchor service: every background sync and the SSE stream (the only nudge since
         // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.
