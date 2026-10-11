@@ -27,8 +27,13 @@ class WindowRelockPlanTest {
         var applyThrows = false
         var listsOk = true
         var proxies = 0
+        var proxiesLeft = 0
         var certs = 0
+        var certsLeft = 0
         var certsThrow = false
+        /** What the resets got as the start's: `null` = no snapshot. */
+        var proxiesAtStart: Map<String, String>? = null
+        var certsAtStart: Set<String>? = null
         var detected = RelockDetections(false, false, emptyList(), emptyList(), emptyList(), emptyList(), false)
         var finishedReopened: Boolean? = null
         var finishedAtStart: Boolean? = null
@@ -60,14 +65,16 @@ class WindowRelockPlanTest {
             if (applyThrows) throw IllegalStateException("apply")
         }
         override fun permittedListsOk() = listsOk
-        override fun clearProxies(): Int {
+        override fun clearProxies(atStart: Map<String, String>?): ResetCount {
             calls += "proxies"
-            return proxies
+            proxiesAtStart = atStart
+            return ResetCount(proxies, proxiesLeft)
         }
-        override fun removeCaCerts(): Int {
+        override fun removeCaCerts(atStart: Set<String>?): ResetCount {
             calls += "certs"
+            certsAtStart = atStart
             if (certsThrow) throw SecurityException("certs")
-            return certs
+            return ResetCount(certs, certsLeft)
         }
         override fun regrantNotifications() {
             calls += "notifications"
@@ -319,8 +326,57 @@ class WindowRelockPlanTest {
         assertFalse(report.credentialRemoved)
         assertFalse(report.credentialLeft)
         assertTrue(report.blocked.isEmpty())
+        // No snapshot of certificates and proxies: every one goes, as before (QA Low 4).
+        assertNull(phone.certsAtStart)
+        assertNull(phone.proxiesAtStart)
         assertNull(adoptedMarker(RelockMarker(pending = true), setOf(WindowKind.PAUSE)))
         assertNull(adoptedMarker(RelockMarker(), emptySet()))
+    }
+
+    @Test
+    fun `only the certificates and proxies added in the window go, and what stays is a failure (QA Low 4, 9)`() {
+        val school = "5c" + "0".repeat(62)
+        open(WindowKind.PAUSE, RelockStart(false, emptyMap(), emptySet(), caCerts = setOf(school), proxies = mapOf("\"School\"" to "proxy.school:3128 ")))
+        open(WindowKind.OVERRIDE)
+        end(WindowKind.PAUSE)
+        end(WindowKind.OVERRIDE)
+        phone.certs = 1
+        phone.certsLeft = 1
+        phone.proxies = 2
+        val first = relock()
+        // The first window's start is what the resets compare with.
+        assertEquals(setOf(school), phone.certsAtStart)
+        assertEquals(mapOf("\"School\"" to "proxy.school:3128 "), phone.proxiesAtStart)
+        val report = first.report!!
+        // The removed one counts; the one left is the step's failure, and the rest still ran.
+        assertEquals(1, report.caCertsRemoved)
+        assertEquals(2, report.proxiesCleared)
+        assertEquals(listOf(RelockFailure.CA_CERTS), report.failures)
+        assertTrue(first.cleared)
+        assertNull(store.caCertsAtStart())
+        assertNull(store.proxiesAtStart())
+
+        // A proxy updateNetwork refused is a failure too.
+        open(WindowKind.PAUSE)
+        end(WindowKind.PAUSE)
+        phone.certsLeft = 0
+        phone.proxiesLeft = 1
+        assertEquals(listOf(RelockFailure.PROXIES), relock().report!!.failures)
+    }
+
+    @Test
+    fun `the resets keep what was there at the first window's start`() {
+        val school = "5c" + "0".repeat(62)
+        val added = "ad" + "0".repeat(62)
+        assertEquals(setOf(added), caCertsToRemove(listOf(school, added), setOf(school)))
+        assertEquals(emptySet<String>(), caCertsToRemove(listOf(school), setOf(school)))
+        assertEquals(setOf(school, added), caCertsToRemove(listOf(school, added), null))
+        val start = mapOf("\"School\"" to "proxy.school:3128 ")
+        assertTrue(proxyStays("\"School\"", "proxy.school:3128 ", start))
+        // Changed in the window, set on another network, or no snapshot: cleared.
+        assertFalse(proxyStays("\"School\"", "10.0.0.2:8080 ", start))
+        assertFalse(proxyStays("\"Home\"", "proxy.school:3128 ", start))
+        assertFalse(proxyStays("\"School\"", "proxy.school:3128 ", null))
     }
 
     @Test

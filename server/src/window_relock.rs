@@ -312,7 +312,7 @@ pub fn relock_notes(
     );
     still.extend(r.admins_enabled.iter().map(|p| format!("device admin {p}")));
     if r.proxy_left {
-        still.push("a proxy on mobile data".to_string());
+        still.push("a proxy on a network (mobile data or Wi-Fi)".to_string());
     }
     if r.credential_left {
         still.push("an Android screen lock the child set (it couldn't be removed)".to_string());
@@ -371,7 +371,7 @@ pub fn log_line(device_id: i64, r: &RelockReport) -> String {
         }
     }
     if r.proxy_left {
-        parts.push("a proxy left on mobile data".to_string());
+        parts.push("a proxy left on a network".to_string());
     }
     if r.credential_left {
         parts.push("an Android screen lock left".to_string());
@@ -485,7 +485,7 @@ mod tests {
             vec![
                 "When the phone locked again at 2025-10-10 12:40 UTC (3 h ago), because its time was up, it removed 2 Wi-Fi proxies, 1 certificate and an Android screen lock the child had set.",
                 "Blocked: com.example.app (signing key 3f2a0000…0000c0de), com.example.game - installed or replaced from outside Play while it was open, or signed with another key, so ticking it under Apps doesn't show it. If one is yours and its key is the one you expect, tick it under Apps and press \"Allow these apps\".",
-                "Still on: accessibility service com.evil.ally; notification access com.evil.reader; device admin com.evil.admin; a proxy on mobile data.",
+                "Still on: accessibility service com.evil.ally; notification access com.evil.reader; device admin com.evil.admin; a proxy on a network (mobile data or Wi-Fi).",
                 "Turned off and can't be turned back on remotely: com.android.inputmethod.latin - turn them on in the phone's Settings during a pause.",
                 "The launcher's notifications are off.",
                 "Steps that failed on the phone: ca_certs.",

@@ -391,3 +391,19 @@ fun keptInputMethods(enabled: Set<String>, system: Set<String>, allowlist: Colle
  * doesn't count, `null` = all. */
 fun permittedListChanged(current: List<String>?, wanted: List<String>?): Boolean =
     if (current == null || wanted == null) current != wanted else current.toSet() != wanted.toSet()
+
+/** What one reset did: [done] removed or cleared, [left] still there afterwards (a failure). */
+data class ResetCount(val done: Int, val left: Int)
+
+/**
+ * The user CA certificates the relock removes (fix round QA Low 4): those added since the first
+ * window's start, by their SHA-256. Without a start snapshot (an adopted window, or it couldn't be
+ * read) every one goes, as before - on calls-only phones too: the rule is the window's, not the
+ * allowlist's.
+ */
+fun caCertsToRemove(now: Collection<String>, atStart: Set<String>?): Set<String> =
+    if (atStart == null) now.toSet() else now.toSet() - atStart
+
+/** A saved Wi-Fi network's proxy stays when it is the one the network had at the first window's
+ * start (by SSID); one set or changed in the window is cleared, and every one without a snapshot. */
+fun proxyStays(ssid: String, proxy: String, atStart: Map<String, String>?): Boolean = atStart?.get(ssid) == proxy

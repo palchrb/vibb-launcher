@@ -75,9 +75,11 @@ class WindowRelockCallersTest {
 
     @Test
     fun `only the relock removes a credential, certificates or proxies`() {
-        for (token in listOf("resetPasswordWithToken(", "uninstallAllUserCaCerts(", "updateNetwork(")) {
+        for (token in listOf("resetPasswordWithToken(", "uninstallCaCert(", "updateNetwork(")) {
             assertEquals(token, setOf("WindowRelock.kt"), sources.filterValues { token in it }.keys.map { File(it).name }.toSet())
         }
+        // Only what the window added goes (fix round QA Low 4): never all of them at once.
+        assertTrue(sources.values.none { "uninstallAllUserCaCerts(" in it })
     }
 
     @Test

@@ -36,6 +36,8 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
         private const val START_MS = "start_ms"
         private const val CATALOG_PINS = "catalog_pins"
         private const val ALLOWED = "allowed"
+        private const val CA_AT_START = "ca_at_start"
+        private const val PROXIES_AT_START = "proxies_at_start"
 
         private val SNAPSHOT_SERIALIZER = MapSerializer(String.serializer(), PackageState.serializer())
         private val NAMES = ListSerializer(String.serializer())
@@ -65,6 +67,12 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
 
     fun disabledAtStart(): Set<String>? = decode(DISABLED_AT_START) { ServerJson.decodeFromString(NAMES, it).toSet() }
 
+    /** The user CA certificates (SHA-256) at the first window's start; `null` = no snapshot. */
+    fun caCertsAtStart(): Set<String>? = decode(CA_AT_START) { ServerJson.decodeFromString(NAMES, it).toSet() }
+
+    /** The saved Wi-Fi networks' proxies at the first window's start (SSID -> proxy); `null` = no snapshot. */
+    fun proxiesAtStart(): Map<String, String>? = decode(PROXIES_AT_START) { ServerJson.decodeFromString(PINS_SERIALIZER, it) }
+
     /** When the first window opened (wall clock); `null` = unknown. */
     fun startMs(): Long? = if (prefs.contains(START_MS)) prefs.getLong(START_MS, 0L) else null
 
@@ -86,6 +94,8 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
             editor.putBoolean(SECURE_AT_START, start.secure)
             putOrRemove(editor, SNAPSHOT, start.packages?.let { ServerJson.encodeToString(SNAPSHOT_SERIALIZER, it) })
             putOrRemove(editor, DISABLED_AT_START, start.disabled?.let { ServerJson.encodeToString(NAMES, it.sorted()) })
+            putOrRemove(editor, CA_AT_START, start.caCerts?.let { ServerJson.encodeToString(NAMES, it.sorted()) })
+            putOrRemove(editor, PROXIES_AT_START, start.proxies?.let { ServerJson.encodeToString(PINS_SERIALIZER, it) })
         }
         return editor.commit()
     }
@@ -135,6 +145,8 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
                 .remove(START_MS)
                 .remove(SNAPSHOT)
                 .remove(DISABLED_AT_START)
+                .remove(CA_AT_START)
+                .remove(PROXIES_AT_START)
         }
         editor.commit()
         !after.pending
@@ -156,8 +168,16 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
 }
 
 /** The first window's start state ([takesStartSnapshot]): when it opened, whether the phone had an
- * Android credential, the non-system packages and the disabled system packages. */
-data class RelockStart(val secure: Boolean, val packages: Map<String, PackageState>?, val disabled: Set<String>?, val atMs: Long = 0L)
+ * Android credential, the non-system packages, the disabled system packages, the user CA
+ * certificates and the Wi-Fi proxies (`null` = couldn't be read). */
+data class RelockStart(
+    val secure: Boolean,
+    val packages: Map<String, PackageState>?,
+    val disabled: Set<String>?,
+    val atMs: Long = 0L,
+    val caCerts: Set<String>? = null,
+    val proxies: Map<String, String>? = null,
+)
 
 /** What a relock needs from the phone: WindowRelock's implementation reads and acts on Android;
  * WindowRelockPlanTest fakes it. Each call may throw - the step is then a failure. */
@@ -192,11 +212,13 @@ interface RelockPlatform {
     /** The last apply() set its permitted accessibility and keyboard lists. */
     fun permittedListsOk(): Boolean
 
-    /** Wi-Fi proxies cleared. */
-    fun clearProxies(): Int
+    /** The saved Wi-Fi networks' proxies set or changed since [atStart] ([proxyStays]) cleared;
+     * [ResetCount.left] = those `updateNetwork` refused. */
+    fun clearProxies(atStart: Map<String, String>?): ResetCount
 
-    /** User CA certificates removed (the count before). */
-    fun removeCaCerts(): Int
+    /** The user CA certificates added since [atStart] ([caCertsToRemove]) removed one by one, then
+     * read again (QA Low 9): [ResetCount.done] = gone, [ResetCount.left] = still there. */
+    fun removeCaCerts(atStart: Set<String>?): ResetCount
 
     fun regrantNotifications()
 
@@ -276,9 +298,17 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
         }
     }
     report = withStep(report, RelockFailure.PERMITTED_LISTS, !platform.permittedListsOk())
-    // 4. The resets.
-    step(RelockFailure.PROXIES) { report = withResets(report, platform.clearProxies(), 0, false, emptyList()) }
-    step(RelockFailure.CA_CERTS) { report = withResets(report, 0, platform.removeCaCerts(), false, emptyList()) }
+    // 4. The resets: only what the window added (QA Low 4); what couldn't go is the step's failure.
+    step(RelockFailure.PROXIES) {
+        val proxies = platform.clearProxies(store.proxiesAtStart())
+        report = withResets(report, proxies.done, 0, false, emptyList())
+        if (proxies.left > 0) throw IllegalStateException("${proxies.left} Wi-Fi proxies left")
+    }
+    step(RelockFailure.CA_CERTS) {
+        val certs = platform.removeCaCerts(store.caCertsAtStart())
+        report = withResets(report, 0, certs.done, false, emptyList())
+        if (certs.left > 0) throw IllegalStateException("${certs.left} certificates left")
+    }
     step(RelockFailure.NOTIFICATIONS) { platform.regrantNotifications() }
     // 5. What is still on.
     step(RelockFailure.DETECTIONS) {

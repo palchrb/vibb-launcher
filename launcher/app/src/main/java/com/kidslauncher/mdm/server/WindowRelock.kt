@@ -11,6 +11,9 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.ProxyInfo
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
@@ -37,6 +40,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Date
 import java.util.concurrent.CopyOnWriteArraySet
@@ -156,6 +160,7 @@ object WindowRelock {
         notifyListeners()
     }
 
+    @Suppress("DEPRECATION") // WifiConfiguration's proxy and SSID
     private fun startState(app: Context): RelockStart {
         val packages = try {
             installedPackages(app, withInstaller = false).associate { it.name to PackageState(it.signers, it.updatedAt) }
@@ -168,7 +173,64 @@ object WindowRelock {
         } catch (e: Exception) {
             null
         }
-        return RelockStart(secure = deviceSecure(app), packages = packages, disabled = disabled, atMs = System.currentTimeMillis())
+        val dpm = dpm(app)?.takeIf { it.isDeviceOwnerApp(app.packageName) }
+        val caCerts = try {
+            dpm?.getInstalledCaCerts(admin(app))?.map { sha256Hex(it) }?.toSet()
+        } catch (e: Exception) {
+            null
+        }
+        val proxies = try {
+            // Wi-Fi configs need location (QA #3): only for the first window, and it is put back.
+            dpm?.let { d -> withWifiConfigs(app, d) { _, configs -> configs.mapNotNull { c -> c.httpProxy?.let { c.SSID.orEmpty() to proxyKey(it) } }.toMap() } }
+        } catch (e: Exception) {
+            null
+        }
+        return RelockStart(
+            secure = deviceSecure(app),
+            packages = packages,
+            disabled = disabled,
+            atMs = System.currentTimeMillis(),
+            caCerts = caCerts,
+            proxies = proxies,
+        )
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).toHex()
+
+    /** A proxy as compared with the start's: the PAC URL, or host:port and the exclusions. */
+    private fun proxyKey(proxy: ProxyInfo): String {
+        val pac = proxy.pacFileUrl
+        return if (pac != null && pac != Uri.EMPTY) "pac $pac" else "${proxy.host}:${proxy.port} ${proxy.exclusionList.orEmpty().joinToString(",")}"
+    }
+
+    /**
+     * Runs [block] on the saved Wi-Fi networks. The Wi-Fi config APIs need location on and fine
+     * location granted (QA #3), so both are switched on around it and location restored; no fix
+     * is taken. A permission granted here stays granted - revoking a runtime permission kills our
+     * process - only its policy state goes back. Device owner only.
+     */
+    @Suppress("DEPRECATION")
+    private fun <T> withWifiConfigs(app: Context, dpm: DevicePolicyManager, block: (WifiManager, List<android.net.wifi.WifiConfiguration>) -> T): T? {
+        val wm = app.getSystemService(WifiManager::class.java) ?: return null
+        val admin = admin(app)
+        val fine = android.Manifest.permission.ACCESS_FINE_LOCATION
+        val locationWasOn = QuickControls.isLocationEnabled(app)
+        val fineGranted = ContextCompat.checkSelfPermission(app, fine) == PackageManager.PERMISSION_GRANTED
+        val fineState = dpm.getPermissionGrantState(admin, app.packageName, fine)
+        try {
+            if (!fineGranted) QuickControls.selfGrantPermission(app, dpm, admin, fine)
+            if (!locationWasOn) QuickControls.setLocationEnabled(dpm, admin, true)
+            return block(wm, wm.configuredNetworks.orEmpty())
+        } finally {
+            if (!locationWasOn) QuickControls.setLocationEnabled(dpm, admin, false)
+            if (!fineGranted && fineState != DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED) {
+                try {
+                    dpm.setPermissionGrantState(admin, app.packageName, fine, fineState)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Couldn't put the location permission's state back", e)
+                }
+            }
+        }
     }
 
     /** §1.5: 32 random bytes, stored first (CE prefs), set only while it isn't active and the phone
@@ -446,46 +508,47 @@ object WindowRelock {
 
         override fun permittedListsOk() = AppEnforcer.permittedListsOk
 
+        /** The Wi-Fi proxies that are fine on a Wi-Fi network after [clearProxies]: the start's,
+         * and those just cleared - the network's link may not show the clear yet (QA Low 8). */
+        private val wifiProxiesOk = mutableSetOf<String>()
+
         /**
-         * Every saved Wi-Fi network's proxy (manual or PAC) goes: `setHttpProxy(null)` +
-         * `updateNetwork` (a device owner may, AOSP `canModifyProxySettings`). The Wi-Fi config
-         * APIs need location on and fine location granted (QA #3), so both are switched on around it
-         * and location restored; no fix is taken. A permission granted here stays granted -
-         * revoking a runtime permission kills our process - only its policy state goes back.
+         * A saved Wi-Fi network's proxy (manual or PAC) set or changed in the window goes:
+         * `setHttpProxy(null)` + `updateNetwork` (a device owner may, AOSP
+         * `canModifyProxySettings`); one it had at the window's start stays (QA Low 4).
          */
         @Suppress("DEPRECATION")
-        override fun clearProxies(): Int {
-            val wm = app.getSystemService(WifiManager::class.java) ?: return 0
-            val fine = android.Manifest.permission.ACCESS_FINE_LOCATION
-            val locationWasOn = QuickControls.isLocationEnabled(app)
-            val fineGranted = ContextCompat.checkSelfPermission(app, fine) == PackageManager.PERMISSION_GRANTED
-            val fineState = dpm.getPermissionGrantState(admin, app.packageName, fine)
-            try {
-                if (!fineGranted) QuickControls.selfGrantPermission(app, dpm, admin, fine)
-                if (!locationWasOn) QuickControls.setLocationEnabled(dpm, admin, true)
-                var cleared = 0
-                for (config in wm.configuredNetworks.orEmpty()) {
-                    if (config.httpProxy == null) continue
-                    config.httpProxy = null
-                    if (wm.updateNetwork(config) != -1) cleared++ else Log.w(LOG_TAG, "Couldn't clear a Wi-Fi proxy")
+        override fun clearProxies(atStart: Map<String, String>?): ResetCount = withWifiConfigs(app, dpm) { wm, configs ->
+            var cleared = 0
+            var left = 0
+            for (config in configs) {
+                val proxy = config.httpProxy?.let { proxyKey(it) } ?: continue
+                if (proxyStays(config.SSID.orEmpty(), proxy, atStart)) {
+                    wifiProxiesOk += proxy
+                    continue
                 }
-                return cleared
-            } finally {
-                if (!locationWasOn) QuickControls.setLocationEnabled(dpm, admin, false)
-                if (!fineGranted && fineState != DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED) {
-                    try {
-                        dpm.setPermissionGrantState(admin, app.packageName, fine, fineState)
-                    } catch (e: Exception) {
-                        Log.w(LOG_TAG, "Couldn't put the location permission's state back", e)
-                    }
+                config.httpProxy = null
+                if (wm.updateNetwork(config) != -1) {
+                    cleared++
+                    wifiProxiesOk += proxy
+                } else {
+                    left++
+                    Log.w(LOG_TAG, "Couldn't clear a Wi-Fi proxy")
                 }
             }
-        }
+            ResetCount(cleared, left)
+        } ?: ResetCount(0, 0)
 
-        override fun removeCaCerts(): Int {
-            val count = dpm.getInstalledCaCerts(admin).size
-            if (count > 0) dpm.uninstallAllUserCaCerts(admin)
-            return count
+        /** `uninstallCaCert` per certificate added in the window (QA Low 4); KeyChain errors are
+         * swallowed by the platform, so the list is read again (QA Low 9). */
+        override fun removeCaCerts(atStart: Set<String>?): ResetCount {
+            val before = dpm.getInstalledCaCerts(admin).associateBy { sha256Hex(it) }
+            val remove = caCertsToRemove(before.keys, atStart)
+            if (remove.isEmpty()) return ResetCount(0, 0)
+            for (hash in remove) dpm.uninstallCaCert(admin, before.getValue(hash))
+            val after = dpm.getInstalledCaCerts(admin).map { sha256Hex(it) }.toSet()
+            val left = remove.count { it in after }
+            return ResetCount(remove.size - left, left)
         }
 
         override fun regrantNotifications() =
@@ -494,8 +557,14 @@ object WindowRelock {
         override fun detect(disabledAtStart: Set<String>?): RelockDetections {
             val ours = app.packageName
             val cm = app.getSystemService(ConnectivityManager::class.java)
+            // Any network's proxy but a Wi-Fi one that is fine (QA Low 8): mobile data's (an APN
+            // proxy) can't be cleared, a Wi-Fi one that couldn't be is here too.
             @Suppress("DEPRECATION")
-            val proxyLeft = cm?.allNetworks.orEmpty().any { cm?.getLinkProperties(it)?.httpProxy != null }
+            val proxyLeft = cm?.allNetworks.orEmpty().any { network ->
+                val proxy = cm?.getLinkProperties(network)?.httpProxy ?: return@any false
+                val wifi = cm?.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+                !(wifi && proxyKey(proxy) in wifiProxiesOk)
+            }
             val accessibility = Settings.Secure.getString(app.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
                 .orEmpty().split(':').mapNotNull { ComponentName.unflattenFromString(it)?.packageName }
                 .filter { it != ours && !systemPackage(app, it) }
