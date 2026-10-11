@@ -168,7 +168,7 @@ object WindowRelock {
         } catch (e: Exception) {
             null
         }
-        return RelockStart(secure = deviceSecure(app), packages = packages, disabled = disabled)
+        return RelockStart(secure = deviceSecure(app), packages = packages, disabled = disabled, atMs = System.currentTimeMillis())
     }
 
     /** §1.5: 32 random bytes, stored first (CE prefs), set only while it isn't active and the phone
@@ -198,7 +198,7 @@ object WindowRelock {
             scope.launch {
                 for (t in requests) {
                     try {
-                        relockMutex.withLock { relock(app, t, fromSync = false) }
+                        relockMutex.withLock { relock(app, t) }
                     } catch (e: Exception) {
                         Log.w(LOG_TAG, "Relock failed", e)
                     }
@@ -210,14 +210,14 @@ object WindowRelock {
 
     /** In the sync, right after its apply() and before its status report (§1.2). */
     suspend fun relockInSync(context: Context) {
-        relockMutex.withLock { relock(context.applicationContext, RelockTrigger.SYNC, fromSync = true) }
+        relockMutex.withLock { relock(context.applicationContext, RelockTrigger.SYNC) }
     }
 
-    private fun relock(app: Context, trigger: RelockTrigger, fromSync: Boolean) {
+    private fun relock(app: Context, trigger: RelockTrigger) {
         val dpm = dpm(app) ?: return
         if (!dpm.isDeviceOwnerApp(app.packageName)) return
         val asked = askedTrigger.getAndSet(null) ?: trigger
-        val outcome = runRelock(store(app), AndroidPlatform(app, dpm), asked, fromSync)
+        val outcome = runRelock(store(app), AndroidPlatform(app, dpm), asked)
         val report = outcome.report ?: return
         Log.i(LOG_TAG, "Relocked (${report.trigger}, ${report.windows}): cleared=${outcome.cleared}, failures=${report.failures}")
         notifyListeners()
@@ -257,9 +257,63 @@ object WindowRelock {
         }
     }
 
-    /** The PWA's `allow_blocked`: every `relock_blocked` entry goes; the sync's apply() right after
-     * the command shows them again. Returns how many there were. */
-    fun allowBlocked(context: Context): Int = store(context).clearBlocked()
+    /** The PWA's `allow_blocked`: the `relock_blocked` entries go - but an app signed with another
+     * key than the catalog's pin stays ([allowBlocked], fix round QA Medium 2); the sync's apply()
+     * right after the command shows them again. Returns how many were let out. */
+    fun allowBlocked(context: Context): Int {
+        val app = context.applicationContext
+        val store = store(app)
+        synchronized(WindowRelockStore.LOCK) {
+            val before = store.blocked()
+            val packages = installedPackages(app, withInstaller = false)
+            val after = allowBlocked(before, packages.associate { it.name to it.signers }, lockedSigners(store))
+            val letOut = packages.filter { it.name in before && it.name !in after }.associate { it.name to it.updatedAt }
+            store.saveAllowed(after, letOut)
+            return before.size - after.size
+        }
+    }
+
+    private fun lockedSigners(store: WindowRelockStore): Map<String, Set<String>> = store.catalogPins().mapValues { setOf(it.value) }
+
+    /** The catalog's pinned signers from the server's app list (M10's `signer_sha256`): the relock
+     * and the install check below compare against them. */
+    fun rememberCatalogPins(context: Context, apps: List<com.kidslauncher.mdm.server.dto.TrackedAppUpdate>) {
+        try {
+            val pins = apps.mapNotNull { app ->
+                val signer = app.signerSha256?.lowercase()?.replace(":", "")
+                if (app.packageName.isBlank() || signer == null || !isSignerHex(signer)) null else app.packageName to signer
+            }.toMap()
+            store(context).saveCatalogPins(pins)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't keep the catalog's signers", e)
+        }
+    }
+
+    /**
+     * A package installed or replaced while no window is open (fix round QA Low 3): the real app
+     * back from Play or the catalog clears its block; something installed just now from elsewhere
+     * (it can't, outside a window - but an install racing the relock can) or with another key than
+     * the catalog's pin is blocked. During a window the relock decides. Background thread.
+     */
+    fun onPackageInstalled(context: Context, packageName: String): Boolean {
+        try {
+            val app = context.applicationContext
+            if (openWindows().isNotEmpty() || store(app).marker().pending) return false
+            val pkg = installedPackages(app, withInstaller = true, only = packageName).firstOrNull() ?: return false
+            val store = store(app)
+            synchronized(WindowRelockStore.LOCK) {
+                val after = blockAfterInstall(
+                    pkg, store.blocked(), lockedSigners(store), setOf(PLAY_STORE, app.packageName), System.currentTimeMillis(), store.allowed(),
+                ) ?: return false
+                store.saveBlocked(after)
+                Log.i(LOG_TAG, "$packageName ${if (packageName in after) "blocked" else "no longer blocked"} after its install")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Install check failed for $packageName", e)
+            return false
+        }
+    }
 
     // ---- notifications ----------------------------------------------------------------------------
 
@@ -319,12 +373,13 @@ object WindowRelock {
 
     private fun isInstalled(info: ApplicationInfo?) = info != null && (info.flags and ApplicationInfo.FLAG_INSTALLED) != 0
 
-    /** Every installed non-system package but ours, with its signers, update time and - for the
-     * relock, not the start snapshot (it runs inside the PIN check) - its installer. */
-    private fun installedPackages(app: Context, withInstaller: Boolean): List<InstalledPackage> {
+    /** Every installed non-system package but ours (or only [only]), with its signers, update time
+     * and - for the relock, not the start snapshot (it runs inside the PIN check) - its installer. */
+    private fun installedPackages(app: Context, withInstaller: Boolean, only: String? = null): List<InstalledPackage> {
         val pm = app.packageManager
         val flags = PackageManager.PackageInfoFlags.of((PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.MATCH_UNINSTALLED_PACKAGES).toLong())
-        return pm.getInstalledPackages(flags)
+        val packages = if (only != null) listOf(pm.getPackageInfo(only, flags)) else pm.getInstalledPackages(flags)
+        return packages
             .filter { !isSystem(it.applicationInfo) && isInstalled(it.applicationInfo) && it.packageName != app.packageName }
             .map { info ->
                 InstalledPackage(
@@ -382,6 +437,8 @@ object WindowRelock {
         override fun installedPackages() = installedPackages(app, withInstaller = true)
 
         override fun allowlist(): List<String>? = currentPolicyDecision().policy?.allowlist
+
+        override fun lockedSigners() = lockedSigners(store(app))
 
         override fun trustedInstallers() = setOf(PLAY_STORE, app.packageName)
 

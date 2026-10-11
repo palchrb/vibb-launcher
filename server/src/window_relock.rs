@@ -59,6 +59,9 @@ pub struct RelockReport {
     pub credential_removed: bool,
     pub credential_left: bool,
     pub blocked: Vec<String>,
+    /// Each blocked app's signing key (SHA-256 of its first certificate, lower-case hex) - fix
+    /// round QA Medium 2: "Allow these apps" shows it, and the catalog's pin is compared with it.
+    pub blocked_signers: std::collections::BTreeMap<String, String>,
     pub accessibility_enabled: Vec<String>,
     pub admins_enabled: Vec<String>,
     pub apps_disabled: Vec<String>,
@@ -103,6 +106,39 @@ fn names(value: &Value, key: &str, allowed: Option<&[&str]>) -> Vec<String> {
     out
 }
 
+/// A signing key as M10 pins it: SHA-256, 64 lower-case hex characters.
+pub fn valid_signer(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// `blocked_signers`: only for packages in [blocked], only valid keys.
+fn signers(value: &Value, blocked: &[String]) -> std::collections::BTreeMap<String, String> {
+    value
+        .get("blocked_signers")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(name, _)| blocked.contains(name))
+        .filter_map(|(name, key)| {
+            key.as_str()
+                .filter(|k| valid_signer(k))
+                .map(|k| (name.clone(), k.to_string()))
+        })
+        .collect()
+}
+
+/// "3f2a1b0c…9d8e7f60": enough of a key for a parent to compare.
+fn short_key(key: &str) -> String {
+    if key.len() < 16 {
+        key.to_string()
+    } else {
+        format!("{}…{}", &key[..8], &key[key.len() - 8..])
+    }
+}
+
 /// The phone's `relock`, re-serialized through the known fields: valid package names, known
 /// windows, triggers and step names, counts and times in range. `None` for anything that isn't
 /// an object with an `at_ms`.
@@ -127,6 +163,7 @@ pub fn sanitize_relock(value: &Value) -> Option<String> {
         credential_removed: flag(value, "credential_removed"),
         credential_left: flag(value, "credential_left"),
         blocked: names(value, "blocked", None),
+        blocked_signers: signers(value, &names(value, "blocked", None)),
         accessibility_enabled: names(value, "accessibility_enabled", None),
         admins_enabled: names(value, "admins_enabled", None),
         apps_disabled: names(value, "apps_disabled", None),
@@ -188,8 +225,9 @@ fn and_list(parts: &[String]) -> String {
 }
 
 /// The device page's lines about the last relock (§1.7), each a warning, only while it is under
-/// 7 days old and something was found. [allowlist]: the server's, so "Allow these apps" is shown
-/// only for blocked apps the parent allowed ([RelockNotes::allow_button]).
+/// 7 days old and something was found. [pins]: the catalog's pinned signers (M10, package -> key);
+/// a blocked app signed with another key stays blocked, so "Allow these apps" is shown only for the
+/// others ([RelockNotes::allow_button]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RelockNotes {
     pub lines: Vec<String>,
@@ -197,7 +235,11 @@ pub struct RelockNotes {
     pub allow_button: bool,
 }
 
-pub fn relock_notes(r: &RelockReport, now_ms: i64, allowlist: &[String]) -> RelockNotes {
+pub fn relock_notes(
+    r: &RelockReport,
+    now_ms: i64,
+    pins: &std::collections::HashMap<String, String>,
+) -> RelockNotes {
     if now_ms - r.at_ms > WARN_MS || !found_anything(r) {
         return RelockNotes::default();
     }
@@ -225,17 +267,35 @@ pub fn relock_notes(r: &RelockReport, now_ms: i64, allowlist: &[String]) -> Relo
             and_list(&removed)
         )
     });
-    let allow_button = r.blocked.iter().any(|p| allowlist.contains(p));
+    // Signed with another key than the catalog pinned: not the catalog's app, whatever its name.
+    let not_catalogs = |p: &String| matches!((pins.get(p), r.blocked_signers.get(p)), (Some(pin), Some(key)) if pin != key);
+    let allow_button = r.blocked.iter().any(|p| !not_catalogs(p));
     if !r.blocked.is_empty() {
+        let apps: Vec<String> = r
+            .blocked
+            .iter()
+            .map(|p| match r.blocked_signers.get(p) {
+                Some(key) => format!("{p} (signing key {})", short_key(key)),
+                None => p.clone(),
+            })
+            .collect();
         let mut line = format!(
-            "Blocked: {} (installed or replaced while it was open).",
-            r.blocked.join(", ")
+            "Blocked: {} - installed or replaced from outside Play while it was open, or signed \
+             with another key, so ticking it under Apps doesn't show it.",
+            apps.join(", ")
         );
-        if allow_button {
-            line.push_str(" \"Allow these apps\" shows them again if they are yours.");
+        for p in r.blocked.iter().filter(|p| not_catalogs(p)) {
+            line.push_str(&format!(
+                " {p} is signed with another key than the catalog's ({}), so it stays blocked: \
+                 uninstall it.",
+                short_key(&pins[p])
+            ));
         }
-        if r.blocked.iter().any(|p| !allowlist.contains(p)) {
-            line.push_str(" Apps not ticked under Apps stay hidden until you tick them.");
+        if allow_button {
+            line.push_str(
+                " If one is yours and its key is the one you expect, tick it under Apps and press \
+                 \"Allow these apps\".",
+            );
         }
         lines.push(line);
     }
@@ -350,13 +410,16 @@ pub fn flash_text(code: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::HashMap;
 
     /// Design 24b §1.7's literal, as the launcher sends it.
     pub(crate) fn literal() -> Value {
         json!({ "at_ms": 1760100000000_i64, "trigger": "timer", "windows": ["override"],
                 "proxies_cleared": 1, "proxy_left": false, "ca_certs_removed": 0,
                 "credential_removed": false, "credential_left": false,
-                "blocked": ["com.example.app"], "accessibility_enabled": [], "admins_enabled": [],
+                "blocked": ["com.example.app"],
+                "blocked_signers": {"com.example.app": "3f2a00000000000000000000000000000000000000000000000000000000c0de"},
+                "accessibility_enabled": [], "admins_enabled": [],
                 "apps_disabled": [], "notification_listeners": [], "own_notifications_off": false,
                 "failures": [] })
     }
@@ -372,6 +435,7 @@ mod tests {
     fn sanitizing_keeps_known_values_in_range() {
         let raw = json!({ "at_ms": -5, "trigger": "<script>", "windows": ["override", "install_mode", "override"],
             "proxies_cleared": 99999, "ca_certs_removed": -3, "blocked": ["com.ok.app", "not a package", "<b>x</b>", 5],
+            "blocked_signers": {"com.ok.app": "AB12", "not a package": "3f2a00000000000000000000000000000000000000000000000000000000c0de"},
             "accessibility_enabled": (0..20).map(|i| format!("com.a.b{i}")).collect::<Vec<_>>(),
             "failures": ["apply", "rm -rf", "apply"], "extra": "dropped", "own_notifications_off": "yes" });
         let r = parse_relock(sanitize_relock(&raw).as_deref()).unwrap();
@@ -381,6 +445,8 @@ mod tests {
         assert_eq!(r.proxies_cleared, 1000);
         assert_eq!(r.ca_certs_removed, 0);
         assert_eq!(r.blocked, vec!["com.ok.app"]);
+        // A key that isn't 64 lower-case hex, or for an app not blocked: dropped.
+        assert!(r.blocked_signers.is_empty());
         assert_eq!(r.accessibility_enabled.len(), LIST_MAX);
         assert_eq!(r.failures, vec!["apply"]);
         assert!(!r.own_notifications_off);
@@ -412,13 +478,13 @@ mod tests {
             failures: vec!["ca_certs".into()],
             ..report()
         };
-        let notes = relock_notes(&r, NOW, &["com.example.app".to_string()]);
+        let notes = relock_notes(&r, NOW, &HashMap::new());
         assert!(notes.allow_button);
         assert_eq!(
             notes.lines,
             vec![
                 "When the phone locked again at 2025-10-10 12:40 UTC (3 h ago), because its time was up, it removed 2 Wi-Fi proxies, 1 certificate and an Android screen lock the child had set.",
-                "Blocked: com.example.app, com.example.game (installed or replaced while it was open). \"Allow these apps\" shows them again if they are yours. Apps not ticked under Apps stay hidden until you tick them.",
+                "Blocked: com.example.app (signing key 3f2a0000…0000c0de), com.example.game - installed or replaced from outside Play while it was open, or signed with another key, so ticking it under Apps doesn't show it. If one is yours and its key is the one you expect, tick it under Apps and press \"Allow these apps\".",
                 "Still on: accessibility service com.evil.ally; notification access com.evil.reader; device admin com.evil.admin; a proxy on mobile data.",
                 "Turned off and can't be turned back on remotely: com.android.inputmethod.latin - turn them on in the phone's Settings during a pause.",
                 "The launcher's notifications are off.",
@@ -443,7 +509,7 @@ mod tests {
             ("settings", "after the pause was switched off in Settings"),
         ] {
             r.trigger = trigger.into();
-            let notes = relock_notes(&r, NOW, &[]);
+            let notes = relock_notes(&r, NOW, &HashMap::new());
             assert_eq!(
                 notes.lines[0],
                 format!("The phone locked again at 2025-10-10 12:40 UTC (3 h ago), {text}.")
@@ -456,7 +522,7 @@ mod tests {
         }
         r.trigger = String::new();
         assert_eq!(
-            relock_notes(&r, NOW, &[]).lines[0],
+            relock_notes(&r, NOW, &HashMap::new()).lines[0],
             "The phone locked again at 2025-10-10 12:40 UTC (3 h ago)."
         );
     }
@@ -467,23 +533,43 @@ mod tests {
         quiet.proxies_cleared = 0;
         quiet.blocked.clear();
         assert!(!found_anything(&quiet));
-        assert_eq!(relock_notes(&quiet, NOW, &[]), RelockNotes::default());
+        assert_eq!(
+            relock_notes(&quiet, NOW, &HashMap::new()),
+            RelockNotes::default()
+        );
         let old = report();
         assert!(
-            !relock_notes(&old, old.at_ms + WARN_MS, &[])
+            !relock_notes(&old, old.at_ms + WARN_MS, &HashMap::new())
                 .lines
                 .is_empty()
         );
         assert_eq!(
-            relock_notes(&old, old.at_ms + WARN_MS + 1, &[]),
+            relock_notes(&old, old.at_ms + WARN_MS + 1, &HashMap::new()),
             RelockNotes::default()
         );
-        // Not allowlisted: no button, only the tick hint.
-        let notes = relock_notes(&old, NOW, &[]);
+    }
+
+    #[test]
+    fn an_app_with_another_key_than_the_catalogs_stays_blocked() {
+        let r = report();
+        let mut pins = HashMap::new();
+        pins.insert("com.example.app".to_string(), "9".repeat(64));
+        let notes = relock_notes(&r, NOW, &pins);
+        // Its only blocked app isn't the catalog's: no button, and why.
         assert!(!notes.allow_button);
         assert!(
-            notes.lines[1].ends_with("Apps not ticked under Apps stay hidden until you tick them.")
+            notes.lines[1].ends_with(
+                " com.example.app is signed with another key than the catalog's (99999999…99999999), so it stays blocked: uninstall it."
+            ),
+            "{}",
+            notes.lines[1]
         );
+        // The catalog's own key: the button.
+        pins.insert(
+            "com.example.app".to_string(),
+            r.blocked_signers["com.example.app"].clone(),
+        );
+        assert!(relock_notes(&r, NOW, &pins).allow_button);
     }
 
     #[test]

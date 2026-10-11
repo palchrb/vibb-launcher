@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.server
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -16,8 +17,8 @@ class RelockBlockTest {
     private fun pkg(name: String = CHAT, signers: Set<String> = setOf(REAL), updatedAt: Long = 1L, installer: String? = PLAY) =
         InstalledPackage(name, signers, updatedAt, installer)
 
-    private fun decide(pkg: InstalledPackage, allowlisted: Boolean = true, atStart: PackageState? = PackageState(setOf(REAL), 1L), expected: Set<String>? = atStart?.signers) =
-        relockBlockDecision(pkg, allowlisted, atStart, expected, trusted)
+    private fun decide(pkg: InstalledPackage, atStart: PackageState? = PackageState(setOf(REAL), 1L), expected: Set<String>? = atStart?.signers) =
+        relockBlockDecision(pkg, atStart, expected, trusted)
 
     @Test
     fun `blocked - an allowlisted app re-signed, and a new one from the package installer`() {
@@ -42,9 +43,71 @@ class RelockBlockTest {
     }
 
     @Test
-    fun `an app that isn't allowlisted is hidden by apply anyway - reported only if new`() {
-        assertEquals(RelockBlock.REPORT, decide(pkg(name = "com.example.game", installer = SIDELOAD), allowlisted = false, atStart = null))
-        assertEquals(RelockBlock.NONE, decide(pkg(name = "com.example.game", signers = setOf(EVIL), updatedAt = 3L), allowlisted = false))
+    fun `an app that isn't allowlisted is blocked when sideloaded or re-signed, not when new from Play (QA Medium 2)`() {
+        // A fake under a name the parent may tick later: blocked, so ticking the name won't show it.
+        assertEquals(RelockBlock.BLOCK, decide(pkg(name = "com.whatsapp", installer = SIDELOAD), atStart = null))
+        assertEquals(RelockBlock.BLOCK, decide(pkg(name = "com.example.game", signers = setOf(EVIL), updatedAt = 3L)))
+        // From Play: apply() hides it until ticked.
+        assertEquals(RelockBlock.NONE, decide(pkg(name = "com.example.game", installer = PLAY), atStart = null))
+        // Not changed in the window: nothing.
+        assertEquals(RelockBlock.NONE, decide(pkg(name = "com.example.game", installer = SIDELOAD)))
+    }
+
+    @Test
+    fun `the catalog pin blocks another key, ticked or not, and allow_blocked cannot let it out`() {
+        val pins = mapOf(CHAT to setOf(REAL))
+        val check = signerCheck(
+            installed = listOf(pkg(signers = setOf(EVIL), installer = PLAY)),
+            snapshot = emptyMap(),
+            allowlist = emptyList(),
+            blockedBefore = emptyMap(),
+            trustedInstallers = trusted,
+            lockedSigners = pins,
+        )
+        assertEquals(mapOf(CHAT to setOf(REAL)), check.blocked)
+        assertEquals(mapOf(CHAT to EVIL), check.signers)
+        // "Allow these apps": the pinned app with another key stays, a sideloaded one goes.
+        val blocked = mapOf(CHAT to setOf(REAL), "org.example.side" to null)
+        assertEquals(mapOf(CHAT to setOf(REAL)), allowBlocked(blocked, mapOf(CHAT to setOf(EVIL), "org.example.side" to setOf("bbbb")), pins))
+        assertEquals(emptyMap<String, Set<String>?>(), allowBlocked(blocked, mapOf(CHAT to setOf(REAL, "rotated"), "org.example.side" to setOf("bbbb")), pins))
+    }
+
+    @Test
+    fun `without a snapshot, what came from elsewhere since the window opened is blocked (QA Low 2)`() {
+        val check = signerCheck(
+            installed = listOf(
+                pkg(updatedAt = 900L, installer = SIDELOAD),
+                pkg(name = "org.example.old", updatedAt = 100L, installer = SIDELOAD),
+                pkg(name = "org.example.play", updatedAt = 900L, installer = PLAY),
+            ),
+            snapshot = null,
+            allowlist = listOf(CHAT),
+            blockedBefore = emptyMap(),
+            trustedInstallers = trusted,
+            windowStartMs = 500L,
+        )
+        assertEquals(mapOf<String, Set<String>?>(CHAT to null), check.blocked)
+        // Without a start either: nothing to judge.
+        assertTrue(signerCheck(listOf(pkg(signers = setOf(EVIL), installer = SIDELOAD)), null, listOf(CHAT), emptyMap(), trusted).blocked.isEmpty())
+    }
+
+    @Test
+    fun `an install outside a window sets or clears a block (QA Low 3)`() {
+        val now = 1_000_000L
+        // The real app back from the catalog: its block goes.
+        assertEquals(emptyMap<String, Set<String>?>(), blockAfterInstall(pkg(installer = OWN), mapOf(CHAT to null), emptyMap(), trusted, now))
+        assertEquals(emptyMap<String, Set<String>?>(), blockAfterInstall(pkg(), mapOf(CHAT to setOf(REAL)), emptyMap(), trusted, now))
+        // The fake still there: no change.
+        assertNull(blockAfterInstall(pkg(signers = setOf(EVIL), installer = SIDELOAD), mapOf(CHAT to null), emptyMap(), trusted, now))
+        // Just installed from elsewhere (a race with the relock): blocked.
+        assertEquals(mapOf<String, Set<String>?>(CHAT to null), blockAfterInstall(pkg(updatedAt = now - 1_000, installer = SIDELOAD), emptyMap(), emptyMap(), trusted, now))
+        // Another key than the catalog's pin, even from Play: blocked with the pin.
+        assertEquals(mapOf(CHAT to setOf(REAL)), blockAfterInstall(pkg(signers = setOf(EVIL), updatedAt = now - 1_000), emptyMap(), mapOf(CHAT to setOf(REAL)), trusted, now))
+        // An old app shown again (unhiding sends a package-added) or the one the parent allowed: left alone.
+        assertNull(blockAfterInstall(pkg(updatedAt = 5L, installer = SIDELOAD), emptyMap(), emptyMap(), trusted, now))
+        assertNull(blockAfterInstall(pkg(updatedAt = now - 1_000, installer = SIDELOAD), emptyMap(), emptyMap(), trusted, now, allowed = mapOf(CHAT to now - 1_000)))
+        // From Play with no pin: fine.
+        assertNull(blockAfterInstall(pkg(updatedAt = now - 1_000, installer = PLAY), emptyMap(), emptyMap(), trusted, now))
     }
 
     @Test
@@ -78,14 +141,14 @@ class RelockBlockTest {
             blockedBefore = emptyMap(),
             trustedInstallers = trusted,
         )
-        assertEquals(mapOf(CHAT to setOf(REAL)), check.blocked)
-        assertEquals(setOf(CHAT), check.newlyBlocked)
+        assertEquals(mapOf(CHAT to setOf(REAL), "com.example.game" to null), check.blocked)
+        assertEquals(setOf(CHAT, "com.example.game"), check.newlyBlocked)
         assertEquals(setOf(CHAT, "com.example.game"), check.reported)
+        assertEquals(mapOf(CHAT to EVIL, "com.example.game" to REAL), check.signers)
         // Apps unmanaged (calls-only phone): nothing is hidden, so nothing is blocked or reported.
         val unmanaged = signerCheck(listOf(pkg(signers = setOf(EVIL), installer = SIDELOAD)), emptyMap(), null, emptyMap(), trusted)
         assertTrue(unmanaged.blocked.isEmpty() && unmanaged.reported.isEmpty())
-        // No snapshot (an adopted window): nothing new is judged.
-        assertTrue(signerCheck(listOf(pkg(signers = setOf(EVIL))), null, listOf(CHAT), emptyMap(), trusted).blocked.isEmpty())
+
     }
 
     @Test
@@ -117,12 +180,14 @@ class RelockBlockTest {
     }
 
     @Test
-    fun `allow_blocked clears every block, and blocked apps count as not allowlisted`() {
+    fun `allow_blocked clears the blocks without a pin, and blocked apps count as not allowlisted`() {
         val store = WindowRelockStore(ParentPinStoreTest.FakePrefs())
         store.saveBlocked(mapOf(CHAT to setOf(REAL), "org.example.side" to null))
         assertEquals(mapOf(CHAT to setOf(REAL), "org.example.side" to null), store.blocked())
-        assertEquals(2, store.clearBlocked())
+        val after = allowBlocked(store.blocked(), mapOf(CHAT to setOf(EVIL), "org.example.side" to setOf("bbbb")), emptyMap())
+        assertTrue(store.saveAllowed(after, mapOf(CHAT to 2L, "org.example.side" to 3L)))
         assertTrue(store.blocked().isEmpty())
+        assertEquals(mapOf(CHAT to 2L, "org.example.side" to 3L), store.allowed())
 
         assertEquals(listOf("org.example.maps"), effectiveAllowlist(listOf(CHAT, "org.example.maps"), setOf(CHAT)))
         assertEquals(null, effectiveAllowlist(null, setOf(CHAT)))

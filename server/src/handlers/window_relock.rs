@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::AppState;
-use crate::models::{DevicePolicy, DeviceStatus};
+use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::window_relock::{
     self, ALLOW_BLOCKED, END_WINDOWS, RelockNotes, WINDOW_RELOCK_CAPABILITY,
@@ -26,8 +26,8 @@ pub struct RelockCard {
     pub notes: RelockNotes,
 }
 
-pub fn card(
-    policy: &DevicePolicy,
+pub async fn card(
+    db: &sqlx::SqlitePool,
     latest: Option<&DeviceStatus>,
     notice: Option<&str>,
     now_ms: i64,
@@ -40,20 +40,33 @@ pub fn card(
     let open = latest.is_some_and(|s| {
         s.restrictions_paused || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
     });
-    let allowlist: Vec<String> = policy
-        .allowlist_json
-        .as_deref()
-        .and_then(|j| serde_json::from_str(j).ok())
-        .unwrap_or_default();
-    let notes = window_relock::parse_relock(latest.and_then(|s| s.relock_json.as_deref()))
-        .map(|r| window_relock::relock_notes(&r, now_ms, &allowlist))
-        .unwrap_or_default();
+    let notes = match window_relock::parse_relock(latest.and_then(|s| s.relock_json.as_deref())) {
+        Some(r) => window_relock::relock_notes(&r, now_ms, &catalog_pins(db).await),
+        None => RelockNotes::default(),
+    };
     RelockCard {
         capable,
         lock_again: capable && open,
         notice: notice.and_then(window_relock::flash_text),
         notes,
     }
+}
+
+/// The catalog's pinned signers (M10): package -> signing key. Empty on a database error (then no
+/// app is called "not the catalog's").
+async fn catalog_pins(db: &sqlx::SqlitePool) -> std::collections::HashMap<String, String> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT package_name, signer_sha256 FROM tracked_apps \
+         WHERE signer_sha256 IS NOT NULL AND package_name != ''",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(%err, "can't read the catalog's pinned signers");
+        Vec::new()
+    })
+    .into_iter()
+    .collect()
 }
 
 /// One of this design's commands: its own insert, never deleted by another command and deleting

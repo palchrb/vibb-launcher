@@ -1399,11 +1399,12 @@ async fn render_device(
     let parent_pin =
         crate::handlers::parent_pin::card(&state.db, &policy, latest_status.as_ref(), notice).await;
     let relock = crate::handlers::window_relock::card(
-        &policy,
+        &state.db,
         latest_status.as_ref(),
         notice,
         chrono::Utc::now().timestamp_millis(),
-    );
+    )
+    .await;
     let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
         .await
         .unwrap_or_else(|err| {

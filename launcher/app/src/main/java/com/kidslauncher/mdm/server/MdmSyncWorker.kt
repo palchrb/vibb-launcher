@@ -477,6 +477,8 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
         return
     }
 
+    // Design 24b (fix round QA Medium 2): the catalog's pinned signers feed the relock's check.
+    WindowRelock.rememberCatalogPins(context, updates)
     val (launcherUpdates, otherUpdates) = updates.partition { it.isLauncher }
     val state = TrackedAppUpdateState.load()
     val wanted = mutableListOf<WantedDownload>()

@@ -46,9 +46,13 @@ class WindowRelockPlanTest {
         }
         override fun installedPackages(): List<InstalledPackage> {
             calls += "signers"
+            if (installedThrows) throw IllegalStateException("dead binder")
             return packages
         }
         override fun allowlist() = allowlist
+        var pins = emptyMap<String, Set<String>>()
+        override fun lockedSigners() = pins
+        var installedThrows = false
         override fun trustedInstallers() = setOf("com.android.vending", "me.vibb.launcher")
         override fun apply() {
             calls += "apply"
@@ -92,7 +96,7 @@ class WindowRelockPlanTest {
         phone.open = phone.open - kind
     }
 
-    private fun relock(trigger: RelockTrigger = RelockTrigger.TIMER, fromSync: Boolean = false) = runRelock(store, phone, trigger, fromSync)
+    private fun relock(trigger: RelockTrigger = RelockTrigger.TIMER) = runRelock(store, phone, trigger)
 
     @Test
     fun `a relock is due only with the marker set and no window open`() {
@@ -256,27 +260,45 @@ class WindowRelockPlanTest {
     }
 
     @Test
-    fun `in the sync, apply runs again only when the credential or a block changed`() {
-        assertFalse(applyNeeded(fromSync = true, credentialRemoved = false, newlyBlocked = false))
-        assertTrue(applyNeeded(fromSync = true, credentialRemoved = true, newlyBlocked = false))
-        assertTrue(applyNeeded(fromSync = true, credentialRemoved = false, newlyBlocked = true))
-        assertTrue(applyNeeded(fromSync = false, credentialRemoved = false, newlyBlocked = false))
-
+    fun `the relock always applies - also in the sync, whose own apply may have seen the window (QA Medium 1)`() {
         open(WindowKind.OVERRIDE)
         end(WindowKind.OVERRIDE)
-        relock(RelockTrigger.SYNC, fromSync = true)
-        assertFalse("apply" in phone.calls)
+        relock(RelockTrigger.SYNC)
+        assertTrue("apply" in phone.calls)
         assertEquals("sync", store.lastReport()!!.trigger)
 
-        // A sideloaded app under an allowlisted name: blocked, so apply runs to hide it.
+        // A sideloaded app under an allowlisted name: blocked and hidden by that apply.
         phone.calls.clear()
         open(WindowKind.OVERRIDE)
-        phone.packages = listOf(InstalledPackage("org.example.chat", setOf("evil"), 9L, "com.google.android.packageinstaller"))
+        phone.packages = listOf(InstalledPackage("org.example.chat", setOf("e5e5"), 9L, "com.google.android.packageinstaller"))
         end(WindowKind.OVERRIDE)
-        relock(RelockTrigger.SYNC, fromSync = true)
+        relock(RelockTrigger.SYNC)
         assertTrue("apply" in phone.calls)
         assertEquals(setOf("org.example.chat"), store.blocked().keys)
         assertEquals(listOf("org.example.chat"), store.lastReport()!!.blocked)
+        assertEquals(emptyMap<String, String>(), store.lastReport()!!.blockedSigners)
+    }
+
+    @Test
+    fun `a signer check that throws keeps the marker and the snapshot (QA Low 2)`() {
+        val start = RelockStart(secure = false, packages = mapOf("org.example.chat" to PackageState(setOf("a1a1"), 1L)), disabled = emptySet(), atMs = 500L)
+        open(WindowKind.PAUSE, start)
+        end(WindowKind.PAUSE)
+        phone.installedThrows = true
+        val first = relock()
+        assertFalse(first.cleared)
+        assertEquals(listOf("signer_check"), first.report!!.failures)
+        assertTrue(store.marker().pending)
+        assertEquals(start.packages, store.snapshot())
+        assertEquals(500L, store.startMs())
+        // The next trigger compares against the same snapshot.
+        phone.installedThrows = false
+        phone.packages = listOf(InstalledPackage("org.example.chat", setOf("e5e5"), 9L, "com.android.vending"))
+        val second = relock()
+        assertTrue(second.cleared)
+        assertEquals(listOf("org.example.chat"), second.report!!.blocked)
+        assertEquals(emptyList<String>(), second.report!!.failures)
+        assertNull(store.startMs())
     }
 
     @Test
@@ -286,6 +308,8 @@ class WindowRelockPlanTest {
         assertNull(relock().report)
         assertTrue(store.marker().pending)
         assertEquals(setOf("pause"), store.marker().windows)
+        // A start as early as the window could have begun (QA Low 2).
+        assertEquals(adoptedStartMs(phone.now()), store.startMs())
         phone.secure = true
         end(WindowKind.PAUSE)
         val report = relock(RelockTrigger.BOOT).report!!
@@ -331,7 +355,7 @@ class WindowRelockPlanTest {
         assertTrue(first.proxyLeft && first.credentialLeft && first.ownNotificationsOff)
         assertEquals(listOf("evil.ally"), first.accessibilityEnabled)
         assertEquals(
-            RelockReport(1L, "timer", listOf("override"), 1, false, 2, true, false, listOf("a.b", "c.d"), emptyList(), emptyList(), emptyList(), emptyList(), false, emptyList()),
+            RelockReport(1L, "timer", listOf("override"), 1, false, 2, true, false, listOf("a.b", "c.d"), emptyMap(), emptyList(), emptyList(), emptyList(), emptyList(), false, emptyList()),
             later,
         )
     }

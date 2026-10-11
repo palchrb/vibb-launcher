@@ -13,7 +13,9 @@ fn literal(at_ms: i64) -> Value {
     json!({ "at_ms": at_ms, "trigger": "timer", "windows": ["override"],
             "proxies_cleared": 1, "proxy_left": false, "ca_certs_removed": 0,
             "credential_removed": false, "credential_left": false,
-            "blocked": ["com.example.app"], "accessibility_enabled": [], "admins_enabled": [],
+            "blocked": ["com.example.app"],
+            "blocked_signers": {"com.example.app": "3f2a00000000000000000000000000000000000000000000000000000000c0de"},
+            "accessibility_enabled": [], "admins_enabled": [],
             "apps_disabled": [], "notification_listeners": [], "own_notifications_off": false,
             "failures": [] })
 }
@@ -137,7 +139,7 @@ async fn the_warnings_appear_on_the_status_card_and_expire_after_a_week() {
     let card = status_card(&html);
     assert!(card.contains("it removed 1 Wi-Fi proxy."), "{card}");
     assert!(
-        card.contains("Blocked: com.example.app (installed or replaced while it was open)."),
+        card.contains("Blocked: com.example.app (signing key 3f2a0000…0000c0de) - installed or replaced from outside Play"),
         "{card}"
     );
     assert!(
@@ -172,6 +174,39 @@ async fn the_warnings_appear_on_the_status_card_and_expire_after_a_week() {
         .text();
     assert!(!html.contains("Wi-Fi proxy"), "{html}");
     assert!(!html.contains("allow-blocked"), "{html}");
+}
+
+/// Fix round QA Medium 2: a blocked app signed with another key than the catalog pinned stays
+/// blocked - the page says why and offers no "Allow these apps" for it.
+#[tokio::test]
+async fn a_blocked_app_with_another_key_than_the_catalogs_is_called_out() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    sqlx::query(
+        "INSERT INTO tracked_apps (name, source_type, github_repo, package_name, signer_sha256) \
+         VALUES ('Example', 'manual', '', 'com.example.app', ?)",
+    )
+    .bind("9".repeat(64))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    post_status(
+        &app,
+        &token,
+        json!({ "relock": literal(now_ms() - 60_000) }),
+    )
+    .await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(
+        card.contains("com.example.app is signed with another key than the catalog&#39;s (99999999…99999999), so it stays blocked: uninstall it."),
+        "{card}"
+    );
+    assert!(!card.contains("allow-blocked"), "{card}");
 }
 
 #[tokio::test]

@@ -122,14 +122,18 @@ class PolicyResponseCompatTest {
             atMs = 1_760_100_000_000, trigger = "timer", windows = listOf("override"),
             proxiesCleared = 1, proxyLeft = false, caCertsRemoved = 0,
             credentialRemoved = false, credentialLeft = false,
-            blocked = listOf("com.example.app"), accessibilityEnabled = emptyList(), adminsEnabled = emptyList(),
+            blocked = listOf("com.example.app"),
+            blockedSigners = mapOf("com.example.app" to "3f2a" + "0".repeat(56) + "c0de"),
+            accessibilityEnabled = emptyList(), adminsEnabled = emptyList(),
             appsDisabled = emptyList(), notificationListeners = emptyList(), ownNotificationsOff = false,
             failures = emptyList(),
         )
         val literal = """{ "at_ms": 1760100000000, "trigger": "timer", "windows": ["override"],
               "proxies_cleared": 1, "proxy_left": false, "ca_certs_removed": 0,
               "credential_removed": false, "credential_left": false,
-              "blocked": ["com.example.app"], "accessibility_enabled": [], "admins_enabled": [],
+              "blocked": ["com.example.app"],
+              "blocked_signers": {"com.example.app": "3f2a00000000000000000000000000000000000000000000000000000000c0de"},
+              "accessibility_enabled": [], "admins_enabled": [],
               "apps_disabled": [], "notification_listeners": [], "own_notifications_off": false,
               "failures": [] }"""
         val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relock = relock)

@@ -61,6 +61,9 @@ class Application : android.app.Application() {
             p0?.let { packageName ->
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
+                        // Design 24b (fix round QA Low 3): a block set or cleared by this install
+                        // first - enforceOnNewPackage reads it.
+                        com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)
                         val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName)
                         // A new app the parent hasn't allowed (e.g. from Play): report it now, so
                         // the device page lists it for allowlisting (handy step 7). The music app
@@ -76,6 +79,19 @@ class Application : android.app.Application() {
 
         override fun onPackageChanged(p0: String?, p1: UserHandle?) {
             loadApps()
+            // An update (a replaced package) lands here: design 24b's install check (fix round QA
+            // Low 3), and a re-apply when it set or cleared a block.
+            p0?.let { packageName ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        if (com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)) {
+                            AppEnforcer.apply(this@Application, com.kidslauncher.mdm.server.currentPolicyDecision().policy)
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("Application", "Install check failed for $packageName", e)
+                    }
+                }
+            }
         }
 
         override fun onPackagesAvailable(p0: Array<out String>?, p1: UserHandle?, p2: Boolean) {

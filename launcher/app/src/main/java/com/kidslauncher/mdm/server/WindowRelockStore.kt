@@ -33,10 +33,15 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
         private const val REPORT_CURRENT = "report_current"
         private const val REPORT_LAST = "report_last"
         private const val TOKEN = "token"
+        private const val START_MS = "start_ms"
+        private const val CATALOG_PINS = "catalog_pins"
+        private const val ALLOWED = "allowed"
 
         private val SNAPSHOT_SERIALIZER = MapSerializer(String.serializer(), PackageState.serializer())
         private val NAMES = ListSerializer(String.serializer())
         private val BLOCKED_SERIALIZER = MapSerializer(String.serializer(), SetSerializer(String.serializer()).nullable)
+        private val PINS_SERIALIZER = MapSerializer(String.serializer(), String.serializer())
+        private val ALLOWED_SERIALIZER = MapSerializer(String.serializer(), Long.serializer())
     }
 
     fun marker(): RelockMarker = RelockMarker(
@@ -60,10 +65,24 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
 
     fun disabledAtStart(): Set<String>? = decode(DISABLED_AT_START) { ServerJson.decodeFromString(NAMES, it).toSet() }
 
+    /** When the first window opened (wall clock); `null` = unknown. */
+    fun startMs(): Long? = if (prefs.contains(START_MS)) prefs.getLong(START_MS, 0L) else null
+
+    /** A window an older build opened gets a marker, and a start as early as it could have been. */
+    fun saveAdopted(marker: RelockMarker, startMs: Long): Boolean = prefs.edit().putMarker(marker).putLong(START_MS, startMs).commit()
+
+    /** The catalog's pinned signers (M10: package -> SHA-256 of its signing certificate), from the
+     * server's app list - the relock's expected signers for those packages. */
+    fun catalogPins(): Map<String, String> = decode(CATALOG_PINS) { ServerJson.decodeFromString(PINS_SERIALIZER, it) }.orEmpty()
+
+    fun saveCatalogPins(pins: Map<String, String>): Boolean =
+        if (pins == catalogPins()) true else prefs.edit().putString(CATALOG_PINS, ServerJson.encodeToString(PINS_SERIALIZER, pins)).commit()
+
     /** The first window's marker and its start state, in one commit ([WindowRelock.opened]). */
     fun saveOpened(marker: RelockMarker, start: RelockStart?): Boolean {
         val editor = prefs.edit().putMarker(marker)
         if (start != null) {
+            editor.putLong(START_MS, start.atMs)
             editor.putBoolean(SECURE_AT_START, start.secure)
             putOrRemove(editor, SNAPSHOT, start.packages?.let { ServerJson.encodeToString(SNAPSHOT_SERIALIZER, it) })
             putOrRemove(editor, DISABLED_AT_START, start.disabled?.let { ServerJson.encodeToString(NAMES, it.sorted()) })
@@ -77,12 +96,15 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
     fun saveBlocked(blocked: Map<String, Set<String>?>): Boolean =
         prefs.edit().putString(BLOCKED, ServerJson.encodeToString(BLOCKED_SERIALIZER, blocked)).commit()
 
-    /** The PWA's `allow_blocked`: every entry goes. Returns how many there were. */
-    fun clearBlocked(): Int {
-        val count = blocked().size
-        prefs.edit().remove(BLOCKED).commit()
-        return count
-    }
+    /** What "Allow these apps" let out last: package -> its update time then. */
+    fun allowed(): Map<String, Long> = decode(ALLOWED) { ServerJson.decodeFromString(ALLOWED_SERIALIZER, it) }.orEmpty()
+
+    /** `allow_blocked`'s result in one commit: the remaining blocks and what was let out. */
+    fun saveAllowed(blocked: Map<String, Set<String>?>, allowed: Map<String, Long>): Boolean = prefs.edit()
+        .putString(BLOCKED, ServerJson.encodeToString(BLOCKED_SERIALIZER, blocked))
+        .putString(ALLOWED, ServerJson.encodeToString(ALLOWED_SERIALIZER, allowed))
+        .commit()
+
 
     /** The relock in progress (its findings add up across re-runs, QA #11), and the last finished one. */
     fun currentReport(): RelockReport? = decode(REPORT_CURRENT) { ServerJson.decodeFromString(RelockReport.serializer(), it) }
@@ -94,13 +116,13 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
 
     /**
      * The end of a relock, under [LOCK]: the marker is cleared only when no window opened since
-     * [genAtStart] and apply() didn't throw ([markerAfterRelock]); then the report becomes the last
-     * one and the start state goes. Otherwise the report stays in progress, for the next run.
-     * Returns whether the marker was cleared.
+     * [genAtStart] and neither apply() nor the signer check threw ([markerAfterRelock], QA Low 2);
+     * then the report becomes the last one and the start state goes. Otherwise the report and the
+     * snapshot stay, for the next run. Returns whether the marker was cleared.
      */
-    fun complete(genAtStart: Int, applyFailed: Boolean, report: RelockReport): Boolean = synchronized(LOCK) {
+    fun complete(genAtStart: Int, keepPending: Boolean, report: RelockReport): Boolean = synchronized(LOCK) {
         val marker = marker()
-        val after = markerAfterRelock(marker, genAtStart, applyFailed)
+        val after = markerAfterRelock(marker, genAtStart, keepPending)
         val editor = prefs.edit()
         val encoded = ServerJson.encodeToString(RelockReport.serializer(), report)
         if (after.pending) {
@@ -110,6 +132,7 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
                 .putString(REPORT_LAST, encoded)
                 .remove(REPORT_CURRENT)
                 .remove(SECURE_AT_START)
+                .remove(START_MS)
                 .remove(SNAPSHOT)
                 .remove(DISABLED_AT_START)
         }
@@ -132,9 +155,9 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
     }
 }
 
-/** The first window's start state ([takesStartSnapshot]): whether the phone had an Android
- * credential, the non-system packages and the disabled system packages. */
-data class RelockStart(val secure: Boolean, val packages: Map<String, PackageState>?, val disabled: Set<String>?)
+/** The first window's start state ([takesStartSnapshot]): when it opened, whether the phone had an
+ * Android credential, the non-system packages and the disabled system packages. */
+data class RelockStart(val secure: Boolean, val packages: Map<String, PackageState>?, val disabled: Set<String>?, val atMs: Long = 0L)
 
 /** What a relock needs from the phone: WindowRelock's implementation reads and acts on Android;
  * WindowRelockPlanTest fakes it. Each call may throw - the step is then a failure. */
@@ -156,6 +179,9 @@ interface RelockPlatform {
 
     /** The enforced policy's allowlist (`null` = apps unmanaged). */
     fun allowlist(): List<String>?
+
+    /** The catalog's pinned signers (M10), package -> signers. */
+    fun lockedSigners(): Map<String, Set<String>>
 
     /** The Play Store and our own package. */
     fun trustedInstallers(): Set<String>
@@ -189,16 +215,16 @@ data class RelockOutcome(val report: RelockReport?, val cleared: Boolean)
  * One relock (design 24b §1.2), when due: (1) an Android screen lock set in the window goes, so
  * `PinLockRuntime.configure` in (3) sees none; (2) the signer check writes `relock_blocked`; (3)
  * apply(); (4) the resets; (5) the detections; (6) finish. Each step's findings are committed as it
- * completes; a step that throws is a failure and the rest still runs; a throwing apply() keeps the
- * marker for the next trigger. [fromSync]: the sync's own apply() just ran - (3) runs again only
- * when (1) or (2) changed something ([applyNeeded]).
+ * completes; a step that throws is a failure and the rest still runs; a throwing apply() or signer
+ * check keeps the marker (and the snapshot) for the next trigger. (3) always runs - also in the sync,
+ * whose own apply() may have run with the window still open (QA Medium 1).
  */
-fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: RelockTrigger, fromSync: Boolean): RelockOutcome {
+fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: RelockTrigger): RelockOutcome {
     val marker = synchronized(WindowRelockStore.LOCK) {
         val marker = store.marker()
         val open = platform.openWindows()
         // A window an older build opened has no marker: it relocks too, without a snapshot.
-        adoptedMarker(marker, open)?.let { store.saveMarker(it) }
+        adoptedMarker(marker, open)?.let { store.saveAdopted(it, adoptedStartMs(platform.now())) }
         if (!relockDue(marker, WindowKind.OVERRIDE in open, WindowKind.PAUSE in open)) return RelockOutcome(null, false)
         marker
     }
@@ -219,34 +245,35 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
     }
 
     // 1. The credential first (QA #9).
-    var credentialRemoved = false
     step(RelockFailure.CREDENTIAL) {
         if (credentialAction(secureAtStart, platform.secureNow(), platform.tokenUsable()) == CredentialAction.REMOVE) {
-            credentialRemoved = platform.removeCredential()
-            report = withResets(report, 0, 0, credentialRemoved, emptyList())
+            report = withResets(report, 0, 0, platform.removeCredential(), emptyList())
         }
     }
-    // 2. The signer check.
-    var newlyBlocked = false
+    // 2. The signer check: a throw keeps the marker and the snapshot (QA Low 2).
+    var signerFailed = false
     step(RelockFailure.SIGNER_CHECK) {
-        val check = signerCheck(platform.installedPackages(), store.snapshot(), platform.allowlist(), store.blocked(), platform.trustedInstallers())
-        store.saveBlocked(check.blocked)
-        newlyBlocked = check.newlyBlocked.isNotEmpty()
-        report = withResets(report, 0, 0, false, check.reported)
+        try {
+            val check = signerCheck(
+                platform.installedPackages(), store.snapshot(), platform.allowlist(), store.blocked(),
+                platform.trustedInstallers(), platform.lockedSigners(), store.startMs(),
+            )
+            if (!store.saveBlocked(check.blocked)) throw IllegalStateException("relock_blocked not saved")
+            report = withResets(report, 0, 0, false, check.reported, check.signers)
+        } catch (e: Exception) {
+            signerFailed = true
+            throw e
+        }
     }
     // 3. apply(): kiosk, hiding (with relock_blocked), the VPN, sideloading, tethering, the lists.
     var applyFailed = false
-    if (applyNeeded(fromSync, credentialRemoved, newlyBlocked)) {
-        step(RelockFailure.APPLY) {
-            try {
-                platform.apply()
-            } catch (e: Exception) {
-                applyFailed = true
-                throw e
-            }
+    step(RelockFailure.APPLY) {
+        try {
+            platform.apply()
+        } catch (e: Exception) {
+            applyFailed = true
+            throw e
         }
-    } else {
-        report = withStep(report, RelockFailure.APPLY, false)
     }
     report = withStep(report, RelockFailure.PERMITTED_LISTS, !platform.permittedListsOk())
     // 4. The resets.
@@ -265,6 +292,6 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
             processStart = trigger == RelockTrigger.BOOT,
         )
     }
-    val cleared = store.complete(genAtStart, applyFailed, report)
+    val cleared = store.complete(genAtStart, keepPending = applyFailed || signerFailed, report)
     return RelockOutcome(report, cleared)
 }

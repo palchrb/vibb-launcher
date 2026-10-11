@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * (override, pause) locked again, and what it couldn't undo. Sent in every status report until a
  * newer relock replaces it. [trigger] `timer | lock_again | command | sync | boot | screen_on |
  * settings`; [windows] `override`, `pause` or both; the lists are valid package names, at most 8
- * each; [failures] names from the fixed step set (`RelockFailure`). No defaults: every key is always
+ * each; [blockedSigners] covers [blocked]; [failures] names from the fixed step set (`RelockFailure`). No defaults: every key is always
  * sent (the literal is pinned in PolicyResponseCompatTest and on the server). Also how
  * WindowRelock stores it.
  */
@@ -22,6 +22,9 @@ data class RelockReport(
     val credentialRemoved: Boolean,
     val credentialLeft: Boolean,
     val blocked: List<String>,
+    /** Each blocked app's signing key (SHA-256 of its first certificate, lower-case hex), for the
+     * PWA's "Allow these apps" (fix round QA Medium 2). */
+    val blockedSigners: Map<String, String>,
     val accessibilityEnabled: List<String>,
     val adminsEnabled: List<String>,
     val appsDisabled: List<String>,

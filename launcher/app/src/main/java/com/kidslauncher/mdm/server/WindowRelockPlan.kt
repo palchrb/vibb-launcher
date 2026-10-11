@@ -78,10 +78,11 @@ fun relockDue(marker: RelockMarker, overrideActive: Boolean, pauseActive: Boolea
 
 /**
  * The marker after a relock: cleared only when no window opened meanwhile ([genAtStart]) and
- * `apply()` didn't throw - otherwise the next trigger runs everything again (QA #2, #11).
+ * neither `apply()` nor the signer check threw ([keepPending]) - otherwise the next trigger runs
+ * everything again (QA #2, #11; fix round Low 2).
  */
-fun markerAfterRelock(marker: RelockMarker, genAtStart: Int, applyFailed: Boolean): RelockMarker =
-    if (!applyFailed && marker.gen == genAtStart) RelockMarker(pending = false, gen = marker.gen) else marker
+fun markerAfterRelock(marker: RelockMarker, genAtStart: Int, keepPending: Boolean): RelockMarker =
+    if (!keepPending && marker.gen == genAtStart) RelockMarker(pending = false, gen = marker.gen) else marker
 
 /**
  * A window an older build opened (no marker) is taken over at the next check, without a start
@@ -137,49 +138,54 @@ data class InstalledPackage(val name: String, val signers: Set<String>, val upda
 
 /** What the signer check found: [blocked] is the whole `relock_blocked` set after it (package ->
  * the expected signers, `null` = none known); [newlyBlocked] this run's; [reported] the report's
- * `blocked` (newly blocked, plus apps new since the start that aren't allowlisted). */
-data class SignerCheck(val blocked: Map<String, Set<String>?>, val newlyBlocked: Set<String>, val reported: Set<String>)
+ * `blocked` (this run's blocks); [signers] each reported app's signing key (its first certificate's
+ * SHA-256), for the PWA's "Allow these apps". A new app from Play that isn't allowlisted isn't
+ * blocked or reported here: `apply()` hides it until ticked, and the Apps card and the security log
+ * (`app_installed`) show it. */
+data class SignerCheck(
+    val blocked: Map<String, Set<String>?>,
+    val newlyBlocked: Set<String>,
+    val reported: Set<String>,
+    val signers: Map<String, String> = emptyMap(),
+)
 
 enum class RelockBlock {
-    /** Nothing to do. */
+    /** Nothing to do (a new app from Play or us that isn't allowlisted is hidden by `apply()`). */
     NONE,
 
-    /** Allowlisted, but re-signed or new from an installer that isn't Play or us: hidden. */
+    /** Re-signed (another key than the catalog's pin or the window's start), or new from an
+     * installer that isn't Play or us: hidden, whatever the allowlist says (QA Medium 2). */
     BLOCK,
-
-    /** Not allowlisted and new since the start: `apply()` hides it anyway, reported only. */
-    REPORT,
 }
 
 /**
- * The rule for one package not blocked yet (§1.6). [atStart] `null` = new since the start
- * snapshot. [expected]: M10's locked signer once it lands, else the snapshot's. [trustedInstallers]:
- * the Play Store and our own package.
+ * The rule for one package not blocked yet (§1.6, fix round QA Medium 2). [atStart] `null` = new
+ * since the start snapshot. [expected]: the catalog's pinned signer (M10) when there is one, else
+ * the snapshot's. [trustedInstallers]: the Play Store and our own package. The allowlist doesn't
+ * matter: a blocked app stays hidden when its name is ticked - only "Allow these apps" lets it out.
  */
 fun relockBlockDecision(
     pkg: InstalledPackage,
-    allowlisted: Boolean,
     atStart: PackageState?,
     expected: Set<String>?,
     trustedInstallers: Set<String>,
 ): RelockBlock {
     val new = atStart == null
-    if (!allowlisted) return if (new) RelockBlock.REPORT else RelockBlock.NONE
     val changed = new || atStart?.signers != pkg.signers || atStart.updatedAt != pkg.updatedAt
     if (!changed) return RelockBlock.NONE
     return when {
-        // A known signer (M10, or the snapshot's): it must match.
-        expected != null -> if (sameSigner(expected, pkg.signers)) RelockBlock.NONE else RelockBlock.BLOCK
-        // New, no signer known: only Play or our own installs pass.
-        pkg.installer in trustedInstallers -> RelockBlock.NONE
-        else -> RelockBlock.BLOCK
+        // A known signer (the catalog's pin, or the snapshot's): it must match.
+        expected != null && !sameSigner(expected, pkg.signers) -> RelockBlock.BLOCK
+        // No signer known: only Play or our own installs pass.
+        expected == null && pkg.installer !in trustedInstallers -> RelockBlock.BLOCK
+        else -> RelockBlock.NONE
     }
 }
 
 /**
  * A block stays until the package is uninstalled, its signer is the expected one again (the real
  * app back from Play), or - with no signer known - it comes from Play or us; `allow_blocked` clears
- * them all ([WindowRelock.allowBlocked]).
+ * them, except an app signed with another key than the catalog's pin ([allowBlocked]).
  */
 fun blockStays(pkg: InstalledPackage, expected: Set<String>?, trustedInstallers: Set<String>): Boolean =
     if (expected != null) !sameSigner(expected, pkg.signers) else pkg.installer !in trustedInstallers
@@ -192,11 +198,16 @@ fun blockStays(pkg: InstalledPackage, expected: Set<String>?, trustedInstallers:
  */
 fun sameSigner(expected: Set<String>, now: Set<String>): Boolean = now.any { it in expected }
 
+/** The signing key the PWA shows for an app: its first certificate's SHA-256 (sorted, so stable). */
+fun shownSigner(signers: Set<String>): String? = signers.minOrNull()
+
 /**
- * Step 2 for every non-system package [installed] now. [snapshot] `null` = none was taken (an
- * adopted window): only the existing blocks are re-checked. [lockedSigners]: M10's per-package
- * signer (none yet); it wins over the snapshot's and a block's. [allowlist] `null` = apps aren't
- * managed: nothing is hidden there, so nothing is blocked or reported.
+ * Step 2 for every non-system package [installed] now. [lockedSigners]: the catalog's pinned
+ * signers (M10, from the server's app list); they win over the snapshot's and a block's.
+ * [allowlist] `null` = apps aren't managed: nothing is hidden there, so nothing is blocked or
+ * reported. Without a [snapshot] (an adopted window, or it couldn't be taken) every package
+ * installed or updated since [windowStartMs] from an installer that isn't Play or us is blocked,
+ * and nothing else is judged (QA Low 2).
  */
 fun signerCheck(
     installed: List<InstalledPackage>,
@@ -205,12 +216,19 @@ fun signerCheck(
     blockedBefore: Map<String, Set<String>?>,
     trustedInstallers: Set<String>,
     lockedSigners: Map<String, Set<String>> = emptyMap(),
+    windowStartMs: Long? = null,
 ): SignerCheck {
     if (allowlist == null) return SignerCheck(blockedBefore, emptySet(), emptySet())
-    val allowed = allowlist.toSet()
     val blocked = mutableMapOf<String, Set<String>?>()
     val newly = mutableSetOf<String>()
     val reported = mutableSetOf<String>()
+    val signers = mutableMapOf<String, String>()
+    fun block(pkg: InstalledPackage, expected: Set<String>?) {
+        blocked[pkg.name] = expected
+        newly += pkg.name
+        reported += pkg.name
+        shownSigner(pkg.signers)?.let { signers[pkg.name] = it }
+    }
     for (pkg in installed) {
         val locked = lockedSigners[pkg.name]?.takeIf { it.isNotEmpty() }
         if (pkg.name in blockedBefore) {
@@ -219,22 +237,64 @@ fun signerCheck(
             if (blockStays(pkg, expected, trustedInstallers)) blocked[pkg.name] = expected
             continue
         }
-        if (snapshot == null) continue
+        if (snapshot == null) {
+            val since = windowStartMs ?: continue
+            if (pkg.updatedAt >= since && (if (locked != null) !sameSigner(locked, pkg.signers) else pkg.installer !in trustedInstallers)) {
+                block(pkg, locked)
+            }
+            continue
+        }
         val atStart = snapshot[pkg.name]
         val expected = locked ?: atStart?.signers?.takeIf { it.isNotEmpty() }
-        when (relockBlockDecision(pkg, pkg.name in allowed, atStart, expected, trustedInstallers)) {
-            RelockBlock.NONE -> Unit
-            RelockBlock.REPORT -> reported += pkg.name
-            RelockBlock.BLOCK -> {
-                blocked[pkg.name] = expected
-                newly += pkg.name
-                reported += pkg.name
-            }
-        }
+        if (relockBlockDecision(pkg, atStart, expected, trustedInstallers) == RelockBlock.BLOCK) block(pkg, expected)
     }
     // Uninstalled packages leave the set: only the installed ones were carried over.
-    return SignerCheck(blocked, newly, reported)
+    return SignerCheck(blocked, newly, reported, signers)
 }
+
+/**
+ * The PWA's `allow_blocked` (fix round QA Medium 2): every block goes, except an app whose
+ * signing key differs from the catalog's pin - that one is not the catalog's app, whatever its name.
+ */
+fun allowBlocked(
+    blocked: Map<String, Set<String>?>,
+    installed: Map<String, Set<String>>,
+    lockedSigners: Map<String, Set<String>>,
+): Map<String, Set<String>?> = blocked.filter { (name, expected) ->
+    val pin = lockedSigners[name]?.takeIf { it.isNotEmpty() } ?: return@filter false
+    val now = installed[name] ?: return@filter false
+    !sameSigner(pin, now)
+}
+
+/**
+ * A package installed or replaced while no window is open (fix round QA Low 3): a block whose
+ * package is back to its expected signer (or, with none known, came from Play or us) goes; an app
+ * installed in the last [recentMs] from an installer that isn't Play or us - or with another key
+ * than the catalog's pin - is blocked. An old app shown again (unhiding sends a package-added too)
+ * is left alone, and so is the very install the parent let out with "Allow these apps" ([allowed]:
+ * package -> its update time then). Returns the new `relock_blocked`, or `null` for no change.
+ */
+fun blockAfterInstall(
+    pkg: InstalledPackage,
+    blocked: Map<String, Set<String>?>,
+    lockedSigners: Map<String, Set<String>>,
+    trustedInstallers: Set<String>,
+    nowMs: Long,
+    allowed: Map<String, Long> = emptyMap(),
+    recentMs: Long = 10 * 60_000L,
+): Map<String, Set<String>?>? {
+    val locked = lockedSigners[pkg.name]?.takeIf { it.isNotEmpty() }
+    if (pkg.name in blocked) {
+        val expected = locked ?: blocked[pkg.name]?.takeIf { it.isNotEmpty() }
+        return if (blockStays(pkg, expected, trustedInstallers)) null else blocked - pkg.name
+    }
+    if (nowMs - pkg.updatedAt !in 0..recentMs || allowed[pkg.name] == pkg.updatedAt) return null
+    val bad = if (locked != null) !sameSigner(locked, pkg.signers) else pkg.installer !in trustedInstallers
+    return if (bad) blocked + (pkg.name to locked) else null
+}
+
+/** An adopted window's start is unknown: as early as the longest window could have started. */
+fun adoptedStartMs(nowMs: Long): Long = nowMs - maxOf(OVERRIDE_DURATION_MS, RESTRICTIONS_PAUSE_DURATION_MS)
 
 /** `relock_blocked` treated as not allowlisted (§1.6): hidden, never pinned, not in the keyboard
  * or accessibility lists. `null` stays unmanaged. */
@@ -258,6 +318,7 @@ fun startedReport(atMs: Long, trigger: RelockTrigger, windows: Set<String>): Rel
     credentialRemoved = false,
     credentialLeft = false,
     blocked = emptyList(),
+    blockedSigners = emptyMap(),
     accessibilityEnabled = emptyList(),
     adminsEnabled = emptyList(),
     appsDisabled = emptyList(),
@@ -274,13 +335,26 @@ fun withStep(report: RelockReport, step: String, failed: Boolean): RelockReport 
 
 /** What the resets did - added to what an earlier run of the same relock did (QA #11: a re-run
  * after a process death adds to "1 certificate removed", never overwrites it with 0). */
-fun withResets(report: RelockReport, proxiesCleared: Int, caCertsRemoved: Int, credentialRemoved: Boolean, blocked: Collection<String>): RelockReport =
-    report.copy(
+fun withResets(
+    report: RelockReport,
+    proxiesCleared: Int,
+    caCertsRemoved: Int,
+    credentialRemoved: Boolean,
+    blocked: Collection<String>,
+    signers: Map<String, String> = emptyMap(),
+): RelockReport {
+    val names = reportPackages(report.blocked + blocked)
+    return report.copy(
         proxiesCleared = report.proxiesCleared + proxiesCleared.coerceAtLeast(0),
         caCertsRemoved = report.caCertsRemoved + caCertsRemoved.coerceAtLeast(0),
         credentialRemoved = report.credentialRemoved || credentialRemoved,
-        blocked = reportPackages(report.blocked + blocked),
+        blocked = names,
+        blockedSigners = (report.blockedSigners + signers.filterValues(::isSignerHex)).filterKeys { it in names }.toSortedMap(),
     )
+}
+
+/** A signing key as the server keeps it: SHA-256, 64 lower-case hex characters. */
+fun isSignerHex(value: String): Boolean = value.length == 64 && value.all { it in '0'..'9' || it in 'a'..'f' }
 
 /** What is still on after the resets - the latest run's view. */
 data class RelockDetections(
@@ -306,14 +380,6 @@ fun withDetections(report: RelockReport, found: RelockDetections): RelockReport 
 /** System apps disabled since the first window's start (QA #5): none of it can be undone. */
 fun newlyDisabled(disabledAtStart: Set<String>?, disabledNow: Set<String>): Set<String> =
     if (disabledAtStart == null) emptySet() else disabledNow - disabledAtStart
-
-/**
- * In the sync (§1.2): its own `apply()` ran right before, with no window open - a second one is
- * needed only when step 1 or 2 changed what `apply()` decides (a credential gone: the kid's lock
- * comes back; a new block: hidden).
- */
-fun applyNeeded(fromSync: Boolean, credentialRemoved: Boolean, newlyBlocked: Boolean): Boolean =
-    !fromSync || credentialRemoved || newlyBlocked
 
 /** The keyboards never hidden or suspended (§1.5): enabled ∩ (system ∪ allowlist) while apps are
  * managed, so a keyboard sideloaded and enabled in a window goes at the relock; every enabled one
