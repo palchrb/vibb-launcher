@@ -571,6 +571,8 @@ struct AccountTemplate {
     error: Option<String>,
     success: Option<String>,
     login_warning: Option<String>,
+    live_warning: Option<String>,
+    warning_back: &'static str,
 }
 
 async fn render_account(
@@ -587,6 +589,8 @@ async fn render_account(
             error,
             success,
             login_warning: login_warning_of(session).await,
+            live_warning: live_warning(admin),
+            warning_back: "/account",
         }
         .render()
         .unwrap(),
@@ -663,12 +667,17 @@ pub async fn update_account_password(
         Err(admin_auth::Busy) => return admin_auth::busy_response(),
     };
 
-    sqlx::query("UPDATE admin_users SET password_hash = ? WHERE id = ?")
-        .bind(&new_hash)
-        .bind(admin.id)
-        .execute(&state.db)
-        .await
-        .ok();
+    // A new password makes the old one's wrong codes moot: the counter and the lock go too, so
+    // the parent can sign in elsewhere again.
+    sqlx::query(
+        "UPDATE admin_users SET password_hash = ?, failed_login_attempts = 0, lock_count = 0, \
+         locked_until = NULL WHERE id = ?",
+    )
+    .bind(&new_hash)
+    .bind(admin.id)
+    .execute(&state.db)
+    .await
+    .ok();
     signed_out_elsewhere(&state, &session, admin.id).await;
     // The warning said to change the password: done.
     session
@@ -790,10 +799,52 @@ pub async fn sign_out_everywhere(
 }
 
 /// Hides the failed-2FA banner (it stays in the security log).
-pub async fn dismiss_login_warning(session: Session) -> impl IntoResponse {
+#[derive(Deserialize)]
+pub struct DismissForm {
+    #[serde(default)]
+    back: String,
+}
+
+/// Hides the failed-2FA banner (it stays in the security log) and returns to the page it was
+/// dismissed on - Devices or Account, nothing else (QA 22 Low 9).
+pub async fn dismiss_login_warning(
+    session: Session,
+    Form(form): Form<DismissForm>,
+) -> impl IntoResponse {
     session
         .remove::<String>(admin_auth::LOGIN_WARNING_KEY)
         .await
         .ok();
-    Redirect::to("/devices")
+    Redirect::to(if form.back == "/account" {
+        "/account"
+    } else {
+        "/devices"
+    })
+}
+
+/// For a signed-in parent (QA 22 Low 9): wrong 2FA codes entered since their last complete
+/// sign-in, and the lock they caused - the post-sign-in banner can't say it, since the lock keeps
+/// new sign-ins out. `admin` is the row `require_full_auth` just read.
+pub fn live_warning(admin: &AdminUser) -> Option<String> {
+    if admin.failed_login_attempts <= 0 {
+        return None;
+    }
+    let locked = admin
+        .locked_until
+        .as_deref()
+        .and_then(|t| chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").ok())
+        .filter(|until| until.and_utc() > chrono::Utc::now());
+    let lock = match locked {
+        Some(until) => format!(
+            ", and new sign-ins are locked until {} UTC",
+            until.format("%Y-%m-%d %H:%M")
+        ),
+        None => String::new(),
+    };
+    let n = admin.failed_login_attempts;
+    Some(format!(
+        "{n} wrong two-factor code{} entered since your last sign-in{lock}. Whoever entered them \
+         knows your password - change it now (that also lifts the lock).",
+        if n == 1 { " was" } else { "s were" }
+    ))
 }

@@ -617,7 +617,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`lock_count`) up to 24 h, a lock running out resets nothing, only a complete login does (`reset_after_login`); a correct password on a locked
   account says so (`login_locked` event). The pending state (`pending_admin_id` + `pending_at`) lasts 5 min. After a
   complete login with earlier failures the session carries a banner (`login_warning`, shown on Devices and Account
-  via `partials/login_warning.html`, `POST /account/dismiss-warning`). Sessions: `cycle_id()` after each step; the
+  via `partials/login_warning.html`, `POST /account/dismiss-warning`, back to the page it was on); a signed-in session
+  also sees wrong codes entered since its sign-in and the lock (`auth::live_warning`, from the `AdminUser` row - QA 22
+  Low 9), and a password change lifts the counter and the lock. Sessions: `cycle_id()` after each step; the
   session stores `session_epoch`, and a password change, a 2FA reset (asks for the current password - user
   decision on QA 22 M5; other sessions) and `POST
   /account/sign-out-everywhere` (all) bump it (`load_active_admin` compares); cookie `__Host-handy` (Secure, Path=/,

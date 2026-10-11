@@ -839,3 +839,61 @@ async fn signed_out_forms_are_small_and_log_short_names() {
     .unwrap();
     assert_eq!(logged.chars().count(), 64);
 }
+
+/// QA 22 Low 9: a signed-in parent sees wrong codes and the lock as they happen, a new password
+/// lifts them, and Dismiss returns to the page it was on.
+#[tokio::test]
+async fn a_live_session_sees_wrong_codes_and_the_lock() {
+    let app = TestApp::new().await;
+    let session = app.admin_cookie().await;
+    for _ in 0..5 {
+        let (_, cookie) = password_step(&app, PASSWORD).await;
+        totp_step(&app, &cookie.unwrap(), "000000").await;
+    }
+    for page in ["/devices", "/account"] {
+        let text = app.get_page(page, &session).await.text();
+        assert!(
+            text.contains("5 wrong two-factor codes were entered since your last sign-in, and new sign-ins are locked until"),
+            "{page}: {text}"
+        );
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/password",
+            Some(&session),
+            &[
+                ("current_password", PASSWORD),
+                ("new_password", "a brand new long password"),
+                ("confirm_password", "a brand new long password"),
+            ],
+        )
+        .await;
+    assert!(res.text().contains("Password changed."));
+    assert_eq!(counters(&app).await, (0, 0, false));
+    assert!(
+        !app.get_page("/devices", &session)
+            .await
+            .text()
+            .contains("wrong two-factor")
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/dismiss-warning",
+            Some(&session),
+            &[("back", "/account")],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/account"));
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/dismiss-warning",
+            Some(&session),
+            &[("back", "https://evil.example/")],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/devices"));
+}

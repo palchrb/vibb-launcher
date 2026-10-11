@@ -22,11 +22,15 @@ struct DevicesListTemplate {
     devices: Vec<DeviceListRow>,
     /// Failed 2FA codes before this sign-in (design 22 §3.2.1), until dismissed.
     login_warning: Option<String>,
+    /// Failed 2FA codes since this sign-in, and the lock (QA 22 Low 9).
+    live_warning: Option<String>,
+    warning_back: &'static str,
 }
 
 pub async fn list_devices(
     State(state): State<AppState>,
     session: tower_sessions::Session,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
     let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name")
         .fetch_all(&state.db)
@@ -57,6 +61,8 @@ pub async fn list_devices(
             title: "Devices".to_string(),
             devices: rows,
             login_warning: crate::handlers::auth::login_warning_of(&session).await,
+            live_warning: crate::handlers::auth::live_warning(&admin),
+            warning_back: "/devices",
         }
         .render()
         .unwrap(),
