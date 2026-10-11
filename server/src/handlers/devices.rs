@@ -436,8 +436,11 @@ struct DeviceDetailTemplate {
     /// "Launcher updates and notifications" card (handy step 11): the update fence and the
     /// notification auto-cancel switches, and what the phone reports about them.
     escapes: crate::kiosk_escapes::EscapesCard,
-    /// One-shot message after a save (`?notice=`), see `kid_lock::flash_text`.
-    notice: Option<&'static str>,
+    /// One-shot message after a kid-PIN save (`?notice=`, `kid_lock::flash_text`), shown in the
+    /// "Screen lock" card; `true` = a refusal.
+    lock_notice: Option<(&'static str, bool)>,
+    /// "Parent PIN" card (design 24, `#parent-pin`).
+    parent_pin: crate::handlers::parent_pin::ParentPinCard,
     /// "Screen timeout" card (migrations/0032): the choice, every option, and what the phone
     /// last reported it applied.
     screen_timeout_seconds: i64,
@@ -1380,9 +1383,10 @@ async fn render_device(
         card.warnings.extend(warnings);
         card
     };
-    let notice = query
-        .get("notice")
-        .and_then(|code| crate::kid_lock::flash_text(code));
+    // Each card shows its own codes (design 24, QA #8); nothing at the top of the page.
+    let notice = query.get("notice").map(String::as_str);
+    let lock_notice = notice.and_then(crate::kid_lock::flash_text);
+    let parent_pin = crate::handlers::parent_pin::card(&policy, notice);
     let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
         .await
         .unwrap_or_else(|err| {
@@ -1415,7 +1419,8 @@ async fn render_device(
             play,
             lock,
             escapes,
-            notice,
+            lock_notice,
+            parent_pin,
             screen_timeout_seconds: crate::models::screen_timeout_seconds(
                 policy.screen_timeout_seconds,
             ),
@@ -1803,11 +1808,8 @@ pub(crate) async fn remove_from_allowlist(
 pub async fn update_policy(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(fields): Form<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let field = |k: &str| fields.get(k).cloned().unwrap_or_default();
-
     // Home, status bar info, recents, notifications, and the power button menu don't let a kid
     // reach anything outside the pinned/allowed app set - Home just re-navigates within it,
     // recents only lists apps already in it, status bar info is read-only, notifications can only
@@ -1847,106 +1849,21 @@ pub async fn update_policy(
 
     let vpn_filter_enabled = fields.contains_key("vpn_filter_enabled");
 
-    // The PIN fields are optional on every save (this form saves everything
-    // together) - leave the stored hash/salt untouched unless the admin
-    // actually typed a new PIN or explicitly asked to clear it, so blank
-    // fields on an unrelated save can't silently wipe an already-configured
-    // PIN.
-    let current =
-        sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    let current_pin = current.as_ref().and_then(|p| p.override_pin_hash.clone());
-    let current_salt = current.as_ref().and_then(|p| p.override_pin_salt.clone());
-
-    let new_pin = field("new_pin").trim().to_string();
-    // Handy's lock (step 10): the override PIN is the lock screen's parent code, so it can't be
-    // removed while a kid PIN is set, and it must never be the kid's PIN (QA 10 #6). PBKDF2 (the
-    // cross-check and the new hash) runs off the async workers (qa-10-code #9).
-    let kid_pin_set = current.as_ref().is_some_and(|p| p.kid_pin_hash.is_some());
-    let clear = fields.contains_key("clear_pin");
-    let decided = {
-        let current = current.clone();
-        tokio::task::spawn_blocking(
-            move || -> (Option<(String, String)>, Option<&'static str>) {
-                if clear || new_pin.is_empty() {
-                    return (None, None);
-                }
-                if current
-                    .as_ref()
-                    .is_some_and(|p| crate::kid_lock::override_conflicts(&new_pin, p))
-                {
-                    return (None, Some("override_is_kid_pin"));
-                }
-                if new_pin.len() >= 6 && new_pin.chars().all(|c| c.is_ascii_digit()) {
-                    (Some(security::hash_pin(&new_pin)), None)
-                } else {
-                    // Invalid PIN typed - ignore it rather than fail the whole save, keeping whatever
-                    // was already configured.
-                    (None, None)
-                }
-            },
-        )
-        .await
-        .unwrap_or_else(|err| {
-            tracing::error!(device_id = id, %err, "override PIN hashing failed");
-            (None, None)
-        })
-    };
-    let (new_hash, mut notice) = decided;
-    let (override_pin_hash, override_pin_salt, mut pin_event) = if clear {
-        if kid_pin_set {
-            notice = Some("override_needed_by_lock");
-            (current_pin, current_salt, None)
-        } else {
-            (None, None, Some("override_pin_cleared"))
-        }
-    } else if let Some((hash, salt)) = new_hash {
-        (Some(hash), Some(salt), Some("override_pin_changed"))
-    } else {
-        (current_pin, current_salt, None)
-    };
-
-    // The SQL itself refuses to remove the override PIN while a kid PIN is set, so a kid PIN
-    // saved in parallel can't end up without its parent code (qa-10-code #9).
-    let stored: Option<Option<String>> = sqlx::query_scalar(
-        "UPDATE device_policy SET kiosk_desired = 1, \
-         lock_task_features = ?, \
-         override_pin_hash = CASE WHEN ? IS NULL AND kid_pin_hash IS NOT NULL THEN override_pin_hash ELSE ? END, \
-         override_pin_salt = CASE WHEN ? IS NULL AND kid_pin_hash IS NOT NULL THEN override_pin_salt ELSE ? END, \
-         quick_controls_mask = ?, vpn_filter_enabled = ?, \
-         updated_at = datetime('now') WHERE device_id = ? RETURNING override_pin_hash",
+    // The parent PIN has its own card and save since design 24 (`handlers::parent_pin`): this
+    // form's SQL never touches it.
+    let result = sqlx::query(
+        "UPDATE device_policy SET kiosk_desired = 1, lock_task_features = ?, \
+         quick_controls_mask = ?, vpn_filter_enabled = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
     )
     .bind(lock_task_features)
-    .bind(&override_pin_hash)
-    .bind(&override_pin_hash)
-    .bind(&override_pin_salt)
-    .bind(&override_pin_salt)
     .bind(quick_controls_mask)
     .bind(vpn_filter_enabled)
     .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-    if override_pin_hash.is_none() && stored.as_ref().is_some_and(|h| h.is_some()) {
-        // Lost the race to a kid PIN: the override stayed.
-        pin_event = None;
-        notice = Some("override_needed_by_lock");
-    }
-
-    if let Some(event_type) = pin_event {
-        security::record_security_event(
-            &state.db,
-            event_type,
-            Some(&admin.username),
-            None,
-            Some(&format!("device {id}")),
-        )
-        .await;
+    .execute(&state.db)
+    .await;
+    if let Err(err) = result {
+        tracing::error!(device_id = id, %err, "failed to save the policy form");
     }
 
     // Nudges the device to re-sync immediately over the same SSE connection Find My Device uses
@@ -1955,10 +1872,7 @@ pub async fn update_policy(
     // the exact same dispatch path as a normal scheduled sync.
     let _ = state.command_notify.send(id);
 
-    match notice {
-        Some(code) => Redirect::to(&format!("/devices/{id}?notice={code}#screen-lock")),
-        None => Redirect::to(&format!("/devices/{id}")),
-    }
+    Redirect::to(&format!("/devices/{id}"))
 }
 
 /// The "Screen lock" card (handy step 10): set or remove the kid's PIN for handy's own lock

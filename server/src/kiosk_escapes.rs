@@ -247,7 +247,7 @@ pub fn escapes_card(
         if notification_auto_cancel && !cancels.active && listener_enabled != Some(false) {
             card.lines.push(
                 "The notification filter isn't active on the phone yet (it waits for the next \
-                 sync, and pauses while the unlock code or the pause is in use)."
+                 sync, and pauses while the parent PIN's override or the pause is in use)."
                     .to_string(),
             );
         }

@@ -74,7 +74,7 @@ async fn set_override(app: &TestApp, cookie: &str, id: i64, fields: &[(&str, &st
     let res = app
         .request_form(
             Method::POST,
-            &format!("/devices/{id}/policy"),
+            &format!("/devices/{id}/parent-pin"),
             Some(cookie),
             fields,
         )
@@ -96,7 +96,7 @@ async fn kid_pin_needs_an_override_pin_first() {
     assert!(!safe_boot(&app, id).await);
 
     let html = app.get_page(&location, &cookie).await.text();
-    assert!(html.contains("set an unlock code"), "{html}");
+    assert!(html.contains("set a parent PIN first"), "{html}");
 }
 
 #[tokio::test]
@@ -195,7 +195,7 @@ async fn kid_and_override_pins_reject_each_other() {
 
     // A different override PIN is fine.
     let location = set_override(&app, &cookie, id, &[("new_pin", "9876543")]).await;
-    assert!(!location.contains("notice"), "{location}");
+    assert!(location.contains("notice=parent_pin_saved"), "{location}");
     assert_ne!(policy(&app, &token).await["override_pin_hash"], before);
 }
 
@@ -222,7 +222,7 @@ async fn clearing_the_kid_pin_switches_the_lock_off() {
     assert_eq!(events(&app, "kid_pin_cleared").await, 1);
     // Now the override can go.
     let location = set_override(&app, &cookie, id, &[("clear_pin", "on")]).await;
-    assert!(!location.contains("notice"));
+    assert!(location.contains("notice=parent_pin_cleared"), "{location}");
 }
 
 #[tokio::test]
@@ -328,10 +328,7 @@ async fn device_page_warns_about_the_lock_state() {
     for (inactive, text) in [
         ("crash_guard", "crashed several times"),
         ("android_credential", "Remove the Android screen lock"),
-        (
-            "bad_hash",
-            "only the unlock code (override PIN) opens the lock",
-        ),
+        ("bad_hash", "so only the parent PIN ("),
     ] {
         post_status(
             &app,

@@ -214,7 +214,7 @@ async fn managed_device_without_pin_is_warned() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
-    let warning = "No unlock code (offline override PIN) is set";
+    let warning = "No parent PIN is set for this phone";
     // Unmanaged (no allowlist, calls unmanaged): nothing to warn about yet.
     let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
     assert!(!page.text().contains(warning));

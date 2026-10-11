@@ -200,7 +200,7 @@ pub fn lock_card(
         let mins = (until - now_ms + 59_999) / 60_000;
         card.lines.push(format!(
             "Too many wrong PINs: the phone waits about {mins} min before the next try. The \
-             unlock code (override PIN) still works on the lock."
+             parent PIN (\"Parent code\") still works on the lock."
         ));
     }
     if state.exempt_yields > 0 {
@@ -232,7 +232,7 @@ pub fn inactive_warning(inactive: &str) -> Option<String> {
             .to_string(),
         "android_credential" => "Remove the Android screen lock to switch to handy's lock. The \
             phone still has Android's own PIN/pattern, so handy's lock stays off (no double lock). \
-            Enter the unlock code on the phone, then Settings > Security > Screen lock > None - or \
+            Enter the parent PIN on the phone, then Settings > Security > Screen lock > None - or \
             with USB debugging allowed: adb shell locksettings clear --old <PIN>."
             .to_string(),
         "keyguard_not_disabled" => "Android refused to switch its own lock screen off, so \
@@ -242,37 +242,39 @@ pub fn inactive_warning(inactive: &str) -> Option<String> {
             phone tries it again at the next sync (at most every 10 minutes). Update the launcher \
             if this repeats."
             .to_string(),
-        "bad_hash" => "The phone can't read the kid's PIN, so only the unlock code (override PIN) \
-            opens the lock. Set the kid's PIN again."
+        "bad_hash" => "The phone can't read the kid's PIN, so only the parent PIN (\"Parent \
+            code\") opens the lock. Set the kid's PIN again."
             .to_string(),
         other => format!("The lock is off on the phone: {other}."),
     })
 }
 
-/// Flash text for `?kid_lock=<code>` after a save.
-pub fn flash_text(code: &str) -> Option<&'static str> {
+/// Flash text for `?notice=<code>` after a kid-PIN save, shown at the top of the `#screen-lock`
+/// card (design 24, QA #8); `true` = a refusal (error style). The parent PIN's codes are
+/// `parent_pin::flash_text`'s.
+pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
     Some(match code {
-        "saved" => "The kid's PIN is saved. The phone uses it after its next sync.",
-        "saved_safe_boot" => {
+        "saved" => (
+            "The kid's PIN is saved. The phone uses it after its next sync.",
+            false,
+        ),
+        "saved_safe_boot" => (
             "The kid's PIN is saved, and safe mode is now blocked (Phone \
-            hardening) - safe mode would skip the lock. The phone uses the PIN after its next sync."
-        }
-        "cleared" => {
+            hardening) - safe mode would skip the lock. The phone uses the PIN after its next sync.",
+            false,
+        ),
+        "cleared" => (
             "The kid's PIN is removed: the phone has no lock screen code after its next \
-            sync."
-        }
-        "invalid" => "Not saved: the kid's PIN must be 4 to 6 digits.",
-        "needs_override" => {
-            "Not saved: set an unlock code (offline override PIN) first. It is \
-            the parent code on the phone's lock screen - without it, a forgotten kid PIN would \
-            lock the kid out."
-        }
-        "same_as_override" => "Not saved: the kid's PIN must not be the unlock code.",
-        "override_is_kid_pin" => "Unlock code not changed: it must not be the kid's PIN.",
-        "override_needed_by_lock" => {
-            "Unlock code not removed: the kid's lock needs it (it is \
-            the parent code on the lock screen). Remove the kid's PIN first."
-        }
+            sync.",
+            false,
+        ),
+        "invalid" => ("Not saved: the kid's PIN must be 4 to 6 digits.", true),
+        "needs_override" => (
+            "Not saved: set a parent PIN first. It is the parent code on the phone's lock screen - \
+            without it, a forgotten kid PIN would lock the kid out.",
+            true,
+        ),
+        "same_as_override" => ("Not saved: the kid's PIN must not be the parent PIN.", true),
         _ => return None,
     })
 }

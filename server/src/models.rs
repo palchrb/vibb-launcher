@@ -104,6 +104,9 @@ pub struct DevicePolicy {
     pub music_mobile_data: bool,
     pub music_volume_cap_pct: Option<i64>,
     pub music_storytel: bool,
+    /// The parent PIN is easy to guess (design 24 §4, migrations/0056): a warning on the device
+    /// page; `None` = not checked yet (the startup sweep) or no PIN. Not in the policy JSON.
+    pub override_pin_easy: Option<bool>,
 }
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.

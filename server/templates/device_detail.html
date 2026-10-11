@@ -10,10 +10,6 @@
         <h1>{{ device.name }}</h1>
     </div>
 
-    {% if let Some(text) = notice %}
-    <div class="card"><div class="error">{{ text }}</div></div>
-    {% endif %}
-
     {% if device.enrolled_at.is_none() %}
     <div class="card enrollment-card" id="access">
         <h2>Not enrolled yet</h2>
@@ -56,6 +52,9 @@
         {% else %}
         <p class="subtitle">No status reported yet.</p>
         {% endif %}
+        {% if parent_pin.easy %}
+        <div class="error">The parent PIN is easy to guess. <a href="#parent-pin">Change the parent PIN.</a></div>
+        {% endif %}
     </div>
 
     <div class="card" id="access">
@@ -97,7 +96,7 @@
 
     {% if managed_without_pin %}
     <div class="card">
-        <div class="error">No unlock code (offline override PIN) is set for this phone. Without one, the launcher's Settings can't be opened on the phone and there is no way to lift restrictions there. If this server ever becomes unreachable{% if hardening.disallow_debugging_features %} - with USB debugging blocked -{% endif %} the only way back is a reset from the phone's recovery menu and setting it up again. Set a PIN below.</div>
+        <div class="error">No parent PIN is set for this phone. Without one, the launcher's Settings can't be opened on the phone and there is no way to lift restrictions there. If this server ever becomes unreachable{% if hardening.disallow_debugging_features %} - with USB debugging blocked -{% endif %} the only way back is a reset from the phone's recovery menu and setting it up again. <a href="#parent-pin">Set a PIN below.</a></div>
     </div>
     {% endif %}
 
@@ -417,7 +416,10 @@
 
     <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card" id="screen-lock">
         <h2>Screen lock</h2>
-        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the unlock code (offline override PIN) - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
+        {% if let Some((text, warning)) = lock_notice %}
+        <div class="{% if warning %}error{% else %}success{% endif %}">{{ text }}</div>
+        {% endif %}
+        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the parent PIN - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
         <p class="subtitle">It keeps people around him out, but the phone no longer has an Android code: its storage is encrypted with a key that doesn't depend on a code, so someone who steals it and has forensic tools may read photos and messages - the kid's PIN is not a secret against that, so don't reuse it anywhere else. Apps that require a screen lock (some bank/ID apps, Google Wallet, passkeys) may refuse to work. Fingerprint unlock isn't available. Safe mode starts the phone without the launcher and so skips the lock - keep "Block safe mode" on (Phone hardening). Lock and wipe on the Locate page still work.</p>
         {% for line in lock.lines %}
         <p>{{ line }}</p>
@@ -429,7 +431,7 @@
         <p class="subtitle">A kid PIN is set ({{ lock.pin_length }} digits).</p>
         {% endif %}
         {% if !pin_configured %}
-        <p class="subtitle">Set an unlock code (offline override PIN, below) first - it is the parent code on the lock screen.</p>
+        <p class="subtitle">Set a parent PIN (below) first - it is the parent code on the lock screen.</p>
         {% endif %}
         <label for="new_kid_pin">{% if lock.pin_set %}Change the kid's PIN{% else %}Set the kid's PIN{% endif %} (4-6 digits, 4 is easiest for a child)</label>
         <input type="text" id="new_kid_pin" name="new_kid_pin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off">
@@ -442,6 +444,34 @@
         <button type="submit" class="button-secondary">Remove the kid's PIN</button>
     </form>
     {% endif %}
+
+    <div class="card" id="parent-pin">
+        <h2>Parent PIN</h2>
+        {% if let Some((text, warning)) = parent_pin.notice %}
+        <div class="{% if warning %}error{% else %}success{% endif %}">{{ text }}</div>
+        {% endif %}
+        <p class="subtitle">The parent PIN works on the phone even when it can't reach this server. It opens the launcher's Settings (and there, pausing all restrictions and Play install mode). It is the "Parent code" on the kid's lock screen, where it opens only the lock. On a time lock, "Enter unlock code" lifts the app restrictions and time rules for up to two hours (until the phone next reaches this server). Calls stay within the call rules, and phone hardening stays. It must differ from the kid's PIN.</p>
+        <p class="subtitle">After 5 wrong tries the phone stops accepting the parent PIN for 15 minutes. Each further lockout doubles (30 minutes, 1 hour, 2 hours, ...) up to 24 hours. The right PIN doesn't reset this. It steps back down by one for every 24 hours without a wrong try. Saving a new parent PIN here resets it and ends a running lockout once the phone checks in. If the phone can't reach this server, a lockout has to be waited out (at most 24 hours).</p>
+        <p class="subtitle">Typed the PIN where your child could see it? Change it here. The phone uses the new PIN as soon as it checks in, usually within seconds.</p>
+        {% if parent_pin.easy %}
+        <div class="error">This parent PIN is easy to guess (all one digit, a run like 123456, or a common PIN). That's your choice, but a child who guesses it can lift every restriction on the phone.</div>
+        {% endif %}
+        {% if offline_override_used %}
+        <div class="error">The offline override was used since this device's last check-in.</div>
+        {% endif %}
+        <p>{% if parent_pin.pin_set %}A parent PIN is set.{% else %}No parent PIN is set yet.{% endif %}</p>
+        <form method="post" action="/devices/{{ device.id }}/parent-pin">
+            <label for="new_pin">New parent PIN (6-10 digits; birthdays and years are easy to guess)</label>
+            <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password">
+            {% if parent_pin.pin_set %}
+            <label class="checkbox-row">
+                <input type="checkbox" name="clear_pin" value="on">
+                Remove the parent PIN instead (no offline override, no pausing restrictions, and no opening the launcher's Settings on the phone{% if lock.pin_set %} - not possible while the kid's PIN is set: it is the lock screen's parent code{% endif %})
+            </label>
+            {% endif %}
+            <button type="submit">Save parent PIN</button>
+        </form>
+    </div>
 
     <form method="post" action="/devices/{{ device.id }}/screen-timeout" class="card" id="screen-timeout">
         <h2>Screen timeout</h2>
@@ -460,7 +490,7 @@
 
     <form method="post" action="/devices/{{ device.id }}/hardening" class="card">
         <h2>Phone hardening</h2>
-        <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The offline-override PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
+        <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The parent PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
         <label class="checkbox-row">
             <input type="checkbox" name="disallow_factory_reset" value="on" {% if hardening.disallow_factory_reset %}checked{% endif %} onchange="this.form.submit()">
             Block factory reset from Settings (a reset from the phone's recovery menu can't be blocked; the phone then stops reporting)
@@ -539,25 +569,6 @@
             <input type="checkbox" name="vpn_filter_enabled" value="on" {% if vpn_filter_enabled %}checked{% endif %}>
             Enable ad/content filtering on this device
         </label>
-
-        <h2>Offline override PIN</h2>
-        <p class="subtitle">A failsafe for when the phone can't reach the server at all. Entering this PIN directly on the phone lifts the app restrictions and the time rules for up to two hours - including school's call block, but calls never go beyond the call rules (only allowed contacts), and phone hardening stays; they come back the moment the phone can sync again. The same PIN opens the launcher's own Settings on the phone - without a PIN, those Settings can't be opened at all - and is the "Parent code" on the kid's lock screen (it opens only the lock there, nothing else). It must differ from the kid's PIN.</p>
-        {% if pin_configured %}
-        <p class="subtitle">A PIN is currently set.</p>
-        {% else %}
-        <p class="subtitle">No PIN is set yet.</p>
-        {% endif %}
-        {% if offline_override_used %}
-        <div class="error">The offline override was used since this device's last check-in.</div>
-        {% endif %}
-        <label for="new_pin">{% if pin_configured %}Change PIN{% else %}Set a PIN{% endif %} (6-10 digits, leave blank to keep the current one)</label>
-        <input type="text" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="off">
-        {% if pin_configured %}
-        <label class="checkbox-row">
-            <input type="checkbox" name="clear_pin" value="on">
-            Remove the PIN instead (no offline override, no pausing restrictions, and no opening the launcher's Settings on the phone{% if lock.pin_set %} - not possible while the kid's PIN is set: it is the lock screen's parent code{% endif %})
-        </label>
-        {% endif %}
 
         <button type="submit">Save changes</button>
     </form>
