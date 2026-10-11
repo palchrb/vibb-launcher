@@ -860,3 +860,35 @@ Choices made while building (each against the §3.1 text, with its reason):
    clash of names) nor `sonos.Zone` (it carries ip and port, and the UI never shows an ip).
 7. `Output`, `OutputKind` and `RendererState` live in `PlayerModel.kt`, not `PlayerHub.kt`: Android-free, so
    `OutputKeyTest` needs no Bundle. `RendererState`'s doc says it is not `sonos.RendererChoice`.
+
+### Fix round after QA's code review (qa-26a-step2-code, 2026-10-11)
+
+QA (`docs/design/qa-26a-step2-code.md`: 0 High, 2 Medium, 6 Low) confirmed the behaviour preserved, 251/0 and lint
+clean; every finding is fixed:
+- **M1** `switchRenderer` -> `attach(next)`, the one place the renderer changes (`onCreate` and step 3's switch): the
+  old renderer is saved (`force`) and paused **before** it is detached (its events still reach the service; the pause
+  runs under `selfPausing`, the renamed `sleepPausing`, so it never cancels the sleep timer), then only `next` reports
+  and the session wraps `KidPlayer(next.player)`. Pinned in `GuardsTest` (a new test).
+- **M2** the display-position pin is an allowlist: four `positionMs()` readers by line, no `.currentPosition` /
+  `.contentPosition` in the service, its only rows in `markDone` and `saveBookmark`, `rendererReady` completed inside
+  `onCreate`.
+- **L1** the shown output falls back to a Bluetooth or wired output only. **L2** `currentIndex()` indexes the queue
+  given to `load`/`reorder` (`Active.items`); a renderer never filters. **L3** `setVolume` -> `setFadeGain` (local gain
+  only). **L4** `onEvent`'s contract: main thread, synchronous, possibly from a post; only the current renderer's; the
+  handler may re-enter the renderer. **L5** `PlayerHub.State.rooms` is one `RoomsView`. **L6** `setOutput` stores the
+  canonical `deviceKey(device.id)`.
+
+For step 3a (QA's notes, not code here):
+- Whether a Sonos room is an `Output` in `outputs`, a `Room` in `rooms.rooms`, or both is 3a's call; the player's bar
+  needs the `Output`.
+- `MediaSession.setPlayer` requires the new player on the session's application looper and the call on it: the
+  `SimpleBasePlayer` is built on the main looper.
+- The command coroutine runs at once only when its caller isn't itself inside a `Main.immediate` coroutine (then the
+  launch is queued behind it); Media3 calls `onCustomCommand` from a handler message, so today it does.
+- The `PLAYS` pin is an action set and can't say "OUTPUT to a Sonos key is a play": the gate must read `ARG_OUTPUT` in
+  `onCustomCommand`'s synchronous prefix.
+- `publish` and `reportNowPlaying` read `renderer.player.playWhenReady`, which §3.2's table holds through the first
+  failed polls while §3.3 says a stale snapshot shows "not playing": 3a likely needs a `renderer.showsPlaying`.
+
+Build: `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` green; 252 tests, 0 failures
+(+1); lint 0 errors.
