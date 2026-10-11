@@ -90,7 +90,9 @@ No prior programming experience - build features directly rather than explaining
   that a catalog app can never be (`never_a_catalog_package`: `android`, `com.android.*`, Play core) or that a phone
   has as a system app or from another installer (`foreign_on_a_phone`) is refused (QA of the security wave,
   Medium 2); a manifest that can't be read is refused once a package is pinned, like the signer. `backfill_pins`
-  (after the hash backfill at startup) pins releases cached before, with the same checks. **A release never allows
+  (after the hash backfill at startup) pins releases cached before, with the same checks. A refused `(tag, asset id)`
+  is remembered in `AppSyncs` (`SyncStatus::refused`): the hourly sync doesn't download it again, "Check now"
+  (`sync_app(.., forced)`) and "Forget" do (QA Low 5). **A release never allows
   anything by itself**: `device_api::allow_installed_catalog_apps` (every status report) allows, on that phone only,
   a checked catalog app's pinned package once the phone reports it installed by the launcher, and nudges it; checking
   the app with a known package (`toggle_app`) allows it as before. "Forget the package and key" on the app's page clears both. `TrackedAppUpdate` carries
