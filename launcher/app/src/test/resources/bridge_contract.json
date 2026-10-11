@@ -12,7 +12,8 @@
     "language": "string",
     "mobile_data": "boolean",
     "library_version": "string",
-    "storytel_generation": "int"
+    "storytel_generation": "int",
+    "volume_cap_pct": "int"
   },
   "report_state": ["report", "held_files", "held_sha256"],
   "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art"],

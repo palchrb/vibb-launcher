@@ -47,6 +47,9 @@ object MusicRestrictions {
     const val MOBILE_DATA = "mobile_data"
     const val LIBRARY_VERSION = "library_version"
     const val STORYTEL_GENERATION = "storytel_generation"
+
+    /** The parent's volume cap in force (design 26a §5.3): 1..99 %, 0 = none. The music app clamps its own Sonos sets to it. */
+    const val VOLUME_CAP_PCT = "volume_cap_pct"
 }
 
 private val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -158,8 +161,11 @@ fun hashFailureSkips(failures: Int, lastAt: Long, nowMs: Long): Boolean =
  * The managed config for the music app (21 §2): written when it differs, cleared when unmanaged.
  * Only Boolean, Int and String values: the platform's store (`UserManagerService.writeBundle`)
  * drops the whole bundle for anything else, a Long included (qa-21-step3-code H1).
+ * [volumeCapPct] is the cap IN FORCE (`capPctInForce`: the policy's, lifted by the override and the
+ * pause), not the policy's: a Sonos room is outside `STREAM_MUSIC`, so the music app clamps its own
+ * sets to it (design 26a §5.3).
  */
-fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: String): Map<String, Any> = linkedMapOf(
+fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: String, volumeCapPct: Int?): Map<String, Any> = linkedMapOf(
     MusicRestrictions.V to 1,
     MusicRestrictions.MANAGED to true,
     MusicRestrictions.LAUNCHER_PACKAGE to launcherPackage,
@@ -167,7 +173,11 @@ fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: Stri
     MusicRestrictions.MOBILE_DATA to policy.mobileData,
     MusicRestrictions.LIBRARY_VERSION to policy.libraryVersion.orEmpty(),
     MusicRestrictions.STORYTEL_GENERATION to policy.storytelGeneration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+    MusicRestrictions.VOLUME_CAP_PCT to volumeCapRestriction(volumeCapPct),
 )
+
+/** The restriction's value for the cap in force: the percentage while it caps (1..99), else 0 ("none"). */
+fun volumeCapRestriction(capPct: Int?): Int = capPct?.takeIf { it in 1..99 } ?: 0
 
 /** The value types `setApplicationRestrictions` stores for a device owner (besides nested bundles and arrays). */
 fun restrictionValueStorable(value: Any?): Boolean = value is Boolean || value is Int || value is String

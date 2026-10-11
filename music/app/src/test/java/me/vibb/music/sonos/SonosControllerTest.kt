@@ -549,7 +549,7 @@ class SonosControllerTest {
         assertEquals(441_000L, r.store.writes.last().posMs)
     }
 
-    // -- volume (§5.3; the cap is 3b) and the sleep ramp (§5.2) --
+    // -- volume (§5.3; the cap: SonosLifecycleTest) and the sleep ramp (§5.2) --
 
     @Test
     fun `volume - clamped 0 to 100, a press from our own last set, else the last read`() {

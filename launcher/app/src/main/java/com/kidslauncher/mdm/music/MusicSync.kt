@@ -74,9 +74,30 @@ object MusicSync {
     }
 
     /**
+     * The cap in force changed (`AppEnforcer.apply` -> [VolumeCap.refresh]: a sync, the override or
+     * the pause): the managed config again, so the music app's own Sonos sets follow it at once
+     * (design 26a §5.3). Any thread; the write runs on IO.
+     */
+    fun capChanged(context: Context, policy: PolicyResponse?) {
+        val app = context.applicationContext
+        capScope.launch {
+            try {
+                val pkg = MusicStore.installedPackage(app) ?: return@launch
+                if (writeRestrictions(app, policy, musicPolicy(policy?.music))) nudge(app, pkg)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't re-push the music app's volume cap", e)
+            }
+        }
+    }
+
+    private val capScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
      * The managed config (21 §2), for each installed music app: written when it differs, cleared
      * when the phone has no policy. Only the device owner writes it. True when it changed.
+     * Synchronized: the sync and a cap edge may write at once.
      */
+    @Synchronized
     private fun writeRestrictions(app: Context, policy: PolicyResponse?, music: MusicPolicy?): Boolean {
         val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return false
         if (!dpm.isDeviceOwnerApp(app.packageName)) return false
@@ -86,7 +107,7 @@ object MusicSync {
             val desired = when {
                 policy == null -> Bundle()
                 music == null -> continue // an older or newer server: keep what is there
-                else -> restrictionsBundle(restrictionsFor(music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language)))
+                else -> restrictionsBundle(restrictionsFor(music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce))
             }
             val current = try {
                 dpm.getApplicationRestrictions(admin, pkg)

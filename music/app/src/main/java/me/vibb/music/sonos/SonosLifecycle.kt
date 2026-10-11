@@ -75,3 +75,11 @@ suspend fun suspensionStop(transport: SonosTransport, choice: RendererChoice, bu
     return transport.park(uid)
 }
 
+/**
+ * The volume our own `SetVolume` sends (design 26a §5.3): [requested] within 0..100 and never above
+ * the parent's [cap] in force (1..99 %, null = none).
+ */
+fun volumeTarget(requested: Int, cap: Int?): Int {
+    val v = requested.coerceIn(0, 100)
+    return if (cap != null && cap in 1..99) minOf(v, cap) else v
+}

@@ -119,6 +119,11 @@ class SonosController(
      * app). Every play the controller sends asks first - a skip, an advance, a start (qa-26a-step3a-code H1).
      */
     private val mayPlay: () -> Boolean = { true },
+    /**
+     * The parent's volume cap in force, 1..99 % (the launcher's `volume_cap_pct`, read live), or
+     * null: our own `SetVolume`s never go above it (design 26a §5.3).
+     */
+    private val cap: () -> Int? = { null },
 ) {
     /** The room: the uid we command (a group by its coordinator), and its label. Migration follow moves them. */
     var uid: String = uid
@@ -1078,12 +1083,17 @@ class SonosController(
         lockFor(false)
     }
 
-    // -- volume (§5.3; the cap is step 3b) --
+    // -- volume (§5.3) --
 
-    /** `SetVolume`, clamped 0..100 (the parent's cap is 3b); the base of the next press. */
+    /**
+     * `SetVolume` of our own (the slider, a key press): clamped 0..100 and to the parent's cap in
+     * force ([volumeTarget]); the base of the next press. A volume set from elsewhere (the Sonos
+     * app, the speaker's buttons) is never pulled down: only what we send is clamped (vibb never
+     * fights an external change).
+     */
     fun setVolume(volume: Int) {
         if (closed) return
-        val v = volume.coerceIn(0, 100)
+        val v = volumeTarget(volume, cap())
         volOpt = v
         val target = uid
         work.submit({ transport.volume(v, target) }) { r ->
@@ -1093,9 +1103,17 @@ class SonosController(
         host.changed()
     }
 
-    /** A volume key: our own last set (never the stale poll), else the last read, else 50 (vibb), +- [delta]. */
+    /**
+     * A volume key: our own last set (never the stale poll), else the last read, else 50 (vibb), +-
+     * [delta]. A press up on a speaker already at or above the cap sends nothing: it would be pulled
+     * down by an "up" (and the cap forbids going higher).
+     */
     fun adjustVolume(delta: Int) {
-        setVolume((volOpt ?: snap?.volume ?: 50) + delta)
+        if (closed) return
+        val base = volOpt ?: snap?.volume ?: 50
+        val c = cap()?.takeIf { it in 1..99 }
+        if (delta > 0 && c != null && base >= c) return host.log("sonos: volume at the cap ($c) - up ignored")
+        setVolume(base + delta)
     }
 
     // -- the sleep timer's end (§5.2) --

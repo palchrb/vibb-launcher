@@ -236,4 +236,15 @@ class GuardsTest {
         assertTrue(release.contains("actor.close()"))
         assertFalse("never cancelled before the queued Stop", release.contains("cancel()"))
     }
+
+    @Test
+    fun `the parent's volume cap reaches every volume set of our own on a Sonos room`() {
+        // design 26a §5.3: read live from the managed config, as mobile_data
+        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        assertTrue(renderer.contains("cap = { Bridge.config(context).volumeCapPct },"))
+        val set = sonos.substringAfter("fun setVolume(volume: Int) {").substringBefore("\n    }\n")
+        assertTrue(set.contains("val v = volumeTarget(volume, cap())"))
+        assertTrue(sonos.substringAfter("fun adjustVolume(delta: Int) {").substringBefore("\n    }\n").contains("setVolume(base + delta)"))
+        assertTrue(renderer.contains("handling { controller.setVolume(deviceVolume) }"))
+    }
 }

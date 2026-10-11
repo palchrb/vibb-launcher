@@ -22,6 +22,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import me.vibb.music.bridge.Bridge
 import me.vibb.music.data.Store
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.resumeFrom
@@ -103,6 +104,8 @@ internal class SonosRenderer(
         restoreVolume = home.choice().takeIf { it.volumeUid == uid }?.volume,
         // every play the controller sends asks first, as KidPlayer and the play commands do (H1)
         mayPlay = { playAllowed(suspendedNow()) },
+        // the parent's cap in force, read live from the managed config like mobile_data (§5.3)
+        cap = { Bridge.config(context).volumeCapPct },
     )
 
     private fun suspendedNow(): Boolean = try {

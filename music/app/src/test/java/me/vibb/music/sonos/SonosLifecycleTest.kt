@@ -300,4 +300,61 @@ class SonosLifecycleTest {
         assertEquals(listOf(true, false), c.host.locks)
         assertFalse(c.c.armedPlaying(c.c.spec(c.now), c.now))
     }
+
+    // -- the parent's volume cap (§5.3) --
+
+    @Test
+    fun `volume cap - our own sets never above it, an up press at the cap sends nothing`() {
+        val r = ControllerRig(uid)
+        r.capPct = 60
+        r.start()
+        r.speaker("0:07:11")
+        r.poll()
+        r.c.setVolume(80)
+        r.work.drain()
+        assertEquals("the slider clamped", "volume 60", r.spk.commands.last())
+        val sent = r.spk.commands.size
+        r.c.adjustVolume(3)
+        r.work.drain()
+        assertEquals("at the cap: nothing", sent, r.spk.commands.size)
+        r.c.adjustVolume(-3)
+        r.c.adjustVolume(-3)
+        r.c.adjustVolume(3)
+        r.work.drain()
+        assertEquals(listOf("volume 57", "volume 54", "volume 57"), r.spk.commands.takeLast(3))
+        r.capPct = null
+        r.c.setVolume(80)
+        r.work.drain()
+        assertEquals("the cap lifted (the override, the pause): read live", "volume 80", r.spk.commands.last())
+    }
+
+    @Test
+    fun `volume cap - a louder speaker set from elsewhere is left alone, an up press never pulls it down`() {
+        val r = ControllerRig(uid)
+        r.capPct = 60
+        r.spk.vol = 90 // from the Sonos app
+        r.start()
+        r.speaker("0:07:11")
+        r.poll()
+        r.advance(15_000)
+        r.poll()
+        assertEquals(90, r.c.deviceVolume())
+        assertFalse("no poll fights it", r.spk.commands.any { it.startsWith("volume") })
+        r.c.adjustVolume(3)
+        r.work.drain()
+        assertFalse("up: nothing", r.spk.commands.any { it.startsWith("volume") })
+        r.c.adjustVolume(-3)
+        r.work.drain()
+        assertEquals("a press down from 90 is our own set: at most the cap", "volume 60", r.spk.commands.last())
+    }
+
+    @Test
+    fun `volume target - 0 to 100, at most a cap of 1 to 99`() {
+        assertEquals(60, volumeTarget(80, 60))
+        assertEquals(40, volumeTarget(40, 60))
+        assertEquals(100, volumeTarget(150, null))
+        assertEquals(0, volumeTarget(-5, 60))
+        assertEquals("0 or 100 is no cap", 80, volumeTarget(80, 0))
+        assertEquals(80, volumeTarget(80, 100))
+    }
 }

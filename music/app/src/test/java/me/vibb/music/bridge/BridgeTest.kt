@@ -39,13 +39,26 @@ class BridgeTest {
             mapOf(
                 "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb",
                 "mobile_data" to true, "library_version" to "0123456789abcdef", "storytel_generation" to 3,
+                "volume_cap_pct" to 70,
             ),
         )
-        assertEquals(BridgeConfig(true, "me.vibb.launcher", "nb", true, "0123456789abcdef", 3), config)
+        assertEquals(BridgeConfig(true, "me.vibb.launcher", "nb", true, "0123456789abcdef", 3, volumeCapPct = 70), config)
         assertEquals("no config: unmanaged", BridgeConfig.UNMANAGED, bridgeConfig(emptyMap()))
         assertEquals(BridgeConfig.UNMANAGED, bridgeConfig(mapOf("v" to 2, "managed" to true)))
         assertNull("not a launcher", bridgeConfig(mapOf("v" to 1, "managed" to true, "launcher_package" to "com.evil")).launcherPackage)
         assertEquals("an unknown language follows the phone", "", bridgeConfig(mapOf("v" to 1, "managed" to true, "language" to "de")).language)
+    }
+
+    @Test
+    fun `the volume cap in force - 1 to 99 percent caps, 0 or anything else is none (design 26a §5_3)`() {
+        fun cap(value: Any?) = bridgeConfig(mapOf("v" to 1, "managed" to true, "volume_cap_pct" to value)).volumeCapPct
+        assertEquals(60, cap(60))
+        assertEquals(99, cap(99))
+        assertNull("0 = none", cap(0))
+        assertNull("100 caps nothing", cap(100))
+        assertNull("not an Int", cap("60"))
+        assertNull("absent (an older launcher)", bridgeConfig(mapOf("v" to 1, "managed" to true)).volumeCapPct)
+        assertNull("unmanaged", bridgeConfig(mapOf("volume_cap_pct" to 60)).volumeCapPct)
     }
 
     @Test
@@ -91,6 +104,7 @@ class BridgeTest {
         val keys = listOf(
             RestrictionKeys.V, RestrictionKeys.MANAGED, RestrictionKeys.LAUNCHER_PACKAGE, RestrictionKeys.LANGUAGE,
             RestrictionKeys.MOBILE_DATA, RestrictionKeys.LIBRARY_VERSION, RestrictionKeys.STORYTEL_GENERATION,
+            RestrictionKeys.VOLUME_CAP_PCT,
         )
         assertEquals(types.keys, keys.toSet())
         val sample: Map<String, Any> = types.mapValues { (key, type) ->
@@ -102,6 +116,7 @@ class BridgeTest {
         }
         val read = bridgeConfig(sample)
         assertTrue(read.managed && read.mobileData && read.launcherPackage == "me.vibb.launcher" && read.storytelGeneration == 7L && read.language == "nb")
+        assertEquals(7, read.volumeCapPct)
         assertEquals(strings("report_state"), listOf(REPORT_KEY, HELD_FILES_KEY, HELD_SHA256_KEY))
         assertEquals(
             strings("now_playing"),

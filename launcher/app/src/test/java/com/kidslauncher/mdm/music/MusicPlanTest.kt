@@ -139,21 +139,45 @@ class MusicPlanTest {
 
     @Test
     fun `the managed config carries the keys the music app reads`() {
-        val r = restrictionsFor(MusicPolicy(null, true, 60, 4), "me.vibb.launcher", "nb")
+        val r = restrictionsFor(MusicPolicy(null, true, 60, 4), "me.vibb.launcher", "nb", 60)
         assertEquals(
-            mapOf("v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb", "mobile_data" to true, "library_version" to "", "storytel_generation" to 4),
+            mapOf(
+                "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb", "mobile_data" to true, "library_version" to "",
+                "storytel_generation" to 4, "volume_cap_pct" to 60,
+            ),
             r,
         )
     }
 
     @Test
+    fun `the managed config carries the volume cap in force - 0 when none, lifted with the override (design 26a §5_3)`() {
+        val policy = MusicPolicy(null, true, 70, 4)
+        assertEquals(70, restrictionsFor(policy, "p", "", capPctInForce(policy.volumeCapPct, managed = true, overrideActive = false))["volume_cap_pct"])
+        assertEquals("the override or the pause lifts it", 0, restrictionsFor(policy, "p", "", capPctInForce(policy.volumeCapPct, managed = true, overrideActive = true))["volume_cap_pct"])
+        assertEquals("unmanaged", 0, restrictionsFor(policy, "p", "", capPctInForce(policy.volumeCapPct, managed = false, overrideActive = false))["volume_cap_pct"])
+        assertEquals("off", 0, volumeCapRestriction(null))
+        assertEquals("100 % caps nothing", 0, volumeCapRestriction(100))
+        assertEquals("never a mute: 0 and below are none", 0, volumeCapRestriction(-5))
+        assertEquals(MusicRestrictions.VOLUME_CAP_PCT, "volume_cap_pct")
+    }
+
+    @Test
+    fun `every apply edge pushes a changed cap to the music app`() {
+        val cap = module("src/main/java/com/kidslauncher/mdm/music/VolumeCap.kt").readText()
+        val refresh = cap.substringAfter("fun refresh(").substringBefore("\n    }\n")
+        assertTrue(refresh.contains("MusicSync.capChanged(app, policy)"))
+        val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
+        assertTrue(sync.contains("restrictionsFor(music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce)"))
+    }
+
+    @Test
     fun `the managed config holds only types the platform stores - Boolean, Int, String (H1)`() {
         for (policy in listOf(MusicPolicy("0123456789abcdef", false, null, 0), MusicPolicy(null, true, 60, Long.MAX_VALUE))) {
-            for ((key, value) in restrictionsFor(policy, "me.vibb.launcher", "")) {
+            for ((key, value) in restrictionsFor(policy, "me.vibb.launcher", "", policy.volumeCapPct)) {
                 assertTrue("$key is a ${value.javaClass.simpleName}", restrictionValueStorable(value))
             }
         }
-        assertEquals("a huge generation is clamped", Int.MAX_VALUE, restrictionsFor(MusicPolicy(null, true, 60, Long.MAX_VALUE), "p", "")["storytel_generation"])
+        assertEquals("a huge generation is clamped", Int.MAX_VALUE, restrictionsFor(MusicPolicy(null, true, 60, Long.MAX_VALUE), "p", "", 60)["storytel_generation"])
         assertFalse(restrictionValueStorable(4L))
         assertFalse(restrictionValueStorable(1.5))
     }
@@ -229,7 +253,7 @@ class MusicPlanTest {
         assertEquals(strings("music_packages"), MUSIC_PACKAGES)
         assertTrue(module("src/main/AndroidManifest.xml").readText().contains("\${applicationId}" + (contract["permission_suffix"] as JsonPrimitive).content))
         val types = (contract["restrictions"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content }
-        val written = restrictionsFor(MusicPolicy(null, true, null, 1), "me.vibb.launcher", "nb")
+        val written = restrictionsFor(MusicPolicy(null, true, null, 1), "me.vibb.launcher", "nb", null)
         assertEquals(types.keys, written.keys)
         for ((key, value) in written) {
             val type = when (value) {

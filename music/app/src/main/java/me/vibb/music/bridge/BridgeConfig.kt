@@ -38,6 +38,9 @@ object RestrictionKeys {
     const val MOBILE_DATA = "mobile_data"
     const val LIBRARY_VERSION = "library_version"
     const val STORYTEL_GENERATION = "storytel_generation"
+
+    /** The parent's volume cap in force (design 26a §5.3): 1..99 %, 0 = none. */
+    const val VOLUME_CAP_PCT = "volume_cap_pct"
 }
 
 data class BridgeConfig(
@@ -51,6 +54,11 @@ data class BridgeConfig(
     /** The library's version; "" = nothing ticked on this phone (an empty library). */
     val libraryVersion: String?,
     val storytelGeneration: Long,
+    /**
+     * The parent's volume cap in force, 1..99 % (the launcher's `capPctInForce`: lifted by its
+     * override and pause), or null: a Sonos room's volume our own sets never exceed (design 26a §5.3).
+     */
+    val volumeCapPct: Int? = null,
 ) {
     companion object {
         val UNMANAGED = BridgeConfig(false, null, "", false, null, 0)
@@ -67,6 +75,7 @@ fun bridgeConfig(values: Map<String, Any?>): BridgeConfig {
         mobileData = values[RestrictionKeys.MOBILE_DATA] == true,
         libraryVersion = values[RestrictionKeys.LIBRARY_VERSION] as? String,
         storytelGeneration = (values[RestrictionKeys.STORYTEL_GENERATION] as? Int)?.toLong() ?: 0,
+        volumeCapPct = (values[RestrictionKeys.VOLUME_CAP_PCT] as? Int)?.takeIf { it in 1..99 },
     )
 }
 
