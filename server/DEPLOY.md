@@ -14,7 +14,8 @@ sudo bash install.sh
 
 (Downloaded to a file rather than piped into `sudo bash`, so what runs as root is what you read, and a cut-off
 download never runs half a script. The server it installs is checked against the project's signing key - "Release
-signing" under "Updating".)
+signing" under "Updating".) **Until the first signed server release (0.24.0) is published, `install.sh` says so and
+installs nothing**: releases before it aren't signed, and it never installs an unsigned one.
 
 This downloads the newest server release (the newest `server-vX.Y.Z` release of the
 [`palchrb/vibb-launcher`](https://github.com/palchrb/vibb-launcher) monorepo), sets it up as a background service that starts on boot, and prints an admin username/password at the end — **save that password**, you'll need it to log in the first time (and you'll be asked to change it immediately after).

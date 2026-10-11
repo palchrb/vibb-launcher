@@ -43,8 +43,24 @@ SERVICE_USER="kidphone"
 # than just checking whether the release version strings happen to match.
 WATCHER_SCHEMA_VERSION="6"
 
+# Security review M5: every release file root installs or runs is signed with the project's
+# minisign key, pinned here (the same line in install.sh, update.sh and actions.sh - a server test
+# keeps them equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
+# the tag, so a signed file can't be passed off under another name or as another release.
+SERVER_SIGNING_PUBKEY="not-set"
+
 if [ "$(id -u)" -ne 0 ]; then
     echo "Please run this as root (e.g. 'sudo bash install.sh')." >&2
+    exit 1
+fi
+
+# Nothing to install without the key (QA of the security wave, Low 7): say so before touching
+# anything, instead of failing on a download later.
+if [ "$SERVER_SIGNING_PUBKEY" = "not-set" ]; then
+    echo "No release signing key is pinned in this script, so it installs nothing: root takes only" >&2
+    echo "server releases signed with the project's key, and this copy predates the key. Use the" >&2
+    echo "script from main once the first signed release (server 0.24.0) is published" >&2
+    echo "(server/DEPLOY.md, \"Release signing\")." >&2
     exit 1
 fi
 
@@ -163,12 +179,6 @@ pick_tag() {
     fi
 }
 
-# Security review M5: every release file root installs or runs is signed with the project's
-# minisign key, pinned here (the same line in install.sh, update.sh and actions.sh - a server test
-# keeps them equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
-# the tag, so a signed file can't be passed off under another name or as another release.
-SERVER_SIGNING_PUBKEY="not-set"
-
 # verify_signed FILE NAME TAG: FILE.minisig must be a good signature of FILE by the pinned key,
 # with the trusted comment "NAME TAG". Anything else - no key pinned, no minisign, no or a bad
 # signature, another comment - refuses.
@@ -200,7 +210,11 @@ download_release() {
     echo "Downloading $TAG from $url ..."
     curl -fsSL "$url" -o "$dir/$asset"
     curl -fsSL "$url.sha256" -o "$dir/$asset.sha256"
-    curl -fsSL "$url.minisig" -o "$dir/$asset.minisig"
+    if ! curl -fsSL "$url.minisig" -o "$dir/$asset.minisig"; then
+        echo "$TAG has no signature ($asset.minisig): server releases before 0.24.0 aren't signed, and" >&2
+        echo "this script installs only signed ones - not installing (server/DEPLOY.md, \"Release signing\")." >&2
+        exit 1
+    fi
     verify_signed "$dir/$asset" "$asset" "$TAG" || exit 1
     expected="$(head -c 64 "$dir/$asset.sha256")"
     actual="$(sha256sum "$dir/$asset" | cut -c1-64)"

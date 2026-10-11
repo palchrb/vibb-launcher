@@ -499,3 +499,22 @@ fn the_release_signs_first_and_in_the_release_environment() {
     assert!(publish.contains("name: server-release-signed"));
     assert!(publish.contains("server-release-sign, server-release-image"));
 }
+
+/// QA of the security wave, Low 7: without a pinned key the scripts say so before doing
+/// anything, and a release without a signature is named as such - never installed.
+#[test]
+fn an_unsigned_install_fails_early_and_clearly() {
+    for script in [INSTALL, UPDATE] {
+        let early = script
+            .find("if [ \"$SERVER_SIGNING_PUBKEY\" = \"not-set\" ]; then\n    echo \"No release signing key is pinned in this script")
+            .expect("the early check");
+        let first_change = ["apt-get", "useradd", "mkdir -p", "systemctl stop"]
+            .iter()
+            .filter_map(|command| script.find(&format!("\n{command}")))
+            .min()
+            .unwrap();
+        assert!(early < first_change);
+        let download = block(script, "download_release() {", "}");
+        assert!(download.contains("aren't signed, and"), "{download}");
+    }
+}
