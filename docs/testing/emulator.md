@@ -493,6 +493,59 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   paused, and one tap continues. The report the step-3 bridge will send is
   `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
 
+## 6g. Vibb music on Sonos (design 26a): the fake speaker
+
+The emulator's user-mode network carries no multicast (no SSDP) and every service on the host is `10.0.2.2` (the
+host's loopback), so the music app's speakers come from `scripts/fake-sonos.py` on the VM: N fake speakers on N
+ports, one household topology, a scripted transport. Its answers are built from the canned SOAP replies in
+`music/app/src/test/resources/sonos/` - the files the JVM tests parse (`SonosFixturesTest`) - so the fake and the
+tests can't drift apart. Python 3, stdlib only; it logs every SOAP call. The app's speaker cache is seeded through
+the debug feed (`debug-feed/sonos.json`, `src/debug` only).
+
+```
+python3 -I scripts/fake-sonos.py --selftest            # fixtures parse, the fake answers itself (no emulator needed)
+python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402 --print-seed > debug-feed/sonos.json
+python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402            # leave it running; Ctrl+C ends it
+#   --group Stua+Kjøkken     the two as one group (the picker's "Stua + Kjøkken" row, Stua the coordinator)
+#   --script FILE            scripted events, timed from the first Play (see below)
+#   --duration 1453          a track length when the DIDL has none (default: the speaker reads 0:00:00)
+R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
+adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
+adb shell am broadcast -n $R
+adb logcat -s VibbMusicDebugFeed VibbSonos       # "sonos: 2 speaker(s) seeded into the cache"
+adb shell run-as me.vibb.music.debug cat no_backup/sonos.json
+```
+
+Script lines are `t+<seconds> [@<speaker>] <event>` (the first speaker when none is named), one per line:
+
+```
+# grouped away: Stua becomes a member of Kjøkken's group (its transport reads x-rincon:RINCON_FAKE01402)
+t+20 x-rincon:RINCON_FAKE01402
+# taken over: someone else plays on the speaker
+t+20 PLAYING "x-sonos-spotify:spotify%3atrack%3aGUEST?sid=9"
+# migration (start with --group Stua+Kjøkken): Stua leaves its group, the stream moves on to Kjøkken, Stua
+# reads STOPPED ""
+t+30 move Kjøkken
+# unreachable for a minute, then back
+t+10 drop
+t+70 back
+# the stall retry: RelTime frozen while PLAYING
+t+15 stall
+# the volume changed from the Sonos app
+t+15 volume 60
+```
+
+- The fake's transport: SetAVTransportURI sets the uri, Play plays (TRANSITIONING for 0.5 s first), RelTime runs in
+  real time and the track ends by itself at its DIDL duration (STOPPED, uri kept: an episode end), Seek on a
+  stopped transport is UPnP 701 (the hush and the settled seek), past the end 711; volume and mute.
+- Step 1 (`sonos/` core) has no screen yet: check the selftest, the seeding and the cache file. With step 3a: the
+  "Spill av på" sheet lists Stua and Kjøkken (stale + "Søker etter høyttalere…" when the fake is down), switch phone ->
+  Stua -> Kjøkken -> phone (the fake's log shows one Stop per room left, a bookmark before it), the same tile, the
+  grouped-away, taken-over and migration scripts. With step 3b: kill and restart the app while the fake plays
+  (adopt, no double playback), a time rule's suspension with and without the service (Stop, then
+  `SetAVTransportURI x-rincon-queue:...`), the volume keys against the cap.
+- Real speakers stay a device check (design 26a, "Device checks"): SSDP, Wi-Fi binding, the NRK service, Doze.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and

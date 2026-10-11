@@ -4,11 +4,18 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import me.vibb.music.data.Store
 import me.vibb.music.model.JSON
+import me.vibb.music.sonos.Player
+import me.vibb.music.sonos.SONOS_PORT
+import me.vibb.music.sonos.SonosFiles
+import me.vibb.music.sonos.SpeakerCache
 import me.vibb.music.sync.Inbox
 import me.vibb.music.sync.Sync
 import java.io.File
@@ -24,13 +31,17 @@ import java.io.File
  *   debug-feed/files/<file id>        own files' audio (size + SHA-256 checked against the library)
  *   debug-feed/covers/<hash>          cover JPEGs (checked against their hash)
  *   debug-feed/config.json            optional: {"mobile_data": true}
+ *   debug-feed/sonos.json             optional: Sonos speakers merged into the uid -> ip cache, for the
+ *                                     emulator's fake speaker (no multicast there, so no SSDP; design 26a
+ *                                     §8 step 1): {"players": [{"uid": "RINCON_FAKE1401", "name": "Stua",
+ *                                     "ip": "10.0.2.2", "port": 1401}]}
  *
  *   adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver  (creates the folder)
  *   adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
  *   adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
  *
  * It goes through the same checks the bridge will (Inbox) and then runs the sync at once.
- * docs/testing/emulator.md §6f has the steps.
+ * docs/testing/emulator.md §6f has the steps (§6g for Sonos).
  */
 class DebugFeedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -53,6 +64,7 @@ class DebugFeedReceiver : BroadcastReceiver() {
             val config = JSON.parseToJsonElement(f.readText()) as? JsonObject
             config?.get("mobile_data")?.jsonPrimitive?.booleanOrNull?.let { store.mobileData = it }
         }
+        File(dir, "sonos.json").takeIf { it.isFile }?.let { f -> seedSonos(context, f) }
         val libraryFile = File(dir, "library.json")
         if (libraryFile.isFile) {
             val ok = Inbox.putLibrary(store, libraryFile.readText())
@@ -79,6 +91,19 @@ class DebugFeedReceiver : BroadcastReceiver() {
         }
         Sync.nudge(context, settleS = 0)
         Log.i(TAG, "sync queued (${library.entries.size} entries, ${library.files.size} files)")
+    }
+
+    /** The fake speaker's rooms into the cache (merged, as an SSDP round would; groups untouched). */
+    private fun seedSonos(context: Context, f: File) {
+        val root = JSON.parseToJsonElement(f.readText()) as? JsonObject
+        val players = (root?.get("players") as? JsonArray).orEmpty().mapNotNull { e ->
+            val o = e as? JsonObject ?: return@mapNotNull null
+            val uid = o["uid"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val ip = o["ip"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            Player(uid, ip, o["port"]?.jsonPrimitive?.intOrNull ?: SONOS_PORT, o["name"]?.jsonPrimitive?.contentOrNull)
+        }
+        SpeakerCache(SonosFiles.cache(context)).seed(players)
+        Log.i(TAG, "sonos: ${players.size} speaker(s) seeded into the cache")
     }
 
     private companion object {

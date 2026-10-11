@@ -1,0 +1,588 @@
+#!/usr/bin/env python3
+# fake-sonos.py - fake Sonos speakers for the music app on the emulator (design 26a §8 step 1).
+#
+# Part of handy (palchrb/vibb-launcher), licensed under the GNU General Public License v3.0 or later
+# (LICENSE). Modelled on palchrb/vibb's test fakes - tests/sonos_renderer.py's FakeSidecar and
+# tests/sonos_contract.py's rule that both fakes answer from ONE source of truth (MIT License,
+# Copyright (c) 2026 palchrb; see NOTICE.md). Python 3, stdlib only.
+"""Fake Sonos speakers: N speakers on N ports, one household topology, a scripted transport.
+
+    python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402 --advertise 10.0.2.2
+    python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402 --group Stua+Kjøkken
+    python3 scripts/fake-sonos.py --script migration.txt
+    python3 -I scripts/fake-sonos.py --selftest
+
+Every answer is built from the canned SOAP replies in music/app/src/test/resources/sonos/ - the same
+files the JVM tests parse (SonosFixturesTest) - with the scripted values put into their elements: the
+"two fakes" guard (neither fake can drift into agreeing with itself). It answers the actions of
+design 26a §2.2 (AVTransport, RenderingControl, ZoneGroupTopology), the device description and
+/status/accounts, and logs every SOAP call. No SSDP: the emulator's user-mode network carries no
+multicast and every host fake is 10.0.2.2, so the app's cache is seeded through the debug feed
+(debug-feed/sonos.json, docs/testing/emulator.md §6g); --print-seed prints that file.
+
+The transport: SetAVTransportURI sets the uri (STOPPED), Play plays (TRANSITIONING for
+--transition-s first), RelTime runs in real time and the track ends by itself at its duration (from
+the DIDL's res@duration, else --duration; STOPPED with the uri kept, like a real episode end), Seek
+on a STOPPED transport is UPnP 701, Pause, Stop, volume and mute.
+
+--script FILE: one event per line, `t+<seconds> [@<speaker>] <event>`, the time counted from the
+first Play any speaker receives (the session start); the speaker defaults to the first. Events:
+    PLAYING "<uri>" | PAUSED_PLAYBACK "<uri>" | STOPPED "" | TRANSITIONING -   set state and uri (- keeps it)
+    x-rincon:<uid> | group <speaker>      grouped away: a member of that coordinator's group
+    move <speaker>                        migration: the stream moves there, this one STOPPED ""
+    drop | back                           stop / start answering (connection closed: unreachable)
+    stall | unstall                       RelTime frozen while PLAYING (the stall retry)
+    volume <0-100>                        changed from "the Sonos app"
+Lines starting with # are comments.
+"""
+
+import argparse
+import http.client
+import json
+import os
+import re
+import shlex
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from xml.sax.saxutils import escape
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+FIXTURES = os.path.join(HERE, "..", "music", "app", "src", "test", "resources", "sonos")
+SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
+SERVICES = {
+    "/MediaRenderer/AVTransport/Control": "urn:schemas-upnp-org:service:AVTransport:1",
+    "/MediaRenderer/RenderingControl/Control": "urn:schemas-upnp-org:service:RenderingControl:1",
+    "/ZoneGroupTopology/Control": "urn:schemas-upnp-org:service:ZoneGroupTopology:1",
+}
+LIVE = ("PLAYING", "PAUSED_PLAYBACK")
+T0 = time.monotonic()
+
+
+def log(msg):
+    print(f"[{time.monotonic() - T0:7.1f}] {msg}", flush=True)
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES, name), encoding="utf-8") as f:
+        return f.read()
+
+
+def put(template, tag, value):
+    """The fixture with <tag>'s text replaced by value, escaped once (as the speaker sends it)."""
+    pattern = re.compile(rf"<{tag}>.*?</{tag}>|<{tag}/>", re.S)
+    if not pattern.search(template):
+        raise KeyError(f"fixture has no <{tag}>")
+    return pattern.sub(lambda _m: f"<{tag}>{escape(value)}</{tag}>", template, count=1)
+
+
+def hms(sec):
+    sec = max(0, int(sec or 0))
+    return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
+
+
+def hms_to_s(s):
+    try:
+        h, m, sec = (s or "0:00:00").split(":")
+        return int(h) * 3600 + int(m) * 60 + float(sec)
+    except (ValueError, AttributeError):
+        return None
+
+
+class Fault(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+class Speaker:
+    def __init__(self, name, port, uid):
+        self.name, self.port, self.uid = name, port, uid
+        self.coordinator = uid
+        self.state = "STOPPED"
+        self.uri = ""
+        self.meta = ""
+        self.duration = 0.0
+        self.rel = 0.0
+        self.since = None          # monotonic when PLAYING started counting
+        self.transition_until = 0.0
+        self.volume = 30
+        self.mute = False
+        self.reachable = True
+        self.stalled = False
+
+    def position(self):
+        if self.state == "PLAYING" and self.since is not None and not self.stalled:
+            return self.rel + (time.monotonic() - self.since)
+        return self.rel
+
+    def settle(self):
+        """The track ends by itself at its duration (STOPPED, uri kept)."""
+        if self.state == "PLAYING" and self.duration > 0 and self.position() >= self.duration:
+            self.state, self.rel, self.since = "STOPPED", 0.0, None
+            log(f"{self.name}: track ended (uri kept)")
+
+    def freeze(self):
+        self.rel, self.since = self.position(), (time.monotonic() if self.state == "PLAYING" else None)
+
+    def set_state(self, state):
+        self.freeze()
+        self.state = state
+        self.since = time.monotonic() if state == "PLAYING" else None
+        if state == "STOPPED":
+            self.rel = 0.0
+
+
+class Household:
+    def __init__(self, speakers, advertise, transition_s, duration):
+        self.speakers = speakers
+        self.by_name = {s.name: s for s in speakers}
+        self.by_uid = {s.uid: s for s in speakers}
+        self.advertise = advertise
+        self.transition_s = transition_s
+        self.default_duration = duration
+        self.lock = threading.RLock()
+        self.script = []           # [(t, speaker, words)]
+        self.started = None        # monotonic of the first Play
+
+    def speaker(self, name):
+        s = self.by_name.get(name)
+        if s is None:
+            raise SystemExit(f"fake-sonos: no speaker named {name!r} (have {', '.join(self.by_name)})")
+        return s
+
+    # -- the script --
+
+    def load_script(self, text):
+        for n, line in enumerate(text.splitlines(), 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = re.match(r"t\+([0-9.]+)\s+(?:@(\S+)\s+)?(.+)$", line)
+            if not m:
+                raise SystemExit(f"fake-sonos: script line {n}: {line!r}")
+            spk = self.speaker(m.group(2)) if m.group(2) else self.speakers[0]
+            self.script.append((float(m.group(1)), spk, shlex.split(m.group(3))))
+        self.script.sort(key=lambda e: e[0])
+
+    def run_due(self):
+        with self.lock:
+            if self.started is None:
+                return
+            now = time.monotonic() - self.started
+            while self.script and self.script[0][0] <= now:
+                t, spk, words = self.script.pop(0)
+                shown = " ".join(words) if words else "-"
+                log(f"script t+{t:g} {spk.name}: {shown}")
+                self.event(spk, words)
+
+    def event(self, spk, words):
+        verb = words[0]
+        if verb in ("PLAYING", "PAUSED_PLAYBACK", "STOPPED", "TRANSITIONING"):
+            spk.set_state(verb)
+            if len(words) > 1 and words[1] != "-":
+                spk.uri = words[1]
+            spk.coordinator = spk.uid
+        elif verb.startswith("x-rincon:") or verb == "group":
+            coord = verb.split(":", 1)[1] if verb.startswith("x-rincon:") else self.speaker(words[1]).uid
+            spk.freeze()
+            spk.coordinator = coord
+        elif verb == "move":
+            to = self.speaker(words[1])
+            spk.freeze()
+            to.uri, to.meta, to.duration, to.rel = spk.uri, spk.meta, spk.duration, spk.rel
+            to.coordinator = to.uid
+            to.set_state(spk.state if spk.state in LIVE else "PLAYING")
+            to.rel = spk.rel
+            for other in self.speakers:
+                if other.coordinator == spk.uid and other is not spk:
+                    other.coordinator = to.uid
+            spk.coordinator = spk.uid
+            spk.uri, spk.meta, spk.duration = "", "", 0.0
+            spk.set_state("STOPPED")
+        elif verb == "drop":
+            spk.reachable = False
+        elif verb == "back":
+            spk.reachable = True
+        elif verb == "stall":
+            spk.freeze()
+            spk.stalled = True
+        elif verb == "unstall":
+            spk.stalled = False
+            spk.since = time.monotonic() if spk.state == "PLAYING" else None
+        elif verb == "volume":
+            spk.volume = max(0, min(100, int(words[1])))
+        else:
+            raise SystemExit(f"fake-sonos: unknown script event {verb!r}")
+
+    # -- what a speaker reports --
+
+    def view(self, spk):
+        """(state, uri, rel, duration, meta) as this speaker's own transport reports them."""
+        spk.settle()
+        if spk.coordinator != spk.uid:
+            coord = self.by_uid.get(spk.coordinator)
+            if coord is not None:
+                coord.settle()
+                return coord.state, f"x-rincon:{coord.uid}", coord.position(), coord.duration, ""
+            return "PLAYING", f"x-rincon:{spk.coordinator}", 0.0, 0.0, ""
+        state = spk.state
+        if state == "PLAYING" and time.monotonic() < spk.transition_until:
+            state = "TRANSITIONING"
+        return state, spk.uri, spk.position(), spk.duration, spk.meta
+
+    def zone_group_state(self):
+        groups = {}
+        for s in self.speakers:
+            groups.setdefault(s.coordinator if s.coordinator in self.by_uid else s.uid, []).append(s)
+        out = []
+        for coord, members in groups.items():
+            ms = "".join(
+                f'<ZoneGroupMember UUID="{m.uid}" Location="http://{self.advertise}:{m.port}/xml/device_description.xml" '
+                f'ZoneName="{escape(m.name, {chr(34): "&quot;"})}" SoftwareVersion="70.3-35220" SWGen="2" BootSeq="1"/>'
+                for m in members)
+            out.append(f'<ZoneGroup Coordinator="{coord}" ID="{coord}:1">{ms}</ZoneGroup>')
+        return f"<ZoneGroupState><ZoneGroups>{''.join(out)}</ZoneGroups><VanishedDevices></VanishedDevices></ZoneGroupState>"
+
+    # -- the actions --
+
+    def act(self, spk, service, action, args):
+        if service.endswith("AVTransport:1"):
+            return self.av(spk, action, args)
+        if service.endswith("RenderingControl:1"):
+            if action == "GetVolume":
+                return put(fixture("get_volume.xml"), "CurrentVolume", str(spk.volume))
+            if action == "SetVolume":
+                spk.volume = max(0, min(100, int(args.get("DesiredVolume", "0"))))
+                return empty(service, action)
+            if action == "GetMute":
+                return put(fixture("get_mute.xml"), "CurrentMute", "1" if spk.mute else "0")
+            if action == "SetMute":
+                spk.mute = args.get("DesiredMute") in ("1", "true", "True")
+                return empty(service, action)
+        if service.endswith("ZoneGroupTopology:1") and action == "GetZoneGroupState":
+            return put(fixture("zgs_wrapped.xml"), "ZoneGroupState", self.zone_group_state())
+        raise Fault(401)  # Invalid Action
+
+    def av(self, spk, action, args):
+        if action == "GetPositionInfo":
+            _state, uri, rel, dur, meta = self.view(spk)
+            body = fixture("position_playing_ours.xml")
+            for tag, value in (("Track", "1" if uri else "0"), ("TrackDuration", hms(dur)), ("TrackMetaData", meta),
+                               ("TrackURI", uri), ("RelTime", hms(rel))):
+                body = put(body, tag, value)
+            return body
+        if action == "GetTransportInfo":
+            state = self.view(spk)[0]
+            return put(fixture("transport_playing.xml"), "CurrentTransportState", state)
+        if action == "SetAVTransportURI":
+            spk.coordinator = spk.uid  # a play on a member makes it standalone again
+            spk.uri, spk.meta = args.get("CurrentURI", ""), args.get("CurrentURIMetaData", "")
+            m = re.search(r'duration="([0-9:]+)"', spk.meta)
+            spk.duration = (hms_to_s(m.group(1)) if m else None) or self.default_duration
+            spk.set_state("STOPPED")
+            return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
+        if action == "Play":
+            if not spk.uri:
+                raise Fault(701)
+            if spk.state != "PLAYING":
+                spk.set_state("PLAYING")
+                spk.transition_until = time.monotonic() + self.transition_s
+            if self.started is None:
+                self.started = time.monotonic()
+                log("session start: the script's clock runs")
+        elif action == "Pause":
+            spk.set_state("PAUSED_PLAYBACK")
+        elif action == "Stop":
+            spk.set_state("STOPPED")
+        elif action == "Seek":
+            state = self.view(spk)[0]
+            if state not in LIVE:
+                raise Fault(701)
+            target = hms_to_s(args.get("Target"))
+            if target is None or (spk.duration and target > spk.duration):
+                raise Fault(711)
+            spk.freeze()
+            spk.rel = target
+        elif action != "RemoveAllTracksFromQueue":
+            raise Fault(401)
+        return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
+
+
+def empty(service, action):
+    return fixture("empty_response.xml").replace("PlayResponse", f"{action}Response").replace(
+        "urn:schemas-upnp-org:service:AVTransport:1", service)
+
+
+def fault(code):
+    return put(fixture("fault_701.xml"), "errorCode", str(code))
+
+
+def parse_call(body):
+    """(action, {arg: value}) of a SOAP request."""
+    root = ET.fromstring(body)
+    call = list(root.find(f"{{{SOAP_NS}}}Body"))[0]
+    action = call.tag.split("}", 1)[-1]
+    return action, {c.tag.split("}", 1)[-1]: (c.text or "") for c in call}
+
+
+def handler_for(house, spk):
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def send(self, code, text, ctype='text/xml; charset="utf-8"'):
+            out = text.encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def unreachable(self):
+            house.run_due()
+            if spk.reachable:
+                return False
+            self.close_connection = True  # no answer at all: the client reads a dropped connection
+            return True
+
+        def do_GET(self):
+            if self.unreachable():
+                return
+            with house.lock:
+                if self.path == "/xml/device_description.xml":
+                    text = put(put(fixture("device_description.xml"), "UDN", f"uuid:{spk.uid}"), "roomName", spk.name)
+                    self.send(200, text)
+                elif self.path == "/status/accounts":
+                    self.send(200, fixture("accounts.xml"))
+                else:
+                    self.send(404, "not found", "text/plain")
+            log(f"{spk.name}:{spk.port} GET {self.path}")
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n).decode("utf-8")
+            if self.unreachable():
+                log(f"{spk.name}:{spk.port} (dropped) POST {self.path}")
+                return
+            service = SERVICES.get(self.path)
+            soapaction = (self.headers.get("SOAPACTION") or "").strip('"')
+            try:
+                action, args = parse_call(body)
+            except (ET.ParseError, IndexError, TypeError):
+                self.send(400, "bad SOAP", "text/plain")
+                return
+            shown = {k: (v if len(v) <= 60 else v[:57] + "...") for k, v in args.items() if k != "InstanceID"}
+            if service is None or soapaction != f"{service}#{action}":
+                log(f"{spk.name}:{spk.port} REFUSED {self.path} SOAPACTION={soapaction!r}")
+                self.send(500, fault(401))
+                return
+            refused = None
+            with house.lock:
+                try:
+                    reply, code = house.act(spk, service, action, args), 200
+                except Fault as f:
+                    refused = f.code
+                    reply, code = fault(f.code), 500
+            outcome = f" -> fault {refused}" if refused is not None else ""
+            log(f"{spk.name}:{spk.port} {service.rsplit(':', 2)[-2]}#{action} {shown}{outcome}")
+            self.send(code, reply)
+
+    return Handler
+
+
+def build(args):
+    speakers = []
+    for i, part in enumerate(args.speakers.split(",")):
+        name, _, port = part.strip().rpartition(":")
+        if not name or not port.isdigit():
+            raise SystemExit(f"fake-sonos: --speakers wants Name:port, got {part!r}")
+        # the uid names the port (port 0, the selftest's, takes a number of its own)
+        speakers.append(Speaker(name, int(port), f"RINCON_FAKE{int(port) or 90001 + i:05d}"))
+    house = Household(speakers, args.advertise, args.transition_s, args.duration)
+    if args.group:
+        names = args.group.split("+")
+        coord = house.speaker(names[0])
+        for n in names[1:]:
+            house.speaker(n).coordinator = coord.uid
+    if args.script:
+        with open(args.script, encoding="utf-8") as f:
+            house.load_script(f.read())
+    return house
+
+
+def serve(house, bind):
+    servers = []
+    for spk in house.speakers:
+        srv = ThreadingHTTPServer((bind, spk.port), handler_for(house, spk))
+        spk.port = srv.server_address[1]  # port 0 -> the one the system chose (the selftest)
+        servers.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return servers
+
+
+def seed(house):
+    return json.dumps({"players": [{"uid": s.uid, "name": s.name, "ip": house.advertise, "port": s.port}
+                                   for s in house.speakers]}, ensure_ascii=False, indent=2)
+
+
+# --- the selftest ---------------------------------------------------------------------------------
+
+def selftest():
+    # 1. Every fixture is well-formed, and every template has the elements this fake fills in.
+    names = sorted(os.listdir(FIXTURES))
+    for name in names:
+        if name.endswith(".xml"):
+            ET.fromstring(fixture(name).encode("utf-8"))
+    for name, tags in (("position_playing_ours.xml", ("Track", "TrackDuration", "TrackMetaData", "TrackURI", "RelTime")),
+                       ("transport_playing.xml", ("CurrentTransportState",)), ("zgs_wrapped.xml", ("ZoneGroupState",)),
+                       ("get_volume.xml", ("CurrentVolume",)), ("get_mute.xml", ("CurrentMute",)),
+                       ("fault_701.xml", ("errorCode",)), ("device_description.xml", ("UDN", "roomName"))):
+        for tag in tags:
+            put(fixture(name), tag, "x")
+    print(f"1. {len(names)} fixtures parse; the templates carry every element the fake fills OK")
+
+    ns = argparse.Namespace(speakers="Stua:0,Kjøkken:0", advertise="127.0.0.1", transition_s=0.3, duration=0.0,
+                            group=None, script=None)
+    house = build(ns)
+    servers = serve(house, "127.0.0.1")
+    stua, kjokken = house.speakers
+
+    def get(spk, path):
+        with urllib.request.urlopen(f"http://127.0.0.1:{spk.port}{path}", timeout=5) as r:
+            return r.read().decode("utf-8")
+
+    def soap(spk, path, action, args=()):
+        service = SERVICES[path]
+        inner = "".join(f"<{k}>{escape(v)}</{k}>" for k, v in (("InstanceID", "0"),) + tuple(args)) \
+            if not path.startswith("/ZoneGroup") else ""
+        body = (f'<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="{SOAP_NS}"><s:Body>'
+                f'<u:{action} xmlns:u="{service}">{inner}</u:{action}></s:Body></s:Envelope>').encode("utf-8")
+        req = urllib.request.Request(f"http://127.0.0.1:{spk.port}{path}", data=body, headers={
+            "SOAPACTION": f'"{service}#{action}"', "Content-Type": 'text/xml; charset="utf-8"'})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                code, text = r.status, r.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            code, text = e.code, e.read().decode("utf-8")
+        root = ET.fromstring(text.encode("utf-8"))
+        first = list(root.find(f"{{{SOAP_NS}}}Body"))[0]
+        if first.tag.endswith("Fault"):
+            err = first.find(".//{urn:schemas-upnp-org:control-1-0}errorCode")
+            return code, {"fault": err.text}
+        assert code == 200, code
+        return code, {c.tag.split("}", 1)[-1]: (c.text or "") for c in first}
+
+    AV, RC, ZGT = ("/MediaRenderer/AVTransport/Control", "/MediaRenderer/RenderingControl/Control",
+                   "/ZoneGroupTopology/Control")
+    try:
+        # 2. the device description, the accounts, the topology with the speakers' own ports
+        assert f"<UDN>uuid:{stua.uid}</UDN>" in get(stua, "/xml/device_description.xml")
+        assert 'Type="70919" SerialNum="7"' in get(stua, "/status/accounts")
+        zgs = soap(stua, ZGT, "GetZoneGroupState")[1]["ZoneGroupState"]
+        assert zgs.startswith("<ZoneGroupState><ZoneGroups>"), zgs[:60]
+        assert f'Location="http://127.0.0.1:{kjokken.port}/xml/device_description.xml"' in zgs
+        assert 'ZoneName="Kjøkken"' in zgs
+        print("2. device description, accounts, topology with each speaker's port OK")
+
+        # 3. a play: the DIDL arrives once-escaped and is echoed back, TRANSITIONING then PLAYING, seek
+        uri = "https://podkast.example/ep12.mp3?a=1&b=2"
+        meta = ('<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="vibb-1"><dc:title>Ole &amp; Dole'
+                '</dc:title><res protocolInfo="http-get:*:audio/mpeg:*" duration="0:24:13">'
+                'https://podkast.example/ep12.mp3?a=1&amp;b=2</res></item></DIDL-Lite>')
+        assert soap(stua, AV, "Seek", (("Unit", "REL_TIME"), ("Target", "0:01:00")))[1] == {"fault": "701"}, "seek before a uri"
+        soap(stua, AV, "RemoveAllTracksFromQueue")
+        soap(stua, AV, "SetAVTransportURI", (("CurrentURI", uri), ("CurrentURIMetaData", meta)))
+        soap(stua, AV, "Play", (("Speed", "1"),))
+        assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "TRANSITIONING"
+        time.sleep(0.35)
+        assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "PLAYING"
+        pos = soap(stua, AV, "GetPositionInfo")[1]
+        assert pos["TrackURI"] == uri and pos["TrackDuration"] == "0:24:13" and pos["TrackMetaData"] == meta, pos
+        soap(stua, AV, "Seek", (("Unit", "REL_TIME"), ("Target", "0:07:11")))
+        assert soap(stua, AV, "GetPositionInfo")[1]["RelTime"] in ("0:07:11", "0:07:12")
+        assert soap(stua, AV, "Seek", (("Unit", "REL_TIME"), ("Target", "9:00:00")))[1] == {"fault": "711"}
+        soap(stua, AV, "Pause")
+        assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "PAUSED_PLAYBACK"
+        soap(stua, RC, "SetVolume", (("Channel", "Master"), ("DesiredVolume", "140")))
+        assert soap(stua, RC, "GetVolume", (("Channel", "Master"),))[1]["CurrentVolume"] == "100"
+        soap(stua, RC, "SetMute", (("Channel", "Master"), ("DesiredMute", "1")))
+        assert soap(stua, RC, "GetMute", (("Channel", "Master"),))[1]["CurrentMute"] == "1"
+        assert soap(stua, AV, "Next")[1] == {"fault": "401"}
+        print("3. play, DIDL echo, transitioning, seek (701 when stopped, 711 past the end), pause, volume OK")
+
+        # 4. the script: grouped away, migration, unreachable
+        soap(stua, AV, "Play", (("Speed", "1"),))
+        house.load_script("t+0 x-rincon:%s\n" % kjokken.uid)
+        house.run_due()
+        assert soap(stua, AV, "GetPositionInfo")[1]["TrackURI"] == f"x-rincon:{kjokken.uid}"
+        zgs = soap(kjokken, ZGT, "GetZoneGroupState")[1]["ZoneGroupState"]
+        assert zgs.count("<ZoneGroup ") == 1, "both in Kjøkken's group"
+        house.load_script("t+0 PLAYING -\nt+0 move Kjøkken\n")
+        house.run_due()
+        own = soap(stua, AV, "GetPositionInfo")[1]
+        assert own["TrackURI"] == "" and soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "STOPPED", own
+        assert soap(kjokken, AV, "GetPositionInfo")[1]["TrackURI"] == uri
+        house.load_script("t+0 drop\n")
+        house.run_due()
+        try:
+            soap(stua, AV, "GetTransportInfo")
+            raise AssertionError("a dropped speaker must not answer")
+        except (urllib.error.URLError, ConnectionError, http.client.HTTPException):
+            pass
+        house.load_script("t+0 back\n")
+        house.run_due()
+        assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "STOPPED"
+        print("4. script: grouped away (x-rincon), migration (move), drop and back OK")
+
+        # 5. the seed file the debug feed reads
+        assert f'"port": {kjokken.port}' in seed(house)
+        print("5. debug-feed seed OK")
+    finally:
+        for s in servers:
+            s.shutdown()
+    print("\nFAKE SONOS SELFTEST OK - answers built from the same fixtures the JVM tests parse.")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("--speakers", default="Stua:1401,Kjøkken:1402", help="Name:port,... (default %(default)s)")
+    p.add_argument("--bind", default="127.0.0.1",
+                   help="address to listen on (default %(default)s: the emulator's 10.0.2.2 is the host's loopback)")
+    p.add_argument("--advertise", default="10.0.2.2",
+                   help="the ip the topology's Locations name: the host as the emulator sees it (default %(default)s)")
+    p.add_argument("--group", help="an initial group, coordinator first: Stua+Kjøkken")
+    p.add_argument("--script", help="scripted events, see above")
+    p.add_argument("--duration", type=float, default=0.0,
+                   help="track length in seconds when the DIDL has none (default: none, reads 0:00:00)")
+    p.add_argument("--transition-s", type=float, default=0.5, help="TRANSITIONING after Play (default %(default)s)")
+    p.add_argument("--print-seed", action="store_true", help="print debug-feed/sonos.json for these speakers and exit")
+    p.add_argument("--selftest", action="store_true", help="check the fixtures and the fake against itself, then exit")
+    args = p.parse_args()
+    if args.selftest:
+        selftest()
+        return
+    house = build(args)
+    if args.print_seed:
+        print(seed(house))
+        return
+    serve(house, args.bind)
+    for s in house.speakers:
+        log(f"{s.name} ({s.uid}) on {args.bind}:{s.port}, advertised as {args.advertise}:{s.port}")
+    log("debug-feed/sonos.json for these speakers: --print-seed")
+    try:
+        while True:
+            time.sleep(0.5)
+            house.run_due()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())
