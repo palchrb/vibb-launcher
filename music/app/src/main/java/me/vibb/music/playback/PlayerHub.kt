@@ -32,6 +32,9 @@ object Commands {
     const val THEN_SHUFFLE = "shuffle"
 
     val ALL: List<SessionCommand> = listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT).map { SessionCommand(it, Bundle.EMPTY) }
+
+    /** The commands that start playing - refused while the app is suspended (`playAllowed`). */
+    val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)
 }
 
 enum class OutputKind { PHONE, BLUETOOTH, WIRED }

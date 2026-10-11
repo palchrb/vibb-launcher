@@ -31,4 +31,12 @@
     <color name="kid_switch_on">@color/kid_accent</color>
     <color name="kid_slider">@color/kid_accent</color>
     <color name="kid_divider">#1AFFFFFF</color>
+    <!-- Vibb music (design 21 step 4, mockups HomeCard/Lock.dc.html v12): Home's "Spilles nå"
+         card, the lock's media tile and its round controls, the light at 78 % for second lines,
+         and the lock's plain emergency text. -->
+    <color name="kid_music_card">#2A2233</color>
+    <color name="kid_music_tile">#1B1B28</color>
+    <color name="kid_music_control">#2A2A3A</color>
+    <color name="kid_core_dim">#C7FBE4DC</color>
+    <color name="kid_emergency_text">#FF8A8A</color>
 </resources>

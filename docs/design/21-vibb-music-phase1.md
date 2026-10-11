@@ -514,3 +514,125 @@ All findings are fixed; launcher 18 + 8 music tests (`MusicPlanTest`, `MusicFile
   own-file download moving from Wi-Fi to mobile data stops; BT-less sleep music for hours keeps an update waiting;
   a never-opened music app gets its first own file; install the music app first, then the step-3 launcher.
 
+
+## Step 4 implementation status (2026-10-11)
+
+Built and tested in the sandbox on branch `music-step4` (launcher, a small music app change; no server change - the
+PWA already offers Off/90/80/70/60); not run on an emulator or a phone. The launcher's part is in its music package
+plus the pure `ui/home/MusicCard.kt` and `lock/LockMedia.kt`, with small hooks in `HomeActivity`, `PinLockActivity`
+(and its layout), `AppEnforcer.apply()`, `ScreenTime(Tracker)`, `TimeRules(Runtime)`, `BadgeCounts` and `Application`.
+- **Sessions**: `MusicSessions` reads the music app's platform session through the badge listener
+  (`getActiveSessions` + its change listener), only while Home or the lock shows a surface. No listener access, a
+  suspended or an uninstalled music app: no media surfaces at all (the snapshot card included).
+- **Home "Spilles nå"** (HomeCard v12): between the contacts row (or the call card) and the grid. Live while the
+  session plays or is paused (the button is its play/pause, a tap sends its `sessionActivity` with
+  `ALLOW_IF_VISIBLE`), else the last `setNowPlaying` snapshot shown paused (both open `MainActivity` with
+  `EXTRA_RESUME`). 52 dp art (the session's bitmap, the snapshot's art file, else a music note on the mockup's
+  gradient), the entry, "Kapittel 3 · 7:46 av 18:30", the 44 dp peach button. Active only between Home's onStart and
+  onStop with its content shown (never LOCKED); 1 s ticks only while playing.
+- **Lock media view** (Lock v12): a layer over the keypad, under the VoIP ring screen. When the lock comes up with
+  the screen on - its first show, and after every screen-off - it shows the media view while the session plays, else
+  the keypad. Clock, date, the tile (72 dp art, item, entry, 5 dp progress, previous / play-pause / next), "Lås opp"
+  and the lock's emergency call. "Lås opp" -> the keypad with a back arrow by the prompt and the compact row (32 dp
+  art, entry, play/pause) at the bottom; the clock and date give way, keys stay >= 52 dp at 320x569 dp with both bars
+  at 48 dp. The view goes when the session does; a pause keeps it.
+- **Time**: `screenTimeCounts(musicListening)`: the player in front (`setForeground`, cleared at every screen-off
+  and at the token's death) while it plays (the last `setNowPlaying`) - each change re-running the tracker (since the
+  fix round; first "the player in front"). The budget lock adds both music package names to its usable apps (the
+  allowlist still applies): music plays on after the budget and the lock screen lists the app. A rule keeps only its
+  own exempt apps; before `apply()` suspends a music package its playing session is paused.
+- **Volume cap**: `VolumeCap` holds `STREAM_MUSIC` at `volumeCapIndex(max, pct)` on every volume change and output
+  change, while managed (`hardeningManaged`) and without the override or the pause; refreshed by every `apply()`.
+- **QA #6**: media notifications never count as unread (`EXTRA_MEDIA_SESSION`, only the key's presence, in a helper
+  outside the listener, which still reads no extras), so the music tile's badge is the
+  "N nye i Musikk" notification's `number`; `MusicSync` grants the music app `POST_NOTIFICATIONS` while a policy
+  exists (the default state without one).
+- **Music app**: `MainActivity` honours `EXTRA_RESUME` (the RESUME command: the stored queue where it stopped, or play
+  on); the player's names are in `bridge_contract.json` (`player`), checked by both suites.
+- **Tests**: launcher 826 JVM tests (+25: `MusicMediaPlanTest`, `MusicCardTest`,
+  `LockMediaTest`/`LockMediaGuardTest`/`LockMediaLayoutTest`, the music keypad stage in `PinLockLayoutTest`, the
+  player in front in `ScreenTimeTest`, the budget's music apps in `TimeRulesTest`, media notifications in
+  `BadgeCountsTest`, the contract's `player`), music 126 (+1 "never keeps the screen on", and the `player` contract
+  in `BridgeTest`); music lint 0 errors.
+
+Readings and deviations:
+1. **The lock's stage** is decided when the lock comes up with the screen on (`lockStageDue`): coming back to the lock
+   from the emergency dialer or an alarm with the screen on keeps the stage the kid was on.
+2. **The keypad stage** keeps the lock's prompt ("Skriv inn koden din" with its wait/wrong texts), Emergency call and
+   Parent code; the back arrow sits in the prompt's row (the mockup's header), the compact row at the very bottom.
+   The media view's emergency button is the lock's own (same confirm, same text "Nødsamtale", not the mockup's
+   "Nødanrop"), styled as the mockup's plain red text; the media view has no Parent code (as the mockup).
+3. **The card's tap on a live session without a session activity** opens the player without resuming; only the
+   snapshot resumes.
+4. **Volume cap index**: max x pct / 100 rounded down, never below 1 or the stream's minimum (a cap never mutes); 100 %
+   or more, or 0 or below (a server fault), is no cap. An output change is looked at again after 1.5 s (a BT device's
+   absolute volume can settle after it appears). The cap is read from the cached policy at process start.
+5. **Picture-in-picture** (replaced in the fix round, user decision): "listening never counts" - time in the player
+   counts unless it plays, so a video in PiP over it (its sound pauses the story) or an idle hour of browsing counts;
+   with the kiosk on lock task allows no PiP anyway.
+6. The install deferral stays on the last `setNowPlaying` (step 3, listener-free), not on the session.
+
+Device checks (21 §6 step 4), emulator (`docs/testing/emulator.md`, 320x569 dp, nb and en):
+- Home card: live (pause/play from the card, the clock moving, a tap opens the player), a queue's end (gone), the
+  snapshot after a force-stop and after a reboot (paused; the button and a tap open the player playing - and whether a
+  resume without leaving Home is possible), no card without listener access, none while the app is suspended.
+- Lock, in both kiosk modes, gesture and 3-button navigation: the media view at screen-on while playing (and the
+  keypad when paused), its controls, "Lås opp" -> keypad with arrow and row (key sizes), back to the media view,
+  screen off/on, the session ending under the media view, Nødsamtale from it, a VoIP ring over it, TalkBack not
+  reaching the covered keypad, nothing else reachable (long presses, swipes, the shade).
+- Time: `time_state.used_minutes` not moving while the player is in front and plays, moving while it is browsed with
+  nothing playing, in split screen and in other apps; the budget used up while playing (music plays on, the lock screen lists the app and opens it); a bedtime edge
+  mid-playback with the app not exempt (paused, position kept, suspended, the lock shows the keypad) and exempt
+  (plays on).
+- Volume cap: 60 % in the PWA - volume keys stop at the cap on the speaker and wired headphones, Off releases it, the
+  override and the pause lift it; the Nytt badge on the music tile equals "N nye", a paused player adds nothing, and
+  `POST_NOTIFICATIONS` is granted at install without a dialog.
+
+Jelly Star: the card live and after a reboot; both lock stages in both kiosk modes; a bedtime edge mid-playback;
+suspension vs audio (is the session paused before the suspension, does a suspended app's audio stop); clamp latency
+incl. BT absolute volume (a headset's own buttons); the Nytt badge.
+
+**For `music-v0.1.0`** (after these checks): the server with the music catalog row (0.21.0+, deployed before any
+stable `music-v*`, QA #11) and a launcher release with steps 3-4 on the phones; the `release` environment's
+deployment rule must allow `music-v*` tags; then tag `music-v0.1.0` on a `main` commit - `music.yml` signs
+`vibb-music.apk` with the launcher's key (`RELEASE_CERT_SHA256` check) and publishes it with its `.sha256`, never
+"latest". The media surfaces also need notification-listener access on each phone (adb at provisioning, as the
+badges).
+
+### Fix round after QA's code review (`qa-21-step4-code.md`, 2026-10-11)
+
+All findings are fixed (0 High, 1 Medium, 7 Low), plus the user's player-controls request; on main with mockup v15.
+- **M1, a suspended music app can't play**: the music app refuses to start playing while it is suspended
+  (`playAllowed`: `KidPlayer.play`/`setPlayWhenReady` - every controller, the launcher's surfaces, headset and BT
+  buttons -, its own play commands and playback resumption; a pause always works). The launcher looks the app up again
+  at every play, next and previous (a pause always goes), and its card and lock view re-render on
+  `onPackagesSuspended`/`Unsuspended`; `apply()`'s pause-then-suspend order is pinned by a source-order test.
+- **L1**: the volume cap is also re-applied whenever a player starts or moves to another output
+  (`registerAudioPlaybackCallback`: the music app's own picker routes between outputs already connected).
+- **L2 (user decision: "listening never counts")**: the player in front counts as screen time unless it plays
+  (`musicListening(inFront, playing)`); browsing with nothing playing counts, and so does a PiP video over it.
+- **L3**: `EXTRA_RESUME` is honoured once (`resumeRequested`): never from Recents
+  (`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`, also after a reboot) or in a restored instance, and removed when used.
+- **L4**: the music app also reports the position with every 15 s save while playing; the launcher rewrites the art
+  file only when it changed. Home's snapshot is right after a crash or a dead battery.
+- **L5**: on the music keypad stage the prompt keeps the arrow's width clear on both sides and wraps between them
+  (`PinLockLayoutTest` counts two lines; keys stay >= 52 dp).
+- **L6**: the device page's listener-access warning names the notification filter, the "Spilles nå" card and the lock's
+  player (server template; no code change).
+- **L7**: the media view's touch blocker has no TalkBack node (`importantForAccessibility="no"`, not focusable).
+- **Player controls fit 320 dp** (user, design 20, mockup v15): the control row is v12's 44/56/76/56/44 with 14 dp
+  gaps where 332 dp fit, else v15's 44/52/72/52/44 with 6 dp gaps (exactly 288 dp); `RoundButton` is
+  `requiredSize`, so a button never becomes an oval, and the row is symmetric, so play is centred (`Fit.kt`,
+  `FitTest` at 320, 360 and 411 dp). The other screens at those widths: the bottom bar cut "Sov · 30 min" and,
+  at 320 dp, "Telefonen" - it now shares the width as the mockup's flex row (Liste and Sov never cut, the output's
+  name gives way; 2 dp inner padding instead of 6); the carousel (180 dp cover, 46 dp peek at 320 dp), the category
+  tiles, list, Nytt and search rows, and in the launcher the lock's media view and Home's card fit
+  (`FitTest`, `LockMediaLayoutTest`).
+- **Tests**: launcher 830 JVM tests (+4: the controls look the app up, the suspension events, apply()'s order, the
+  widths; the listening rule replaces the in-front one), music 135 (+9: `GuardsTest` - the play gate, the resume once,
+  the 15 s report -, `FitTest`); music lint 0 errors; server 487 (the template only), fmt clean, clippy no new
+  warnings.
+- Device checks added: at a bedtime edge, the headset's and the lock's play buttons do nothing; switch the music app's
+  output picker with both outputs connected (the cap holds); open the music app from Recents after a snapshot tap and
+  after a reboot (nothing plays); kill the player mid-item, Home shows the place to the last 15 s; a long prompt on the
+  music keypad stage at 320 dp and font scale 1.3; TalkBack over the media view; the player at 320 and 411 dp.

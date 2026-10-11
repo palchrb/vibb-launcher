@@ -124,6 +124,7 @@ class BadgeListenerService : NotificationListenerService() {
                         clearable = it.isClearable,
                         groupSummary = it.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
                         number = it.notification.number,
+                        mediaSession = isMediaNotification(it.notification),
                     )
                 },
                 ownPackage = packageName,

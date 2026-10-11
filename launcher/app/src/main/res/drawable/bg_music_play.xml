@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The peach play/pause circle (mockups HomeCard/Lock.dc.html v12). -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#330C0C14">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/kid_accent" />
+        </shape>
+    </item>
+</ripple>

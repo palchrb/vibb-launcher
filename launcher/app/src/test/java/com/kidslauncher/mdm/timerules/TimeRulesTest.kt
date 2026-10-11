@@ -124,6 +124,25 @@ class TimeRulesTest {
     }
 
     @Test
+    fun `the music app plays on after the budget, but at bedtime only as the rule's exempt app (design 21)`() {
+        val p = policy(bedtime, budget = List(7) { 60 })
+        val used = BudgetUse(usedMs = 60 * 60_000L, budgetMinutes = 60, extraMinutes = 0)
+        val music = setOf("me.vibb.music", "me.vibb.music.debug")
+        val lock = decideTimeLock(p, at(0, 12), false, budget = used, messagingApps = setOf("element"), musicApps = music)
+        assertEquals(LockReason.SCREEN_TIME, lock.reason)
+        assertEquals(setOf("element") + music, lock.usableApps)
+        // A rule keeps exactly its own exempt apps, budget or not.
+        val night = decideTimeLock(p, at(0, 22), false, budget = used, messagingApps = setOf("element"), musicApps = music)
+        assertEquals(LockReason.BEDTIME, night.reason)
+        assertEquals(setOf("vibb"), night.usableApps)
+        val exempt = policy(bedtime.copy(exemptApps = listOf("me.vibb.music")), budget = List(7) { 60 })
+        assertEquals(setOf("me.vibb.music"), decideTimeLock(exempt, at(0, 22), false, budget = used, musicApps = music).usableApps)
+        // Budget left: nothing locks, music or not.
+        val left = BudgetUse(usedMs = 59 * 60_000L, budgetMinutes = 60, extraMinutes = 0)
+        assertEquals(UNLOCKED, decideTimeLock(p, at(0, 12), false, budget = left, musicApps = music))
+    }
+
+    @Test
     fun `a used-up budget locks with calls and messaging apps, a rule keeps its own exemptions`() {
         val p = policy(bedtime, budget = List(7) { 60 })
         val used = BudgetUse(usedMs = 60 * 60_000L, budgetMinutes = 60, extraMinutes = 0)

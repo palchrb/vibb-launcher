@@ -29,23 +29,44 @@ class PinLockLayoutTest {
 
     private fun id(e: Element) = e.getAttributeNS(ns, "id").substringAfter("/")
 
+    /** The keypad stage with a live music session (design 21 step 4): the clock and date give way,
+     * the back arrow by the prompt and the compact row come. */
+    private val mediaHidden = setOf("pin_clock", "pin_date")
+    private val mediaShown = setOf("pin_media_back", "pin_media_row")
+
+    private fun shown(e: Element, media: Boolean): Boolean = when (id(e)) {
+        in mediaHidden -> !media
+        in mediaShown -> media
+        else -> e.getAttributeNS(ns, "visibility") != "gone"
+    }
+
+    /** The compact row's own layout (an include in activity_pin_lock.xml). */
+    private val mediaRow: Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        .newDocumentBuilder().parse(file("res/layout/view_lock_media_row.xml")).documentElement
+
     /** Height of everything but the keypad (dp), margins and the root's padding included. */
-    private fun fixedHeightDp(): Float {
+    private fun fixedHeightDp(media: Boolean = false): Float {
         var total = root.dim("paddingTop") + root.dim("paddingBottom")
-        for (child in children()) {
+        for (child in children().filter { shown(it, media) }) {
+            if (id(child) == "pin_media_row") {
+                total += mediaRow.dim("layout_marginTop") + mediaRow.dim("minHeight")
+                continue
+            }
             total += child.dim("layout_marginTop") + child.dim("layout_marginBottom")
             if (id(child) == "pin_keypad") continue
             val explicit = child.getAttributeNS(ns, "layout_height").takeIf { it.endsWith("dp") }
             val text = child.dim("textSize") * 1.4f
+            // On the music keypad stage the prompt wraps between the arrow's columns: two lines.
             val inner = (0 until child.childNodes.length).map { child.childNodes.item(it) }.filterIsInstance<Element>()
-                .maxOfOrNull { maxOf(it.dim("textSize") * 1.4f, it.dim("layout_height")) } ?: 0f
+                .filter { shown(it, media) }
+                .maxOfOrNull { maxOf(it.dim("textSize") * 1.4f * (if (media && id(it) == "pin_prompt") 2 else 1), it.dim("layout_height")) } ?: 0f
             total += explicit?.removeSuffix("dp")?.toFloat() ?: maxOf(text, inner, child.dim("minHeight"))
         }
         return total
     }
 
-    private fun keySizeDp(screenHeightDp: Float, screenWidthDp: Float, statusBarDp: Float, navBarDp: Float): Float {
-        val keypad = screenHeightDp - statusBarDp - navBarDp - fixedHeightDp()
+    private fun keySizeDp(screenHeightDp: Float, screenWidthDp: Float, statusBarDp: Float, navBarDp: Float, media: Boolean = false): Float {
+        val keypad = screenHeightDp - statusBarDp - navBarDp - fixedHeightDp(media)
         val width = screenWidthDp - root.dim("paddingStart") - root.dim("paddingEnd")
         return PinKeypadLayout.keySizePx(keypad.toInt(), width.toInt(), 1f).toFloat()
     }
@@ -59,6 +80,23 @@ class PinLockLayoutTest {
             assertTrue(PinKeypadLayout.fits(size.toInt(), 1f))
             assertTrue(size <= PinKeypadLayout.MAX_DP)
         }
+    }
+
+    @Test
+    fun `the music keypad stage - back arrow and compact row - keeps keys of at least 52 dp`() {
+        // Design 21 step 4 (spec: >= 48 dp; QA #11: the lock's keys stay >= 52 dp).
+        for (navBar in listOf(24f, 48f)) {
+            val size = keySizeDp(569f, 320f, statusBarDp = 48f, navBarDp = navBar, media = true)
+            assertTrue("nav $navBar: key size $size dp", size >= 52f)
+        }
+        val ids = children().map(::id)
+        assertEquals("the compact row is the last thing on the lock", "pin_media_row", ids.last())
+        // The prompt keeps clear of the arrow on both sides (qa-21-step4-code L5).
+        val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
+        val stage = activity.substringAfter("private fun setMediaKeypad(on: Boolean) {").substringBefore("\n    }\n")
+        assertTrue(stage.contains("val side = if (on) binding.pinMediaBack.layoutParams.width else 0"))
+        assertTrue(stage.contains("marginStart = side") && stage.contains("marginEnd = side"))
+        assertEquals("the arrow sits in the prompt's row", "pin_prompt_row", id(root.getElementsByTagName("ImageButton").item(0).parentNode as Element))
     }
 
     @Test
@@ -84,7 +122,8 @@ class PinLockLayoutTest {
         assertTrue(ids.indexOf("pin_parent_code") > ids.indexOf("pin_emergency"))
         val weighted = children().filter { it.getAttributeNS(ns, "layout_weight").isNotEmpty() }.map(::id)
         assertEquals(listOf("pin_keypad"), weighted)
-        assertTrue(children().none { it.getAttributeNS(ns, "visibility") == "gone" })
+        // Only the music keypad stage's row starts hidden (design 21 step 4).
+        assertEquals(listOf("pin_media_row"), children().filter { it.getAttributeNS(ns, "visibility") == "gone" }.map(::id))
     }
 
     @Test

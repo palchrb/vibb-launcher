@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.music
 
+import android.Manifest
 import android.app.BroadcastOptions
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
@@ -47,7 +48,29 @@ object MusicSync {
         }
         val music = musicPolicy(policy?.music)
         if (writeRestrictions(app, policy, music)) nudge(app, pkg)
+        grantNotifications(app, managed = policy != null)
         if (fetch && music != null) MusicCourier.request(app, music)
+    }
+
+    /**
+     * The music app's "N nye i Musikk" notification is what Home's badge counts (21 QA #6): while a
+     * policy exists the device owner grants `POST_NOTIFICATIONS` (no dialog for the kid); without
+     * one the choice goes back to the phone ([notificationGrantState]).
+     */
+    private fun grantNotifications(app: Context, managed: Boolean) {
+        val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return
+        if (!dpm.isDeviceOwnerApp(app.packageName)) return
+        val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
+        val wanted = notificationGrantState(managed)
+        for (pkg in MUSIC_PACKAGES.filter { MusicStore.isInstalled(app, it) }) {
+            try {
+                if (dpm.getPermissionGrantState(admin, pkg, Manifest.permission.POST_NOTIFICATIONS) != wanted) {
+                    dpm.setPermissionGrantState(admin, pkg, Manifest.permission.POST_NOTIFICATIONS, wanted)
+                }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't set the music app's notification permission", e)
+            }
+        }
     }
 
     /**

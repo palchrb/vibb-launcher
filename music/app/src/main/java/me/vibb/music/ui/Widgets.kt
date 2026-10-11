@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -74,7 +75,8 @@ fun Glyph(icon: ImageVector, size: Dp, tint: Color, modifier: Modifier = Modifie
 fun Modifier.button(label: String?, onClick: () -> Unit): Modifier =
     this.semantics { if (label != null) contentDescription = label }.clickable(role = Role.Button, onClick = onClick)
 
-/** The mockup's round button (44 dp card circle by default). */
+/** The mockup's round button (44 dp card circle by default): always [size] square, never squeezed
+ * into an oval - its row must leave it the room (Fit.kt). */
 @Composable
 fun RoundButton(
     icon: ImageVector,
@@ -87,7 +89,7 @@ fun RoundButton(
     modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier.size(size).clip(CircleShape).background(bg).button(label, onClick),
+        modifier.requiredSize(size).clip(CircleShape).background(bg).button(label, onClick),
         contentAlignment = Alignment.Center,
     ) { Glyph(icon, iconSize, fg) }
 }

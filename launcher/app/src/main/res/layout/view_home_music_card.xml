@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home's "Spilles nå" card (design 21 step 4, mockup HomeCard.dc.html v12; music.MusicHomeCard,
+     pure ui.home.musicCard): between the contacts row (or the call card) and the grid while the
+     music app's session plays or is paused, else from its last snapshot, paused. 52 dp art, the
+     entry, "Kapittel 3 · 7:46 av 18:30", a 44 dp peach play/pause. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/music_card"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_music_card"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="72dp"
+    android:orientation="horizontal"
+    android:paddingStart="12dp"
+    android:paddingTop="10dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="10dp">
+
+    <FrameLayout
+        android:layout_width="52dp"
+        android:layout_height="52dp">
+
+        <ImageView
+            android:id="@+id/music_card_art"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_music_art"
+            android:clipToOutline="true"
+            android:importantForAccessibility="no"
+            android:scaleType="centerCrop" />
+
+        <ImageView
+            android:id="@+id/music_card_glyph"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/app_glyph_music_note"
+            android:tint="@color/kid_core" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/music_card_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/nunito_extrabold"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:text="@string/music_now_playing"
+            android:textColor="@color/kid_accent"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/music_card_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_extrabold"
+            android:maxLines="1"
+            android:textColor="@color/kid_ink"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/music_card_line"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_bold"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/music_card_play"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginStart="12dp"
+        android:background="@drawable/bg_music_play"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_music_pause"
+        android:tint="@color/kid_ground" />
+
+</LinearLayout>

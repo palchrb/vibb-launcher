@@ -56,3 +56,12 @@ shared files in `src/test/resources/` must equal `server/testdata/music_{library
   signed like this app; honour `BRIDGE_CHANGED` only from a launcher. `mobile_data` is read live from the managed
   config. The AIDL is byte-identical with `launcher/` - append, never reorder; shared names are in
   `bridge_contract.json`.
+- The launcher's media surfaces (design 21 step 4) read the platform session and `setNowPlaying` (also sent with
+  every 15 s position save while playing); its Home card opens `MainActivity` with `EXTRA_OPEN` = player and, on its
+  snapshot, `EXTRA_RESUME` (the RESUME command: the stored queue where it stopped, or play on) - honoured once, never
+  from Recents or a restored instance (`resumeRequested`). Listening never counts as screen time, so the app never
+  keeps the screen on (`SourceScanTest`). While the launcher has suspended the app (a time rule) nothing starts
+  playing (`playAllowed` in `KidPlayer`, the play commands and playback resumption; `GuardsTest`).
+- Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
+  control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
+  widths, the category tiles, the carousel. `RoundButton` is `requiredSize`: give it the room, it never shrinks.

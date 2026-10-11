@@ -14,6 +14,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import me.vibb.music.bridge.LiveBridge
+import me.vibb.music.logic.resumeRequested
 import me.vibb.music.playback.Commands
 import me.vibb.music.playback.PlaybackService
 import me.vibb.music.playback.PlayerHub
@@ -27,6 +28,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_OPEN = "me.vibb.music.extra.OPEN"
         const val OPEN_NEWS = "news"
         const val OPEN_PLAYER = "player"
+        /** The launcher's Home card on its snapshot (design 21 §3 step 4): continue, as the play button would. */
+        const val EXTRA_RESUME = "me.vibb.music.extra.RESUME"
     }
 
     private val vm: MusicViewModel by viewModels()
@@ -37,19 +40,29 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) open(intent)
+        open(intent, restored = savedInstanceState != null)
         setContent { MusicRoot(vm, actions) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        open(intent)
+        open(intent, restored = false)
     }
 
-    private fun open(intent: Intent?) {
-        when (intent?.getStringExtra(EXTRA_OPEN)) {
-            OPEN_NEWS -> vm.screen = Screen.NEWS
-            OPEN_PLAYER -> vm.screen = Screen.PLAYER
+    /** A new intent ([restored]: a recreated instance - its screen is already restored). */
+    private fun open(intent: Intent?, restored: Boolean) {
+        intent ?: return
+        if (!restored) {
+            when (intent.getStringExtra(EXTRA_OPEN)) {
+                OPEN_NEWS -> vm.screen = Screen.NEWS
+                OPEN_PLAYER -> vm.screen = Screen.PLAYER
+            }
+        }
+        // Home's snapshot card: the last item where it stopped, or play on - once, as delivered;
+        // never from Recents or a restored instance (resumeRequested).
+        if (resumeRequested(intent.getBooleanExtra(EXTRA_RESUME, false), intent.flags, restored)) {
+            intent.removeExtra(EXTRA_RESUME)
+            command(Commands.RESUME)
         }
     }
 

@@ -156,7 +156,9 @@ val UNLOCKED = TimeLock(LockReason.NONE)
  * The lock in force at local date-time [at]: nothing while the offline override or the pause is
  * active; otherwise the active rules that no lift suspends (calls only if every one allows them,
  * usable apps = the intersection of their exempt apps); otherwise, with the budget used up,
- * SCREEN_TIME with calls and [messagingApps] usable. Rule exemptions are not cut by the budget.
+ * SCREEN_TIME with calls, [messagingApps] and the Vibb music app ([musicApps], design 21 §3: music
+ * plays on after the budget and never counts) usable. Rule exemptions are not cut by the budget,
+ * and a rule only keeps its own exempt apps - the music app plays at bedtime only as one of them.
  */
 fun decideTimeLock(
     policy: TimePolicy?,
@@ -165,6 +167,7 @@ fun decideTimeLock(
     lifts: RuleLifts = RuleLifts(),
     budget: BudgetUse? = null,
     messagingApps: Set<String> = emptySet(),
+    musicApps: Set<String> = emptySet(),
 ): TimeLock {
     if (overrideActive || policy == null) return UNLOCKED
     val active = policy.rules.withIndex()
@@ -183,7 +186,7 @@ fun decideTimeLock(
             until = activeSpan(active.first(), at)?.end,
         )
     }
-    if (exhausted) return TimeLock(LockReason.SCREEN_TIME, budgetExhausted = true, usableApps = messagingApps)
+    if (exhausted) return TimeLock(LockReason.SCREEN_TIME, budgetExhausted = true, usableApps = messagingApps + musicApps)
     return UNLOCKED
 }
 

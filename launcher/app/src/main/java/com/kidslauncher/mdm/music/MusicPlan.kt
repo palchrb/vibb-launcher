@@ -26,6 +26,15 @@ val MUSIC_PACKAGES = listOf("me.vibb.music", "me.vibb.music.debug")
 /** The bridge's nudge to the music app: carries nothing, only starts its sync. */
 const val ACTION_BRIDGE_CHANGED = "me.vibb.music.action.BRIDGE_CHANGED"
 
+/**
+ * The music app's player activity and the extras Home's card sends it on a snapshot (21 §3 step 4:
+ * open the player and continue). Spelled once in bridge_contract.json, byte-identical in both apps.
+ */
+const val MUSIC_PLAYER_ACTIVITY = "me.vibb.music.ui.MainActivity"
+const val MUSIC_EXTRA_OPEN = "me.vibb.music.extra.OPEN"
+const val MUSIC_OPEN_PLAYER = "player"
+const val MUSIC_EXTRA_RESUME = "me.vibb.music.extra.RESUME"
+
 /** Status-report capability: `music_state` (design 21 §1.3). */
 const val MUSIC_CAPABILITY = "music_v1"
 

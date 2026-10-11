@@ -158,13 +158,13 @@ private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> 
     }
     val pull = with(LocalDensity.current) { 24.dp.toPx() }
     BoxWithConstraints(Modifier.fillMaxWidth().height(184.dp)) {
-        val side = ((maxWidth - 180.dp) / 2).coerceAtLeast(0.dp)
+        val side = carouselSide(maxWidth.value).dp
         HorizontalPager(
             state = pager,
             modifier = Modifier.fillMaxSize(),
-            pageSize = PageSize.Fixed(180.dp),
+            pageSize = PageSize.Fixed(CAROUSEL_COVER_DP.dp),
             contentPadding = PaddingValues(horizontal = side),
-            pageSpacing = 8.dp,
+            pageSpacing = CAROUSEL_SPACING_DP.dp,
             beyondViewportPageCount = 1,
             userScrollEnabled = n > 1,
             flingBehavior = PagerDefaults.flingBehavior(state = pager, snapAnimationSpec = snap),
@@ -250,7 +250,7 @@ private fun CoverBadges(e: EntryUi) {
 private fun CategoryTiles(tiles: List<Category>, selected: Long?, onCategory: (Long?) -> Unit) {
     val label = stringResource(R.string.categories)
     BoxWithConstraints(Modifier.fillMaxWidth().semantics { contentDescription = label }) {
-        val tileWidth = (maxWidth - 16.dp) / 5
+        val tileWidth = categoryTileWidth(maxWidth.value).dp
         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             item { CategoryTile(null, selected == null, tileWidth) { onCategory(null) } }
             items(tiles, key = { it.id }) { c -> CategoryTile(c, selected == c.id, tileWidth) { onCategory(c.id) } }

@@ -85,11 +85,14 @@ class Application : android.app.Application() {
         // The PIN lock's camera lock suspends/unsuspends at every screen-off and unlock; the app
         // list doesn't change for it (AppFilter counts those cameras as usable), so no reload.
         override fun onPackagesSuspended(packageNames: Array<out String>?, user: UserHandle?) {
+            // Vibb music's card and lock view look the app's state up again (design 21 step 4).
+            com.kidslauncher.mdm.music.MusicSessions.packagesChanged(packageNames?.toList())
             if (com.kidslauncher.mdm.lock.CameraLock.ownChange(packageNames?.toList())) return
             loadApps()
         }
 
         override fun onPackagesUnsuspended(packageNames: Array<out String>?, user: UserHandle?) {
+            com.kidslauncher.mdm.music.MusicSessions.packagesChanged(packageNames?.toList())
             if (com.kidslauncher.mdm.lock.CameraLock.ownChange(packageNames?.toList())) return
             loadApps()
         }
@@ -316,6 +319,8 @@ class Application : android.app.Application() {
         // screen on/off/unlock receiver for the whole process (QA 10 #4) - screen time, time
         // rules and the Play window use it too.
         com.kidslauncher.mdm.lock.PinLockRuntime.init(this)
+        // Vibb music (design 21 step 4): the volume cap, and the player's "in front" ends at screen-off.
+        com.kidslauncher.mdm.music.MusicMedia.init(this)
 
         // The anchor service: every background sync and the SSE stream (the only nudge since
         // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.

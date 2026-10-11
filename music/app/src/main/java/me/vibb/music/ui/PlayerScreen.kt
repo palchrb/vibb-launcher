@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
@@ -25,9 +27,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import me.vibb.music.R
 import me.vibb.music.logic.Kind
@@ -38,7 +43,8 @@ import me.vibb.music.playback.OutputKind
 /**
  * The player (design 21 §4.2, `Main.dc.html` v12 `onPlayer`): back + entry title, the cover
  * (it shrinks to fit the Jelly Star), the item's marquee title, "Episode|Spor N av M", the seek
- * line, [shuffle] previous / play-pause / next [slot], then Liste / Sov / "Spill av på".
+ * line, [shuffle] previous / play-pause / next [slot] (v15's compact sizes on a 320 dp phone, [controlRow]),
+ * then Liste / Sov / "Spill av på".
  */
 @Composable
 fun PlayerScreen(
@@ -78,33 +84,61 @@ fun PlayerScreen(
             Line(stringResource(if (kindOf(now.entry) == Kind.OWN) R.string.track_of else R.string.episode_of, number, of), 13, 700, Palette.sub)
         }
         SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-            if (now.canShuffle) {
+        // v12's sizes where they fit, v15's compact ones on a 320 dp phone: always round, play centred.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val row = controlRow(maxWidth.value)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                if (now.canShuffle) {
+                    RoundButton(
+                        Icons.shuffle, stringResource(R.string.shuffle), onShuffle, row.side.dp, 20.dp,
+                        if (now.shuffled) Palette.peach else Palette.card, if (now.shuffled) Palette.bg else Palette.fg,
+                        Modifier.semantics { selected = now.shuffled },
+                    )
+                } else {
+                    Spacer(Modifier.requiredSize(row.side.dp))
+                }
+                RoundButton(Icons.previous, stringResource(R.string.previous), onPrevious, row.skip.dp, 24.dp)
                 RoundButton(
-                    Icons.shuffle, stringResource(R.string.shuffle), onShuffle, 44.dp, 20.dp,
-                    if (now.shuffled) Palette.peach else Palette.card, if (now.shuffled) Palette.bg else Palette.fg,
-                    Modifier.semantics { selected = now.shuffled },
+                    if (now.playing) Icons.pause else Icons.play, stringResource(if (now.playing) R.string.pause else R.string.play),
+                    onTogglePlay, row.play.dp, 32.dp, Palette.peach, Palette.bg,
                 )
-            } else {
-                Spacer(Modifier.size(44.dp))
+                RoundButton(Icons.next, stringResource(R.string.next), onNext, row.skip.dp, 24.dp)
+                Spacer(Modifier.requiredSize(row.side.dp))
             }
-            RoundButton(Icons.previous, stringResource(R.string.previous), onPrevious, 56.dp, 24.dp)
-            RoundButton(
-                if (now.playing) Icons.pause else Icons.play, stringResource(if (now.playing) R.string.pause else R.string.play),
-                onTogglePlay, 76.dp, 32.dp, Palette.peach, Palette.bg,
-            )
-            RoundButton(Icons.next, stringResource(R.string.next), onNext, 56.dp, 24.dp)
-            Spacer(Modifier.size(44.dp))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BarButton(Icons.list, stringResource(R.string.list), null, Modifier.weight(1f), onClick = onList)
-            BarButton(Icons.moon, sleepMinutes?.let { stringResource(R.string.sleep_on, it) } ?: stringResource(R.string.sleep), null, Modifier.weight(1f), onClick = onSleep)
+        // Liste and Sov are never cut ("Sov · 30 min"); the output's name gives way (the mockup's flex).
+        FlexBar(listOf(1f, 1f, 1.2f), shrinks = listOf(false, false, true), gap = 8.dp) {
+            BarButton(Icons.list, stringResource(R.string.list), null, Modifier, onClick = onList)
+            BarButton(Icons.moon, sleepMinutes?.let { stringResource(R.string.sleep_on, it) } ?: stringResource(R.string.sleep), null, Modifier, onClick = onSleep)
             val name = outputName(output)
             val external = output.kind != OutputKind.PHONE
             BarButton(
-                outputIcon(output), name, stringResource(R.string.output_label, name), Modifier.weight(1.2f),
+                outputIcon(output), name, stringResource(R.string.output_label, name), Modifier,
                 if (external) Palette.selected else Palette.card, if (external) Palette.peach else Palette.fg, onOutput,
             )
+        }
+    }
+}
+
+/**
+ * A row of [weights] sharing the width, each child at least as wide as its content unless it
+ * [shrinks] ([flexWidths]), [gap] apart; as tall as the tallest child.
+ */
+@Composable
+private fun FlexBar(weights: List<Float>, shrinks: List<Boolean>, gap: Dp, content: @Composable () -> Unit) {
+    Layout(content, Modifier.fillMaxWidth()) { measurables, constraints ->
+        val gapPx = gap.roundToPx()
+        val available = (constraints.maxWidth - gapPx * (measurables.size - 1)).coerceAtLeast(0)
+        val mins = measurables.mapIndexed { i, m -> if (shrinks[i]) 0 else m.maxIntrinsicWidth(constraints.maxHeight) }
+        val widths = flexWidths(available, weights, mins)
+        val placeables = measurables.mapIndexed { i, m -> m.measure(Constraints.fixedWidth(widths[i])) }
+        val height = placeables.maxOfOrNull { it.height } ?: 0
+        layout(constraints.maxWidth, height) {
+            var x = 0
+            for (p in placeables) {
+                p.placeRelative(x, (height - p.height) / 2)
+                x += p.width + gapPx
+            }
         }
     }
 }
@@ -120,7 +154,7 @@ private fun BarButton(
     onClick: () -> Unit,
 ) {
     Row(
-        modifier.height(48.dp).clip(RoundedCornerShape(16.dp)).background(bg).button(description ?: label, onClick).padding(horizontal = 6.dp),
+        modifier.height(48.dp).clip(RoundedCornerShape(16.dp)).background(bg).button(description ?: label, onClick).padding(horizontal = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {

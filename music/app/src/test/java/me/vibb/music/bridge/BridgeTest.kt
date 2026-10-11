@@ -107,6 +107,13 @@ class BridgeTest {
             strings("now_playing"),
             listOf(NowPlayingKeys.ENTRY, NowPlayingKeys.ITEM, NowPlayingKeys.POSITION_MS, NowPlayingKeys.DURATION_MS, NowPlayingKeys.PLAYING, NowPlayingKeys.ART),
         )
+        // The launcher's Home card opens the player and continues (design 21 step 4).
+        val player = (contract["player"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
+        assertEquals(player["activity"], me.vibb.music.ui.MainActivity::class.java.name)
+        assertEquals(player["extra_open"], me.vibb.music.ui.MainActivity.EXTRA_OPEN)
+        assertEquals(player["open_player"], me.vibb.music.ui.MainActivity.OPEN_PLAYER)
+        assertEquals(player["extra_resume"], me.vibb.music.ui.MainActivity.EXTRA_RESUME)
+        assertTrue("the player is exported", Regex("android:name=\"\\.ui\\.MainActivity\"\\s+android:exported=\"true\"").containsMatchIn(manifest))
     }
 
     @Test

@@ -202,6 +202,18 @@ class ScreenTimeTest {
     }
 
     @Test
+    fun `listening to Vibb music never counts, browsing it does (design 21, qa-21-step4-code L2)`() {
+        assertTrue("the player in front, playing", musicListening(inFront = true, playing = true))
+        assertFalse("browsing the library with nothing playing", musicListening(inFront = true, playing = false))
+        assertFalse("music in the background, another app in front", musicListening(inFront = false, playing = true))
+        assertFalse(screenTimeCounts(true, false, false, false, musicListening = true))
+        assertTrue(screenTimeCounts(true, false, false, false, musicListening = musicListening(inFront = true, playing = false)))
+        assertTrue(screenTimeCounts(true, false, false, false, musicListening = musicListening(inFront = false, playing = true)))
+        assertFalse("screen off", screenTimeCounts(false, false, false, false, musicListening = false))
+        assertFalse("locked", screenTimeCounts(true, false, false, false, pinLocked = true, musicListening = true))
+    }
+
+    @Test
     fun `an unreadable record fails closed`() {
         val lifts = listOf(Lift(40, TARGET_BUDGET, null, 30, 0), Lift(41, TARGET_RULE, 1, 30, 0))
         val ledger = unreadableLedger(clocks(wall(12), bootAt), zone, lifts)

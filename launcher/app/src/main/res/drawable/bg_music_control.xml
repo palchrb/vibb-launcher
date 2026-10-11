@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Previous / next on the lock's media tile (mockup Lock.dc.html v12): #2A2A3A circles. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33FFFFFF">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/kid_music_control" />
+        </shape>
+    </item>
+</ripple>

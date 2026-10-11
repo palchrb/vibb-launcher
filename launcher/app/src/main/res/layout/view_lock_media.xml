@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The PIN lock's media view (design 21 step 4, design 20's two-stage lock, mockup Lock.dc.html v12;
+     music.MusicLockPanel, pure lock.LockMedia): over the keypad when the lock comes up while the music
+     app plays - clock, date, a tile (72 dp art, item, entry, 5 dp progress, previous / play-pause /
+     next), "Lås opp" to the keypad and the lock's emergency call. Part of the lock: nothing here
+     opens an app, a setting or a notification. The root only blocks touches to the keypad below - no
+     node for TalkBack (qa-21-step4-code L7). Fits 320x569 dp with both bars at 48 dp
+     (LockMediaLayoutTest). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/lock_media_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground"
+    android:clickable="true"
+    android:focusable="false"
+    android:gravity="center_horizontal"
+    android:importantForAccessibility="no"
+    android:orientation="vertical"
+    android:paddingStart="20dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="20dp"
+    android:paddingBottom="16dp"
+    android:visibility="gone">
+
+    <TextClock
+        android:id="@+id/lock_media_clock"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFamily="@font/nunito_extrabold"
+        android:format12Hour="h:mm"
+        android:format24Hour="HH:mm"
+        android:includeFontPadding="false"
+        android:textColor="@color/kid_ink"
+        android:textSize="56sp" />
+
+    <TextClock
+        android:id="@+id/lock_media_date"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:fontFamily="@font/nunito_bold"
+        android:textColor="@color/kid_core_dim"
+        android:textSize="14sp" />
+
+    <LinearLayout
+        android:id="@+id/lock_media_tile"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="22dp"
+        android:background="@drawable/bg_music_tile"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="72dp"
+                android:layout_height="72dp">
+
+                <ImageView
+                    android:id="@+id/lock_media_art"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/bg_music_art_large"
+                    android:clipToOutline="true"
+                    android:importantForAccessibility="no"
+                    android:scaleType="centerCrop" />
+
+                <ImageView
+                    android:id="@+id/lock_media_glyph"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:layout_gravity="center"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/app_glyph_music_note"
+                    android:tint="@color/kid_core" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/lock_media_item"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/nunito_extrabold"
+                    android:maxLines="2"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/lock_media_entry"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/nunito_bold"
+                    android:maxLines="1"
+                    android:textColor="@color/kid_core_dim"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/lock_media_progress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="5dp"
+            android:layout_marginTop="12dp"
+            android:indeterminate="false"
+            android:max="1000"
+            android:progressDrawable="@drawable/bg_music_progress" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/lock_media_previous"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_music_control"
+                android:contentDescription="@string/music_previous"
+                android:padding="15dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_music_previous"
+                android:tint="@color/kid_core" />
+
+            <ImageButton
+                android:id="@+id/lock_media_play"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_marginStart="18dp"
+                android:layout_marginEnd="18dp"
+                android:background="@drawable/bg_music_play"
+                android:padding="19dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_music_pause"
+                android:tint="@color/kid_ground" />
+
+            <ImageButton
+                android:id="@+id/lock_media_next"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_music_control"
+                android:contentDescription="@string/music_next"
+                android:padding="15dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_music_next"
+                android:tint="@color/kid_core" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <LinearLayout
+        android:id="@+id/lock_media_unlock"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@drawable/bg_lock_unlock"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_lock_unlock"
+            android:tint="@color/kid_ground" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:fontFamily="@font/nunito_extrabold"
+            android:text="@string/lock_media_unlock"
+            android:textColor="@color/kid_ground"
+            android:textSize="17sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/lock_media_emergency"
+        android:layout_width="wrap_content"
+        android:layout_height="44dp"
+        android:layout_marginTop="6dp"
+        android:background="?android:attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:fontFamily="@font/nunito_extrabold"
+        android:gravity="center"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:text="@string/pin_lock_emergency"
+        android:textColor="@color/kid_emergency_text"
+        android:textSize="15sp" />
+
+</LinearLayout>

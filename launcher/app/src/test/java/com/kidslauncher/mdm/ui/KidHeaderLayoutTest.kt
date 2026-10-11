@@ -33,7 +33,7 @@ class KidHeaderLayoutTest {
         generateSequence(parentNode) { it.parentNode }.filter { it.nodeType == Node.ELEMENT_NODE }.map { it as Element }.toList()
 
     private val fullPages = listOf("activity_phone_book", "activity_kid_settings", "activity_wifi_networks", "activity_bluetooth_devices")
-    private val allScreens = fullPages + listOf("activity_home", "activity_pin_lock", "activity_lock", "activity_in_call")
+    private val allScreens = fullPages + listOf("activity_home", "activity_pin_lock", "activity_lock", "activity_in_call", "view_lock_media")
 
     private fun header(page: String): Element =
         parse(page).all().single { it.tagName == "include" && it.getAttribute("layout") == "@layout/include_kid_header" }
