@@ -120,8 +120,9 @@ The Pi keeps two axes apart (`renderer.py:1-13`): `output` (local|bt: where *our
   `GET http://<ip>:1400/status/accounts` (`<Account Type="70919" SerialNum=…>`), cached per ip in memory, fallback
   `"14"` with a log line; uri `x-sonos-http:series%3a<urlencode(series)>%3a1%3a<programId>.unknown?sid=277&flags=0&
   sn=<serial>`; class `object.item.audioItem.show`, protocolInfo `sonos.com-http:*:audio/mpeg:*`, desc
-  `SA_RINCON70919_X_#Svc70919-0-Token`. **Precondition:** the household's Sonos has the NRK Radio service linked (the
-  Pi's does) [device check].
+  `SA_RINCON70919_X_#Svc70919-0-Token`. **Precondition:** the household's Sonos has the NRK Radio service linked. It
+  does: vibb's fallback `sn=14` is "the owner's known-working household value" (`sonosd.py:377`). Only NRK *series*
+  need it (HLS, `content.py:8-13, 193`); NRK podcasts and RSS are plain mp3 urls the speaker fetches itself.
 
 ### 2.4 The session machine (`SonosSession.kt`, pure)
 State as `Session.__init__` (392-421): `armed, uid, kind, uri, seq, lastOkAt, frozen, lastPos, retriedAt, aux{volume,
@@ -138,8 +139,8 @@ groupedAway, coordinator}, auxN, fastAt, oursAt, migrateTries, moved, lastTr, di
   relS, durS, uri, ours, foreignUri, groupedAway, coordinator, lostSession, volume, retriedAt, streamMoved?, error?`.
 - `cadence(tr, snap, fails)` (832-858): PAUSED 15 s; UNREACHABLE `min(5*2^min(fails,6), 300)`; STOPPED 5 s only while
   a migration transition pends (empty uri, no hint, tries left, within 90 s of `oursAt`), else 60 s; PLAYING 5 s when
-  `dur-rel <= 45` or within 30 s of the last verb/arm, else cruise 15 s. **Phone addition (§6.3):** cruise 60 s while
-  the screen is off and the session is PLAYING far from the end.
+  `dur-rel <= 45` or within 30 s of the last verb/arm, else cruise 15 s. The same with the screen off (user,
+  2026-10-11: the position is saved as finely as ever; only the screen needn't follow, §6.3).
 - `stall(fields)` (860-885): PLAYING + ours + `relS` identical for `STALL_POLLS=3` polls and no retry this session ->
   `retriedAt`, then Stop, Play, `seekSettled(rel)` when rel >= 5; one retry per session.
 - `maybeProbeMigration(fields)` + `probeMigration()` (889-984): trigger only STOPPED with an **empty** TrackURI, no
@@ -250,8 +251,9 @@ UI and the session (`_sonos_position`, 1137-1162): `optPos` wins while <= 12 s o
 PAUSED; PLAYING and poll age < 60 s -> `rel + age + staleS`, clamped to `dur`.
 
 ### 4.4 Bookmarks (`_sonos_bookmark_now`, 1177-1268; pure in `SonosBookmarks.kt`)
-Needs an index, `ours`, a **measured** `relS` (PLAYING adds `staleS`), not STOPPED. Throttle 15 s unless forced (vibb
-25 s was SD hygiene; the phone's `saveTick` is 15 s). Rules, in order: the refused-seek **hold** `(itemKey, minPos,
+Needs an index, `ours`, a **measured** `relS` (PLAYING adds `staleS`), not STOPPED. Written on **every poll** (user,
+2026-10-11: as fine-grained as possible; vibb's 25 s throttle was SD hygiene), so every 15 s at cruise and every 5 s
+near the end or after a verb, and forced before any Stop or switch. Rules, in order: the refused-seek **hold** `(itemKey, minPos,
 at)` keeps a lower position from being written, bounded by `BM_HOLD_MAX_S = 120` of real listening (1216-1231); the
 **regression guard**: `rel < BM_RESTART_FLOOR_S (90)` while the saved position is `> BM_REGRESS_MIN_S (300)` and no
 user seek within `BM_USER_GRACE_S (180)` -> keep the bookmark ("the speaker restarted the track", 1232-1258); then
@@ -318,13 +320,15 @@ once. The player's bottom bar shows the room name highlighted like a headset. St
 ### 5.2 The player on Sonos
 Everything as today, plus: `rendererState` as one quiet line under the entry name ("Spilles i en annen gruppe",
 "Noen andre bruker høyttaleren", "Høyttaleren stoppet", "Får ikke kontakt med høyttaleren"); a stale snapshot keeps the
-last position and shows the play button (a tap starts over, §4.5). The sleep timer pauses without a fade (§9).
+last position and shows the play button (a tap starts over, §4.5). The sleep timer ends with a **short fade**: three
+`SetVolume` steps (2/3, 1/3, 0 of the current volume) 1 s apart, `pause`, then the volume restored, so the next
+play isn't silent (user, 2026-10-11: a fade, as long as it is short; the local 10 s fade would be ten SOAP calls).
 
 ### 5.3 Volume
 `DeviceInfo(PLAYBACK_TYPE_REMOTE)` makes the phone's volume keys drive `setDeviceVolume` while Sonos renders; the
 renderer sends `SetVolume` clamped to the parent's cap (`volume_cap_pct`, read from the managed config as `mobile_data`
 is) applied to the speaker's 0..100 scale; vibb's "no cap on Sonos" (1004-1028) is a deviation (§9) because the user's
-answer in design 21 says the cap applies to every output.
+answer in design 21 says the cap applies to every output. Confirmed by the user 2026-10-11.
 
 ### 5.4 Server: the NRK program id (one commit, both directories)
 NRK series items play on Sonos only through the NRK service, which needs the program id. Today the item key is that id
@@ -342,10 +346,13 @@ No other server change in 1b: the report stays as it is (the server sees no now-
    every Sonos play path as it gates the local ones (`GuardsTest`).
 2. **Process death while Sonos plays** leaves the speaker playing (there is no sidecar to keep polling). Accepted and
    documented; the next start adopts (§4.7). `onTaskRemoved`/`onDestroy` bookmark first, as today (176-197).
-3. **Doze and the screen.** The poller runs in the `mediaPlayback` FGS with the phone silent. Cruise cadence 60 s while
-   the screen is off and PLAYING far from the end (`PowerManager.isInteractive`), 15 s with it on; a bookmark on every
-   poll while off. [device check] 1 h screen off: are polls deferred in Doze, do bookmarks land? If they are, the
-   fallback is the launcher granting the music app the battery-optimisation exemption design 19b gives itself.
+3. **Doze and the screen.** The poller runs in the `mediaPlayback` FGS with the phone silent, at vibb's cadence
+   whatever the screen does, and bookmarks on every poll (§4.4): the saved position stays as fine as on the Pi. What
+   idles with the screen off is only the UI side, which already does (`livePosition` polls only while a screen is
+   shown, `MusicRoot.kt:166-182`); the `SimpleBasePlayer` state still updates per poll, since the launcher's lock view
+   reads it when the screen comes back. [device check] 1 h screen off: are polls deferred in Doze, do bookmarks land
+   every 15 s? If Doze defers them, the launcher grants the music app the battery-optimisation exemption design 19b
+   gives itself (device owner), rather than accepting coarser bookmarks.
 4. **Network changes.** Wi-Fi gone -> the speaker reads UNREACHABLE (backoff, disarm after 600 s); the kid's phone away
    from home keeps the cache (the "cabin case", `sonosd.py:1050-1053`): the sheet lists home rooms marked stale.
 5. **Permissions:** `CHANGE_WIFI_MULTICAST_STATE` (the `MulticastLock`) and `ACCESS_WIFI_STATE` in the manifest. The
@@ -411,26 +418,28 @@ No other server change in 1b: the report stays as it is (the server sees no now-
 | Sidecar on 127.0.0.1:3681, `SidecarDown`, `/state?live=1` thread | one process, a `Mutex`, a 1.5 s-budget classify | no second process on Android |
 | SoCo | own SSDP + SOAP (§2.2) | no GPL-compatible maintained UPnP library; the surface is ten actions |
 | `soco.discover` | SSDP for one ip, then GetZoneGroupState | that is what discover does; done in the open |
-| bookmark throttle 25 s | 15 s | the phone's `saveTick`; SD hygiene was the Pi's reason |
-| cruise 15 s always | 60 s with the screen off | battery and Doze (§6.3) [device check decides] |
-| no volume cap on Sonos | the parent's cap, clamped on `SetVolume` | design 21 user answer: the cap applies to every output |
+| bookmark throttle 25 s | a bookmark on every poll | user 2026-10-11: as fine-grained as possible; SD hygiene was the Pi's reason |
+| no volume cap on Sonos | the parent's cap, clamped on `SetVolume` | design 21 user answer: the cap applies to every output (confirmed 2026-10-11) |
 | volume via a Pi card | the phone's volume keys (remote `DeviceInfo`) | the mockup has no volume UI |
 | shuffle unsupported on Sonos (1892-1901) | supported for url kind | the phone sequences the queue itself, shuffle is only an order |
-| sleep timer fades `exo.volume` | pause without a fade on Sonos | a `SetVolume` ramp fights the kid's own volume; keep it simple |
+| sleep timer fades `exo.volume` over 10 s | three `SetVolume` steps over 3 s, pause, volume restored | user 2026-10-11: a short fade; ten SOAP calls for a 10 s ramp is too chatty |
 | `content.PREFER_REMOTE` global, `_EXPAND_CACHE` | the renderer passed explicitly to the plan filter | the thread race at `daemon.py:1529` |
 | `_hms`-formatted `start_s` in a Python float | `Long` ms internally, `H:MM:SS` at the SOAP edge | Kotlin |
 | `openssl`, ALSA, btwatchd, mpv, go-librespot, `sonos_keep_playing` | n/a | Pi-only |
 | `uid` 404 triggers nothing (docstring says rescan) | a failed play offers "Se etter høyttalere" | the code's actual behaviour, made visible |
 | process death keeps polling (sidecar) | the speaker plays on until the next start adopts | no sidecar (§6.2) |
 
-## 10. Open questions for the user
+## 10. User answers (2026-10-11)
 
-1. Volume keys on the phone control the speaker, with the parent's cap applied (§5.3)? Else no volume control at all.
-2. Sleep timer on Sonos: pause without the fade (§9)?
-3. The NRK Radio service is linked in the household's Sonos (the Pi's recipe depends on it)? Without it, NRK series
-   can't play on Sonos and only RSS/NRK podcasts can.
-4. The Doze check (§6.3): if polls are deferred with the screen off, accept coarser bookmarks on Sonos, or have the
-   launcher grant the music app the battery exemption?
+1. **Volume keys control the speaker, with the parent's cap** (§5.3): yes.
+2. **Sleep timer**: a fade, as long as it is short -> the 3 s `SetVolume` ramp in §5.2.
+3. **The NRK Radio service**: the user expected plain streaming links plus DIDL to be enough. True for RSS and NRK
+   podcasts (mp3). NRK *series* are HLS manifests, which the Pi downloads locally with ffmpeg and plays on Sonos only
+   through the NRK service (`daemon.py:1270-1290`); the household already has it linked (`sn=14` is its known-working
+   value). So: no new setup, and §2.3 stays as the port of what works.
+4. **Positions with the screen off**: saved as finely as ever; only the screen needn't follow -> the cadence is
+   vibb's, a bookmark on every poll, the UI idles (§4.4, §6.3). If Doze defers the polls, the launcher grants the
+   battery exemption rather than the bookmarks getting coarser.
 
 ## Device checks (Jelly Star, real speakers; after step 3)
 - Picker: rooms and a group row; a renamed or re-addressed speaker (DHCP) heals on the next refresh; "Se etter
@@ -445,5 +454,6 @@ No other server change in 1b: the report stays as it is (the server sees no now-
   the bar comes back paused.
 - A bedtime edge mid-episode on Sonos: the speaker stops; its play button does nothing we care about (the app is
   suspended); the lock's media view and Home card went away.
-- Screen off 1 h in Doze while Sonos plays: poll timestamps in logcat, the bookmark after a forced stop.
+- Screen off 1 h in Doze while Sonos plays: poll timestamps in logcat every 15 s, the bookmark after a forced stop
+  within 15 s of the truth; the sleep timer's fade and the volume restored after it.
 - VPN filter on: discovery and control still work; volume keys and the cap.
