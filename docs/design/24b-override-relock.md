@@ -12,7 +12,8 @@ This follows design 24 and is built by the same implementer after 24's step 1. I
 - **L6:** a Keystore-backed HMAC for the **parent** PIN only. The kid's own PIN lock never depends on a Keystore key.
 - **H4:** `DISALLOW_SAFE_BOOT` on by default, but only after device check 6 passes on the Jelly Star.
 
-The body is revised after QA's design review (§ "QA review (design)", then "Decisions after QA review" at the end).
+The body is revised after QA's design review (§ "QA review (design)", then "Decisions after QA review" at the end)
+and again after the code review's fix round ("Decisions after the code review", `docs/design/qa-24b-code.md`).
 [AOSP] marks something read in `android14/15/16-release`. [device] marks what only the phone can answer.
 
 ## 1. M9: windows that close themselves
@@ -105,7 +106,7 @@ calls `PlayRuntime.endInstallMode`.
   - pause: "All restrictions paused until %1$s" / "Alle begrensninger er satt på pause til %1$s";
   - the action: "Lock again" / "Lås igjen".
 
-### 1.4 The PWA commands `end_windows` and `allow_blocked`
+### 1.4 The PWA commands `end_windows`, `allow_blocked` and `start_pause`
 
 - **Server:**
   - Routes in `admin_routes` (`require_full_auth`, plain forms): `POST /devices/{id}/end-windows` and
@@ -121,32 +122,42 @@ calls `PlayRuntime.endInstallMode`.
       the parent PIN in its Settings). The pause ends by itself, or press "Lock the phone again now"."
     - Subtitle: "Ends the pause or Play install mode as soon as the phone gets this (usually within seconds). A
       parent-code opening on the time-lock screen already ends whenever the phone reaches this server."
-  - **"Allow these apps"** shows next to the blocked list (§1.7).
+  - **"Allow these apps"** shows next to the blocked list (§1.7). It goes once the phone answered one pressed after
+    the relock (code review Low 10).
+  - **"Pause restrictions for 2 hours"** (`POST /devices/{id}/start-pause`, `start_pause`, the same own insert; fix
+    round, High 1): the phone's own 2-hour pause, started without the parent PIN on the phone. Shown while the
+    latest status has no pause.
+  - **The answers** (code review Low 10): the newest of each of the three commands shows for a week under the
+    buttons - when it was pressed and the phone's answer, or "no answer from the phone yet".
 - **Phone (`dispatchPendingCommand`):**
   - `"end_windows"` runs `WindowRelock.lockAgain(context, "command")` and `PlayRuntime.endInstallMode`. The result is
     `"ended: pause, install mode"` or `"nothing was open"`.
-  - `"allow_blocked"` clears `relock_blocked` and re-applies. The result is `"allowed: <n> apps"`.
+  - `"allow_blocked"` clears `relock_blocked` - except an app signed with another key than the catalog's pin (§1.6) -
+    and re-applies. The result is `"allowed: <n> apps"`.
+  - `"start_pause"` runs `RestrictionsPause.start` with a fresh 2-hour `WindowStart` (the marker first, as always).
+    The result is `"paused for 2 hours"`.
   - An older launcher logs "Unknown pending command". The capability gate hides both buttons for it.
 
 ### 1.5 What the kid could change during a window
 
 These are the surfaces an override or pause opens. Install mode opens none. Nothing is blocked while a window is
-open. Everything listed here is reset at the relock, or reported.
+open but the accessibility list (the user's decision on the code review's High 1). Everything listed here is reset at
+the relock, or reported.
 
 **The lists below apply only while apps are managed** (`allowlist != null`): QA #4. On a calls-only or unmanaged phone
 they are `null`/off, as today.
 
 | Surface | Reset at relock | Report (§1.7) |
 |---|---|---|
-| Wi-Fi proxy (manual or PAC, per network) | For every `WifiManager.getConfiguredNetworks()` entry with a proxy: `setHttpProxy(null)` + `updateNetwork` ([AOSP] `canModifyNetwork`/`canModifyProxySettings` allow the device owner). It needs location on and fine location granted, so around the reset location is switched on and the permission self-granted (`QuickControls.selfGrantPermission`, as `WifiNetworksActivity` does), then both are restored. No fix is taken, so no indicator shows (QA #3). | `proxies_cleared`, and `proxy_left` from `getLinkProperties(n).httpProxy` on every network |
+| Wi-Fi proxy (manual or PAC, per network) | Fix round (Low 4): only a proxy set or changed since the first window's start (its snapshot keeps each saved network's proxy by SSID; no snapshot = every one). For every such `WifiManager.getConfiguredNetworks()` entry: `setHttpProxy(null)` + `updateNetwork` ([AOSP] `canModifyNetwork`/`canModifyProxySettings` allow the device owner). It needs location on and fine location granted, so around the reset location is switched on and the permission self-granted (`QuickControls.selfGrantPermission`, as `WifiNetworksActivity` does), then both are restored. No fix is taken, so no indicator shows (QA #3). A refused `updateNetwork` is the step's failure. | `proxies_cleared`, and `proxy_left` from `getLinkProperties(n).httpProxy` on every network but a Wi-Fi one whose proxy was kept or just cleared (Low 8) |
 | Mobile-data (APN) proxy | none: a device owner can only replace APNs wholesale | `proxy_left` (cellular) |
-| User CA certificates | `uninstallAllUserCaCerts(admin)` | `ca_certs_removed` (the count from `getInstalledCaCerts` before) |
+| User CA certificates | Fix round (Low 4): `uninstallCaCert(admin, cert)` for each certificate added since the first window's start (by SHA-256; no snapshot = every one), then `getInstalledCaCerts` read again (Low 9). Certificates for Wi-Fi (EAP) live in the Wi-Fi keystore and aren't touched (QA question 1). | `ca_certs_removed` (gone after the re-read); one still there is the step's failure |
 | Android screen lock (handy's lock goes inactive; the parent can't open the phone) | step 1: if `device_secure_at_start == false` and the phone is secure now, `resetPasswordWithToken(admin, null, token, 0)`. The token is 32 random bytes in CE prefs (`commit()`), set with `setResetPasswordToken` only while `!isResetPasswordTokenActive` and the phone has no credential, which activates it at once (QA #9). Any lock set during a window is removed, a parent's too. [device] | `credential_removed`, `credential_left` |
-| Accessibility services | Outside windows: `setPermittedAccessibilityServices(admin, allowlist)`. In windows: `null` (all). Set in step 3, after hiding. A hidden package's services leave `ENABLED_ACCESSIBILITY_SERVICES` ([AOSP] `onPackageRemoved`; that hiding broadcasts it is [device]). | `accessibility_enabled`: non-system services still on |
+| Accessibility services | `setPermittedAccessibilityServices(admin, allowlist)` - since the fix round also in windows (High 1 (a)): only an allowlisted app's service can be turned on, ever; ticking the app in the PWA allows it. Set in step 3, after hiding. A hidden package's services leave `ENABLED_ACCESSIBILITY_SERVICES` ([AOSP] `onPackageRemoved`; that hiding broadcasts it is [device]). | `accessibility_enabled`: non-system services still on |
 | Input methods | Outside windows: `setPermittedInputMethods(admin, allowlist)`. In windows: `null`. `neverRestrict`'s keyboards become *enabled ∩ (system ∪ allowlist)*, so a sideloaded one is hidden. No fallback is needed: the parent PIN no longer types through a keyboard (§1.8, QA #5/S5). | - |
 | Hotspot, USB and Bluetooth tethering | `DISALLOW_CONFIG_TETHERING` outside windows, lifted in windows. Setting it at the relock calls `untetherAll()` ([AOSP] `Tethering.UserRestrictionActionListener`). | - |
 | Apps installed, updated or re-signed in the window | §1.6 | `blocked` |
-| Device admin apps | a non-allowlisted or blocked package is hidden, and DPMS drops a removed package's admin [device] | `admins_enabled`: active admins other than ours |
+| Device admin apps | none: [AOSP] an app with an active device admin can't be hidden, suspended or uninstalled, and a device owner can't deactivate another app's admin (corrected in the fix round - this row said it was hidden). The backstop (High 1 (b), §1.8): while one of a non-system app outside the allowlist is active, the phone refuses the parent PIN and the PWA shows how to remove it. | `admins_enabled`: active admins other than ours; `foreign_access` in every status |
 | Our own notifications | `fixOwnPermission(POST_NOTIFICATIONS)` (a device owner can grant its own permission). A channel the user lowered can't be raised. | `own_notifications_off` (a channel at `IMPORTANCE_NONE`) |
 | System apps disabled in the window (keyboards, dialer, clock, cell broadcast, anything) | none: `enableSystemApp` doesn't clear a user's disable [AOSP 14] | `apps_disabled`: newly disabled since the start snapshot (QA #5) |
 | Notification access for an allowlisted app | none (a non-allowlisted app is hidden) | `notification_listeners`: non-system listeners other than ours (`NotificationManagerCompat.getEnabledListenerPackages`) [device] (QA #12) |
@@ -169,22 +180,28 @@ Sideloading stays allowed in windows. The relock closes the "same name, differen
   - or with a changed `lastUpdateTime`;
   - or with a changed signer.
 - **The expected signer** is, in order:
-  - M10's locked signer for a catalog app, once M10 lands (the policy carries it);
+  - M10's pinned signer for a catalog app (`signer_sha256` in the sync's app list, kept on the phone);
   - otherwise the snapshot's signer.
-- **The rule** (pure `relockBlockDecision`):
-  - **Not allowlisted:** hidden by `apply()` as always. Reported only if new.
-  - **Allowlisted, changed signer** (vs the expected one): **blocked**.
-  - **Allowlisted, new:**
-    - no expected signer and the installer (`getInstallSourceInfo().installingPackageName`) is not the Play Store or
-      us: **blocked**;
-    - with an expected signer (M10): blocked unless it matches.
-  - **Allowlisted, updated with the same signer:** fine (Play's own update).
+- **The rule** (pure `relockBlockDecision`; fix round, Medium 2: whatever the allowlist says, so ticking the app's name
+  doesn't show it):
+  - **Changed signer** (vs the expected one): **blocked**.
+  - **New with no expected signer**, and the installer (`getInstallSourceInfo().installingPackageName`) is not the Play
+    Store or us: **blocked**.
+  - **New or updated with the expected signer, or new from Play or us:** fine. A new app that isn't allowlisted is
+    hidden by `apply()` as always (the Apps card and `app_installed` show it).
+  - **No snapshot** (an adopted window, or it couldn't be taken; Low 2): every package installed since the window's
+    start (kept as `start_ms`, an adopted window's as early as it could have begun) from another installer, or with
+    another key than its pin, is blocked. A signer check that throws keeps the marker and the snapshot.
 - **`relock_blocked`** (CE prefs, `package -> cert`): `computeEnforcementPlan` treats these as not allowlisted. They
   are hidden, never pinned, and not in the keyboard or accessibility lists.
   - An entry clears when the package is uninstalled.
   - An entry clears when the installed signer equals the expected one again (the real app reinstalled from Play during
     a later pause).
-  - All entries clear on `allow_blocked` (§1.4).
+  - All entries clear on `allow_blocked` (§1.4) - except an app signed with another key than the catalog's pin, which
+    stays blocked until uninstalled (the PWA says so).
+  - **Outside windows** (Low 3), an install or update re-checks the one package: a block clears once it is back to
+    its expected signer (or came from Play or us), and one installed just now from elsewhere or with another key than
+    its pin is blocked. An app "Allow these apps" let out stays out.
 - **M10's server rule** (learning a catalog name from "the one new package") must ignore packages the phone reports
   as `blocked`. That's noted for M10's server part.
 - **Limits:**
@@ -200,10 +217,17 @@ Sideloading stays allowed in windows. The relock closes the "same name, differen
   "relock": { "at_ms": 1760100000000, "trigger": "timer", "windows": ["override"],
               "proxies_cleared": 1, "proxy_left": false, "ca_certs_removed": 0,
               "credential_removed": false, "credential_left": false,
-              "blocked": ["com.example.app"], "accessibility_enabled": [], "admins_enabled": [],
+              "blocked": ["com.example.app"],
+              "blocked_signers": {"com.example.app": "3f2a…c0de (64 hex)"},
+              "accessibility_enabled": [], "admins_enabled": [],
               "apps_disabled": [], "notification_listeners": [], "own_notifications_off": false,
               "failures": [] }
   ```
+
+  - `blocked_signers` (fix round, Medium 2): each blocked app's signing key, SHA-256 lower-case hex; the PWA shows it
+    and compares it with the catalog's pin.
+  - `foreign_access` (fix round, High 1 (b)) is its own status field, sent in every report while something is found:
+    `{"admins": [...], "accessibility": [...]}` (§1.8).
 
   - `trigger`: `timer | lock_again | command | sync | boot | screen_on | settings`.
   - `windows`: `override`, `pause`, or both, since they can overlap (QA #11).
@@ -215,8 +239,11 @@ Sideloading stays allowed in windows. The relock closes the "same name, differen
   - The device page's Status card shows a warning when `at_ms` is within 7 days and anything was found:
     - "When the phone locked again at {time} ({trigger}), it removed {n} Wi-Fi proxy(ies), {n} certificate(s) and an
       Android screen lock the child had set."
-    - "Blocked: {apps} (installed or replaced while it was open) - [Allow these apps]."
-    - "Still on: accessibility service {pkg}; notification access {pkg}; a proxy on mobile data."
+    - "Blocked: {app} (signing key {short}) - installed or replaced from outside Play while it was open, or signed with
+      another key, so ticking it under Apps doesn't show it." For an app with another key than the catalog's: "... so it
+      stays blocked: uninstall it." Otherwise: "If one is yours and its key is the one you expect, tick it under Apps
+      and press "Allow these apps"."
+    - "Still on: accessibility service {pkg}; notification access {pkg}; a proxy on a network (mobile data or Wi-Fi)."
     - "Turned off and can't be turned back on remotely: {apps} - turn them on in the phone's Settings during a pause."
     - "The launcher's notifications are off."
 
@@ -236,9 +263,19 @@ Sideloading stays allowed in windows. The relock closes the "same name, differen
 - **The dialogs' windows** get `FLAG_SECURE` (no screenshots, no screen recording). The keypad views get
   `setAccessibilityDataSensitive(YES)` (API 34).
   - That stops ordinary accessibility services, but [AOSP] any service can declare `isAccessibilityTool`.
-  - So an accessibility service the kid enables in a window can still see a PIN the parent types *in the same window*.
-    It goes at the relock (hidden, or outside the permitted list) and is reported. That is the accepted cost of a
-    completely open window.
+  - So, since the fix round (the user's "both" on the code review's High 1):
+    - **(a)** the permitted accessibility list stays the allowlist in windows too: a service of an app the parent
+      didn't tick can't be turned on, in a window or outside one;
+    - **(b) the backstop** (`ForeignAccess`): an active device admin other than ours, or an enabled accessibility
+      service, of a non-system app outside the allowlist (relock-blocked apps count as outside) makes the phone refuse
+      the parent PIN in all five entries - checked right before the keypad shows (`ParentPin.status`) and again
+      before the verify (`ParentPin.check`), nothing counted. The dialogs say to use the parent app. It is checked
+      after a relock, at every sync (`foreign_access` in the status) and at a process start; a new finding asks for a
+      sync. The PIN works again as soon as a check finds nothing.
+    - **The PWA** shows a red warning naming what was found, with the steps: 1. "Pause restrictions for 2 hours"
+      (`start_pause`, no PIN on the phone); 2. on the phone, turn the admin and the service off and uninstall the
+      app; 3. "Lock the phone again now"; 4. change the parent PIN. The security log gets `phone_foreign_access` when
+      it appears, changes or goes.
 
 ## 2. L6: a vault for the parent PIN only
 
@@ -363,7 +400,8 @@ next free numbers.
   - a step failure doesn't stop the rest;
   - credential removal only when the phone wasn't secure at the first window's start;
   - the keyboard rule: enabled ∩ (system ∪ allowlist);
-  - the lists and the tethering restriction only while `allowlist != null` and no window is open.
+  - the lists and the tethering restriction only while `allowlist != null` and no window is open - the accessibility
+    list also in windows (fix round).
 - **Launcher `RelockBlockTest` (pure `relockBlockDecision`):**
   - **blocked:** allowlisted re-signed, and allowlisted new from the package installer;
   - **not blocked:** allowlisted new from Play or us, allowlisted updated with the same signer;
@@ -422,17 +460,21 @@ next free numbers.
   - an APN proxy shows as left;
   - a CA certificate is removed;
   - an Android screen PIN set in the window is removed, and handy's lock is active again right away;
-  - a sideloaded keyboard and accessibility service are gone;
+  - a sideloaded keyboard is gone; a sideloaded accessibility service can't be turned on in the window (Settings shows
+    it restricted);
   - hotspot is off;
-  - a sideloaded device admin is gone;
+  - a sideloaded app made a device admin in the window: it stays (the platform keeps it), the phone refuses the parent
+    PIN in all five entries, the PWA shows the warning, and after its steps (a PWA pause, deactivate and uninstall,
+    lock again) the PIN works again;
   - a disabled system keyboard is reported, and the parent PIN still works on our keypad.
 - **The same-name case:**
   - in a pause, uninstall an allowlisted app and sideload another APK under its name: after the relock it is hidden
     and shown as blocked;
   - "Allow these apps" brings it back;
   - reinstalling the real app from Play in a later pause clears the block.
-- **Check before S1a ships:** that no phone relies on a user CA certificate (it goes at the first relock).
-- **A reboot during a window:** after the boot, one relock with trigger `boot`.
+- **A CA certificate and a Wi-Fi proxy set before the window** stay; ones added in it go.
+- **A reboot during a window:** after the boot, one relock with trigger `boot`. A launcher crash or update restart
+  after a window's end relocks as `timer` and brings Home.
 - **PIN vault:**
   - after the upgrade, the prefs hold no `override_pin_hash` (`run-as`, debug build);
   - a lockout running before the upgrade continues;
@@ -758,8 +800,32 @@ One line per finding:
 - **S5, accepted.** No keyboard fallback and no `input_methods_kept`.
 - **QA's open questions:**
   - Q1 is superseded by answer 1. Nothing is blocked in windows. Hotspot is open in windows and untethered at the
-    relock. CA certificates are removed at the relock. There's a device check that no phone relies on one.
+    relock. CA certificates are removed at the relock. There's a device check that no phone relies on one (dropped
+    in the fix round: only certificates added in a window go, and no phone relies on one - see below).
   - Q2-Q5 are agreed: Q3 is narrowed to the parent PIN, and Q2/Q4 are this note's Q3/Q4.
+
+## Decisions after the code review (2026-10-11)
+
+The code review is `docs/design/qa-24b-code.md` (1 High, 2 Medium, 12 Low). The user's answers:
+1. **High 1 (a device admin shields a sideloaded app and its accessibility service): "both".**
+   - **(a)** The permitted accessibility list stays in force during windows - the only block a window keeps. An
+     accessibility app can be turned on only after the parent allows it in the PWA; the tick under Apps is that
+     switch (no separate one was needed: the list is the allowlist). Everything else stays unblocked in windows.
+   - **(b)** The backstop of §1.8: an active device admin other than ours, or an enabled non-system accessibility
+     service, outside the allowlist makes the phone refuse the parent PIN in all five entries until nothing unknown
+     is seen; the PWA warns in red with the steps, and can start the pause itself (`start_pause`, new: there was no
+     remote pause).
+   - §1.5's device-admin row was wrong ("hidden, and DPMS drops a removed package's admin"): [AOSP] such an app can't
+     be hidden, suspended or uninstalled. Corrected.
+2. **Medium 2:** M10's pins (`signer_sha256`) feed the signer check; "Allow these apps" shows each app's key; an app
+   whose key differs from the catalog's pin or the window start's stays blocked even if ticked, and one with another
+   key than the pin even after "Allow these apps"; the PWA says why and no longer invites ticking.
+3. **Low 4:** only the CA certificates and proxies added during the window go (a start snapshot,
+   `uninstallCaCert` per certificate), on calls-only phones by the same rule.
+4. **QA question 1:** EAP Wi-Fi certificates are unaffected (they live in the Wi-Fi keystore, not the user CA
+   store). The user confirmed that no phone uses a school or work network with its own CA, so the "check before S1a
+   ships" item is dropped.
+5. **Medium 1 and the other Lows:** as QA suggested (implementation status, "Fix round").
 
 ## Open questions: resolved (2026-10-10)
 These follow from the user's earlier decisions (allowlist and kiosk, no Android screen lock, safe mode blocked by
@@ -792,15 +858,16 @@ the buttons.
    the new marker with no window open, clear it, and leave the window without one.
 3. **Adoption:** a window an older build opened (no marker) gets one at the next check or "Lock again" and relocks
    without a start snapshot (no signer check, no credential removal).
-4. **The sync's relock** skips `apply()` only when steps 1-2 changed nothing; after a removed credential or a new
-   block it runs again, or the kid's lock and the hiding would wait for the next apply.
+4. **The sync's relock** ~~skips `apply()` only when steps 1-2 changed nothing~~ - gone in the fix round (Medium 1):
+   step 3 always runs, also in the sync, whose own apply may have run with the window still open.
 5. **Home after a relock** is not brought to the front at a process start (`boot`): the boot brings Home itself
    (design 16).
 6. **Signers** match when the installed set shares a certificate with the expected one (a key rotation keeps the old
    one in its history), as the self-update's `signerMatches`. A block with no known signer also clears when the app
    comes back from Play or us.
-7. **`relock.blocked`** lists the blocked apps and, per §1.6, new apps that aren't allowlisted. The server shows
-   "Allow these apps" only when a blocked app is on the allowed list, and says the others need a tick under Apps.
+7. **`relock.blocked`** lists only the blocked apps (since the fix round, Medium 2): a new app from Play that isn't
+   allowlisted is hidden by `apply()` and shown by the Apps card and `app_installed`, not here. "Allow these apps"
+   shows while a blocked app isn't one with another key than the catalog's pin.
 8. **The location permission** self-granted for the proxy reset stays granted (revoking a runtime permission kills
    our process); its policy state goes back. Location itself is switched off again.
 9. **`failures`** names: `credential, signer_check, apply, permitted_lists, proxies, ca_certs, notifications,
@@ -816,6 +883,30 @@ the buttons.
 13. **Debug-only hook** `PinVaultKeyReceiver` (src/debug, DUMP) deletes the vault key for §7's check; the release
     build check (`checkReleaseHasNoDebugHook`) covers it.
 
-**Device checks (emulator, then the Jelly Star):** §7 as written. Before S1a reaches a phone: check that no phone
-relies on a user CA certificate (a school EAP network) - it goes at the first relock. For S4: check 6 in design 04
-first.
+**Device checks (emulator, then the Jelly Star):** §7 as written. For S4: check 6 in design 04 first.
+
+### Fix round (2026-10-11)
+
+Every finding of `docs/design/qa-24b-code.md` is fixed, rebased onto main (after the security wave's QA fixes):
+- **High 1:** (a) the accessibility list in windows (`EnforcementPlan.permittedAccessibility` follows the allowlist,
+  not the window); (b) `ForeignAccess` and the PIN refusal in `ParentPin.status`/`check`, the status field
+  `foreign_access` (`device_status.foreign_access_json`, in 0063), the red warning, `phone_foreign_access`, and
+  `start_pause` ("Pause restrictions for 2 hours") with its own insert. `ParentPinCallersTest` lets `MdmSyncWorker`
+  start a pause for it.
+- **Medium 1:** the relock always applies. **Medium 2:** the catalog pins on the phone (`rememberCatalogPins` from the
+  sync's app list), blocks whatever the allowlist, `blocked_signers` in the report (both sides), "Allow these apps"
+  keeps a pin mismatch, the PWA texts.
+- **Lows:** 1 the vault keeps its tag on a failed wrap; 2 a throwing signer check keeps the marker, and the
+  no-snapshot rule with `start_ms`; 3 the install check outside windows (with the let-out record); 4 only what the
+  window added goes (CA certificates by SHA-256, Wi-Fi proxies by SSID); 5 the alarm in `opened()`; 6 `boot` only in
+  a new boot (`BootWitness.newBoot`), else `timer`; 7 the notification only as device owner; 8 `proxy_left` wording
+  and Wi-Fi settle; 9 the certificates read again, leftovers a failure; 10 the commands' answers on the Status card,
+  "Allow these apps" gone once answered; 11 the vault migration on IO from `initRest`; 12
+  `device_policy.disallow_safe_boot_set_at_ms` (in 0064) for the unseen-boots advice.
+- **Device checks added to §7:** the foreign-admin backstop end to end, an accessibility service refused in a window,
+  certificates and proxies from before a window kept, a crash restart relocking as `timer`.
+- **Green on main `7e930b24`:** launcher `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true`
+  (893 tests), server `cargo test` (537; 538 with S4), `fmt --check`, `clippy --all-targets` with no new warnings,
+  the same on `relock-24b-s4`. The PWA in headless Chromium at 360 px, light and dark: no horizontal scroll, the red
+  warning with its steps, the answers under the buttons, and after "Lock the phone again now", "Allow these apps"
+  or "Pause restrictions for 2 hours" the page comes back at the same place with the notice in view.
