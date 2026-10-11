@@ -31,7 +31,9 @@ Already there (from the code, more than the README says):
   with per-device chrome, global + per-device schedules enforced offline.
 - App catalog on the server: silent install/uninstall/update via
   PackageInstaller, incl. the launcher's own self-update.
-- Offline override PIN (PBKDF2, verified on the phone), PIN-gated settings.
+- Offline override PIN (PBKDF2, verified on the phone), PIN-gated settings. Since design 24 the "parent
+  PIN": one gate on the phone with an escalating lockout (15 min up to 24 h), every use, wrong try
+  and lockout reported to the PWA, its own card there with an easy-PIN warning.
 - Tailscale embedded in the launcher (`tsnet.aar`), no Tailscale app needed.
 - DNS filtering via the launcher's own `VpnService` + blocklists from the
   server, private DNS lock, DNS log.
@@ -234,7 +236,8 @@ launchable.
   Firebase project nor any content goes to Google. A push only triggers a sync over the
   device API. Costs: one more app to keep allowed and exempt, plus a dependency on ntfy.sh
   and Play services. Before building it, try a battery-optimisation exemption at setup
-  and design 22's direct-HTTPS mode without tsnet. The
+  and design 22's direct-HTTPS mode without tsnet (design 19b phase 1 is built: the status line,
+  the "Background connection" row during the pause, the adb line in the setup docs). The
   original decision, as history: FCM (works without a
   Google account; Play services stay installed and are never suspended).
   Content-free high-priority data message, so a forged or replayed push can only

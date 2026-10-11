@@ -255,3 +255,6 @@ Two phases ("Ok ift ditt forslag"):
   - the row in the PIN-gated Settings during the existing pause.
 - **Phase 2, the prompt inside QR provisioning:** only if the Jelly Star run shows a difference, or the phone has an OEM battery manager.
 - Open questions 1-4: the architect's recommendations stand.
+
+**Phase 1 status (2026-10-10):** built with design 24 step 1b - see "Implementation status" in
+`24-parent-pin-hardening.md` (migration `0055_battery_exemption.sql`). Device checks: §5.

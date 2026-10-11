@@ -903,3 +903,44 @@ One line per finding:
   event committed first. The grant class goes, and a source scan pins the three starters (§2, §7).
 - **QA's open-questions notes:** all taken. Q5's residual risk (one extra round per override or pause, at most one
   extra duration after a clock reset) is stated in §2.1.
+
+## Implementation status (2026-10-10)
+
+Built on branch `pin-24` as §6's steps, rebased onto main `112b68b3` (design 22 R1): 1a (launcher gate), 1b (19b
+phase 1, launcher + server), 2 (server card and warning), 3 (events, both sides), 4 (docs). Launcher
+`testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` green (773 tests, 732 at 99d88c61);
+server `cargo test` (454 tests), `fmt --check` and `clippy --all-targets` green with no new warnings. The PWA was
+checked in headless Chromium at 360 px, light and dark: no horizontal scroll, the notices inside their cards, and
+the `#parent-pin`/`#screen-lock` redirects land at the card's top.
+
+**Deviations** (none changes a rule of the design):
+
+1. **Migration numbers:** main took 0052-0054 (design 22, security H2), so 19b's is `0055_battery_exemption.sql`,
+   then `0056_parent_pin_easy.sql` and `0057_device_pin_events.sql`.
+2. **Server files:** to stay out of design 22's files the handlers live in `src/handlers/parent_pin.rs`
+   (`update_parent_pin`, `pin_events`, the card) next to the pure `src/parent_pin.rs`, not in `devices.rs`/
+   `device_api.rs`. The device route is in `device_routes.rs` (behind design 22's limits and body cap).
+3. **One shared dialog** (`ui/ParentPinDialog.kt`) for the time lock, the Settings gate, the pause and install mode;
+   the PIN lock keeps its own layout and shares the result texts.
+4. **`lockoutText` takes the unit strings,** so Norwegian reads "1 t 45 min".
+5. **Settings' session number** is taken when the gate dialog is created, not when OK is tapped. A dialog never
+   outlives its session (`onStop` dismisses it and bumps the number), so it is the same guard.
+6. **`LockEvent.Unlocked(checkedAt, screenOffs)`** carries both counts, so `step` stays pure.
+7. **Install mode's `NO_PIN`** also opens the PIN dialog in its "no PIN" state (§2.4 named only `LOCKED_OUT`); the
+   non-PIN refusals keep their toasts.
+8. **A correct PIN whose `unlocked` commit fails** still works (logged); the use stays in memory for the upload
+   (§2.1 didn't say).
+9. **The clear path** relies on the SQL `CASE` alone (no early read), so the race guard is what the test exercises.
+10. **The sweep takes its candidates** (`run_easy_sweep(db, easy_candidates())`), so the test can use two.
+11. **Notice styles:** a use is a plain line, a lockout or wrong tries are error-style, and one wrong try reads
+    "1 wrong parent PIN was typed". The kid lock's saved/cleared notices are now success-style.
+12. **19b's row** decides by resolving Android's dialog (`dialogTarget`), not by reading
+    `RestrictionsPause.isActive()`: the same result during the pause, and it also works during setup.
+
+**Not done here:** design 24b (on main since `bb8ba7dc`) is a separate step. Pre-existing and unchanged: the phone's
+PIN fields take at most 10 digits, so a parent PIN of 11+ digits saved before the server's new 10-digit bound
+can't be typed on the phone (save a new one).
+
+**Device checks (emulator, then the Jelly Star):** §8 as written, and 19b §5's emulator list (row states, the
+dialog only during the pause, `whitelist +/-` reflected in the PWA after "Sync now"). Also: the error line and the
+disabled OK on a budget phone (no toasts), and a reboot during a 30-minute lockout.
