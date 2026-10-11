@@ -33,7 +33,7 @@ This installs a systemd service listening on `127.0.0.1:3100` only - put it behi
 ## Development
 
 ```bash
-cp .env.example .env   # fill in an admin username/password
+cp .env.example .env   # optional; without ADMIN_PASSWORD the first password is in data/initial-admin-password
 cargo run
 ```
 

@@ -399,8 +399,8 @@ pub struct DnsFilterSettings {
 }
 
 /// Singleton row (id always 1) - see migrations/0018_provisioning_settings.sql. Embedded into
-/// every device's QR provisioning payload (handlers::provisioning) - one server and one reusable
-/// Tailscale pre-auth key cover every device, so neither is per-device.
+/// every device's QR provisioning payload (handlers::provisioning). The Tailscale key is a one-time
+/// key the parent replaces before each phone's setup (security review M12, DEPLOY.md).
 #[derive(sqlx::FromRow, Clone, Default)]
 pub struct ProvisioningSettings {
     pub id: i64,

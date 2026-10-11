@@ -27,12 +27,21 @@ pages and the phones' API can be exposed differently:
 | `DEVICE_BIND_ADDR` | unset | The phone listener, e.g. `127.0.0.1:3101`: only the phones' API (`/api/devices/*`) and `/healthz`; every other path is a bare 404. |
 | `ADMIN_DEVICE_API` | `on` | The admin listener also serves the phones' API (the URLs phones set up before 0.23.0 use). `off` once every phone uses the phone listener. |
 | `ADMIN_PUBLIC` | `off` | The admin listener answers **only loopback and tailnet clients** (100.64.0.0/10, fd7a:115c:a1e0::/48); everyone else gets 403 (logged as `admin_refused` in the security log). `on` lets every client in - see (b) below. |
-| `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies (IPs or CIDRs) whose `X-Forwarded-For` is believed. Your proxy on the same box needs nothing here. |
+| `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` is believed: exact proxy addresses (a range only if every address in it is one of your proxies). Your proxy on the same box needs nothing here. |
 | `ADMIN_TAILSCALE_USERS` | unset | Only behind `tailscale serve`: the admin pages also need one of these Tailscale logins (comma list). Tagged phones carry no login, so a phone node can't open the admin even if a serve rule points it there. |
 | `SESSION_INACTIVITY_DAYS` | `30` | How long an admin session lasts without use. |
 
 The admin gate is on by default: a proxy rule meant for the phones, or a typo in a Caddyfile, can't put the PWA on the
 internet - it answers 403 to anything that isn't loopback or tailnet. `/healthz` (says `ok`) always answers.
+
+**What the gate can't see.** It knows a client by the connection's address, and behind a trusted proxy by the
+proxy's `X-Forwarded-For`. So:
+- **`TRUSTED_PROXIES` holds exact proxy addresses, never a subnet with other hosts in it.** Any host in a trusted
+  range can name a tailnet address in `X-Forwarded-For`, or send none and pass as a tool on the box.
+- **Never point a TCP-level forwarder at the admin port (3100)**: `socat`, `ssh -L`, `tailscale serve
+  --tls-terminated-tcp`, `tailscale funnel --tcp`, Caddy's layer4 module. They send no `X-Forwarded-For`, so every
+  client they forward arrives from loopback and passes. Use an HTTP proxy (Caddy's `reverse_proxy`, `tailscale serve`
+  with an `http://` target), which says who the client is.
 
 **Three ways to expose it**:
 - **(a) tailnet only** (default, and today's setup): admin and phones over Tailscale.
@@ -158,10 +167,16 @@ downloads will feel.
 ### Tailscale keys for the phones
 
 In every setup that gives phones a Tailscale key (tailnet only, or a phone listener with the tailnet as a second
-path): a reusable, **tagged** (`tag:kid`), pre-approved, non-ephemeral key, and a tailnet policy that lets
-`tag:kid` reach only the phones' port (`8444` above) on this box. Auth keys expire within 90 days; a phone already
-set up keeps working on its stored node state, the key only matters for setting up a phone. The key is write-only on
-Settings > Provisioning since 0.23.0.
+path): a **one-time** (not reusable), **tagged** (`tag:kid`), pre-approved, non-ephemeral key, and a tailnet policy
+that lets `tag:kid` reach only the phones' port (`8444` above) on this box (security review M12).
+
+One-time means one key per phone setup. Settings > Provisioning holds a single key, and every setup QR carries it:
+before setting up a phone (or setting one up again), make a new key in the Tailscale admin console and paste it
+there. The phone uses it once; after that the key, and any photo of the QR, is worth nothing. Remove it from
+Provisioning afterwards if you like - it is dead either way. A phone already set up keeps working on its stored node
+state; the key only matters for a setup. The key is write-only on Settings > Provisioning since 0.23.0. (The
+launcher still keeps its copy of the used key; deleting it after the first connect comes with the launcher's security
+wave.)
 
 ### Phones' long-lived connection through a proxy
 

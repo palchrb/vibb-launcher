@@ -9,7 +9,7 @@
     <div class="page-header">
         <h1>Provisioning</h1>
     </div>
-    <p class="subtitle">Embedded verbatim into every device's setup QR code (both Android's native zero-touch provisioning on stock/GMS devices, and the launcher's own in-app QR scanner for devices like GrapheneOS that need adb-based setup instead). One server and one reusable Tailscale key cover every device - nothing here is per-device.</p>
+    <p class="subtitle">Embedded verbatim into every device's setup QR code (both Android's native zero-touch provisioning on stock/GMS devices, and the launcher's own in-app QR scanner for devices like GrapheneOS that need adb-based setup instead). One server covers every device. The Tailscale key is one-time: put a new one here before each phone's setup.</p>
 
     <div class="card">
         <form method="post" action="/settings/provisioning">
@@ -26,7 +26,7 @@
                 <span>Remove the stored key</span>
             </label>
             {% endif %}
-            <p class="subtitle">A <em>reusable</em>, tagged (<code>tag:kid</code>), pre-approved pre-auth key from your Tailscale admin console - one key enrolls every device via the embedded tsnet client. It is never shown again here; leave the field empty to keep it. Leave it unset to enter it by hand per device instead.</p>
+            <p class="subtitle">A <em>one-time</em>, tagged (<code>tag:kid</code>), pre-approved auth key from your Tailscale admin console, used by the phone's embedded tsnet client. One key sets up one phone: make a new one before each setup (DEPLOY.md, "Tailscale keys for the phones"). A used key is worth nothing, so a photo of the setup QR is too. It is never shown again here; leave the field empty to keep it. Leave it unset to enter it by hand per device instead.</p>
 
             <label for="locale">Phone language</label>
             <input type="text" id="locale" name="locale" value="{{ settings.locale }}" placeholder="nb_NO" autocomplete="off">
