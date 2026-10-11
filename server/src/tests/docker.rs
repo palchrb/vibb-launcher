@@ -295,6 +295,85 @@ async fn a_restored_database_that_wont_open_is_put_back() {
     );
 }
 
+/// QA 22 Low 7: a kidphone.db over the cap is refused before anything is swapped, and only the
+/// newest prerestore copies are kept.
+#[tokio::test]
+async fn a_restore_is_size_capped_and_old_prerestore_copies_go() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let live = data.join("kidphone.db");
+    let url = format!("sqlite://{}", live.display());
+    let db = crate::connect_db(&url).await;
+    sqlx::query("INSERT INTO admin_users (username, password_hash) VALUES ('live', 'x')")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
+    db.close().await;
+    let backup_db = dir.path().join("b.db");
+    std::fs::copy(&live, &backup_db).unwrap();
+    let size = std::fs::metadata(&backup_db).unwrap().len();
+    backup_zip(dir.path(), "backup-20261009-050000.zip", Some(&backup_db));
+    let backups = data.join("backups");
+
+    std::fs::write(
+        data.join(startup::RESTORE_REQUEST),
+        "backup-20261009-050000.zip",
+    )
+    .unwrap();
+    let refused = startup::apply_restore_request_capped(&data, &live, size - 1);
+    assert!(refused.unwrap_err().contains("larger than"));
+    assert!(!data.join("kidphone.db.restore-tmp").exists());
+    assert_eq!(admin_names(&url).await, ["live"]);
+    assert!(
+        !std::fs::read_dir(&backups)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| e.file_name().to_string_lossy().starts_with("prerestore-")),
+        "a refused restore makes no copy"
+    );
+
+    // Four older copies, one of them dated in the future (a clock set back): the new copy stays,
+    // with the two newest of the rest.
+    for name in [
+        "prerestore-20260101-000000",
+        "prerestore-20260201-000000",
+        "prerestore-20260301-000000",
+        "prerestore-29990101-000000",
+    ] {
+        std::fs::create_dir_all(backups.join(name)).unwrap();
+    }
+    std::fs::write(
+        data.join(startup::RESTORE_REQUEST),
+        "backup-20261009-050000.zip",
+    )
+    .unwrap();
+    let restored = startup::apply_restore_request_capped(&data, &live, size)
+        .unwrap()
+        .expect("applied");
+    let mut left: Vec<String> = std::fs::read_dir(&backups)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with("prerestore-"))
+        .collect();
+    left.sort();
+    let current = restored
+        .prerestore_dir
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(left.len(), startup::PRERESTORE_KEEP, "{left:?}");
+    assert!(left.contains(&current), "{left:?}");
+    assert!(left.contains(&"prerestore-29990101-000000".to_string()));
+    assert!(left.contains(&"prerestore-20260301-000000".to_string()));
+}
+
 #[tokio::test]
 async fn the_healthcheck_dials_the_admin_listener() {
     let app = TestApp::new().await;

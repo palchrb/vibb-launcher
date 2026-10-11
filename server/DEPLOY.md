@@ -251,7 +251,8 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   (The volume's name may carry the compose project's prefix: `docker volume ls`.)
 - **Restoring a backup** from the Backups page works in the container too: the server stops, swaps in the backup at
   its next start (Docker's restart policy brings it back), and keeps the previous database in
-  `data/backups/prerestore-<time>/`; if the backup won't open, the previous database goes back.
+  `data/backups/prerestore-<time>/` (the newest 3 are kept); if the backup won't open, the previous database goes
+  back. A backup whose database is over 1 GiB is refused.
 - The Updates page has no OS, Tailscale or reboot controls in the container, and the Backups page no external drive:
   copy `data/backups` off the host yourself.
 - **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin` (it also replaces the password,

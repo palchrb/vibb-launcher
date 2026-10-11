@@ -70,6 +70,20 @@ fn with_suffix(db: &Path, suffix: &str) -> PathBuf {
 /// `backups/prerestore-<timestamp>/` first, then replaced, and its `-wal`/`-shm` removed.
 /// `Ok(None)`: no marker. `Err`: refused or failed - nothing was swapped.
 pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<AppliedRestore>, String> {
+    apply_restore_request_capped(data_dir, db, RESTORE_MAX_BYTES)
+}
+
+/// The largest `kidphone.db` a restore takes out of a zip (QA 22 Low 7; `actions.sh` has the same
+/// cap).
+pub const RESTORE_MAX_BYTES: u64 = 1024 * 1024 * 1024;
+/// `prerestore-*` copies kept in `backups/`.
+pub const PRERESTORE_KEEP: usize = 3;
+
+pub(crate) fn apply_restore_request_capped(
+    data_dir: &Path,
+    db: &Path,
+    max_bytes: u64,
+) -> Result<Option<AppliedRestore>, String> {
     let marker = data_dir.join(RESTORE_REQUEST);
     let Ok(filename) = std::fs::read_to_string(&marker) else {
         return Ok(None);
@@ -101,12 +115,21 @@ pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<Applie
         let mut out = std::fs::File::create(&staged)
             .map_err(|err| format!("couldn't write {}: {err}", staged.display()))?;
         let mut buffer = vec![0u8; 64 * 1024];
+        let mut total: u64 = 0;
         loop {
             let read = entry
                 .read(&mut buffer)
                 .map_err(|err| format!("couldn't read {filename}: {err}"))?;
             if read == 0 {
                 break;
+            }
+            total += read as u64;
+            if total > max_bytes {
+                drop(out);
+                let _ = std::fs::remove_file(&staged);
+                return Err(format!(
+                    "{filename}'s kidphone.db is larger than {max_bytes} bytes - refused"
+                ));
             }
             out.write_all(&buffer[..read])
                 .map_err(|err| format!("couldn't write {}: {err}", staged.display()))?;
@@ -153,10 +176,30 @@ pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<Applie
     for suffix in ["-wal", "-shm"] {
         let _ = std::fs::remove_file(with_suffix(db, suffix));
     }
+    prune_prerestore(&backups, &prerestore_dir);
     Ok(Some(AppliedRestore {
         filename,
         prerestore_dir,
     }))
+}
+
+/// Keeps the newest [PRERESTORE_KEEP] `prerestore-*` directories (each a full copy of a database),
+/// `current` always (a clock set back must not delete the copy an undo needs).
+fn prune_prerestore(backups: &Path, current: &Path) {
+    let Ok(entries) = std::fs::read_dir(backups) else {
+        return;
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with("prerestore-") && backups.join(name) != current)
+        .collect();
+    names.sort();
+    let excess = names.len().saturating_sub(PRERESTORE_KEEP - 1);
+    for name in &names[..excess] {
+        let _ = std::fs::remove_dir_all(backups.join(name));
+    }
 }
 
 /// Puts the prerestore copy back (the restored database didn't open): there is no shell in the

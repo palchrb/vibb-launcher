@@ -637,8 +637,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by
   uid N", exit 1); `apply_restore_request` (the container's restore: `data/restore_request` written by
   `backups::restore_in_container`, which exits 3 a second later for the restart policy; startup deletes the marker
-  first, checks the name/zip/`kidphone.db` like `actions.sh`, copies the DB + wal/shm to
-  `backups/prerestore-<ts>/`, swaps, and `undo_restore` puts it back if `try_connect_db` fails;
+  first, checks the name/zip/`kidphone.db` like `actions.sh` (at most `RESTORE_MAX_BYTES`, 1 GiB), copies the DB +
+  wal/shm to `backups/prerestore-<ts>/` (`PRERESTORE_KEEP` = 3, the new one always kept), swaps, and `undo_restore` puts it back if `try_connect_db` fails;
   `backup_restored` event); `try_connect_db` = `connect_db` without the panic, taking
   `<db dir>/backups/pre-migrate-<from>-<to>.db` (`VACUUM INTO`, 3 kept, a failure stops the start) when migrations
   are pending on an existing DB (`MIGRATOR` static); `bootstrap_admin` takes `ADMIN_PASSWORD`, else
