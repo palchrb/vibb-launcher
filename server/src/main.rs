@@ -147,6 +147,13 @@ async fn main() {
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://data/kidphone.db".into());
     let net_config = net::NetConfig::from_env();
+    if !net_config.admin_device_api && net_config.device_bind_addr.is_none() {
+        tracing::error!(
+            "ADMIN_DEVICE_API=off and no DEVICE_BIND_ADDR: no listener would serve the phones - \
+             set DEVICE_BIND_ADDR, or ADMIN_DEVICE_API=on"
+        );
+        std::process::exit(2);
+    }
     if net_config.device_bind_addr.as_deref() == Some(net_config.bind_addr.as_str()) {
         tracing::error!(
             "BIND_ADDR and DEVICE_BIND_ADDR are both {} - give the phone listener its own port",
@@ -574,11 +581,8 @@ pub fn build_device_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// The admin listener as the tests drive it: [build_admin_router], device routes included unless
-/// `ADMIN_DEVICE_API=off`.
-pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteStore>) -> Router {
-    build_admin_router(state, session_layer)
-}
+/// The body limit of the forms reachable without a session (`/login`, `/auth/verify-2fa`).
+const SIGNED_OUT_FORM_LIMIT: usize = 4096;
 
 /// The admin listener (`BIND_ADDR`): every admin route, middleware and the session layer, given
 /// ready-made state, plus the device API unless `ADMIN_DEVICE_API=off`, behind the admin gate
@@ -593,13 +597,18 @@ pub fn build_admin_router(
     // service-worker fetch has no session cookie context the way a page
     // load does, so it can't sit behind require_full_auth.
     let public_routes = Router::new()
+        // Signed-out forms take a few fields: 4 KiB, not axum's 2 MB (QA 22 Low 1).
         .route(
             "/login",
-            get(handlers::auth::login_form).post(handlers::auth::login),
+            get(handlers::auth::login_form)
+                .post(handlers::auth::login)
+                .layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
         )
         .route(
             "/auth/verify-2fa",
-            get(handlers::auth::verify_2fa_form).post(handlers::auth::verify_2fa),
+            get(handlers::auth::verify_2fa_form)
+                .post(handlers::auth::verify_2fa)
+                .layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
         )
         .route("/sw.js", get(handlers::sw::serve_sw));
 

@@ -1,4 +1,4 @@
-//! In-process tests: the real router from `build_router`, a fresh migrated SQLite database per
+//! In-process tests: the real router from `build_admin_router`, a fresh migrated SQLite database per
 //! test (a temp file, so WAL mode and multiple pool connections behave as in production), and
 //! requests sent straight to the router - no network, no background tasks.
 
@@ -38,7 +38,7 @@ use tower::ServiceExt;
 use tower_sessions_sqlx_store::SqliteStore;
 
 use crate::config::ForkConfig;
-use crate::{AppState, build_router, connect_db, dns_engine, security};
+use crate::{AppState, build_admin_router, connect_db, dns_engine, security};
 
 pub struct TestApp {
     pub router: Router,
@@ -170,7 +170,7 @@ impl TestApp {
         };
 
         TestApp {
-            router: build_router(state.clone(), session_layer),
+            router: build_admin_router(state.clone(), session_layer),
             state,
             db,
             fetch,
@@ -236,7 +236,7 @@ impl TestApp {
     /// session layer on the same database.
     pub fn admin_router(&self, state: AppState) -> Router {
         let store = SqliteStore::new(self.db.clone());
-        build_router(state, crate::security::session_layer(store, true, 30))
+        build_admin_router(state, crate::security::session_layer(store, true, 30))
     }
 
     /// The phone listener's router (`DEVICE_BIND_ADDR`) on the same state.

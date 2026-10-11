@@ -221,7 +221,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 
 ## Tests
 
-`cargo test` runs in-process tests in `src/tests/` (and in CI): `build_router` (split out of `main()` for this) is driven directly with `tower::ServiceExt::oneshot`, against a fresh migrated SQLite file in a temp dir per test - no network, no background tasks. `TestApp` (`src/tests/mod.rs`) has helpers to create and enroll a device and send JSON requests with or without a bearer token; handlers extracting `ConnectInfo` get a fixed loopback address. A test that documents a known bug is marked `#[ignore = "..."]` until the fix lands - run `cargo test -- --ignored` to see them fail. Admin handlers can be called directly with `TestApp::state` (skipping the session/2FA middleware), or through the real middleware: `TestApp::admin_cookie()` seeds an onboarded admin with a fixed TOTP secret, logs in via `/login` + `/auth/verify-2fa` (with a TOTP step not used yet - a code works once) and returns the session cookie for `request_form` (urlencoded POSTs) and `get_page`. Requests come from `LOOPBACK_PEER`; `send_via(router, peer, request)` sends from any peer to the admin router or `device_router()` (the phone listener), `with_env(&[...])` builds the app with other listener settings. `policy_json_keys_snapshot` is the contract with the launcher's `PolicyResponse` DTO - update both sides together.
+`cargo test` runs in-process tests in `src/tests/` (and in CI): `build_admin_router` (split out of `main()` for this; `TestApp::device_router()` for the phone listener) is driven directly with `tower::ServiceExt::oneshot`, against a fresh migrated SQLite file in a temp dir per test - no network, no background tasks. `TestApp` (`src/tests/mod.rs`) has helpers to create and enroll a device and send JSON requests with or without a bearer token; handlers extracting `ConnectInfo` get a fixed loopback address. A test that documents a known bug is marked `#[ignore = "..."]` until the fix lands - run `cargo test -- --ignored` to see them fail. Admin handlers can be called directly with `TestApp::state` (skipping the session/2FA middleware), or through the real middleware: `TestApp::admin_cookie()` seeds an onboarded admin with a fixed TOTP secret, logs in via `/login` + `/auth/verify-2fa` (with a TOTP step not used yet - a code works once) and returns the session cookie for `request_form` (urlencoded POSTs) and `get_page`. Requests come from `LOOPBACK_PEER`; `send_via(router, peer, request)` sends from any peer to the admin router or `device_router()` (the phone listener), `with_env(&[...])` builds the app with other listener settings. `policy_json_keys_snapshot` is the contract with the launcher's `PolicyResponse` DTO - update both sides together.
 
 ## Non-obvious gotchas hit so far
 
@@ -488,7 +488,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 
 - **What**: the server lists every NRK/RSS entry itself (vibb's logic); phones get each list from `GET
   /api/devices/music/entries/{id}/items` and only download audio from the source. `music_sweep::run` is spawned in
-  `main` (never in `build_router`), its first pass 60 s after start, then whenever something is due or `wake()`
+  `main` (never in `build_admin_router`), its first pass 60 s after start, then whenever something is due or `wake()`
   (`AppState.music_sweep`: after an add, the import's commit, a tick, Check now, a flagged item, the setting).
 - **Data**: `music_settings.sweep_hours` (1/3/6/12/24, default 6), `music_check_requests` (Check now's hourly/daily
   limits), `music_listings` (one per NRK/RSS entry: source title, `lan`, `fallback`, `capped`, `cut`, `keep_end`
@@ -557,7 +557,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Two listeners** (S1, `main::serve`, one `try_join!`): `BIND_ADDR` (default `127.0.0.1:3100`) =
   `build_admin_router` (admin, onboarding, public routes, `/static`, the device API unless `ADMIN_DEVICE_API=off`,
   `/healthz`, empty-404 fallback), and `DEVICE_BIND_ADDR` (unset = none) = `build_device_router` (`device_routes()`
-  + `/healthz` + empty-404 fallback; no session layer, no `/static`). `build_router` (the tests) = the admin router.
+  + `/healthz` + empty-404 fallback; no session layer, no `/static`). `ADMIN_DEVICE_API=off` without `DEVICE_BIND_ADDR` refuses to
+  start (QA 22 Low 2). `/login` and `/auth/verify-2fa` take 4 KiB bodies.
   Equal addresses refuse to start; one exposure line is logged (`NetConfig::exposure_line`). SIGTERM/Ctrl-C: graceful
   stop, `CommandStreams::close_all` ends every SSE stream (each stream merges its close signal, a `watch`), 8 s grace.
 - **`src/net.rs`** (`AppState.net`, `NetConfig::from_vars`): `BIND_ADDR`, `DEVICE_BIND_ADDR`, `ADMIN_DEVICE_API`
@@ -585,12 +586,13 @@ needed to manage the phone, delete on a schedule, never store notification or me
   never a DB query per request); `AuthedDevice` now carries only `DeviceRef { id }`. A bad or missing token counts
   against the client's failure bucket (`limits`, key `net::limit_key`: 30 per 10 min, then 429 for 10 min) and a
   throttled `device_auth_failed`; a valid token never touches it: its own bucket (600, 2/s), then an in-flight slot
-  (`route_class`: SSE + APK/music file downloads 4, others 8, `policy`/`status`/`command-result` always admitted),
+  (`route_class`: APK/music file downloads 4, others 8, `policy`/`status`/`command-result` and the SSE stream always
+  admitted - the stream is bounded by its cap of 2, QA 22 Low 3),
   held until the response body ends (`limits::hold_until_done`). Maps capped at 10k keys. Last access per phone
   (when, tailnet/loopback/outside, the last 5 outside IPs) in memory, on the device page's Status card.
   `CommandStreams`: 2 live streams per phone (a third closes the oldest), `close_device` on delete and re-enroll.
-  Warnings: a wide bind with only loopback trusted (startup), an untrusted peer sending XFF or two phones behind one
-  private address (logged once, `Limits::exposure_warning` for the Connection page).
+  Warnings: a wide bind with only loopback trusted (startup), an untrusted peer sending XFF (logged once,
+  `Limits::exposure_warning` for the Connection page).
 - **Enrollment** (S3, `src/enrollment.rs`, migration `0052_enrollment_codes.sql`): one live code per phone, stored
   only as SHA-256 of the normalised code (upper-case, no spaces/dashes) in `devices.enrollment_code_hash` with
   `enrollment_code_kind` - `qr` (26 chars base32, 30 min, only in the setup QR) or `typed` (8 chars of

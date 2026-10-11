@@ -1,8 +1,8 @@
 //! Limits on the device API (design 22 §3.1, QA High 2), on both listeners. Two key kinds:
 //!
 //! - **A valid token** (the device): a bucket of [TOKEN_BURST] requests refilling at
-//!   [TOKEN_REFILL_PER_SEC], and in-flight caps - [LONG_IN_FLIGHT] for the SSE stream and file
-//!   downloads, [GENERAL_IN_FLIGHT] for the rest, while `policy`, `status` and `command-result` are
+//!   [TOKEN_REFILL_PER_SEC], and in-flight caps - [LONG_IN_FLIGHT] for file downloads,
+//!   [GENERAL_IN_FLIGHT] for the rest (the SSE stream is bounded by its own cap instead), while `policy`, `status` and `command-result` are
 //!   always admitted (the bucket still applies), so a ring or a lock never waits behind downloads.
 //! - **A client IP** (`net::limit_key`: IPv4 address, IPv6 /64), counted only for failed requests -
 //!   a bad or missing token, a typed-shaped enrollment code that didn't match: [IP_FAILURES] in
@@ -16,7 +16,6 @@
 //! oldest dropped first. Nothing here touches the database.
 
 use std::collections::{HashMap, VecDeque};
-use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -46,7 +45,11 @@ pub const LAST_IPS: usize = 5;
 pub enum RouteClass {
     /// `policy`, `status`, `command-result`: never refused for being in flight.
     Always,
-    /// The SSE stream and file downloads (APKs, music files): their own cap, and no timeout.
+    /// The SSE stream: no in-flight slot and no timeout. `CommandStreams` bounds it (2 per phone, a
+    /// third closes the oldest), so a phone that changed networks while downloading never gets
+    /// 429 for its new stream while half-open old ones still count (QA 22 Low 3).
+    Stream,
+    /// File downloads (APKs, music files): their own cap, and no timeout.
     Long,
     General,
 }
@@ -56,7 +59,7 @@ pub fn route_class(path: &str) -> RouteClass {
         "/api/devices/policy" | "/api/devices/status" | "/api/devices/command-result" => {
             RouteClass::Always
         }
-        "/api/devices/commands/stream" => RouteClass::Long,
+        "/api/devices/commands/stream" => RouteClass::Stream,
         _ if (path.starts_with("/api/devices/apps/") && path.ends_with("/download"))
             || path.starts_with("/api/devices/music/files/") =>
         {
@@ -64,6 +67,14 @@ pub fn route_class(path: &str) -> RouteClass {
         }
         _ => RouteClass::General,
     }
+}
+
+/// One phone's last access as kept: the public IPs once, as a deque ([LastAccess] is built from
+/// it on read).
+struct Access {
+    at: DateTime<Utc>,
+    via: Via,
+    public_ips: VecDeque<String>,
 }
 
 /// Why a request was refused: 429 with `Retry-After` (seconds).
@@ -109,7 +120,7 @@ pub struct Limits {
     buckets: Mutex<HashMap<i64, Bucket>>,
     in_flight: Mutex<HashMap<i64, InFlight>>,
     ip_failures: Mutex<HashMap<String, IpFailures>>,
-    last_access: Mutex<HashMap<i64, (LastAccess, VecDeque<String>)>>,
+    last_access: Mutex<HashMap<i64, Access>>,
     /// In flight at once for requests without a valid token (enroll, bad tokens) - a memory
     /// guard that a phone with a valid token never waits behind (QA 22 M2).
     unauthenticated: Arc<tokio::sync::Semaphore>,
@@ -161,7 +172,7 @@ impl Limits {
     /// A slot for one request of `class` from a device; the permit frees it when dropped (the
     /// response body finished). `Always` requests get a permit that counts nothing.
     pub fn enter(self: &Arc<Self>, device_id: i64, class: RouteClass) -> Result<Permit, Refused> {
-        if class == RouteClass::Always {
+        if matches!(class, RouteClass::Always | RouteClass::Stream) {
             return Ok(Permit {
                 limits: None,
                 device_id,
@@ -259,29 +270,21 @@ impl Limits {
         };
         let mut access = self.last_access.lock().unwrap_or_else(|e| e.into_inner());
         if access.len() >= MAX_KEYS && !access.contains_key(&device_id) {
-            evict_oldest(&mut access, |(last, _)| last.at);
+            evict_oldest(&mut access, |entry| entry.at);
         }
-        let (last, ips) = access.entry(device_id).or_insert_with(|| {
-            (
-                LastAccess {
-                    at: Utc::now(),
-                    via,
-                    public_ips: Vec::new(),
-                },
-                VecDeque::new(),
-            )
+        let entry = access.entry(device_id).or_insert_with(|| Access {
+            at: Utc::now(),
+            via,
+            public_ips: VecDeque::new(),
         });
-        last.at = Utc::now();
-        last.via = via;
+        entry.at = Utc::now();
+        entry.via = via;
         if via == Via::Public {
             let ip = client.describe();
-            ips.retain(|known| *known != ip);
-            ips.push_front(ip);
-            ips.truncate(LAST_IPS);
-            last.public_ips = ips.iter().cloned().collect();
+            entry.public_ips.retain(|known| *known != ip);
+            entry.public_ips.push_front(ip);
+            entry.public_ips.truncate(LAST_IPS);
         }
-        drop(access);
-        self.exposure.observe(device_id, client);
     }
 
     pub fn last_access(&self, device_id: i64) -> Option<LastAccess> {
@@ -289,7 +292,11 @@ impl Limits {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(&device_id)
-            .map(|(last, _)| last.clone())
+            .map(|entry| LastAccess {
+                at: entry.at,
+                via: entry.via,
+                public_ips: entry.public_ips.iter().cloned().collect(),
+            })
     }
 
     pub fn forget_device(&self, device_id: i64) {
@@ -442,7 +449,7 @@ pub async fn device_edge(
         }
     };
     let class = route_class(request.uri().path());
-    let mut response = if class == RouteClass::Long {
+    let mut response = if matches!(class, RouteClass::Long | RouteClass::Stream) {
         next.run(request).await
     } else {
         match tokio::time::timeout(REQUEST_TIMEOUT, next.run(request)).await {
@@ -489,17 +496,14 @@ pub(crate) fn evict_oldest<K: Clone + Eq + std::hash::Hash, V, T: Ord>(
     }
 }
 
-/// "Every public request resolves to one private IP" (§3.1): an untrusted proxy, or Docker
-/// hiding the client. Two signals, each logged once:
-/// - an untrusted peer sent `X-Forwarded-For` (a proxy missing from `TRUSTED_PROXIES`);
-/// - two phones' requests from outside the tailnet both resolve to the same private address.
+/// "Every public request resolves to one private IP" (§3.1): an untrusted proxy sending
+/// `X-Forwarded-For` (a proxy missing from `TRUSTED_PROXIES`, or Docker's gateway), logged once.
+/// (A second signal - two phones behind one private address - waits for S5's Connection page,
+/// the only place that would show it: QA 22 Simplification 7.)
 #[derive(Default)]
 struct ExposureWatch {
-    /// Per device, the private address its last non-tailnet, non-loopback request came from.
-    private_seen: Mutex<HashMap<i64, IpAddr>>,
     warning: Mutex<Option<String>>,
     logged_proxy: AtomicBool,
-    logged_shared: AtomicBool,
 }
 
 impl ExposureWatch {
@@ -517,40 +521,6 @@ impl ExposureWatch {
             tracing::warn!("{text}");
         }
         *self.warning.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
-    }
-
-    fn observe(&self, device_id: i64, client: &crate::net::Client) {
-        let Some(client_ip) = client.ip else {
-            return;
-        };
-        if crate::net::is_tailnet(client_ip) || crate::net::is_loopback(client_ip) {
-            return;
-        }
-        let mut seen = self.private_seen.lock().unwrap_or_else(|e| e.into_inner());
-        if !crate::net::is_private(client_ip) {
-            seen.remove(&device_id);
-            return;
-        }
-        if seen.len() >= 64 && !seen.contains_key(&device_id) {
-            seen.clear();
-        }
-        seen.insert(device_id, client_ip);
-        let shared = seen
-            .iter()
-            .filter(|(id, ip)| **id != device_id && **ip == client_ip)
-            .count();
-        if shared > 0 {
-            let text = format!(
-                "Phones reach this server from the one private address {}: a proxy that isn't \
-                 in TRUSTED_PROXIES, or Docker's network hiding the clients. Limits and the \
-                 device pages can't tell the phones apart.",
-                client_ip
-            );
-            if !self.logged_shared.swap(true, Ordering::Relaxed) {
-                tracing::warn!("{text}");
-            }
-            *self.warning.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
-        }
     }
 
     fn warning(&self) -> Option<String> {
@@ -575,7 +545,7 @@ mod tests {
         );
         assert_eq!(
             route_class("/api/devices/commands/stream"),
-            RouteClass::Long
+            RouteClass::Stream
         );
         assert_eq!(
             route_class("/api/devices/apps/7/download"),
@@ -723,22 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn two_phones_behind_one_private_address_warn() {
-        let limits = Limits::default();
-        let client = |ip: &str| crate::net::Client {
-            ip: Some(ip.parse().unwrap()),
-            peer: ip.parse().unwrap(),
-            forwarded: false,
-            untrusted_forward: false,
-        };
-        limits.record_access(1, &client("172.17.0.1"));
-        limits.record_access(1, &client("172.17.0.1"));
-        assert_eq!(limits.exposure_warning(), None, "one phone can't tell");
-        limits.record_access(2, &client("100.101.102.103"));
-        assert_eq!(limits.exposure_warning(), None, "tailnet");
-        limits.record_access(3, &client("172.17.0.1"));
-        assert!(limits.exposure_warning().unwrap().contains("172.17.0.1"));
-
+    fn an_untrusted_proxy_warns() {
         let limits = Limits::default();
         limits.observe_peer(&crate::net::Client {
             ip: Some("172.30.0.5".parse().unwrap()),

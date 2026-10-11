@@ -103,19 +103,6 @@ pub fn is_loopback(ip: IpAddr) -> bool {
     ip.to_canonical().is_loopback()
 }
 
-/// RFC 1918, IPv6 ULA (outside the tailnet's) and link-local: an address that can't be a phone
-/// on the internet. Used only for the "every request comes from one private IP" warning
-/// (`limits`).
-pub fn is_private(ip: IpAddr) -> bool {
-    match ip.to_canonical() {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
-        IpAddr::V6(v6) => {
-            !is_tailnet(IpAddr::V6(v6))
-                && ((v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80)
-        }
-    }
-}
-
 /// The key limits and bans count by: the IPv4 address itself, or the IPv6 /64 written as
 /// "2001:db8:1:2::/64".
 pub fn limit_key(ip: IpAddr) -> String {
@@ -506,11 +493,6 @@ mod tests {
         assert!(is_tailnet(ip("fd7a:115c:a1e0::1")));
         assert!(!is_tailnet(ip("100.128.0.1")));
         assert!(!is_tailnet(ip("fd7a:115c:a1e1::1")));
-        assert!(is_private(ip("172.17.0.1")));
-        assert!(is_private(ip("fd00::1")));
-        assert!(!is_private(ip("fd7a:115c:a1e0::1")));
-        assert!(!is_private(ip("8.8.8.8")));
-        assert!(!is_private(ip("100.101.102.103")));
     }
 
     #[test]

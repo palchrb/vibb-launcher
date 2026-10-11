@@ -567,7 +567,7 @@ async fn the_session_cookie_is_host_prefixed_unless_insecure() {
     // In production: `__Host-handy`, Secure, Path=/, no Domain, HttpOnly, SameSite=Strict.
     let state = app.state.clone();
     let store = tower_sessions_sqlx_store::SqliteStore::new(app.db.clone());
-    let router = crate::build_router(state, security::session_layer(store, false, 7));
+    let router = crate::build_admin_router(state, security::session_layer(store, false, 7));
     let res = app
         .send_via(
             &router,
@@ -797,4 +797,45 @@ async fn a_login_dropped_mid_verify_still_counts() {
     let (res, _) = password_step(&app, PASSWORD).await;
     assert_eq!(res.location(), Some("/auth/verify-2fa"));
     assert_eq!(rows().await, 1);
+}
+
+/// QA 22 Low 1: the signed-out forms take a few fields, not axum's 2 MB default; usernames in the
+/// log are cut to 64 characters.
+#[tokio::test]
+async fn signed_out_forms_are_small_and_log_short_names() {
+    let app = TestApp::new().await;
+    let long = "x".repeat(5000);
+    let res = app
+        .request_form(
+            Method::POST,
+            "/login",
+            None,
+            &[("username", long.as_str()), ("password", "y")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE);
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/verify-2fa",
+            None,
+            &[("code", long.as_str())],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE);
+    let name = "é".repeat(500);
+    app.request_form(
+        Method::POST,
+        "/login",
+        None,
+        &[("username", name.as_str()), ("password", "y")],
+    )
+    .await;
+    let logged: String = sqlx::query_scalar(
+        "SELECT username FROM security_events WHERE event_type = 'login_failed'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(logged.chars().count(), 64);
 }

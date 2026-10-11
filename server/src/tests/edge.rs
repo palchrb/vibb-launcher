@@ -131,42 +131,71 @@ async fn policy_and_command_result_get_in_while_every_slot_is_busy() {
         .await;
     assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(res.headers.contains_key(header::RETRY_AFTER));
-    let res = app
-        .request(
-            Method::GET,
-            "/api/devices/commands/stream",
-            Some(&token),
-            None,
+    // The SSE stream isn't one of them (QA 22 Low 3): its own cap bounds it.
+    let stream = app
+        .call_via(
+            &app.router,
+            LOOPBACK_PEER,
+            device_request(
+                Method::GET,
+                "/api/devices/commands/stream",
+                Some(&token),
+                "",
+            ),
         )
         .await;
-    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(stream.status(), StatusCode::OK);
 }
 
-/// A stream's slot lasts as long as the stream, not just its handler.
+/// A download's slot lasts as long as its body, not just its handler.
 #[tokio::test]
-async fn a_stream_holds_its_slot_until_it_ends() {
+async fn a_download_holds_its_slot_until_its_body_ends() {
+    let limits = std::sync::Arc::new(crate::limits::Limits::default());
+    let mut bodies = Vec::new();
+    for _ in 0..LONG_IN_FLIGHT {
+        let permit = limits.enter(1, RouteClass::Long).unwrap();
+        let response = axum::response::Response::new(Body::from_stream(tokio_stream::pending::<
+            Result<axum::body::Bytes, std::io::Error>,
+        >()));
+        bodies.push(crate::limits::hold_until_done(response, permit));
+    }
+    assert!(limits.enter(1, RouteClass::Long).is_err());
+    drop(bodies);
+    assert!(limits.enter(1, RouteClass::Long).is_ok());
+}
+
+/// QA 22 Low 3: a phone that changed networks twice while two downloads ran has two half-open
+/// streams counted; its new stream is admitted and closes the oldest.
+#[tokio::test]
+async fn a_new_stream_gets_in_past_stale_ones_and_downloads() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let mut open = Vec::new();
-    for _ in 0..LONG_IN_FLIGHT {
-        let response = app
-            .call_via(
-                &app.router,
-                LOOPBACK_PEER,
-                device_request(
-                    Method::GET,
-                    "/api/devices/commands/stream",
-                    Some(&token),
-                    "",
-                ),
-            )
-            .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        open.push(response.into_body());
-    }
-    assert!(app.state.limits.enter(id, RouteClass::Long).is_err());
-    drop(open);
-    assert!(app.state.limits.enter(id, RouteClass::Long).is_ok());
+    let open_stream = || {
+        app.call_via(
+            &app.router,
+            LOOPBACK_PEER,
+            device_request(
+                Method::GET,
+                "/api/devices/commands/stream",
+                Some(&token),
+                "",
+            ),
+        )
+    };
+    let stale_first = open_stream().await.into_body();
+    let stale_second = open_stream().await.into_body();
+    let _downloads: Vec<_> = (0..2)
+        .map(|_| app.state.limits.enter(id, RouteClass::Long).unwrap())
+        .collect();
+    let fresh = open_stream().await;
+    assert_eq!(fresh.status(), StatusCode::OK);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), stale_first.collect())
+            .await
+            .is_ok(),
+        "the oldest stream wasn't closed"
+    );
+    drop(stale_second);
 }
 
 #[tokio::test]
