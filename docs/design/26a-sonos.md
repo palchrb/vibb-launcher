@@ -478,11 +478,18 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
 6. **Kiosk.** Nothing opens: no Sonos app, no links (`SourceScanTest`). The NRK service precondition is the
    household's, set once from a parent's Sonos app, not from the phone. The speaker resolves hosts outside the
    phone's DNS filter; acceptable for a parent-curated library (design 20).
-7. **Calls (QA M6; user 2026-10-11: yes).** vibb has no phone. Today a call pauses local playback through audio
-   focus; on Sonos nothing holds focus. So: hold no focus while Sonos renders; on `AudioManager`'s
-   `OnModeChangedListener` (`MODE_IN_CALL` / `MODE_IN_COMMUNICATION` / `MODE_RINGTONE`, no permission) pause if ours
-   and PLAYING, remember that we did, and resume when the mode returns to normal only then (a kid who paused during
-   the call stays paused).
+7. **Calls (QA M6; user 2026-10-11: yes, Element X voice and video calls included).** vibb has no phone. Today a
+   system call pauses local playback through audio focus; on Sonos nothing holds focus, and an Element X call
+   (WebRTC) sets `MODE_IN_COMMUNICATION` only once connected - while it *rings* nothing in the audio system changes
+   (design 17 "Facts": a `CATEGORY_CALL` notification with a ringtone), and design 17 QA #5 forbids trusting
+   `MODE_IN_COMMUNICATION` alone (any app can hold it). The launcher already sees both: `VoipCallPlan`'s `RINGING` /
+   `IN_CALL` from the notification listener (`L/lock/VoipCallPlan.kt:70-75`) and system calls (`isInManagedCall`,
+   `MODE_IN_CALL`). So the rule lives in the launcher, the same for local and Sonos playback: `MusicSessions` pauses
+   the music session when a VoIP call starts ringing or a system call starts, remembers that it did, and sends play
+   when the call ends only then (a kid who paused during the call stays paused; a pause the kid made before the call
+   is untouched). The music app holds no audio focus while Sonos renders and keeps `AudioManager`'s
+   `OnModeChangedListener` (`MODE_IN_CALL` / `MODE_RINGTONE` only) as a backstop for a system call when the launcher's
+   listener access is missing (design 21 QA #8's listener-free fallbacks). Launcher part: step 3b, `MusicMediaPlanTest`.
 
 ## 7. Tests (JVM; vibb's tests ported, one line each)
 
