@@ -99,8 +99,11 @@ No prior programming experience - build features directly rather than explaining
   never sets a catalog app's package (QA Low 4: the `installer` it names is its own claim): for an app whose APK
   didn't give one, the app's page lists what the launcher installed on its phones (`package_candidates`) and the
   parent confirms one (`confirm_package`). A new phone's first report
-  allowlists only `device_api::SAFE_DEFAULT_APPS` it has (clock, calculator, camera, Vibb music) - never everything
-  installed. Fixtures: `testdata/apk/` (aapt2 + apksigner, throwaway keys, no code).
+  allowlists only `device_api::SAFE_DEFAULT_APPS` it has (clock, calculator, camera, Vibb music; the user's choice,
+  2026-10-11) plus its phone and SMS apps - `CALL_AND_TEXT_APPS` (Google's and AOSP's) and the `system_dialer` /
+  `default_sms_package` its `call_state` names (`call_and_text_roles`), since while calls are unmanaged the launcher
+  restricts outgoing calls unless the system dialer is allowed and hides an SMS app that isn't (QA Medium 3) - never
+  everything installed. `calls::call_report` warns when the allowlist leaves either out. Fixtures: `testdata/apk/` (aapt2 + apksigner, throwaway keys, no code).
 - **`GET /api/devices/policy` never answers with a default policy** (`handlers::device_api::build_policy`): a missing `device_policy` row, an unparseable `allowlist_json`, or any DB error is an empty 500 (logged). The launcher treats non-2xx as "no fresh policy" and keeps enforcing its cache. A `NULL` allowlist is still served as `null` (a new device before its first heartbeat); `"[]"` is served as `[]` and means "nothing allowed" on the launcher. Upstream returned `DevicePolicy::default()` (kiosk off, no allowlist) on these errors, which unlocked the phone.
 - **The launcher reports what it did with the policy** (`StatusReportRequest.policy_state`, migration `0021`): `"ok"`, `"cache_corrupt"`, `"rejected_suspect"`, `"fresh_decode_failed"` or `"server_error"` (this server answered 5xx) - anything but `"ok"` (or `NULL` from an older launcher) shows a warning on the device page. `restrictions_paused` reports the launcher's PIN-gated, time-limited "pause all restrictions" switch, also shown as a warning.
 - **Allowlist writes never guess**: `devices::add_to_allowlist`/`remove_from_allowlist` read-modify-write in one transaction (`edit_allowlist`) and return an error on a DB error, a missing policy row or a stored allowlist that isn't valid JSON - `toggle_app` then answers 500 and writes nothing. The first-heartbeat bootstrap in `device_api::status` is one `UPDATE ... WHERE allowlist_json IS NULL`, so a read error can't make it overwrite a parent's list.

@@ -391,3 +391,120 @@ async fn a_pinned_app_refuses_what_it_cant_check() {
     let refused = crate::handlers::tracked_apps::check_pins(&pinned, &unreadable).unwrap_err();
     assert!(refused.contains("can't be read"), "{refused}");
 }
+
+/// QA of the security wave, Medium 3: a new phone keeps calls and texts - its phone and SMS apps,
+/// by the roles it reports or by Google's and AOSP's names - and the device page says when the
+/// allowlist takes them away.
+#[tokio::test]
+async fn a_new_phone_keeps_its_phone_and_sms_apps() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let status = |installed: &[&str], call_state: Option<serde_json::Value>| {
+        let installed: Vec<serde_json::Value> = installed
+            .iter()
+            .map(|p| serde_json::json!({ "package_name": p, "label": p, "preinstalled": true }))
+            .collect();
+        let mut body = serde_json::json!({
+            "lock_reason": "none", "kiosk_engaged": true, "installed_apps": installed,
+        });
+        if let Some(call_state) = call_state {
+            body["call_state"] = call_state;
+        }
+        body
+    };
+    let allowlist = |token: String| {
+        let app = &app;
+        async move {
+            let mut list: Vec<String> = app
+                .request(Method::GET, "/api/devices/policy", Some(&token), None)
+                .await
+                .json()["allowlist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_string())
+                .collect();
+            list.sort();
+            list
+        }
+    };
+
+    // A maker's own phone and SMS apps, named by role.
+    let (first, token) = app.enrolled_device("phone").await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(status(
+                &[
+                    "com.android.settings",
+                    "com.android.chrome",
+                    "com.maker.dialer",
+                    "com.maker.sms",
+                    "com.google.android.deskclock",
+                ],
+                Some(serde_json::json!({
+                    "state": "unmanaged", "system_dialer": "com.maker.dialer",
+                    "default_sms_package": "com.maker.sms",
+                })),
+            )),
+        )
+        .await;
+    assert!(res.status.is_success());
+    assert_eq!(
+        allowlist(token.clone()).await,
+        [
+            "com.google.android.deskclock",
+            "com.maker.dialer",
+            "com.maker.sms"
+        ]
+    );
+    let page = app
+        .get_page(&format!("/devices/{first}"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("Only emergency calls work"), "{page}");
+
+    // An older launcher without call_state: Google's names.
+    let (_, token) = app.enrolled_device("other phone").await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(status(
+                &[
+                    "com.google.android.dialer",
+                    "com.google.android.apps.messaging",
+                    "com.android.settings",
+                ],
+                None,
+            )),
+        )
+        .await;
+    assert!(res.status.is_success());
+    assert_eq!(
+        allowlist(token).await,
+        [
+            "com.google.android.apps.messaging",
+            "com.google.android.dialer"
+        ]
+    );
+
+    // The parent unchecks both: the device page says what that costs.
+    sqlx::query("UPDATE device_policy SET allowlist_json = '[]' WHERE device_id = ?")
+        .bind(first)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app
+        .get_page(&format!("/devices/{first}"), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains("Only emergency calls work on this phone: its phone app (com.maker.dialer)"),
+        "{page}"
+    );
+    assert!(page.contains("The phone hides its Messages app (com.maker.sms)"));
+}

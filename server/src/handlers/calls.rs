@@ -339,6 +339,35 @@ pub(crate) async fn call_report(
         RoleReport::Current => {}
     }
 
+    // A new phone starts with only the safe defaults allowed (security review M10); the parent may
+    // also have unchecked the phone or SMS app. Say what that costs (QA of the security wave,
+    // Medium 3): while calls aren't managed the launcher restricts outgoing calls unless the
+    // system dialer is allowed, and it hides an SMS app that isn't.
+    let allowlist: Option<Vec<String>> = policy
+        .allowlist_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok());
+    if let Some(allowed) = &allowlist {
+        if !policy.calls_managed
+            && let Some(dialer) = text("system_dialer")
+            && !allowed.contains(&dialer)
+        {
+            warnings.push(format!(
+                "Only emergency calls work on this phone: its phone app ({dialer}) isn't allowed \
+                 in Apps, and calls aren't managed by the launcher (Calls & SMS). Allow the phone \
+                 app, or turn call management on."
+            ));
+        }
+        if (!policy.calls_managed || policy.sms_enabled)
+            && let Some(sms_app) = text("default_sms_package")
+            && !allowed.contains(&sms_app)
+        {
+            warnings.push(format!(
+                "The phone hides its Messages app ({sms_app}) because it isn't allowed in Apps, so \
+                 texts can't be read or sent. Allow it there."
+            ));
+        }
+    }
     if !policy.calls_managed {
         return Ok(report);
     }

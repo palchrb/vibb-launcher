@@ -541,8 +541,10 @@ audio from the source.
   key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone
   already has from Play or as a system app. A phone allows a catalog app once the launcher has installed it there. If the developer really changed keys, "Forget the package and key" on
   the app's page lets the next release set them again.
-- **A new phone starts with only its clock, calculator, camera and Vibb Music allowed** (never Settings, a browser or a
-  file manager); allow the rest on its page. Phones already set up keep their lists.
+- **A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed** (never
+  Settings, a browser or a file manager): it can call and text, but every other app stays hidden until you allow it
+  on its page. The device page warns when the phone app or Messages isn't allowed (then only emergency calls work, or
+  texts can't be read or sent). Phones already set up keep their lists.
 - **Signed releases**: from 0.24.0 on, root installs and runs only release files signed with the project's key
   ("Release signing" under "Updating"; the repo owner sets the key up once before tagging 0.24.0).
 - Rolling back to 0.23 means restoring the `update.sh` backup: 0.23 refuses a database that 0.24 migrated (0061, 0062).

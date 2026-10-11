@@ -658,6 +658,37 @@ pub(crate) const SAFE_DEFAULT_APPS: [&str; 10] = [
     "me.vibb.music.debug",
 ];
 
+/// The phone and SMS apps a new phone keeps (QA of the security wave, Medium 3), besides the ones
+/// it names by role ([call_and_text_roles]). While calls aren't managed by the launcher, the
+/// launcher restricts outgoing calls unless the system dialer is allowed, and it hides every app
+/// that isn't, the SMS app included: without these a new phone could only call emergency numbers
+/// and couldn't text. Google's and AOSP's phone and Messages apps.
+pub(crate) const CALL_AND_TEXT_APPS: [&str; 4] = [
+    "com.google.android.dialer",
+    "com.android.dialer",
+    "com.google.android.apps.messaging",
+    "com.android.messaging",
+];
+
+/// The phone's system dialer and default SMS app as its launcher reports them in `call_state`
+/// (`TelecomManager.getSystemDialerPackage()`, the SMS role holder): what it needs for calls and
+/// texts, whatever its maker named them. Real package names only, never Settings or Play's core.
+pub(crate) fn call_and_text_roles(call_state: Option<&serde_json::Value>) -> Vec<String> {
+    let Some(call_state) = call_state else {
+        return Vec::new();
+    };
+    ["system_dialer", "default_sms_package"]
+        .iter()
+        .filter_map(|key| call_state.get(key)?.as_str())
+        .filter(|package| {
+            is_package_name(package)
+                && *package != "com.android.settings"
+                && !crate::play::is_play_core(package)
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 /// The launcher's application ids (the configured admin component's, and the release and debug
 /// builds'): what an app it installed - a catalog app - names as its installer.
 pub(crate) fn installed_by_launcher(state: &AppState, installer: Option<&str>) -> bool {
@@ -1033,7 +1064,8 @@ pub async fn status(
 
     // A brand-new device's allowlist starts on its first heartbeat (a NULL allowlist is an
     // unmanaged phone), with only the safe defaults it has ([SAFE_DEFAULT_APPS], security review
-    // M10) - never everything installed, which let in Settings, the browser and the file manager
+    // M10) and its phone and SMS apps ([CALL_AND_TEXT_APPS], its reported roles - QA of the
+    // security wave, Medium 3) - never everything installed, which let in Settings, the browser and the file manager
     // (and whatever a fake phone claimed to have). "[]" is fine: the launcher pins only itself in
     // kiosk then. Only ever fires once per device - `allowlist_json` being non-null (even "[]")
     // means an admin or an earlier toggle has already taken ownership of it, so this never
@@ -1046,10 +1078,15 @@ pub async fn status(
         .as_ref()
         .filter(|apps| !apps.is_empty())
     {
+        let roles = call_and_text_roles(report.call_state.as_ref());
         let package_names: Vec<&str> = installed
             .iter()
             .map(|a| a.package_name.as_str())
-            .filter(|p| SAFE_DEFAULT_APPS.contains(p))
+            .filter(|p| {
+                SAFE_DEFAULT_APPS.contains(p)
+                    || CALL_AND_TEXT_APPS.contains(p)
+                    || roles.iter().any(|role| role == p)
+            })
             .collect();
         let json =
             serde_json::to_string(&package_names).expect("a list of strings always serializes");
