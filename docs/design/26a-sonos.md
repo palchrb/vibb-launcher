@@ -112,7 +112,9 @@ The Pi keeps two axes apart (`renderer.py:1-13`): `output` (local|bt: where *our
   `http://<ip>:<port><controlPath>`, headers `SOAPACTION: "<serviceType>#<action>"`, `Content-Type: text/xml;
   charset="utf-8"`; body the standard envelope with each arg XML-escaped once (`&`, `<`, `>` only, like Python's
   `escape`; SoCo does the same, which is why a DIDL argument carries `&amp;amp;` on the wire - correct,
-  `sonosd.py:319-323`). Reply parsed with `XmlPullParser` into the response's child elements; a `<s:Fault>` with
+  `sonosd.py:319-323`). Reply parsed with `javax.xml.parsers` (DOM, namespace-aware; in the JDK and in Android, so
+  JVM tests parse for real - `android.jar`'s `XmlPullParser` is a stub under `isReturnDefaultValues`) into the
+  response's child elements; a `<s:Fault>` with
   `<errorCode>` -> `UpnpFault(code)`; transport errors -> `SpeakerUnreachable`. Timeouts: connect 2 s, read 5 s;
   one OkHttp client with a connection pool (vibb's keep-alive session, 101-117), bound to Wi-Fi, and **no address
   guard**: this is control traffic to the LAN (21b §2.7 is about audio origins; design 26 review #3).
