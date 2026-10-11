@@ -33,6 +33,7 @@ pub struct Pruned {
     pub status_reports: u64,
     pub crashes: u64,
     pub security_events: u64,
+    pub pin_events: u64,
 }
 
 /// One pruning pass:
@@ -43,7 +44,8 @@ pub struct Pruned {
 /// - status reports older than [STATUS_HISTORY_DAYS], except the newest per phone and the newest
 ///   one that reported call enforcement (`call_policy_v1`);
 /// - crash reports not reported again for [CRASH_REPORT_DAYS];
-/// - security log entries older than [SECURITY_EVENT_DAYS].
+/// - security log entries older than [SECURITY_EVENT_DAYS];
+/// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived).
 pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     let dns_events = sqlx::query(
         "DELETE FROM device_dns_events \
@@ -98,12 +100,20 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
+    let pin_events = sqlx::query(
+        "DELETE FROM device_pin_events WHERE received_at < datetime('now', '-' || ? || ' days')",
+    )
+    .bind(crate::parent_pin::PIN_EVENT_DAYS)
+    .execute(db)
+    .await?
+    .rows_affected();
     Ok(Pruned {
         dns_events,
         locations,
         status_reports,
         crashes,
         security_events,
+        pin_events,
     })
 }
 

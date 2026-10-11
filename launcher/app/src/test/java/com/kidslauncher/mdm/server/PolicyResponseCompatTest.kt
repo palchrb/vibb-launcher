@@ -6,6 +6,8 @@ import com.kidslauncher.mdm.server.dto.CallState
 import com.kidslauncher.mdm.server.dto.LauncherUi
 import com.kidslauncher.mdm.server.dto.PolicyContact
 import com.kidslauncher.mdm.server.dto.KidLock
+import com.kidslauncher.mdm.server.dto.ParentPinEvent
+import com.kidslauncher.mdm.server.dto.ParentPinEventBatch
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import kotlinx.serialization.json.jsonArray
@@ -93,6 +95,19 @@ class PolicyResponseCompatTest {
         val unknown = StatusReportRequest(lockReason = "NONE", kioskEngaged = true)
         val unknownJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), unknown)).jsonObject
         assertTrue("backup_service_enabled" !in unknownJson)
+    }
+
+    @Test
+    fun `parent PIN events use the server's keys - design 24's literal`() {
+        val batch = ParentPinEventBatch(
+            listOf(ParentPinEvent("0123456789abcdef0123456789abcdef", "unlocked", "override", 1_760_000_000_000, 1_760_007_200_000, null, null)),
+        )
+        val literal = """{ "events": [ { "id": "0123456789abcdef0123456789abcdef", "kind": "unlocked", "entry": "override",
+                "at_ms": 1760000000000, "until_ms": 1760007200000, "failures": null, "level": null } ] }"""
+        assertEquals(
+            ServerJson.parseToJsonElement(literal),
+            ServerJson.parseToJsonElement(ServerJson.encodeToString(ParentPinEventBatch.serializer(), batch)),
+        )
     }
 
     @Test

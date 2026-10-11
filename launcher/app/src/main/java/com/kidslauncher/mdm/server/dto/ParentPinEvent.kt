@@ -21,3 +21,7 @@ data class ParentPinEvent(
     val failures: Int?,
     val level: Int?,
 )
+
+/** Body of `POST /api/devices/pin-events`. */
+@Serializable
+data class ParentPinEventBatch(val events: List<ParentPinEvent>)

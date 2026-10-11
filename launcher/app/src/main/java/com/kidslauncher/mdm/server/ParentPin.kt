@@ -56,8 +56,7 @@ object ParentPin {
     /** After the server took them: only the sent ids go, events added meanwhile stay (QA #11). */
     @Synchronized
     fun removeEvents(context: Context, ids: Set<String>) {
-        val store = ParentPinStore.of(context)
-        store.saveQueue(store.queue().filter { it.id !in ids })
+        removeSentPinEvents(ParentPinStore.of(context), ids)
     }
 
     /** Enrollment (a new device token): the events were about the old enrollment. The lockout
@@ -98,6 +97,11 @@ object ParentPin {
             ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS -> Unit
         }
     }
+}
+
+/** The queue without [ids] - read afresh, so events committed during the upload stay. */
+internal fun removeSentPinEvents(store: ParentPinStore, ids: Set<String>) {
+    store.saveQueue(store.queue().filter { it.id !in ids })
 }
 
 /** Which parent PIN a state is about, without a second copy of the hash (the kid lock's

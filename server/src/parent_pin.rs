@@ -1,7 +1,9 @@
 //! The parent PIN (design 24; the launcher's "unlock code", "Parent code", the offline override
 //! PIN): the checks on a new PIN, the easy-PIN warning - never a refusal, the code is the parents'
-//! choice - and its one-time sweep over the PINs stored before it existed. Pure apart from
-//! [run_easy_sweep]; the card and the save are `handlers::parent_pin`.
+//! choice - and its one-time sweep over the PINs stored before it existed; and what the phones
+//! report about it (`POST /api/devices/pin-events`): the checks on each event, its line and the
+//! Status card's notices. Pure apart from [run_easy_sweep]; the card, the save and the endpoint
+//! are `handlers::parent_pin`.
 
 use sqlx::SqlitePool;
 
@@ -193,6 +195,329 @@ pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
     })
 }
 
+// ------------------------------------------------------------------------------------------------
+// Events reported by the phone (design 24 §3, §5)
+// ------------------------------------------------------------------------------------------------
+
+/// At most this many events per `POST /api/devices/pin-events` (the launcher's queue holds as
+/// many; more gets 413 so the phone never deletes what wasn't stored).
+pub const PIN_EVENTS_MAX: usize = 100;
+/// The launcher reports parent-PIN events (status `capabilities`).
+pub const PARENT_PIN_EVENTS_CAPABILITY: &str = "parent_pin_events_v1";
+/// Events are kept this many days (by `received_at`, `retention::prune`).
+pub const PIN_EVENT_DAYS: i64 = 90;
+/// The card lists this many, newest first.
+pub const SHOWN: i64 = 10;
+
+/// 2020-01-01T00:00:00Z: an event before this comes from a phone whose clock is off.
+const EARLIEST_MS: i64 = 1_577_836_800_000;
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+/// The longest window an event can carry: a lockout's 24 h, plus a minute of slack.
+const MAX_UNTIL_MS: i64 = DAY_MS + 60_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A correct parent PIN.
+    Unlocked,
+    /// Tries 1-4 of a round.
+    Wrong,
+    /// The 5th: the parent PIN is locked on the phone.
+    Lockout,
+}
+
+impl Kind {
+    pub fn parse(wire: &str) -> Option<Kind> {
+        Some(match wire {
+            "unlocked" => Kind::Unlocked,
+            "wrong" => Kind::Wrong,
+            "lockout" => Kind::Lockout,
+            _ => return None,
+        })
+    }
+
+    pub fn wire(self) -> &'static str {
+        match self {
+            Kind::Unlocked => "unlocked",
+            Kind::Wrong => "wrong",
+            Kind::Lockout => "lockout",
+        }
+    }
+}
+
+/// Where on the phone the parent PIN was typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entry {
+    /// The time lock's "Enter unlock code": the offline override.
+    Override,
+    /// The PIN lock's "Parent code".
+    PinLock,
+    /// The launcher's Settings.
+    Settings,
+    /// "Pause all restrictions".
+    Pause,
+    /// Play install mode.
+    InstallMode,
+}
+
+impl Entry {
+    pub fn parse(wire: &str) -> Option<Entry> {
+        Some(match wire {
+            "override" => Entry::Override,
+            "pin_lock" => Entry::PinLock,
+            "settings" => Entry::Settings,
+            "pause" => Entry::Pause,
+            "install_mode" => Entry::InstallMode,
+            _ => return None,
+        })
+    }
+
+    pub fn wire(self) -> &'static str {
+        match self {
+            Entry::Override => "override",
+            Entry::PinLock => "pin_lock",
+            Entry::Settings => "settings",
+            Entry::Pause => "pause",
+            Entry::InstallMode => "install_mode",
+        }
+    }
+
+    /// "on the time-lock screen", for the wrong-try and lockout lines.
+    fn place(self) -> &'static str {
+        match self {
+            Entry::Override => "on the time-lock screen",
+            Entry::PinLock => "on the lock screen",
+            Entry::Settings => "for Settings",
+            Entry::Pause => "for pausing restrictions",
+            Entry::InstallMode => "for Play install mode",
+        }
+    }
+
+    /// Screens the kid uses: the parent may have been watched typing.
+    fn kid_screen(self) -> bool {
+        matches!(self, Entry::Override | Entry::PinLock)
+    }
+}
+
+/// One event as stored: every field checked, nothing free-form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PinEvent {
+    pub event_id: String,
+    pub kind: Kind,
+    pub entry: Entry,
+    pub occurred_at_ms: i64,
+    pub until_ms: Option<i64>,
+    pub failures: Option<i64>,
+    pub level: Option<i64>,
+    /// The phone's clock was off: `occurred_at_ms` is when the server received it.
+    pub clock_off: bool,
+}
+
+/// One event of a batch, read field by field (QA #10): `Err` (with why, for the log) skips it - an
+/// id that isn't 32 hex characters, or an unknown kind or entry. A time outside 2020..now + 1 day is
+/// kept with the received time and `clock_off` (QA #12); an implausible `until_ms`, `failures`
+/// (1..=4) or `level` (1..=8) becomes null.
+pub fn clean_event(event: &serde_json::Value, received_ms: i64) -> Result<PinEvent, &'static str> {
+    let id = event
+        .get("id")
+        .and_then(|v| v.as_str())
+        .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or("bad id")?
+        .to_ascii_lowercase();
+    let kind = event
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .and_then(Kind::parse)
+        .ok_or("unknown kind")?;
+    let entry = event
+        .get("entry")
+        .and_then(|v| v.as_str())
+        .and_then(Entry::parse)
+        .ok_or("unknown entry")?;
+    let int = |key: &str| event.get(key).and_then(|v| v.as_i64());
+    let at = int("at_ms").filter(|at| (EARLIEST_MS..=received_ms + DAY_MS).contains(at));
+    let (occurred_at_ms, until_ms, clock_off) = match at {
+        Some(at) => (
+            at,
+            int("until_ms").filter(|until| (at..=at + MAX_UNTIL_MS).contains(until)),
+            false,
+        ),
+        None => (received_ms, None, true),
+    };
+    Ok(PinEvent {
+        event_id: id,
+        kind,
+        entry,
+        occurred_at_ms,
+        until_ms,
+        failures: int("failures").filter(|f| (1..=4).contains(f)),
+        level: int("level").filter(|l| (1..=8).contains(l)),
+        clock_off,
+    })
+}
+
+fn utc(ms: i64) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::from_timestamp_millis(ms)
+}
+
+/// "14:02 UTC" when on the same UTC day as `at_ms`, else "10 Oct 14:02 UTC".
+fn until_text(until_ms: i64, at_ms: i64) -> String {
+    match (utc(until_ms), utc(at_ms)) {
+        (Some(until), Some(at)) if until.date_naive() == at.date_naive() => {
+            until.format("%H:%M UTC").to_string()
+        }
+        (Some(until), _) => until.format("%-d %b %H:%M UTC").to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// The lockout of `level` (the launcher's `parentLockoutMs`): "15 minutes" .. "24 hours".
+fn lockout_text(level: i64) -> String {
+    let minutes = (15i64 << (level - 1).clamp(0, 7)).min(24 * 60);
+    match minutes {
+        m if m < 60 => format!("{m} minutes"),
+        60 => "1 hour".to_string(),
+        m => format!("{} hours", m / 60),
+    }
+}
+
+/// "just now", "5 min ago", "3 h ago", "2 days ago".
+fn ago(ms: i64, now_ms: i64) -> String {
+    let minutes = ((now_ms - ms) / 60_000).max(0);
+    match minutes {
+        0 => "just now".to_string(),
+        1..=59 => format!("{minutes} min ago"),
+        60..=2879 => format!("{} h ago", minutes / 60),
+        _ => format!("{} days ago", minutes / 1440),
+    }
+}
+
+/// What the phone reported, as a sentence - built only from the checked enums and numbers.
+pub fn event_line(event: &PinEvent) -> String {
+    let until = event
+        .until_ms
+        .map(|until| until_text(until, event.occurred_at_ms));
+    let mut line = match event.kind {
+        Kind::Unlocked => match (event.entry, until) {
+            (Entry::Override, Some(until)) => {
+                format!("Restrictions lifted on the time-lock screen, until {until} at the latest.")
+            }
+            (Entry::Override, None) => "Restrictions lifted on the time-lock screen.".to_string(),
+            (Entry::PinLock, _) => "Lock screen opened with the parent code.".to_string(),
+            (Entry::Settings, _) => "The launcher's Settings opened.".to_string(),
+            (Entry::Pause, Some(until)) => {
+                format!("All restrictions paused from Settings, until {until}.")
+            }
+            (Entry::Pause, None) => "All restrictions paused from Settings.".to_string(),
+            (Entry::InstallMode, Some(until)) => {
+                format!("Play install mode started, until {until}.")
+            }
+            (Entry::InstallMode, None) => "Play install mode started.".to_string(),
+        },
+        Kind::Wrong => match event.failures {
+            Some(n) => format!("Wrong parent PIN {} ({n} in a row).", event.entry.place()),
+            None => format!("Wrong parent PIN {}.", event.entry.place()),
+        },
+        Kind::Lockout => {
+            let mut text = format!(
+                "5 wrong parent PINs {}: the parent PIN is locked on the phone",
+                event.entry.place()
+            );
+            if let Some(level) = event.level {
+                text.push_str(&format!(" for {}", lockout_text(level)));
+            }
+            if let Some(until) = until {
+                text.push_str(&format!(", until {until}"));
+            }
+            text.push_str(". Saving a new parent PIN ends it once the phone checks in.");
+            text
+        }
+    };
+    if event.clock_off {
+        line.push_str(" (the phone's clock was off; time of arrival shown)");
+    }
+    line
+}
+
+/// "2026-10-09 14:02 UTC (3 h ago)".
+pub fn when_text(ms: i64, now_ms: i64) -> String {
+    let at = utc(ms)
+        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("{at} ({})", ago(ms, now_ms))
+}
+
+/// A status-card notice: `child_tail` ends it with "Typed where your child could see? Change the
+/// parent PIN." (a link to the card).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub text: String,
+    pub error: bool,
+    pub child_tail: bool,
+}
+
+/// The status card's notices from the last 24 hours (design 24 §5), at most two: the latest use,
+/// then a lockout or else the wrong tries. `events` newest first.
+pub fn notices(events: &[PinEvent], now_ms: i64) -> Vec<Notice> {
+    let recent: Vec<&PinEvent> = events
+        .iter()
+        .filter(|e| e.occurred_at_ms > now_ms - DAY_MS)
+        .collect();
+    let mut out = Vec::new();
+    let uses: Vec<&&PinEvent> = recent.iter().filter(|e| e.kind == Kind::Unlocked).collect();
+    if let Some(latest) = uses.first() {
+        let mut text = format!(
+            "The parent PIN was used on the phone {}: {}",
+            ago(latest.occurred_at_ms, now_ms),
+            event_line(latest)
+        );
+        if uses.len() > 1 {
+            text.push_str(&format!(
+                " ({} more in the last 24 hours - see Parent PIN)",
+                uses.len() - 1
+            ));
+        }
+        out.push(Notice {
+            text,
+            error: false,
+            child_tail: latest.entry.kid_screen(),
+        });
+    }
+    if let Some(lockout) = recent.iter().find(|e| e.kind == Kind::Lockout) {
+        let until = lockout
+            .until_ms
+            .map(|until| format!(" (until {})", until_text(until, now_ms)))
+            .unwrap_or_default();
+        out.push(Notice {
+            text: format!(
+                "The parent PIN was locked on the phone after repeated wrong tries{until}. If \
+                 that wasn't you, your child may be guessing it - save a new parent PIN to stop it."
+            ),
+            error: true,
+            child_tail: false,
+        });
+    } else {
+        let wrong = recent.iter().filter(|e| e.kind == Kind::Wrong).count();
+        if wrong > 0 {
+            let text = if wrong == 1 {
+                "1 wrong parent PIN was typed on the phone in the last 24 hours. If that wasn't \
+                 you, consider changing the PIN."
+                    .to_string()
+            } else {
+                format!(
+                    "{wrong} wrong parent PINs were typed on the phone in the last 24 hours. If \
+                     that wasn't you, consider changing the PIN."
+                )
+            };
+            out.push(Notice {
+                text,
+                error: true,
+                child_tail: false,
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +603,243 @@ mod tests {
         assert!(flash_text("parent_pin_saved_easy").unwrap().1);
         // The kid lock's codes are not this card's.
         assert_eq!(flash_text("saved"), None);
+    }
+
+    // --------------------------------------------------------------------------------------------
+    // Events
+    // --------------------------------------------------------------------------------------------
+
+    const NOW: i64 = 1_760_000_000_000; // 2025-10-09 08:53:20 UTC
+    const H: i64 = 3_600_000;
+
+    fn raw(id: &str, kind: &str, entry: &str, at: i64) -> serde_json::Value {
+        serde_json::json!({ "id": id, "kind": kind, "entry": entry, "at_ms": at })
+    }
+
+    fn ev(kind: Kind, entry: Entry, at: i64) -> PinEvent {
+        PinEvent {
+            event_id: "0".repeat(32),
+            kind,
+            entry,
+            occurred_at_ms: at,
+            until_ms: None,
+            failures: None,
+            level: None,
+            clock_off: false,
+        }
+    }
+
+    #[test]
+    fn clean_event_skips_bad_ids_and_unknown_names() {
+        let id = "0123456789ABCDEF0123456789abcdef";
+        let ok = clean_event(&raw(id, "unlocked", "pause", NOW - H), NOW).unwrap();
+        assert_eq!(ok.event_id, id.to_ascii_lowercase());
+        assert_eq!((ok.kind, ok.entry), (Kind::Unlocked, Entry::Pause));
+        for bad in [
+            raw("0123", "unlocked", "pause", NOW),
+            raw(&"g".repeat(32), "unlocked", "pause", NOW),
+            raw(id, "guessed", "pause", NOW),
+            raw(id, "unlocked", "garage", NOW),
+            serde_json::json!({ "kind": "wrong", "entry": "settings", "at_ms": NOW }),
+            serde_json::json!("wrong"),
+        ] {
+            assert!(clean_event(&bad, NOW).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn clean_event_keeps_an_implausible_time_and_nulls_bad_numbers() {
+        let id = "0123456789abcdef0123456789abcdef";
+        for at in [
+            serde_json::json!(NOW + 2 * DAY_MS),
+            serde_json::json!(1_000),
+            serde_json::json!("soon"),
+            serde_json::Value::Null,
+        ] {
+            let mut e = raw(id, "lockout", "override", 0);
+            e["at_ms"] = at.clone();
+            e["until_ms"] = serde_json::json!(NOW + H);
+            let clean = clean_event(&e, NOW).unwrap();
+            assert!(clean.clock_off, "{at}");
+            assert_eq!(clean.occurred_at_ms, NOW);
+            assert_eq!(clean.until_ms, None);
+        }
+        // Up to a day ahead is a plausible clock.
+        assert!(
+            !clean_event(&raw(id, "wrong", "settings", NOW + DAY_MS), NOW)
+                .unwrap()
+                .clock_off
+        );
+
+        let mut e = raw(id, "wrong", "settings", NOW);
+        e["failures"] = serde_json::json!(5);
+        e["level"] = serde_json::json!(0);
+        e["until_ms"] = serde_json::json!(NOW - 1);
+        let clean = clean_event(&e, NOW).unwrap();
+        assert_eq!(
+            (clean.failures, clean.level, clean.until_ms),
+            (None, None, None)
+        );
+        e["failures"] = serde_json::json!(4);
+        e["level"] = serde_json::json!(8);
+        e["until_ms"] = serde_json::json!(NOW + DAY_MS + 60_000);
+        let clean = clean_event(&e, NOW).unwrap();
+        assert_eq!(
+            (clean.failures, clean.level, clean.until_ms),
+            (Some(4), Some(8), Some(NOW + DAY_MS + 60_000))
+        );
+        e["until_ms"] = serde_json::json!(NOW + DAY_MS + 60_001);
+        assert_eq!(clean_event(&e, NOW).unwrap().until_ms, None);
+    }
+
+    #[test]
+    fn every_event_line() {
+        let until = Some(NOW + 2 * H); // 10:53 UTC, the same day
+        let unlocked = |entry, until| PinEvent {
+            until_ms: until,
+            ..ev(Kind::Unlocked, entry, NOW)
+        };
+        let cases = [
+            (
+                unlocked(Entry::Override, until),
+                "Restrictions lifted on the time-lock screen, until 10:53 UTC at the latest.",
+            ),
+            (
+                unlocked(Entry::Override, None),
+                "Restrictions lifted on the time-lock screen.",
+            ),
+            (
+                unlocked(Entry::PinLock, None),
+                "Lock screen opened with the parent code.",
+            ),
+            (
+                unlocked(Entry::Settings, None),
+                "The launcher's Settings opened.",
+            ),
+            (
+                unlocked(Entry::Pause, until),
+                "All restrictions paused from Settings, until 10:53 UTC.",
+            ),
+            (
+                unlocked(Entry::InstallMode, Some(NOW + 15 * 60_000)),
+                "Play install mode started, until 09:08 UTC.",
+            ),
+            (
+                PinEvent {
+                    failures: Some(3),
+                    ..ev(Kind::Wrong, Entry::PinLock, NOW)
+                },
+                "Wrong parent PIN on the lock screen (3 in a row).",
+            ),
+            (
+                ev(Kind::Wrong, Entry::InstallMode, NOW),
+                "Wrong parent PIN for Play install mode.",
+            ),
+            (
+                PinEvent {
+                    level: Some(1),
+                    until_ms: Some(NOW + 15 * 60_000),
+                    ..ev(Kind::Lockout, Entry::Settings, NOW)
+                },
+                "5 wrong parent PINs for Settings: the parent PIN is locked on the phone for 15 \
+                 minutes, until 09:08 UTC. Saving a new parent PIN ends it once the phone checks in.",
+            ),
+            (
+                PinEvent {
+                    level: Some(8),
+                    until_ms: Some(NOW + 24 * H),
+                    ..ev(Kind::Lockout, Entry::Pause, NOW)
+                },
+                "5 wrong parent PINs for pausing restrictions: the parent PIN is locked on the phone \
+                 for 24 hours, until 10 Oct 08:53 UTC. Saving a new parent PIN ends it once the \
+                 phone checks in.",
+            ),
+            (
+                PinEvent {
+                    clock_off: true,
+                    ..ev(Kind::Wrong, Entry::Override, NOW)
+                },
+                "Wrong parent PIN on the time-lock screen. (the phone's clock was off; time of \
+                 arrival shown)",
+            ),
+        ];
+        for (event, line) in cases {
+            assert_eq!(event_line(&event), line);
+        }
+        assert_eq!(lockout_text(3), "1 hour");
+        assert_eq!(lockout_text(5), "4 hours");
+        assert_eq!(lockout_text(2), "30 minutes");
+        assert_eq!(
+            when_text(NOW - 3 * H, NOW),
+            "2025-10-09 05:53 UTC (3 h ago)"
+        );
+        assert_eq!(when_text(NOW, NOW), "2025-10-09 08:53 UTC (just now)");
+        assert_eq!(
+            when_text(NOW - 50 * H, NOW),
+            "2025-10-07 06:53 UTC (2 days ago)"
+        );
+    }
+
+    #[test]
+    fn notices_from_the_last_24_hours() {
+        assert!(notices(&[], NOW).is_empty());
+        // Older than 24 h: nothing.
+        assert!(notices(&[ev(Kind::Lockout, Entry::Override, NOW - 25 * H)], NOW).is_empty());
+
+        // Newest first: the latest use, with the watched-typing tail on a kid's screen.
+        let events = [
+            ev(Kind::Unlocked, Entry::Override, NOW - 5 * 60_000),
+            ev(Kind::Wrong, Entry::Override, NOW - H),
+            ev(Kind::Unlocked, Entry::Settings, NOW - 2 * H),
+            ev(Kind::Wrong, Entry::Settings, NOW - 3 * H),
+        ];
+        let out = notices(&events, NOW);
+        assert_eq!(out.len(), 2);
+        assert_eq!(
+            out[0],
+            Notice {
+                text: "The parent PIN was used on the phone 5 min ago: Restrictions lifted on the \
+                       time-lock screen. (1 more in the last 24 hours - see Parent PIN)"
+                    .to_string(),
+                error: false,
+                child_tail: true,
+            }
+        );
+        assert_eq!(
+            out[1].text,
+            "2 wrong parent PINs were typed on the phone in the last 24 hours. If that wasn't \
+             you, consider changing the PIN."
+        );
+        assert!(out[1].error);
+
+        // Settings is the parent's own screen: no tail. A lockout replaces the wrong tries.
+        let events = [
+            PinEvent {
+                until_ms: Some(NOW + 10 * 60_000),
+                level: Some(1),
+                ..ev(Kind::Lockout, Entry::PinLock, NOW - 5 * 60_000)
+            },
+            ev(Kind::Wrong, Entry::PinLock, NOW - 6 * 60_000),
+            ev(Kind::Unlocked, Entry::Settings, NOW - H),
+        ];
+        let out = notices(&events, NOW);
+        assert_eq!(out.len(), 2);
+        assert!(!out[0].child_tail);
+        assert!(out[0].text.ends_with("The launcher's Settings opened."));
+        assert_eq!(
+            out[1],
+            Notice {
+                text: "The parent PIN was locked on the phone after repeated wrong tries (until \
+                       09:03 UTC). If that wasn't you, your child may be guessing it - save a new \
+                       parent PIN to stop it."
+                    .to_string(),
+                error: true,
+                child_tail: false,
+            }
+        );
+        // One wrong try, no use.
+        let out = notices(&[ev(Kind::Wrong, Entry::Pause, NOW - H)], NOW);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].text.starts_with("1 wrong parent PIN was typed"));
     }
 }

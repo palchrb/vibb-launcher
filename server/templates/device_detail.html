@@ -52,6 +52,9 @@
         {% else %}
         <p class="subtitle">No status reported yet.</p>
         {% endif %}
+        {% for n in parent_pin.notices %}
+        <p{% if n.error %} class="error"{% endif %}>{{ n.text }}{% if n.child_tail %} Typed where your child could see? <a href="#parent-pin">Change the parent PIN.</a>{% endif %}</p>
+        {% endfor %}
         {% if parent_pin.easy %}
         <div class="error">The parent PIN is easy to guess. <a href="#parent-pin">Change the parent PIN.</a></div>
         {% endif %}
@@ -456,7 +459,7 @@
         {% if parent_pin.easy %}
         <div class="error">This parent PIN is easy to guess (all one digit, a run like 123456, or a common PIN). That's your choice, but a child who guesses it can lift every restriction on the phone.</div>
         {% endif %}
-        {% if offline_override_used %}
+        {% if offline_override_used && !parent_pin.capable %}
         <div class="error">The offline override was used since this device's last check-in.</div>
         {% endif %}
         <p>{% if parent_pin.pin_set %}A parent PIN is set.{% else %}No parent PIN is set yet.{% endif %}</p>
@@ -471,6 +474,18 @@
             {% endif %}
             <button type="submit">Save parent PIN</button>
         </form>
+        <h3>Reported by the phone</h3>
+        {% if !parent_pin.events.is_empty() %}
+        <ul class="pin-events">
+            {% for (when, line) in parent_pin.events %}
+            <li>{{ when }}: {{ line }}</li>
+            {% endfor %}
+        </ul>
+        {% else if !parent_pin.capable %}
+        <p class="subtitle">This phone's launcher doesn't report parent-PIN use yet; it will after its next update.</p>
+        {% else %}
+        <p class="subtitle">The phone hasn't reported any use of the parent PIN yet.</p>
+        {% endif %}
     </div>
 
     <form method="post" action="/devices/{{ device.id }}/screen-timeout" class="card" id="screen-timeout">

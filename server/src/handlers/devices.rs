@@ -1386,7 +1386,8 @@ async fn render_device(
     // Each card shows its own codes (design 24, QA #8); nothing at the top of the page.
     let notice = query.get("notice").map(String::as_str);
     let lock_notice = notice.and_then(crate::kid_lock::flash_text);
-    let parent_pin = crate::handlers::parent_pin::card(&policy, notice);
+    let parent_pin =
+        crate::handlers::parent_pin::card(&state.db, &policy, latest_status.as_ref(), notice).await;
     let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
         .await
         .unwrap_or_else(|err| {
