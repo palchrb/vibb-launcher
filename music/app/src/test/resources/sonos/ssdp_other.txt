@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+CACHE-CONTROL: max-age=120
+ST: upnp:rootdevice
+USN: uuid:router-1::upnp:rootdevice
+EXT:
+SERVER: Linux/5.4 UPnP/1.1 MiniUPnPd/2.2.1
+LOCATION: http://10.0.0.1:5000/rootDesc.xml
+
