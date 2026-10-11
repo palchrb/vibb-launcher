@@ -98,7 +98,8 @@ object RestrictionsPause {
     }
 
     /** Starts the pause from [start] and re-applies at once - called only by [ParentPin.check]
-     * after a correct PIN and its committed `unlocked` event (design 24 §2). Any thread. */
+     * after a correct PIN and its committed `unlocked` event (design 24 §2), and by the parent
+     * app's `start_pause` (design 24b's fix round). Any thread. */
     fun start(context: Context, start: WindowStart) {
         val mdm = LauncherPreferences.mdm()
         // Design 24b: the relock marker first - the pause locks again by itself when it ends.

@@ -347,4 +347,5 @@
     <!-- Design 24b §1.8: the parent PIN's own keypad (no keyboard). -->
     <string name="parent_pin_keypad_dots">%1$d digits typed</string>
     <string name="parent_pin_until_sync">The code can\'t be checked until the phone reaches the server.</string>
+    <string name="parent_pin_foreign_access">An app the parent hasn\'t allowed can control this phone or read its screen, so the parent code can\'t be typed here. Use the parent app: its Status card shows what to do.</string>
 </resources>

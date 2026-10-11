@@ -85,8 +85,9 @@ object ParentPinDialog {
     data class Opening(val text: String?, val okEnabled: Boolean)
 
     /**
-     * The dialog's state before any try ([ParentPin.status]): no PIN or a running lockout - the
-     * refusal, OK disabled; one try left (4 wrong ones earlier, anywhere) - the warning with the
+     * The dialog's state before any try ([ParentPin.status]): no PIN, an app that could read the
+     * PIN ([com.kidslauncher.mdm.server.ForeignAccess]) or a running lockout - the refusal, OK and
+     * the keypad disabled; one try left (4 wrong ones earlier, anywhere) - the warning with the
      * next lockout's length, OK enabled (qa-24-code Low 1). Main thread: no hashing, but it may
      * wait for a running check.
      */
@@ -94,6 +95,7 @@ object ParentPinDialog {
         val status = ParentPin.status(context)
         return when {
             !status.configured -> Opening(context.getString(notConfigured), okEnabled = false)
+            status.foreignAccess -> Opening(context.getString(R.string.parent_pin_foreign_access), okEnabled = false)
             status.untilSync -> Opening(context.getString(R.string.parent_pin_until_sync), okEnabled = false)
             status.lockoutMs > 0L -> Opening(lockedOutText(context, lockedOut, status.lockoutMs), okEnabled = false)
             status.triesLeft == 1 ->
@@ -114,6 +116,7 @@ object ParentPinDialog {
             is ParentPinResult.LockedOut -> lockedOutText(context, lockedOut, result.remainingMs)
             ParentPinResult.TooShort -> context.getString(R.string.parent_pin_too_short)
             ParentPinResult.NotConfigured -> context.getString(notConfigured)
+            ParentPinResult.ForeignAccessOn -> context.getString(R.string.parent_pin_foreign_access)
             is ParentPinResult.Unavailable -> context.getString(
                 when {
                     result.untilSync -> R.string.parent_pin_until_sync

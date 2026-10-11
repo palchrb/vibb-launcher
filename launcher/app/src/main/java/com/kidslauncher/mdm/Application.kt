@@ -320,6 +320,8 @@ class Application : android.app.Application() {
         com.kidslauncher.mdm.timerules.ScreenTimeTracker.init(this)
         // A reboot ends every parent-PIN window: it locks again now (design 24b).
         com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(this, com.kidslauncher.mdm.server.RelockTrigger.BOOT)
+        // Design 24b's fix round (QA High 1): an app that could read the parent PIN, at every start.
+        com.kidslauncher.mdm.server.ForeignAccess.checkInBackground(this)
 
         // The update fence (step 11): a fence recorded by this or an older build is checked now
         // (process start = boot, update, crash) - before the PIN lock, whose first chrome refresh

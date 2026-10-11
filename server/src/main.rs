@@ -719,6 +719,10 @@ pub fn build_admin_router(
             post(handlers::window_relock::allow_blocked),
         )
         .route(
+            "/devices/{id}/start-pause",
+            post(handlers::window_relock::start_pause),
+        )
+        .route(
             "/devices/{id}/regenerate-code",
             post(handlers::devices::regenerate_code),
         )

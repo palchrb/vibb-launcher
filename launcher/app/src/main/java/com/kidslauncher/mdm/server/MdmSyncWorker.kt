@@ -240,6 +240,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 batteryOptimizationExempt = BatteryExemption.exempt(context),
                 relock = WindowRelock.lastReport(context),
                 unseenBoots = BootWitness.report(context),
+                foreignAccess = ForeignAccess.report(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -313,7 +314,8 @@ private suspend fun reportBlockedDnsEvents(context: Context, api: MdmApi) {
 }
 
 /**
- * The remote commands: design 24b's `end_windows`/`allow_blocked` (each followed by one more sync),
+ * The remote commands: design 24b's `end_windows`/`allow_blocked`/`start_pause` (each followed by
+ * one more sync),
  * and Find My Device's ring/stop_ring/lock/wipe, or `locate` (nothing here:
  * the sync takes a fresh fix for the status report - bypassing the throttle - and answers the
  * command after the report with the fix's accuracy and age; the PWA's "Update location now"
@@ -362,6 +364,15 @@ private suspend fun dispatchPendingCommand(
             if (installMode) com.kidslauncher.mdm.play.PlayRuntime.endInstallMode(context)
             reportCommandResult(api, pending.id, success = true, message = endWindowsResult(ended, installMode))
             // A command queued behind it (a lock, a locate) follows within seconds (QA #8).
+            requestFollowUpSync(context)
+        }
+
+        // Design 24b's fix round (QA High 1): the parent app's pause - the same 2 hours as the
+        // Settings switch, locking again by itself, without the PIN on a phone that may have an
+        // app able to read it.
+        "start_pause" -> {
+            RestrictionsPause.start(context, BootClock.windowStart(RESTRICTIONS_PAUSE_DURATION_MS))
+            reportCommandResult(api, pending.id, success = true, message = "paused for 2 hours")
             requestFollowUpSync(context)
         }
 

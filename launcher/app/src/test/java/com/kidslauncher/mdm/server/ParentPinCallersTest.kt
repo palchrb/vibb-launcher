@@ -37,7 +37,9 @@ class ParentPinCallersTest {
     @Test
     fun `only the gate starts an override, a pause or install mode`() {
         assertEquals(setOf("ParentPin.kt"), callers("OfflineOverride.activate("))
-        assertEquals(setOf("ParentPin.kt"), callers("RestrictionsPause.start("))
+        // And the parent app's `start_pause` (24b fix round, QA High 1): no PIN on the phone.
+        assertEquals(setOf("ParentPin.kt", "MdmSyncWorker.kt"), callers("RestrictionsPause.start("))
+        assertTrue("\"start_pause\" -> {" in sources.getValue("server/MdmSyncWorker.kt"))
         assertEquals(setOf("ParentPin.kt"), callers("startInstallMode("))
     }
 
@@ -76,6 +78,25 @@ class ParentPinCallersTest {
         }
         for (file in listOf("ui/ParentPinDialog.kt", "ui/LockActivity.kt", "lock/PinLockActivity.kt")) {
             assertTrue(file, "Toast" !in sources.getValue(file))
+        }
+    }
+
+    @Test
+    fun `the parent PIN is refused while an app could read it - before the keypad and before the verify (24b fix round)`() {
+        val pin = sources.getValue("server/ParentPin.kt")
+        for (fn in listOf("fun check(", "fun status(")) {
+            val body = pin.substringAfter(fn).substringBefore("\n    }\n")
+            val refusal = body.indexOf("ForeignAccess.blocksParentPin(")
+            assertTrue(fn, refusal >= 0)
+            // Before anything is counted or verified.
+            assertTrue(fn, "checkParentPin(" !in body || refusal < body.indexOf("checkParentPin("))
+        }
+        // Every entry opens through the one pre-check and shows its line: the four dialogs and the PIN lock.
+        assertTrue("status.foreignAccess ->" in sources.getValue("ui/ParentPinDialog.kt"))
+        assertTrue("ParentPinResult.ForeignAccessOn ->" in sources.getValue("ui/ParentPinDialog.kt"))
+        assertTrue("ParentPinDialog.opening(" in sources.getValue("lock/PinLockActivity.kt"))
+        for (file in listOf("ui/LockActivity.kt", "ui/settings/SettingsActivity.kt")) {
+            assertTrue(file, "ParentPinDialog.show(" in sources.getValue(file))
         }
     }
 

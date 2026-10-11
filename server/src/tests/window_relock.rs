@@ -265,7 +265,7 @@ async fn lock_again_follows_the_status_and_the_capability() {
 }
 
 #[tokio::test]
-async fn both_commands_are_queued_logged_and_kept_by_other_commands() {
+async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _token) = app.enrolled_device("phone").await;
@@ -274,6 +274,7 @@ async fn both_commands_are_queued_logged_and_kept_by_other_commands() {
     for (path, command, notice) in [
         ("end-windows", "end_windows", "end_windows_sent"),
         ("allow-blocked", "allow_blocked", "allow_blocked_sent"),
+        ("start-pause", "start_pause", "start_pause_sent"),
     ] {
         let res = app
             .request_form(
@@ -293,10 +294,10 @@ async fn both_commands_are_queued_logged_and_kept_by_other_commands() {
         let logged = events(&app, "device_command_queued").await;
         assert_eq!(logged.last().map(String::as_str), Some(command));
     }
-    // Neither deleted the other.
+    // None deleted another.
     assert_eq!(
         commands(&app, id).await,
-        vec!["end_windows", "allow_blocked"]
+        vec!["end_windows", "allow_blocked", "start_pause"]
     );
     // A lock queued after them replaces an undelivered ring, but not them.
     for path in ["ring", "lock"] {
@@ -312,7 +313,7 @@ async fn both_commands_are_queued_logged_and_kept_by_other_commands() {
     }
     assert_eq!(
         commands(&app, id).await,
-        vec!["end_windows", "allow_blocked", "lock"]
+        vec!["end_windows", "allow_blocked", "start_pause", "lock"]
     );
     // And they delete nothing: an end_windows behind the lock keeps it.
     app.request_form(
@@ -324,7 +325,13 @@ async fn both_commands_are_queued_logged_and_kept_by_other_commands() {
     .await;
     assert_eq!(
         commands(&app, id).await,
-        vec!["end_windows", "allow_blocked", "lock", "end_windows"]
+        vec![
+            "end_windows",
+            "allow_blocked",
+            "start_pause",
+            "lock",
+            "end_windows"
+        ]
     );
 
     // The notice renders inside the Status card.
@@ -346,6 +353,89 @@ async fn both_commands_are_queued_logged_and_kept_by_other_commands() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn the_pause_button_shows_while_no_pause_is_on() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let button = format!("action=\"/devices/{id}/start-pause\"");
+    post_status(&app, &token, json!({})).await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(status_card(&html).contains(&button), "{html}");
+    post_status(&app, &token, json!({ "restrictions_paused": true })).await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains(&button));
+}
+
+#[tokio::test]
+async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    post_status(
+        &app,
+        &token,
+        json!({ "foreign_access": { "admins": ["com.evil.admin", "not a package"],
+                                    "accessibility": ["com.evil.admin"] } }),
+    )
+    .await;
+    let stored: Option<String> = sqlx::query_scalar(
+        "SELECT foreign_access_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored.as_deref(),
+        Some(r#"{"admins":["com.evil.admin"],"accessibility":["com.evil.admin"]}"#)
+    );
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(
+        card.contains(
+            "The phone refuses the parent PIN because of device admin com.evil.admin and \
+             accessibility service com.evil.admin, from an app you haven&#39;t allowed."
+        ),
+        "{card}"
+    );
+    assert!(card.contains("Pause restrictions for 2 hours"), "{card}");
+    assert!(card.contains("<a href=\"#parent-pin\">Change the parent PIN</a>"));
+    // Logged once when it appears, not again while it stays.
+    post_status(
+        &app,
+        &token,
+        json!({ "foreign_access": { "admins": ["com.evil.admin"], "accessibility": ["com.evil.admin"] } }),
+    )
+    .await;
+    assert_eq!(
+        events(&app, "phone_foreign_access").await,
+        vec![format!(
+            "device {id}: the parent PIN is refused on the phone - device admin: com.evil.admin; \
+             accessibility on: com.evil.admin."
+        )]
+    );
+    // Gone: the warning goes, and the log says the PIN works again.
+    post_status(&app, &token, json!({})).await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("refuses the parent PIN"));
+    let logged = events(&app, "phone_foreign_access").await;
+    assert_eq!(logged.len(), 2);
+    assert!(logged[1].contains("takes the parent PIN again"));
 }
 
 #[tokio::test]
@@ -380,7 +470,7 @@ async fn the_phone_gets_them_one_by_one_oldest_first() {
 async fn unauthenticated_posts_queue_nothing() {
     let app = TestApp::new().await;
     let (id, _token) = app.enrolled_device("phone").await;
-    for path in ["end-windows", "allow-blocked"] {
+    for path in ["end-windows", "allow-blocked", "start-pause"] {
         let res = app
             .request_form(Method::POST, &format!("/devices/{id}/{path}"), None, &[])
             .await;

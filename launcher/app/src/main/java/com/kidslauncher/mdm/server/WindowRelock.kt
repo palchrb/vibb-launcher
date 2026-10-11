@@ -282,6 +282,8 @@ object WindowRelock {
         val outcome = runRelock(store(app), AndroidPlatform(app, dpm), asked)
         val report = outcome.report ?: return
         Log.i(LOG_TAG, "Relocked (${report.trigger}, ${report.windows}): cleared=${outcome.cleared}, failures=${report.failures}")
+        // A device admin or accessibility service the window let in: the parent PIN is refused (QA High 1).
+        ForeignAccess.checkInBackground(app)
         notifyListeners()
     }
 

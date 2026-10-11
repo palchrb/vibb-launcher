@@ -72,8 +72,11 @@ data class EnforcementPlan(
      * (design 24b §1.5): setting it untethers, so a hotspot turned on in a window goes at the relock. */
     val restrictTethering: Boolean = false,
     /** `setPermittedAccessibilityServices` / `setPermittedInputMethods` (design 24b §1.5): the
-     * allowlist while apps are managed and no window is open (system services and keyboards are
-     * always permitted); `null` (all) otherwise - also on calls-only phones (QA #4). */
+     * allowlist while apps are managed (system services and keyboards are always permitted);
+     * `null` (all) otherwise - also on calls-only phones (QA #4). Keyboards: only outside windows.
+     * Accessibility services: also in windows (the user's decision on QA 24b High 1) - the one
+     * block a window keeps, so a service that can read the parent PIN can't be turned on there;
+     * ticking an app in the PWA allows its service. */
     val permittedAccessibility: List<String>? = null,
     val permittedInputMethods: List<String>? = null,
 )
@@ -230,7 +233,7 @@ fun computeEnforcementPlan(
         denyCallPermissions = callState.managed,
         restrictCreateWindows = budgetSet && !overrideActive,
         restrictTethering = appsManaged,
-        permittedAccessibility = allowed.sorted().takeIf { appsManaged },
+        permittedAccessibility = allowed.sorted().takeIf { allowlist != null },
         permittedInputMethods = allowed.sorted().takeIf { appsManaged },
     )
 }

@@ -44,6 +44,8 @@ object ParentPin {
         val app = context.applicationContext
         val vault = vault(app)
         if (!vault.configured()) return ParentPinResult.NotConfigured
+        // Checked again right before the verify (QA 24b High 1): the dialog's opening check may be old.
+        if (ForeignAccess.blocksParentPin(app)) return ParentPinResult.ForeignAccessOn
         // The key failed: nothing can be checked (or counted) until the next sync re-wraps.
         val fingerprint = vault.fingerprint()
         if (vault.rewrapNeeded() || fingerprint == null) return ParentPinResult.Unavailable(storageFull = false, untilSync = true)
@@ -62,16 +64,18 @@ object ParentPin {
     }
 
     /**
-     * The one pre-check before a dialog opens (qa-24-code Low 1): whether a PIN is configured, the
-     * lockout time left, and how many tries are left before the next lockout and how long it is -
-     * so a dialog opened after 4 wrong tries warns before the 5th. No hashing, but it may wait for
-     * a running [check]; the pre-checks accept that.
+     * The one pre-check before a dialog opens (qa-24-code Low 1): whether a PIN is configured, an
+     * app that could read it ([ForeignAccess], checked right before the keypad shows), the lockout
+     * time left, and how many tries are left before the next lockout and how long it is - so a
+     * dialog opened after 4 wrong tries warns before the 5th. No hashing, but it may wait for a
+     * running [check]; the pre-checks accept that.
      */
     @Synchronized
     fun status(context: Context): ParentPinStatus {
         val app = context.applicationContext
         val vault = vault(app)
         if (!vault.configured()) return ParentPinStatus.NOT_CONFIGURED
+        if (ForeignAccess.blocksParentPin(app)) return ParentPinStatus.NOT_CONFIGURED.copy(configured = true, foreignAccess = true)
         val fingerprint = vault.fingerprint()
         if (vault.rewrapNeeded() || fingerprint == null) return ParentPinStatus.NOT_CONFIGURED.copy(configured = true, untilSync = true)
         return parentPinStatus(ParentPinStore.of(app), fingerprint, clocks())
@@ -172,13 +176,16 @@ internal fun prepareParentState(
 }
 
 /** [ParentPin.status]: [lockoutMs] 0 = none; [triesLeft] before the next lockout of [nextLockoutMs];
- * [untilSync]: the vault's key failed - nothing can be checked until the phone reaches the server. */
+ * [untilSync]: the vault's key failed - nothing can be checked until the phone reaches the server;
+ * [foreignAccess]: see [ForeignAccess]. */
 data class ParentPinStatus(
     val configured: Boolean,
     val lockoutMs: Long,
     val triesLeft: Int,
     val nextLockoutMs: Long,
     val untilSync: Boolean = false,
+    /** [ForeignAccess]: the PIN is refused - the dialogs point to the parent app. */
+    val foreignAccess: Boolean = false,
 ) {
     companion object {
         val NOT_CONFIGURED = ParentPinStatus(false, 0L, PARENT_FREE_TRIES, PARENT_LOCKOUT_BASE_MS)

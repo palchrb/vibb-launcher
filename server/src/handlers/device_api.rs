@@ -944,6 +944,13 @@ pub async fn status(
         .and_then(crate::window_relock::sanitize_relock);
     let previous_relock_at =
         crate::handlers::window_relock::previous_relock_at(&state.db, device.id).await;
+    // The fix round (QA High 1 (b)): an app that could read the parent PIN, and the previous one.
+    let foreign_access_json = report
+        .foreign_access
+        .as_ref()
+        .and_then(crate::window_relock::sanitize_foreign_access);
+    let previous_foreign =
+        crate::handlers::window_relock::previous_foreign_access(&state.db, device.id).await;
     // Design 24b §3: boots the launcher didn't see, and the previous count for the security log.
     let unseen_boots = report
         .unseen_boots
@@ -982,8 +989,9 @@ pub async fn status(
           screen_timeout_seconds, ringer_mode, interruption_filter, update_fence_json, \
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
-          battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
+          foreign_access_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1020,6 +1028,7 @@ pub async fn status(
     .bind(&relock_json)
     .bind(unseen_boots.map(|(count, _)| count))
     .bind(unseen_boots.and_then(|(_, at)| at))
+    .bind(&foreign_access_json)
     .execute(&state.db)
     .await
     .ok();
@@ -1036,6 +1045,13 @@ pub async fn status(
         device.id,
         previous_relock_at,
         relock_json.as_deref(),
+    )
+    .await;
+    crate::handlers::window_relock::log_foreign_access(
+        &state.db,
+        device.id,
+        previous_foreign.as_deref(),
+        foreign_access_json.as_deref(),
     )
     .await;
 

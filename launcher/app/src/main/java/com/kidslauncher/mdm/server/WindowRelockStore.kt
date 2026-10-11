@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import android.content.SharedPreferences
+import com.kidslauncher.mdm.server.dto.ForeignAccessReport
 import com.kidslauncher.mdm.server.dto.RelockReport
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
@@ -38,6 +39,7 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
         private const val ALLOWED = "allowed"
         private const val CA_AT_START = "ca_at_start"
         private const val PROXIES_AT_START = "proxies_at_start"
+        private const val FOREIGN_ACCESS = "foreign_access"
 
         private val SNAPSHOT_SERIALIZER = MapSerializer(String.serializer(), PackageState.serializer())
         private val NAMES = ListSerializer(String.serializer())
@@ -115,6 +117,13 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
         .putString(ALLOWED, ServerJson.encodeToString(ALLOWED_SERIALIZER, allowed))
         .commit()
 
+
+    /** [ForeignAccess]'s last finding (`null` = nothing). */
+    fun foreignAccess(): ForeignAccessReport? = decode(FOREIGN_ACCESS) { ServerJson.decodeFromString(ForeignAccessReport.serializer(), it) }
+
+    fun saveForeignAccess(report: ForeignAccessReport?): Boolean = prefs.edit().apply {
+        if (report == null) remove(FOREIGN_ACCESS) else putString(FOREIGN_ACCESS, ServerJson.encodeToString(ForeignAccessReport.serializer(), report))
+    }.commit()
 
     /** The relock in progress (its findings add up across re-runs, QA #11), and the last finished one. */
     fun currentReport(): RelockReport? = decode(REPORT_CURRENT) { ServerJson.decodeFromString(RelockReport.serializer(), it) }

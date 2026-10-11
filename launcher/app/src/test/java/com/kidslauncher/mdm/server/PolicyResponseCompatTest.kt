@@ -177,8 +177,23 @@ class PolicyResponseCompatTest {
     }
 
     @Test
-    fun `the two relock commands decode, and their answers`() {
-        for (command in listOf("end_windows", "allow_blocked")) {
+    fun `foreign_access is reported under the server's keys, left out when nothing is found (24b fix round)`() {
+        val report = StatusReportRequest(
+            lockReason = "NONE",
+            kioskEngaged = true,
+            foreignAccess = com.kidslauncher.mdm.server.dto.ForeignAccessReport(listOf("com.example.admin"), emptyList()),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(ServerJson.parseToJsonElement("""{"admins": ["com.example.admin"], "accessibility": []}"""), json["foreign_access"])
+        val none = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("foreign_access" !in none)
+    }
+
+    @Test
+    fun `the relock commands decode, and their answers`() {
+        for (command in listOf("end_windows", "allow_blocked", "start_pause")) {
             val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "$command"}}""")
             assertEquals(command, policy.pendingCommand?.command)
             assertEquals(7L, policy.pendingCommand?.id)

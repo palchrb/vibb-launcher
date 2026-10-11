@@ -224,7 +224,7 @@ pub async fn locations_json(
 }
 
 /// Deletes any not-yet-delivered command for this device (but design 24b's
-/// `end_windows`/`allow_blocked`) before inserting the
+/// `end_windows`/`allow_blocked`/`start_pause`) before inserting the
 /// new one - "your last action wins", and doubles as a way to cancel a
 /// queued-but-not-yet-delivered wipe by queuing something else before it
 /// lands. Once a command is delivered it's no longer touched by this.
@@ -234,14 +234,16 @@ pub async fn locations_json(
 /// (device offline/asleep) is expected and harmless, it just falls back to
 /// that regular poll.
 async fn queue_command(state: &AppState, device_id: i64, command: &str) {
-    // Design 24b's `end_windows`/`allow_blocked` have their own insert and stay (QA #8).
+    // Design 24b's `end_windows`/`allow_blocked`/`start_pause` have their own insert and stay (QA #8).
+    let [end_windows, allow_blocked, start_pause] = crate::window_relock::OWN_INSERT_COMMANDS;
     sqlx::query(
         "DELETE FROM device_commands WHERE device_id = ? AND delivered_at IS NULL \
-         AND command NOT IN (?, ?)",
+         AND command NOT IN (?, ?, ?)",
     )
     .bind(device_id)
-    .bind(crate::window_relock::OWN_INSERT_COMMANDS[0])
-    .bind(crate::window_relock::OWN_INSERT_COMMANDS[1])
+    .bind(end_windows)
+    .bind(allow_blocked)
+    .bind(start_pause)
     .execute(&state.db)
     .await
     .ok();

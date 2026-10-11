@@ -10,11 +10,13 @@ use serde_json::Value;
 
 /// The launcher reports `relock` and handles the two commands.
 pub const WINDOW_RELOCK_CAPABILITY: &str = "window_relock_v1";
-/// The two commands of this design: their own insert, never deleted by another command and
-/// deleting none (QA #8).
+/// The commands of this design: their own insert, never deleted by another command and deleting
+/// none (QA #8). `start_pause` (the fix round, QA High 1): the phone's 2-hour pause, started here
+/// without the parent PIN on the phone.
 pub const END_WINDOWS: &str = "end_windows";
 pub const ALLOW_BLOCKED: &str = "allow_blocked";
-pub const OWN_INSERT_COMMANDS: [&str; 2] = [END_WINDOWS, ALLOW_BLOCKED];
+pub const START_PAUSE: &str = "start_pause";
+pub const OWN_INSERT_COMMANDS: [&str; 3] = [END_WINDOWS, ALLOW_BLOCKED, START_PAUSE];
 
 /// At most this many package names per list (the launcher's `RELOCK_LIST_MAX`).
 pub const LIST_MAX: usize = 8;
@@ -176,6 +178,129 @@ pub fn sanitize_relock(value: &Value) -> Option<String> {
 
 pub fn parse_relock(json: Option<&str>) -> Option<RelockReport> {
     json.and_then(|j| serde_json::from_str(j).ok())
+}
+
+/// `StatusReportRequest.foreign_access` (the fix round, QA High 1 (b)), as stored
+/// (`device_status.foreign_access_json`): a device admin or an accessibility service of an app
+/// outside the allowlist. The phone refuses the parent PIN while it reports one - such an app can't
+/// be hidden or stopped and can read the screen.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct ForeignAccess {
+    pub admins: Vec<String>,
+    pub accessibility: Vec<String>,
+}
+
+/// Valid package names only, at most [LIST_MAX] each; `None` when nothing is left.
+pub fn sanitize_foreign_access(value: &Value) -> Option<String> {
+    if !value.is_object() {
+        return None;
+    }
+    let found = ForeignAccess {
+        admins: names(value, "admins", None),
+        accessibility: names(value, "accessibility", None),
+    };
+    if found.admins.is_empty() && found.accessibility.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&found).ok()
+}
+
+pub fn parse_foreign_access(json: Option<&str>) -> Option<ForeignAccess> {
+    json.and_then(|j| serde_json::from_str(j).ok())
+}
+
+/// The Status card's red warning: what was found, then the steps (the template adds the last
+/// one, "Change the parent PIN", with its link).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignNote {
+    pub text: String,
+    pub steps: Vec<String>,
+}
+
+/// [paused]: the latest report has a pause on - step 1 is done.
+pub fn foreign_note(found: &ForeignAccess, paused: bool) -> ForeignNote {
+    let mut what = Vec::new();
+    what.extend(found.admins.iter().map(|p| format!("device admin {p}")));
+    what.extend(
+        found
+            .accessibility
+            .iter()
+            .map(|p| format!("accessibility service {p}")),
+    );
+    let mut apps: Vec<String> = found.admins.clone();
+    for p in &found.accessibility {
+        if !apps.contains(p) {
+            apps.push(p.clone());
+        }
+    }
+    let mut remove = Vec::new();
+    if !found.admins.is_empty() {
+        remove.push(format!(
+            "Security > Device admin apps: turn {} off",
+            and_list(&found.admins)
+        ));
+    }
+    if !found.accessibility.is_empty() {
+        remove.push(format!(
+            "Accessibility: turn {} off",
+            and_list(&found.accessibility)
+        ));
+    }
+    let (from, it) = if apps.len() == 1 {
+        ("an app you haven't allowed. It can", "it's")
+    } else {
+        ("apps you haven't allowed. They can", "they're")
+    };
+    ForeignNote {
+        text: format!(
+            "The phone refuses the parent PIN because of {}, from {from} control the phone or read \
+             its screen - the parent PIN too - and the phone can't hide or stop them. Don't type \
+             the parent PIN on the phone until {it} gone:",
+            and_list(&what)
+        ),
+        steps: vec![
+            if paused {
+                "The phone's restrictions are paused (the last report): it is open without the \
+                 parent PIN."
+                    .to_string()
+            } else {
+                "Press \"Pause restrictions for 2 hours\" below: the phone opens without the \
+                 parent PIN."
+                    .to_string()
+            },
+            format!(
+                "On the phone, in Settings: {}. Then uninstall {} (Settings > Apps).",
+                remove.join("; "),
+                and_list(&apps)
+            ),
+            "Press \"Lock the phone again now\" below. The phone takes the parent PIN again once \
+             nothing unknown is on."
+                .to_string(),
+        ],
+    }
+}
+
+/// The security log's line when the finding appears, changes or goes (`phone_foreign_access`).
+pub fn foreign_log_line(device_id: i64, found: Option<&ForeignAccess>) -> String {
+    match found {
+        Some(f) => {
+            let mut parts = Vec::new();
+            if !f.admins.is_empty() {
+                parts.push(format!("device admin: {}", f.admins.join(", ")));
+            }
+            if !f.accessibility.is_empty() {
+                parts.push(format!("accessibility on: {}", f.accessibility.join(", ")));
+            }
+            format!(
+                "device {device_id}: the parent PIN is refused on the phone - {}.",
+                parts.join("; ")
+            )
+        }
+        None => format!(
+            "device {device_id}: nothing unknown any more - the phone takes the parent PIN again."
+        ),
+    }
 }
 
 /// Something was reset, blocked, left on or failed - worth telling the parent.
@@ -402,6 +527,10 @@ pub fn flash_text(code: &str) -> Option<&'static str> {
             "Sent: the phone shows the blocked apps again as soon as it gets this - the ones \
              ticked under Apps.",
         ),
+        "start_pause_sent" => Some(
+            "Sent: the phone pauses its restrictions for 2 hours as soon as it gets this (usually \
+             within seconds).",
+        ),
         _ => None,
     }
 }
@@ -580,6 +709,63 @@ mod tests {
         );
         assert!(flash_text("end_windows_sent").is_some());
         assert!(flash_text("allow_blocked_sent").is_some());
+        assert!(flash_text("start_pause_sent").is_some());
         assert_eq!(flash_text("parent_pin_saved"), None);
+    }
+
+    #[test]
+    fn foreign_access_is_kept_through_valid_names_only() {
+        let raw = json!({ "admins": ["com.evil.admin", "not a package", "com.evil.admin"],
+                          "accessibility": ["com.evil.reader"], "extra": 1 });
+        let stored = sanitize_foreign_access(&raw).unwrap();
+        assert_eq!(
+            parse_foreign_access(Some(&stored)),
+            Some(ForeignAccess {
+                admins: vec!["com.evil.admin".to_string()],
+                accessibility: vec!["com.evil.reader".to_string()],
+            })
+        );
+        // Nothing valid, or not an object: nothing stored.
+        assert_eq!(
+            sanitize_foreign_access(&json!({ "admins": ["x"], "accessibility": [] })),
+            None
+        );
+        assert_eq!(sanitize_foreign_access(&json!([])), None);
+        assert_eq!(parse_foreign_access(Some("garbage")), None);
+    }
+
+    #[test]
+    fn the_foreign_access_warning_names_it_and_gives_the_steps() {
+        let found = ForeignAccess {
+            admins: vec!["com.evil.admin".to_string()],
+            accessibility: vec!["com.evil.admin".to_string(), "com.evil.reader".to_string()],
+        };
+        assert!(
+            foreign_note(&found, true).steps[0].starts_with("The phone's restrictions are paused")
+        );
+        let note = foreign_note(&found, false);
+        assert_eq!(
+            note.text,
+            "The phone refuses the parent PIN because of device admin com.evil.admin, \
+             accessibility service com.evil.admin and accessibility service com.evil.reader, from \
+             apps you haven't allowed. They can control the phone or read its screen - the parent \
+             PIN too - and the phone can't hide or stop them. Don't type the parent PIN on the \
+             phone until they're gone:"
+        );
+        assert_eq!(note.steps.len(), 3);
+        assert!(note.steps[0].contains("Pause restrictions for 2 hours"));
+        assert_eq!(
+            note.steps[1],
+            "On the phone, in Settings: Security > Device admin apps: turn com.evil.admin off; \
+             Accessibility: turn com.evil.admin and com.evil.reader off. Then uninstall \
+             com.evil.admin and com.evil.reader (Settings > Apps)."
+        );
+        assert!(note.steps[2].contains("Lock the phone again now"));
+        assert_eq!(
+            foreign_log_line(4, Some(&found)),
+            "device 4: the parent PIN is refused on the phone - device admin: com.evil.admin; \
+             accessibility on: com.evil.admin, com.evil.reader."
+        );
+        assert!(foreign_log_line(4, None).contains("takes the parent PIN again"));
     }
 }

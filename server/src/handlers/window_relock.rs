@@ -1,6 +1,7 @@
 //! Design 24b on the device page and in the status report: the Status card's "Lock the phone
-//! again now" (`end_windows`), "Allow these apps" (`allow_blocked`) and the last relock's
-//! findings (`crate::window_relock`).
+//! again now" (`end_windows`), "Allow these apps" (`allow_blocked`), "Pause restrictions for 2
+//! hours" (`start_pause`), the last relock's findings and the warning when the phone refuses the
+//! parent PIN (`foreign_access`, the fix round) - `crate::window_relock`.
 
 use axum::Extension;
 use axum::extract::{Path, State};
@@ -11,7 +12,8 @@ use crate::AppState;
 use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::window_relock::{
-    self, ALLOW_BLOCKED, END_WINDOWS, RelockNotes, WINDOW_RELOCK_CAPABILITY,
+    self, ALLOW_BLOCKED, END_WINDOWS, ForeignNote, RelockNotes, START_PAUSE,
+    WINDOW_RELOCK_CAPABILITY,
 };
 
 /// What the Status card shows for design 24b.
@@ -24,6 +26,10 @@ pub struct RelockCard {
     pub notice: Option<&'static str>,
     /// The last relock's findings ([window_relock::relock_notes]).
     pub notes: RelockNotes,
+    /// "Pause restrictions for 2 hours": no pause at the last report.
+    pub pause_button: bool,
+    /// The phone refuses the parent PIN ([window_relock::foreign_note]).
+    pub foreign: Option<ForeignNote>,
 }
 
 pub async fn card(
@@ -44,11 +50,18 @@ pub async fn card(
         Some(r) => window_relock::relock_notes(&r, now_ms, &catalog_pins(db).await),
         None => RelockNotes::default(),
     };
+    let foreign =
+        window_relock::parse_foreign_access(latest.and_then(|s| s.foreign_access_json.as_deref()))
+            .map(|f| {
+                window_relock::foreign_note(&f, latest.is_some_and(|s| s.restrictions_paused))
+            });
     RelockCard {
         capable,
         lock_again: capable && open,
         notice: notice.and_then(window_relock::flash_text),
         notes,
+        pause_button: capable && !latest.is_some_and(|s| s.restrictions_paused),
+        foreign,
     }
 }
 
@@ -144,6 +157,55 @@ pub async fn allow_blocked(
         "allow_blocked_sent",
     )
     .await
+}
+
+/// `POST /devices/{id}/start-pause` (full auth): "Pause restrictions for 2 hours" - the phone's
+/// own pause (it locks again by itself), without the parent PIN on the phone (the fix round, QA
+/// High 1: a phone that refuses the PIN, or one where it shouldn't be typed).
+pub async fn start_pause(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+) -> Response {
+    queue(&state, id, &admin.username, START_PAUSE, "start_pause_sent").await
+}
+
+/// The latest report's `foreign_access`, read before a new report is stored.
+pub async fn previous_foreign_access(db: &sqlx::SqlitePool, device_id: i64) -> Option<String> {
+    let json: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT foreign_access_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id, %err, "can't read the previous foreign access");
+        None
+    });
+    json.flatten()
+}
+
+/// `phone_foreign_access` when the finding appears, changes or goes.
+pub async fn log_foreign_access(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    previous: Option<&str>,
+    now: Option<&str>,
+) {
+    let before = window_relock::parse_foreign_access(previous);
+    let after = window_relock::parse_foreign_access(now);
+    if before == after {
+        return;
+    }
+    security::record_security_event(
+        db,
+        "phone_foreign_access",
+        None,
+        None,
+        Some(&window_relock::foreign_log_line(device_id, after.as_ref())),
+    )
+    .await;
 }
 
 /// The latest report's relock time, read before a new report is stored.

@@ -45,7 +45,7 @@ object RelockFailure {
     val ALL = setOf(CREDENTIAL, SIGNER_CHECK, APPLY, PERMITTED_LISTS, PROXIES, CA_CERTS, NOTIFICATIONS, DETECTIONS, FINISH)
 }
 
-/** Status capability: the launcher reports `relock` and takes `end_windows`/`allow_blocked`. */
+/** Status capability: the launcher reports `relock` and `foreign_access`, and takes `end_windows`/`allow_blocked`/`start_pause`. */
 const val WINDOW_RELOCK_CAPABILITY = "window_relock_v1"
 
 /** `end_windows`'s answer: "ended: pause, install mode", or "nothing was open". */

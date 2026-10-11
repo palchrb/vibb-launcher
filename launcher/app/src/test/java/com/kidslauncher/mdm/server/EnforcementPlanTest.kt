@@ -390,14 +390,24 @@ class EnforcementPlanTest {
     // ---- design 24b: windows that lock again --------------------------------------------------
 
     @Test
-    fun `under an override or pause everything opens as before - apps, kiosk, Settings, the lists`() {
+    fun `under an override or pause everything opens as before - apps, kiosk, Settings, keyboards`() {
         val plan = plan(listOf("org.example.music"), overrideActive = true, ime = setOf("com.sideloaded.keyboard"))
         assertTrue(plan.suspend.isEmpty())
         assertTrue(plan.hide.isEmpty())
         assertNull(plan.kioskPackages)
         assertFalse(plan.restrictTethering)
-        assertNull(plan.permittedAccessibility)
         assertNull(plan.permittedInputMethods)
+    }
+
+    @Test
+    fun `the accessibility list stays in force in a window - the one block it keeps (QA 24b High 1)`() {
+        val plan = plan(listOf("org.example.music"), overrideActive = true)
+        assertEquals(listOf("org.example.music"), plan.permittedAccessibility)
+        // A relock-blocked app's service stays out in a window too.
+        val blocked = effectiveAllowlist(listOf("org.example.music", "org.example.game"), setOf("org.example.game"))
+        assertEquals(listOf("org.example.music"), plan(blocked, overrideActive = true).permittedAccessibility)
+        // Calls-only phones: still nothing.
+        assertNull(plan(null, overrideActive = true).permittedAccessibility)
     }
 
     @Test

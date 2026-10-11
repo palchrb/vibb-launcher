@@ -289,4 +289,5 @@
     <!-- Design 24b §1.8: foreldrekodens eget tastatur. -->
     <string name="parent_pin_keypad_dots">%1$d sifre tastet</string>
     <string name="parent_pin_until_sync">Koden kan ikke sjekkes før telefonen når serveren.</string>
+    <string name="parent_pin_foreign_access">En app foreldrene ikke har tillatt kan styre telefonen eller lese skjermen, så foreldrekoden kan ikke skrives her. Bruk foreldreappen: Status-kortet der viser hva du skal gjøre.</string>
 </resources>

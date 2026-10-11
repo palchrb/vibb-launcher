@@ -323,6 +323,9 @@ pub struct DeviceStatus {
     /// `boot_witness`. `None` from older launchers.
     pub unseen_boots_count: Option<i64>,
     pub unseen_boots_last_at_ms: Option<i64>,
+    /// A device admin or accessibility service of an app outside the allowlist (design 24b's fix
+    /// round), see `window_relock::ForeignAccess`. `None` = nothing found.
+    pub foreign_access_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -797,6 +800,11 @@ pub struct StatusReportRequest {
     /// cut short), read leniently (`boot_witness::sanitize`).
     #[serde(default)]
     pub unseen_boots: Option<serde_json::Value>,
+    /// Design 24b's fix round (QA High 1): `{admins, accessibility}` of apps outside the allowlist,
+    /// while the phone refuses the parent PIN; stored through valid package names only
+    /// (`window_relock::sanitize_foreign_access`). Absent = nothing found.
+    #[serde(default)]
+    pub foreign_access: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.

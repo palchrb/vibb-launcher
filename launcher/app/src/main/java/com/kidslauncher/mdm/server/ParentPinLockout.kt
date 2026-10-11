@@ -61,6 +61,10 @@ sealed interface ParentPinResult {
     /** A failed commit ([storageFull] when the disk is), or - design 24b - the vault's key failed:
      * [untilSync], nothing can be checked until the phone reaches the server. */
     data class Unavailable(val storageFull: Boolean, val untilSync: Boolean = false) : ParentPinResult
+
+    /** An app outside the allowlist is a device admin or has an accessibility service on
+     * ([ForeignAccess], QA 24b High 1): no PIN is taken - nothing counted, nothing verified. */
+    data object ForeignAccessOn : ParentPinResult
 }
 
 const val PIN_EVENT_UNLOCKED = "unlocked"

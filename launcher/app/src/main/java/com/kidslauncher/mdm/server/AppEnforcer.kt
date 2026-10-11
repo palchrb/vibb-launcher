@@ -400,8 +400,9 @@ object AppEnforcer {
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
         // Design 24b §1.5, after hiding (a hidden package's services leave the enabled lists): the
-        // accessibility and keyboard lists, and no hotspot or tethering - while apps are managed
-        // and no window is open. Setting the tethering restriction untethers.
+        // accessibility list while apps are managed (in windows too: QA 24b High 1), the keyboard
+        // list and no hotspot or tethering while also no window is open. Setting the tethering
+        // restriction untethers.
         permittedListsOk = applyPermittedLists(dpm, admin, plan.permittedAccessibility, plan.permittedInputMethods)
         setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_TETHERING, plan.restrictTethering)
         // The PIN lock's camera targets for this phone now (no PackageManager work at screen-off).
