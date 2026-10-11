@@ -7,34 +7,40 @@ use super::TestApp;
 const INSTALL: &str = include_str!("../../deploy/install.sh");
 const UPDATE: &str = include_str!("../../deploy/update.sh");
 
-/// The text of the heredoc `<<'MARKER'` ... `MARKER` in `script`.
+/// The text of the heredoc `<<'MARKER'` ... `MARKER` in `script` (the opening line may go on
+/// after the marker, e.g. into a pipe).
 fn heredoc<'a>(script: &'a str, marker: &str) -> &'a str {
-    let open = format!("<<'{marker}'\n");
-    let start = script.find(&open).unwrap_or_else(|| panic!("no {marker}")) + open.len();
+    let open = format!("<<'{marker}'");
+    let at = script.find(&open).unwrap_or_else(|| panic!("no {marker}"));
+    let start = at + script[at..].find('\n').unwrap() + 1;
     let end = script[start..]
         .find(&format!("\n{marker}\n"))
         .unwrap_or_else(|| panic!("no end of {marker}"));
     &script[start..start + end + 1]
 }
 
+const ROOT_SCRIPTS: [&str; 4] = [
+    "ACTIONS_EOF",
+    "WATCHER_EOF",
+    "SCHEDULER_EOF",
+    "BACKUP_SYNC_EOF",
+];
+
 #[test]
-fn update_sh_writes_the_same_scheduler_as_install_sh() {
-    assert_eq!(
-        heredoc(INSTALL, "SCHEDULER_EOF"),
-        heredoc(UPDATE, "SCHEDULER_EOF"),
-        "update.sh refreshes scheduler.sh with install.sh's text - keep the two equal"
-    );
+fn update_sh_writes_the_same_root_scripts_as_install_sh() {
+    for marker in ROOT_SCRIPTS {
+        assert_eq!(
+            heredoc(INSTALL, marker),
+            heredoc(UPDATE, marker),
+            "update.sh refreshes the root scripts with install.sh's text - keep {marker} equal"
+        );
+    }
 }
 
 /// No root script reads a file in data/ as shell code: the service user writes data/.
 #[test]
 fn no_root_script_sources_anything_from_data() {
-    for marker in [
-        "ACTIONS_EOF",
-        "WATCHER_EOF",
-        "SCHEDULER_EOF",
-        "BACKUP_SYNC_EOF",
-    ] {
+    for marker in ROOT_SCRIPTS {
         let script = heredoc(INSTALL, marker);
         for line in script.lines() {
             let code = line.trim_start();
@@ -54,6 +60,37 @@ fn no_root_script_sources_anything_from_data() {
             }
         }
     }
+}
+
+/// The restore (security review M4): only kidphone.db is read from the zip, with a size limit
+/// and the SQLite header checked, and it goes into place by rename - never `unzip` of the whole
+/// archive, never `cp` onto a path in data/.
+#[test]
+fn the_root_restore_never_writes_through_data() {
+    let actions = heredoc(INSTALL, "ACTIONS_EOF");
+    let start = actions.find("action_restore_backup() {").unwrap();
+    let restore = &actions[start..];
+    let restore = &restore[..restore.find("\n}\n").unwrap()];
+    assert!(restore.contains("unzip -p \"$backup_path\" kidphone.db"));
+    assert!(restore.contains("RESTORE_MAX_BYTES"));
+    assert!(restore.contains("53514c69746520666f726d6174203300"));
+    assert!(restore.contains("mv -fT \"$incoming\" \"$DATA_DIR/kidphone.db\""));
+    assert!(
+        !restore.contains("unzip -q"),
+        "the whole archive is never unpacked"
+    );
+    assert!(!restore.contains("-d \"$restore_tmp\""));
+    for line in restore.lines().map(str::trim) {
+        if line.starts_with("cp ") {
+            assert!(
+                !line.contains("\"$DATA_DIR/kidphone.db\"\n")
+                    && !line.ends_with("\"$DATA_DIR/kidphone.db\""),
+                "cp onto data/: {line}"
+            );
+        }
+        assert!(!line.contains("chown -R"), "{line}");
+    }
+    assert!(heredoc(INSTALL, "WATCHER_EOF").contains("if [ -L \"$FLAG_FILE\" ]"));
 }
 
 #[tokio::test]

@@ -482,6 +482,8 @@ Built in - see the **Backups** page under Settings in the admin UI. Create a bac
   everything: every location, the PIN hashes, the password hash - and the 2FA secret, which is kept unsealed on
   purpose: sealing it would tie every sign-in to the key file in `data/keys/`, and losing that file would lock you out
   of the admin (design 22).
+- Restoring a backup on the Pi keeps the database it replaces in `/var/backups/kid-phone-server-prerestore/<time>/`
+  (root-only, the newest 3).
 - Since 0.23.0 the server also copies the database to `data/backups/pre-migrate-<from>-<to>.db` before an update
   changes it (the newest 3 are kept). Rolling back a Pi still uses the `update.sh` copy ("Rolling back the server");
   the pre-migration copy is a second one.

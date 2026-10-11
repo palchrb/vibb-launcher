@@ -237,10 +237,23 @@ else
     PRINT_CREDENTIALS=0
 fi
 
-if [ -n "$INSTALLED_VERSION" ]; then
-    echo -n "$INSTALLED_VERSION" >"$INSTALL_DIR/data/watcher_version"
+# Writes $2 into data/$1 by rename: data/ belongs to the service user, so a symlink there is
+# replaced, never written through (security review M4).
+write_data_file() {
+    local tmp
+    tmp="$(mktemp "$INSTALL_DIR/data/.install.XXXXXX")"
+    printf '%s' "$2" >"$tmp"
+    chmod 644 "$tmp"
+    mv -fT "$tmp" "$INSTALL_DIR/data/$1"
+}
+if [ -L "$INSTALL_DIR/data" ]; then
+    echo "$INSTALL_DIR/data is a symlink - refusing to continue." >&2
+    exit 1
 fi
-echo -n "$WATCHER_SCHEMA_VERSION" >"$INSTALL_DIR/data/watcher_schema_version"
+if [ -n "$INSTALLED_VERSION" ]; then
+    write_data_file watcher_version "$INSTALLED_VERSION"
+fi
+write_data_file watcher_schema_version "$WATCHER_SCHEMA_VERSION"
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 chmod 600 "$INSTALL_DIR/.env"
@@ -424,14 +437,17 @@ action_format_drive() {
     echo "Drive formatted and mounted at /mnt/kid-phone-server-backup."
 }
 
-# Restores a named backup zip: stops the app, swaps in the backup's
-# database, and restarts. Everything that can be validated up front
-# (filename shape, the file actually existing, the zip actually containing a
-# kidphone.db) happens *before* the app is stopped, so a bad request never
-# takes the app down for nothing. Once stopped, an EXIT trap guarantees the
-# app gets restarted no matter how the rest of this function finishes -
-# success, or an unexpected failure partway through the file swap - since
-# this is the last thing watcher.sh does before the script itself exits.
+# Restores a named backup zip: stops the app, swaps in the backup's database, and restarts.
+# data/ belongs to the unprivileged service user, so this root code never follows or writes
+# through anything it finds there (security review M4): only the zip's kidphone.db is read, as a
+# stream into a root-only temp directory, at most RESTORE_MAX_BYTES and only if it is an SQLite
+# file; the live database is copied aside into a root-owned directory; and the restored file goes
+# into place by rename, which replaces a symlink at the target instead of writing through it.
+# Everything that can be checked happens *before* the app is stopped, so a bad request never takes
+# the app down for nothing. Once stopped, an EXIT trap restarts it however this ends.
+RESTORE_MAX_BYTES=$((1024 * 1024 * 1024))
+PRERESTORE_ROOT="/var/backups/kid-phone-server-prerestore"
+
 action_restore_backup() {
     local filename="$1"
 
@@ -450,22 +466,31 @@ action_restore_backup() {
         echo "restore_backup: refusing to restore '$filename' — invalid characters" >&2
         return 1
     fi
-
-    local backup_path="$BACKUP_DIR/$filename"
-    if [ ! -f "$backup_path" ]; then
-        echo "restore_backup: '$backup_path' not found" >&2
+    if [ -L "$DATA_DIR" ] || [ -L "$BACKUP_DIR" ]; then
+        echo "restore_backup: $DATA_DIR or $BACKUP_DIR is a symlink - refusing" >&2
         return 1
     fi
 
-    local restore_tmp
+    local backup_path="$BACKUP_DIR/$filename"
+    if [ -L "$backup_path" ] || [ ! -f "$backup_path" ]; then
+        echo "restore_backup: '$backup_path' not found (or not a plain file)" >&2
+        return 1
+    fi
+
+    local restore_tmp staged size magic
     restore_tmp="$(mktemp -d)"
-    if ! unzip -q -o "$backup_path" -d "$restore_tmp"; then
-        echo "restore_backup: couldn't unzip '$backup_path'" >&2
+    staged="$restore_tmp/kidphone.db"
+    # Only kidphone.db, streamed: no other entry (a symlink, a path) is ever written anywhere, and
+    # head stops a zip bomb at the limit (unzip then fails on the closed pipe).
+    if ! unzip -p "$backup_path" kidphone.db 2>/dev/null | head -c "$((RESTORE_MAX_BYTES + 1))" >"$staged"; then
+        echo "restore_backup: couldn't read kidphone.db from '$backup_path' (missing, damaged or larger than $RESTORE_MAX_BYTES bytes)" >&2
         rm -rf "$restore_tmp"
         return 1
     fi
-    if [ ! -f "$restore_tmp/kidphone.db" ]; then
-        echo "restore_backup: backup zip didn't contain kidphone.db, aborting" >&2
+    size="$(stat -c %s "$staged")"
+    magic="$(head -c 16 "$staged" | od -An -tx1 | tr -d ' \n')"
+    if [ "$size" -eq 0 ] || [ "$size" -gt "$RESTORE_MAX_BYTES" ] || [ "$magic" != "53514c69746520666f726d6174203300" ]; then
+        echo "restore_backup: the kidphone.db in '$backup_path' is not an SQLite database (or too large) - aborting" >&2
         rm -rf "$restore_tmp"
         return 1
     fi
@@ -474,20 +499,31 @@ action_restore_backup() {
     systemctl stop kid-phone-server
     trap 'systemctl start kid-phone-server' EXIT
 
-    # Safety copy of whatever's live right now, in case the wrong backup
-    # gets restored - a raw file rather than a zip, so this doesn't depend
-    # on any extra tooling being present.
-    local prerestore_dir
-    prerestore_dir="$BACKUP_DIR/prerestore-$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$prerestore_dir"
-    cp "$DATA_DIR/kidphone.db" "$prerestore_dir/kidphone.db" 2>/dev/null || true
+    # Safety copy of whatever's live right now, in a root-owned directory (never inside data/): the
+    # newest 3 are kept. Only plain files are copied; a symlink in data/ is never followed.
+    local prerestore_dir f incoming
+    install -d -m 700 "$PRERESTORE_ROOT"
+    prerestore_dir="$PRERESTORE_ROOT/$(date +%Y%m%d-%H%M%S)"
+    mkdir -m 700 "$prerestore_dir"
+    for f in kidphone.db kidphone.db-wal kidphone.db-shm; do
+        if [ -f "$DATA_DIR/$f" ] && [ ! -L "$DATA_DIR/$f" ]; then
+            cp -p "$DATA_DIR/$f" "$prerestore_dir/$f"
+        fi
+    done
+    find "$PRERESTORE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | head -n -3 \
+        | while read -r old; do rm -rf "${PRERESTORE_ROOT:?}/$old"; done
 
-    cp "$restore_tmp/kidphone.db" "$DATA_DIR/kidphone.db"
+    # Into place by rename: mktemp creates a new file (never an existing one), and mv -T replaces
+    # whatever sits at the target - a symlink included - instead of writing through it.
+    incoming="$(mktemp "$DATA_DIR/.restore.XXXXXX")"
+    cat "$staged" >"$incoming"
+    chown kidphone:kidphone "$incoming"
+    chmod 600 "$incoming"
     rm -f "$DATA_DIR/kidphone.db-wal" "$DATA_DIR/kidphone.db-shm"
+    mv -fT "$incoming" "$DATA_DIR/kidphone.db"
     rm -rf "$restore_tmp"
-    chown -R kidphone:kidphone "$DATA_DIR"
 
-    echo "Restore complete."
+    echo "Restore complete (the previous database is in $prerestore_dir)."
 }
 ACTIONS_EOF
 sed -i "s|@REPO@|$REPO|" "$UPDATER_DIR/actions.sh"
@@ -500,7 +536,14 @@ set -euo pipefail
 source /opt/kid-phone-server-updater/actions.sh
 
 FLAG_FILE="/opt/kid-phone-server/data/update_requested"
-FLAG_CONTENT="$(cat "$FLAG_FILE" 2>/dev/null || true)"
+# data/ belongs to the service user: a symlinked flag is never read (security review M4), and at
+# most one short line is.
+if [ -L "$FLAG_FILE" ]; then
+    rm -f "$FLAG_FILE"
+    echo "The update request is a symlink - ignored" >&2
+    exit 1
+fi
+FLAG_CONTENT="$(head -c 256 "$FLAG_FILE" 2>/dev/null | head -n 1 || true)"
 rm -f "$FLAG_FILE"
 
 # Most actions are a single word; format_drive/restore_backup additionally
@@ -632,6 +675,11 @@ DATA_DIR="/opt/kid-phone-server/data"
 
 [ -f "$BACKUP_CONFIG_FILE" ] || exit 0
 mountpoint -q "$EXTERNAL_MOUNT" || exit 0
+# data/ belongs to the service user: never follow a symlink it put there (security review M4).
+if [ -L "$DATA_DIR" ] || [ -L "$DATA_DIR/backups" ] || [ -L "$BACKUP_CONFIG_FILE" ]; then
+    echo "backup_sync: a symlink in $DATA_DIR - not copying" >&2
+    exit 0
+fi
 
 EXTERNAL_COPY_ENABLED="$(grep -m1 '^EXTERNAL_COPY_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
 CONTINUOUS_MIRROR_ENABLED="$(grep -m1 '^CONTINUOUS_MIRROR_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"

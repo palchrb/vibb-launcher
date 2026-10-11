@@ -244,8 +244,13 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `scheduler.sh` reads `schedule.conf` key by key with `grep` and checks each value against a pattern (a bad one
   falls back to its default and is logged; a symlinked file is ignored), and every form that writes a schedule file
   accepts only `HH:MM` times (`security::valid_clock_time`, 400 and nothing written otherwise). `update.sh` rewrites
-  `scheduler.sh` on every update with install.sh's text (`tests::deploy_scripts` keeps the two heredocs equal and
-  checks that no root heredoc sources anything but `actions.sh`).
+  every root script (`actions.sh`, `watcher.sh`, `scheduler.sh`, `backup_sync.sh`) on every update with install.sh's
+  text (`tests::deploy_scripts` keeps the heredocs equal and checks that no root heredoc sources anything but
+  `actions.sh`). The root restore (M4) reads only the zip's `kidphone.db` (`unzip -p`, at most 1 GiB, SQLite header
+  checked), keeps the replaced database in root-owned `/var/backups/kid-phone-server-prerestore/<time>/` (3 kept),
+  and puts the new file in place with `mktemp` + `mv -T` (a symlink at the target is replaced, never written
+  through); `watcher.sh` ignores a symlinked flag, `backup_sync.sh` a symlinked `data/`, and install.sh writes
+  `data/watcher_*` by rename.
 
 ## Data model (SQLite, see `migrations/`)
 

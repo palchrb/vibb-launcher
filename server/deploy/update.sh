@@ -149,15 +149,278 @@ download_release() {
 
 UPDATER_DIR="/opt/kid-phone-server-updater"
 
-# Rewrites the root-side helper scripts this release changed, so an existing Pi gets their fixes
-# without re-running install.sh (security review H1: scheduler.sh no longer sources data/). The
-# text is the same as install.sh's (a server test keeps them equal). Written to a temp file and
-# renamed, so a script running right now keeps its old copy.
-refresh_root_scripts() {
-    [ -d "$UPDATER_DIR" ] || return 0
+# Writes stdin to $UPDATER_DIR/$1 (root, 0700) through a temp file and a rename, so a script
+# running right now keeps its old copy.
+install_root_script() {
     local tmp
-    tmp="$(mktemp "$UPDATER_DIR/.scheduler.sh.XXXXXX")"
-    cat >"$tmp" <<'SCHEDULER_EOF'
+    tmp="$(mktemp "$UPDATER_DIR/.$1.XXXXXX")"
+    cat >"$tmp"
+    chown root:root "$tmp"
+    chmod 700 "$tmp"
+    mv -f "$tmp" "$UPDATER_DIR/$1"
+}
+
+# Rewrites the root-side helper scripts on every update, so an existing Pi gets their fixes
+# without re-running install.sh (security review H1: scheduler.sh no longer sources data/; M4: the
+# restore never writes through data/). The texts are install.sh's (a server test keeps them
+# equal); no privileged action is added, so the watcher schema stays.
+refresh_root_scripts() {
+    [ -d "$UPDATER_DIR" ] && [ ! -L "$UPDATER_DIR" ] || return 0
+    sed "s|@REPO@|$REPO|" <<'ACTIONS_EOF' | install_root_script actions.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Filled in by install.sh (sed below) with the repo it was installed from.
+REPO="@REPO@"
+DATA_DIR="/opt/kid-phone-server/data"
+BACKUP_DIR="$DATA_DIR/backups"
+
+# The repo is a monorepo that also publishes the launcher, whose stable releases are GitHub's
+# "latest" - so the server's release is looked up in the releases list (newest first): the first
+# server-vX.Y.Z that is neither a draft nor a prerelease. Never releases/latest. Plain grep/awk on
+# the API's JSON (each release lists tag_name, then draft, then prerelease; asset objects have
+# none of these keys). Same text in install.sh and update.sh.
+resolve_server_tag() {
+    curl -fsSL -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/$REPO/releases?per_page=100" \
+        | grep -oE '"(tag_name|draft|prerelease)": *("[^"]*"|true|false)' \
+        | awk -F': *' '
+            /"tag_name"/ { tag = $2; gsub(/"/, "", tag); draft = ""; next }
+            /"draft"/ { draft = $2; next }
+            /"prerelease"/ {
+                if (draft == "false" && $2 == "false" && tag ~ /^server-v[0-9]+\.[0-9]+\.[0-9]+$/) { print tag; exit }
+            }' || true
+}
+
+# Runs update.sh as it is in the release it installs (not master HEAD), from a file: a failed or
+# truncated download is never executed.
+action_app_update() {
+    local tag script rc=0
+    tag="$(resolve_server_tag)"
+    if [ -z "$tag" ]; then
+        echo "app_update: no server-vX.Y.Z release found in $REPO" >&2
+        return 1
+    fi
+    script="$(mktemp)"
+    if ! curl -fsSL "https://raw.githubusercontent.com/$REPO/$tag/server/deploy/update.sh" -o "$script"; then
+        rm -f "$script"
+        echo "app_update: couldn't download update.sh for $tag" >&2
+        return 1
+    fi
+    KPS_REPO="$REPO" KPS_TAG="$tag" bash "$script" || rc=$?
+    rm -f "$script"
+    return "$rc"
+}
+
+action_app_restart() {
+    systemctl restart kid-phone-server
+}
+
+action_os_check() {
+    apt-get update -qq
+}
+
+action_os_upgrade() {
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq
+}
+
+action_tailscale_update() {
+    tailscale update --yes
+}
+
+action_reboot() {
+    systemctl reboot
+}
+
+# Formats a removable drive as ext4 and mounts it at the external backup
+# path. Defense in depth: independently re-validates the device from
+# scratch - matches the expected /dev/sd[a-z] pattern, is actually marked
+# removable by the kernel, and is definitely not whatever backs / or /boot
+# - regardless of what the (unprivileged, internet-facing) app already
+# checked before requesting this, since that process is exactly the one
+# component that must never be trusted to have gotten this right on its own.
+action_format_drive() {
+    local device="$1"
+
+    if [ -z "$device" ]; then
+        echo "format_drive: no device specified" >&2
+        return 1
+    fi
+    if ! echo "$device" | grep -qE '^/dev/sd[a-z]$'; then
+        echo "format_drive: refusing to format '$device' — doesn't match the expected /dev/sd[a-z] pattern" >&2
+        return 1
+    fi
+
+    local devname
+    devname="$(basename "$device")"
+    if [ ! -f "/sys/block/$devname/removable" ] || [ "$(cat "/sys/block/$devname/removable")" != "1" ]; then
+        echo "format_drive: refusing to format '$device' — not marked removable by the kernel" >&2
+        return 1
+    fi
+
+    local root_device boot_device
+    root_device="$(findmnt -no SOURCE / | sed -E 's/p?[0-9]+$//')"
+    if [ "$device" = "$root_device" ]; then
+        echo "format_drive: refusing to format '$device' — this is the root filesystem's device" >&2
+        return 1
+    fi
+    boot_device="$(findmnt -no SOURCE /boot 2>/dev/null | sed -E 's/p?[0-9]+$//' || true)"
+    if [ -n "$boot_device" ] && [ "$device" = "$boot_device" ]; then
+        echo "format_drive: refusing to format '$device' — this is the boot device" >&2
+        return 1
+    fi
+
+    echo "Formatting $device as ext4..."
+    umount "${device}"* 2>/dev/null || true
+    mkfs.ext4 -F -q "$device"
+
+    mkdir -p /mnt/kid-phone-server-backup
+    local uuid
+    uuid="$(blkid -s UUID -o value "$device")"
+
+    # Replace any existing fstab entry for this mount point first, so
+    # re-formatting a previously-configured drive doesn't leave stale
+    # duplicate entries behind.
+    sed -i '\#/mnt/kid-phone-server-backup#d' /etc/fstab
+    echo "UUID=$uuid /mnt/kid-phone-server-backup ext4 defaults,nofail 0 2" >>/etc/fstab
+
+    mount /mnt/kid-phone-server-backup
+    echo "Drive formatted and mounted at /mnt/kid-phone-server-backup."
+}
+
+# Restores a named backup zip: stops the app, swaps in the backup's database, and restarts.
+# data/ belongs to the unprivileged service user, so this root code never follows or writes
+# through anything it finds there (security review M4): only the zip's kidphone.db is read, as a
+# stream into a root-only temp directory, at most RESTORE_MAX_BYTES and only if it is an SQLite
+# file; the live database is copied aside into a root-owned directory; and the restored file goes
+# into place by rename, which replaces a symlink at the target instead of writing through it.
+# Everything that can be checked happens *before* the app is stopped, so a bad request never takes
+# the app down for nothing. Once stopped, an EXIT trap restarts it however this ends.
+RESTORE_MAX_BYTES=$((1024 * 1024 * 1024))
+PRERESTORE_ROOT="/var/backups/kid-phone-server-prerestore"
+
+action_restore_backup() {
+    local filename="$1"
+
+    if [ -z "$filename" ]; then
+        echo "restore_backup: no filename specified" >&2
+        return 1
+    fi
+    case "$filename" in
+        backup-*.zip) ;;
+        *)
+            echo "restore_backup: refusing to restore '$filename' — doesn't match the expected backup-*.zip pattern" >&2
+            return 1
+            ;;
+    esac
+    if echo "$filename" | grep -qE '/|\.\.'; then
+        echo "restore_backup: refusing to restore '$filename' — invalid characters" >&2
+        return 1
+    fi
+    if [ -L "$DATA_DIR" ] || [ -L "$BACKUP_DIR" ]; then
+        echo "restore_backup: $DATA_DIR or $BACKUP_DIR is a symlink - refusing" >&2
+        return 1
+    fi
+
+    local backup_path="$BACKUP_DIR/$filename"
+    if [ -L "$backup_path" ] || [ ! -f "$backup_path" ]; then
+        echo "restore_backup: '$backup_path' not found (or not a plain file)" >&2
+        return 1
+    fi
+
+    local restore_tmp staged size magic
+    restore_tmp="$(mktemp -d)"
+    staged="$restore_tmp/kidphone.db"
+    # Only kidphone.db, streamed: no other entry (a symlink, a path) is ever written anywhere, and
+    # head stops a zip bomb at the limit (unzip then fails on the closed pipe).
+    if ! unzip -p "$backup_path" kidphone.db 2>/dev/null | head -c "$((RESTORE_MAX_BYTES + 1))" >"$staged"; then
+        echo "restore_backup: couldn't read kidphone.db from '$backup_path' (missing, damaged or larger than $RESTORE_MAX_BYTES bytes)" >&2
+        rm -rf "$restore_tmp"
+        return 1
+    fi
+    size="$(stat -c %s "$staged")"
+    magic="$(head -c 16 "$staged" | od -An -tx1 | tr -d ' \n')"
+    if [ "$size" -eq 0 ] || [ "$size" -gt "$RESTORE_MAX_BYTES" ] || [ "$magic" != "53514c69746520666f726d6174203300" ]; then
+        echo "restore_backup: the kidphone.db in '$backup_path' is not an SQLite database (or too large) - aborting" >&2
+        rm -rf "$restore_tmp"
+        return 1
+    fi
+
+    echo "Stopping the app for restore..."
+    systemctl stop kid-phone-server
+    trap 'systemctl start kid-phone-server' EXIT
+
+    # Safety copy of whatever's live right now, in a root-owned directory (never inside data/): the
+    # newest 3 are kept. Only plain files are copied; a symlink in data/ is never followed.
+    local prerestore_dir f incoming
+    install -d -m 700 "$PRERESTORE_ROOT"
+    prerestore_dir="$PRERESTORE_ROOT/$(date +%Y%m%d-%H%M%S)"
+    mkdir -m 700 "$prerestore_dir"
+    for f in kidphone.db kidphone.db-wal kidphone.db-shm; do
+        if [ -f "$DATA_DIR/$f" ] && [ ! -L "$DATA_DIR/$f" ]; then
+            cp -p "$DATA_DIR/$f" "$prerestore_dir/$f"
+        fi
+    done
+    find "$PRERESTORE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | head -n -3 \
+        | while read -r old; do rm -rf "${PRERESTORE_ROOT:?}/$old"; done
+
+    # Into place by rename: mktemp creates a new file (never an existing one), and mv -T replaces
+    # whatever sits at the target - a symlink included - instead of writing through it.
+    incoming="$(mktemp "$DATA_DIR/.restore.XXXXXX")"
+    cat "$staged" >"$incoming"
+    chown kidphone:kidphone "$incoming"
+    chmod 600 "$incoming"
+    rm -f "$DATA_DIR/kidphone.db-wal" "$DATA_DIR/kidphone.db-shm"
+    mv -fT "$incoming" "$DATA_DIR/kidphone.db"
+    rm -rf "$restore_tmp"
+
+    echo "Restore complete (the previous database is in $prerestore_dir)."
+}
+ACTIONS_EOF
+    install_root_script watcher.sh <<'WATCHER_EOF'
+#!/usr/bin/env bash
+# Runs as root, triggered only when kid-phone-server (unprivileged) drops
+# a flag file asking for one of a fixed set of actions.
+set -euo pipefail
+source /opt/kid-phone-server-updater/actions.sh
+
+FLAG_FILE="/opt/kid-phone-server/data/update_requested"
+# data/ belongs to the service user: a symlinked flag is never read (security review M4), and at
+# most one short line is.
+if [ -L "$FLAG_FILE" ]; then
+    rm -f "$FLAG_FILE"
+    echo "The update request is a symlink - ignored" >&2
+    exit 1
+fi
+FLAG_CONTENT="$(head -c 256 "$FLAG_FILE" 2>/dev/null | head -n 1 || true)"
+rm -f "$FLAG_FILE"
+
+# Most actions are a single word; format_drive/restore_backup additionally
+# carry a second, space-separated argument.
+ACTION="${FLAG_CONTENT%% *}"
+if [ "$ACTION" != "$FLAG_CONTENT" ]; then
+    ARG="${FLAG_CONTENT#* }"
+else
+    ARG=""
+fi
+
+case "$ACTION" in
+    update) action_app_update ;;
+    restart) action_app_restart ;;
+    os_check) action_os_check ;;
+    os_upgrade) action_os_upgrade ;;
+    tailscale_update) action_tailscale_update ;;
+    reboot) action_reboot ;;
+    format_drive) action_format_drive "$ARG" ;;
+    restore_backup) action_restore_backup "$ARG" ;;
+    *)
+        echo "Unknown or empty update-request action: '$ACTION'" >&2
+        exit 1
+        ;;
+esac
+WATCHER_EOF
+    install_root_script scheduler.sh <<'SCHEDULER_EOF'
 #!/usr/bin/env bash
 # Root-run, every 10 minutes: the OS/Tailscale schedule from the Software updates page.
 # schedule.conf lives in data/, which the unprivileged service writes, so it is never sourced or
@@ -235,9 +498,35 @@ if [ "$AUTO_REBOOT" = "true" ] && [ -f /var/run/reboot-required ]; then
     action_reboot
 fi
 SCHEDULER_EOF
-    chown root:root "$tmp"
-    chmod 700 "$tmp"
-    mv -f "$tmp" "$UPDATER_DIR/scheduler.sh"
+    install_root_script backup_sync.sh <<'BACKUP_SYNC_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKUP_CONFIG_FILE="/opt/kid-phone-server/data/backup_schedule.conf"
+EXTERNAL_MOUNT="/mnt/kid-phone-server-backup"
+DATA_DIR="/opt/kid-phone-server/data"
+
+[ -f "$BACKUP_CONFIG_FILE" ] || exit 0
+mountpoint -q "$EXTERNAL_MOUNT" || exit 0
+# data/ belongs to the service user: never follow a symlink it put there (security review M4).
+if [ -L "$DATA_DIR" ] || [ -L "$DATA_DIR/backups" ] || [ -L "$BACKUP_CONFIG_FILE" ]; then
+    echo "backup_sync: a symlink in $DATA_DIR - not copying" >&2
+    exit 0
+fi
+
+EXTERNAL_COPY_ENABLED="$(grep -m1 '^EXTERNAL_COPY_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
+CONTINUOUS_MIRROR_ENABLED="$(grep -m1 '^CONTINUOUS_MIRROR_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
+
+if [ "$EXTERNAL_COPY_ENABLED" = "true" ] && [ -d "$DATA_DIR/backups" ]; then
+    mkdir -p "$EXTERNAL_MOUNT/snapshots"
+    cp -au "$DATA_DIR/backups/." "$EXTERNAL_MOUNT/snapshots/" 2>/dev/null || true
+fi
+
+if [ "$CONTINUOUS_MIRROR_ENABLED" = "true" ] && [ -f "$DATA_DIR/live_mirror.db" ]; then
+    mkdir -p "$EXTERNAL_MOUNT/live"
+    cp -au "$DATA_DIR/live_mirror.db" "$EXTERNAL_MOUNT/live/kidphone.db" 2>/dev/null || true
+fi
+BACKUP_SYNC_EOF
 }
 
 TAG="$(pick_tag)"
