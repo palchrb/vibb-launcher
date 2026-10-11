@@ -264,3 +264,139 @@ fn server_workflows_pin_rust_and_cross() {
         }
     }
 }
+
+/// Runs root script `marker` (install.sh's heredoc) under bash in a sandbox: each `(from, to)`
+/// replaces a fixed path, and `stubs` are commands on a PATH of their own (each a script body).
+/// Returns the exit status; the run is cut off after 20 s (a hang is a failure).
+fn run_root_script(
+    marker: &str,
+    replace: &[(&str, &str)],
+    stubs: &[(&str, &str)],
+    sandbox: &std::path::Path,
+) -> std::process::ExitStatus {
+    let mut script = heredoc(INSTALL, marker).to_string();
+    for (from, to) in replace {
+        assert!(script.contains(from), "{marker} has no {from}");
+        script = script.replace(from, to);
+    }
+    let bin = sandbox.join("stub-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for (name, body) in stubs {
+        let path = bin.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+    }
+    let path = sandbox.join(format!("{marker}.sh"));
+    std::fs::write(&path, script).unwrap();
+    let status = std::process::Command::new("timeout")
+        .arg("20")
+        .arg("bash")
+        .arg(&path)
+        .env(
+            "PATH",
+            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+        )
+        .status()
+        .expect("bash runs");
+    assert_ne!(status.code(), Some(124), "{marker} hung");
+    status
+}
+
+fn mkfifo(path: &std::path::Path) {
+    let made = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(made.success());
+}
+
+/// QA of the security wave, Medium 1: the USB backup sync copies only regular files out of
+/// data/ - never a symlink, a FIFO or a directory - and never writes through a symlink already on
+/// the drive.
+#[test]
+fn the_backup_sync_never_follows_or_writes_through_links() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let data = root.join("data");
+    let backups = data.join("backups");
+    let drive = root.join("drive");
+    let victims = root.join("root-files");
+    for dir in [
+        &backups,
+        &drive.join("snapshots"),
+        &victims,
+        &backups.join("sub"),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    for name in ["actions.sh", "shadow", "other"] {
+        std::fs::write(victims.join(name), "root's own\n").unwrap();
+    }
+    std::fs::write(
+        data.join("backup_schedule.conf"),
+        "EXTERNAL_COPY_ENABLED=true\nCONTINUOUS_MIRROR_ENABLED=true\n",
+    )
+    .unwrap();
+    std::fs::write(backups.join("backup-20261011-020000.zip"), "a backup").unwrap();
+    std::os::unix::fs::symlink(victims.join("shadow"), backups.join("link")).unwrap();
+    mkfifo(&backups.join("fifo"));
+    std::fs::write(backups.join("sub/inner"), "nested").unwrap();
+    std::os::unix::fs::symlink(victims.join("other"), data.join("live_mirror.db")).unwrap();
+    // QA's sequence: a link the drive got earlier, and now a regular file of the same name.
+    std::os::unix::fs::symlink(victims.join("actions.sh"), drive.join("snapshots/planted"))
+        .unwrap();
+    std::fs::write(backups.join("planted"), "#!/bin/sh\necho owned\n").unwrap();
+    mkfifo(&drive.join("snapshots/old-fifo"));
+
+    let status = run_root_script(
+        "BACKUP_SYNC_EOF",
+        &[
+            (
+                "/opt/kid-phone-server/data/backup_schedule.conf",
+                data.join("backup_schedule.conf").to_str().unwrap(),
+            ),
+            ("/opt/kid-phone-server/data", data.to_str().unwrap()),
+            ("/mnt/kid-phone-server-backup", drive.to_str().unwrap()),
+        ],
+        &[("mountpoint", "exit 0")],
+        root,
+    );
+    assert!(status.success(), "{status:?}");
+
+    for name in ["actions.sh", "shadow", "other"] {
+        assert_eq!(
+            std::fs::read_to_string(victims.join(name)).unwrap(),
+            "root's own\n",
+            "{name} was written through"
+        );
+    }
+    let snapshots = drive.join("snapshots");
+    assert_eq!(
+        std::fs::read(snapshots.join("backup-20261011-020000.zip")).unwrap(),
+        b"a backup"
+    );
+    let planted = std::fs::symlink_metadata(snapshots.join("planted")).unwrap();
+    assert!(
+        planted.file_type().is_file(),
+        "the drive's link was replaced"
+    );
+    for gone in ["link", "fifo", "sub", "old-fifo"] {
+        assert!(
+            std::fs::symlink_metadata(snapshots.join(gone)).is_err(),
+            "{gone} on the drive"
+        );
+    }
+    assert!(
+        std::fs::symlink_metadata(drive.join("live/kidphone.db")).is_err(),
+        "a symlinked live mirror is never copied"
+    );
+    let sync = heredoc(INSTALL, "BACKUP_SYNC_EOF");
+    for line in sync
+        .lines()
+        .filter(|line| line.trim_start().starts_with("cp "))
+    {
+        assert!(line.contains("--remove-destination"), "{line}");
+    }
+}

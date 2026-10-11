@@ -282,8 +282,11 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `actions.sh`). The root restore (M4) reads only the zip's `kidphone.db` (`unzip -p`, at most 1 GiB, SQLite header
   checked), keeps the replaced database in root-owned `/var/backups/kid-phone-server-prerestore/<time>/` (3 kept),
   and puts the new file in place with `mktemp` + `mv -T` (a symlink at the target is replaced, never written
-  through); `watcher.sh` ignores a symlinked flag, `backup_sync.sh` a symlinked `data/`, and install.sh writes
-  `data/watcher_*` by rename.
+  through); `watcher.sh` ignores a symlinked flag, and install.sh writes `data/watcher_*` by rename.
+  `backup_sync.sh` copies only regular files at the top of `data/backups/` and a regular `live_mirror.db`, with
+  `cp -a --remove-destination`, after deleting everything on the drive that isn't a regular file or a directory
+  (QA of the security wave, Medium 1: `cp -au` wrote through a link it had copied to the drive the run before).
+  `tests::deploy_scripts::run_root_script` runs a root heredoc under bash in a sandbox, with stubs.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
   `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, which
   `backup_sync.sh` copies to the drive), `DELETE FROM tower_sessions` with `secure_delete` and the journal in memory,

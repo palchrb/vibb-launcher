@@ -768,15 +768,26 @@ CONTINUOUS_MIRROR_ENABLED="$(grep -m1 '^CONTINUOUS_MIRROR_ENABLED=' "$BACKUP_CON
 
 # The copies hold the whole database: root's alone on the Pi (security review M2).
 chmod 700 "$EXTERNAL_MOUNT"
+# Root never follows, reads or writes through anything else the service user put in data/ (QA of
+# the security wave, Medium 1): only regular files at the top of data/backups/ and a regular
+# live_mirror.db are copied - never a symlink, a FIFO, a device or a directory. Each copy lands by
+# --remove-destination, so whatever sits at the destination is replaced, never written through;
+# -a never dereferences, so a file swapped for a link in between arrives as a link, and anything
+# on the drive that isn't a regular file or a directory is deleted first, every run.
+find "$EXTERNAL_MOUNT" -xdev -mindepth 1 ! -type f ! -type d -delete 2>/dev/null || true
 
 if [ "$EXTERNAL_COPY_ENABLED" = "true" ] && [ -d "$DATA_DIR/backups" ]; then
     install -d -m 700 "$EXTERNAL_MOUNT/snapshots"
-    cp -au "$DATA_DIR/backups/." "$EXTERNAL_MOUNT/snapshots/" 2>/dev/null || true
+    find "$DATA_DIR/backups" -mindepth 1 -maxdepth 1 -type f -print0 |
+        while IFS= read -r -d '' file; do
+            cp -au --remove-destination -- "$file" "$EXTERNAL_MOUNT/snapshots/" 2>/dev/null || true
+        done
 fi
 
-if [ "$CONTINUOUS_MIRROR_ENABLED" = "true" ] && [ -f "$DATA_DIR/live_mirror.db" ]; then
+if [ "$CONTINUOUS_MIRROR_ENABLED" = "true" ] && [ -f "$DATA_DIR/live_mirror.db" ] &&
+    [ ! -L "$DATA_DIR/live_mirror.db" ]; then
     install -d -m 700 "$EXTERNAL_MOUNT/live"
-    cp -au "$DATA_DIR/live_mirror.db" "$EXTERNAL_MOUNT/live/kidphone.db" 2>/dev/null || true
+    cp -au --remove-destination -- "$DATA_DIR/live_mirror.db" "$EXTERNAL_MOUNT/live/kidphone.db" 2>/dev/null || true
 fi
 BACKUP_SYNC_EOF
 
