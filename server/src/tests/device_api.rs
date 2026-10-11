@@ -471,6 +471,14 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
         "Wi-Fi, Bluetooth, brightness, sound (design 18)"
     );
     assert_eq!(mask(existing).await.unwrap(), 0);
+    // Design 24b S4: safe mode blocked from the start.
+    let safe_boot: bool =
+        sqlx::query_scalar("SELECT disallow_safe_boot FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(safe_boot);
 
     let enrolled = app
         .request(

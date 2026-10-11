@@ -42,7 +42,9 @@ async fn save(app: &TestApp, cookie: &str, id: i64, on: &[&str]) -> super::TestR
 async fn new_device_gets_explicit_defaults() {
     let app = TestApp::new().await;
     let (_, token) = app.enrolled_device("phone").await;
-    // Every switch explicit; safe boot off until a launcher build is proven on the phone.
+    // Every switch explicit. TestApp inserts its rows directly (the column defaults); a device
+    // created on the page blocks safe mode (design 24b S4, device_api's
+    // a_new_device_starts_with_all_kid_settings_on).
     assert_eq!(
         hardening(&app, &token).await,
         json!({
@@ -283,7 +285,70 @@ async fn rows_from_before_the_migration_get_the_defaults() {
     .unwrap();
     assert_eq!(policy.hardening, crate::models::Hardening::default());
     assert!(policy.hardening.disallow_debugging_features);
-    assert!(!policy.hardening.disallow_safe_boot);
+    // Design 24b S4: migration 0065 blocked safe mode on every older row.
+    assert!(policy.hardening.disallow_safe_boot);
+}
+
+/// Design 24b S4 (H4): migration 0065 blocks safe mode on every existing device and names each
+/// one it flipped in the security log.
+#[tokio::test]
+async fn the_safe_mode_migration_flips_every_device_and_logs_each() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("old.db"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let full = sqlx::migrate!("./migrations");
+    let mut old = sqlx::migrate!("./migrations");
+    old.migrations = full
+        .migrations
+        .iter()
+        .filter(|m| m.version < 65)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    old.run(&db).await.unwrap();
+    let mut ids = Vec::new();
+    for (name, safe_boot) in [("off", 0), ("on", 1), ("off too", 0)] {
+        let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
+            .bind(name)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO device_policy (device_id, kiosk_desired, disallow_safe_boot) VALUES (?, 1, ?)")
+            .bind(id)
+            .bind(safe_boot)
+            .execute(&db)
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+    full.run(&db).await.unwrap();
+    let blocked: Vec<bool> =
+        sqlx::query_scalar("SELECT disallow_safe_boot FROM device_policy ORDER BY device_id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(blocked, vec![true, true, true]);
+    let logged: Vec<String> = sqlx::query_scalar(
+        "SELECT detail FROM security_events WHERE event_type = 'safe_boot_blocked_by_default' ORDER BY detail",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    let mut expected = vec![format!("device {}", ids[0]), format!("device {}", ids[2])];
+    expected.sort();
+    assert_eq!(logged, expected);
+    // When: set for the rows it flipped, left alone for the one already on (unknown since when).
+    let since: Vec<Option<i64>> = sqlx::query_scalar(
+        "SELECT disallow_safe_boot_set_at_ms FROM device_policy ORDER BY device_id",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert!(since[0].is_some() && since[2].is_some(), "{since:?}");
+    assert_eq!(since[1], None);
 }
 
 async fn report_backup(app: &TestApp, token: &str, backup: Option<Value>) {

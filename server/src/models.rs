@@ -198,8 +198,9 @@ pub struct Hardening {
     /// `DISALLOW_DEBUGGING_FEATURES`: no adb and no developer options - which also removes adb as
     /// the recovery path for a broken launcher.
     pub disallow_debugging_features: bool,
-    /// `DISALLOW_SAFE_BOOT`: off by default until checked on the phone. Safe mode bypasses the
-    /// launcher but repairs nothing (restrictions persist there).
+    /// `DISALLOW_SAFE_BOOT`: on by default since design 24b S4 (device check 6 passed). Safe mode
+    /// starts the phone without the launcher, so no app, call or time rule applies there; it
+    /// repairs nothing (restrictions persist there).
     pub disallow_safe_boot: bool,
     /// `DISALLOW_CONFIG_LOCATION` with location turned on (Find my device).
     pub lock_location: bool,
@@ -211,7 +212,9 @@ pub struct Hardening {
 }
 
 impl Default for Hardening {
-    /// The column defaults in migrations/0023_hardening.sql.
+    /// A device's switches when nobody changed them: the column defaults of
+    /// migrations/0023_hardening.sql, but safe mode blocked (design 24b S4: new devices get it
+    /// explicitly, migration 0065 flipped every older row).
     fn default() -> Self {
         Hardening {
             disallow_factory_reset: true,
@@ -220,7 +223,7 @@ impl Default for Hardening {
             disallow_config_vpn: true,
             disallow_usb_file_transfer: true,
             disallow_debugging_features: true,
-            disallow_safe_boot: false,
+            disallow_safe_boot: true,
             lock_location: true,
             disallow_airplane_mode: false,
             disallow_config_locale: true,

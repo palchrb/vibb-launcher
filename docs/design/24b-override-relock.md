@@ -840,13 +840,14 @@ The user can overturn any of these.
 ## Implementation status (2026-10-11)
 
 Built on branch `relock-24b` as §5's steps: S1a (launcher), S1b (both), S2 (launcher, plus the PWA's advice line),
-S3 (both), docs. S4, the safe-mode default, is built on its own branch `relock-24b-s4` on top and **merges only after
-device check 6** (design 04) is ticked there. On main `2481de32`: launcher
+S3 (both), docs. S4, the safe-mode default (launcher `SAFE_BOOT(true)`, new devices, migration 0065 with one
+`safe_boot_blocked_by_default` per flipped device and its `disallow_safe_boot_set_at_ms`, the card's text), is the commit on branch `relock-24b-s4`, merged
+after device check 6 (design 04) was ticked there. On main `2481de32`: launcher
 `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` green (848 tests); server `cargo test`
-(497 tests), `fmt --check` and `clippy --all-targets` green with no new warnings. The PWA was checked in headless
-Chromium at 360 px, light and dark: no horizontal scroll, the warnings and buttons in the Status card, and after
-"Lock the phone again now" or "Allow these apps" the page comes back at the same place with the notice right above
-the buttons.
+(497 tests without S4), `fmt --check` and `clippy --all-targets` green with no new warnings. The PWA was checked in
+headless Chromium at 360 px, light and dark: no horizontal scroll, the warnings and buttons in the Status card, and
+after "Lock the phone again now" or "Allow these apps" the page comes back at the same place with the notice right
+above the buttons.
 
 **Deviations** (none changes a rule of the design):
 

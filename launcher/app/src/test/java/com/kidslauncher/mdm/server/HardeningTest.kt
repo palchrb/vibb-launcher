@@ -15,17 +15,16 @@ class HardeningTest {
         disallowConfigVpn = true,
         disallowUsbFileTransfer = true,
         disallowDebuggingFeatures = true,
-        disallowSafeBoot = false,
+        disallowSafeBoot = true,
         lockLocation = true,
         disallowAirplaneMode = false,
         disallowConfigLocale = true,
     )
 
     @Test
-    fun `defaults are on except safe boot and airplane mode`() {
-        val defaults = HardeningRestriction.entries.associateWith {
-            it != HardeningRestriction.SAFE_BOOT && it != HardeningRestriction.AIRPLANE_MODE
-        }
+    fun `defaults are on except airplane mode - safe mode is blocked by default (24b S4)`() {
+        val defaults = HardeningRestriction.entries.associateWith { it != HardeningRestriction.AIRPLANE_MODE }
+        assertTrue(hardeningPlan(null, managed = true).isSet(HardeningRestriction.SAFE_BOOT))
         assertEquals(defaults, hardeningPlan(null, managed = true).restrictions)
         assertEquals(defaults, hardeningPlan(HardeningPolicy(), managed = true).restrictions)
         assertEquals(defaults, hardeningPlan(serverDefaults, managed = true).restrictions)
@@ -121,7 +120,7 @@ class HardeningTest {
             {"allowlist": [], "call_policy": {"managed": false}, "hardening": {
               "disallow_factory_reset": true, "disallow_add_user": true, "disallow_modify_accounts": true,
               "disallow_config_vpn": true, "disallow_usb_file_transfer": true,
-              "disallow_debugging_features": false, "disallow_safe_boot": false, "lock_location": true,
+              "disallow_debugging_features": false, "disallow_safe_boot": true, "lock_location": true,
               "disallow_airplane_mode": false, "disallow_config_locale": true}}
         """.trimIndent()
         val policy = (decodeFresh(json) as FreshDecode.Ok).policy

@@ -352,6 +352,8 @@ mod tests {
     #[test]
     fn card_warns_about_safe_boot_capability_and_inactive_states() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
+        // Safe mode is blocked by default (design 24b S4): a parent switched it off.
+        p.hardening.disallow_safe_boot = false;
         let card = lock_card(&p, None, false, true, 0);
         assert!(
             card.warnings

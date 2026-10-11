@@ -22,9 +22,10 @@ enum class HardeningRestriction(val defaultOn: Boolean) {
     USB_FILE_TRANSFER(true),
     /** `DISALLOW_DEBUGGING_FEATURES` - no adb, so no adb recovery for a broken launcher either. */
     DEBUGGING_FEATURES(true),
-    /** `DISALLOW_SAFE_BOOT` - off by default until checked on the phone. Safe mode bypasses the
-     * launcher but repairs nothing (restrictions and suspension persist there). */
-    SAFE_BOOT(false),
+    /** `DISALLOW_SAFE_BOOT` - on by default since design 24b S4 (device check 6 passed): safe mode
+     * starts the phone without the launcher, so no app, call or time rule applies there; it repairs
+     * nothing (restrictions and suspension persist). Only matters when a server omits the switch. */
+    SAFE_BOOT(true),
     /** `DISALLOW_CONFIG_LOCATION`, with location turned on first (Find my device). */
     CONFIG_LOCATION(true),
     /** `DISALLOW_AIRPLANE_MODE` - off by default: airplane mode stays allowed (travel). */
