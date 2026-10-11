@@ -11,10 +11,10 @@ use tokio_stream::wrappers::{BroadcastStream, WatchStream};
 
 use crate::AppState;
 use crate::models::{
-    CallPolicy, CommandResultRequest, DeviceContactRow, DevicePolicy, DnsBlocklistCategory,
-    DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse, GlobalSchedule,
-    InstallProgressReport, InstalledApp, LauncherUi, PendingCommand, PolicyContact, PolicyResponse,
-    StatusReportRequest, TrackedApp, TrackedAppUpdate,
+    CallPolicy, CommandReceiptRequest, CommandResultRequest, DeviceContactRow, DevicePolicy,
+    DnsBlocklistCategory, DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse,
+    GlobalSchedule, InstallProgressReport, InstalledApp, LauncherUi, PendingCommand, PolicyContact,
+    PolicyResponse, StatusReportRequest, TrackedApp, TrackedAppUpdate,
 };
 use crate::security::{self, AuthedDevice};
 use crate::time_rules::{LocationPolicy, TimePolicy};
@@ -313,18 +313,30 @@ pub(crate) async fn build_policy(
     };
 
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
-    // consumes a command, and two concurrent polls can't both get the same one. Delivery is
-    // still at-most-once - a command popped into a response the launcher then refuses (it
-    // rejects a suspicious policy, or can't decode it) is lost, which is why every command
-    // (ring/stop_ring/lock/wipe) must be safe to simply queue again. See
-    // migrations/0010_find_my_device.sql and handlers::locate.
+    // consumes a command, and two concurrent polls can't both get the same one. A launcher that
+    // confirms commands (security review L12) confirms each one before running it; one it didn't
+    // confirm - the response was lost, or it refused the policy - is offered again after
+    // REDELIVER_AFTER_MINUTES, at most MAX_COMMAND_DELIVERIES times in all (the phone runs a
+    // command id once). For an older launcher delivery stays at-most-once, which is why every
+    // command must be safe to simply queue again. See migrations/0010_find_my_device.sql,
+    // 0065_command_receipts.sql and handlers::locate.
+    let receipts = sends_command_receipts(&state.db, device_id).await?;
     let pending_command = sqlx::query_as::<_, (i64, String)>(
-        "UPDATE device_commands SET delivered_at = datetime('now') WHERE id = \
-         (SELECT id FROM device_commands WHERE device_id = ? AND delivered_at IS NULL \
+        "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1 \
+         WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
+           AND received_at IS NULL AND acknowledged_at IS NULL \
+           AND (delivered_at IS NULL OR (? AND deliveries < ? \
+                AND delivered_at <= datetime('now', ?))) \
           ORDER BY requested_at ASC, id ASC LIMIT 1) \
          RETURNING id, command",
     )
     .bind(device_id)
+    .bind(receipts)
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
+    .bind(format!(
+        "-{} minutes",
+        crate::models::REDELIVER_AFTER_MINUTES
+    ))
     .fetch_optional(&state.db)
     .await?
     .map(|(id, command)| PendingCommand { id, command });
@@ -1255,31 +1267,82 @@ async fn log_play_events(
     }
 }
 
-/// The device reports back whether a delivered command actually succeeded -
-/// never called for `wipe` (the device is gone by the time it would report).
-/// Scoped to this device's own commands only, so one device can't ack
-/// another's queue entry.
+/// Whether this device's launcher confirms commands before running them (its latest status
+/// report has [crate::models::COMMAND_RECEIPT_CAPABILITY], security review L12).
+pub(crate) async fn sends_command_receipts(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let capabilities: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT capabilities_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(capabilities
+        .flatten()
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .is_some_and(|caps| {
+            caps.iter()
+                .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY)
+        }))
+}
+
+/// The phone got a command and is about to run it (security review L12) - sent before it runs,
+/// so a wipe is confirmed too. Scoped to this device's own commands; the first receipt counts.
+pub async fn command_receipt(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    Json(req): Json<CommandReceiptRequest>,
+) -> impl IntoResponse {
+    let stored = sqlx::query(
+        "UPDATE device_commands SET received_at = COALESCE(received_at, datetime('now')) \
+         WHERE id = ? AND device_id = ?",
+    )
+    .bind(req.command_id)
+    .bind(device.id)
+    .execute(&state.db)
+    .await;
+    match stored {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "can't store a command receipt");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+/// The device reports back whether a delivered command actually succeeded (a wipe only when it
+/// was refused - a wiped phone can't). A result implies the receipt. Scoped to this device's own
+/// commands only, so one device can't ack another's queue entry.
 pub async fn command_result(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
     Json(req): Json<CommandResultRequest>,
 ) -> impl IntoResponse {
-    sqlx::query(
-        "UPDATE device_commands SET acknowledged_at = datetime('now'), result = ? \
-         WHERE id = ? AND device_id = ?",
-    )
-    .bind(if req.success {
+    let result = if req.success {
         req.message.unwrap_or_else(|| "ok".to_string())
     } else {
         req.message.unwrap_or_else(|| "failed".to_string())
-    })
+    };
+    let stored = sqlx::query(
+        "UPDATE device_commands SET acknowledged_at = datetime('now'), result = ?, succeeded = ?, \
+         received_at = COALESCE(received_at, datetime('now')) WHERE id = ? AND device_id = ?",
+    )
+    .bind(result.chars().take(500).collect::<String>())
+    .bind(req.success)
     .bind(req.command_id)
     .bind(device.id)
     .execute(&state.db)
-    .await
-    .ok();
-
-    StatusCode::NO_CONTENT
+    .await;
+    match stored {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "can't store a command result");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 /// Upserts this device's current download/install status for one tracked app - purely transient,

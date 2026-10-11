@@ -49,7 +49,7 @@ class WipePlanTest {
         assertFalse("wipeData(0)" in locate)
         val sync = File(src, "main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
         val wipe = sync.substringAfter("\"wipe\" -> {").substringBefore("\n        }\n")
-        assertTrue("reportCommandResult(api, pending.id, success = outcome != WipeOutcome.FAILED" in wipe)
+        assertTrue("reportCommandResult(context, api, pending.id, success = outcome != WipeOutcome.FAILED" in wipe)
         val admin = File(src, "main/res/xml/device_admin.xml").readText()
         assertTrue("the admin declares the wipe policy", "<wipe-data />" in admin)
     }

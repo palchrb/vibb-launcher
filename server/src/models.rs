@@ -486,10 +486,11 @@ pub struct DeviceLocation {
     pub received_at: String,
 }
 
-/// A queued remote command (ring/lock/wipe/locate) - `delivered_at` is set the
-/// instant `policy()` serves it to the device, `acknowledged_at` when the
-/// device reports back (never, for `wipe`). See
-/// migrations/0010_find_my_device.sql.
+/// A queued remote command (ring/lock/wipe/locate, design 24b's window commands) - `delivered_at`
+/// is set when `policy()` serves it to the device (again at each re-delivery, `deliveries`
+/// counts them), `received_at` when the phone confirms it got it (security review L12: before it
+/// runs it, so a wipe confirms too), `acknowledged_at`/`result`/`succeeded` when it reports back
+/// what it did. See migrations/0010_find_my_device.sql and 0065_command_receipts.sql.
 #[derive(sqlx::FromRow, Clone)]
 pub struct DeviceCommand {
     pub id: i64,
@@ -499,34 +500,89 @@ pub struct DeviceCommand {
     pub delivered_at: Option<String>,
     pub acknowledged_at: Option<String>,
     pub result: Option<String>,
+    pub received_at: Option<String>,
+    pub deliveries: i64,
+    /// `None` for results from before migration 0065 (and launchers that sent none).
+    pub succeeded: Option<bool>,
 }
 
 /// How long a delivered command may go unconfirmed before the page says it may be lost.
 const UNCONFIRMED_AFTER_MINUTES: i64 = 10;
 
+/// A phone that confirms commands (capability [COMMAND_RECEIPT_CAPABILITY]) gets a command it
+/// didn't confirm again, at most this many deliveries in all.
+pub const MAX_COMMAND_DELIVERIES: i64 = 3;
+
+/// The gap before an unconfirmed command is offered again (the phone confirms within seconds).
+pub const REDELIVER_AFTER_MINUTES: i64 = 2;
+
+/// Status-report capability of a launcher that confirms each command before running it
+/// (`POST /api/devices/command-receipt`, security review L12).
+pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";
+
+fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
+    chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|at| (now - at).num_minutes())
+}
+
 impl DeviceCommand {
     /// The status shown on the device's Find My Device page. Delivery is "the phone fetched it",
-    /// not "it ran" (security review L12): a fetched command the phone never confirms may have
-    /// been lost on the way, and the page says so, so the parent sends it again. A wipe never
-    /// confirms. `now` is UTC, like the stored times.
-    pub fn status_line(&self, now: chrono::NaiveDateTime) -> String {
+    /// not "it ran" (security review L12): a phone with `receipts` (it confirms every command
+    /// before running it) gets an unconfirmed one again, up to [MAX_COMMAND_DELIVERIES]; one that
+    /// is never confirmed may have been lost, and the page says so, so the parent sends it again.
+    /// An older launcher's wipe never confirms. `now` is UTC, like the stored times.
+    pub fn status_line(&self, now: chrono::NaiveDateTime, receipts: bool) -> String {
         if let Some(result) = &self.result {
-            return match &self.acknowledged_at {
-                Some(at) => format!("Done {at} ({result})"),
-                None => format!("Done ({result})"),
+            let at = self
+                .acknowledged_at
+                .as_deref()
+                .map(|at| format!(" {at}"))
+                .unwrap_or_default();
+            return if self.succeeded == Some(false) {
+                format!("Failed{at}: {result}")
+            } else {
+                format!("Done{at} ({result})")
+            };
+        }
+        if let Some(received) = &self.received_at {
+            if self.command == "wipe" {
+                return format!(
+                    "Received {received} - the phone is wiping now; it stops checking in"
+                );
+            }
+            return if minutes_since(received, now).is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
+                format!("Received {received}, but the phone never said it finished")
+            } else {
+                format!("Received {received}, not finished yet")
             };
         }
         let Some(delivered) = &self.delivered_at else {
             return "Waiting for the phone to check in".to_string();
         };
+        let waited = minutes_since(delivered, now);
+        if receipts {
+            // It confirms within seconds: after REDELIVER_AFTER_MINUTES it is offered again, and
+            // after the last delivery it is lost.
+            if waited.is_none_or(|m| m < REDELIVER_AFTER_MINUTES) {
+                return format!("Delivered {delivered}, not confirmed yet");
+            }
+            return if self.deliveries < MAX_COMMAND_DELIVERIES {
+                format!(
+                    "Delivered {delivered}, not confirmed - offered again when the phone next checks in"
+                )
+            } else {
+                format!(
+                    "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
+                )
+            };
+        }
         if self.command == "wipe" {
             return format!(
-                "Delivered {delivered}, not confirmed - a wiped phone can't confirm; it stops checking in"
+                "Delivered {delivered}, not confirmed - this launcher can't confirm a wipe; a wiped phone stops checking in"
             );
         }
-        let stale = chrono::NaiveDateTime::parse_from_str(delivered, "%Y-%m-%d %H:%M:%S")
-            .is_ok_and(|at| (now - at).num_minutes() >= UNCONFIRMED_AFTER_MINUTES);
-        if stale {
+        if waited.is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
             format!(
                 "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
             )
@@ -698,10 +754,11 @@ pub struct PolicyContact {
     pub photo: Option<String>,
 }
 
-/// The oldest undelivered [DeviceCommand] for this device, if any - `policy()`
-/// marks it delivered the instant it's serialized into a response, so a
-/// second poll before the device acknowledges never hands out the same
-/// command twice. See `handlers::device_api::policy`.
+/// The oldest undelivered [DeviceCommand] for this device (or, for a phone that confirms
+/// commands, one it didn't confirm - security review L12), if any - `policy()` marks it delivered
+/// the instant it's serialized into a response, so a second poll within
+/// [REDELIVER_AFTER_MINUTES] never hands out the same command twice. See
+/// `handlers::device_api::policy`.
 #[derive(Serialize)]
 pub struct PendingCommand {
     pub id: i64,
@@ -863,6 +920,13 @@ pub struct CommandResultRequest {
     pub command_id: i64,
     pub success: bool,
     pub message: Option<String>,
+}
+
+/// `POST /api/devices/command-receipt`: the phone got the command and is about to run it (security
+/// review L12) - sent before anything runs, so a wipe confirms too.
+#[derive(Deserialize)]
+pub struct CommandReceiptRequest {
+    pub command_id: i64,
 }
 
 /// Reported by the device during a tracked app's download, or once if the install ultimately

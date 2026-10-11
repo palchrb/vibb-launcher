@@ -2,8 +2,9 @@
 //!
 //! - **A valid token** (the device): a bucket of [TOKEN_BURST] requests refilling at
 //!   [TOKEN_REFILL_PER_SEC], and in-flight caps - [LONG_IN_FLIGHT] for file downloads,
-//!   [GENERAL_IN_FLIGHT] for the rest (the SSE stream is bounded by its own cap instead), while `policy`, `status` and `command-result` are
-//!   always admitted (the bucket still applies), so a ring or a lock never waits behind downloads.
+//!   [GENERAL_IN_FLIGHT] for the rest (the SSE stream is bounded by its own cap instead), while `policy`, `status`,
+//!   `command-result` and `command-receipt` are always admitted (the bucket still applies), so a ring, a lock or a
+//!   wipe's receipt never waits behind downloads.
 //! - **A client IP** (`net::limit_key`: IPv4 address, IPv6 /64), counted only for failed requests -
 //!   a bad or missing token, a typed-shaped enrollment code that didn't match: [IP_FAILURES] in
 //!   [IP_WINDOW] get 429 for [IP_BLOCK]. **A valid token never touches this bucket**, so a
@@ -43,7 +44,7 @@ pub const LAST_IPS: usize = 5;
 /// What kind of device request this is, by path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouteClass {
-    /// `policy`, `status`, `command-result`: never refused for being in flight.
+    /// `policy`, `status`, `command-result`, `command-receipt`: never refused for being in flight.
     Always,
     /// The SSE stream: no in-flight slot and no timeout. `CommandStreams` bounds it (2 per phone, a
     /// third closes the oldest), so a phone that changed networks while downloading never gets
@@ -56,9 +57,10 @@ pub enum RouteClass {
 
 pub fn route_class(path: &str) -> RouteClass {
     match path {
-        "/api/devices/policy" | "/api/devices/status" | "/api/devices/command-result" => {
-            RouteClass::Always
-        }
+        "/api/devices/policy"
+        | "/api/devices/status"
+        | "/api/devices/command-result"
+        | "/api/devices/command-receipt" => RouteClass::Always,
         "/api/devices/commands/stream" => RouteClass::Stream,
         _ if (path.starts_with("/api/devices/apps/") && path.ends_with("/download"))
             || path.starts_with("/api/devices/music/files/") =>
@@ -541,6 +543,10 @@ mod tests {
         assert_eq!(route_class("/api/devices/status"), RouteClass::Always);
         assert_eq!(
             route_class("/api/devices/command-result"),
+            RouteClass::Always
+        );
+        assert_eq!(
+            route_class("/api/devices/command-receipt"),
             RouteClass::Always
         );
         assert_eq!(

@@ -8,6 +8,7 @@ mod backup_secrets;
 mod calls;
 mod catalog_pins;
 mod cleanup;
+mod command_receipts;
 mod deploy_scripts;
 mod device_api;
 mod dns_blocklist;

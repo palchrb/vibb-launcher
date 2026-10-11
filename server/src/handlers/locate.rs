@@ -133,10 +133,16 @@ async fn render_locate_page(
         Vec::new()
     };
     let now = chrono::Utc::now().naive_utc();
+    let receipts = match &selected {
+        Some(dev) => crate::handlers::device_api::sends_command_receipts(&state.db, dev.id)
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
     let commands = commands
         .into_iter()
         .map(|command| {
-            let status = command.status_line(now);
+            let status = command.status_line(now, receipts);
             (command, status)
         })
         .collect();
@@ -227,8 +233,8 @@ pub async fn locations_json(
 /// `end_windows`/`allow_blocked`/`start_pause`) before inserting the
 /// new one - "your last action wins", and doubles as a way to cancel a
 /// queued-but-not-yet-delivered wipe by queuing something else before it
-/// lands. Once a command is delivered it's no longer touched by this.
-/// Broadcasts on `command_notify` afterwards so a connected device's SSE
+/// lands. A delivered one the phone didn't confirm is no longer offered again
+/// (security review L12: its row stays, as history). Broadcasts on `command_notify` afterwards so a connected device's SSE
 /// listener (see `device_api::commands_stream`) wakes it immediately instead
 /// of waiting for its next 2-minute poll - a `send` with no subscribers
 /// (device offline/asleep) is expected and harmless, it just falls back to
@@ -240,6 +246,19 @@ async fn queue_command(state: &AppState, device_id: i64, command: &str) {
         "DELETE FROM device_commands WHERE device_id = ? AND delivered_at IS NULL \
          AND command NOT IN (?, ?, ?)",
     )
+    .bind(device_id)
+    .bind(end_windows)
+    .bind(allow_blocked)
+    .bind(start_pause)
+    .execute(&state.db)
+    .await
+    .ok();
+    sqlx::query(
+        "UPDATE device_commands SET deliveries = MAX(deliveries, ?) WHERE device_id = ? \
+         AND delivered_at IS NOT NULL AND received_at IS NULL AND acknowledged_at IS NULL \
+         AND command NOT IN (?, ?, ?)",
+    )
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
     .bind(device_id)
     .bind(end_windows)
     .bind(allow_blocked)

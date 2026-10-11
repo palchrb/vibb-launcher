@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import com.kidslauncher.mdm.server.dto.CommandReceiptRequest
 import com.kidslauncher.mdm.server.dto.CommandResultRequest
 import com.kidslauncher.mdm.server.dto.CrashReportBatch
 import com.kidslauncher.mdm.server.dto.DnsBlocklistCategory
@@ -47,6 +48,10 @@ interface MdmApi {
 
     @POST("api/devices/command-result")
     suspend fun sendCommandResult(@Body request: CommandResultRequest): Response<Unit>
+
+    /** The explicit receipt (security review L12), before the command runs - see [CommandAnswers]. */
+    @POST("api/devices/command-receipt")
+    suspend fun sendCommandReceipt(@Body request: CommandReceiptRequest): Response<Unit>
 
     @GET("api/devices/apps")
     suspend fun getTrackedAppUpdates(): Response<List<TrackedAppUpdate>>

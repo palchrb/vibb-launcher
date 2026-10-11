@@ -16,7 +16,6 @@ import com.kidslauncher.mdm.calls.CallStateReport
 import com.kidslauncher.mdm.calls.callPrefsUpdate
 import com.kidslauncher.mdm.notifyAppInstallResult
 import com.kidslauncher.mdm.notifyAppInstalling
-import com.kidslauncher.mdm.server.dto.CommandResultRequest
 import com.kidslauncher.mdm.server.dto.InstallProgressReport
 import com.kidslauncher.mdm.server.dto.InstalledApp
 import com.kidslauncher.mdm.server.dto.LocationReport
@@ -94,6 +93,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // Everything in the `freshPolicy != null` block (cache, PIN hash, commands, uninstalls) is
     // skipped for a rejected or undecodable one, exactly as if the server were unreachable.
     var freshPolicy: PolicyResponse? = null
+    // The command this sync ran (not one delivered again that ran before - security review L12).
+    var ranCommand: PendingCommand? = null
     val freshOutcome = when (val fetched = fetchPolicy(api)) {
         null -> FreshOutcome.UNREACHABLE
         is FreshDecode.Failed -> if (fetched === POLICY_SERVER_ERROR) FreshOutcome.SERVER_ERROR else {
@@ -138,7 +139,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // cached policy blob can still hold a `pendingCommand` from a past cycle that's already
         // been delivered and consumed server-side, and replaying it from cache while offline would
         // re-run an old command (harmless for ring, not for lock/wipe).
-        dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand)
+        ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand)
         // Same "only off a genuinely fresh fetch" reasoning as the pending-command dispatch above -
         // the server clears an entry once a status report confirms the package is gone, so acting
         // on a stale cached list while offline would just be redundant, not actively harmful, but
@@ -182,7 +183,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // push-triggered syncs, and manual "Sync now") follows the parent's location policy instead
     // (off / on request / every N minutes, see locationAction), so location isn't forcing an
     // active fetch (visible location indicator, slower sync) on every single cycle.
-    val forceFreshLocation = freshPolicy?.pendingCommand?.command in setOf("ring", "locate")
+    val forceFreshLocation = ranCommand?.command in setOf("ring", "locate")
     val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
     val location = currentLocationReport(context, dpm, admin, forceFreshLocation, locationPolicy)
 
@@ -251,15 +252,17 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     }
 
     // `locate` is answered after the report that carries the fix, with the fix's accuracy and age.
-    freshPolicy?.pendingCommand?.takeIf { it.command == "locate" }?.let { command ->
+    ranCommand?.takeIf { it.command == "locate" }?.let { command ->
         val (ok, message) = locateResultMessage(location.action, location.accuracyMeters, location.ageSeconds)
-        reportCommandResult(api, command.id, ok, message)
+        CommandAnswers.result(context, api, command.id, ok, message)
     }
 
     // Crashes since the last sync (hash + short trace, no personal data) for the device page.
     com.kidslauncher.mdm.crash.CrashReports.upload(context, api)
     // Parent-PIN uses, wrong tries and lockouts (design 24): with the sync, never on their own.
     ParentPinEvents.upload(context, api)
+    // Command receipts and results that didn't get through when they were made (security review L12).
+    CommandAnswers.flush(context, api)
     // Retention (cleanup 2026-10-06): blocked calls older than 30 days leave the call log.
     com.kidslauncher.mdm.calls.BlockedCallLog.pruneIfDue(context)
 
@@ -321,6 +324,10 @@ private suspend fun reportBlockedDnsEvents(context: Context, api: MdmApi) {
  * command after the report with the fix's accuracy and age; the PWA's "Update location now"
  * queues it). A `wipe` that works never reports - the phone reboots into the reset; one the
  * platform refuses reports the failure (security review M8).
+ *
+ * Security review L12: every command is confirmed (receipt) before it runs - a wipe's only answer
+ * when it works -, and a command the server delivers again (our receipt didn't arrive) is
+ * confirmed again but never run twice ([CommandAnswers.begin]). Returns the command it ran.
  */
 private suspend fun dispatchPendingCommand(
     context: Context,
@@ -328,18 +335,25 @@ private suspend fun dispatchPendingCommand(
     dpm: DevicePolicyManager,
     admin: ComponentName,
     pending: PendingCommand?,
-) {
-    if (pending == null || !dpm.isDeviceOwnerApp(context.packageName)) return
+): PendingCommand? {
+    if (pending == null || !dpm.isDeviceOwnerApp(context.packageName)) return null
+
+    val fresh = CommandAnswers.begin(context, pending.id)
+    CommandAnswers.receipt(context, api, pending.id)
+    if (!fresh) {
+        Log.i(LOG_TAG, "Command ${pending.id} (${pending.command}) delivered again - confirmed, not run twice")
+        return null
+    }
 
     when (pending.command) {
         "ring" -> {
             LocateCommands.ring(context)
-            reportCommandResult(api, pending.id, success = true, message = "ringing")
+            reportCommandResult(context, api, pending.id, success = true, message = "ringing")
         }
 
         "stop_ring" -> {
             LocateCommands.stopRingAndRestore(context)
-            reportCommandResult(api, pending.id, success = true, message = "stopped")
+            reportCommandResult(context, api, pending.id, success = true, message = "stopped")
         }
 
         "lock" -> {
@@ -351,14 +365,14 @@ private suspend fun dispatchPendingCommand(
                 ours -> "locked (handy lock)"
                 else -> "locked (Android)"
             }
-            reportCommandResult(api, pending.id, ok, message)
+            reportCommandResult(context, api, pending.id, ok, message)
         }
 
         // Only reached when the wipe didn't take the phone down at once: a refusal (or a call
         // that returned) is reported, so the parent sees it (security review M8).
         "wipe" -> {
             val (outcome, message) = LocateCommands.wipe(dpm)
-            reportCommandResult(api, pending.id, success = outcome != WipeOutcome.FAILED, message = message)
+            reportCommandResult(context, api, pending.id, success = outcome != WipeOutcome.FAILED, message = message)
         }
 
         // Design 24b: "Lock the phone again now" - the pause or override and Play install mode
@@ -367,7 +381,7 @@ private suspend fun dispatchPendingCommand(
             val ended = WindowRelock.lockAgain(context, RelockTrigger.COMMAND)
             val installMode = com.kidslauncher.mdm.play.PlayRuntime.installModeActive(context)
             if (installMode) com.kidslauncher.mdm.play.PlayRuntime.endInstallMode(context)
-            reportCommandResult(api, pending.id, success = true, message = endWindowsResult(ended, installMode))
+            reportCommandResult(context, api, pending.id, success = true, message = endWindowsResult(ended, installMode))
             // A command queued behind it (a lock, a locate) follows within seconds (QA #8).
             requestFollowUpSync(context)
         }
@@ -377,22 +391,26 @@ private suspend fun dispatchPendingCommand(
         // app able to read it.
         "start_pause" -> {
             RestrictionsPause.start(context, BootClock.windowStart(RESTRICTIONS_PAUSE_DURATION_MS))
-            reportCommandResult(api, pending.id, success = true, message = "paused for 2 hours")
+            reportCommandResult(context, api, pending.id, success = true, message = "paused for 2 hours")
             requestFollowUpSync(context)
         }
 
         // Design 24b: "Allow these apps" - the relock's blocks go; this sync's apply shows them.
         "allow_blocked" -> {
             val count = WindowRelock.allowBlocked(context)
-            reportCommandResult(api, pending.id, success = true, message = "allowed: $count apps")
+            reportCommandResult(context, api, pending.id, success = true, message = "allowed: $count apps")
             requestFollowUpSync(context)
         }
 
         // Answered after the status report that carries the fresh fix (performMdmSync).
         "locate" -> {}
 
-        else -> Log.w(LOG_TAG, "Unknown pending command: ${pending.command}")
+        else -> {
+            Log.w(LOG_TAG, "Unknown pending command: ${pending.command}")
+            reportCommandResult(context, api, pending.id, success = false, message = "unknown command - update the launcher")
+        }
     }
+    return pending
 }
 
 private fun requestFollowUpSync(context: Context) {
@@ -403,13 +421,9 @@ private fun requestFollowUpSync(context: Context) {
     }
 }
 
-private suspend fun reportCommandResult(api: MdmApi, commandId: Long, success: Boolean, message: String?) {
-    try {
-        api.sendCommandResult(CommandResultRequest(commandId, success, message))
-    } catch (e: Exception) {
-        Log.w(LOG_TAG, "Failed to report command result for id=$commandId", e)
-    }
-}
+/** What a command did - kept for the next sync if it doesn't get through (security review L12). */
+private suspend fun reportCommandResult(context: Context, api: MdmApi, commandId: Long, success: Boolean, message: String?) =
+    CommandAnswers.result(context, api, commandId, success, message)
 
 /** What the sync did about location: the report (if any), and for `locate` the fix's details. */
 private class LocationOutcome(
