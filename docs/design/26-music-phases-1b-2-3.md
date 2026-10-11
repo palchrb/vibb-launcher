@@ -20,8 +20,8 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   in NOTICE.md and each ported file's header.
 - **Phase 1 was ported from vibb `main`.** `library.py`'s only behaviour change since (the `cache` default) applies to
   Spotify under soloist, which the import skips. `daemon.py` changed by ~400 lines (mostly the Pi's audio, idle and
-  soloist handling). The 1b architect diffs pipewire's play rules (shortcuts, resume, queue, sleep) against phase 1 and
-  lists anything phase 1 should adopt.
+  soloist handling). The main session checks pipewire's play rules (shortcuts, resume, queue, sleep) against phase 1
+  and fixes phase 1 itself; the 1b session needn't.
 - **Sonos and Storytel are ports, not new designs** (user, 2026-10-11: the Pi's logic there is worked through). The
   architect maps every behaviour of the vibb code below to its Kotlin home and ports vibb's tests as Kotlin tests. A
   deviation is allowed only where the phone forces it (no server on the phone, the kiosk, Doze, the launcher as
