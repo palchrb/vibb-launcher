@@ -467,3 +467,35 @@ fn root_never_creates_files_in_data() {
         "if [ -f \"$INSTALL_DIR/data/$f\" ] && [ ! -L \"$INSTALL_DIR/data/$f\" ]; then\n        cp -P -p"
     ));
 }
+
+/// QA of the security wave, Low 6: the release is signed - with the key only the protected
+/// `release` environment holds - before any image is pushed or tagged, and published from the
+/// signed files.
+#[test]
+fn the_release_signs_first_and_in_the_release_environment() {
+    let release = include_str!("../../../.github/workflows/server-release.yml");
+    let job = |name: &str| {
+        let start = release
+            .find(&format!("\n  {name}:\n"))
+            .unwrap_or_else(|| panic!("no job {name}"));
+        let rest = &release[start + 1..];
+        let end = rest[2..]
+            .find("\n  server-release-")
+            .map_or(rest.len(), |at| at + 2);
+        &rest[..end]
+    };
+    let sign = job("server-release-sign");
+    assert!(sign.contains("    environment: release\n"), "{sign}");
+    assert!(sign.contains("secrets.SERVER_MINISIGN_KEY"));
+    assert_eq!(release.matches("secrets.SERVER_MINISIGN_KEY").count(), 1);
+    let image = job("server-release-image");
+    assert!(image.contains("needs: [ server-release-build, server-release-sign ]"));
+    assert!(
+        image.contains(
+            "needs.server-release-sign.result == 'success' || github.event_name != 'push'"
+        )
+    );
+    let publish = job("server-release-publish");
+    assert!(publish.contains("name: server-release-signed"));
+    assert!(publish.contains("server-release-sign, server-release-image"));
+}

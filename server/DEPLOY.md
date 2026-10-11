@@ -333,24 +333,32 @@ Root on the Pi installs and runs only release files signed with the project's [m
 key (security review M5): `install.sh` and `update.sh` check the tarball, and the root-side updater checks `update.sh`
 before it runs it. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
 trusted comment names the file and the release tag, so a signed file can't be passed off under another name or as
-another release. `server-release.yml` signs both with the `SERVER_MINISIGN_KEY` secret and refuses to publish without
-it, or when it doesn't match the pinned key.
+another release. `server-release.yml` signs both in its `server-release-sign` job, with the `SERVER_MINISIGN_KEY`
+secret of the protected `release` environment, before any image is pushed or tagged: without the secret, or when it
+doesn't match the pinned key, the run stops there and nothing is pushed or published.
 
 **One-time setup by the repo owner, before the first `server-v0.24.0` tag:**
 1. On your own computer (not the Pi, not CI), with minisign installed (`apt install minisign`, `brew install minisign`):
    `minisign -G -W -p handy-server.pub -s handy-server.key`. `-W` leaves the secret key without a password, since CI
    signs unattended; the GitHub secret is what protects it. Keep `handy-server.key` somewhere safe offline (a password
    manager) and never in the repo.
-2. GitHub > the repo > Settings > Secrets and variables > Actions > New repository secret: name
-   `SERVER_MINISIGN_KEY`, value the whole content of `handy-server.key` (both lines).
+2. GitHub > the repo > Settings > Environments > `release` (the environment the launcher and music releases already
+   sign in):
+   - **Environment secrets** > Add: name `SERVER_MINISIGN_KEY`, value the whole content of `handy-server.key` (both
+     lines). Not a repository secret: the release reads it only from this environment, so a workflow pushed to some
+     branch can't.
+   - **Deployment branches and tags**: add a tag rule `server-v*` next to `launcher-v*` and `music-v*`, or the release
+     job can't enter the environment.
 3. Pin the public key, the second line of `handy-server.pub` (it starts with `RW`), in both scripts (six places,
    actions.sh's copies included):
    `KEY='RW...'; sed -i "s|^SERVER_SIGNING_PUBKEY=.*|SERVER_SIGNING_PUBKEY=\"$KEY\"|" server/deploy/install.sh server/deploy/update.sh`,
    then `cargo test deploy_scripts` (from `server/`) and commit.
-4. Optional, as the review suggests: turn on immutable releases (Settings > General > Releases), and move the secret
-   into an environment with required reviewers.
+4. Optional, as the review suggests: turn on immutable releases (Settings > General > Releases). The `release`
+   environment's required reviewer, if it has one, then approves each server release too.
 
-Until the key is pinned, the scripts refuse every release ("No release signing key is pinned").
+Until the key is pinned, the scripts refuse every release ("No release signing key is pinned"). A `server-v*` tag
+pushed before steps 2-3 stops at the signing job, with nothing pushed or published: delete the tag, finish the setup,
+and tag again.
 
 - **The way in**: a Pi on 0.23 or older updates to 0.24.0 the old way (its `actions.sh` takes `update.sh` from the
   tag), but 0.24.0's `update.sh` already checks the tarball's signature, installs `minisign`, and rewrites
