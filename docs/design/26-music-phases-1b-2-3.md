@@ -16,10 +16,18 @@ can't see elsewhere, in particular the working rules the main session keeps in i
 - **The reference implementation** is the Pi player, github `palchrb/vibb` (`pi/sonosd.py`, `pi/daemon.py`,
   `pi/vibb/{library,content,storytel,bookmarks}.py`, `tests/`). MIT: behaviour is reimplemented in Kotlin and credited
   in NOTICE.md and each ported file's header.
+- **Sonos and Storytel are ports, not new designs** (user, 2026-10-11: the Pi's logic there is worked through). The
+  architect maps every behaviour of the vibb code below to its Kotlin home and ports vibb's tests as Kotlin tests. A
+  deviation is allowed only where the phone forces it (no server on the phone, the kiosk, Doze, the launcher as
+  courier), and each one is listed with its reason. Read the vibb code before designing anything; don't re-derive
+  what it already handles. **Spotify is the exception**: new ground (below).
 
 ## The phases, in order
 
 ### 1b - Sonos (start here)
+- **Source of truth:** vibb `pi/sonosd.py` and its tests `tests/sonos_contract.py`, `sonos_renderer.py`,
+  `sonos_groups.py`, `sonos_grouped.py`, `sonos_migrate.py`, `sonos_migrate_probe.py`, `sonos_same_tile.py`,
+  `sonos_hush.py` (`sonos_spotify_queue.py` belongs to phase 3).
 - Design 20 "Outputs": the "Spill av på" picker gains Sonos rooms. The phone is a UPnP **controller**, never a server.
 - Port `sonosd.py`: the uid -> ip cache, discovery only on a cache miss, a rescan or a failed play; content kinds `url`
   (the speaker fetches from the origin: NRK/RSS enclosures, later Storytel's signed CDN URL) and `nrk_program` (the NRK
@@ -30,6 +38,9 @@ can't see elsewhere, in particular the working rules the main session keeps in i
 - Testable here with canned UPnP/SSDP responses and vibb's tests ported; real speakers are a device check for the user.
 
 ### 2 - Storytel
+- **Source of truth:** vibb `pi/vibb/storytel.py` and `pi/vibb/bookmarks.py`, with the tests `tests/storytel_api.py`,
+  `storytel_expand.py`, `storytel_routes.py`, `storytel_sync.py`, `storytel_bookmark_sync.py`, `storytel_subprocess.py`,
+  and `storytel_sonos.py` (Storytel on Sonos through the signed CDN URL; it lands here if 1b is done, else after it).
 - Design 20 "Storytel and the source fetching": the phone logs in and downloads by itself, from Storytel's CDN, like
   the Pi. The login is entered in the PWA, stored encrypted on the server and sealed to the phone through the launcher:
   **that plumbing already exists** (design 21 §1.4 and step 3). Phase 2 is the shelf, series grouping, playback,
@@ -41,6 +52,9 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   in logs. The credentials are never shown back in the PWA and never logged.
 
 ### 3 - Spotify (a spike first)
+- **New ground:** the Pi's Spotify path (go-librespot) doesn't carry over to Android (`vibb-spotify-options.md`: the
+  audio-key denial for new accounts). Only `tests/sonos_spotify_queue.py` (Sonos owning a Spotify queue via ShareLink)
+  is reusable, for Spotify on Sonos. Everything else is designed from scratch, from the spike's answers.
 - Design 20 §4 and `vibb-spotify-options.md`: App Remote driving the official Spotify app as an "engine".
 - **The user's hard rule: the kid never sees the Spotify app** (design 20 §4 "Never shown"). Spike items 1 and 3 are
   kill criteria: if App Remote can't connect without showing Spotify, the Spotify source is dropped.
