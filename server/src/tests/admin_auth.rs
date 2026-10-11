@@ -686,3 +686,40 @@ async fn ipv6_login_failures_are_banned_by_their_64() {
         .unwrap();
     assert_eq!(left, 0);
 }
+
+/// QA 22 H2, as QA probed it: a burst of wrong codes on one pending session checks at most 5,
+/// however many arrive at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_burst_of_codes_checks_at_most_five() {
+    let app = TestApp::new().await;
+    app.admin_cookie().await;
+    let (_, cookie) = password_step(&app, PASSWORD).await;
+    let cookie = cookie.unwrap();
+    let mut burst = tokio::task::JoinSet::new();
+    for n in 0..50 {
+        let router = app.router.clone();
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/auth/verify-2fa")
+            .header(header::COOKIE, &cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(format!("code={:06}", 100_000 + n)))
+            .unwrap();
+        burst.spawn(async move {
+            let mut request = request;
+            request
+                .extensions_mut()
+                .insert(axum::extract::ConnectInfo(LOOPBACK_PEER));
+            tower::ServiceExt::oneshot(router, request).await.unwrap()
+        });
+    }
+    burst.join_all().await;
+    let checked: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM security_events WHERE event_type = 'totp_failed'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(checked <= 5, "{checked} codes were checked");
+    let (failures, locks, locked) = counters(&app).await;
+    assert_eq!((failures, locks, locked), (5, 1, true));
+}

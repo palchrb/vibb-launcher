@@ -204,7 +204,7 @@ pub struct Verify2faForm {
 }
 
 /// The TOTP step (design 22 §3.2.1): a code for a later step than the last one used
-/// (`admin_auth::check_totp`); failures count and lock (`admin_auth::record_totp_failure`), and
+/// (`admin_auth::check_totp`); every attempt is counted before the code is checked and locks at 5 (`admin_auth::take_totp_attempt`), and
 /// only this complete login resets them. Then the session id is cycled again, the session stores
 /// the account's epoch, and a banner names earlier failed codes (`admin_auth::login_warning`).
 pub async fn verify_2fa(
@@ -241,14 +241,26 @@ pub async fn verify_2fa(
         return Redirect::to("/login").into_response();
     };
 
-    if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
-        session.flush().await.ok();
-        return render_login(Some(locked_message(minutes))).into_response();
-    }
-
     let Some(secret) = admin.totp_secret.clone() else {
         session.flush().await.ok();
         return Redirect::to("/login").into_response();
+    };
+
+    // The attempt is taken before the code is looked at (QA 22 H2): while the account is locked no
+    // code is checked, and parallel requests can't slip past the count.
+    let attempt = match admin_auth::take_totp_attempt(&state.db, admin.id).await {
+        Ok(Some(attempt)) => attempt,
+        Ok(None) => {
+            let minutes = admin_auth::lock_minutes_left(&state.db, admin.id)
+                .await
+                .unwrap_or(1);
+            session.flush().await.ok();
+            return render_login(Some(locked_message(minutes))).into_response();
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't count the 2FA attempt");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     };
 
     // Copying a code from a phone's authenticator app commonly brings along a trailing space or
@@ -265,7 +277,6 @@ pub async fn verify_2fa(
     match checked {
         Ok(admin_auth::Totp::Accepted) => {}
         Ok(admin_auth::Totp::Refused) => {
-            admin_auth::record_totp_failure(&state.db, admin.id).await;
             security::record_security_event(
                 &state.db,
                 "totp_failed",
@@ -288,13 +299,8 @@ pub async fn verify_2fa(
         }
     }
 
-    // Read before the reset: the failures since the last complete login.
-    let failures: i64 =
-        sqlx::query_scalar("SELECT failed_login_attempts FROM admin_users WHERE id = ?")
-            .bind(admin.id)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or(0);
+    // The failures since the last complete login: every attempt before this one.
+    let failures = attempt - 1;
     let warning = admin_auth::login_warning(&state.db, &admin.username, failures).await;
     admin_auth::reset_after_login(&state.db, admin.id).await;
     security::record_security_event(

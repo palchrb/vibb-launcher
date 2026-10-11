@@ -597,8 +597,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   429), an unknown username verifies a dummy hash. Wrong passwords never lock the account (only the per-IP ban, now
   keyed by `net::limit_key`; unban is `POST /security/unban` with an `ip` field since a key can be a /64). TOTP:
   `check_totp` accepts a step within +-1 that is later than `admin_users.totp_last_step` (stored in the same UPDATE;
-  setup too); `record_totp_failure`: 5 failures lock 15 min, each further lock doubles (`lock_count`) up to 24 h, a
-  lock running out resets nothing, only a complete login does (`reset_after_login`); a correct password on a locked
+  setup too); `take_totp_attempt` (one conditional `UPDATE ... RETURNING`, taken *before* the code is checked, so parallel
+  requests can't slip past it - QA 22 H2; locked = no code checked): 5 attempts lock 15 min, each further lock doubles
+  (`lock_count`) up to 24 h, a lock running out resets nothing, only a complete login does (`reset_after_login`); a correct password on a locked
   account says so (`login_locked` event). The pending state (`pending_admin_id` + `pending_at`) lasts 5 min. After a
   complete login with earlier failures the session carries a banner (`login_warning`, shown on Devices and Account
   via `partials/login_warning.html`, `POST /account/dismiss-warning`). Sessions: `cycle_id()` after each step; the

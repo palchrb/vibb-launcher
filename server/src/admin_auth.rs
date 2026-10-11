@@ -6,7 +6,7 @@
 //!   exist.
 //! - TOTP ([check_totp]): a code is accepted only for a later 30-second step than the last one
 //!   accepted (`admin_users.totp_last_step`), so a code can't be replayed. Failures lock the
-//!   account ([record_totp_failure]): 5 lock it for 15 minutes, every further lock doubles up to
+//!   account ([take_totp_attempt], taken before the code is checked): 5 lock it for 15 minutes, every further lock doubles up to
 //!   24 hours, and only a complete login resets the counter (password failures never lock - they
 //!   only count toward the IP ban, or anyone who knows "admin" could lock the parent out).
 //! - Sessions: the id is cycled after the password and after the TOTP; the session stores
@@ -199,12 +199,19 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// One TOTP failure against an account that isn't locked: counts it, and from the fifth on
+/// Takes one TOTP attempt before the code is checked (QA 22 H2): counts it, and from the fifth on
 /// locks the account - 15 minutes, doubled for every lock since the last complete login, at most
-/// 24 hours. A lock running out resets nothing, so after the first lock every further failure
-/// locks again (for longer). Does nothing while locked: hammering can't extend a lock.
-pub async fn record_totp_failure(db: &sqlx::SqlitePool, admin_id: i64) {
-    sqlx::query(
+/// 24 hours. Returns the attempt's number since the last complete login, or `None` while the
+/// account is locked: then the code must not be checked at all. One conditional `UPDATE ...
+/// RETURNING`, so parallel requests are counted one by one and at most 5 codes are checked per
+/// lock, however many arrive at once. A lock running out resets nothing, so after the first lock
+/// every further attempt locks again (for longer); only a complete login resets the count
+/// ([reset_after_login]).
+pub async fn take_totp_attempt(
+    db: &sqlx::SqlitePool,
+    admin_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
         "UPDATE admin_users SET \
             failed_login_attempts = failed_login_attempts + 1, \
             lock_count = CASE WHEN failed_login_attempts + 1 >= ?1 \
@@ -212,15 +219,15 @@ pub async fn record_totp_failure(db: &sqlx::SqlitePool, admin_id: i64) {
             locked_until = CASE WHEN failed_login_attempts + 1 >= ?1 \
                 THEN datetime('now', '+' || MIN(?2 * (1 << MIN(lock_count, 10)), ?3) || ' minutes') \
                 ELSE locked_until END \
-         WHERE id = ?4 AND (locked_until IS NULL OR locked_until <= datetime('now'))",
+         WHERE id = ?4 AND (locked_until IS NULL OR locked_until <= datetime('now')) \
+         RETURNING failed_login_attempts",
     )
     .bind(TOTP_FAILURES_TO_LOCK)
     .bind(FIRST_LOCK_MINUTES)
     .bind(MAX_LOCK_MINUTES)
     .bind(admin_id)
-    .execute(db)
+    .fetch_optional(db)
     .await
-    .ok();
 }
 
 /// After a complete login: counter, locks and lock count start over.
