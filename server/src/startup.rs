@@ -247,15 +247,22 @@ pub const INITIAL_PASSWORD_FILE: &str = "initial-admin-password";
 /// (0600) - or the one already there, if an earlier start wrote it and stopped before the account
 /// was created.
 pub fn initial_admin_password(data_dir: &Path) -> Result<(String, PathBuf), String> {
-    use argon2::password_hash::rand_core::{OsRng, RngCore};
-    use std::os::unix::fs::OpenOptionsExt;
-
     let path = data_dir.join(INITIAL_PASSWORD_FILE);
     if let Ok(existing) = std::fs::read_to_string(&path)
         && existing.trim().len() >= crate::security::MIN_PASSWORD_LEN
     {
         return Ok((existing.trim().to_string(), path));
     }
+    new_password_file(data_dir)
+}
+
+/// A fresh random password (24 letters and digits) in `data_dir/initial-admin-password` (0600),
+/// replacing any there: the first admin's, and `reset-2fa`'s (QA 22 M4).
+pub fn new_password_file(data_dir: &Path) -> Result<(String, PathBuf), String> {
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = data_dir.join(INITIAL_PASSWORD_FILE);
     const CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     let password: String = (0..24)
         .map(|_| {

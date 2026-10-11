@@ -310,32 +310,54 @@ pub async fn bump_epoch(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
 }
 
 /// `kid_phone_server reset-2fa <user>` (§3.2.3): clears the TOTP (the next sign-in sets it up
-/// again), the lock and its counter, and signs out every session. For a parent locked out of
-/// their authenticator. Returns a line for the terminal.
-pub async fn reset_2fa(db: &sqlx::SqlitePool, username: &str) -> Result<String, String> {
-    let reset = sqlx::query(
+/// again), the lock and its counter, signs out every session - and replaces the password with a
+/// new one in `data_dir/initial-admin-password` (0600, to be changed at the next sign-in). The CLI
+/// exists for someone who knows the password keeping the account locked; keeping the password
+/// would hand the account to whoever signs in first and sets up an authenticator (QA 22 M4).
+/// Returns a line for the terminal.
+pub async fn reset_2fa(
+    db: &sqlx::SqlitePool,
+    username: &str,
+    data_dir: &std::path::Path,
+) -> Result<String, String> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM admin_users WHERE username = ?)")
+            .bind(username)
+            .fetch_one(db)
+            .await
+            .map_err(|err| format!("couldn't read the account: {err}"))?;
+    if !exists {
+        return Err(format!("there is no admin named {username:?}"));
+    }
+    let (password, path) = crate::startup::new_password_file(data_dir)?;
+    let hash = crate::security::hash_password(&password);
+    sqlx::query(
         "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
          failed_login_attempts = 0, locked_until = NULL, lock_count = 0, \
+         password_hash = ?, must_change_password = 1, \
          session_epoch = session_epoch + 1 WHERE username = ?",
     )
+    .bind(&hash)
     .bind(username)
     .execute(db)
     .await
     .map_err(|err| format!("couldn't reset: {err}"))?;
-    if reset.rows_affected() == 0 {
-        return Err(format!("there is no admin named {username:?}"));
-    }
     crate::security::record_security_event(
         db,
         "totp_reset",
         Some(username),
         None,
-        Some("from the command line (reset-2fa); every session signed out"),
+        Some(
+            "from the command line (reset-2fa): new password, 2FA cleared, every session \
+             signed out",
+        ),
     )
     .await;
     Ok(format!(
-        "Two-factor login for {username} is reset and every session is signed out. Sign in with \
-         the password and set up a new authenticator."
+        "Two-factor login for {username} is reset, every session is signed out, and the password \
+         is replaced: the new one is in {} (readable by the server's user only). Sign in with it, \
+         then set a new password and a new authenticator - the file is deleted then.",
+        path.display()
     ))
 }
 

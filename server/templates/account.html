@@ -50,7 +50,7 @@
         {% else %}
         <p class="subtitle">Two-factor login isn't set up yet.</p>
         {% endif %}
-        <p class="subtitle">Locked out of the authenticator and signed out? On the server: <code>kid_phone_server reset-2fa {{ username }}</code> (DEPLOY.md, "Recovery").</p>
+        <p class="subtitle">Locked out of the authenticator and signed out? On the server: <code>kid_phone_server reset-2fa {{ username }}</code> - it also replaces the password with a new one in <code>data/initial-admin-password</code> (DEPLOY.md, "Signing in and recovery").</p>
     </div>
 
     <div class="card" id="sessions">

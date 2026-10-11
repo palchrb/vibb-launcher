@@ -277,8 +277,16 @@ async fn reset_2fa_from_the_command_line_clears_the_lock_and_the_totp() {
         }
     }
     assert!(counters(&app).await.2, "locked");
-    let message = crate::admin_auth::reset_2fa(&app.db, USER).await.unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let message = crate::admin_auth::reset_2fa(&app.db, USER, data.path())
+        .await
+        .unwrap();
     assert!(message.contains("reset"));
+    let new_password = std::fs::read_to_string(data.path().join("initial-admin-password"))
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(new_password.len(), 24);
     assert_eq!(counters(&app).await, (0, 0, false));
     let (enabled, secret): (bool, Option<String>) =
         sqlx::query_as("SELECT totp_enabled, totp_secret FROM admin_users WHERE username = ?")
@@ -287,19 +295,23 @@ async fn reset_2fa_from_the_command_line_clears_the_lock_and_the_totp() {
             .await
             .unwrap();
     assert!(!enabled && secret.is_none());
-    // Every session is signed out; the password alone now leads to the 2FA setup.
+    // Every session is signed out, and the old password no longer signs in (QA 22 M4): whoever
+    // knew it can't take the account by setting up an authenticator first.
     assert_eq!(
         app.get_page("/devices", &session).await.location(),
         Some("/login")
     );
-    let (res, cookie) = password_step(&app, PASSWORD).await;
+    let (res, _) = password_step(&app, PASSWORD).await;
+    assert!(res.text().contains("Incorrect username or password."));
+    // The new one leads to a forced password change, then the 2FA setup.
+    let (res, cookie) = password_step(&app, &new_password).await;
     assert_eq!(res.location(), Some("/"));
     assert_eq!(
         app.get_page("/devices", &cookie.unwrap()).await.location(),
-        Some("/auth/setup-2fa")
+        Some("/auth/change-password")
     );
     assert!(
-        crate::admin_auth::reset_2fa(&app.db, "nobody")
+        crate::admin_auth::reset_2fa(&app.db, "nobody", data.path())
             .await
             .is_err()
     );

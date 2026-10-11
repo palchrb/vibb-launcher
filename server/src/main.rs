@@ -407,7 +407,7 @@ async fn run_command(command: &str, args: &[String]) -> i32 {
                 return 1;
             }
             let db = connect_db(&database_url).await;
-            match admin_auth::reset_2fa(&db, username).await {
+            match admin_auth::reset_2fa(&db, username, std::path::Path::new("data")).await {
                 Ok(message) => {
                     println!("{message}");
                     0

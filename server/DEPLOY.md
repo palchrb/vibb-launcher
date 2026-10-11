@@ -187,7 +187,10 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
 - **Lost the authenticator and signed out?** On the Pi:
   `cd /opt/kid-phone-server && sudo -u kidphone ./kid_phone_server reset-2fa admin` (in Docker:
   `docker compose exec handy /app/kid_phone_server reset-2fa admin`). It removes the 2FA setup, the lock and its
-  count, and signs out every session; the next sign-in with the password sets up a new authenticator.
+  count, signs out every session, and **replaces the password**: the new one is in `data/initial-admin-password`
+  (on the Pi `sudo cat /opt/kid-phone-server/data/initial-admin-password`; in Docker copy it out as for the first
+  start). Sign in with it, set a new password, then a new authenticator. Replacing the password matters: the lock
+  you are recovering from means someone else knows the old one.
 - Updating to 0.23.0 signs everyone out once (the session cookie is now `__Host-handy`; reopen the installed PWA on an
   iPhone and sign in again), and enrollment codes that were open stop working: make a new one on the device page.
 
@@ -251,7 +254,8 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   `data/backups/prerestore-<time>/`; if the backup won't open, the previous database goes back.
 - The Updates page has no OS, Tailscale or reboot controls in the container, and the Backups page no external drive:
   copy `data/backups` off the host yourself.
-- **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin`.
+- **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin` (it also replaces the password,
+  see "Signing in and recovery").
 
 **Bridge network instead**: inside the container set `BIND_ADDR=0.0.0.0:3100` (and `DEVICE_BIND_ADDR=0.0.0.0:3101`),
 and publish them only on the host's loopback (`ports: ["127.0.0.1:3100:3100", "127.0.0.1:3101:3101"]` - Docker's

@@ -619,8 +619,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   session stores `session_epoch`, and a password change, a 2FA reset (other sessions) and `POST
   /account/sign-out-everywhere` (all) bump it (`load_active_admin` compares); cookie `__Host-handy` (Secure, Path=/,
   HttpOnly, Strict) or `handy` with `INSECURE_COOKIES` (`security::session_layer`); `SESSION_INACTIVITY_DAYS`
-  (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter
-  and bumps the epoch. `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
+  (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
+  bumps the epoch and replaces the password with a new one in `data/initial-admin-password` (QA 22 M4). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
   CSP phase 1 (`ADMIN_CSP`, inline JS still allowed until S7); HTML `private, no-cache`, `no_store_path` (locations
   JSON, backups, provision, the code page, provisioning settings, account, auth) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
