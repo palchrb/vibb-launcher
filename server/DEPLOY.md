@@ -197,7 +197,7 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
 ## Docker (server >= 0.23.0)
 
 The server also ships as a multi-arch image (`linux/amd64`, `linux/arm64`): `ghcr.io/palchrb/handy-server:X.Y.Z`
-(and `latest`). The Pi Zero 2 W stays with the install script above; the image is for a home server or VPS. It runs
+(and `latest`, the highest release). The Pi Zero 2 W stays with the install script above; the image is for a home server or VPS. It runs
 as uid 65532 with no shell, keeps everything in `/app/data`, and listens on `127.0.0.1:3100` by default.
 
 **Recommended: the host's network, with the host's Tailscale and Caddy.** The proxies' defaults then hold, and Docker

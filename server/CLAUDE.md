@@ -653,8 +653,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   Image: distroless static nonroot (uid 65532) pinned by digest, a busybox stage seeds `data/` and `data/keys/`
   (0700) owned by 65532, `BIND_ADDR=127.0.0.1:3100`, `HEALTHCHECK` = `healthcheck`. CI `server-image` (only when the
   Dockerfile, `.dockerignore`, the smoke script or the workflow change) and the release's `server-release-image`
-  (push by digest, smoke amd64 + arm64 under QEMU, then tag `X.Y.Z`/`latest`, provenance attestation, release
-  published last; `workflow_dispatch` = dry run) run `deploy/image-smoke.sh`.
+  (push by digest, smoke amd64 + arm64 under QEMU, then tag `X.Y.Z`, and `latest` only when X.Y.Z is the highest
+  `server-v*` tag, provenance attestation, release published last; `workflow_dispatch` = dry run, on a tag ref too:
+  `RELEASE` needs a push event) run `deploy/image-smoke.sh`.
 - Tests: `src/tests/docker.rs` (the pre-migration backup once and 3 kept, from a real older DB; the restore marker
   with a good zip, bad names, a zip without a DB, and a DB that won't open put back; the healthcheck; the Docker
   Updates page; the host routes 404 and the drive features hidden in docker), `startup::tests`.

@@ -74,9 +74,9 @@ keeps the music app's, the music app sends exactly those.
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
   then the aarch64 tarball and its `.sha256`, never "latest". The server's update check and `install.sh`/`update.sh` find it by tag.
   Since 0.23.0 (design 22) the same run builds the multi-arch image `ghcr.io/<owner>/handy-server`,
-  pushes it by digest, smoke-tests it (amd64, arm64 under QEMU), then tags `X.Y.Z` and `latest`;
-  the GitHub release is published last. The GHCR package must be made public once by the owner
-  (server/DEPLOY.md, "Docker"). `workflow_dispatch` on a branch is a dry run.
+  pushes it by digest, smoke-tests it (amd64, arm64 under QEMU), then tags `X.Y.Z`, and `latest` when it is
+  the highest `server-v*` tag; the GitHub release is published last. The GHCR package must be made public once by
+  the owner (server/DEPLOY.md, "Docker"). `workflow_dispatch` is always a dry run, on a tag ref too.
 
 ## Licensing
 

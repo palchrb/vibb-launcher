@@ -5,16 +5,17 @@ name: Server release
 #    tarball, as before) and x86_64 (the image).
 # 2. server-release-image (design 22 §6): a multi-arch image ghcr.io/<owner>/handy-server, pushed
 #    by digest only, smoke-tested on amd64 natively and on arm64 under QEMU
-#    (server/deploy/image-smoke.sh), only then tagged X.Y.Z and latest, with a build provenance
-#    attestation.
+#    (server/deploy/image-smoke.sh), only then tagged X.Y.Z (and latest, if X.Y.Z is the highest
+#    server-v* tag - a patch on an older line doesn't take it), with a build provenance attestation.
 # 3. server-release-publish, last: the GitHub release with the tarball. server/deploy/install.sh
 #    and update.sh (and the in-app update check) look up the newest server-v* release through the
 #    GitHub API - never releases/latest, which in this monorepo belongs to the launcher: a server
 #    release is published with makeLatest false. Publishing last means the update check can't
 #    announce a version whose image is missing or broken.
 #
-# workflow_dispatch on a branch is a dry run: the same build, the image built and smoke-tested on
-# both platforms locally, nothing pushed, tagged or published.
+# workflow_dispatch is always a dry run (on a branch or a tag ref): the same build, the image built and
+# smoke-tested on both platforms locally, nothing pushed, tagged or published. Only a tag push
+# releases.
 #
 # The GHCR package must be public (design 22, U3): after the first image push, the owner sets its
 # visibility once (GitHub > Packages > handy-server > Package settings > Change visibility).
@@ -39,6 +40,7 @@ jobs:
         working-directory: server
     outputs:
       version: ${{ steps.version.outputs.version }}
+      latest: ${{ steps.version.outputs.latest }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -81,6 +83,16 @@ jobs:
             fi
           fi
           echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+          # The image's latest tag goes only to the highest server release (fetch-depth 0 brings
+          # every tag, this one included).
+          highest="$(git tag -l 'server-v*' | sed -n -E 's/^server-v([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' \
+            | sort -V | tail -n 1)"
+          if [ "$highest" = "$cargo_version" ]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+            echo "$cargo_version is not the highest server release ($highest): the image keeps latest where it is"
+          fi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
@@ -151,7 +163,8 @@ jobs:
       attestations: write
     env:
       VERSION: ${{ needs.server-release-build.outputs.version }}
-      RELEASE: ${{ startsWith(github.ref, 'refs/tags/server-v') }}
+      LATEST: ${{ needs.server-release-build.outputs.latest }}
+      RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     defaults:
       run:
         working-directory: server
@@ -227,12 +240,18 @@ jobs:
             deploy/image-smoke.sh "handy-server:dry-$arch" "linux/$arch"
           done
 
-      - name: Tag X.Y.Z and latest
+      - name: Tag X.Y.Z (and latest, for the highest release)
         if: ${{ env.RELEASE == 'true' }}
         env:
           IMAGE: ${{ steps.name.outputs.image }}
           DIGEST: ${{ steps.push.outputs.digest }}
-        run: docker buildx imagetools create -t "$IMAGE:$VERSION" -t "$IMAGE:latest" "$IMAGE@$DIGEST"
+        run: |
+          set -euo pipefail
+          tags=(-t "$IMAGE:$VERSION")
+          if [ "$LATEST" = true ]; then
+            tags+=(-t "$IMAGE:latest")
+          fi
+          docker buildx imagetools create "${tags[@]}" "$IMAGE@$DIGEST"
 
       - name: Attest build provenance
         if: ${{ env.RELEASE == 'true' }}
@@ -244,7 +263,7 @@ jobs:
 
   server-release-publish:
     needs: [ server-release-build, server-release-image ]
-    if: ${{ startsWith(github.ref, 'refs/tags/server-v') }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
