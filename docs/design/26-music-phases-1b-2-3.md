@@ -92,3 +92,57 @@ The main session works on `main` at the same time. To keep merges clean:
 - **Shared with music:** the launcher's music bridge, Home card and the lock's media view. Change them only where a
   phase needs it, append to the AIDL, and rebase on `main` often.
 - Server migrations: both sessions add them, so renumber after the final rebase.
+
+## Review of the brief (the 1b session, 2026-10-11)
+
+Read before the 1b spec: the brief, designs 20/21/21b, `music/` on `main` (`cdf003d`), and vibb `22bdc38` (`pi/sonosd.py`,
+`pi/daemon.py`, `pi/vibb/{renderer,storytel}.py`, `tests/sonos_*.py`, `tests/storytel_*.py`). The order 1b -> 2 -> 3 and
+"ports, not designs" hold. Five corrections, two of them decisions for the user.
+
+1. **Sonos is two ports, not one.** `sonosd.py` (1115 lines) is only the sidecar: the SOAP calls, the poller and the
+   uid -> ip cache. The controller lives in `daemon.py`: about twenty `_sonos_*` methods (lines 1085-2100, `_sonos_poller`
+   at 4254, `_sonos_on_term` at 5340, the fields at 350-420) with the queue mapping, bookmark throttling, stall and
+   migration handling, the step/seek workers and `_sonos_body` (late URL minting). `tests/sonos_renderer.py` and
+   `storytel_sonos.py` import `daemon`, not `sonosd`. The architect maps both files. In the music app this means a
+   **renderer axis** next to the output axis, as the Pi has it (`renderer.py`: `output` = where *we* write audio,
+   `renderer` = who makes sound): a `Renderer` with Local (ExoPlayer) and Sonos (SOAP poller), the Sonos one a Media3
+   `SimpleBasePlayer` mirroring the speaker, so the launcher's Home card and lock media view (they read the platform
+   session) keep working unchanged. Today `Output(id: Int, kind, name)` is keyed by `AudioDeviceInfo` id and
+   `PlaybackService` assumes ExoPlayer plays.
+2. **The UPnP client is written here, no library.** The SoCo surface `sonosd.py` uses is small: `SoCo(ip)`, `discover`,
+   AVTransport (SetAVTransportURI, Play/Pause/Stop/Seek, GetPositionInfo, GetTransportInfo), RenderingControl
+   (volume, mute), ZoneGroupTopology (group, coordinator), the queue (clear, play from index) and ShareLink (phase 3):
+   eight to ten SOAP actions, SSDP M-SEARCH and the device description. OkHttp + `XmlPullParser`, 400-600 lines.
+   Cling is LGPL and dead; jUPnP is CDDL (not GPL-compatible). That answers the licence question.
+3. **SSDP and the VPN are fine; three other things need spelling out.** `KidVpnService` routes only `192.0.2.2/32`
+   through the tun, so multicast to 239.255.255.250 and LAN unicast bypass it. Needed instead: `WifiManager.MulticastLock`
+   + `CHANGE_WIFI_MULTICAST_STATE` (Android drops multicast replies without it). Then:
+   - the music app's address guard (21b §2.7, `publicOnly`) refuses private addresses: SOAP control to 192.168.x.x
+     goes through a LAN-only client (like `MediaCache.lanClient`), and the guard never applies to control traffic;
+   - **bedtime on Sonos**: the launcher pauses the session before suspending the app; the Sonos renderer must turn that
+     pause into a synchronous `Stop` on the speaker, or the speaker plays on after the app is suspended (the Pi never
+     had this problem). A crash while Sonos plays leaves the speaker playing: accepted, documented;
+   - **polling from a sleeping phone**: vibb's cadence (5/15/60 s, disarm after 600 s) is for a Pi on mains. On the
+     phone the poller runs in the `mediaPlayback` FGS while the phone itself plays nothing, and Doze defers network.
+     GENA eventing is out (the phone is never a server). So: a slower cadence with the screen off (e.g. 60 s), a
+     bookmark on every poll, and a Doze device check on the Jelly Star.
+4. **Storytel: who fetches the shelf? (user decision, before phase 2.)** Design 20 §2.5 says the server reads the shelf
+   and mints URLs; the 2026-10-09 decision says the phone logs in and fetches by itself and the server holds only the
+   library definition. The parent still picks books and series in the PWA, which needs the shelf server-side.
+   - **A (recommended):** the server logs in with its own stable `deviceId`, for `login.action` + `bookshelf` only,
+     never bookmarks or audio (it already holds the plaintext via `MUSIC_SECRET_KEY`); the phone mints the CDN URL,
+     downloads and keeps positions. Cost: two "devices" on the account.
+   - **B:** the phone reports the normalised shelf over the bridge and the PWA shows it. A phone must be logged in and
+     synced before anything can be picked; a new phone can't bootstrap.
+   Also for phase 2: `_encrypt_password` shells out to `openssl`; on Android it is `javax.crypto` (AES-128-CBC, PKCS#7,
+   UPPERCASE hex) with `tests/storytel_api.py`'s vector ported as is, and `storytel_subprocess.py` is a deviation. The 302
+   from `assets/v2/consumables/<id>/abook` is captured with `followRedirects=false`, as vibb does, never left to OkHttp's
+   header stripping.
+5. **Sequencing.** Design 21 put 1b after phase 1's device checks; the brief says start 1b now. Both hold: the checks are
+   the user's on the Jelly Star, 1b is built in the sandbox meanwhile. But tag `music-v0.1.0` first so the checks test a
+   fixed build, and 1b becomes 0.2.0. The risk is the checks forcing `PlaybackService` changes while 1b rewrites it, so
+   1b starts with the Android-free core (see the steps in the 1b spec).
+
+Spotify (phase 3), two additions: the App Remote AAR's terms must be checked before it enters a GPL repo (design 20
+flagged it; not done), and the spike APK is a throwaway module outside `music/`. The "engine" app state is launcher
+work in `AppEnforcer`/`AppFilter`, which the main session also touches: the biggest coordination risk of phase 3.
