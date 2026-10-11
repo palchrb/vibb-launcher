@@ -788,3 +788,75 @@ Tests: 109 (+11: H1, H2, M1 x2 and M2 in `SonosSessionTest`; L1 and L2 x2 in `So
 `SonosTransportTest`; L4 in `SpeakerCacheTest`; L6 in `PlayBodyTest`; L1's Location cases and L3 joined existing tests).
 The JVM harness (warnings as errors) ran all 109 green plus the interop test against `scripts/fake-sonos.py`; the
 Android wrappers and the debug receiver type-check against the stubs; `--selftest` OK. The Android build runs in CI.
+
+## Step 2 implementation status (2026-10-11)
+
+Built on branch `music-1b-sonos` in two commits (the output keys, then the renderer axis), each built and tested on
+its own. **This time with the real Android build** in the sandbox (SDK 36, build-tools 35/36, Google Maven
+reachable): `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` green, **251 JVM
+tests, 0 failures** (the 135 + 109 of before, +2 in `GuardsTest`, +5 `OutputKeyTest`), `lintDebug` 0 errors (its
+one warning on the new code, `SwitchIntDef` on the playback-state switch, is the old one, moved). Not run on an
+emulator or a phone (no KVM here): §6f's smoke test is still due. No behaviour change intended; `FitTest`,
+`SourceScanTest`, `ReportTest`, `BridgeTest` and `ContractFilesTest` are untouched, and so are the AIDL and
+`bridge_contract.json` (the output key is app-internal).
+- **What moved where** (`M/playback/`): `Renderer.kt` (the interface, `RendererKind`, `RendererEvent`, `PauseCause`);
+  `LocalRenderer.kt` builds the ExoPlayer (media source factory, attributes, noisy, wake mode) and holds every read and
+  write the service made on it: `currentPosition/duration/currentMediaItemIndex/mediaItemCount`, `setMediaItems` +
+  `prepare` (`load`), the shuffle's remove/add (`reorder`), `seekTo` (both forms), `play/pause/prepare`,
+  `clearMediaItems`, `volume`, `setAudioAttributes/setWakeMode/setPreferredAudioDevice`, `release`, and the
+  `Player.Listener`, whose callbacks come back as `RendererEvent`s. `savePosition()` is `LocalRenderer.saveNow(force)`
+  (its body unchanged; `force` = the old `blocking`, from `onTaskRemoved` and `onDestroy`), called from every former
+  caller (`saveTick`, `start`, `goTo`, `playItem`, `toggleShuffle`, the pause, the transition, the transient focus
+  loss, the error, the sleep timer's end, `onTaskRemoved`, `onDestroy`). `positionMs()` feeds `PlayerHub.position`,
+  the launcher's `setNowPlaying`, previous's 3 s rule and the resume overlap - never a stored row. The service's
+  `listener` is `onRendererEvent` (its bodies split into `onItemChanged`, `onIsPlayingChanged`, `onError`, unchanged).
+  `Active` is a top-level `internal` class (the renderer reads the queue to save it). `audioAttributes(speech)` moved
+  next to the player. `PlayerModel.kt` (Android-free): `Output`, `OutputKind` (+`SONOS`) and `RendererState`.
+- **The session**: `MediaSession.Builder(this, KidPlayer(renderer.player))`; `switchRenderer(next)` sets the renderer
+  and calls `session?.setPlayer(KidPlayer(next.player))`, uncalled until step 3 (kotlinc has no unused-private warning;
+  the warnings-as-errors build confirms). `KidPlayer` is unchanged.
+- **`rendererReady`**: a `CompletableDeferred<Unit>` completed in `onCreate` after the session; `onCustomCommand`
+  keeps the `playAllowed` gate and the unknown-action refusal synchronous, then launches one coroutine that awaits it
+  and dispatches (on `Main.immediate` with the deferred complete that runs in place, so SHUFFLE/SLEEP/OUTPUT stay
+  synchronous as before); `onPlaybackResumption`'s coroutine awaits it before `restore()`.
+- **Outputs**: `Output(key: String, kind, name)` with `"phone"` (`PHONE_KEY`), `"dev:<id>"` (`deviceKey`/`deviceId`),
+  `SONOS_PREFIX = "sonos:"` reserved; `Commands.ARG_OUTPUT` is the key (`getString`, default the phone);
+  `chosenOutput: String?`. `outputIcon`, `outputName` and the sheet's glyph and subtitle are exhaustive `when`s;
+  SONOS shows the speaker glyph and "Sonos" (a new string, `output_sonos`, en and nb). OUTPUT stays ungated: §3.3's
+  gate for a Sonos key comes with the key, in step 3.
+- **`PlayerHub.State`** gains `rendererState: RendererState? = null`, `rooms: List<sonos.Room> = emptyList()`,
+  `roomsStale = false`, `scanning = false`, all inert.
+- **`GuardsTest` pins changed**: `MediaSession.Builder(this, KidPlayer(exo))` -> `...KidPlayer(renderer.player))`;
+  the 15 s tick's `savePosition()` -> `renderer.saveNow()`, its slice now ending at `private fun onRendererEvent`
+  (was `private val listener`). Unchanged and still passing: `KidPlayer`'s two gates, the command gate (its slice
+  still ends at `when (customCommand.customAction)`), resumption's gate, `PLAYS`, the Home card's resume. Added: every
+  `setPlayer(` wraps `KidPlayer` (exactly one, in `switchRenderer`); both the command coroutine and resumption's await
+  `rendererReady`, completed exactly once; the service names no `exo.`/`ExoPlayer`/`savePosition` and stores no
+  `positionMs()`, and `LocalRenderer.saveNow` reads `exo.currentPosition`. Three mutations (resumption without the
+  await, a bare `setPlayer(next.player)`, the tick without `saveNow`) each turned the suite red.
+
+Choices made while building (each against the §3.1 text, with its reason):
+1. **`onEvent: ((RendererEvent) -> Unit)?`, not `events: Flow<RendererEvent>`.** ExoPlayer calls its listeners
+   synchronously inside the call that caused them, and the service depends on that: `sleepPausing` is true only
+   during the sleep timer's own `pause()`, `start()` sets `active` before `setMediaItems` fires the transition, an
+   error handler's seek/prepare/play runs before `onEvents`' publish. A Flow collected on `Main.immediate` queues an
+   emission behind a coroutine already running on main (every custom command runs in one), so the order would change.
+   A synchronous callback keeps it; step 3's `SonosRenderer` emits on main the same way.
+2. **`load(items, startIndex, startMs, playNow)` without a `PlayPlan`** (no such type exists; step 3 adds what the
+   speaker needs). `start()` passes `playNow = false` and then plays, so the wake mode is still set between `prepare`
+   and `play` as before.
+3. **`reorder(keep: Int, after: List<MediaItem>)`, not `reorder(order: List<Int>)`**: shuffle on/off rebuilds the
+   queue from the entry's whole play order, which can hold items the player's list doesn't (a queue restored after a
+   restart keeps only its stored keys, `restoredQueue`), so an index permutation of the current list can't express it;
+   and the current item must play on untouched, which is what the remove-around/add-after edit does.
+4. **Added to the interface**: `prepare()` (the error path and a seek from IDLE), `seekTo(ms)` (in-item seeks, as
+   `exo.seekTo(ms)` before), `setVolume(v)` (the sleep fade's steps), `setAudioAttributes/setWakeMode/
+   setPreferredAudioDevice` (§3.2: no-ops on Sonos) and `release()`.
+5. **No `fadeOutAndPause()` yet**: the local 10 s fade is the service's `sleepTick` (250 ms steps, cancelled by a
+   manual pause or a new timer); moving it into the renderer would rewrite the timer in a no-behaviour-change step.
+   Step 3a adds `fadeOutAndPause()` with §5.2's ramp and decides whether the local fade moves behind it.
+6. **`rooms` reuses `sonos.Room`** (label, coordinator uid, member names: step 1's picker row from `_sonos_choices`,
+   what `RoomDirectory.state` already publishes), not a new `Room(uid, name)` (a second type for the same row, and a
+   clash of names) nor `sonos.Zone` (it carries ip and port, and the UI never shows an ip).
+7. `Output`, `OutputKind` and `RendererState` live in `PlayerModel.kt`, not `PlayerHub.kt`: Android-free, so
+   `OutputKeyTest` needs no Bundle. `RendererState`'s doc says it is not `sonos.RendererChoice`.
