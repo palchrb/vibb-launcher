@@ -649,9 +649,11 @@ BACKUP_DIR="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)"
 echo "Backing up the database and current binary to $BACKUP_DIR ..."
 mkdir -p -m 700 "$BACKUP_ROOT"
 mkdir -p "$BACKUP_DIR"
+# Plain files only, never through a link the service user put in data/ (QA of the security wave,
+# Low 2): the copy is root-only, and a rollback copies it back.
 for f in kidphone.db kidphone.db-wal kidphone.db-shm; do
-    if [ -f "$INSTALL_DIR/data/$f" ]; then
-        cp -p "$INSTALL_DIR/data/$f" "$BACKUP_DIR/$f"
+    if [ -f "$INSTALL_DIR/data/$f" ] && [ ! -L "$INSTALL_DIR/data/$f" ]; then
+        cp -P -p "$INSTALL_DIR/data/$f" "$BACKUP_DIR/$f"
     fi
 done
 cp -p "$INSTALL_DIR/kid_phone_server" "$BACKUP_DIR/kid_phone_server"

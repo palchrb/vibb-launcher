@@ -271,19 +271,19 @@ else
     PRINT_CREDENTIALS=0
 fi
 
-# Writes $2 into data/$1 by rename: data/ belongs to the service user, so a symlink there is
-# replaced, never written through (security review M4).
+# Writes $2 into data/$1 as the service user, by a new file and a rename: data/ is theirs, so root
+# never creates, writes or chmods anything in it that they could swap for a symlink (security review
+# M4; QA of the security wave, Low 2: root's temp file in data/ could be swapped before the write).
 write_data_file() {
-    local tmp
-    tmp="$(mktemp "$INSTALL_DIR/data/.install.XXXXXX")"
-    printf '%s' "$2" >"$tmp"
-    chmod 644 "$tmp"
-    mv -fT "$tmp" "$INSTALL_DIR/data/$1"
+    # shellcheck disable=SC2016 # expanded by the inner sh, from its own arguments
+    runuser -u "$SERVICE_USER" -- sh -c 'printf "%s" "$2" >"$1.new" && mv -f "$1.new" "$1"' \
+        sh "$INSTALL_DIR/data/$1" "$2"
 }
 if [ -L "$INSTALL_DIR/data" ]; then
     echo "$INSTALL_DIR/data is a symlink - refusing to continue." >&2
     exit 1
 fi
+chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/data"
 if [ -n "$INSTALLED_VERSION" ]; then
     write_data_file watcher_version "$INSTALLED_VERSION"
 fi

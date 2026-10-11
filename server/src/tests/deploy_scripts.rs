@@ -454,3 +454,16 @@ fn the_watcher_reads_only_a_regular_flag() {
     // No flag at all (the path unit raced a removal): nothing to do.
     assert!(run().success());
 }
+
+/// QA of the security wave, Low 2: root writes nothing into data/ itself - install.sh's data
+/// files are written as the service user - and update.sh copies only plain database files out.
+#[test]
+fn root_never_creates_files_in_data() {
+    let write = block(INSTALL, "write_data_file() {", "}");
+    assert!(write.contains("runuser -u \"$SERVICE_USER\" --"), "{write}");
+    assert!(!write.contains("mktemp"), "{write}");
+    assert!(!INSTALL.contains("mktemp \"$INSTALL_DIR/data"));
+    assert!(UPDATE.contains(
+        "if [ -f \"$INSTALL_DIR/data/$f\" ] && [ ! -L \"$INSTALL_DIR/data/$f\" ]; then\n        cp -P -p"
+    ));
+}
