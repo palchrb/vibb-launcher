@@ -175,6 +175,7 @@ object WindowRelock {
      * has no credential - that activates it at once (QA #9). */
     private fun ensureResetToken(app: Context) {
         val dpm = dpm(app) ?: return
+        if (!dpm.isDeviceOwnerApp(app.packageName)) return
         val admin = admin(app)
         val store = store(app)
         val active = try {

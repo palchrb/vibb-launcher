@@ -47,6 +47,9 @@ data class FingerprintChange(val from: Set<String>, val to: String)
 /** [PinVaultCore.accept]'s answer: the policy without the hash, the only copy cached or passed on. */
 data class VaultAccept(val policy: PolicyResponse, val change: FingerprintChange?)
 
+/** [policy] without the parent PIN's hash: `""` for one, `null` stays `null` (no PIN). */
+fun redactedPolicy(policy: PolicyResponse): PolicyResponse = policy.copy(overridePinHash = policy.overridePinHash?.let { "" })
+
 /** Design 24's fingerprint recipe (SHA-256 of salt:hash) - computed from a hash in memory only,
  * never stored: a stored one would be an offline oracle again. */
 fun legacyParentFingerprint(hashHex: String, saltHex: String): String = parentPinFingerprint(hashHex, saltHex)
@@ -131,7 +134,7 @@ class PinVaultCore(
     fun accept(policy: PolicyResponse): VaultAccept {
         val hash = policy.overridePinHash
         if (hash == "") return VaultAccept(policy, null)
-        val redacted = policy.copy(overridePinHash = hash?.let { "" })
+        val redacted = redactedPolicy(policy)
         val saltHex = policy.overridePinSalt
         val previousTag = tag()
         val previousSalt = salt()

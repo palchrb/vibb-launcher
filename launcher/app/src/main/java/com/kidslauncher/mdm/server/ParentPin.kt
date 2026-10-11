@@ -83,9 +83,16 @@ object ParentPin {
     @Synchronized
     fun acceptPolicy(context: Context, fresh: com.kidslauncher.mdm.server.dto.PolicyResponse): com.kidslauncher.mdm.server.dto.PolicyResponse {
         val app = context.applicationContext
-        val accepted = vault(app).accept(fresh)
-        accepted.change?.let { ParentPinStore.of(app).rewriteFingerprint(it.from, it.to) }
-        return accepted.policy
+        return try {
+            val accepted = vault(app).accept(fresh)
+            accepted.change?.let { ParentPinStore.of(app).rewriteFingerprint(it.from, it.to) }
+            accepted.policy
+        } catch (e: Exception) {
+            // Never fails the sync; the vault keeps what it had until the next one. The hash still
+            // never reaches the cache.
+            android.util.Log.e("ParentPin", "The vault couldn't take the policy's PIN", e)
+            redactedPolicy(fresh)
+        }
     }
 
     /** A snapshot of the queued events, for the upload. */
