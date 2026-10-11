@@ -24,7 +24,8 @@ struct LocateTemplate {
     /// Same id as `selected.id`, but as a plain `i64` (0 = none selected) so
     /// the dropdown's `<option>` loop can compare without nested `if let`.
     selected_id: i64,
-    commands: Vec<DeviceCommand>,
+    /// The recent commands with their status lines ([DeviceCommand::status_line]).
+    commands: Vec<(DeviceCommand, String)>,
     wipe_error: Option<String>,
     /// The selected device's `location_mode` / `location_interval_minutes`.
     location_mode: String,
@@ -131,6 +132,14 @@ async fn render_locate_page(
     } else {
         Vec::new()
     };
+    let now = chrono::Utc::now().naive_utc();
+    let commands = commands
+        .into_iter()
+        .map(|command| {
+            let status = command.status_line(now);
+            (command, status)
+        })
+        .collect();
 
     let selected_id = selected.as_ref().map(|d| d.id).unwrap_or(0);
 

@@ -491,6 +491,41 @@ pub struct DeviceCommand {
     pub result: Option<String>,
 }
 
+/// How long a delivered command may go unconfirmed before the page says it may be lost.
+const UNCONFIRMED_AFTER_MINUTES: i64 = 10;
+
+impl DeviceCommand {
+    /// The status shown on the device's Find My Device page. Delivery is "the phone fetched it",
+    /// not "it ran" (security review L12): a fetched command the phone never confirms may have
+    /// been lost on the way, and the page says so, so the parent sends it again. A wipe never
+    /// confirms. `now` is UTC, like the stored times.
+    pub fn status_line(&self, now: chrono::NaiveDateTime) -> String {
+        if let Some(result) = &self.result {
+            return match &self.acknowledged_at {
+                Some(at) => format!("Done {at} ({result})"),
+                None => format!("Done ({result})"),
+            };
+        }
+        let Some(delivered) = &self.delivered_at else {
+            return "Waiting for the phone to check in".to_string();
+        };
+        if self.command == "wipe" {
+            return format!(
+                "Delivered {delivered}, not confirmed - a wiped phone can't confirm; it stops checking in"
+            );
+        }
+        let stale = chrono::NaiveDateTime::parse_from_str(delivered, "%Y-%m-%d %H:%M:%S")
+            .is_ok_and(|at| (now - at).num_minutes() >= UNCONFIRMED_AFTER_MINUTES);
+        if stale {
+            format!(
+                "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
+            )
+        } else {
+            format!("Delivered {delivered}, not confirmed yet")
+        }
+    }
+}
+
 /// One entry in a device's self-reported installed-app list, used to build
 /// the admin UI's allowlist checkboxes from real data instead of asking a
 /// parent to type raw Android package names.

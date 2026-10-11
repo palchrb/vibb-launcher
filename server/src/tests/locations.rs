@@ -160,3 +160,68 @@ async fn the_cleanup_migration_removes_bad_rows() {
         ["2026-10-10T12:00:00.123Z", "2026-10-10T12:00:00+02:00"]
     );
 }
+
+/// Security review L12 (server part): a command the phone fetched is "delivered", not done; one
+/// it never confirms is shown as possibly lost, so the parent sends it again. A wipe can't confirm.
+#[tokio::test]
+async fn a_delivered_command_is_not_shown_as_done() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    for (command, delivered, acknowledged, result) in [
+        ("ring", None, None, None),
+        ("lock", Some("datetime('now', '-1 minutes')"), None, None),
+        (
+            "stop_ring",
+            Some("datetime('now', '-30 minutes')"),
+            None,
+            None,
+        ),
+        ("wipe", Some("datetime('now', '-30 minutes')"), None, None),
+        (
+            "locate",
+            Some("datetime('now', '-30 minutes')"),
+            Some("'2026-10-11 10:00:00'"),
+            Some("'ok'"),
+        ),
+    ] {
+        sqlx::query(&format!(
+            "INSERT INTO device_commands (device_id, command, delivered_at, acknowledged_at, result) \
+             VALUES (?, ?, {}, {}, {})",
+            delivered.unwrap_or("NULL"),
+            acknowledged.unwrap_or("NULL"),
+            result.unwrap_or("NULL"),
+        ))
+        .bind(id)
+        .bind(command)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let page = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    let row = |command: &str| -> String {
+        page.split(&format!("<td>{command}</td>"))
+            .nth(1)
+            .and_then(|rest| rest.split("</tr>").next())
+            .unwrap_or_else(|| panic!("no row for {command}"))
+            .to_string()
+    };
+    assert!(row("ring").contains("Waiting for the phone to check in"));
+    assert!(row("lock").contains("not confirmed yet"), "{}", row("lock"));
+    assert!(
+        row("stop_ring").contains("never confirmed"),
+        "{}",
+        row("stop_ring")
+    );
+    assert!(row("stop_ring").contains("send it again"));
+    assert!(row("wipe").contains("can"), "{}", row("wipe"));
+    assert!(!row("wipe").contains("send it again"));
+    assert!(
+        row("locate").contains("Done 2026-10-11 10:00:00 (ok)"),
+        "{}",
+        row("locate")
+    );
+}

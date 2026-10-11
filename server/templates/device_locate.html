@@ -112,19 +112,11 @@
         <table>
             <thead><tr><th>Command</th><th>Requested</th><th>Status</th></tr></thead>
             <tbody>
-            {% for c in commands %}
+            {% for (c, status) in commands %}
             <tr>
                 <td>{{ c.command }}</td>
                 <td>{{ c.requested_at }}</td>
-                <td>
-                    {% if let Some(result) = c.result %}
-                    Done ({{ result }})
-                    {% else if let Some(delivered) = c.delivered_at %}
-                    Delivered {{ delivered }}, waiting for confirmation
-                    {% else %}
-                    Waiting for device to check in
-                    {% endif %}
-                </td>
+                <td>{{ status }}</td>
             </tr>
             {% endfor %}
             </tbody>
