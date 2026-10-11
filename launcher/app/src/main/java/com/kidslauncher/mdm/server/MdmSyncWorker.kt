@@ -239,6 +239,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 },
                 batteryOptimizationExempt = BatteryExemption.exempt(context),
                 relock = WindowRelock.lastReport(context),
+                unseenBoots = BootWitness.report(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,

@@ -158,6 +158,21 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `unseen_boots is reported under the server's keys (24b S3)`() {
+        val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, unseenBoots = com.kidslauncher.mdm.server.dto.UnseenBootsReport(1, 1_760_100_000_000))
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(ServerJson.parseToJsonElement("""{"count": 1, "last_at_ms": 1760100000000}"""), json["unseen_boots"])
+        // A first boot of the witness's build: 0 and no time, both keys sent.
+        val first = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, unseenBoots = com.kidslauncher.mdm.server.dto.UnseenBootsReport(0, null))
+        val firstJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), first)).jsonObject
+        assertEquals(ServerJson.parseToJsonElement("""{"count": 0, "last_at_ms": null}"""), firstJson["unseen_boots"])
+        val none = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("unseen_boots" !in none)
+    }
+
+    @Test
     fun `the two relock commands decode, and their answers`() {
         for (command in listOf("end_windows", "allow_blocked")) {
             val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "$command"}}""")

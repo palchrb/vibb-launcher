@@ -53,6 +53,9 @@
         <div class="error">All restrictions are paused on the phone (someone entered the PIN in its Settings). The pause ends by itself.</div>
         {% endif %}
         {% endif %}
+        {% if let Some(text) = unseen_boots %}
+        <div class="error">{{ text }}</div>
+        {% endif %}
         {% for line in relock.notes.lines %}
         <div class="error">{{ line }}</div>
         {% endfor %}

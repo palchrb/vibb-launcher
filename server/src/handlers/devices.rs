@@ -449,6 +449,8 @@ struct DeviceDetailTemplate {
     parent_pin: crate::handlers::parent_pin::ParentPinCard,
     /// Status card (design 24b): "Lock the phone again now", the last relock's findings.
     relock: crate::handlers::window_relock::RelockCard,
+    /// Status card (design 24b §3): boots the launcher didn't see in the last 30 days.
+    unseen_boots: Option<String>,
     /// "Screen timeout" card (migrations/0032): the choice, every option, and what the phone
     /// last reported it applied.
     screen_timeout_seconds: i64,
@@ -1437,6 +1439,14 @@ async fn render_device(
             lock_notice,
             parent_pin,
             relock,
+            unseen_boots: latest_status.as_ref().and_then(|s| {
+                crate::boot_witness::warning(
+                    s.unseen_boots_count,
+                    s.unseen_boots_last_at_ms,
+                    chrono::Utc::now().timestamp_millis(),
+                    policy.hardening.disallow_safe_boot,
+                )
+            }),
             screen_timeout_seconds: crate::models::screen_timeout_seconds(
                 policy.screen_timeout_seconds,
             ),

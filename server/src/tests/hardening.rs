@@ -396,3 +396,95 @@ async fn backup_service_state_is_per_device() {
     let html = app.get_page(&format!("/devices/{b}"), &cookie).await.text();
     assert!(!html.contains("Backup to Google"));
 }
+
+/// Design 24b §3 (H4): boots the launcher didn't see are stored, logged when the count rises and
+/// warned about on the Status card for 30 days - with advice that follows the safe-mode switch.
+#[tokio::test]
+async fn unseen_boots_are_stored_warned_and_logged() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let report = |unseen: Value| {
+        let token = token.clone();
+        let app = &app;
+        async move {
+            let res = app
+                .request(
+                    Method::POST,
+                    "/api/devices/status",
+                    Some(&token),
+                    Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true, "unseen_boots": unseen })),
+                )
+                .await;
+            assert_eq!(res.status, StatusCode::NO_CONTENT);
+        }
+    };
+    let logged = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT detail FROM security_events WHERE event_type = 'boot_unseen' ORDER BY id",
+        )
+        .fetch_all(&app.db)
+        .await
+        .unwrap()
+    };
+    let stored = || async {
+        sqlx::query_as::<_, (Option<i64>, Option<i64>)>(
+            "SELECT unseen_boots_count, unseen_boots_last_at_ms FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let page = || async {
+        app.get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text()
+    };
+    let warning = "without the launcher running";
+
+    // The first report of the witness's build: 0, nothing shown or logged.
+    report(json!({ "count": 0, "last_at_ms": null })).await;
+    assert_eq!(stored().await, (Some(0), None));
+    assert!(logged().await.is_empty());
+    assert!(!page().await.contains(warning));
+
+    // A safe-mode boot: count 1, logged once, warned with the switch's advice.
+    let at = chrono::Utc::now().timestamp_millis() - 60_000;
+    report(json!({ "count": 1, "last_at_ms": at })).await;
+    assert_eq!(stored().await, (Some(1), Some(at)));
+    assert_eq!(
+        logged().await,
+        vec![format!(
+            "device {id}: 1 start(s) without the launcher running noticed (1 in all)"
+        )]
+    );
+    let html = page().await;
+    assert!(
+        html.contains("The phone started 1 time without the launcher running"),
+        "{html}"
+    );
+    assert!(
+        html.contains("Turn on &#34;Block safe mode&#34; under Phone hardening."),
+        "{html}"
+    );
+    // The same count again: not logged again.
+    report(json!({ "count": 1, "last_at_ms": at })).await;
+    assert_eq!(logged().await.len(), 1);
+
+    // With safe mode blocked the advice changes.
+    let res = save(&app, &cookie, id, &["disallow_safe_boot"]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert!(
+        page()
+            .await
+            .contains("Safe mode is blocked, so it was probably a start cut short")
+    );
+
+    // Older than 30 days: no warning. Junk: dropped, the report kept.
+    let old = chrono::Utc::now().timestamp_millis() - 31 * 24 * 3_600_000;
+    report(json!({ "count": 1, "last_at_ms": old })).await;
+    assert!(!page().await.contains(warning));
+    report(json!("<script>")).await;
+    assert_eq!(stored().await, (None, None));
+}

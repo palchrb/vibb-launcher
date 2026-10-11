@@ -4,6 +4,7 @@ mod app_display;
 mod app_downloads;
 mod app_icons;
 mod audit;
+mod boot_witness;
 mod config;
 mod crashes;
 mod device_routes;

@@ -150,6 +150,9 @@ class Application : android.app.Application() {
         } catch (e: Exception) {
             android.util.Log.e("Application", "BootClock.init failed", e)
         }
+        // Design 24b §3: a boot the launcher didn't see (safe mode, a start cut short) - early, so a
+        // crash later in onCreate doesn't make the next start look like one. Never throws.
+        com.kidslauncher.mdm.server.BootWitness.record(this)
         // A call notification a dead process left behind (emulator run 2026-10-06): posted to the
         // main thread so a bind that is already queued (onCallAdded) goes first.
         try {

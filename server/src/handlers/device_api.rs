@@ -944,6 +944,21 @@ pub async fn status(
         .and_then(crate::window_relock::sanitize_relock);
     let previous_relock_at =
         crate::handlers::window_relock::previous_relock_at(&state.db, device.id).await;
+    // Design 24b §3: boots the launcher didn't see, and the previous count for the security log.
+    let unseen_boots = report
+        .unseen_boots
+        .as_ref()
+        .and_then(crate::boot_witness::sanitize);
+    let previous_unseen: Option<i64> = sqlx::query_scalar(
+        "SELECT unseen_boots_count FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device.id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
 
     // The previous report, for the security log below (install mode started, new apps).
     let previous: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
@@ -967,8 +982,8 @@ pub async fn status(
           screen_timeout_seconds, ringer_mode, interruption_filter, update_fence_json, \
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
-          battery_optimization_exempt, relock_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1003,9 +1018,19 @@ pub async fn status(
     .bind(&music_state_json)
     .bind(report.battery_optimization_exempt)
     .bind(&relock_json)
+    .bind(unseen_boots.map(|(count, _)| count))
+    .bind(unseen_boots.and_then(|(_, at)| at))
     .execute(&state.db)
     .await
     .ok();
+    if let Some(line) = crate::boot_witness::log_line(
+        device.id,
+        previous_unseen,
+        unseen_boots.map(|(count, _)| count),
+    ) {
+        crate::security::record_security_event(&state.db, "boot_unseen", None, None, Some(&line))
+            .await;
+    }
     crate::handlers::window_relock::log_relock(
         &state.db,
         device.id,

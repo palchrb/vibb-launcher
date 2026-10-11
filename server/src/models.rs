@@ -319,6 +319,10 @@ pub struct DeviceStatus {
     /// The phone's last relock of a parent-PIN window (design 24b), see
     /// `window_relock::RelockReport`. `None` from older launchers or before any relock.
     pub relock_json: Option<String>,
+    /// Boots the launcher didn't see and when it last noticed one (design 24b §3), see
+    /// `boot_witness`. `None` from older launchers.
+    pub unseen_boots_count: Option<i64>,
+    pub unseen_boots_last_at_ms: Option<i64>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -789,6 +793,10 @@ pub struct StatusReportRequest {
     /// fields only (`window_relock::sanitize_relock`).
     #[serde(default)]
     pub relock: Option<serde_json::Value>,
+    /// Design 24b §3: `{count, last_at_ms}` - boots the launcher didn't see (safe mode, a start
+    /// cut short), read leniently (`boot_witness::sanitize`).
+    #[serde(default)]
+    pub unseen_boots: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.
