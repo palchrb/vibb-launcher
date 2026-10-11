@@ -37,12 +37,16 @@ enum class WipeOutcome {
     FAILED,
 }
 
-/** [errorClass] the simple class name of what the call threw (`null` = it returned). A dying
- * system server shows up as `DeadSystemException`/`DeadObjectException` (often wrapped in a
- * `RuntimeException` whose name is passed as [causeClass]). */
+/** The names a dying system server's binder failure arrives under: `RemoteException
+ * .rethrowFromSystemServer` throws `DeadSystemRuntimeException` (API 33+; older ones wrapped a
+ * `DeadSystemException` in a `RuntimeException`). */
+private val SYSTEM_GOING_DOWN = setOf("DeadSystemRuntimeException", "DeadSystemException", "DeadObjectException")
+
+/** [errorClass] the simple class name of what the call threw (`null` = it returned), [causeClass]
+ * its cause's. */
 fun wipeOutcome(errorClass: String?, causeClass: String? = null): WipeOutcome = when {
     errorClass == null -> WipeOutcome.STARTED
-    listOf(errorClass, causeClass).any { it == "DeadSystemException" || it == "DeadObjectException" } -> WipeOutcome.GOING_DOWN
+    errorClass in SYSTEM_GOING_DOWN || causeClass in SYSTEM_GOING_DOWN -> WipeOutcome.GOING_DOWN
     else -> WipeOutcome.FAILED
 }
 

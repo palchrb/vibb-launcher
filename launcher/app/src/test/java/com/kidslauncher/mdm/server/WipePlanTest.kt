@@ -29,6 +29,7 @@ class WipePlanTest {
         assertEquals(WipeOutcome.FAILED, wipeOutcome("SecurityException"))
         assertEquals(WipeOutcome.FAILED, wipeOutcome("IllegalStateException"))
         assertEquals(WipeOutcome.FAILED, wipeOutcome("UnsupportedOperationException"))
+        assertEquals("API 33+", WipeOutcome.GOING_DOWN, wipeOutcome("DeadSystemRuntimeException"))
         assertEquals(WipeOutcome.GOING_DOWN, wipeOutcome("DeadSystemException"))
         assertEquals(WipeOutcome.GOING_DOWN, wipeOutcome("RuntimeException", "DeadSystemException"))
         assertEquals(WipeOutcome.GOING_DOWN, wipeOutcome("DeadObjectException"))
