@@ -11,8 +11,9 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Only NRK *series* go this way (HLS, which a speaker plays through the service); NRK podcasts and
  * RSS are plain mp3 URLs the speaker fetches itself. Precondition: the household's Sonos has the NRK
- * Radio service linked (it has: `sn=14` is the owner's known-working value). Design 26a §10 item 7:
- * the first device check decides whether a plain `url` of the manifest makes this path unnecessary.
+ * Radio service linked (it has: `sn=14` is the owner's known-working value). The path is necessary:
+ * a Sonos doesn't play an NRK series manifest handed over as a plain url (design 26a §10 item 7, tested
+ * on a speaker 2026-10-11).
  */
 class NrkService(
     /** `GET http://<ip>:<port>/status/accounts` (Soap.get). */

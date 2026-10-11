@@ -519,8 +519,8 @@ adb shell run-as me.vibb.music.debug cat no_backup/sonos.json
 Script lines are `t+<seconds> [@<speaker>] <event>` (the first speaker when none is named), one per line:
 
 ```
-# grouped away: Stua becomes a member of Kjøkken's group (its transport reads x-rincon:RINCON_FAKE01402)
-t+20 x-rincon:RINCON_FAKE01402
+# grouped away: Stua becomes a member of Kjøkken's group (its transport reads x-rincon:RINCON_FAKE0140201400)
+t+20 x-rincon:RINCON_FAKE0140201400
 # taken over: someone else plays on the speaker
 t+20 PLAYING "x-sonos-spotify:spotify%3atrack%3aGUEST?sid=9"
 # migration (start with --group Stua+Kjøkken): Stua leaves its group, the stream moves on to Kjøkken, Stua

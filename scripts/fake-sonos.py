@@ -403,8 +403,9 @@ def build(args):
         name, _, port = part.strip().rpartition(":")
         if not name or not port.isdigit():
             raise SystemExit(f"fake-sonos: --speakers wants Name:port, got {part!r}")
-        # the uid names the port (port 0, the selftest's, takes a number of its own)
-        speakers.append(Speaker(name, int(port), f"RINCON_FAKE{int(port) or 90001 + i:05d}"))
+        # Sonos-shaped (RINCON_ + 12-20 of [A-Z0-9], design 26a §5.5), naming the port; port 0 (the
+        # selftest's) takes a number of its own
+        speakers.append(Speaker(name, int(port), f"RINCON_FAKE{int(port) or 90001 + i:05d}01400"))
     house = Household(speakers, args.advertise, args.transition_s, args.duration)
     if args.group:
         names = args.group.split("+")

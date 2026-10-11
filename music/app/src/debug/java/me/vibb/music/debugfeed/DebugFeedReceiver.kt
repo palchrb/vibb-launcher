@@ -33,7 +33,7 @@ import java.io.File
  *   debug-feed/config.json            optional: {"mobile_data": true}
  *   debug-feed/sonos.json             optional: Sonos speakers merged into the uid -> ip cache, for the
  *                                     emulator's fake speaker (no multicast there, so no SSDP; design 26a
- *                                     §8 step 1): {"players": [{"uid": "RINCON_FAKE1401", "name": "Stua",
+ *                                     §8 step 1): {"players": [{"uid": "RINCON_FAKE0140101400", "name": "Stua",
  *                                     "ip": "10.0.2.2", "port": 1401}]}
  *
  *   adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver  (creates the folder)
