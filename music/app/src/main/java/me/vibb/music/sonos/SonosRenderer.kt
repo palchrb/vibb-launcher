@@ -19,15 +19,16 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import me.vibb.music.data.Store
+import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.playback.Active
 import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
+import me.vibb.music.playback.PlayerHub
 import me.vibb.music.playback.Renderer
 import me.vibb.music.playback.RendererEvent
 import me.vibb.music.playback.RendererKind
@@ -90,14 +91,25 @@ internal class SonosRenderer(
 
         override fun followed(uid: String, name: String?) = writeChoice { it.copy(uid = uid, name = name) }
 
-        override fun ramp(volume: Int?) = writeChoice { it.copy(volume = volume) }
+        override fun ramp(volume: Int?) = writeChoice { it.copy(volume = volume, volumeUid = volume?.let { _ -> controller.uid }) }
 
         override fun armedPlaying(playing: Boolean) = onArmedPlaying(playing)
 
         override fun log(message: String) = SonosHome.log(message)
     }
 
-    val controller = SonosController(transport, actor, sonosStore, clock, uid, name, host, sleep = { delay(it) }, restoreVolume = home.choice().volume)
+    val controller: SonosController = SonosController(
+        transport, actor, sonosStore, clock, uid, name, host, sleep = { delay(it) },
+        restoreVolume = home.choice().takeIf { it.volumeUid == uid }?.volume,
+        // every play the controller sends asks first, as KidPlayer and the play commands do (H1)
+        mayPlay = { playAllowed(suspendedNow()) },
+    )
+
+    private fun suspendedNow(): Boolean = try {
+        context.packageManager.isPackageSuspended
+    } catch (e: Exception) {
+        false
+    }
 
     /** The room this renderer commands (migration follow may move it). */
     val uid: String get() = controller.uid
@@ -176,13 +188,16 @@ internal class SonosRenderer(
      */
     suspend fun handOff(): Boolean = suspendCancellableCoroutine { cont -> controller.handOff { if (cont.isActive) cont.resume(it) } }
 
+    /** A hand-off that timed out: the last bookmark and an ours-gated Stop queued behind the busy actor (M1). */
+    fun abandon() = controller.abandon()
+
     override fun release() {
         if (released) return
         released = true
         controller.close()
         poller?.stop()
+        // the queued jobs (a hand-off's or an abandon's Stop) still go out; the scope ends after them
         actor.close()
-        actorScope.cancel()
         handler.removeCallbacksAndMessages(null)
         onEvent = null
     }
@@ -239,6 +254,7 @@ internal class SonosRenderer(
         }
         if (ended) events += RendererEvent.Ended
         if (controller.takeLost() != null) events += RendererEvent.Lost
+        if (controller.takeRefused()) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
         events += RendererEvent.StateChanged
         for (e in events) onEvent?.invoke(e)
     }
@@ -267,13 +283,14 @@ internal class SonosRenderer(
                 .setDeviceVolume(controller.deviceVolume())
                 .setPlayWhenReady(spec.playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             val items = mediaItems
-            if (items.isEmpty() || items.size != controller.items.size) {
-                return b.setPlaybackState(if (spec.phase == PlayPhase.ENDED) Player.STATE_ENDED else Player.STATE_IDLE).build()
+            val plan = playlistPlan(items.map { it.mediaId }, controller.items.size, spec)
+            if (plan.uids.isEmpty()) {
+                return b.setPlaybackState(if (plan.phase == PlayPhase.ENDED) Player.STATE_ENDED else Player.STATE_IDLE).build()
             }
-            val index = spec.index.coerceIn(items.indices)
+            val index = plan.index
             val playlist = items.mapIndexed { i, mi ->
                 val durationMs = if (i == index) spec.durationMs else mi.mediaMetadata.durationMs
-                MediaItemData.Builder(mi.mediaId.ifEmpty { "item$i" })
+                MediaItemData.Builder(plan.uids[i])
                     .setMediaItem(mi)
                     .setMediaMetadata(mi.mediaMetadata)
                     .setDurationUs(durationMs?.let { it * 1000 } ?: C.TIME_UNSET)
@@ -283,7 +300,7 @@ internal class SonosRenderer(
             return b.setPlaylist(playlist)
                 .setCurrentMediaItemIndex(index)
                 .setPlaybackState(
-                    when (spec.phase) {
+                    when (plan.phase) {
                         PlayPhase.IDLE -> Player.STATE_IDLE
                         PlayPhase.BUFFERING -> Player.STATE_BUFFERING
                         PlayPhase.READY -> Player.STATE_READY

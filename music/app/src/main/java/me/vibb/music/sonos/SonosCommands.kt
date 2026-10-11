@@ -24,3 +24,23 @@ val SONOS_COMMANDS: IntArray = intArrayOf(
     Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS,
     Player.COMMAND_ADJUST_DEVICE_VOLUME_WITH_FLAGS,
 )
+
+/**
+ * The playlist the player's State is built from (Media3's preconditions, checked once here and in
+ * SonosControllerTest): [uids] unique (`MediaItemData` refuses duplicates), [index] inside them, and
+ * an empty playlist only in IDLE or ENDED - when the MediaItems and the controller's queue disagree
+ * the player shows nothing rather than another item's title.
+ */
+data class PlaylistPlan(val uids: List<String>, val index: Int, val phase: PlayPhase)
+
+fun playlistPlan(mediaIds: List<String>, queueSize: Int, spec: SonosSpec): PlaylistPlan {
+    if (mediaIds.isEmpty() || mediaIds.size != queueSize) {
+        return PlaylistPlan(emptyList(), 0, if (spec.phase == PlayPhase.ENDED) PlayPhase.ENDED else PlayPhase.IDLE)
+    }
+    val seen = mutableSetOf<String>()
+    val uids = mediaIds.mapIndexed { i, id ->
+        val base = id.ifEmpty { "item$i" }
+        if (seen.add(base)) base else "$base#$i".also { seen.add(it) }
+    }
+    return PlaylistPlan(uids, spec.index.coerceIn(uids.indices), spec.phase)
+}

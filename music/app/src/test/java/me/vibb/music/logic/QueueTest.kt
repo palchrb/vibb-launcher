@@ -86,4 +86,17 @@ class QueueTest {
         assertEquals(oldestFirst.toSet(), plan.keys.toSet())
         assertEquals(0L, plan.startPosMs)
     }
+
+    @Test
+    fun `the stored queue as a plan - its place when the item is still there, else where it starts`() {
+        assertEquals(QueuePlan(listOf("a", "b", "c"), 1, 42_000), storedPlan(listOf("a", "b", "c"), 1, 42_000, setOf("a", "b", "c")) { 7 })
+        assertEquals("b went: c, where it starts", QueuePlan(listOf("a", "c"), 1, 7), storedPlan(listOf("a", "b", "c"), 1, 42_000, setOf("a", "c")) { 7 })
+        assertNull(storedPlan(listOf("a"), 0, 0, emptySet()) { 0 })
+    }
+
+    @Test
+    fun `coming home from a speaker - the whole order rotated to the item that played, at its bookmark`() {
+        assertEquals(QueuePlan(listOf("c", "a", "b"), 0, 99_000), homePlan(listOf("a", "b", "c"), "c", 99_000))
+        assertEquals("an item gone from the order starts the order at 0", QueuePlan(listOf("a", "b"), 0, 0), homePlan(listOf("a", "b"), "x", 99_000))
+    }
 }

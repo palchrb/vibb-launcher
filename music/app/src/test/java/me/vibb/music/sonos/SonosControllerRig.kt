@@ -100,7 +100,9 @@ class ControllerRig(val uid: String = "RINCON_KID01400") {
     val session = SonosSession({ clock.now })
     var resolvedUids = mutableListOf<String>()
     val transport = SonosTransport(session, { u, _, _ -> resolvedUids.add(u); spk }, NrkService({ _, _ -> SonosFakes.fixture("accounts.xml") }), clock.clock)
-    val c = SonosController(transport, work, store, { clock.now }, uid, "Barnerom", host, sleep = clock.clock.sleep)
+    /** playAllowed: false while the launcher has suspended the app. */
+    var allowed = true
+    val c = SonosController(transport, work, store, { clock.now }, uid, "Barnerom", host, sleep = clock.clock.sleep, mayPlay = { allowed })
 
     val entry = SonosFakes.entry()
     val items: List<PlayItem> = (1..3).map { SonosFakes.item(key = "ep$it", url = "https://podkast.example/ep$it.mp3") }

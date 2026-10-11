@@ -168,6 +168,8 @@ class SonosControllerTest {
     @Test
     fun `a paused speaker comes home paused`() {
         playing("0:07:11", transport = "PAUSED_PLAYBACK")
+        r.advance(9_000) // past our own play's 8 s hold
+        r.poll()
         var wasPlaying: Boolean? = null
         r.c.handOff { wasPlaying = it }
         r.work.drain()
@@ -418,12 +420,14 @@ class SonosControllerTest {
         r.c.stepTo(2, 0)
         assertEquals("optimistic", 2, r.c.index)
         r.work.drain()
-        assertEquals(listOf(r.url(0), r.url(1), r.url(2)), r.host.played.map { it.second })
+        assertEquals("ep2 went out, superseded: only what landed last is ours", listOf(r.url(0), r.url(2)), r.host.played.map { it.second })
+        assertEquals(3, r.spk.commands.count { it == "seturi" })
         r.c.stepTo(0, 0)
         r.c.stepTo(1, 0)
         r.c.stepTo(2, 0)
         r.work.drain()
-        assertEquals(listOf(r.url(0), r.url(2)), r.host.played.drop(3).map { it.second })
+        assertEquals("the first want and the latest", 5, r.spk.commands.count { it == "seturi" })
+        assertEquals(listOf(r.url(2)), r.host.played.drop(2).map { it.second })
         assertEquals(2, r.c.index)
         assertFalse("never a seek: steps start at 0", r.spk.commands.any { it.startsWith("seek") })
     }
@@ -581,12 +585,14 @@ class SonosControllerTest {
     }
 
     @Test
-    fun `the sleep ramp cancelled puts the volume back and never pauses`() {
+    fun `the sleep ramp cancelled puts the volume back, never pauses and never reports the timer's end (M3)`() {
         playing()
-        r.c.fadeOutAndPause { }
+        var done = false
+        r.c.fadeOutAndPause { done = true }
         r.c.cancelFade()
         r.work.drain()
         assertEquals(listOf("volume 30"), r.spk.commands.drop(2))
+        assertFalse("a new timer set during the ramp survives it", done)
     }
 
     @Test
@@ -604,5 +610,185 @@ class SonosControllerTest {
             assertTrue("$c", c in commands)
         }
         assertFalse("no playlist edits from outside", androidx.media3.common.Player.COMMAND_SET_MEDIA_ITEM in commands)
+    }
+
+    // -- the fix round (qa-26a-step3a-code) --
+
+    @Test
+    fun `H1 - a skip on a paused speaker only moves where the next play starts`() {
+        playing("0:07:11", transport = "PAUSED_PLAYBACK")
+        r.advance(9_000)
+        r.poll()
+        val before = r.spk.commands.size
+        r.c.stepTo(1, 42_000)
+        r.work.drain()
+        assertEquals("nothing went to the speaker", before, r.spk.commands.size)
+        assertEquals(1, r.c.index)
+        assertEquals(42_000L, r.c.spec(r.now).positionAt(r.now))
+        assertFalse(r.c.spec(r.now).playWhenReady)
+        r.c.playPause()
+        r.work.drain()
+        assertEquals("the play starts the picked item at its place", r.url(1), r.spk.lastUri)
+        assertTrue("seek 0:00:42" in r.spk.commands)
+    }
+
+    @Test
+    fun `H1 - while nothing may play, neither a skip nor a start reaches the speaker`() {
+        playing()
+        r.allowed = false
+        val before = r.spk.commands.size
+        r.c.stepTo(1, 0)
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(before, r.spk.commands.size)
+        val fresh = ControllerRig().apply { allowed = false }
+        fresh.start()
+        assertTrue(fresh.spk.commands.isEmpty())
+    }
+
+    @Test
+    fun `H2a - a failed start while our session plays is refused - the renderer stays, the index back, no Lost`() {
+        playing("0:07:11")
+        r.spk.failOn = mapOf("seturi" to { UpnpFault(714, null) })
+        r.c.load(r.entry, r.items, 2, 0)
+        r.c.playTile()
+        r.work.drain()
+        assertNull(r.c.takeLost())
+        assertTrue(r.c.takeRefused())
+        assertEquals("back on what the speaker plays", 0, r.c.index)
+        assertTrue(r.c.session)
+        assertFalse(r.spk.commands.contains("stop"))
+        r.advance(5_000)
+        r.spk.failOn = emptyMap()
+        r.speaker("0:07:16", uri = r.url(0))
+        r.poll()
+        assertTrue(r.c.showsPlaying(r.now))
+    }
+
+    @Test
+    fun `H2b - a tap superseded while its play is in flight fails quietly, the newer play owns the session`() {
+        r.c.load(r.entry, r.items, 0, 0)
+        r.c.playTile()
+        r.c.load(r.entry, r.items, 1, 0)
+        r.c.playTile()
+        r.work.failNext = SpeakerUnreachable("the first play")
+        r.work.drain()
+        assertNull(r.c.takeLost())
+        assertTrue(r.c.session)
+        assertEquals(1, r.c.index)
+        assertEquals(listOf("ep2" to r.url(1)), r.host.played)
+    }
+
+    @Test
+    fun `H2c - an older play's result never blinks the index back nor reaches renderer json`() {
+        r.start(drain = false)
+        r.c.stepTo(2, 0)
+        assertEquals(2, r.c.index)
+        r.work.jobs.removeFirst()() // the first play lands
+        assertEquals("no blink back to ep1", 2, r.c.index)
+        assertTrue(r.host.played.isEmpty())
+        r.work.drain()
+        assertEquals(listOf("ep3" to r.url(2)), r.host.played)
+        assertEquals(2, r.c.index)
+    }
+
+    @Test
+    fun `M1 - an abandoned hand-off bookmarks the last poll and queues an ours-gated Stop`() {
+        playing("0:07:11")
+        r.advance(3_000)
+        r.c.abandon()
+        assertEquals(434_000L, r.store.writes.last().posMs)
+        assertTrue(r.c.closed)
+        r.work.drain()
+        assertEquals("stop", r.spk.commands.last())
+    }
+
+    @Test
+    fun `L2 - a refused same-tile resume falls through to the full start`() {
+        playing("0:07:11", transport = "PAUSED_PLAYBACK")
+        r.advance(9_000)
+        r.poll()
+        r.work.failNext = UpnpFault(701, null)
+        r.c.playTile()
+        r.work.drain()
+        assertEquals("the transfer is the heal", 2, r.spk.commands.count { it == "seturi" })
+    }
+
+    @Test
+    fun `L3 - play after a pause while a play is in flight - the last intent wins`() {
+        r.start(drain = false)
+        r.c.pause()
+        r.c.playPause()
+        r.work.drain()
+        assertEquals(listOf("seturi", "play", "pause", "play"), r.spk.commands)
+        assertTrue(r.c.spec(r.now).playWhenReady)
+    }
+
+    @Test
+    fun `L4 - the bookmark's age term is at most 5 s`() {
+        playing("0:01:40")
+        r.advance(12_000)
+        r.c.pause()
+        assertEquals(105_000L, r.store.writes.last().posMs)
+    }
+
+    @Test
+    fun `L5 - a pause pressed just before the switch comes home paused even when the live read fails`() {
+        playing("0:07:11")
+        r.c.pause()
+        r.spk.failOn = mapOf("getposition" to { SpeakerUnreachable("gone") })
+        var wasPlaying: Boolean? = null
+        r.c.handOff { wasPlaying = it }
+        r.work.drain()
+        assertEquals(false, wasPlaying)
+    }
+
+    @Test
+    fun `L6 - TRANSITIONING reads BUFFERING holding playWhenReady`() {
+        playing()
+        r.c.shown(r.c.spec(r.now))
+        r.advance(5_000)
+        r.speaker("0:07:16", transport = "TRANSITIONING")
+        r.poll()
+        val spec = r.c.spec(r.now)
+        assertEquals(PlayPhase.BUFFERING, spec.phase)
+        assertTrue(spec.playWhenReady)
+    }
+
+    @Test
+    fun `L6 - a disarmed session reads IDLE and a play starts it again from the bookmark`() {
+        playing("0:07:11")
+        r.c.onPoll(Tick.Disarmed, r.session.snapshot.copy(armed = false))
+        assertEquals(PlayPhase.IDLE, r.c.spec(r.now).phase)
+        assertFalse(r.c.ownsSpeaker)
+        r.c.playPause()
+        r.work.drain()
+        assertEquals(2, r.spk.commands.count { it == "seturi" })
+        assertTrue("from the bookmark", "seek 0:07:11" in r.spk.commands)
+    }
+
+    @Test
+    fun `L6 - the player's playlist - unique uids, an index inside them, empty only in IDLE or ENDED`() {
+        val spec = SonosSpec(PlayPhase.READY, true, 5, 0, 0, false, null)
+        val plan = playlistPlan(listOf("1/a", "1/a", ""), 3, spec)
+        assertEquals(3, plan.uids.toSet().size)
+        assertEquals(2, plan.index)
+        assertEquals(PlayPhase.READY, plan.phase)
+        val mismatch = playlistPlan(listOf("1/a"), 2, spec)
+        assertTrue(mismatch.uids.isEmpty())
+        assertEquals(PlayPhase.IDLE, mismatch.phase)
+        assertEquals(PlayPhase.ENDED, playlistPlan(emptyList(), 0, spec.copy(phase = PlayPhase.ENDED)).phase)
+    }
+
+    @Test
+    fun `L1 - a cut ramp's volume survives a switch home and belongs to its room`() {
+        val f = java.io.File.createTempFile("renderer", ".json").apply { deleteOnExit() }
+        RendererChoice.write(f, RendererChoice(RendererChoice.SONOS, "RINCON_A", "Stua", volume = 30, volumeUid = "RINCON_A"))
+        RendererChoice.write(f, RendererChoice.local(RendererChoice.read(f)))
+        val back = RendererChoice.read(f)
+        assertFalse(back.sonos)
+        assertEquals(30, back.volume)
+        assertEquals("RINCON_A", back.volumeUid)
+        assertEquals(RendererChoice.LOCAL_CHOICE, RendererChoice.local(RendererChoice(volume = 30)))
     }
 }

@@ -97,9 +97,9 @@ class FitTest {
 
     @Test
     fun `a Sonos room in the bar - a long name or a three-member group gives way, Liste and Sov stay whole`() {
-        // design 26a §5.1: the room's label is the output's name; widths of Nunito ExtraBold 14 sp as above,
-        // a three-member label like "Kjøkken + Stua + Bad" and a long room name both far wider than the slot
-        val labels = listOf(150f, 260f)
+        // design 26a §5.1: the room's label is the output's name; Nunito ExtraBold 14 sp as above:
+        // "Kjøkken + Stua + Bad" 142.5 dp, "Barnerommet i andre etasje" 184.7 dp
+        val labels = listOf(142.5f, 184.7f)
         val liste = 32.0f
         val sov30 = 81.4f
         for (screen in widths) {
@@ -109,8 +109,9 @@ class FitTest {
                 assertEquals("$screen: the row is filled", room, w.sum())
                 assertTrue("$screen: Liste whole", w[0] >= bar(liste))
                 assertTrue("$screen: Sov whole", w[1] >= bar(sov30))
-                assertTrue("$screen: the room keeps its glyph and some name", w[2] > icon)
-                assertTrue("$screen: the label is cut, never pushes", w[2] < bar(label))
+                val text = w[2] - icon
+                assertTrue("$screen: the room keeps its glyph and a readable start of its name ($text dp)", text >= 40)
+                if (bar(label) > w[2]) assertTrue("$screen: cut with an ellipsis, never pushing", text < label)
             }
         }
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
@@ -120,5 +121,21 @@ class FitTest {
         assertTrue("one line, ellipsized (Line's default)", bar.contains("Line(label, 14, 800, fg)"))
         val widgets = moduleFile("src/main/java/me/vibb/music/ui/Widgets.kt").readText()
         assertTrue(widgets.contains("maxLines: Int = 1") && widgets.contains("overflow = TextOverflow.Ellipsis"))
+    }
+
+    @Test
+    fun `the player's state line under the entry name fits one line at 320 dp in nb and en`() {
+        // the header: the 44 dp back button, the title column with 44 dp at its end (PlayerScreen); Nunito Bold 12 sp
+        val longest = mapOf(
+            "Får ikke kontakt med høyttaleren" to 184.8f, "Noen andre bruker høyttaleren" to 172.2f,
+            "Someone else is using the speaker" to 191.8f, "Can't reach the speaker" to 131.4f, "Spilles i en annen gruppe" to 141.4f,
+        )
+        for (screen in widths) {
+            val room = available(screen) - 44 - 44
+            for ((line, width) in longest) assertTrue("$screen: $line ($width in $room)", width <= room)
+        }
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue(player.contains("Column(Modifier.weight(1f).padding(end = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {"))
+        assertTrue(player.contains("rendererState?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }"))
     }
 }

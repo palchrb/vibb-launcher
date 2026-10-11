@@ -5,6 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -55,10 +56,21 @@ class SonosActor(
 
     override fun after(delayMs: Long, block: () -> Unit) = postDelayed(delayMs, block)
 
-    /** No more jobs; a running one finishes its SOAP (each is bounded by the client's timeouts). */
-    fun close() {
+    /**
+     * No more jobs; the ones already queued still run - a hand-off's or an abandon's Stop is among them
+     * (qa-26a-step3a-code M1) - then [scope] is cancelled, after [drainMs] at most.
+     */
+    fun close(drainMs: Long = DRAIN_MS) {
         jobs.close()
-        consumer.cancel()
+        scope.launch {
+            withTimeoutOrNull(drainMs) { consumer.join() }
+            scope.cancel()
+        }
+    }
+
+    companion object {
+        /** A queued hushed play with a settled seek, a ramp and a Stop fit in this with room to spare. */
+        const val DRAIN_MS = 30_000L
     }
 
     private suspend fun <T> run(job: suspend () -> T): Result<T> = try {

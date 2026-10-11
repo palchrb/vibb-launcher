@@ -111,6 +111,11 @@ class SonosController(
     private val sleep: suspend (Long) -> Unit,
     /** A volume to put back with the next play: a sleep ramp the process didn't live to finish (§5.2). */
     private var restoreVolume: Int? = null,
+    /**
+     * Whether anything may start playing now (`playAllowed`: not while the launcher has suspended the
+     * app). Every play the controller sends asks first - a skip, an advance, a start (qa-26a-step3a-code H1).
+     */
+    private val mayPlay: () -> Boolean = { true },
 ) {
     /** The room: the uid we command (a group by its coordinator), and its label. Migration follow moves them. */
     var uid: String = uid
@@ -137,9 +142,22 @@ class SonosController(
     var closed: Boolean = false
         private set
 
-    // Not yet started (a queue loaded paused): where it starts.
+    // Not yet started (a queue loaded paused, or an item picked while the speaker isn't playing): where it starts.
     private var startPosMs = 0L
     private var deliberateStart = false
+
+    /** The next play starts [index] at [startPosMs] (not the speaker's own item from its bookmark). */
+    private var startPending = false
+
+    /**
+     * Bumped by everything that supersedes a play in flight (a load, a clear, a step, a new play): a
+     * result of an older generation only says what the speaker now holds (qa-26a-step3a-code H2).
+     */
+    private var gen = 0
+
+    /** A play of ours went out to this uid and succeeded, and no Stop, hand-off or disarm since. */
+    var ownsSpeaker: Boolean = false
+        private set
 
     /** The last snapshot: measured values only, plus the duration carry. */
     var snap: Fields? = null
@@ -157,8 +175,8 @@ class SonosController(
 
     private class Pending(val itemKey: String, var at: Long, var uri: String?)
 
-    /** The item actually on the speaker: what the bookmark is about. */
-    private class Playing(val index: Int, val itemKey: String, val uri: String)
+    /** The item actually on the speaker (of entry [entryId]): what the bookmark is about. */
+    private class Playing(val entryId: Long?, val index: Int, val itemKey: String, val uri: String)
 
     private var optTr: Opt? = null
     private var optPos: OptPos? = null
@@ -189,6 +207,7 @@ class SonosController(
         private set
     private var endedFlag = false
     private var lost: Exception? = null
+    private var refusedFlag = false
     private var wasArmedPlaying = false
 
     // -- what the renderer reads --
@@ -201,6 +220,9 @@ class SonosController(
 
     /** A start that failed (once): the renderer reports it and the service goes back to the phone. */
     fun takeLost(): Exception? = lost.also { lost = null }
+
+    /** True once when a start was refused while our session on this uid plays on: "Kan ikke spilles på Sonos". */
+    fun takeRefused(): Boolean = refusedFlag.also { refusedFlag = false }
 
     private fun opt(now: Long): Opt? = optTr?.takeIf { now - it.at <= SETTLE_MS }
 
@@ -248,12 +270,12 @@ class SonosController(
         if (items.isEmpty()) return SonosSpec(if (ended) PlayPhase.ENDED else PlayPhase.IDLE, false, 0, 0, now, false, null)
         val listed = items.getOrNull(idx)?.durationMs
         if (!session) {
-            val shown = if (playing == null) startPosMs else ((lastOursRel ?: 0.0) * 1000).toLong()
+            val shown = if (startPending) startPosMs else ((lastOursRel ?: 0.0) * 1000).toLong()
             return SonosSpec(if (ended) PlayPhase.ENDED else PlayPhase.IDLE, false, idx, shown, now, false, currentDurS()?.let { (it * 1000).toLong() } ?: listed)
         }
         val s = snap
         val tr = effectiveTransport(now)
-        val dur = currentDurS()?.let { (it * 1000).toLong() } ?: listed
+        val dur = if (startPending) listed else currentDurS()?.let { (it * 1000).toLong() } ?: listed
         val (pos, anchor, moving) = position(now)
         fun spec(phase: PlayPhase, pwr: Boolean) = SonosSpec(phase, pwr, idx, pos, anchor, moving && pwr, dur)
         val p = pending
@@ -288,6 +310,7 @@ class SonosController(
 
     /** (position ms at anchor, anchor, moving). */
     private fun position(now: Long): Triple<Long, Long, Boolean> {
+        if (startPending) return Triple(startPosMs, now, false) // an item picked while the speaker holds another
         val s = snap
         optPos?.let { o -> if (now - o.at <= SEEK_HOLD_MS && o.uri == s?.uri) return Triple((o.s * 1000).toLong(), now, false) }
         frozen?.let { f -> if (opt(now)?.state == TransportState.PAUSED_PLAYBACK) return Triple((f.s * 1000).toLong(), now, false) }
@@ -320,8 +343,11 @@ class SonosController(
         index = if (items.isEmpty()) 0 else startIndex.coerceIn(items.indices)
         startPosMs = startMs.coerceAtLeast(0)
         deliberateStart = items.getOrNull(index)?.let { startPosMs < store.savedPosMs(it.key) } ?: false
+        startPending = true
+        gen++
         session = false
-        playing = null
+        // what the speaker holds stays known (a failed start must not lose it); its index is this queue's
+        playing = playing?.let { p -> Playing(p.entryId, if (p.entryId == entry.id) items.indexOfFirst { it.key == p.itemKey } else -1, p.itemKey, p.uri) }
         pending = null
         optTr = null
         optPos = null
@@ -340,7 +366,7 @@ class SonosController(
         val current = items.getOrNull(keep) ?: return
         items = listOf(current) + after
         index = 0
-        playing = playing?.let { Playing(0, it.itemKey, it.uri) }
+        playing = playing?.let { Playing(it.entryId, 0, it.itemKey, it.uri) }
         host.changed()
     }
 
@@ -348,7 +374,9 @@ class SonosController(
     fun clear() {
         items = emptyList()
         index = 0
+        gen++
         session = false
+        startPending = false
         playing = null
         pending = null
         optTr = null
@@ -365,14 +393,19 @@ class SonosController(
      */
     fun playPause() {
         if (closed || items.isEmpty()) return
-        if (!session) return start()
-        if (pending != null) return // a play is in flight: it is the answer
+        if (!session || startPending) return start()
         val now = elapsedMs()
+        if (pending != null) {
+            // a play in flight is the answer - unless a pause went after it: the last intent wins (L3)
+            if (opt(now)?.state == TransportState.PAUSED_PLAYBACK) resume(fallback = false)
+            host.changed()
+            return
+        }
         val s = snap
         val live = s != null && s.fresh(now) && s.ours && (effectiveTransport(now)?.live == true)
         when {
             !live -> restart()
-            effectiveTransport(now) == TransportState.PAUSED_PLAYBACK -> resume()
+            effectiveTransport(now) == TransportState.PAUSED_PLAYBACK -> resume(fallback = false)
             else -> Unit
         }
         host.changed()
@@ -386,22 +419,25 @@ class SonosController(
      */
     fun playTile() {
         if (closed || items.isEmpty()) return
-        if (!session) return start()
+        if (!session || startPending) return start()
         val now = elapsedMs()
         val s = snap
         val settling = pending != null || opt(now) != null
         val steady = s != null && s.fresh(now) && s.ours && !seeded && !settling && playing?.index == index
         when {
             steady && s!!.transport == TransportState.PLAYING -> Unit
-            steady && s!!.transport == TransportState.PAUSED_PLAYBACK -> resume()
+            steady && s!!.transport == TransportState.PAUSED_PLAYBACK -> resume(fallback = true)
             else -> restart()
         }
         host.changed()
     }
 
-    /** The first play of a loaded queue; after a session (a stop, a disarm) a full start from the bookmark. */
+    /**
+     * The first play of a loaded queue, or of an item picked while the speaker wasn't playing, at its
+     * planned place; after a session (a stop, a disarm) a full start from the bookmark.
+     */
     private fun start() {
-        if (playing != null) restart() else playIndex(index, startPosMs / 1000.0, deliberateStart, PlayWhy.START)
+        if (startPending) playIndex(index, startPosMs / 1000.0, deliberateStart, PlayWhy.START) else restart()
         host.changed()
     }
 
@@ -411,15 +447,19 @@ class SonosController(
         playIndex(index, store.savedPosMs(item.key) / 1000.0, deliberate = false, PlayWhy.START)
     }
 
-    private fun resume() {
+    /** One resume; [fallback]: a refusal falls through to the full start - the transfer is the heal (same tile, L2). */
+    private fun resume(fallback: Boolean) {
+        if (!mayPlay()) return host.log("sonos: resume refused - playing isn't allowed now")
         val now = elapsedMs()
         optTr = Opt(TransportState.PLAYING, now)
         frozen = null
         val target = uid
+        val g = gen
         work.submit({ transport.resume(target) }) { r ->
             r.exceptionOrNull()?.let {
                 host.log("sonos: resume failed (${it.javaClass.simpleName})")
                 optTr = null
+                if (fallback && g == gen && !closed) restart()
             }
             host.changed()
         }
@@ -458,6 +498,7 @@ class SonosController(
         bookmarkNow(force = true)
         val ours = snap?.ours == true
         endSession()
+        ownsSpeaker = false
         if (ours) {
             val target = uid
             work.submit({ transport.stop(target) }) { r ->
@@ -487,10 +528,10 @@ class SonosController(
     fun seek(ms: Long) {
         if (closed || items.isEmpty()) return
         val now = elapsedMs()
-        if (!session) {
+        if (!session || startPending) {
             startPosMs = ms.coerceAtLeast(0)
             deliberateStart = items.getOrNull(index)?.let { startPosMs < store.savedPosMs(it.key) } ?: false
-            playing = null
+            startPending = true
             host.changed()
             return
         }
@@ -526,21 +567,30 @@ class SonosController(
     }
 
     /**
-     * Another item (`sonos_step`, §4.5): the index flips at once (optimistic), one worker plays the
-     * LATEST wanted index from 0 (`playIndex(want, 0, deliberate)`), a mash costs one play per
-     * settled want. Before a start it only moves where the queue will start ([ms]).
+     * Another item (`sonos_step`, §4.5): while the speaker plays, the index flips at once
+     * (optimistic) and one worker plays the LATEST wanted index from 0 (`playIndex(want, 0,
+     * deliberate)`), a mash costing one play per settled want. While it doesn't play (paused,
+     * stopped, stale, before a start) or nothing may play, a skip only moves where the next play
+     * starts ([ms]): a skip on a paused phone stays paused too, and a headset's "next" after a time
+     * rule must not start the speaker (qa-26a-step3a-code H1).
      */
     fun stepTo(idx: Int, ms: Long) {
         if (closed || idx !in items.indices) return
-        if (!session) {
+        val now = elapsedMs()
+        if (!session || effectiveTransport(now) != TransportState.PLAYING || !mayPlay()) {
+            gen++
             index = idx
             startPosMs = ms.coerceAtLeast(0)
             deliberateStart = startPosMs < store.savedPosMs(items[idx].key)
-            playing = null
+            startPending = true
+            stepWant = null
+            pending = null
+            optPos = null
+            frozen = null
             host.changed()
             return
         }
-        val now = elapsedMs()
+        gen++
         pending = Pending(items[idx].key, now, null)
         stepWant = idx
         index = idx
@@ -573,6 +623,11 @@ class SonosController(
      * start-seek arms the bounded hold. A deliberate restart stamps [seekAt].
      */
     private fun playIndex(idx: Int, startS: Double, deliberate: Boolean, why: PlayWhy, done: () -> Unit = {}) {
+        if (!mayPlay()) {
+            host.log("sonos: a play refused - playing isn't allowed now")
+            done()
+            return
+        }
         val e = entry
         val item = items.getOrNull(idx)
         val body = if (e != null && item != null) PlayBodies.build(e, item, uid, startS) else null
@@ -583,6 +638,9 @@ class SonosController(
             return
         }
         val now = elapsedMs()
+        val g = ++gen
+        val entryId = e?.id
+        startPending = false
         session = true
         ended = false
         if (deliberate) seekAt = now
@@ -607,7 +665,19 @@ class SonosController(
             result
         }) { r ->
             try {
-                r.fold({ played(idx, item, it, startS, volume) }, { failed(why, it) })
+                if (closed) {
+                    Unit
+                } else if (g != gen) {
+                    // superseded (a newer load, step or play): only what the speaker holds now
+                    r.onSuccess { res ->
+                        playing = Playing(entryId, if (entry?.id == entryId) items.indexOfFirst { it.key == item.key } else -1, item.key, res.uri)
+                        ownsSpeaker = true
+                        restoredBy(volume)
+                    }
+                    r.onFailure { host.log("sonos: a superseded play failed (${it.javaClass.simpleName})") }
+                } else {
+                    r.fold({ played(idx, item, it, startS, volume) }, { failed(why, it) })
+                }
             } catch (t: Exception) {
                 host.log("sonos: play result failed (${t.javaClass.simpleName})")
             } finally {
@@ -617,15 +687,19 @@ class SonosController(
         }
     }
 
-    private fun played(idx: Int, item: PlayItem, res: PlayResult, startS: Double, restored: Int?) {
-        if (closed) return
-        val now = elapsedMs()
-        if (restored != null) {
+    private fun restoredBy(volume: Int?) {
+        if (volume != null && restoreVolume == volume) {
             restoreVolume = null
             host.ramp(null)
         }
-        if (stepWant == null) index = idx // no newer press: confirm (a completed older jump never blinks the title back)
-        playing = Playing(idx, item.key, res.uri)
+    }
+
+    private fun played(idx: Int, item: PlayItem, res: PlayResult, startS: Double, restored: Int?) {
+        val now = elapsedMs()
+        restoredBy(restored)
+        index = idx // the current generation: nothing newer was pressed
+        ownsSpeaker = true
+        playing = Playing(entry?.id, idx, item.key, res.uri)
         pending = Pending(item.key, now, res.uri)
         // a pause pressed while the play was in flight went out after it: that intent stands
         if (optTr?.state != TransportState.PAUSED_PLAYBACK) optTr = Opt(TransportState.PLAYING, now)
@@ -647,17 +721,32 @@ class SonosController(
         host.log("sonos: playing [${idx + 1}/${items.size}] ${item.title}")
     }
 
+    /**
+     * A play of the current generation failed. The first start on this room is lost (the service goes
+     * back to the phone); while a session of ours lives on this uid a failed start is refused like a
+     * failed step - "Kan ikke spilles på Sonos", the index back on what the speaker plays, the renderer
+     * stays (vibb keeps the renderer and warns; qa-26a-step3a-code H2). A lost step is a shrug, a dead
+     * coalescer is a brick.
+     */
     private fun failed(why: PlayWhy, e: Throwable) {
         host.log("sonos: play failed (${e.javaClass.simpleName}: ${e.message}) [$why]")
         pending = null
         optTr = null
-        when (why) {
-            PlayWhy.START -> {
-                endSession()
-                lost = (e as? Exception) ?: SonosException(e.toString())
-            }
-            // a lost step is a shrug, a dead coalescer is a brick: back to what the speaker plays
-            PlayWhy.STEP, PlayWhy.ADVANCE -> if (stepWant == null) playing?.let { index = it.index }
+        val ours = ownsSpeaker && snap?.ours == true
+        if (why == PlayWhy.START && !ours) {
+            endSession()
+            lost = (e as? Exception) ?: SonosException(e.toString())
+            return
+        }
+        if (why == PlayWhy.START) refusedFlag = true
+        session = true
+        val back = playing?.takeIf { it.entryId == entry?.id && it.index in items.indices }
+        if (stepWant == null && back != null) {
+            index = back.index
+            startPending = false
+        } else if (back == null) {
+            // the speaker holds another entry's item: the next play starts this one at its place
+            startPending = true
         }
     }
 
@@ -696,6 +785,7 @@ class SonosController(
         if (tick == Tick.Disarmed || !polled.armed) {
             accept(polled)
             endSession()
+            ownsSpeaker = false
             host.log("sonos: the session stood down")
             return
         }
@@ -768,7 +858,7 @@ class SonosController(
                 uid = mv.uid
                 name = mv.name
                 volOpt = null // new speaker, new volume world
-                playing = playing?.let { Playing(it.index, it.itemKey, mv.uri) }
+                playing = playing?.let { Playing(it.entryId, it.index, it.itemKey, mv.uri) }
                 host.followed(mv.uid, mv.name)
                 host.log("sonos: stream moved to ${mv.name} (${mv.uid}) - following")
             }
@@ -784,15 +874,25 @@ class SonosController(
      * service's `queueEnded`. A stop far from the end is a human and stays stopped.
      */
     private fun advance() {
-        val cur = playing ?: return
+        val cur = playing?.takeIf { it.index >= 0 && it.entryId == entry?.id } ?: return
         val next = cur.index + 1
         if (next < items.size) {
             host.log("sonos: episode ended - next")
             autoFlag = true
-            playIndex(next, 0.0, deliberate = false, PlayWhy.ADVANCE)
+            if (mayPlay()) {
+                playIndex(next, 0.0, deliberate = false, PlayWhy.ADVANCE)
+            } else {
+                // nothing may play now: the next item waits for a play, at 0
+                gen++
+                index = next
+                startPosMs = 0
+                deliberateStart = false
+                startPending = true
+            }
         } else {
             host.log("sonos: queue finished - stop")
             endSession()
+            ownsSpeaker = false
             ended = true
             endedFlag = true
             val target = uid
@@ -814,10 +914,11 @@ class SonosController(
     fun bookmarkNow(force: Boolean) {
         if (closed) return
         val s = snap ?: return
-        val pl = playing ?: return
+        val pl = playing?.takeIf { it.index >= 0 && it.entryId == entry?.id } ?: return
         if (seeded || !s.ours || normUri(s.uri) != normUri(pl.uri)) return
         val now = elapsedMs()
-        val age = s.measuredAt?.takeIf { s.fresh(now) }?.let { now - it } ?: 0L
+        // the one age term, at most BOOKMARK_AGE_MAX_MS (vibb added only the sidecar's <= 5 s; qa L4)
+        val age = s.measuredAt?.takeIf { s.fresh(now) }?.let { (now - it).coerceAtMost(BOOKMARK_AGE_MAX_MS) } ?: 0L
         val input = BookmarkInput(pl.itemKey, s.ours, s.transport, s.relS, s.durS, durFromListing, age)
         val verdict = SonosBookmarks.decide(input, bmHold, store.savedPosMs(pl.itemKey) / 1000.0, seekAt, now)
         bmHold = verdict.hold
@@ -840,7 +941,7 @@ class SonosController(
      */
     fun handOff(then: (wasPlaying: Boolean) -> Unit) {
         if (closed) return then(false)
-        if (!session) {
+        if (!session && !ownsSpeaker) {
             closed = true
             return then(false)
         }
@@ -849,13 +950,15 @@ class SonosController(
                 r.getOrNull()?.let { live(it) }
                 bookmarkNow(force = true)
                 val s = snap
-                s != null && s.ours && s.reachable && s.transport == TransportState.PLAYING
+                // our own verb's intent counts (a pause pressed just before the switch, the live read failed; L5)
+                s != null && s.ours && s.reachable && effectiveTransport(elapsedMs()) == TransportState.PLAYING
             } catch (e: Exception) {
                 host.log("sonos: hand-off bookkeeping failed (${e.javaClass.simpleName})")
                 false
             }
-            val ours = snap?.ours == true
+            val ours = snap?.ours == true || pending != null
             endSession()
+            ownsSpeaker = false
             closed = true
             val target = uid
             if (ours) {
@@ -874,6 +977,25 @@ class SonosController(
         if (!f.armed || f.relS == null || f.uid != uid || !f.reachable) return
         pending = null
         accept(f)
+    }
+
+    /**
+     * A hand-off that didn't finish in time (the actor was busy: a hushed play, the ramp): the bookmark
+     * from the last measured snapshot, and a Stop queued behind whatever the actor holds - ours-gated
+     * (our stream on the speaker, or a play of ours in flight). The renderer's release drains the actor,
+     * so the Stop still goes out (qa-26a-step3a-code M1).
+     */
+    fun abandon() {
+        if (closed) return
+        bookmarkNow(force = true)
+        val ours = (ownsSpeaker && snap?.ours == true) || pending != null
+        endSession()
+        ownsSpeaker = false
+        closed = true
+        if (ours) {
+            val target = uid
+            work.submit({ transport.stop(target) }) { r -> r.exceptionOrNull()?.let { host.log("sonos: stop failed (${it.javaClass.simpleName})") } }
+        }
     }
 
     /** No more SOAP and no more writes (the renderer is going). */
@@ -948,7 +1070,8 @@ class SonosController(
                 frozen = OptPos(spec(at).positionAt(at) / 1000.0, at, snap?.uri)
                 optTr = Opt(TransportState.PAUSED_PLAYBACK, at)
             }
-            done()
+            // a cancelled ramp (a pause, a new timer) never reports the timer's end (qa-26a-step3a-code M3)
+            if (!cancel.get()) done()
             host.changed()
         }
     }
@@ -973,6 +1096,9 @@ class SonosController(
 
         /** The state table's transient: the first failed polls read BUFFERING (§3.2). */
         const val TRANSIENT_FAILURES = 3
+
+        /** The bookmark's age term at most (vibb's sidecar measurement lag; design 26a §9). */
+        const val BOOKMARK_AGE_MAX_MS = 5_000L
 
         /** The live classify of a switch home (`/state?live=1`, 1021-1039). */
         const val LIVE_BUDGET_MS = 1_500L

@@ -45,4 +45,14 @@ class SonosActorTest {
         scope.cancel()
         main.shutdown()
     }
+
+    @Test
+    fun `close drains - a Stop queued before the release still goes out`() {
+        val ran = CountDownLatch(1)
+        actor.submit({ delay(100); "busy" }) { }
+        actor.submit({ ran.countDown(); "stop" }) { }
+        actor.close()
+        assertTrue("the queued job ran after close", ran.await(5, TimeUnit.SECONDS))
+        main.shutdown()
+    }
 }

@@ -128,7 +128,7 @@ class GuardsTest {
         // the renderer changes only in attach: the phone at start, the room, the phone again
         assertEquals("attach: defined once, three callers", 4, Regex("""\battach\(""").findAll(service).count())
         assertTrue(service.contains("attach(SonosRenderer("))
-        assertTrue(service.contains("if (renderer === sonos) attach(local)"))
+        assertTrue(service.substringAfter("private suspend fun comeHome(").substringBefore("sonos.release()\n        active = null").contains("if (renderer !== sonos) return\n        attach(local)"))
         // a headset arriving or leaving touches the output choice only, never the renderer (sonos_renderer.py 5)
         val devices = service.substringAfter("private val deviceCallback").substringBefore("private val saveTick")
         assertFalse(devices.contains("renderer."))
@@ -152,5 +152,30 @@ class GuardsTest {
             .map { f -> f.name to f.readText().replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("//[^\\n]*"), "") }.toList()
         val calls = main.flatMap { (name, text) -> Regex("""persistPlace\(""").findAll(text).map { name }.toList() }
         assertEquals(listOf("LocalRenderer.kt", "LocalRenderer.kt", "SonosRenderer.kt"), calls.sorted())
+    }
+
+    @Test
+    fun `fix round - skips never start a paused speaker, every Sonos play asks playAllowed, switches are serialized`() {
+        // qa-26a-step3a-code H1
+        val step = sonos.substringAfter("fun stepTo(idx: Int, ms: Long) {").substringBefore("\n    }\n")
+        assertTrue(step.contains("if (!session || effectiveTransport(now) != TransportState.PLAYING || !mayPlay()) {"))
+        assertTrue(step.indexOf("startPending = true") < step.indexOf("pending = Pending("))
+        val play = sonos.substringAfter("private fun playIndex(").substringBefore("\n    }\n")
+        assertTrue("before anything is sent", play.indexOf("if (!mayPlay()) {") < play.indexOf("work.submit("))
+        assertTrue(sonos.substringAfter("private fun resume(").substringBefore("\n    }\n").contains("if (!mayPlay()) return"))
+        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        assertTrue(renderer.contains("mayPlay = { playAllowed(suspendedNow()) },"))
+        // M2: the command coroutine and resumption hold the switch lock; lost() takes it too
+        val command = service.substringAfter("override fun onCustomCommand(").substringAfter("rendererReady.await()").substringBefore("return Futures")
+        assertTrue(command.trimStart().startsWith("switching.withLock {\n                    when (customCommand.customAction) {"))
+        val resumption = service.substringAfter("override fun onPlaybackResumption(").substringAfter("rendererReady.await()")
+        assertTrue(resumption.trimStart().startsWith("switching.withLock {"))
+        assertTrue(service.contains("private suspend fun lost() = switching.withLock {"))
+        // M1: a hand-off that times out still stops the speaker; the release drains the actor
+        assertTrue(service.contains("withTimeoutOrNull(HANDOFF_MS) { sonos.handOff() } ?: run {"))
+        assertTrue(service.substringAfter("withTimeoutOrNull(HANDOFF_MS) { sonos.handOff() } ?: run {").substringBefore("}").contains("sonos.abandon()"))
+        val release = renderer.substringAfter("override fun release() {").substringBefore("\n    }\n")
+        assertTrue(release.contains("actor.close()"))
+        assertFalse("never cancelled before the queued Stop", release.contains("cancel()"))
     }
 }

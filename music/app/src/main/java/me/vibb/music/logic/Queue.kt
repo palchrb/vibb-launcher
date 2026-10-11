@@ -82,3 +82,21 @@ fun restoredQueue(stored: List<String>, currentIndex: Int, playable: Set<String>
     val after = stored.drop(currentIndex.coerceIn(0, stored.size)).firstOrNull { it in playable } ?: keys.first()
     return keys to keys.indexOf(after)
 }
+
+/**
+ * The stored queue as a plan: [restoredQueue]'s keys and index, at the stored [rowPosMs] when the
+ * stored item is still the one at that index, else where [startPos] says that item starts.
+ */
+fun storedPlan(stored: List<String>, rowIndex: Int, rowPosMs: Long, playable: Set<String>, startPos: (String) -> Long): QueuePlan? {
+    val (keys, index) = restoredQueue(stored, rowIndex, playable) ?: return null
+    val pos = if (keys[index] == stored.getOrNull(rowIndex)) rowPosMs else startPos(keys[index])
+    return QueuePlan(keys, index, pos)
+}
+
+/**
+ * Coming home from a Sonos room (design 26a §4.6): the entry's whole play order (the speaker's queue
+ * held only what a speaker can play) rotated to the item that played, as a pick does, at [posMs] -
+ * the bookmark the hand-off just wrote.
+ */
+fun homePlan(order: List<String>, current: String, posMs: Long): QueuePlan =
+    QueuePlan(rotatedTo(order, current), 0, if (current in order) posMs else 0)
