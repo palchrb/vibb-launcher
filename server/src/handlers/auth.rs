@@ -66,7 +66,7 @@ pub async fn login(
     headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> axum::response::Response {
-    let ip = crate::net::limit_key(state.net.client(&headers, addr.ip()).ip);
+    let ip = state.net.client(&headers, addr.ip()).key();
 
     if security::is_ip_banned(&state.db, &ip).await {
         return (
@@ -214,7 +214,7 @@ pub async fn verify_2fa(
     headers: HeaderMap,
     Form(form): Form<Verify2faForm>,
 ) -> axum::response::Response {
-    let ip = crate::net::limit_key(state.net.client(&headers, addr.ip()).ip);
+    let ip = state.net.client(&headers, addr.ip()).key();
 
     if security::is_ip_banned(&state.db, &ip).await {
         return (

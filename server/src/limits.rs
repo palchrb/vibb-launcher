@@ -239,12 +239,10 @@ impl Limits {
 
     /// Notes a phone's authenticated request from `client` (`peer` is the TCP peer).
     pub fn record_access(&self, device_id: i64, client: &crate::net::Client) {
-        let via = if crate::net::is_tailnet(client.ip) {
-            Via::Tailnet
-        } else if crate::net::is_loopback(client.ip) {
-            Via::Loopback
-        } else {
-            Via::Public
+        let via = match client.ip {
+            Some(ip) if crate::net::is_tailnet(ip) => Via::Tailnet,
+            Some(ip) if crate::net::is_loopback(ip) => Via::Loopback,
+            _ => Via::Public,
         };
         let mut access = self.last_access.lock().unwrap_or_else(|e| e.into_inner());
         if access.len() >= MAX_KEYS && !access.contains_key(&device_id) {
@@ -263,7 +261,7 @@ impl Limits {
         last.at = Utc::now();
         last.via = via;
         if via == Via::Public {
-            let ip = client.ip.to_string();
+            let ip = client.describe();
             ips.retain(|known| *known != ip);
             ips.push_front(ip);
             ips.truncate(LAST_IPS);
@@ -493,28 +491,31 @@ impl ExposureWatch {
     }
 
     fn observe(&self, device_id: i64, client: &crate::net::Client) {
-        if crate::net::is_tailnet(client.ip) || crate::net::is_loopback(client.ip) {
+        let Some(client_ip) = client.ip else {
+            return;
+        };
+        if crate::net::is_tailnet(client_ip) || crate::net::is_loopback(client_ip) {
             return;
         }
         let mut seen = self.private_seen.lock().unwrap_or_else(|e| e.into_inner());
-        if !crate::net::is_private(client.ip) {
+        if !crate::net::is_private(client_ip) {
             seen.remove(&device_id);
             return;
         }
         if seen.len() >= 64 && !seen.contains_key(&device_id) {
             seen.clear();
         }
-        seen.insert(device_id, client.ip);
+        seen.insert(device_id, client_ip);
         let shared = seen
             .iter()
-            .filter(|(id, ip)| **id != device_id && **ip == client.ip)
+            .filter(|(id, ip)| **id != device_id && **ip == client_ip)
             .count();
         if shared > 0 {
             let text = format!(
                 "Phones reach this server from the one private address {}: a proxy that isn't \
                  in TRUSTED_PROXIES, or Docker's network hiding the clients. Limits and the \
                  device pages can't tell the phones apart.",
-                client.ip
+                client_ip
             );
             if !self.logged_shared.swap(true, Ordering::Relaxed) {
                 tracing::warn!("{text}");
@@ -641,7 +642,7 @@ mod tests {
     fn last_access_keeps_five_public_ips() {
         let limits = Limits::default();
         let client = |ip: &str| crate::net::Client {
-            ip: ip.parse().unwrap(),
+            ip: Some(ip.parse().unwrap()),
             peer: "127.0.0.1".parse().unwrap(),
             forwarded: true,
             untrusted_forward: false,
@@ -696,7 +697,7 @@ mod tests {
     fn two_phones_behind_one_private_address_warn() {
         let limits = Limits::default();
         let client = |ip: &str| crate::net::Client {
-            ip: ip.parse().unwrap(),
+            ip: Some(ip.parse().unwrap()),
             peer: ip.parse().unwrap(),
             forwarded: false,
             untrusted_forward: false,
@@ -711,7 +712,7 @@ mod tests {
 
         let limits = Limits::default();
         limits.observe_peer(&crate::net::Client {
-            ip: "172.30.0.5".parse().unwrap(),
+            ip: Some("172.30.0.5".parse().unwrap()),
             peer: "172.30.0.5".parse().unwrap(),
             forwarded: false,
             untrusted_forward: true,

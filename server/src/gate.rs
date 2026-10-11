@@ -32,6 +32,11 @@ use crate::net::{self, Client};
 pub enum Refusal {
     /// Not loopback or tailnet, and `ADMIN_PUBLIC` is off.
     NotTailnet,
+    /// A trusted proxy's `X-Forwarded-For` doesn't say who the client is (QA 22 H1).
+    UnknownClient,
+    /// A proxy that isn't in `TRUSTED_PROXIES` forwarded the request: its clients would all look
+    /// like the proxy (QA 22 H1).
+    UntrustedProxy,
     /// `Tailscale-Funnel-Request` - a request from the internet through Funnel.
     Funnel,
     /// `ADMIN_TAILSCALE_USERS` is set and the request has no listed login from a tailnet client.
@@ -42,6 +47,8 @@ impl Refusal {
     fn as_str(&self) -> &'static str {
         match self {
             Refusal::NotTailnet => "not a tailnet or loopback client",
+            Refusal::UnknownClient => "a proxy's X-Forwarded-For names no client",
+            Refusal::UntrustedProxy => "forwarded by a proxy that isn't in TRUSTED_PROXIES",
             Refusal::Funnel => "through Tailscale Funnel",
             Refusal::TailscaleUser => "no allowed Tailscale-User-Login",
         }
@@ -59,8 +66,14 @@ pub fn decide(
         if headers.contains_key("tailscale-funnel-request") {
             return Err(Refusal::Funnel);
         }
-        let allowed = net::is_loopback(client.ip)
-            || net::is_tailnet(client.ip)
+        if client.untrusted_forward {
+            return Err(Refusal::UntrustedProxy);
+        }
+        let Some(ip) = client.ip else {
+            return Err(Refusal::UnknownClient);
+        };
+        let allowed = net::is_loopback(ip)
+            || net::is_tailnet(ip)
             || (net.is_trusted(client.peer) && !client.forwarded);
         if !allowed {
             return Err(Refusal::NotTailnet);
@@ -69,7 +82,9 @@ pub fn decide(
     if let Some(users) = &net.admin_tailscale_users
         && !path.starts_with("/api/devices/")
     {
-        let login = net::is_tailnet(client.ip)
+        let login = client
+            .ip
+            .is_some_and(net::is_tailnet)
             .then(|| headers.get("tailscale-user-login"))
             .flatten()
             .and_then(|v| v.to_str().ok())
@@ -102,7 +117,7 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
     match decide(&state.net, &client, request.headers(), request.uri().path()) {
         Ok(()) => next.run(request).await,
         Err(refusal) => {
-            let ip = client.ip.to_string();
+            let ip = client.describe();
             let detail = format!(
                 "{} (peer {}, {} {})",
                 refusal.as_str(),
@@ -115,7 +130,7 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
                 .record(
                     &state.db,
                     "admin_refused",
-                    &net::limit_key(client.ip),
+                    &client.key(),
                     Some(&ip),
                     &detail,
                 )
@@ -201,7 +216,7 @@ mod tests {
             check(&net, "192.168.1.20", &[], "/devices"),
             Err(Refusal::NotTailnet)
         );
-        // A forged header from an untrusted peer counts for nothing.
+        // A forged header from an untrusted peer counts for nothing (and is refused as such).
         assert_eq!(
             check(
                 &net,
@@ -209,7 +224,7 @@ mod tests {
                 &[("x-forwarded-for", "100.101.102.103")],
                 "/devices"
             ),
-            Err(Refusal::NotTailnet)
+            Err(Refusal::UntrustedProxy)
         );
         // The device API on the admin listener is gated the same way.
         assert_eq!(
@@ -220,6 +235,65 @@ mod tests {
                 "/api/devices/policy"
             ),
             Err(Refusal::NotTailnet)
+        );
+    }
+
+    /// QA 22 H1: a proxy that appends to the client's header, or isn't trusted, never makes a
+    /// public client loopback.
+    #[test]
+    fn malformed_forwards_and_untrusted_proxies_are_refused() {
+        let gated = net(&[]);
+        for header in [
+            "garbage, 203.0.113.7",
+            ", 203.0.113.7",
+            "unknown, 203.0.113.7",
+            "fe80::1%eth0, 203.0.113.7",
+        ] {
+            assert_eq!(
+                check(
+                    &gated,
+                    "127.0.0.1",
+                    &[("x-forwarded-for", header)],
+                    "/login"
+                ),
+                Err(Refusal::NotTailnet),
+                "{header:?}"
+            );
+        }
+        for header in ["garbage", "", "127.0.0.1, x"] {
+            assert_eq!(
+                check(
+                    &gated,
+                    "127.0.0.1",
+                    &[("x-forwarded-for", header)],
+                    "/login"
+                ),
+                Err(Refusal::UnknownClient),
+                "{header:?}"
+            );
+        }
+        // Loopback trusted no more (the list names a bridge gateway), yet a proxy on the box
+        // forwards: its clients would all be 127.0.0.1.
+        let bridge = net(&[("TRUSTED_PROXIES", "172.30.0.1")]);
+        assert_eq!(
+            check(
+                &bridge,
+                "127.0.0.1",
+                &[("x-forwarded-for", "203.0.113.7")],
+                "/login"
+            ),
+            Err(Refusal::UntrustedProxy)
+        );
+        // ADMIN_PUBLIC lets them all in, as it does everyone.
+        let public = net(&[("ADMIN_PUBLIC", "on")]);
+        assert_eq!(
+            check(
+                &public,
+                "127.0.0.1",
+                &[("x-forwarded-for", "garbage")],
+                "/login"
+            ),
+            Ok(())
         );
     }
 

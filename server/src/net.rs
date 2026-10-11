@@ -132,7 +132,10 @@ pub fn limit_key(ip: IpAddr) -> String {
 /// who the client is (`X-Forwarded-For`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Client {
-    pub ip: IpAddr,
+    /// The client; `None` when a trusted proxy's header can't say who it is (an entry that isn't
+    /// an address before any untrusted one). Never guessed as the peer: the peer is the proxy
+    /// itself, often loopback (QA 22 H1).
+    pub ip: Option<IpAddr>,
     pub peer: IpAddr,
     /// The peer is a trusted proxy and sent `X-Forwarded-For` (whether or not it named an
     /// untrusted client).
@@ -141,24 +144,41 @@ pub struct Client {
     pub untrusted_forward: bool,
 }
 
-/// Every `X-Forwarded-For` entry, in order (several headers are one list). `None` when there is
-/// no header; `Some(Err)` when an entry isn't an address.
-fn forwarded_for(headers: &HeaderMap) -> Option<Result<Vec<IpAddr>, ()>> {
+impl Client {
+    /// What limits and bans count by: [limit_key] of the client, or for an unknown client a key of
+    /// its own (never the proxy's loopback address, which the proxy's other clients share).
+    pub fn key(&self) -> String {
+        match self.ip {
+            Some(ip) => limit_key(ip),
+            None => format!("unknown via {}", limit_key(self.peer)),
+        }
+    }
+
+    /// The client as the security log shows it.
+    pub fn describe(&self) -> String {
+        match self.ip {
+            Some(ip) => ip.to_string(),
+            None => format!("unknown (via {})", self.peer),
+        }
+    }
+}
+
+/// Every `X-Forwarded-For` entry, in order (several headers are one list), each parsed or `None`
+/// when it isn't an address (also a header that isn't text). `None` when there is no header.
+fn forwarded_for(headers: &HeaderMap) -> Option<Vec<Option<IpAddr>>> {
     let mut values = headers.get_all("x-forwarded-for").iter().peekable();
     values.peek()?;
     let mut list = Vec::new();
     for value in values {
-        let Ok(text) = value.to_str() else {
-            return Some(Err(()));
-        };
-        for entry in text.split(',') {
-            match parse_forwarded_entry(entry.trim()) {
-                Some(ip) => list.push(ip),
-                None => return Some(Err(())),
-            }
+        match value.to_str() {
+            Ok(text) => list.extend(
+                text.split(',')
+                    .map(|entry| parse_forwarded_entry(entry.trim())),
+            ),
+            Err(_) => list.push(None),
         }
     }
-    Some(Ok(list))
+    Some(list)
 }
 
 /// "1.2.3.4", "2001:db8::1", or with a port ("1.2.3.4:5678", "[2001:db8::1]:443") as some proxies
@@ -325,28 +345,43 @@ impl NetConfig {
 
     /// The client behind `peer` (§2 "Trusted proxies"): from a trusted peer, `X-Forwarded-For`
     /// is walked from the right, skipping trusted entries, and the first other one is the client
-    /// (all trusted: the left-most). A malformed header means the peer itself. From any other
-    /// peer the header is ignored.
+    /// (all trusted: the left-most). An entry that isn't an address stops the walk: the client is
+    /// then unknown (QA 22 H1 - a proxy that appends to a client's header would otherwise make
+    /// any client the proxy itself). From any other peer the header is ignored, and the peer is
+    /// the client.
     pub fn client(&self, headers: &HeaderMap, peer: IpAddr) -> Client {
         let peer = peer.to_canonical();
         let header = forwarded_for(headers);
         if !self.is_trusted(peer) {
             return Client {
-                ip: peer,
+                ip: Some(peer),
                 peer,
                 forwarded: false,
                 untrusted_forward: header.is_some(),
             };
         }
         let ip = match &header {
-            None | Some(Err(())) => peer,
-            Some(Ok(list)) => list
-                .iter()
-                .rev()
-                .find(|ip| !self.is_trusted(**ip))
-                .or(list.first())
-                .copied()
-                .unwrap_or(peer),
+            None => Some(peer),
+            Some(list) => {
+                let mut found = None;
+                for entry in list.iter().rev() {
+                    match entry {
+                        None => break,
+                        Some(ip) if self.is_trusted(*ip) => continue,
+                        Some(ip) => {
+                            found = Some(*ip);
+                            break;
+                        }
+                    }
+                }
+                found.or_else(|| {
+                    // Every entry trusted (and an address): the left-most.
+                    list.iter()
+                        .all(Option::is_some)
+                        .then(|| list.first().copied().flatten())
+                        .flatten()
+                })
+            }
         };
         Client {
             ip,
@@ -501,29 +536,56 @@ mod tests {
         let net = NetConfig::default();
         // An untrusted peer with XFF: the peer.
         let client = net.client(&xff(&["1.2.3.4"]), ip("198.51.100.9"));
-        assert_eq!(client.ip, ip("198.51.100.9"));
+        assert_eq!(client.ip, Some(ip("198.51.100.9")));
         assert!(client.untrusted_forward && !client.forwarded);
         // A trusted peer: the right-most untrusted entry, not the left-most (forgeable) one.
         let client = net.client(&xff(&["6.6.6.6, 203.0.113.7"]), ip("127.0.0.1"));
-        assert_eq!(client.ip, ip("203.0.113.7"));
+        assert_eq!(client.ip, Some(ip("203.0.113.7")));
         assert!(client.forwarded);
         // Trusted entries are skipped; several headers are one list.
         let client = net.client(&xff(&["6.6.6.6", "203.0.113.7, ::1"]), ip("::1"));
-        assert_eq!(client.ip, ip("203.0.113.7"));
+        assert_eq!(client.ip, Some(ip("203.0.113.7")));
         // All trusted: the left-most.
         let client = net.client(&xff(&["127.0.0.1"]), ip("127.0.0.1"));
-        assert_eq!(client.ip, ip("127.0.0.1"));
-        // A malformed header means the peer itself.
-        let client = net.client(&xff(&["203.0.113.7, nonsense"]), ip("127.0.0.1"));
-        assert_eq!(client.ip, ip("127.0.0.1"));
+        assert_eq!(client.ip, Some(ip("127.0.0.1")));
+        // An entry that isn't an address stops the walk: the client is unknown, never the peer.
+        for header in [
+            "203.0.113.7, nonsense",
+            "nonsense",
+            "",
+            "127.0.0.1, ",
+            "fe80::1%eth0",
+        ] {
+            let client = net.client(&xff(&[header]), ip("127.0.0.1"));
+            assert_eq!(client.ip, None, "{header:?}");
+            assert_eq!(client.key(), "unknown via 127.0.0.1");
+        }
+        // ... unless an untrusted address came first from the right: what a proxy that appends
+        // to the client's own header sends.
+        for header in [
+            "garbage, 203.0.113.7",
+            ", 203.0.113.7",
+            "unknown, 203.0.113.7",
+            "fe80::1%eth0, 203.0.113.7",
+        ] {
+            let client = net.client(&xff(&[header]), ip("127.0.0.1"));
+            assert_eq!(client.ip, Some(ip("203.0.113.7")), "{header:?}");
+        }
+        // A header that isn't text: unknown.
+        let mut bytes = HeaderMap::new();
+        bytes.insert(
+            "x-forwarded-for",
+            HeaderValue::from_bytes(b"\xff\xfe").unwrap(),
+        );
+        assert_eq!(net.client(&bytes, ip("127.0.0.1")).ip, None);
         // Ports and brackets as some proxies write them.
         let client = net.client(&xff(&["[2001:db8::5]:443"]), ip("127.0.0.1"));
-        assert_eq!(client.ip, ip("2001:db8::5"));
+        assert_eq!(client.ip, Some(ip("2001:db8::5")));
         let client = net.client(&xff(&["203.0.113.7:5678"]), ip("127.0.0.1"));
-        assert_eq!(client.ip, ip("203.0.113.7"));
+        assert_eq!(client.ip, Some(ip("203.0.113.7")));
         // No header from a trusted peer: the peer, not forwarded (a local tool).
         let client = net.client(&HeaderMap::new(), ip("127.0.0.1"));
-        assert_eq!(client.ip, ip("127.0.0.1"));
+        assert_eq!(client.ip, Some(ip("127.0.0.1")));
         assert!(!client.forwarded);
     }
 
@@ -538,7 +600,7 @@ mod tests {
         // The default (loopback) is replaced, not extended.
         assert!(!net.is_trusted(ip("127.0.0.1")));
         let client = net.client(&xff(&["203.0.113.7"]), ip("172.30.0.20"));
-        assert_eq!(client.ip, ip("203.0.113.7"));
+        assert_eq!(client.ip, Some(ip("203.0.113.7")));
     }
 
     #[test]

@@ -365,3 +365,102 @@ async fn shutdown_ends_the_command_streams() {
     }
     assert_eq!(app.state.command_streams.state(1).map(|s| s.open), Some(0));
 }
+
+/// QA 22 H1, as QA probed it: `GET /login` from the local proxy (127.0.0.1) with a header the
+/// proxy appended to, or one that names no client, is refused - never served as loopback.
+#[tokio::test]
+async fn a_malformed_forward_never_makes_a_client_loopback() {
+    let app = TestApp::new().await;
+    let with = |header: &str| {
+        Request::builder()
+            .uri("/login")
+            .header("x-forwarded-for", header)
+            .body(Body::empty())
+            .unwrap()
+    };
+    for header in [
+        "203.0.113.7",
+        "garbage, 203.0.113.7",
+        ", 203.0.113.7",
+        "unknown, 203.0.113.7",
+        "fe80::1%eth0, 203.0.113.7",
+        "garbage",
+        "",
+    ] {
+        let res = app.send_via(&app.router, LOOPBACK_PEER, with(header)).await;
+        assert_eq!(res.status, StatusCode::FORBIDDEN, "{header:?}");
+    }
+    let mut bytes = with("x");
+    bytes.headers_mut().insert(
+        "x-forwarded-for",
+        axum::http::HeaderValue::from_bytes(b"\xff\xfe").unwrap(),
+    );
+    let res = app.send_via(&app.router, LOOPBACK_PEER, bytes).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "non-UTF-8");
+    // A tailnet client through the proxy still passes.
+    let res = app
+        .send_via(&app.router, LOOPBACK_PEER, with("100.101.102.103"))
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+
+    // A loopback proxy that isn't trusted (the list names a bridge gateway): refused.
+    let bridge = TestApp::with_env(&[("TRUSTED_PROXIES", "172.30.0.1")]).await;
+    let res = bridge
+        .send_via(&bridge.router, LOOPBACK_PEER, with("203.0.113.7"))
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
+    let res = bridge
+        .send_via(
+            &bridge.router,
+            LOOPBACK_PEER,
+            Request::builder()
+                .uri("/login")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "a local tool without a header");
+}
+
+/// QA 22 H1's other effect: such a request's failures used to count as loopback's. They count
+/// for the client the header names, or for an "unknown" key of their own.
+#[tokio::test]
+async fn malformed_forwards_dont_share_loopbacks_failure_bucket() {
+    let app = TestApp::new().await;
+    let router = app.device_router();
+    let bad = |header: Option<&str>| {
+        let mut builder = Request::builder()
+            .uri("/api/devices/policy")
+            .header(header::AUTHORIZATION, "Bearer guess");
+        if let Some(header) = header {
+            builder = builder.header("x-forwarded-for", header);
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+    for _ in 0..crate::limits::IP_FAILURES {
+        app.send_via(&router, LOOPBACK_PEER, bad(Some("garbage, 203.0.113.7")))
+            .await;
+        app.send_via(&router, LOOPBACK_PEER, bad(Some("garbage")))
+            .await;
+    }
+    let res = app
+        .send_via(&router, LOOPBACK_PEER, bad(Some("203.0.113.7")))
+        .await;
+    assert_eq!(
+        res.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "203.0.113.7's bucket"
+    );
+    let res = app.send_via(&router, LOOPBACK_PEER, bad(Some("x"))).await;
+    assert_eq!(
+        res.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the unknown bucket"
+    );
+    let res = app.send_via(&router, LOOPBACK_PEER, bad(None)).await;
+    assert_eq!(
+        res.status,
+        StatusCode::UNAUTHORIZED,
+        "loopback's own bucket is untouched"
+    );
+}

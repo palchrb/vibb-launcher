@@ -517,9 +517,7 @@ pub async fn require_device_token(
     let device_id = token.and_then(|token| state.tokens.lookup(token));
 
     let Some(device_id) = device_id else {
-        let key = client
-            .map(|c| crate::net::limit_key(c.ip))
-            .unwrap_or_default();
+        let key = client.map(|c| c.key()).unwrap_or_default();
         if let Some(refused) = state.limits.ip_blocked(&key) {
             return too_many(refused);
         }
@@ -529,7 +527,7 @@ pub async fn require_device_token(
         } else {
             "missing bearer token"
         };
-        let ip = client.map(|c| c.ip.to_string());
+        let ip = client.map(|c| c.describe());
         let detail = format!(
             "{what} for {}{}",
             request.uri().path().chars().take(100).collect::<String>(),

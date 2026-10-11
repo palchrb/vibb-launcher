@@ -342,14 +342,14 @@ pub async fn csrf_guard(State(state): State<AppState>, request: Request, next: N
         crate::gate::peer_of(&request).is_some_and(|peer| state.net.is_trusted(peer.ip()));
     if let Err(reason) = csrf_check(request.headers(), peer_trusted) {
         let client = crate::gate::peer_of(&request)
-            .map(|peer| state.net.client(request.headers(), peer.ip()).ip);
-        let ip = client.map(|ip| ip.to_string());
+            .map(|peer| state.net.client(request.headers(), peer.ip()));
+        let ip = client.map(|c| c.describe());
         state
             .audit
             .record(
                 &state.db,
                 "csrf_refused",
-                &client.map(crate::net::limit_key).unwrap_or_default(),
+                &client.map(|c| c.key()).unwrap_or_default(),
                 ip.as_deref(),
                 &format!(
                     "{reason} ({method} {})",

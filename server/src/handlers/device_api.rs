@@ -39,8 +39,8 @@ pub async fn enroll(
     use crate::enrollment::{self, Kind};
 
     let client = state.net.client(&headers, addr.ip());
-    let ip = client.ip.to_string();
-    let key = crate::net::limit_key(client.ip);
+    let ip = client.describe();
+    let key = client.key();
     let code = enrollment::normalize(&req.enrollment_code);
     let unauthorized = || {
         (

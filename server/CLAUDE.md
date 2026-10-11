@@ -551,11 +551,14 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **`src/net.rs`** (`AppState.net`, `NetConfig::from_vars`): `BIND_ADDR`, `DEVICE_BIND_ADDR`, `ADMIN_DEVICE_API`
   (on), `ADMIN_PUBLIC` (off), `TRUSTED_PROXIES` (`127.0.0.1,::1`; IPs or CIDRs, a bad entry is dropped, never
   widened), `ADMIN_TAILSCALE_USERS`. `NetConfig::client`: `X-Forwarded-For` only from a trusted peer, walked from the
-  right skipping trusted entries (all trusted: the left-most; malformed: the peer); IPv4-mapped peers are canonical.
+  right skipping trusted entries (all trusted: the left-most); an entry that isn't an address stops the walk and
+  makes the client unknown (`Client::ip` is `None`, keyed `unknown via <peer>` by `Client::key`) - never the peer,
+  which is the proxy (QA 22 H1); IPv4-mapped peers are canonical.
   `limit_key`: IPv4 address or IPv6 /64. Login uses it (the old `security::client_ip` took the left-most XFF entry
   from anyone - §0 #1).
 - **Admin gate** (`src/gate.rs`, outermost layer of the admin router): passes loopback and tailnet
-  (100.64.0.0/10, fd7a:115c:a1e0::/48) clients and a trusted peer without XFF; `Tailscale-Funnel-Request` is refused;
+  (100.64.0.0/10, fd7a:115c:a1e0::/48) clients and a trusted peer without XFF; an unknown client and any forward
+  from an untrusted peer are refused (QA 22 H1); `Tailscale-Funnel-Request` is refused;
   `ADMIN_PUBLIC=on` passes everyone. `ADMIN_TAILSCALE_USERS`: admin pages also need a listed `Tailscale-User-Login`,
   believed only from a tailnet client; `/api/devices/*` skips that check (tagged phones have no login). `/healthz`
   (`SELECT 1`, "ok") skips every guard. Refused: empty 403 + `admin_refused` through `AppState.audit`
