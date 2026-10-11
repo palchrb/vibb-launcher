@@ -459,10 +459,22 @@ pub async fn save_backup_schedule(
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
     let day_of_month: i32 = form.day_of_month.trim().parse().unwrap_or(1).clamp(1, 28);
+    // Also read by a root script (backup_sync.sh): exactly HH:MM or nothing is written (review H1).
     let backup_time = if form.backup_time.trim().is_empty() {
         "02:00".to_string()
-    } else {
+    } else if security::valid_clock_time(form.backup_time.trim()) {
         form.backup_time.trim().to_string()
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            render_backups(
+                &state,
+                None,
+                Some("The time must look like 02:00 - nothing was saved.".to_string()),
+            )
+            .await,
+        )
+            .into_response();
     };
     let retention_count: i64 = form
         .retention_count

@@ -147,6 +147,99 @@ download_release() {
     fi
 }
 
+UPDATER_DIR="/opt/kid-phone-server-updater"
+
+# Rewrites the root-side helper scripts this release changed, so an existing Pi gets their fixes
+# without re-running install.sh (security review H1: scheduler.sh no longer sources data/). The
+# text is the same as install.sh's (a server test keeps them equal). Written to a temp file and
+# renamed, so a script running right now keeps its old copy.
+refresh_root_scripts() {
+    [ -d "$UPDATER_DIR" ] || return 0
+    local tmp
+    tmp="$(mktemp "$UPDATER_DIR/.scheduler.sh.XXXXXX")"
+    cat >"$tmp" <<'SCHEDULER_EOF'
+#!/usr/bin/env bash
+# Root-run, every 10 minutes: the OS/Tailscale schedule from the Software updates page.
+# schedule.conf lives in data/, which the unprivileged service writes, so it is never sourced or
+# executed (security review H1): each key is read with grep and must match its pattern, else its
+# default is used and the problem logged. A symlinked file is ignored. update.sh rewrites this
+# script on every update (the same text is in install.sh and update.sh; a server test keeps them
+# equal).
+set -euo pipefail
+# shellcheck source=/dev/null
+source /opt/kid-phone-server-updater/actions.sh
+
+CONFIG_FILE="/opt/kid-phone-server/data/schedule.conf"
+LAST_RUN_FILE="/opt/kid-phone-server-updater/last_run_date"
+
+[ -f "$CONFIG_FILE" ] || exit 0
+if [ -L "$CONFIG_FILE" ]; then
+    echo "scheduler: $CONFIG_FILE is a symlink - ignored" >&2
+    exit 0
+fi
+
+# setting KEY DEFAULT PATTERN: the key's value if it matches PATTERN (an anchored regex), else
+# DEFAULT.
+setting() {
+    local value
+    value="$(grep -m1 "^$1=" "$CONFIG_FILE" | cut -d= -f2- || true)"
+    if [[ "$value" =~ $3 ]]; then
+        printf '%s\n' "$value"
+    else
+        if [ -n "$value" ]; then
+            echo "scheduler: ignoring an invalid $1 in $CONFIG_FILE" >&2
+        fi
+        printf '%s\n' "$2"
+    fi
+}
+
+FREQUENCY="$(setting FREQUENCY daily '^(daily|weekly|monthly)$')"
+DAY_OF_WEEK="$(setting DAY_OF_WEEK 0 '^[0-6]$')"
+DAY_OF_MONTH="$(setting DAY_OF_MONTH 1 '^([1-9]|1[0-9]|2[0-8])$')"
+CHECK_TIME="$(setting CHECK_TIME 03:00 '^([01][0-9]|2[0-3]):[0-5][0-9]$')"
+AUTO_APPLY_OS="$(setting AUTO_APPLY_OS false '^(true|false)$')"
+AUTO_APPLY_TAILSCALE="$(setting AUTO_APPLY_TAILSCALE false '^(true|false)$')"
+AUTO_REBOOT="$(setting AUTO_REBOOT false '^(true|false)$')"
+
+TODAY="$(date +%F)"
+LAST_RUN="$(cat "$LAST_RUN_FILE" 2>/dev/null || true)"
+[ "$LAST_RUN" != "$TODAY" ] || exit 0
+
+case "$FREQUENCY" in
+    weekly)
+        [ "$(date +%w)" = "$DAY_OF_WEEK" ] || exit 0
+        ;;
+    monthly)
+        [ "$(date +%-d)" = "$DAY_OF_MONTH" ] || exit 0
+        ;;
+esac
+
+NOW_MINUTES=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
+TARGET_MINUTES=$(( 10#${CHECK_TIME%%:*} * 60 + 10#${CHECK_TIME##*:} ))
+DIFF=$(( NOW_MINUTES - TARGET_MINUTES ))
+# Only fire in the 10-minute window right after the scheduled time (this
+# runs on a 10-minute timer, so this is the precision that's actually
+# achievable - good enough for background maintenance).
+[ "$DIFF" -ge 0 ] && [ "$DIFF" -lt 10 ] || exit 0
+
+echo "$TODAY" >"$LAST_RUN_FILE"
+
+action_os_check
+if [ "$AUTO_APPLY_OS" = "true" ]; then
+    action_os_upgrade
+fi
+if [ "$AUTO_APPLY_TAILSCALE" = "true" ]; then
+    action_tailscale_update
+fi
+if [ "$AUTO_REBOOT" = "true" ] && [ -f /var/run/reboot-required ]; then
+    action_reboot
+fi
+SCHEDULER_EOF
+    chown root:root "$tmp"
+    chmod 700 "$tmp"
+    mv -f "$tmp" "$UPDATER_DIR/scheduler.sh"
+}
+
 TAG="$(pick_tag)"
 if [ -z "$TAG" ]; then
     echo "No server-vX.Y.Z release found in $REPO - not updating." >&2
@@ -160,6 +253,7 @@ trap 'rm -rf "$TMP_EXTRACT"' EXIT
 # Download, verify and unpack everything *before* stopping the service: a 404, a GitHub error
 # page, a truncated or altered download must fail here, with the old version still running.
 download_release "$TMP_EXTRACT"
+refresh_root_scripts
 
 echo "Stopping service..."
 systemctl stop kid-phone-server

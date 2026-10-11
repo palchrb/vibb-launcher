@@ -313,10 +313,21 @@ pub async fn save_app_update_schedule(
     };
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
     let day_of_month: i32 = form.day_of_month.trim().parse().unwrap_or(1).clamp(1, 28);
+    // Exactly HH:MM or nothing is written (review H1).
     let check_time = if form.check_time.trim().is_empty() {
         "04:00".to_string()
-    } else {
+    } else if security::valid_clock_time(form.check_time.trim()) {
         form.check_time.trim().to_string()
+    } else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            updates::render_page(
+                &state,
+                Some("The time must look like 04:00 - nothing was saved.".to_string()),
+            )
+            .await,
+        )
+            .into_response();
     };
 
     let config = AppUpdateScheduleConfig {
@@ -344,7 +355,9 @@ pub async fn save_app_update_schedule(
         "Couldn't save the schedule.".to_string()
     };
 
-    updates::render_page(&state, Some(message)).await
+    updates::render_page(&state, Some(message))
+        .await
+        .into_response()
 }
 
 /// Background task: checks for a new app release on the configured

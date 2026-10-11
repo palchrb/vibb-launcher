@@ -536,23 +536,47 @@ WATCHER_EOF
 # doesn't apply to this trusted, non-network-facing component.
 cat >"$UPDATER_DIR/scheduler.sh" <<'SCHEDULER_EOF'
 #!/usr/bin/env bash
+# Root-run, every 10 minutes: the OS/Tailscale schedule from the Software updates page.
+# schedule.conf lives in data/, which the unprivileged service writes, so it is never sourced or
+# executed (security review H1): each key is read with grep and must match its pattern, else its
+# default is used and the problem logged. A symlinked file is ignored. update.sh rewrites this
+# script on every update (the same text is in install.sh and update.sh; a server test keeps them
+# equal).
 set -euo pipefail
+# shellcheck source=/dev/null
 source /opt/kid-phone-server-updater/actions.sh
 
 CONFIG_FILE="/opt/kid-phone-server/data/schedule.conf"
 LAST_RUN_FILE="/opt/kid-phone-server-updater/last_run_date"
 
 [ -f "$CONFIG_FILE" ] || exit 0
+if [ -L "$CONFIG_FILE" ]; then
+    echo "scheduler: $CONFIG_FILE is a symlink - ignored" >&2
+    exit 0
+fi
 
-FREQUENCY="daily"
-DAY_OF_WEEK="0"
-DAY_OF_MONTH="1"
-CHECK_TIME="03:00"
-AUTO_APPLY_OS="false"
-AUTO_APPLY_TAILSCALE="false"
-AUTO_REBOOT="false"
-# shellcheck disable=SC1090
-source "$CONFIG_FILE"
+# setting KEY DEFAULT PATTERN: the key's value if it matches PATTERN (an anchored regex), else
+# DEFAULT.
+setting() {
+    local value
+    value="$(grep -m1 "^$1=" "$CONFIG_FILE" | cut -d= -f2- || true)"
+    if [[ "$value" =~ $3 ]]; then
+        printf '%s\n' "$value"
+    else
+        if [ -n "$value" ]; then
+            echo "scheduler: ignoring an invalid $1 in $CONFIG_FILE" >&2
+        fi
+        printf '%s\n' "$2"
+    fi
+}
+
+FREQUENCY="$(setting FREQUENCY daily '^(daily|weekly|monthly)$')"
+DAY_OF_WEEK="$(setting DAY_OF_WEEK 0 '^[0-6]$')"
+DAY_OF_MONTH="$(setting DAY_OF_MONTH 1 '^([1-9]|1[0-9]|2[0-8])$')"
+CHECK_TIME="$(setting CHECK_TIME 03:00 '^([01][0-9]|2[0-3]):[0-5][0-9]$')"
+AUTO_APPLY_OS="$(setting AUTO_APPLY_OS false '^(true|false)$')"
+AUTO_APPLY_TAILSCALE="$(setting AUTO_APPLY_TAILSCALE false '^(true|false)$')"
+AUTO_REBOOT="$(setting AUTO_REBOOT false '^(true|false)$')"
 
 TODAY="$(date +%F)"
 LAST_RUN="$(cat "$LAST_RUN_FILE" 2>/dev/null || true)"

@@ -6,6 +6,7 @@ mod admin_auth;
 mod app_display;
 mod calls;
 mod cleanup;
+mod deploy_scripts;
 mod device_api;
 mod docker;
 mod edge;

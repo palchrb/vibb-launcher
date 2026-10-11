@@ -39,6 +39,22 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
+/// A schedule time as the forms send it: exactly `HH:MM`, 00:00-23:59 (security review H1). The
+/// value goes into files a root-run script reads, so nothing else may ever reach them.
+pub fn valid_clock_time(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 5 || bytes[2] != b':' {
+        return false;
+    }
+    let digits = [bytes[0], bytes[1], bytes[3], bytes[4]];
+    if !digits.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let hour = (bytes[0] - b'0') * 10 + (bytes[1] - b'0');
+    let minute = (bytes[3] - b'0') * 10 + (bytes[4] - b'0');
+    hour < 24 && minute < 60
+}
+
 /// High-entropy bearer token handed to a device once, at enrollment. Only
 /// its SHA-256 hash (see `hash_token`) is ever stored - the plaintext value
 /// is shown/returned exactly once and can't be recovered afterward, the same
@@ -572,6 +588,32 @@ mod tests {
             "942eed8586f04aa8cc4b14537eb02bb601b671749b6f95c07a2d2261f83e75a7",
             "000102030405060708090a0b0c0d0e0f"
         ));
+    }
+
+    #[test]
+    fn clock_times_are_exactly_hh_mm() {
+        for good in ["00:00", "03:00", "23:59", "09:05"] {
+            assert!(valid_clock_time(good), "{good}");
+        }
+        for bad in [
+            "",
+            "3:00",
+            "24:00",
+            "23:60",
+            "03:00 ",
+            " 03:00",
+            "03:00$(x)",
+            "03:00\nx",
+            "03:00;reboot",
+            "0300",
+            "03-00",
+            "ab:cd",
+            "03:0",
+            "003:00",
+            "\u{0663}3:00",
+        ] {
+            assert!(!valid_clock_time(bad), "{bad:?}");
+        }
     }
 
     #[test]

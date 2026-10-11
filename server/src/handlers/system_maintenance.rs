@@ -361,10 +361,21 @@ pub async fn save_schedule(
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
     let day_of_month: i32 = form.day_of_month.trim().parse().unwrap_or(1).clamp(1, 28);
+    // Read by a root script (scheduler.sh): exactly HH:MM or nothing is written (review H1).
     let check_time = if form.check_time.trim().is_empty() {
         "03:00".to_string()
-    } else {
+    } else if security::valid_clock_time(form.check_time.trim()) {
         form.check_time.trim().to_string()
+    } else {
+        return (
+            http::StatusCode::BAD_REQUEST,
+            updates::render_page(
+                &state,
+                Some("The time must look like 03:00 - nothing was saved.".to_string()),
+            )
+            .await,
+        )
+            .into_response();
     };
 
     let config = ScheduleConfig {
