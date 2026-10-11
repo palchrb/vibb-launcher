@@ -937,6 +937,14 @@ pub async fn status(
         .as_ref()
         .and_then(crate::music::sanitize_music_state);
 
+    // Design 24b: the last relock, known fields only; the previous one for the security log.
+    let relock_json = report
+        .relock
+        .as_ref()
+        .and_then(crate::window_relock::sanitize_relock);
+    let previous_relock_at =
+        crate::handlers::window_relock::previous_relock_at(&state.db, device.id).await;
+
     // The previous report, for the security log below (install mode started, new apps).
     let previous: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
         "SELECT installed_apps_json, install_mode_until_ms FROM device_status \
@@ -959,8 +967,8 @@ pub async fn status(
           screen_timeout_seconds, ringer_mode, interruption_filter, update_fence_json, \
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
-          battery_optimization_exempt) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          battery_optimization_exempt, relock_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -994,9 +1002,17 @@ pub async fn status(
     .bind(&boot_cover_json)
     .bind(&music_state_json)
     .bind(report.battery_optimization_exempt)
+    .bind(&relock_json)
     .execute(&state.db)
     .await
     .ok();
+    crate::handlers::window_relock::log_relock(
+        &state.db,
+        device.id,
+        previous_relock_at,
+        relock_json.as_deref(),
+    )
+    .await;
 
     // A phone's failing downloads and streams flag their items for a re-resolve (design 21b §2.5).
     if let Some(report) = crate::music::parse_music_state(music_state_json.as_deref())

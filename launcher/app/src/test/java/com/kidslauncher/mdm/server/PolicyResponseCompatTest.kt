@@ -117,6 +117,46 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `relock is reported under the server's keys - design 24b's literal`() {
+        val relock = com.kidslauncher.mdm.server.dto.RelockReport(
+            atMs = 1_760_100_000_000, trigger = "timer", windows = listOf("override"),
+            proxiesCleared = 1, proxyLeft = false, caCertsRemoved = 0,
+            credentialRemoved = false, credentialLeft = false,
+            blocked = listOf("com.example.app"), accessibilityEnabled = emptyList(), adminsEnabled = emptyList(),
+            appsDisabled = emptyList(), notificationListeners = emptyList(), ownNotificationsOff = false,
+            failures = emptyList(),
+        )
+        val literal = """{ "at_ms": 1760100000000, "trigger": "timer", "windows": ["override"],
+              "proxies_cleared": 1, "proxy_left": false, "ca_certs_removed": 0,
+              "credential_removed": false, "credential_left": false,
+              "blocked": ["com.example.app"], "accessibility_enabled": [], "admins_enabled": [],
+              "apps_disabled": [], "notification_listeners": [], "own_notifications_off": false,
+              "failures": [] }"""
+        val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relock = relock)
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(ServerJson.parseToJsonElement(literal), json["relock"])
+        // Before the first relock: absent, like an older launcher's report.
+        val none = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("relock" !in none)
+        assertEquals("window_relock_v1", WINDOW_RELOCK_CAPABILITY)
+        assertTrue(WINDOW_RELOCK_CAPABILITY in STATUS_CAPABILITIES)
+    }
+
+    @Test
+    fun `the two relock commands decode, and their answers`() {
+        for (command in listOf("end_windows", "allow_blocked")) {
+            val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "$command"}}""")
+            assertEquals(command, policy.pendingCommand?.command)
+            assertEquals(7L, policy.pendingCommand?.id)
+        }
+        assertEquals("ended: pause, install mode", endWindowsResult(setOf(WindowKind.PAUSE), installMode = true))
+        assertEquals("ended: override, pause", endWindowsResult(setOf(WindowKind.PAUSE, WindowKind.OVERRIDE), installMode = false))
+        assertEquals("nothing was open", endWindowsResult(emptySet(), installMode = false))
+    }
+
+    @Test
     fun `battery_optimization_exempt is reported under the server's key and left out when unknown (19b)`() {
         for (exempt in listOf(true, false)) {
             val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, batteryOptimizationExempt = exempt)

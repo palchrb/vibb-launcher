@@ -45,6 +45,15 @@ object RelockFailure {
     val ALL = setOf(CREDENTIAL, SIGNER_CHECK, APPLY, PERMITTED_LISTS, PROXIES, CA_CERTS, NOTIFICATIONS, DETECTIONS, FINISH)
 }
 
+/** Status capability: the launcher reports `relock` and takes `end_windows`/`allow_blocked`. */
+const val WINDOW_RELOCK_CAPABILITY = "window_relock_v1"
+
+/** `end_windows`'s answer: "ended: pause, install mode", or "nothing was open". */
+fun endWindowsResult(ended: Set<WindowKind>, installMode: Boolean): String {
+    val names = WindowKind.entries.filter { it in ended }.map { it.wire } + listOfNotNull("install mode".takeIf { installMode })
+    return if (names.isEmpty()) "nothing was open" else "ended: ${names.joinToString(", ")}"
+}
+
 /** At most this many package names per list in the report. */
 const val RELOCK_LIST_MAX = 8
 

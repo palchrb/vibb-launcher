@@ -31,6 +31,7 @@ mod step9;
 mod time_rules;
 mod tracked_apps;
 mod wallpapers;
+mod window_relock;
 
 use axum::Router;
 use axum::body::Body;

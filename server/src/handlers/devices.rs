@@ -447,6 +447,8 @@ struct DeviceDetailTemplate {
     lock_notice: Option<(&'static str, bool)>,
     /// "Parent PIN" card (design 24, `#parent-pin`).
     parent_pin: crate::handlers::parent_pin::ParentPinCard,
+    /// Status card (design 24b): "Lock the phone again now", the last relock's findings.
+    relock: crate::handlers::window_relock::RelockCard,
     /// "Screen timeout" card (migrations/0032): the choice, every option, and what the phone
     /// last reported it applied.
     screen_timeout_seconds: i64,
@@ -1394,6 +1396,12 @@ async fn render_device(
     let lock_notice = notice.and_then(crate::kid_lock::flash_text);
     let parent_pin =
         crate::handlers::parent_pin::card(&state.db, &policy, latest_status.as_ref(), notice).await;
+    let relock = crate::handlers::window_relock::card(
+        &policy,
+        latest_status.as_ref(),
+        notice,
+        chrono::Utc::now().timestamp_millis(),
+    );
     let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
         .await
         .unwrap_or_else(|err| {
@@ -1428,6 +1436,7 @@ async fn render_device(
             escapes,
             lock_notice,
             parent_pin,
+            relock,
             screen_timeout_seconds: crate::models::screen_timeout_seconds(
                 policy.screen_timeout_seconds,
             ),

@@ -62,6 +62,9 @@ data class StatusReportRequest(
     /** Design 19b: the launcher is on Android's power-save allowlist
      * (`PowerManager.isIgnoringBatteryOptimizations`); `null` = unreadable (left out). */
     val batteryOptimizationExempt: Boolean? = null,
+    /** Design 24b: the last relock of a parent-PIN window (an override or a pause that ended) -
+     * see [RelockReport]; `null` before the first one (left out). */
+    val relock: RelockReport? = null,
 )
 
 /**

@@ -316,6 +316,9 @@ pub struct DeviceStatus {
     /// The launcher is exempt from battery optimisation (design 19b, migrations/0055). `None`
     /// from older launchers, or when the phone couldn't read it.
     pub battery_optimization_exempt: Option<bool>,
+    /// The phone's last relock of a parent-PIN window (design 24b), see
+    /// `window_relock::RelockReport`. `None` from older launchers or before any relock.
+    pub relock_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -782,6 +785,10 @@ pub struct StatusReportRequest {
     /// older launchers and when the phone couldn't read it.
     #[serde(default)]
     pub battery_optimization_exempt: Option<bool>,
+    /// Design 24b: the last relock of a parent-PIN window - opaque, stored through the known
+    /// fields only (`window_relock::sanitize_relock`).
+    #[serde(default)]
+    pub relock: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.

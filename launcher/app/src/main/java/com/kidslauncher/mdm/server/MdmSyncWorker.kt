@@ -242,6 +242,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     null
                 },
                 batteryOptimizationExempt = BatteryExemption.exempt(context),
+                relock = WindowRelock.lastReport(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -315,7 +316,8 @@ private suspend fun reportBlockedDnsEvents(context: Context, api: MdmApi) {
 }
 
 /**
- * Find My Device's remote-command dispatch - ring/stop_ring/lock/wipe, or `locate` (nothing here:
+ * The remote commands: design 24b's `end_windows`/`allow_blocked` (each followed by one more sync),
+ * and Find My Device's ring/stop_ring/lock/wipe, or `locate` (nothing here:
  * the sync takes a fresh fix for the status report - bypassing the throttle - and answers the
  * command after the report with the fix's accuracy and age; the PWA's "Update location now"
  * queues it). No result is ever reported for `wipe` - the device is gone by the time it would
@@ -355,10 +357,36 @@ private suspend fun dispatchPendingCommand(
 
         "wipe" -> LocateCommands.wipe(dpm, admin)
 
+        // Design 24b: "Lock the phone again now" - the pause or override and Play install mode
+        // end, and the phone locks again (the relock right after this sync's apply, or the worker).
+        "end_windows" -> {
+            val ended = WindowRelock.lockAgain(context, RelockTrigger.COMMAND)
+            val installMode = com.kidslauncher.mdm.play.PlayRuntime.installModeActive(context)
+            if (installMode) com.kidslauncher.mdm.play.PlayRuntime.endInstallMode(context)
+            reportCommandResult(api, pending.id, success = true, message = endWindowsResult(ended, installMode))
+            // A command queued behind it (a lock, a locate) follows within seconds (QA #8).
+            requestFollowUpSync(context)
+        }
+
+        // Design 24b: "Allow these apps" - the relock's blocks go; this sync's apply shows them.
+        "allow_blocked" -> {
+            val count = WindowRelock.allowBlocked(context)
+            reportCommandResult(api, pending.id, success = true, message = "allowed: $count apps")
+            requestFollowUpSync(context)
+        }
+
         // Answered after the status report that carries the fresh fix (performMdmSync).
         "locate" -> {}
 
         else -> Log.w(LOG_TAG, "Unknown pending command: ${pending.command}")
+    }
+}
+
+private fun requestFollowUpSync(context: Context) {
+    try {
+        com.kidslauncher.mdm.push.SyncRunner.request(context, "command_followup")
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't request the follow-up sync", e)
     }
 }
 
