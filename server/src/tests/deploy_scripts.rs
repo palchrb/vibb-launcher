@@ -249,3 +249,18 @@ async fn schedule_times_that_arent_hh_mm_are_refused() {
     let after: Vec<Option<Vec<u8>>> = files.iter().map(|f| std::fs::read(f).ok()).collect();
     assert_eq!(before, after, "a refused form wrote a schedule file");
 }
+
+/// Security review L9: the server's CI and release build with a pinned Rust and cross.
+#[test]
+fn server_workflows_pin_rust_and_cross() {
+    for workflow in [
+        include_str!("../../../.github/workflows/server-ci.yml"),
+        include_str!("../../../.github/workflows/server-release.yml"),
+    ] {
+        assert!(!workflow.contains("toolchain: stable"));
+        assert!(workflow.contains("toolchain: 1."));
+        for line in workflow.lines().filter(|line| line.contains("tool: cross")) {
+            assert!(line.trim().starts_with("tool: cross@0."), "{line}");
+        }
+    }
+}

@@ -71,7 +71,8 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: stable
+          # Pinned (security review L9); move it on deliberately, with the clippy count.
+          toolchain: 1.99.0
           components: rustfmt, clippy
       - run: cargo build --locked
       - run: cargo fmt --check
@@ -96,11 +97,12 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: stable
+          # Pinned (security review L9); move it on deliberately, with the clippy count.
+          toolchain: 1.99.0
       - name: Install cross
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cross
+          tool: cross@0.2.5
       - name: Build (x86_64-unknown-linux-musl)
         run: cross build --release --locked --target x86_64-unknown-linux-musl
       - name: Stage the image context

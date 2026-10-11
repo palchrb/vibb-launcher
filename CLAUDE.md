@@ -59,7 +59,9 @@ keeps the music app's, the music app sends exactly those.
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read, `music.yml` also
   on the shared `server/testdata/music_*.json` and the launcher's copy of the bridge AIDL; `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
-  the workflow changed). Require the always-running gate jobs `launcher-ci`, `server-ci` and `music-ci` in
+  the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in
+  `server-ci.yml` and `server-release.yml` (security review L9) - move them on deliberately, both files at once.
+  Require the always-running gate jobs `launcher-ci`, `server-ci` and `music-ci` in
   branch protection, not the build jobs.
 - `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
   release (`kids-launcher-mdm.apk`), versionCode `X*1_000_000 + Y*1_000 + Z` (RC: minus 1). Only
