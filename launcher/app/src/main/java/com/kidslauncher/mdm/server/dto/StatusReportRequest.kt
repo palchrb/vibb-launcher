@@ -235,6 +235,9 @@ data class CallState(
     val state: String,
     val dialerRoleHeld: Boolean,
     val redirectionRoleHeld: Boolean,
+    /** Security review L7: `ROLE_CALL_SCREENING` - the incoming-call filter when we aren't the
+     * phone app. The server warns when calls are managed and neither role filters them. */
+    val screeningRoleHeld: Boolean,
     val defaultDialer: String?,
     val systemDialer: String?,
     val smsRestricted: Boolean,

@@ -37,7 +37,36 @@ fun shouldPromptForRole(state: CallPolicyState, roleHeld: Boolean, nowMs: Long, 
 fun lockDefaultApps(state: CallPolicyState, dialerRoleHeld: Boolean): Boolean = state.managed && dialerRoleHeld
 
 /** The call roles as the server last heard about them (or as a sync was last asked to report). */
-data class RoleSnapshot(val dialerHeld: Boolean, val redirectionHeld: Boolean)
+data class RoleSnapshot(val dialerHeld: Boolean, val redirectionHeld: Boolean, val screeningHeld: Boolean = false)
+
+/**
+ * The system role prompt Home may show (at most once a day, [shouldPromptForRole]), `null` = none -
+ * [ROLE_DIALER]/[ROLE_CALL_REDIRECTION]/[ROLE_CALL_SCREENING] (the RoleManager names, literal to
+ * stay Android-free). In this order: the dialer role when the device-owner call couldn't take it
+ * ([dialerError]); call redirection (no device-owner API) once the dialer role is held; call
+ * screening (no device-owner API either) whenever it isn't held - security review L7: Telecom binds
+ * the screening role holder's service instead of the phone app's, so it filters incoming calls
+ * when the launcher isn't the phone app, and keeps another app from screening instead of us. Only
+ * while calls are managed.
+ */
+fun rolePromptFor(
+    state: CallPolicyState,
+    dialerHeld: Boolean,
+    dialerError: Boolean,
+    redirectionHeld: Boolean,
+    screeningHeld: Boolean,
+): String? = when {
+    !state.managed -> null
+    !dialerHeld && dialerError -> ROLE_DIALER
+    dialerHeld && !redirectionHeld -> ROLE_CALL_REDIRECTION
+    !screeningHeld -> ROLE_CALL_SCREENING
+    else -> null
+}
+
+/** `RoleManager.ROLE_DIALER`, `ROLE_CALL_REDIRECTION`, `ROLE_CALL_SCREENING`. */
+const val ROLE_DIALER = "android.app.role.DIALER"
+const val ROLE_CALL_REDIRECTION = "android.app.role.CALL_REDIRECTION"
+const val ROLE_CALL_SCREENING = "android.app.role.CALL_SCREENING"
 
 /**
  * Whether a role changed since the server was last told (B1): `apply()` also runs outside a sync

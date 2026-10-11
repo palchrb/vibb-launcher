@@ -67,5 +67,24 @@ class DialerRoleTest {
         assertFalse(roleReportNeeded(held, held))
         assertTrue(roleReportNeeded(held, held.copy(dialerHeld = false)))
         assertTrue(roleReportNeeded(held, held.copy(redirectionHeld = false)))
+        assertTrue("security review L7", roleReportNeeded(held, held.copy(screeningHeld = true)))
+    }
+
+    /** Security review L7: the call-screening role is asked for too - it filters incoming calls
+     * when the launcher isn't the phone app. One prompt at a time, in order. */
+    @Test
+    fun `the role prompts ask for screening too`() {
+        fun prompt(state: CallPolicyState = managed, dialer: Boolean = true, error: Boolean = false, redirection: Boolean = true, screening: Boolean = true) =
+            rolePromptFor(state, dialer, error, redirection, screening)
+        assertEquals(null, prompt())
+        assertEquals(ROLE_DIALER, prompt(dialer = false, error = true, redirection = false, screening = false))
+        assertEquals("no error yet: the device-owner call may still take it", ROLE_CALL_SCREENING, prompt(dialer = false, screening = false))
+        assertEquals(ROLE_CALL_REDIRECTION, prompt(redirection = false, screening = false))
+        assertEquals(ROLE_CALL_SCREENING, prompt(screening = false))
+        assertEquals(ROLE_CALL_SCREENING, prompt(state = failClosed, screening = false))
+        assertEquals("unmanaged: nothing", null, prompt(state = unmanaged, dialer = false, error = true, screening = false))
+        assertEquals("android.app.role.CALL_SCREENING", ROLE_CALL_SCREENING)
+        assertEquals("android.app.role.CALL_REDIRECTION", ROLE_CALL_REDIRECTION)
+        assertEquals("android.app.role.DIALER", ROLE_DIALER)
     }
 }

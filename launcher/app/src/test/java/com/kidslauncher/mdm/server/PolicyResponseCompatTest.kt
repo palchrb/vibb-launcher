@@ -568,7 +568,7 @@ class PolicyResponseCompatTest {
         val report = StatusReportRequest(
             lockReason = "NONE", kioskEngaged = true, capabilities = listOf("call_policy_v1"),
             callState = CallState(
-                state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false,
+                state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false, screeningRoleHeld = true,
                 defaultDialer = "x", systemDialer = "y", smsRestricted = true, outgoingRestricted = false,
                 defaultSmsPackage = null, lastError = null, lastEmergencyCallAt = null, callbackWindowUntil = null,
                 callLogReadable = false, bootPolicy = "ok",
@@ -579,7 +579,7 @@ class PolicyResponseCompatTest {
         val callState = json["call_state"]!!.jsonObject
         assertEquals(
             setOf(
-                "state", "dialer_role_held", "redirection_role_held", "default_dialer", "system_dialer",
+                "state", "dialer_role_held", "redirection_role_held", "screening_role_held", "default_dialer", "system_dialer",
                 "sms_restricted", "outgoing_restricted", "default_sms_package", "last_error",
                 "last_emergency_call_at", "callback_window_until", "call_log_readable", "boot_policy",
             ),
@@ -664,7 +664,7 @@ class PolicyResponseCompatTest {
         )
         assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
         val failed = CallState(
-            state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, defaultDialer = null, systemDialer = null,
+            state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, screeningRoleHeld = false, defaultDialer = null, systemDialer = null,
             smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,
             lastEmergencyCallAt = null, callbackWindowUntil = null, callLogReadable = true, bootPolicy = "ok",
             inCallUiFailedAt = "2026-10-05T08:00:00Z",

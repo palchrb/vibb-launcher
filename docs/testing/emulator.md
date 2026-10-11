@@ -53,6 +53,8 @@ P=me.vibb.launcher.debug
 adb install -r ~/repos/handy/launcher/app/build/outputs/apk/debug/app-debug.apk
 adb shell dpm set-device-owner $P/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
+# Security review L7: the incoming-call filter when the launcher isn't the phone app.
+adb shell cmd role add-role-holder android.app.role.CALL_SCREENING $P
 adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeListenerService
 # Design 19b: the launcher on the power-save allowlist ("battery: Unrestricted"); expect "Added: ...".
 # Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.
@@ -508,6 +510,14 @@ Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - 
    server, `UPDATE device_commands SET received_at = NULL, acknowledged_at = NULL, result = NULL, delivered_at =
    datetime('now', '-3 minutes') WHERE id = <the lock's id>`, then "Sync now" on the phone: the log says "delivered
    again - confirmed, not run twice", the screen doesn't lock again, and the row reads "Received ...".
+3. **Call screening without the phone-app role (L7)**, calls managed, `CALL_SCREENING` granted (§4): `adb shell cmd
+   role get-role-holders android.app.role.CALL_SCREENING` lists the launcher. Device page -> Calls: no role warning.
+   Then `adb shell cmd role remove-role-holder android.app.role.CALL_SCREENING $P`: after the next sync the page says
+   "Call-screening role not active". Add it back, take the dialer role away (Calls unmanaged and managed again won't
+   do it - `adb shell cmd role add-role-holder android.app.role.DIALER com.android.dialer` while `Block USB debugging`
+   is off; the launcher takes the role back at its next apply, so call right away): `adb emu gsm call <unknown>` is
+   rejected without ringing, an allowed contact rings in the system dialer, and a report sent meanwhile makes the page
+   say "Incoming calls are still filtered". Without either role the page says "not filtered".
 
 ## 6b. Step 7: Play (optional)
 
