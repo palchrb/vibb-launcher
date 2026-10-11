@@ -336,7 +336,7 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `ui/home/MusicCa
 
 ## Building without tsnet.aar
 
-`libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. CI builds with `-PrequireTsnet=true`, which fails the build if the aar is missing, so a release can't ship the stub. If `mobile/tsembed`'s exported API changes, update the stub to match.
+`libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` into the **debug** variant instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. A **release** build never gets the stub, whatever the flags (security review L13): `checkReleaseHasTsnet` (a dependency of `preReleaseBuild`) fails it without the aar, and the stub isn't in the release source set anyway. CI also passes `-PrequireTsnet=true`, which fails any build without the aar. To build a release locally without Go (an APK that is never for a phone), pack the stub's classes into a throwaway `libs/tsnet.aar` (gitignored). If `mobile/tsembed`'s exported API changes, update the stub to match.
 
 ## Release builds (palchrb fork)
 

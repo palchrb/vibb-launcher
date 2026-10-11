@@ -33,8 +33,8 @@ Server (from `server/`): `cargo test`, `cargo fmt --check`, `cargo clippy --all-
 Launcher (from `launcher/`, JDK 17, `local.properties` with `sdk.dir=...`):
 `./gradlew assembleDebug assembleRelease testDebugUnitTest`. Music app (from `music/`, the same JDK and
 `local.properties`): `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true`.
-Without `-PrequireTsnet=true` a missing
-`app/libs/tsnet.aar` falls back to a stub. No Firebase config is needed: FCM was removed in design 19 (the
+Without `app/libs/tsnet.aar` the debug build falls
+back to a stub and a release build fails (security review L13; `-PrequireTsnet=true` fails any build). No Firebase config is needed: FCM was removed in design 19 (the
 SSE stream is the only nudge), and `assembleRelease` fails if Firebase or Play services comes back on the
 release classpath.
 
