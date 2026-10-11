@@ -146,12 +146,7 @@ fn block<'a>(script: &'a str, start: &str, end: &str) -> &'a str {
 #[test]
 fn root_takes_only_signed_release_files() {
     let actions = heredoc(INSTALL, "ACTIONS_EOF");
-    let places = [
-        INSTALL,
-        UPDATE,
-        actions,
-        heredoc(UPDATE, "ACTIONS_EOF"),
-    ];
+    let places = [INSTALL, UPDATE, actions, heredoc(UPDATE, "ACTIONS_EOF")];
     let key_lines: Vec<&str> = places
         .iter()
         .flat_map(|script| {
@@ -162,7 +157,10 @@ fn root_takes_only_signed_release_files() {
         .collect();
     // install.sh and update.sh each hold it twice: their own and actions.sh's.
     assert_eq!(key_lines.len(), 6, "{key_lines:?}");
-    assert!(key_lines.iter().all(|line| *line == key_lines[0]), "{key_lines:?}");
+    assert!(
+        key_lines.iter().all(|line| *line == key_lines[0]),
+        "{key_lines:?}"
+    );
     let verify = block(INSTALL, "verify_signed() {", "}");
     for script in places {
         assert_eq!(block(script, "verify_signed() {", "}"), verify);
