@@ -35,6 +35,14 @@ const val MUSIC_EXTRA_OPEN = "me.vibb.music.extra.OPEN"
 const val MUSIC_OPEN_PLAYER = "player"
 const val MUSIC_EXTRA_RESUME = "me.vibb.music.extra.RESUME"
 
+/**
+ * The call rule's session commands (design 26a §6.7, qa-26a-step3b-code H1), sent as the platform
+ * session's custom actions: a call began while the music played / that call is over. The player
+ * pauses as its own pause (the kid's sleep timer runs on) and decides itself whether to play again.
+ */
+const val MUSIC_CALL_HOLD = "me.vibb.music.CALL_HOLD"
+const val MUSIC_CALL_RELEASE = "me.vibb.music.CALL_RELEASE"
+
 /** Status-report capability: `music_state` (design 21 §1.3). */
 const val MUSIC_CAPABILITY = "music_v1"
 

@@ -54,4 +54,14 @@ class CallPauseTest {
         assertEquals(CallAction.NONE, run(listOf(Triple(true, true, false), Triple(true, false, true), Triple(false, false, true)), mayPlay = false).last())
         assertEquals("taken over, stopped: not ours to resume", CallAction.NONE, run(listOf(Triple(true, true, false), Triple(true, false, true), Triple(false, false, false))).last())
     }
+
+    @Test
+    fun `a release never plays after the sleep timer ended during the hold (qa-26a-step3b-code H1)`() {
+        var state = CallPause()
+        state = callPauseStep(state, inCall = true, playing = true, paused = false, mayPlay = true).first
+        state = callPauseStep(state, inCall = true, playing = false, paused = true, mayPlay = true).first
+        state = callTimerEnded(state)
+        assertEquals(CallAction.NONE, callPauseStep(state, inCall = false, playing = false, paused = true, mayPlay = true).second)
+        assertEquals("a timer ending outside a hold changes nothing", CallPause(inCall = true), callTimerEnded(CallPause(inCall = true)))
+    }
 }

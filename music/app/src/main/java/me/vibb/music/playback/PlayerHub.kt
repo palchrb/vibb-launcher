@@ -44,6 +44,18 @@ object Commands {
         listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN).map { SessionCommand(it, Bundle.EMPTY) }
 
     /**
+     * The launcher's call rule (design 26a §6.7, qa-26a-step3b-code H1): a call that rings or is up
+     * while the music plays -> [CALL_HOLD]; the call over -> [CALL_RELEASE]. The service pauses as its
+     * own pause (the sleep timer runs on) and plays again only what it paused, and not after the
+     * timer ended meanwhile. Spelled in bridge_contract.json; granted only to a launcher signed like
+     * this app (`onConnect`), as the platform session's custom actions.
+     */
+    const val CALL_HOLD = "me.vibb.music.CALL_HOLD"
+    const val CALL_RELEASE = "me.vibb.music.CALL_RELEASE"
+
+    val LAUNCHER: List<SessionCommand> = listOf(CALL_HOLD, CALL_RELEASE).map { SessionCommand(it, Bundle.EMPTY) }
+
+    /**
      * The commands that start playing - refused while the app is suspended (`playAllowed`). [OUTPUT]
      * to a Sonos room starts the speaker too: that depends on its argument, so the service's command
      * gate reads [ARG_OUTPUT] (`Output.sonosUid`) beside this set (design 26a §3.3).

@@ -116,17 +116,17 @@ class MusicMediaPlanTest {
 
     // Calls (design 26a §6.7).
 
-    private fun calls(steps: List<Pair<Boolean, SessionPlay?>>, usable: Boolean = true): List<CallMusicAction> {
+    private fun calls(steps: List<Pair<Boolean, Boolean>>): List<CallMusicAction> {
         var state = CallHold()
-        return steps.map { (inCall, play) ->
-            val (next, action) = callHoldStep(state, inCall, play, usable)
+        return steps.map { (inCall, playing) ->
+            val (next, action) = callHoldStep(state, inCall, playing)
             state = next
             action
         }
     }
 
     @Test
-    fun `a VoIP ring or call, our dialer's call or a system call pauses the music`() {
+    fun `a VoIP ring or call, our dialer's call or a system call is a call`() {
         assertTrue("Element X ringing: no audio mode yet", musicCallActive(com.kidslauncher.mdm.lock.VoipPhase.RINGING, ourCall = false, systemCall = false))
         assertTrue(musicCallActive(com.kidslauncher.mdm.lock.VoipPhase.IN_CALL, ourCall = false, systemCall = false))
         assertTrue(musicCallActive(com.kidslauncher.mdm.lock.VoipPhase.NONE, ourCall = true, systemCall = false))
@@ -137,37 +137,22 @@ class MusicMediaPlanTest {
     }
 
     @Test
-    fun `music playing when a call starts is paused, and played again when it ends`() {
-        val actions = calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.PAUSED))
-        assertEquals(listOf(CallMusicAction.PAUSE, CallMusicAction.NONE, CallMusicAction.PLAY), actions)
+    fun `music playing when a call starts gets a HOLD, and the RELEASE when it ends`() {
+        assertEquals(listOf(CallMusicAction.HOLD, CallMusicAction.NONE, CallMusicAction.RELEASE), calls(listOf(true to true, true to false, false to false)))
+        assertEquals("whatever the kid did during the call: the music app decides", CallMusicAction.RELEASE, calls(listOf(true to true, true to true, false to true)).last())
     }
 
     @Test
-    fun `a pause made before the call is untouched, nothing playing is nothing to do`() {
-        assertEquals(listOf(CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to SessionPlay.PAUSED, false to SessionPlay.PAUSED)))
-        assertEquals(listOf(CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to null, false to null)))
-        assertEquals("no call, no look", listOf(CallMusicAction.NONE), calls(listOf(false to SessionPlay.PLAYING)))
+    fun `a pause made before the call gets nothing, and no call no look`() {
+        assertEquals(listOf(CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to false, false to false)))
+        assertEquals("playing only after the call began", listOf(CallMusicAction.NONE, CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to false, true to true, false to true)))
+        assertEquals(listOf(CallMusicAction.NONE), calls(listOf(false to true)))
     }
 
     @Test
-    fun `the kid's own play and pause during the call stay theirs`() {
-        val actions = calls(
-            listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.PAUSED),
-        )
-        assertEquals(List(4) { if (it == 0) CallMusicAction.PAUSE else CallMusicAction.NONE } + CallMusicAction.NONE, actions)
-    }
-
-    @Test
-    fun `our pause not shown yet is not the kid's play - the ring's re-reads while the session still plays`() {
-        val actions = calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.PAUSED))
-        assertEquals(listOf(CallMusicAction.PAUSE, CallMusicAction.NONE, CallMusicAction.NONE, CallMusicAction.PLAY), actions)
-    }
-
-    @Test
-    fun `after the call nothing plays in a suspended app, nor a session that stopped`() {
-        assertEquals(CallMusicAction.NONE, calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.PAUSED), usable = false).last())
-        assertEquals(CallMusicAction.NONE, calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.STOPPED)).last())
-        assertEquals(CallMusicAction.NONE, calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to null)).last())
+    fun `the call commands are the music app's, spelled once in the shared contract`() {
+        assertEquals("me.vibb.music.CALL_HOLD", MUSIC_CALL_HOLD)
+        assertEquals("me.vibb.music.CALL_RELEASE", MUSIC_CALL_RELEASE)
     }
 }
 
@@ -219,6 +204,11 @@ class MusicSuspensionGuardTest {
         for (source in listOf("VoipCalls.addListener", "OngoingCalls.addListener", "addOnModeChangedListener")) assertTrue(source, init.contains(source))
         assertTrue(body(calls, "private fun evaluate(").contains("musicCallActive(VoipCalls.phase, OngoingCalls.hasLiveCall, systemCall(ctx))"))
         assertTrue(body(calls, "private fun systemCall(").contains("managedCallActive(managed, mode)"))
+        // the music app pauses as its own pause (the sleep timer stays): never a plain session pause or play (qa-26a-step3b-code H1)
+        val evaluate = body(calls, "private fun evaluate(")
+        assertTrue(evaluate.contains("session?.transportControls?.sendCustomAction(command, Bundle())"))
+        assertFalse(calls.contains("transportControls?.pause()"))
+        assertFalse(calls.contains("transportControls?.play()"))
         assertTrue(file("music/MusicSessions.kt").contains("VolumeCap.init(app)\n            MusicCalls.init(app)"))
     }
 }

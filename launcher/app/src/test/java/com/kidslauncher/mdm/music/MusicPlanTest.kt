@@ -269,6 +269,10 @@ class MusicPlanTest {
             strings("now_playing"),
             listOf(MusicNowPlaying.ENTRY, MusicNowPlaying.ITEM, MusicNowPlaying.POSITION_MS, MusicNowPlaying.DURATION_MS, MusicNowPlaying.PLAYING, MusicNowPlaying.ART),
         )
+        // The call rule's session commands (design 26a §6.7, qa-26a-step3b-code H1).
+        val calls = (contract["call_commands"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content }
+        assertEquals(calls["hold"], MUSIC_CALL_HOLD)
+        assertEquals(calls["release"], MUSIC_CALL_RELEASE)
         // Home's card opens the player and continues (design 21 step 4).
         val player = (contract["player"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content }
         assertEquals(

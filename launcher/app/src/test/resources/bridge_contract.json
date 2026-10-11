@@ -17,6 +17,10 @@
   },
   "report_state": ["report", "held_files", "held_sha256"],
   "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art"],
+  "call_commands": {
+    "hold": "me.vibb.music.CALL_HOLD",
+    "release": "me.vibb.music.CALL_RELEASE"
+  },
   "player": {
     "activity": "me.vibb.music.ui.MainActivity",
     "extra_open": "me.vibb.music.extra.OPEN",

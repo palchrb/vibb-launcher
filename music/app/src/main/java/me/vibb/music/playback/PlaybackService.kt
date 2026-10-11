@@ -43,6 +43,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.music.R
+import me.vibb.music.bridge.Bridge
+import me.vibb.music.bridge.LAUNCHER_PACKAGES
 import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.bridge.NowPlayingKeys
 import me.vibb.music.data.BookmarkRow
@@ -63,6 +65,7 @@ import me.vibb.music.logic.QueuePlan
 import me.vibb.music.logic.TransportAction
 import me.vibb.music.logic.callMode
 import me.vibb.music.logic.callPauseStep
+import me.vibb.music.logic.callTimerEnded
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
@@ -333,6 +336,11 @@ class PlaybackService : MediaSessionService() {
 
     private val callback = object : MediaSession.Callback {
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
+            if (controller.packageName in LAUNCHER_PACKAGES && Bridge.sameSigner(this@PlaybackService, controller.packageName)) {
+                // the launcher's call rule only (design 26a §6.7, qa-26a-step3b-code H1)
+                val calls = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().apply { Commands.LAUNCHER.forEach { add(it) } }.build()
+                return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(calls).build()
+            }
             if (controller.packageName != packageName) return MediaSession.ConnectionResult.AcceptedResultBuilder(session).build()
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().apply { Commands.ALL.forEach { add(it) } }.build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session).setAvailableSessionCommands(commands).build()
@@ -349,7 +357,7 @@ class PlaybackService : MediaSessionService() {
             if ((customCommand.customAction in Commands.PLAYS || toRoom) && !playAllowed(suspendedNow())) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
-            if (Commands.ALL.none { it.customAction == customCommand.customAction }) {
+            if ((Commands.ALL + Commands.LAUNCHER).none { it.customAction == customCommand.customAction }) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
             // Main.immediate: with the renderer settled this runs at once, as before step 2.
@@ -366,6 +374,8 @@ class PlaybackService : MediaSessionService() {
                         Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
                         Commands.ROOMS_REFRESH -> launch(Dispatchers.IO) { home.rooms.refresh() }
                         Commands.ROOMS_RESCAN -> home.rooms.rescanInBackground()
+                        Commands.CALL_HOLD -> launcherCall(true)
+                        Commands.CALL_RELEASE -> launcherCall(false)
                     }
                 }
             }
@@ -705,6 +715,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun sleepEnded() {
+        // a pause held for a call is not undone after the timer's end (qa-26a-step3b-code H1)
+        callPause = callTimerEnded(callPause)
         sleepEndsAt = null
         sleepMinutes = null
         renderer.saveNow()
@@ -800,7 +812,7 @@ class PlaybackService : MediaSessionService() {
             RendererEvent.InterruptionEnded -> if (renderer.player.playWhenReady) applyOverlap()
             is RendererEvent.IsPlaying -> {
                 onIsPlayingChanged(event.playing)
-                if (callPause.inCall) callStep(callPause.inCall)
+                if (callPause.inCall) callStep()
             }
             is RendererEvent.Error -> onError(event.code)
             RendererEvent.Lost -> scope.launch { lost() }
@@ -840,40 +852,56 @@ class PlaybackService : MediaSessionService() {
         renderer.saveNow()
     }
 
-    // --- calls on a Sonos room (design 26a §6.7) ---
+    // --- calls (design 26a §6.7) ---
 
     private var callPause = CallPause()
 
-    /** The room we paused for the call: only it is resumed. */
+    /** The renderer we paused for the call: only it is played again. */
     private var callRenderer: Renderer? = null
 
-    /** The backstop for a system call (the launcher holds the rule; without its listener access only this). */
-    private val modeListener = AudioManager.OnModeChangedListener { mode -> callStep(callMode(mode)) }
+    /** The launcher says a call rings or is up (CALL_HOLD) / is over (CALL_RELEASE). */
+    private var launcherInCall = false
+
+    /** The audio mode says a system call rings or is up: the backstop on a Sonos room. */
+    private var modeInCall = false
+
+    private val modeListener = AudioManager.OnModeChangedListener { mode ->
+        modeInCall = callMode(mode)
+        callStep()
+    }
+
+    private fun launcherCall(inCall: Boolean) {
+        launcherInCall = inCall
+        callStep()
+    }
 
     /**
-     * The call rule's step ([callPauseStep]) while a Sonos room renders: the phone's own player
-     * pauses for a call through its audio focus, and the room holds none. Our pause and resume are
-     * the service's own (the sleep timer runs on), and the resume asks `playAllowed`.
+     * The call rule's step ([callPauseStep]): the launcher's hold for every renderer, the audio mode
+     * only while a Sonos room renders (the phone's own player pauses for a system call through its
+     * audio focus; a room holds none). The pause is the service's own ([selfPausing]: the sleep timer
+     * runs on); the resume asks `playAllowed`, goes only to the renderer we paused, and through its
+     * player's play - the same entry point as the session's play (qa-26a-step3b-code L7).
      */
-    private fun callStep(inCall: Boolean) {
-        val sonos = renderer as? SonosRenderer
-        if (sonos == null) {
-            callPause = CallPause(inCall = inCall)
+    private fun callStep() {
+        val r = renderer
+        val inCall = launcherInCall || (modeInCall && r.kind == RendererKind.SONOS)
+        if (callRenderer != null && callRenderer !== r) {
+            // the renderer changed under the call: nothing of ours to play again
+            callPause = CallPause(inCall = callPause.inCall)
             callRenderer = null
-            return
         }
-        val playing = sonos.showsPlaying
-        val paused = !playing && sonos.itemCount() > 0 && sonos.rendererState == null
+        val playing = r.showsPlaying
+        val paused = !playing && r.itemCount() > 0 && r.rendererState == null
         val (next, action) = callPauseStep(callPause, inCall, playing, paused, playAllowed(suspendedNow()))
         callPause = next
         when (action) {
             CallAction.PAUSE -> {
-                callRenderer = sonos
+                callRenderer = r
                 selfPausing = true
-                sonos.pause()
+                r.pause()
                 selfPausing = false
             }
-            CallAction.PLAY -> if (callRenderer === sonos) sonos.play()
+            CallAction.PLAY -> if (callRenderer === r) r.player.play()
             CallAction.NONE -> Unit
         }
         if (!next.pausedByCall) callRenderer = null

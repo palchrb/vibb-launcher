@@ -142,30 +142,20 @@ fun notificationGrantState(managed: Boolean): Int =
 fun musicCallActive(voip: VoipPhase, ourCall: Boolean, systemCall: Boolean): Boolean =
     voip != VoipPhase.NONE || ourCall || systemCall
 
-/** [pausedByCall]: the launcher paused the music for this call; [pauseSent]: and the pause hasn't shown yet. */
-data class CallHold(val inCall: Boolean = false, val pausedByCall: Boolean = false, val pauseSent: Boolean = false)
+/** [holdSent]: the launcher told the music app to hold for this call. */
+data class CallHold(val inCall: Boolean = false, val holdSent: Boolean = false)
 
-enum class CallMusicAction { NONE, PAUSE, PLAY }
+enum class CallMusicAction { NONE, HOLD, RELEASE }
 
 /**
- * One look at the call and the music session ([play]: null without one). A call starting while it
- * plays -> PAUSE, remembered. During the call a play the kid makes (seen after our pause showed)
- * forgets it: their own pause afterwards stays. The call ending -> PLAY only when we paused, the
- * session is still paused and the app [usable] (a time rule in between keeps it quiet). A pause the
- * kid made before the call is never ours to undo.
+ * One look at the call ([inCall]) and the music session ([playing]). A call starting while it plays
+ * -> HOLD ([MUSIC_CALL_HOLD]); the call over -> RELEASE, only after a HOLD. The music app decides the
+ * rest itself (qa-26a-step3b-code H1): its pause is its own, so the kid's sleep timer runs on; it
+ * plays again only what it paused, not after the kid's own play and pause during the call, nor after
+ * the timer ended meanwhile, nor while it may not play. A pause the kid made before the call: no HOLD.
  */
-fun callHoldStep(state: CallHold, inCall: Boolean, play: SessionPlay?, usable: Boolean): Pair<CallHold, CallMusicAction> {
-    val playing = play == SessionPlay.PLAYING
-    return when {
-        !state.inCall && inCall ->
-            if (playing) CallHold(inCall = true, pausedByCall = true, pauseSent = true) to CallMusicAction.PAUSE else CallHold(inCall = true) to CallMusicAction.NONE
-        state.inCall && inCall -> when {
-            state.pauseSent && !playing -> state.copy(pauseSent = false) to CallMusicAction.NONE
-            state.pausedByCall && !state.pauseSent && playing -> state.copy(pausedByCall = false) to CallMusicAction.NONE
-            else -> state to CallMusicAction.NONE
-        }
-        state.inCall && !inCall ->
-            CallHold() to (if (state.pausedByCall && play == SessionPlay.PAUSED && usable) CallMusicAction.PLAY else CallMusicAction.NONE)
-        else -> state to CallMusicAction.NONE
-    }
+fun callHoldStep(state: CallHold, inCall: Boolean, playing: Boolean): Pair<CallHold, CallMusicAction> = when {
+    !state.inCall && inCall -> if (playing) CallHold(inCall = true, holdSent = true) to CallMusicAction.HOLD else CallHold(inCall = true) to CallMusicAction.NONE
+    state.inCall && !inCall -> CallHold() to (if (state.holdSent) CallMusicAction.RELEASE else CallMusicAction.NONE)
+    else -> state to CallMusicAction.NONE
 }

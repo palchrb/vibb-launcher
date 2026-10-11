@@ -5,7 +5,7 @@ import android.content.Context
 import android.media.AudioManager
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
-import android.media.session.PlaybackState
+import android.os.Bundle
 import android.telecom.TelecomManager
 import android.util.Log
 import com.kidslauncher.mdm.badges.BadgeListenerService
@@ -16,27 +16,20 @@ import com.kidslauncher.mdm.lock.managedCallActive
 private const val LOG_TAG = "MusicCalls"
 
 /**
- * Calls pause the music (design 26a §6.7; user 2026-10-11: the speaker pauses on a call and resumes
+ * Calls pause the music (design 26a §6.7; user 2026-10-11: the music pauses on a call and resumes
  * afterwards only if we paused it - Element X voice and video calls included). The launcher sees
  * every call: a VoIP ring or call from the notification listener ([VoipCalls]), its own dialer's
- * ([OngoingCalls]) and a system call (Telecom, the audio mode). The rule is [callHoldStep], the same
- * for local and Sonos playback (a Sonos room holds no audio focus; the phone's own player also
- * pauses for a system call through its focus). The music app's session is looked up at each edge,
- * and watched only during a call. Without notification-listener access there is no session to see:
- * the music app's own audio-mode backstop covers a system call then. Main thread.
+ * ([OngoingCalls]) and a system call (Telecom, the audio mode). At the call's edges ([callHoldStep])
+ * it tells the music app's player through its session's custom actions - [MUSIC_CALL_HOLD] when the
+ * music plays as a call begins, [MUSIC_CALL_RELEASE] when that call is over - and the player pauses
+ * as its own pause and decides whether to play again (qa-26a-step3b-code H1: a plain session pause
+ * is the kid's and would end the sleep timer). The same for local and Sonos playback. Without
+ * notification-listener access there is no session to see: the music app's own audio-mode backstop
+ * covers a system call on a Sonos room then. Main thread.
  */
 object MusicCalls {
     private var app: Context? = null
     private var state = CallHold()
-    private var watched: MediaController? = null
-
-    private val callback = object : MediaController.Callback() {
-        override fun onPlaybackStateChanged(state: PlaybackState?) = evaluate()
-        override fun onSessionDestroyed() {
-            watch(null)
-            evaluate()
-        }
-    }
 
     /** From [MusicMedia.init] (process start, main thread). */
     fun init(context: Context) {
@@ -54,30 +47,22 @@ object MusicCalls {
     private fun evaluate() {
         val ctx = app ?: return
         val inCall = musicCallActive(VoipCalls.phase, OngoingCalls.hasLiveCall, systemCall(ctx))
-        if (!inCall && !state.inCall) return
+        if (inCall == state.inCall) return
         val session = musicSession(ctx)
-        val play = session?.let { sessionPlay(it.playbackState?.state) }
-        val (next, action) = callHoldStep(state, inCall, play, session != null && MusicSessions.usable(ctx, session.packageName))
-        if (next.inCall != state.inCall) Log.i(LOG_TAG, "call ${if (next.inCall) "began" else "ended"}: music $play -> $action")
+        val playing = session?.let { sessionPlay(it.playbackState?.state) } == SessionPlay.PLAYING
+        val (next, action) = callHoldStep(state, inCall, playing)
         state = next
-        watch(if (next.inCall) session else null)
-        try {
-            when (action) {
-                CallMusicAction.PAUSE -> session?.transportControls?.pause()
-                CallMusicAction.PLAY -> session?.transportControls?.play()
-                CallMusicAction.NONE -> Unit
-            }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't $action the music", e)
+        Log.i(LOG_TAG, "call ${if (inCall) "began" else "ended"}: music ${if (playing) "playing" else "not playing"} -> $action")
+        val command = when (action) {
+            CallMusicAction.HOLD -> MUSIC_CALL_HOLD
+            CallMusicAction.RELEASE -> MUSIC_CALL_RELEASE
+            CallMusicAction.NONE -> return
         }
-    }
-
-    /** During a call the session's own changes are looked at too: the kid's play during the call. */
-    private fun watch(session: MediaController?) {
-        if (session?.sessionToken == watched?.sessionToken) return
-        watched?.let { runCatching { it.unregisterCallback(callback) } }
-        watched = session
-        session?.let { runCatching { it.registerCallback(callback) } }
+        try {
+            session?.transportControls?.sendCustomAction(command, Bundle())
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't send $action to the music app", e)
+        }
     }
 
     private fun musicSession(ctx: Context): MediaController? = try {

@@ -122,6 +122,10 @@ class BridgeTest {
             strings("now_playing"),
             listOf(NowPlayingKeys.ENTRY, NowPlayingKeys.ITEM, NowPlayingKeys.POSITION_MS, NowPlayingKeys.DURATION_MS, NowPlayingKeys.PLAYING, NowPlayingKeys.ART),
         )
+        // The launcher's call rule (design 26a §6.7, qa-26a-step3b-code H1): its two session commands.
+        val calls = (contract["call_commands"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
+        assertEquals(calls["hold"], me.vibb.music.playback.Commands.CALL_HOLD)
+        assertEquals(calls["release"], me.vibb.music.playback.Commands.CALL_RELEASE)
         // The launcher's Home card opens the player and continues (design 21 step 4).
         val player = (contract["player"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
         assertEquals(player["activity"], me.vibb.music.ui.MainActivity::class.java.name)

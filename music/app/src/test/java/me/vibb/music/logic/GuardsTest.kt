@@ -256,9 +256,27 @@ class GuardsTest {
         assertTrue(local.substringAfter("fun standDown() {").substringBefore("\n    }\n").contains("exo.stop()"))
         assertTrue(service.contains("audio.addOnModeChangedListener(mainExecutor, modeListener)"))
         assertTrue(service.contains("audio.removeOnModeChangedListener(modeListener)"))
-        val step = service.substringAfter("private fun callStep(inCall: Boolean) {").substringBefore("\n    }\n")
+        val step = service.substringAfter("private fun callStep() {").substringBefore("\n    }\n")
+        assertTrue(step.contains("val inCall = launcherInCall || (modeInCall && r.kind == RendererKind.SONOS)"))
         assertTrue(step.contains("callPauseStep(callPause, inCall, playing, paused, playAllowed(suspendedNow()))"))
-        assertTrue(step.contains("CallAction.PLAY -> if (callRenderer === sonos) sonos.play()"))
-        assertTrue("the service's own pause (the sleep timer stays)", step.contains("selfPausing = true\n                sonos.pause()"))
+        // the same entry point as the session's play (qa-26a-step3b-code L7)
+        assertTrue(step.contains("CallAction.PLAY -> if (callRenderer === r) r.player.play()"))
+    }
+
+    @Test
+    fun `a call never cancels the sleep timer, and a release never plays after the timer ended`() {
+        // qa-26a-step3b-code H1: the launcher's hold is the service's own pause, not a session pause (USER)
+        val step = service.substringAfter("private fun callStep() {").substringBefore("\n    }\n")
+        assertTrue(step.contains("selfPausing = true\n                r.pause()\n                selfPausing = false"))
+        val events = service.substringAfter("private fun onRendererEvent(").substringBefore("\n    }\n")
+        assertTrue(events.contains("PauseCause.USER -> if (!selfPausing && sleepEndsAt != null) setSleep(0)"))
+        assertTrue(service.substringAfter("private fun sleepEnded() {").substringBefore("\n    }\n").contains("callPause = callTimerEnded(callPause)"))
+        // the launcher's two commands, granted to a launcher signed like this app only, never a play gate bypass
+        val connect = service.substringAfter("override fun onConnect(").substringBefore("override fun onCustomCommand(")
+        assertTrue(connect.contains("controller.packageName in LAUNCHER_PACKAGES && Bridge.sameSigner(this@PlaybackService, controller.packageName)"))
+        assertTrue(connect.contains("Commands.LAUNCHER.forEach { add(it) }"))
+        assertTrue(service.contains("Commands.CALL_HOLD -> launcherCall(true)"))
+        assertTrue(service.contains("Commands.CALL_RELEASE -> launcherCall(false)"))
+        assertFalse(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").substringAfter("val PLAYS").substringBefore("\n").contains("CALL"))
     }
 }
