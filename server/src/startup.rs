@@ -113,6 +113,19 @@ pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<Applie
         }
         out.sync_all().ok();
     }
+    // SQLite takes a file shorter than a page for an empty database: a backup whose kidphone.db
+    // isn't one would silently start an empty server.
+    let mut header = [0u8; 16];
+    let is_sqlite = std::fs::File::open(&staged)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .is_ok()
+        && &header == b"SQLite format 3\0";
+    if !is_sqlite {
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!(
+            "{filename}'s kidphone.db is not an SQLite database"
+        ));
+    }
 
     let prerestore_dir = backups.join(format!(
         "prerestore-{}",
@@ -129,6 +142,11 @@ pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<Applie
                 format!("couldn't copy {} aside: {err}", live.display())
             })?;
         }
+    }
+    // The old database's -wal/-shm must never be applied to the restored file: gone before the
+    // swap, and again after it.
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(with_suffix(db, suffix));
     }
     std::fs::rename(&staged, db)
         .map_err(|err| format!("couldn't put the backup in place: {err}"))?;

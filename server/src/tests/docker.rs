@@ -183,6 +183,9 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
 
     backup_zip(dir.path(), "backup-20261009-020000.zip", Some(&backup_db));
     backup_zip(dir.path(), "backup-20261009-030000.zip", None);
+    let not_sqlite = dir.path().join("not-sqlite.db");
+    std::fs::write(&not_sqlite, b"tiny").unwrap();
+    backup_zip(dir.path(), "backup-20261009-031000.zip", Some(&not_sqlite));
 
     // No marker: nothing happens.
     assert!(
@@ -199,6 +202,7 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
         "kidphone.db",
         "backup-missing.zip",
         "backup-20261009-030000.zip",
+        "backup-20261009-031000.zip",
     ] {
         std::fs::write(data.join(startup::RESTORE_REQUEST), name).unwrap();
         let result = startup::apply_restore_request(&data, &live);
@@ -241,7 +245,11 @@ async fn a_restored_database_that_wont_open_is_put_back() {
     db.close().await;
     // A "database" that isn't one.
     let junk = dir.path().join("junk.db");
-    std::fs::write(&junk, b"this is not an SQLite file at all, not even close").unwrap();
+    // An SQLite header with garbage after it (a file that isn't one at all is refused before the
+    // swap - see the test above).
+    let mut bytes = b"SQLite format 3\0".to_vec();
+    bytes.extend(b"this is not an SQLite file at all. ".repeat(400));
+    std::fs::write(&junk, bytes).unwrap();
     backup_zip(dir.path(), "backup-20261009-040000.zip", Some(&junk));
     std::fs::write(
         data.join(startup::RESTORE_REQUEST),
