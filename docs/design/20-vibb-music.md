@@ -264,3 +264,7 @@ The decisions above override the earlier sections of this doc where they differ.
   - Only for music entries (playlists, albums, own files), hidden for audiobooks and podcasts, where order and resume
     matter.
   - Remembered per entry. With shuffle on, "next" picks a random unplayed track, and the list shows the shuffled order.
+- **Player controls fit a 320 dp screen** (user, 2026-10-11; mockup version 15): the row was 332 dp wide in 288 dp
+  (320 minus 2 x 16 padding), so the browser squeezed the buttons into tall ovals, and on the Jelly Star Compose would
+  drop the right slot and push play off centre. Now shuffle 44, previous 52, play 72, next 52, the empty slot 44, with
+  6 dp gaps: exactly 288 dp, every button round, play centred.

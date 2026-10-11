@@ -151,24 +151,24 @@ input.seek::-moz-range-thumb{width:26px;height:26px;border-radius:50%;background
         </div>
       </div>
 
-      <div style="display: flex; align-items: center; justify-content: center; gap: 14px">
+      <div style="display: flex; align-items: center; justify-content: center; gap: 6px">
         <sc-if value="{{np.canShuffle}}" hint-placeholder-val="{{ true }}">
-          <button type="button" onClick="{{toggleShuffle}}" aria-label="Tilfeldig rekkefølge" aria-pressed="{{np.shufflePressed}}" style="all: unset; cursor: pointer; width: 44px; height: 44px; border-radius: 50%; background: {{np.shuffleBg}}; color: {{np.shuffleFg}}; display: flex; align-items: center; justify-content: center">
+          <button type="button" onClick="{{toggleShuffle}}" aria-label="Tilfeldig rekkefølge" aria-pressed="{{np.shufflePressed}}" style="all: unset; cursor: pointer; flex: none; width: 44px; height: 44px; border-radius: 50%; background: {{np.shuffleBg}}; color: {{np.shuffleFg}}; display: flex; align-items: center; justify-content: center">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"></path></svg>
           </button>
         </sc-if>
-        <sc-if value="{{np.noShuffle}}" hint-placeholder-val="{{ false }}"><span style="width: 44px; height: 44px"></span></sc-if>
-        <button type="button" onClick="{{prevTrack}}" aria-label="Forrige" style="all: unset; cursor: pointer; width: 56px; height: 56px; border-radius: 50%; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
+        <sc-if value="{{np.noShuffle}}" hint-placeholder-val="{{ false }}"><span style="flex: none; width: 44px; height: 44px"></span></sc-if>
+        <button type="button" onClick="{{prevTrack}}" aria-label="Forrige" style="all: unset; cursor: pointer; flex: none; width: 52px; height: 52px; border-radius: 50%; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h2v14H7zM20 5v14L10 12z"></path></svg>
         </button>
-        <button type="button" onClick="{{togglePlay}}" aria-label="{{playLabel}}" style="all: unset; cursor: pointer; width: 76px; height: 76px; border-radius: 50%; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center">
+        <button type="button" onClick="{{togglePlay}}" aria-label="{{playLabel}}" style="all: unset; cursor: pointer; flex: none; width: 72px; height: 72px; border-radius: 50%; background: #F0A884; color: #0C0C14; display: flex; align-items: center; justify-content: center">
           <sc-if value="{{playing}}" hint-placeholder-val="{{ true }}"><svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg></sc-if>
           <sc-if value="{{paused}}" hint-placeholder-val="{{ false }}"><svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg></sc-if>
         </button>
-        <button type="button" onClick="{{nextTrack}}" aria-label="Neste" style="all: unset; cursor: pointer; width: 56px; height: 56px; border-radius: 50%; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
+        <button type="button" onClick="{{nextTrack}}" aria-label="Neste" style="all: unset; cursor: pointer; flex: none; width: 52px; height: 52px; border-radius: 50%; background: #1B1B28; color: #FBE4DC; display: flex; align-items: center; justify-content: center">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M15 5h2v14h-2zM4 5v14l10-7z"></path></svg>
         </button>
-        <span style="width: 44px; height: 44px"></span>
+        <span style="flex: none; width: 44px; height: 44px"></span>
       </div>
 
       <div style="display: flex; gap: 8px; margin-top: auto">
