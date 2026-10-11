@@ -32,8 +32,32 @@ class GuardsTest {
         assertTrue(resumption.contains("if (!playAllowed(suspendedNow())) return"))
         // (Commands itself builds SessionCommands with Android Bundles: read, not loaded.)
         assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)"))
-        // The session is built on KidPlayer, so every controller goes through it.
-        assertTrue(service.contains("MediaSession.Builder(this, KidPlayer(exo))"))
+        // The session is built on KidPlayer, so every controller goes through it - also after a
+        // renderer switch (design 26a §0): every setPlayer wraps KidPlayer.
+        assertTrue(service.contains("MediaSession.Builder(this, KidPlayer(renderer.player))"))
+        assertEquals(1, Regex("""\.setPlayer\(""").findAll(service).count())
+        assertTrue(service.contains("session?.setPlayer(KidPlayer(next.player))"))
+    }
+
+    @Test
+    fun `every command and playback resumption waits until the renderer is settled`() {
+        // Design 26a §4.7: Home's RESUME after a restart must not start the phone under a playing speaker.
+        val command = service.substringAfter("override fun onCustomCommand(").substringBefore("when (customCommand.customAction)")
+        assertTrue(command.contains("scope.launch {\n                rendererReady.await()\n"))
+        val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("val restored = restore()")
+        assertTrue(resumption.contains("scope.launch {\n                rendererReady.await()\n"))
+        assertEquals("completed once, in onCreate", 1, Regex("""rendererReady\.complete\(""").findAll(service).count())
+    }
+
+    @Test
+    fun `the service reaches the player only through the renderer, which alone persists positions`() {
+        // Design 26a §3.1 (QA H3): no direct ExoPlayer left in the service; saveNow is the one save.
+        assertFalse(service.contains("exo."))
+        assertFalse(service.contains("ExoPlayer"))
+        assertFalse(service.contains("savePosition"))
+        assertFalse("the display position is never stored", Regex("""positionMs\(\)[^\n]*Row\(""").containsMatchIn(service))
+        val local = code("src/main/java/me/vibb/music/playback/LocalRenderer.kt")
+        assertTrue(local.substringAfter("override fun saveNow(force: Boolean)").contains("val pos = exo.currentPosition"))
     }
 
     @Test
@@ -49,8 +73,8 @@ class GuardsTest {
 
     @Test
     fun `the launcher hears the position with every 15 s save`() {
-        val tick = service.substringAfter("private val saveTick").substringBefore("private val listener")
-        assertTrue(tick.contains("savePosition()"))
+        val tick = service.substringAfter("private val saveTick").substringBefore("private fun onRendererEvent")
+        assertTrue(tick.contains("renderer.saveNow()"))
         assertTrue(tick.contains("reportNowPlaying(refresh = true)"))
     }
 }

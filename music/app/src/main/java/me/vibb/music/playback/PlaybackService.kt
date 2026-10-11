@@ -13,17 +13,14 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.annotation.OptIn
-import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.StreamKey
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
@@ -34,13 +31,13 @@ import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import me.vibb.music.R
 import me.vibb.music.bridge.LiveBridge
@@ -75,13 +72,11 @@ import me.vibb.music.logic.publicOnly
 import me.vibb.music.logic.restoredQueue
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.resumeOverlapMs
-import me.vibb.music.logic.save
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.showsPlaying
 import me.vibb.music.logic.sleepVolume
 import me.vibb.music.logic.streamAllowed
 import me.vibb.music.logic.toggledQueue
-import me.vibb.music.media.ItemMediaSourceFactory
 import me.vibb.music.media.ItemTag
 import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Entry
@@ -92,6 +87,22 @@ import me.vibb.music.sync.netCaps
 import me.vibb.music.ui.MainActivity
 import java.io.File
 import java.util.concurrent.Executors
+
+/** The queue the player holds, in play order (or shuffled); the service's, read by [LocalRenderer.saveNow]. */
+internal class Active(
+    val entry: Entry,
+    /** The entry's playable items in play order (for shuffle off and the list). */
+    val order: List<PlayItem>,
+    var items: List<PlayItem>,
+    val positions: MutableMap<String, ItemPosition>,
+    val copies: MutableSet<String>,
+    val downloads: MutableMap<String, DownloadRow>,
+    var shuffled: Boolean,
+    /** Cover hash -> its ≤ 300 px copy, made off the main thread. */
+    val art: Map<String, Uri?>,
+    /** The player's duration per item, once known (done marks don't depend on the listing's). */
+    val durations: MutableMap<String, Long> = mutableMapOf(),
+)
 
 /**
  * The one player (design 21 §4.6): Media3 ExoPlayer behind a [MediaSession] in a
@@ -109,6 +120,8 @@ import java.util.concurrent.Executors
  * - the sleep timer fades out over ~10 s and pauses; a manual pause cancels it;
  * - "Spill av på": the phone or a connected Bluetooth/wired output (`setPreferredAudioDevice`)
  *   until that device goes - or, for the phone, until headphones arrive.
+ * Who plays is the [Renderer] (design 26a §0): the phone's [LocalRenderer] (the ExoPlayer) until
+ * Sonos (step 3); the session wraps `KidPlayer(renderer.player)`.
  * Nothing here ever starts playback by itself.
  */
 @OptIn(UnstableApi::class)
@@ -117,25 +130,16 @@ class PlaybackService : MediaSessionService() {
     private val writer = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var store: Store
-    private lateinit var exo: ExoPlayer
+    private lateinit var renderer: Renderer
     private var session: MediaSession? = null
     private val audio by lazy { getSystemService(AudioManager::class.java) }
 
-    /** The queue the player holds, in play order (or shuffled). */
-    private class Active(
-        val entry: Entry,
-        /** The entry's playable items in play order (for shuffle off and the list). */
-        val order: List<PlayItem>,
-        var items: List<PlayItem>,
-        val positions: MutableMap<String, ItemPosition>,
-        val copies: MutableSet<String>,
-        val downloads: MutableMap<String, DownloadRow>,
-        var shuffled: Boolean,
-        /** Cover hash -> its ≤ 300 px copy, made off the main thread. */
-        val art: Map<String, Uri?>,
-        /** The player's duration per item, once known (done marks don't depend on the listing's). */
-        val durations: MutableMap<String, Long> = mutableMapOf(),
-    )
+    /**
+     * Who plays is settled (design 26a §4.7): every custom command and playback resumption awaits
+     * it first, so a RESUME after a restart can never start the phone under a playing speaker.
+     * Complete at once while only the phone renders; step 3b completes it after adopt.
+     */
+    private val rendererReady = CompletableDeferred<Unit>()
 
     private var active: Active? = null
     private var lastIndex = -1
@@ -151,36 +155,32 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         store = Store.get(this)
-        exo = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(ItemMediaSourceFactory(this))
-            .setAudioAttributes(attributes(speech = true), true)
-            .setHandleAudioBecomingNoisy(true)
-            .setWakeMode(C.WAKE_MODE_NETWORK)
-            .build()
-        exo.addListener(listener)
+        renderer = LocalRenderer(this, store, scope, writer) { active }
+        renderer.onEvent = { onRendererEvent(it) }
         val open = PendingIntent.getActivity(
             this, 1,
             Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN, MainActivity.OPEN_PLAYER),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        session = MediaSession.Builder(this, KidPlayer(exo)).setCallback(callback).setSessionActivity(open).build()
+        session = MediaSession.Builder(this, KidPlayer(renderer.player)).setCallback(callback).setSessionActivity(open).build()
         setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(this).build().also { it.setSmallIcon(R.drawable.music_glyph_music_note) })
         audio.registerAudioDeviceCallback(deviceCallback, handler)
-        PlayerHub.position = { exo.currentPosition }
-        PlayerHub.pause = { exo.pause() }
+        PlayerHub.position = { renderer.positionMs() }
+        PlayerHub.pause = { renderer.pause() }
         LiveBridge.acquire(this)
+        rendererReady.complete(Unit)
         publish()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        savePosition(blocking = true)
+        renderer.saveNow(force = true)
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        savePosition(blocking = true)
+        renderer.saveNow(force = true)
         handler.removeCallbacksAndMessages(null)
         audio.unregisterAudioDeviceCallback(deviceCallback)
         PlayerHub.position = null
@@ -191,17 +191,20 @@ class PlaybackService : MediaSessionService() {
         LiveBridge.release(this)
         session?.release()
         session = null
-        exo.release()
+        renderer.release()
         scope.cancel()
         writer.close()
         super.onDestroy()
     }
 
-    /** Speech (podcasts, stories: a notification pauses rather than ducks) or music. */
-    private fun attributes(speech: Boolean) = AudioAttributes.Builder()
-        .setUsage(C.USAGE_MEDIA)
-        .setContentType(if (speech) C.AUDIO_CONTENT_TYPE_SPEECH else C.AUDIO_CONTENT_TYPE_MUSIC)
-        .build()
+    /**
+     * The one place the session's player changes (design 26a §0, §4.6): whoever plays, the session
+     * wraps it in [KidPlayer]. Only the phone renders until step 3, which calls this.
+     */
+    private fun switchRenderer(next: Renderer) {
+        renderer = next
+        session?.setPlayer(KidPlayer(next.player))
+    }
 
     /** This app is suspended now (a time rule, design 21 step 4): nothing may start playing. */
     private fun suspendedNow(): Boolean = try {
@@ -254,15 +257,21 @@ class PlaybackService : MediaSessionService() {
             if (customCommand.customAction in Commands.PLAYS && !playAllowed(suspendedNow())) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
-            when (customCommand.customAction) {
-                Commands.PLAY_ENTRY -> scope.launch { playEntry(args.getLong(Commands.ARG_ENTRY)) }
-                Commands.PLAY_ITEM -> scope.launch { playItem(args.getLong(Commands.ARG_ENTRY), args.getString(Commands.ARG_KEY).orEmpty()) }
-                Commands.RESUME -> scope.launch { resumeLast() }
-                Commands.RESTORE -> scope.launch { restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION)) }
-                Commands.SHUFFLE -> toggleShuffle()
-                Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
-                Commands.OUTPUT -> setOutput(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
-                else -> return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+            if (Commands.ALL.none { it.customAction == customCommand.customAction }) {
+                return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+            }
+            // Main.immediate: with the renderer settled this runs at once, as before step 2.
+            scope.launch {
+                rendererReady.await()
+                when (customCommand.customAction) {
+                    Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY))
+                    Commands.PLAY_ITEM -> playItem(args.getLong(Commands.ARG_ENTRY), args.getString(Commands.ARG_KEY).orEmpty())
+                    Commands.RESUME -> resumeLast()
+                    Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION))
+                    Commands.SHUFFLE -> toggleShuffle()
+                    Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
+                    Commands.OUTPUT -> setOutput(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
+                }
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
@@ -275,6 +284,7 @@ class PlaybackService : MediaSessionService() {
             if (!playAllowed(suspendedNow())) return Futures.immediateFailedFuture(UnsupportedOperationException("suspended"))
             val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
             scope.launch {
+                rendererReady.await()
                 val restored = restore()
                 if (restored == null) {
                     Resumable.set(this@PlaybackService, false)
@@ -284,7 +294,7 @@ class PlaybackService : MediaSessionService() {
                     active = a
                     lastIndex = index
                     clearFault()
-                    exo.setAudioAttributes(attributes(speech = a.entry.resume), true)
+                    renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
                     future.set(MediaSession.MediaItemsWithStartPosition(a.items.map { mediaItem(a, it) }, index, pos))
                 }
             }
@@ -315,8 +325,8 @@ class PlaybackService : MediaSessionService() {
 
     private suspend fun playEntry(entryId: Long) {
         val current = active
-        if (current != null && current.entry.id == entryId && exo.mediaItemCount > 0) {
-            exo.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
+        if (current != null && current.entry.id == entryId && renderer.itemCount() > 0) {
+            renderer.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
             return
         }
         val (snap, rows) = load()
@@ -327,7 +337,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private suspend fun playItem(entryId: Long, key: String) {
-        savePosition()
+        renderer.saveNow()
         val (snap, rows) = load()
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
@@ -337,8 +347,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     private suspend fun resumeLast() {
-        if (active != null && exo.mediaItemCount > 0) {
-            exo.play()
+        if (active != null && renderer.itemCount() > 0) {
+            renderer.play()
             return
         }
         val (a, index, pos) = restore() ?: return
@@ -347,14 +357,14 @@ class PlaybackService : MediaSessionService() {
 
     /** The player's controls before play after a restart: the stored queue loaded paused, then the action. */
     private suspend fun restoreThen(then: String?, positionMs: Long) {
-        if (active == null || exo.mediaItemCount == 0) {
+        if (active == null || renderer.itemCount() == 0) {
             val (a, index, pos) = restore() ?: return
             start(a, QueuePlan(a.items.map { it.key }, index, pos), play = false)
         }
         when (then) {
             Commands.THEN_NEXT -> skipNext()
             Commands.THEN_PREVIOUS -> skipPrevious()
-            Commands.THEN_SEEK -> exo.seekTo(positionMs)
+            Commands.THEN_SEEK -> renderer.seekTo(positionMs)
             Commands.THEN_SHUFFLE -> toggleShuffle()
         }
         publish()
@@ -373,7 +383,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {
-        savePosition()
+        renderer.saveNow()
         clearFault()
         var index = plan.startIndex.coerceIn(a.items.indices)
         var pos = plan.startPosMs
@@ -389,12 +399,12 @@ class PlaybackService : MediaSessionService() {
         }
         active = a
         lastIndex = index
-        exo.setAudioAttributes(attributes(speech = a.entry.resume), true)
-        exo.setMediaItems(a.items.map { mediaItem(a, it) }, index, pos)
-        exo.prepare()
+        renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
+        // Loaded paused: the wake mode goes between prepare and play, as before step 2.
+        renderer.load(a.items.map { mediaItem(a, it) }, index, pos, playNow = false)
         wakeModeFor(a, index)
         if (play) {
-            exo.play()
+            renderer.play()
             startedPlaying(a, index)
         }
         publish()
@@ -428,7 +438,7 @@ class PlaybackService : MediaSessionService() {
     /** A copy plays without holding Wi-Fi awake; a stream needs it (qa-21-step2-code L18). */
     private fun wakeModeFor(a: Active, index: Int) {
         val item = a.items.getOrNull(index) ?: return
-        exo.setWakeMode(if (hasCopy(a, item)) C.WAKE_MODE_LOCAL else C.WAKE_MODE_NETWORK)
+        renderer.setWakeMode(if (hasCopy(a, item)) C.WAKE_MODE_LOCAL else C.WAKE_MODE_NETWORK)
     }
 
     private fun mediaItem(a: Active, item: PlayItem): MediaItem {
@@ -482,7 +492,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun skipNext() {
         val a = active ?: return
-        when (val action = nextAction(exo.currentMediaItemIndex, exo.mediaItemCount)) {
+        when (val action = nextAction(renderer.currentIndex(), renderer.itemCount())) {
             is TransportAction.GoTo -> goTo(a, action.index, forward = true)
             else -> Unit
         }
@@ -490,23 +500,23 @@ class PlaybackService : MediaSessionService() {
 
     private fun skipPrevious() {
         val a = active ?: return
-        val duration = exo.duration.takeIf { it > 0 } ?: a.items.getOrNull(exo.currentMediaItemIndex)?.durationMs
-        when (val action = previousAction(exo.currentMediaItemIndex, exo.mediaItemCount, exo.currentPosition, duration)) {
-            TransportAction.Restart -> exo.seekTo(0)
+        val duration = renderer.durationMs() ?: a.items.getOrNull(renderer.currentIndex())?.durationMs
+        when (val action = previousAction(renderer.currentIndex(), renderer.itemCount(), renderer.positionMs(), duration)) {
+            TransportAction.Restart -> renderer.seekTo(0L)
             is TransportAction.GoTo -> goTo(a, action.index, forward = false)
             TransportAction.Stay -> Unit
         }
     }
 
     private fun goTo(a: Active, index: Int, forward: Boolean) {
-        savePosition()
+        renderer.saveNow()
         val target = playableFrom(a, index, forward, wrap = true) ?: run {
             PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
             return
         }
         if (target != index) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
-        exo.seekTo(target, startPos(a, target))
-        if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
+        renderer.seekTo(target, startPos(a, target))
+        if (renderer.player.playbackState == Player.STATE_IDLE) renderer.prepare()
     }
 
     // --- shuffle, sleep, outputs ---
@@ -515,26 +525,24 @@ class PlaybackService : MediaSessionService() {
         val a = active ?: return
         if (!canShuffle(a.entry)) return
         val on = !a.shuffled
-        val index = exo.currentMediaItemIndex.coerceIn(a.items.indices)
+        val index = renderer.currentIndex().coerceIn(a.items.indices)
         val current = a.items[index]
         val byKey = a.order.associateBy { it.key }
         val items = toggledQueue(a.order.map { it.key }, current.key, on).mapNotNull { byKey[it] }
-        // Keep the current item playing: drop the others around it, then add the new order after it.
-        exo.removeMediaItems(index + 1, exo.mediaItemCount)
-        exo.removeMediaItems(0, index)
-        exo.addMediaItems(1, items.drop(1).map { mediaItem(a, it) })
+        // Keep the current item playing, the new order after it.
+        renderer.reorder(index, items.drop(1).map { mediaItem(a, it) })
         a.items = items
         a.shuffled = on
         lastIndex = 0
         val entryKey = a.entry.key
         scope.launch(writer) { store.db.upsertShuffle(ShuffleRow(entryKey, on)) }
-        savePosition()
+        renderer.saveNow()
         publish()
     }
 
     private fun setSleep(minutes: Int) {
         handler.removeCallbacks(sleepTick)
-        exo.volume = 1f
+        renderer.setVolume(1f)
         if (minutes <= 0) {
             sleepEndsAt = null
             sleepMinutes = null
@@ -550,15 +558,15 @@ class PlaybackService : MediaSessionService() {
         override fun run() {
             val end = sleepEndsAt ?: return
             val left = end - SystemClock.elapsedRealtime()
-            exo.volume = sleepVolume(left)
+            renderer.setVolume(sleepVolume(left))
             if (left <= 0) {
                 sleepPausing = true
-                exo.pause()
+                renderer.pause()
                 sleepPausing = false
-                exo.volume = 1f
+                renderer.setVolume(1f)
                 sleepEndsAt = null
                 sleepMinutes = null
-                savePosition()
+                renderer.saveNow()
                 publish()
             } else {
                 handler.postDelayed(this, if (left > SLEEP_FADE_MS + 1_000) minOf(left - SLEEP_FADE_MS, 30_000) else 250)
@@ -584,7 +592,7 @@ class PlaybackService : MediaSessionService() {
             Output.deviceId(key)?.let { id -> devices.firstOrNull { it.id == id } }
         }
         chosenOutput = if (device == null) null else key
-        exo.setPreferredAudioDevice(device)
+        renderer.setPreferredAudioDevice(device)
         publish()
     }
 
@@ -594,7 +602,7 @@ class PlaybackService : MediaSessionService() {
             // would route it (qa-21-step2-code M3): a story never stays loud by an old choice.
             if (chosenOutput == Output.PHONE_KEY && addedDevices.any { outputKind(it.type) != null }) {
                 chosenOutput = null
-                exo.setPreferredAudioDevice(null)
+                renderer.setPreferredAudioDevice(null)
             }
             publish()
         }
@@ -603,7 +611,7 @@ class PlaybackService : MediaSessionService() {
             // The chosen device went: back to system routing.
             if (removedDevices.any { Output.deviceKey(it.id) == chosenOutput }) {
                 chosenOutput = null
-                exo.setPreferredAudioDevice(null)
+                renderer.setPreferredAudioDevice(null)
             }
             publish()
         }
@@ -613,7 +621,7 @@ class PlaybackService : MediaSessionService() {
 
     private val saveTick = object : Runnable {
         override fun run() {
-            savePosition()
+            renderer.saveNow()
             // The launcher's snapshot keeps the place too, so Home is right after a crash or a
             // dead battery (qa-21-step4-code L4).
             reportNowPlaying(refresh = true)
@@ -621,120 +629,114 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    private val listener = object : Player.Listener {
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            val a = active ?: return
-            val index = exo.currentMediaItemIndex
-            if (index !in a.items.indices) return
-            val previous = a.items.getOrNull(lastIndex)
-            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && previous != null && lastIndex != index) {
-                markDone(a, previous)
+    /** The renderer's events (the local one's are ExoPlayer's `Player.Listener` callbacks, in order). */
+    private fun onRendererEvent(event: RendererEvent) {
+        when (event) {
+            is RendererEvent.ItemChanged -> onItemChanged(event.index, event.auto)
+            RendererEvent.Ready -> active?.let { a ->
+                val item = a.items.getOrNull(renderer.currentIndex())
+                val duration = renderer.durationMs()
+                if (item != null && duration != null) a.durations[item.key] = duration
             }
-            lastIndex = index
-            wakeModeFor(a, index)
-            if (!playable(a, index)) {
-                // The queue moves on (21 §4.2's one line beyond the mockup).
-                PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
-                val nextIndex = playableFrom(a, index, forward = true, wrap = false)
-                if (nextIndex != null) {
-                    exo.seekTo(nextIndex, startPos(a, nextIndex))
-                } else {
-                    exo.pause()
-                    // The bookmark moves on to the item that plays next, not back to the finished one.
-                    saveBookmark(a, index)
+            RendererEvent.Ended -> queueEnded()
+            is RendererEvent.Paused -> {
+                when (event.cause) {
+                    PauseCause.FAULT -> markFault()
+                    PauseCause.USER -> if (!sleepPausing && sleepEndsAt != null) setSleep(0)
+                    PauseCause.OTHER -> Unit
                 }
-                return
+                renderer.saveNow()
             }
-            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-                // A natural advance resumes an item heard before (vibb: in-session jumps resume too).
-                val pos = startPos(a, index)
-                if (pos > 0) exo.seekTo(index, pos)
-            }
-            if (exo.playWhenReady) startedPlaying(a, index)
-            savePosition()
-        }
-
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            when (playbackState) {
-                Player.STATE_READY -> active?.let { a ->
-                    val item = a.items.getOrNull(exo.currentMediaItemIndex)
-                    if (item != null && exo.duration > 0) a.durations[item.key] = exo.duration
-                }
-                Player.STATE_ENDED -> queueEnded()
-            }
-        }
-
-        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            if (!playWhenReady) {
-                when (reason) {
-                    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY,
-                    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> markFault()
-                    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> if (!sleepPausing && sleepEndsAt != null) setSleep(0)
-                }
-                savePosition()
-            } else {
+            RendererEvent.Resumed -> {
                 applyOverlap()
-                active?.let { a -> if (exo.currentMediaItemIndex in a.items.indices) startedPlaying(a, exo.currentMediaItemIndex) }
+                active?.let { a -> if (renderer.currentIndex() in a.items.indices) startedPlaying(a, renderer.currentIndex()) }
             }
-        }
-
-        override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
-            if (playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS) {
+            RendererEvent.Interrupted -> {
                 markFault()
-                savePosition()
-            } else if (playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE && exo.playWhenReady) {
-                applyOverlap()
+                renderer.saveNow()
             }
+            RendererEvent.InterruptionEnded -> if (renderer.player.playWhenReady) applyOverlap()
+            is RendererEvent.IsPlaying -> onIsPlayingChanged(event.playing)
+            is RendererEvent.Error -> onError(event.code)
+            RendererEvent.StateChanged -> publish()
         }
+    }
 
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            handler.removeCallbacks(saveTick)
-            if (!isPlaying) return
-            handler.postDelayed(saveTick, 15_000)
-            // It plays: an earlier failure of this item is history (qa-21-step2-code L9).
-            val a = active ?: return
-            val item = a.items.getOrNull(exo.currentMediaItemIndex) ?: return
-            if (item.fileId == null) {
-                val entryId = a.entry.id
-                scope.launch(writer) { store.db.deleteItemError(entryId, item.key) }
-            }
+    private fun onItemChanged(index: Int, auto: Boolean) {
+        val a = active ?: return
+        if (index !in a.items.indices) return
+        val previous = a.items.getOrNull(lastIndex)
+        if (auto && previous != null && lastIndex != index) {
+            markDone(a, previous)
         }
-
-        override fun onPlayerError(error: PlaybackException) {
-            val a = active ?: return
-            val index = exo.currentMediaItemIndex
-            val item = a.items.getOrNull(index) ?: return
-            val code = MediaCache.errorCode(error)
-            val entryId = a.entry.id
-            val copy = a.downloads[item.key]
-            when {
-                item.fileId != null -> Unit
-                copy != null -> if (code == "bad_media") {
-                    // A copy that isn't playable media: drop it, so the next sync fetches it again.
-                    a.copies -= item.key
-                    a.downloads -= item.key
-                    scope.launch(writer) {
-                        MediaCache.remove(this@PlaybackService, copy.cacheKey, copy.hls)
-                        store.db.deleteDownload(entryId, item.key)
-                    }
-                }
-                item.url != null -> scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }
-            }
-            val offline = copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.mobileData)
-            PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
-            savePosition()
-            val nextIndex = if (index + 1 < a.items.size) playableFrom(a, index + 1, forward = true, wrap = false) else null
+        lastIndex = index
+        wakeModeFor(a, index)
+        if (!playable(a, index)) {
+            // The queue moves on (21 §4.2's one line beyond the mockup).
+            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+            val nextIndex = playableFrom(a, index, forward = true, wrap = false)
             if (nextIndex != null) {
-                exo.seekTo(nextIndex, startPos(a, nextIndex))
-                exo.prepare()
-                exo.play()
+                renderer.seekTo(nextIndex, startPos(a, nextIndex))
             } else {
-                // Nothing after it can play now: stay here, paused (a tap on play tries again).
-                exo.pause()
+                renderer.pause()
+                // The bookmark moves on to the item that plays next, not back to the finished one.
+                saveBookmark(a, index)
             }
+            return
         }
+        if (auto) {
+            // A natural advance resumes an item heard before (vibb: in-session jumps resume too).
+            val pos = startPos(a, index)
+            if (pos > 0) renderer.seekTo(index, pos)
+        }
+        if (renderer.player.playWhenReady) startedPlaying(a, index)
+        renderer.saveNow()
+    }
 
-        override fun onEvents(player: Player, events: Player.Events) = publish()
+    private fun onIsPlayingChanged(isPlaying: Boolean) {
+        handler.removeCallbacks(saveTick)
+        if (!isPlaying) return
+        handler.postDelayed(saveTick, 15_000)
+        // It plays: an earlier failure of this item is history (qa-21-step2-code L9).
+        val a = active ?: return
+        val item = a.items.getOrNull(renderer.currentIndex()) ?: return
+        if (item.fileId == null) {
+            val entryId = a.entry.id
+            scope.launch(writer) { store.db.deleteItemError(entryId, item.key) }
+        }
+    }
+
+    private fun onError(code: String) {
+        val a = active ?: return
+        val index = renderer.currentIndex()
+        val item = a.items.getOrNull(index) ?: return
+        val entryId = a.entry.id
+        val copy = a.downloads[item.key]
+        when {
+            item.fileId != null -> Unit
+            copy != null -> if (code == "bad_media") {
+                // A copy that isn't playable media: drop it, so the next sync fetches it again.
+                a.copies -= item.key
+                a.downloads -= item.key
+                scope.launch(writer) {
+                    MediaCache.remove(this@PlaybackService, copy.cacheKey, copy.hls)
+                    store.db.deleteDownload(entryId, item.key)
+                }
+            }
+            item.url != null -> scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }
+        }
+        val offline = copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.mobileData)
+        PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
+        renderer.saveNow()
+        val nextIndex = if (index + 1 < a.items.size) playableFrom(a, index + 1, forward = true, wrap = false) else null
+        if (nextIndex != null) {
+            renderer.seekTo(nextIndex, startPos(a, nextIndex))
+            renderer.prepare()
+            renderer.play()
+        } else {
+            // Nothing after it can play now: stay here, paused (a tap on play tries again).
+            renderer.pause()
+        }
     }
 
     /** An item started: it leaves Nytt (21 §4.5). */
@@ -762,7 +764,7 @@ class PlaybackService : MediaSessionService() {
      * partial positions go, the done marks stay. */
     private fun queueEnded() {
         val a = active ?: return
-        a.items.getOrNull(exo.currentMediaItemIndex)?.let { markDone(a, it) }
+        a.items.getOrNull(renderer.currentIndex())?.let { markDone(a, it) }
         active = null
         lastIndex = -1
         Resumable.set(this, false)
@@ -772,7 +774,7 @@ class PlaybackService : MediaSessionService() {
             store.db.clearPartialPositions(entryKey)
             store.db.clearNowPlaying()
         }
-        exo.clearMediaItems()
+        renderer.clear()
         publish()
     }
 
@@ -780,7 +782,7 @@ class PlaybackService : MediaSessionService() {
         val now = SystemClock.elapsedRealtime()
         if (faultAt == null) {
             faultAt = now
-            faultKey = active?.items?.getOrNull(exo.currentMediaItemIndex)?.key
+            faultKey = active?.items?.getOrNull(renderer.currentIndex())?.key
         }
         faults.addLast(now)
         while (faults.size > 10) faults.removeFirst()
@@ -798,33 +800,10 @@ class PlaybackService : MediaSessionService() {
         val key = faultKey
         clearFault()
         val a = active ?: return
-        if (a.items.getOrNull(exo.currentMediaItemIndex)?.key != key) return
+        if (a.items.getOrNull(renderer.currentIndex())?.key != key) return
         val now = SystemClock.elapsedRealtime()
         val overlap = resumeOverlapMs(music = !a.entry.resume, goneMs = now - at, recentFaults = faults.count { now - it < 60_000 })
-        if (overlap > 0) exo.seekTo(overlapStart(exo.currentPosition, overlap))
-    }
-
-    /** Store where the current item is (its position, the entry's bookmark, the now-playing queue). */
-    private fun savePosition(blocking: Boolean = false) {
-        val a = active ?: return
-        val index = exo.currentMediaItemIndex
-        val item = a.items.getOrNull(index) ?: return
-        if (exo.mediaItemCount == 0) return
-        val pos = exo.currentPosition
-        val duration = exo.duration.takeIf { it > 0 } ?: a.durations[item.key] ?: item.durationMs
-        val (rec, bookmark) = save(item.key, pos, duration)
-        a.positions[item.key] = rec
-        val now = System.currentTimeMillis()
-        val position = PositionRow(a.entry.key, item.key, rec.posMs, rec.done, now)
-        val mark = BookmarkRow(a.entry.key, bookmark.itemKey, bookmark.posMs, now)
-        val queue = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, pos, duration, a.shuffled, now)
-        Resumable.set(this, true)
-        val write: suspend () -> Unit = {
-            store.db.upsertPosition(position)
-            store.db.upsertBookmark(mark)
-            store.db.upsertNowPlaying(queue)
-        }
-        if (blocking) runBlocking(writer) { write() } else scope.launch(writer) { write() }
+        if (overlap > 0) renderer.seekTo(overlapStart(renderer.positionMs(), overlap))
     }
 
     /** The bookmark (and the stored queue) on item [index] at its start, its own position untouched. */
@@ -849,8 +828,8 @@ class PlaybackService : MediaSessionService() {
      */
     private fun reportNowPlaying(forcePaused: Boolean = false, refresh: Boolean = false) {
         val a = active
-        val item = a?.items?.getOrNull(exo.currentMediaItemIndex)
-        val playing = !forcePaused && exo.playWhenReady && exo.playbackState != Player.STATE_ENDED
+        val item = a?.items?.getOrNull(renderer.currentIndex())
+        val playing = !forcePaused && renderer.player.playWhenReady && renderer.player.playbackState != Player.STATE_ENDED
         val key = Triple(a?.entry?.id, item?.key, playing)
         if (key == sentNowPlaying && !refresh) return
         sentNowPlaying = key
@@ -864,8 +843,8 @@ class PlaybackService : MediaSessionService() {
             Bundle().apply {
                 putString(NowPlayingKeys.ENTRY, a.entry.name)
                 putString(NowPlayingKeys.ITEM, item.title)
-                putLong(NowPlayingKeys.POSITION_MS, exo.currentPosition)
-                putLong(NowPlayingKeys.DURATION_MS, exo.duration.takeIf { it > 0 } ?: a.durations[item.key] ?: item.durationMs ?: 0)
+                putLong(NowPlayingKeys.POSITION_MS, renderer.positionMs())
+                putLong(NowPlayingKeys.DURATION_MS, renderer.durationMs() ?: a.durations[item.key] ?: item.durationMs ?: 0)
                 putBoolean(NowPlayingKeys.PLAYING, playing)
                 art?.let { putByteArray(NowPlayingKeys.ART, it) }
             },
@@ -878,13 +857,13 @@ class PlaybackService : MediaSessionService() {
         val outputs = outputs()
         val output = outputs.firstOrNull { it.key == chosenOutput } ?: outputs.firstOrNull { it.kind != OutputKind.PHONE } ?: Output.PHONE
         PlayerHub.mutableState.value = PlayerHub.State(
-            live = a != null && exo.mediaItemCount > 0,
+            live = a != null && renderer.itemCount() > 0,
             entryId = a?.entry?.id,
             keys = a?.items?.map { it.key }.orEmpty(),
-            index = exo.currentMediaItemIndex,
+            index = renderer.currentIndex(),
             shuffled = a?.shuffled ?: false,
-            playing = showsPlaying(exo.playWhenReady, exo.playbackState == Player.STATE_ENDED),
-            durationMs = exo.duration.takeIf { it > 0 } ?: a?.items?.getOrNull(exo.currentMediaItemIndex)?.durationMs,
+            playing = showsPlaying(renderer.player.playWhenReady, renderer.player.playbackState == Player.STATE_ENDED),
+            durationMs = renderer.durationMs() ?: a?.items?.getOrNull(renderer.currentIndex())?.durationMs,
             sleepEndsAt = sleepEndsAt,
             sleepMinutes = sleepMinutes,
             outputs = outputs,
