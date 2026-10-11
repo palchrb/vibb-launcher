@@ -1185,6 +1185,11 @@ login from a tailnet device logging its 100.x IP, the iOS Safari PWA after the c
 here (login, lock, banner, access card, code page, provisioning, account) were checked in headless Chromium at 360 px,
 light and dark: no CSP violations, and revoke/provision keep the scroll position.
 
+**After QA 22 (2026-10-11)**: every QA finding is fixed (`docs/design/qa-22-server-code.md`, "Fixes"), then the
+server part of the security review followed (its "Server security wave status"); together they are server 0.24.0.
+Changed against this design: "Reset two-factor login" asks for the current password (QA M5, the user's decision),
+`reset-2fa` also replaces the password, and the Tailscale key for the phones is one-time (M12).
+
 **Still to come**: S5 (Connection page, policy `connection`, QR v2, `connection_state`), L1-L3, S6 + L2, S7. The
 600-request token bucket waits for the music implementer's measured first sync. The launcher's `CLAUDE.md` is left
 to the launcher wave.

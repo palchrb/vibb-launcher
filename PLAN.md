@@ -173,6 +173,11 @@ install an app, after which the parent allowlists it in the PWA as today;
 Play auto-updates on. Device test: Play updates in the background while not
 launchable.
 
+**Server 0.24.0 (2026-10-11, not tagged yet)**: design 22's server side (two listeners, the admin gate, hashed
+enrollment codes, the Docker image), QA 22's fixes, and the server part of the security review 2026-10-10 (its
+"Server security wave status" lists each finding). Before tagging it, the repo owner creates the release signing key
+(`server/DEPLOY.md`, "Release signing"): root on the Pi takes only signed releases from 0.24.0 on.
+
 ## Next features (agreed 2026-10-05)
 
 - **Launcher UI like Xplora One**: grid of round app icons and contacts with
