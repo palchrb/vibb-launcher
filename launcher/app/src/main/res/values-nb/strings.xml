@@ -158,6 +158,7 @@
     <string name="settings_mdm_server_url">Serveradresse</string>
     <string name="settings_mdm_tailscale_auth_key">Tailscale-nøkkel</string>
     <string name="settings_mdm_not_set">Ikke satt</string>
+    <string name="settings_mdm_tailscale_joined">På tailnettet - nøkkelen ble slettet etter første tilkobling</string>
     <string name="settings_mdm_scan_setup_qr">Skann oppsettskode</string>
     <string name="settings_mdm_scan_setup_qr_summary">Henter serveradresse, Tailscale-nøkkel og registreringskode fra telefonens QR-kode på adminsiden i én skanning</string>
     <string name="settings_mdm_scan_setup_qr_prompt">Rett kameraet mot oppsettskoden på adminsiden</string>

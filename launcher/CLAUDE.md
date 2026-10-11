@@ -332,6 +332,7 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `ui/home/MusicCa
 ## Security review, launcher wave (2026-10-11, `docs/review/security-review-2026-10-10.md`, at the monorepo root)
 
 - **The bearer stays home** (L8, `server/ServerAuth.kt`, `ServerAuthTest`): `bearerInterceptor` adds `Authorization` only to requests for the server's own origin (scheme, host, port - `sameOrigin`); `createMdmApi` and `createMusicServer` both use it, so an absolute `@Url` elsewhere never gets the device token. The SSE request builds its URL from the base itself.
+- **The Tailscale key is deleted after the first connect** (M12, `server/TailnetKey.kt`, `TailnetKeyTest`): tsnet reads `AuthKey` only to create the node (its state dir then holds the identity), so once `connect` returns an address `TsnetClient.forgetKeyOnceJoined` removes `tailscale_auth_key` and sets `tsnet_node_joined` in one `commit()`; later starts come up with an empty key from the stored state (`tailnetConnect`: key -> up with it, joined -> up with "", neither -> nothing). A key scanned or typed while connected is dropped the same way (tsnet would ignore it). Settings shows "On the tailnet - the key was deleted". A node removed from the tailnet is set up again (wipe and provision): a new key can't revive it.
 
 ## Background connection (design 19b phase 1, `docs/design/19b-doze-exemption.md`, at the monorepo root)
 
