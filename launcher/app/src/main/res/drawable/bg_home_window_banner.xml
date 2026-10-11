@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home's "Open until 18:40 · Lock again" banner (design 24b §1.3): the Vibb accent, rounded. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kid_accent" />
+    <corners android:radius="20dp" />
+</shape>

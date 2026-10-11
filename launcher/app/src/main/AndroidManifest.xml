@@ -430,6 +430,10 @@
         <receiver
             android:name=".play.InstallModeReceiver"
             android:exported="false" />
+        <!-- "Lock again" on a parent-PIN window's notification (design 24b) - our own PendingIntent only. -->
+        <receiver
+            android:name=".server.WindowRelockReceiver"
+            android:exported="false" />
         <!-- Answers market:// and play.google.com/store links (handy step 7): the device owner makes
              it their persistent preferred activity, which AOSP honours only when the activity
              declares matching filters. Passes the link on to Play while Play isn't suspended. -->

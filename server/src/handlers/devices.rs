@@ -447,6 +447,10 @@ struct DeviceDetailTemplate {
     lock_notice: Option<(&'static str, bool)>,
     /// "Parent PIN" card (design 24, `#parent-pin`).
     parent_pin: crate::handlers::parent_pin::ParentPinCard,
+    /// Status card (design 24b): "Lock the phone again now", the last relock's findings.
+    relock: crate::handlers::window_relock::RelockCard,
+    /// Status card (design 24b §3): boots the launcher didn't see in the last 30 days.
+    unseen_boots: Option<String>,
     /// "Screen timeout" card (migrations/0032): the choice, every option, and what the phone
     /// last reported it applied.
     screen_timeout_seconds: i64,
@@ -1394,6 +1398,26 @@ async fn render_device(
     let lock_notice = notice.and_then(crate::kid_lock::flash_text);
     let parent_pin =
         crate::handlers::parent_pin::card(&state.db, &policy, latest_status.as_ref(), notice).await;
+    let relock = crate::handlers::window_relock::card(
+        &state.db,
+        id,
+        latest_status.as_ref(),
+        notice,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .await;
+    // When "Block safe mode" went on, for the unseen-boots advice (QA 24b Low 12).
+    let safe_boot_blocked_since: Option<i64> = sqlx::query_scalar(
+        "SELECT disallow_safe_boot_set_at_ms FROM device_policy WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id = id, %err, "can't read when safe mode was blocked");
+        None
+    })
+    .flatten();
     let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
         .await
         .unwrap_or_else(|err| {
@@ -1428,6 +1452,16 @@ async fn render_device(
             escapes,
             lock_notice,
             parent_pin,
+            relock,
+            unseen_boots: latest_status.as_ref().and_then(|s| {
+                crate::boot_witness::warning(
+                    s.unseen_boots_count,
+                    s.unseen_boots_last_at_ms,
+                    chrono::Utc::now().timestamp_millis(),
+                    policy.hardening.disallow_safe_boot,
+                    safe_boot_blocked_since,
+                )
+            }),
             screen_timeout_seconds: crate::models::screen_timeout_seconds(
                 policy.screen_timeout_seconds,
             ),
@@ -1956,15 +1990,20 @@ pub async fn update_kid_lock(
         let first = current.kid_pin_hash.is_none();
         let block_safe_boot = first || current.hardening.disallow_safe_boot;
         // Only while the override PIN still exists: a parallel "remove unlock code" can't leave a
-        // kid PIN without its parent code (qa-10-code #9); zero rows = refused.
+        // kid PIN without its parent code (qa-10-code #9); zero rows = refused. When the switch
+        // goes on is kept for the unseen-boots advice (QA 24b Low 12).
         let result = sqlx::query(
             "UPDATE device_policy SET kid_pin_hash = ?, kid_pin_salt = ?, kid_pin_length = ?, \
+             disallow_safe_boot_set_at_ms = CASE WHEN ? AND NOT disallow_safe_boot THEN ? \
+             ELSE disallow_safe_boot_set_at_ms END, \
              disallow_safe_boot = ?, updated_at = datetime('now') \
              WHERE device_id = ? AND override_pin_hash IS NOT NULL",
         )
         .bind(&hash)
         .bind(&salt)
         .bind(length)
+        .bind(block_safe_boot)
+        .bind(chrono::Utc::now().timestamp_millis())
         .bind(block_safe_boot)
         .bind(id)
         .execute(&state.db)
@@ -2008,13 +2047,20 @@ pub async fn update_hardening(
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
     let on = |key: &str| form.contains_key(key);
+    // When "Block safe mode" goes on (QA 24b Low 12: the unseen-boots advice); off clears it.
+    // SET reads the old values, so `disallow_safe_boot` in the CASE is the switch before the save.
     let result = sqlx::query(
-        "UPDATE device_policy SET disallow_factory_reset = ?, disallow_add_user = ?, \
+        "UPDATE device_policy SET \
+         disallow_safe_boot_set_at_ms = CASE WHEN NOT ? THEN NULL \
+         WHEN NOT disallow_safe_boot THEN ? ELSE disallow_safe_boot_set_at_ms END, \
+         disallow_factory_reset = ?, disallow_add_user = ?, \
          disallow_modify_accounts = ?, disallow_config_vpn = ?, disallow_usb_file_transfer = ?, \
          disallow_debugging_features = ?, disallow_safe_boot = ?, lock_location = ?, \
          disallow_airplane_mode = ?, disallow_config_locale = ?, updated_at = datetime('now') \
          WHERE device_id = ?",
     )
+    .bind(on("disallow_safe_boot"))
+    .bind(chrono::Utc::now().timestamp_millis())
     .bind(on("disallow_factory_reset"))
     .bind(on("disallow_add_user"))
     .bind(on("disallow_modify_accounts"))

@@ -4,6 +4,7 @@ mod app_display;
 mod app_downloads;
 mod app_icons;
 mod audit;
+mod boot_witness;
 mod config;
 mod crashes;
 mod device_routes;
@@ -36,6 +37,7 @@ mod streams;
 mod tests;
 mod time_rules;
 mod wallpapers;
+mod window_relock;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -707,6 +709,18 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/parent-pin",
             post(handlers::parent_pin::update_parent_pin),
+        )
+        .route(
+            "/devices/{id}/end-windows",
+            post(handlers::window_relock::end_windows),
+        )
+        .route(
+            "/devices/{id}/allow-blocked",
+            post(handlers::window_relock::allow_blocked),
+        )
+        .route(
+            "/devices/{id}/start-pause",
+            post(handlers::window_relock::start_pause),
         )
         .route(
             "/devices/{id}/regenerate-code",

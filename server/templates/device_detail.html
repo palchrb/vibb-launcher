@@ -40,17 +40,64 @@
         <p>App version: {{ v }}</p>
         {% endif %}
         {% for line in sound_lines %}
-        <p>{{ line }}</p>
+        <p{% if line.starts_with("Do Not Disturb") %} class="error"{% endif %}>{{ line }}</p>
         {% endfor %}
         <p class="subtitle">Last reported {{ status.reported_at }}</p>
         {% if let Some(problem) = policy_problem %}
         <div class="error">{{ problem }}</div>
         {% endif %}
         {% if restrictions_paused %}
+        {% if relock.capable %}
+        <div class="error">All restrictions are paused on the phone (from here, or someone entered the parent PIN in its Settings). The pause ends by itself, or press "Lock the phone again now".</div>
+        {% else %}
         <div class="error">All restrictions are paused on the phone (someone entered the PIN in its Settings). The pause ends by itself.</div>
         {% endif %}
+        {% endif %}
+        {% if let Some(foreign) = relock.foreign %}
+        <div class="error">
+            <p style="margin:0 0 8px;">{{ foreign.text }}</p>
+            <ol style="margin:0; padding-left:20px;">
+                {% for step in foreign.steps %}
+                <li>{{ step }}</li>
+                {% endfor %}
+                <li><a href="#parent-pin">Change the parent PIN</a>: the app may have read it.</li>
+            </ol>
+        </div>
+        {% endif %}
+        {% if let Some(text) = unseen_boots %}
+        <div class="error">{{ text }}</div>
+        {% endif %}
+        {% for line in relock.notes.lines %}
+        <div class="error">{{ line }}</div>
+        {% endfor %}
+        {% if let Some(text) = relock.notice %}
+        <div class="success">{{ text }}</div>
+        {% endif %}
+        {% if relock.notes.allow_button %}
+        <form method="post" action="/devices/{{ device.id }}/allow-blocked">
+            <button type="submit" class="button-small button-secondary">Allow these apps</button>
+        </form>
+        {% endif %}
+        {% if relock.lock_again %}
+        <form method="post" action="/devices/{{ device.id }}/end-windows">
+            <button type="submit" class="button-small">Lock the phone again now</button>
+        </form>
+        <p class="subtitle">Ends the pause or Play install mode as soon as the phone gets this (usually within seconds). A parent-code opening on the time-lock screen already ends whenever the phone reaches this server.</p>
+        {% endif %}
+        {% if relock.pause_button %}
+        <form method="post" action="/devices/{{ device.id }}/start-pause">
+            <button type="submit" class="button-small button-secondary">Pause restrictions for 2 hours</button>
+        </form>
+        <p class="subtitle">Opens the phone - apps, Settings, Play - without typing the parent PIN on it, like the pause in its Settings (accessibility services stay limited to checked apps). It locks again by itself after 2 hours, or press "Lock the phone again now".</p>
+        {% endif %}
+        {% for line in relock.answers %}
+        <p class="subtitle">{{ line }}</p>
+        {% endfor %}
         {% else %}
         <p class="subtitle">No status reported yet.</p>
+        {% if let Some(text) = relock.notice %}
+        <div class="success">{{ text }}</div>
+        {% endif %}
         {% endif %}
         {% for n in parent_pin.notices %}
         <p{% if n.error %} class="error"{% endif %}>{{ n.text }}{% if n.child_tail %} Typed where your child could see? <a href="#parent-pin">Change the parent PIN.</a>{% endif %}</p>
@@ -245,6 +292,7 @@
         <div class="error">The stored app list for this device can't be read, so the phone gets an error instead of its policy and keeps enforcing the last one it had. The checkboxes below don't show what the phone allows, and changing them fails. Check this server's log ("failed to build device policy"), or restore a backup.</div>
         {% endif %}
         <p class="subtitle">Every app currently on this device, plus anything from the <a href="/apps">Apps</a> catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; checking one that isn't installed installs and allows it. Unchecking disallows it - and uninstalls it too, unless it's preinstalled and can't be removed. Each checkbox saves itself immediately - no separate Save button. A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed - never Settings, a browser or a file manager.</p>
+        <p class="subtitle">Only a checked app's keyboard and accessibility service can be turned on in the phone's Settings - an accessibility service not even during a pause, since it could read the parent PIN. Check the app first.</p>
         <form method="post" action="/devices/{{ device.id }}/app-updates">
             <label class="checkbox-row">
                 <input type="checkbox" name="app_updates_wifi_only" value="on" {% if app_updates_wifi_only %}checked{% endif %} onchange="this.form.submit()">
@@ -466,6 +514,7 @@
         <form method="post" action="/devices/{{ device.id }}/parent-pin">
             <label for="new_pin">New parent PIN (6-10 digits; birthdays and years are easy to guess)</label>
             <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password">
+            <p class="subtitle">8 or more digits are much harder to crack if this server is ever copied.</p>
             {% if parent_pin.pin_set %}
             <label class="checkbox-row">
                 <input type="checkbox" name="clear_pin" value="on">

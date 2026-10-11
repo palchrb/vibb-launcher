@@ -14,7 +14,6 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -544,10 +543,11 @@ class PinLockActivity : AppCompatActivity() {
     // ---- parent code ------------------------------------------------------------------------
 
     /** The parent PIN through its gate ([ParentPin], design 24): every result in the dialog's
-     * error line; no PIN or a running lockout opens it in that state with OK disabled. */
+     * error line; no PIN or a running lockout opens it in that state with OK disabled. Typed on our
+     * own keypad (design 24b §1.8), kept out of screenshots. */
     private fun showParentCodeDialog() {
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_pin_parent_code, null)
-        val input = view.findViewById<EditText>(R.id.parent_code_input)
+        val keypad = com.kidslauncher.mdm.ui.ParentPinKeypad.bind(view.findViewById(R.id.parent_code_keypad))
         val error = view.findViewById<TextView>(R.id.parent_code_error)
         fun showError(text: String?) {
             error.text = text
@@ -559,16 +559,18 @@ class PinLockActivity : AppCompatActivity() {
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(android.R.string.ok, null)
             .create()
+        com.kidslauncher.mdm.ui.ParentPinKeypad.secure(dialog)
         dialog.show()
         trackDialog(dialog)
         val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
         ParentPinDialog.opening(this, R.string.pin_lock_parent_not_set, R.string.pin_lock_parent_locked_out).let {
             showError(it.text)
             ok.isEnabled = it.okEnabled
+            keypad.setEnabled(it.okEnabled)
         }
         // Set after show() so a wrong code keeps the dialog open.
         ok.setOnClickListener {
-            val code = input.text.toString()
+            val code = keypad.pin
             ok.isEnabled = false
             val checkedAt = PinLockRuntime.screenOffs
             lifecycleScope.launch {
@@ -579,7 +581,7 @@ class PinLockActivity : AppCompatActivity() {
                     if (PinLockRuntime.screenOffs == checkedAt) unlock(checkedAt)
                     return@launch
                 }
-                if (result is ParentPinResult.Wrong || result is ParentPinResult.LockedOut) input.text.clear()
+                if (result is ParentPinResult.Wrong || result is ParentPinResult.LockedOut) keypad.clear()
                 showError(
                     ParentPinDialog.resultText(
                         this@PinLockActivity, result,
@@ -589,6 +591,7 @@ class PinLockActivity : AppCompatActivity() {
                     ),
                 )
                 ok.isEnabled = ParentPinDialog.okAfter(result)
+                keypad.setEnabled(ParentPinDialog.okAfter(result))
             }
         }
     }

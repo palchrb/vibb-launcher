@@ -62,7 +62,26 @@ data class StatusReportRequest(
     /** Design 19b: the launcher is on Android's power-save allowlist
      * (`PowerManager.isIgnoringBatteryOptimizations`); `null` = unreadable (left out). */
     val batteryOptimizationExempt: Boolean? = null,
+    /** Design 24b: the last relock of a parent-PIN window (an override or a pause that ended) -
+     * see [RelockReport]; `null` before the first one (left out). */
+    val relock: RelockReport? = null,
+    /** Design 24b §3: boots the launcher didn't see (safe mode, a start cut short) - see
+     * [UnseenBootsReport]; `null` before the first count (left out). */
+    val unseenBoots: UnseenBootsReport? = null,
+    /** Design 24b's fix round (QA High 1): a device admin or accessibility service of an app
+     * outside the allowlist - the phone refuses the parent PIN meanwhile; `null` = none (left out). */
+    val foreignAccess: ForeignAccessReport? = null,
 )
+
+/** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the
+ * device admins and accessibility services found. Both keys always sent. */
+@Serializable
+data class ForeignAccessReport(val admins: List<String>, val accessibility: List<String>)
+
+/** `StatusReportRequest.unseenBoots`: how many boots the launcher never saw (it only goes up) and
+ * when it last noticed one (wall clock; `null` = never). */
+@Serializable
+data class UnseenBootsReport(val count: Int, val lastAtMs: Long?)
 
 /**
  * `StatusReportRequest.bootCover` (design 16b, qa-16b-code #5; no defaults: every field is always

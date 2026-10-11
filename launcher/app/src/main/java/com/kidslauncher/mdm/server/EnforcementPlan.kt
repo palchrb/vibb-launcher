@@ -68,6 +68,17 @@ data class EnforcementPlan(
     /** `UserManager.DISALLOW_CREATE_WINDOWS` while a screen-time budget is set (QA step 6 #2:
      * overlay windows over our free screens would be uncounted use). Lifted by an override. */
     val restrictCreateWindows: Boolean = false,
+    /** `UserManager.DISALLOW_CONFIG_TETHERING` while apps are managed and no window is open
+     * (design 24b §1.5): setting it untethers, so a hotspot turned on in a window goes at the relock. */
+    val restrictTethering: Boolean = false,
+    /** `setPermittedAccessibilityServices` / `setPermittedInputMethods` (design 24b §1.5): the
+     * allowlist while apps are managed (system services and keyboards are always permitted);
+     * `null` (all) otherwise - also on calls-only phones (QA #4). Keyboards: only outside windows.
+     * Accessibility services: also in windows (the user's decision on QA 24b High 1) - the one
+     * block a window keeps, so a service that can read the parent PIN can't be turned on there;
+     * ticking an app in the PWA allows its service. */
+    val permittedAccessibility: List<String>? = null,
+    val permittedInputMethods: List<String>? = null,
 )
 
 /**
@@ -105,8 +116,9 @@ data class EnforcementPlan(
  *   call state; with calls managed the caller also passes the rule-restricted call state.
  * - [timeRulesSet]/[budgetSet]: the enforced time policy has any rule or budget / a budget (see
  *   [EnforcementPlan.lockDateTime] and [EnforcementPlan.restrictCreateWindows]).
- * - [inputMethods]: the enabled/default keyboards, never suspended or hidden - the PIN dialogs
- *   (lock screen, Settings gate) need one (QA step 4 #3).
+ * - [inputMethods]: the keyboards never suspended or hidden - since design 24b only the enabled
+ *   ones that are system or allowlisted ([keptInputMethods]): a keyboard sideloaded in a window is
+ *   hidden at the relock. The parent PIN types on our own keypad, so it needs none.
  *   The call restrictions don't change: allowed calls and emergency calls keep working
  *   (qa-security P0 #3 - the overlay alone could be escaped through Recents or a notification).
  * - Play (handy step 7, [com.kidslauncher.mdm.play]): Play services and GSF are in
@@ -220,6 +232,9 @@ fun computeEnforcementPlan(
         restrictSms = restrictSms,
         denyCallPermissions = callState.managed,
         restrictCreateWindows = budgetSet && !overrideActive,
+        restrictTethering = appsManaged,
+        permittedAccessibility = allowed.sorted().takeIf { allowlist != null },
+        permittedInputMethods = allowed.sorted().takeIf { appsManaged },
     )
 }
 

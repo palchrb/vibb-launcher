@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Debug build only: the design 16d lock-task override hook (docs/testing/emulator.md §6e). Merged
+<!-- Debug build only: the design 16d lock-task override hook (docs/testing/emulator.md §6e) and the
+     design 24b vault-key hook. Merged
      into the debug manifest; the release build never sees this file (checkReleaseHasNoDebugHook,
      DebugHookAbsentTest). Exported for `adb shell am broadcast -n`, guarded by DUMP (shell holds it,
      apps don't). -->
@@ -7,6 +8,11 @@
     <application>
         <receiver
             android:name="com.kidslauncher.mdm.lock.LockTaskOverrideReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+        <!-- Design 24b §7: deletes the parent PIN vault's key (the key-failure device check). -->
+        <receiver
+            android:name="com.kidslauncher.mdm.server.PinVaultKeyReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
     </application>

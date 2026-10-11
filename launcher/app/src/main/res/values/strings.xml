@@ -337,4 +337,15 @@
     <string name="music_next">Next</string>
     <string name="lock_media_unlock">Unlock</string>
     <string name="lock_media_back">Back to playback</string>
+    <!-- Design 24b: a parent-PIN window that locks again by itself (notification, Home banner). -->
+    <string name="notification_channel_window">Opened with the parent code</string>
+    <string name="window_override_open">Open with the parent code until %1$s</string>
+    <string name="window_pause_open">All restrictions paused until %1$s</string>
+    <string name="window_notification_text">The phone locks again by itself then.</string>
+    <string name="window_lock_again">Lock again</string>
+    <string name="home_window_open">Open until %1$s</string>
+    <!-- Design 24b §1.8: the parent PIN's own keypad (no keyboard). -->
+    <string name="parent_pin_keypad_dots">%1$d digits typed</string>
+    <string name="parent_pin_until_sync">The code can\'t be checked until the phone reaches the server.</string>
+    <string name="parent_pin_foreign_access">An app the parent hasn\'t allowed can control this phone or read its screen, so the parent code can\'t be typed here. Use the parent app: its Status card shows what to do.</string>
 </resources>

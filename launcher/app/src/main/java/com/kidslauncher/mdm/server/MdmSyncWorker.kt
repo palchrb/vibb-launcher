@@ -106,7 +106,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 FreshOutcome.REJECTED_SUSPECT
             }
             FreshVerdict.ACCEPT -> {
-                freshPolicy = fetched.policy
+                // Design 24b §2: the parent PIN's hash goes into the vault; nothing caches it.
+                freshPolicy = ParentPin.acceptPolicy(context, fetched.policy)
                 FreshOutcome.ACCEPTED
             }
         }
@@ -124,11 +125,6 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.
         OfflineOverride.clear()
-        // Cache the hash+salt into their own preference slots (not just inside the serialized
-        // kid_mode_policy blob) - this is what lets OfflineOverride verify a locally-entered PIN
-        // with zero network at all, which is the entire point of the offline failsafe.
-        mdm.overridePinHash(freshPolicy.overridePinHash)
-        mdm.overridePinSalt(freshPolicy.overridePinSalt)
         // KidVpnService reads this cached value directly (it never talks to the network itself for
         // policy) - see DnsFilterEngine.resolveUpstream.
         mdm.dnsUpstreamProvider(freshPolicy.dnsUpstreamProvider)
@@ -162,6 +158,15 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     mdm.lockKey(lock.key())
     // Derives the same lock from the same policy and suspends apps while it's on.
     AppEnforcer.apply(context, decision.policy, fromSync = true)
+    // Design 24b: a parent-PIN window that ended (this sync ends an override) locks again now,
+    // before the status report, so the report carries the relock.
+    try {
+        WindowRelock.relockInSync(context)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Relock in the sync failed", e)
+    }
     // A lock that began with this policy (a lift ended early, a new rule): show it now, also over
     // an app (not over a call), then re-arm the boundary alarm and the screen-time timer.
     val appContext = context.applicationContext
@@ -233,6 +238,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     null
                 },
                 batteryOptimizationExempt = BatteryExemption.exempt(context),
+                relock = WindowRelock.lastReport(context),
+                unseenBoots = BootWitness.report(context),
+                foreignAccess = ForeignAccess.report(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -306,7 +314,9 @@ private suspend fun reportBlockedDnsEvents(context: Context, api: MdmApi) {
 }
 
 /**
- * Find My Device's remote-command dispatch - ring/stop_ring/lock/wipe, or `locate` (nothing here:
+ * The remote commands: design 24b's `end_windows`/`allow_blocked`/`start_pause` (each followed by
+ * one more sync),
+ * and Find My Device's ring/stop_ring/lock/wipe, or `locate` (nothing here:
  * the sync takes a fresh fix for the status report - bypassing the throttle - and answers the
  * command after the report with the fix's accuracy and age; the PWA's "Update location now"
  * queues it). No result is ever reported for `wipe` - the device is gone by the time it would
@@ -346,10 +356,45 @@ private suspend fun dispatchPendingCommand(
 
         "wipe" -> LocateCommands.wipe(dpm, admin)
 
+        // Design 24b: "Lock the phone again now" - the pause or override and Play install mode
+        // end, and the phone locks again (the relock right after this sync's apply, or the worker).
+        "end_windows" -> {
+            val ended = WindowRelock.lockAgain(context, RelockTrigger.COMMAND)
+            val installMode = com.kidslauncher.mdm.play.PlayRuntime.installModeActive(context)
+            if (installMode) com.kidslauncher.mdm.play.PlayRuntime.endInstallMode(context)
+            reportCommandResult(api, pending.id, success = true, message = endWindowsResult(ended, installMode))
+            // A command queued behind it (a lock, a locate) follows within seconds (QA #8).
+            requestFollowUpSync(context)
+        }
+
+        // Design 24b's fix round (QA High 1): the parent app's pause - the same 2 hours as the
+        // Settings switch, locking again by itself, without the PIN on a phone that may have an
+        // app able to read it.
+        "start_pause" -> {
+            RestrictionsPause.start(context, BootClock.windowStart(RESTRICTIONS_PAUSE_DURATION_MS))
+            reportCommandResult(api, pending.id, success = true, message = "paused for 2 hours")
+            requestFollowUpSync(context)
+        }
+
+        // Design 24b: "Allow these apps" - the relock's blocks go; this sync's apply shows them.
+        "allow_blocked" -> {
+            val count = WindowRelock.allowBlocked(context)
+            reportCommandResult(api, pending.id, success = true, message = "allowed: $count apps")
+            requestFollowUpSync(context)
+        }
+
         // Answered after the status report that carries the fresh fix (performMdmSync).
         "locate" -> {}
 
         else -> Log.w(LOG_TAG, "Unknown pending command: ${pending.command}")
+    }
+}
+
+private fun requestFollowUpSync(context: Context) {
+    try {
+        com.kidslauncher.mdm.push.SyncRunner.request(context, "command_followup")
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't request the follow-up sync", e)
     }
 }
 
@@ -443,6 +488,8 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
         return
     }
 
+    // Design 24b (fix round QA Medium 2): the catalog's pinned signers feed the relock's check.
+    WindowRelock.rememberCatalogPins(context, updates)
     val (launcherUpdates, otherUpdates) = updates.partition { it.isLauncher }
     val state = TrackedAppUpdateState.load()
     val wanted = mutableListOf<WantedDownload>()
@@ -758,7 +805,7 @@ private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
  * call prefs ([callPrefsUpdate]: `calls_managed_last` only from an explicit `managed`, and the last
  * managed call rules) in one synchronous `commit()` - they must never disagree, and the generated
  * preference setters only `apply()` asynchronously (see CLAUDE.md on writes racing a process death). */
-private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
+private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit = synchronized(POLICY_CACHE_LOCK) {
     val keys = LauncherPreferences.mdm().keys()
     val editor = PreferenceManager.getDefaultSharedPreferences(context).edit()
         .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), policy))
@@ -776,6 +823,10 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse) {
     val ok = editor.commit()
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
 }
+
+/** The cached policy blob is written by the sync and once by the vault's migration
+ * ([redactCachedPolicy]) - never both at once (design 24b §2). */
+internal val POLICY_CACHE_LOCK = Any()
 
 /**
  * The last accepted policy, straight from the local cache - no network call. Feed it to

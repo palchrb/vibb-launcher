@@ -35,6 +35,21 @@ const val MISSED_CALL_NOTIFICATION_ID = 1006
 /** Play install mode (handy step 7, play.PlayRuntime) - LOW, ongoing, with "End now". */
 const val NOTIFICATION_CHANNEL_INSTALL_MODE = "launcher:install_mode"
 const val INSTALL_MODE_NOTIFICATION_ID = 1004
+/** A parent-PIN window that is open (design 24b §1.3, server.WindowRelock) - LOW, silent, ongoing,
+ * with "Lock again"; ids 1007 (override) and 1008 (pause). */
+const val NOTIFICATION_CHANNEL_WINDOW = "launcher:window"
+
+/** The window channel; also called before each post (idempotent), like [createCallChannels]. */
+fun createWindowChannel(context: Context) {
+    val notificationManager = context.getSystemService(NotificationManager::class.java) ?: return
+    notificationManager.createNotificationChannel(
+        NotificationChannel(
+            NOTIFICATION_CHANNEL_WINDOW,
+            context.getString(R.string.notification_channel_window),
+            NotificationManager.IMPORTANCE_LOW
+        ).apply { setSound(null, null) }
+    )
+}
 
 /**
  * The two call channels. Silent: Telecom plays the ringtone itself (we don't declare
@@ -125,6 +140,7 @@ fun createNotificationChannels(context: Context) {
                 NotificationManager.IMPORTANCE_LOW
             )
         )
+        createWindowChannel(context)
         notificationManager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL_APP_INSTALL,

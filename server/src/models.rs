@@ -316,6 +316,16 @@ pub struct DeviceStatus {
     /// The launcher is exempt from battery optimisation (design 19b, migrations/0055). `None`
     /// from older launchers, or when the phone couldn't read it.
     pub battery_optimization_exempt: Option<bool>,
+    /// The phone's last relock of a parent-PIN window (design 24b), see
+    /// `window_relock::RelockReport`. `None` from older launchers or before any relock.
+    pub relock_json: Option<String>,
+    /// Boots the launcher didn't see and when it last noticed one (design 24b §3), see
+    /// `boot_witness`. `None` from older launchers.
+    pub unseen_boots_count: Option<i64>,
+    pub unseen_boots_last_at_ms: Option<i64>,
+    /// A device admin or accessibility service of an app outside the allowlist (design 24b's fix
+    /// round), see `window_relock::ForeignAccess`. `None` = nothing found.
+    pub foreign_access_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -782,6 +792,19 @@ pub struct StatusReportRequest {
     /// older launchers and when the phone couldn't read it.
     #[serde(default)]
     pub battery_optimization_exempt: Option<bool>,
+    /// Design 24b: the last relock of a parent-PIN window - opaque, stored through the known
+    /// fields only (`window_relock::sanitize_relock`).
+    #[serde(default)]
+    pub relock: Option<serde_json::Value>,
+    /// Design 24b §3: `{count, last_at_ms}` - boots the launcher didn't see (safe mode, a start
+    /// cut short), read leniently (`boot_witness::sanitize`).
+    #[serde(default)]
+    pub unseen_boots: Option<serde_json::Value>,
+    /// Design 24b's fix round (QA High 1): `{admins, accessibility}` of apps outside the allowlist,
+    /// while the phone refuses the parent PIN; stored through valid package names only
+    /// (`window_relock::sanitize_foreign_access`). Absent = nothing found.
+    #[serde(default)]
+    pub foreign_access: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.

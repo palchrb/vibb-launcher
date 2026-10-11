@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The parent PIN's own keypad (design 24b §1.8): a dot row and twelve keys built by
+     ui.ParentPinKeypad - no EditText, so no keyboard ever sees the PIN. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/parent_pin_dots"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="8dp"
+        android:gravity="center"
+        android:letterSpacing="0.25"
+        android:maxLines="1"
+        android:minHeight="32dp"
+        android:textColor="#000000"
+        android:textSize="22sp" />
+
+    <LinearLayout
+        android:id="@+id/parent_pin_keys"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
+</LinearLayout>
