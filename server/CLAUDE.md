@@ -77,6 +77,11 @@ No prior programming experience - build features directly rather than explaining
 
 ## Fail closed
 
+- **A status report is stored within limits (security review M7).** `device_api::cap_installed_apps`: real package
+  names only (`is_package_name`), no duplicates, labels clipped to 100 chars, an installer that isn't a package name
+  dropped, at most `MAX_INSTALLED_APPS` (1500); `lock_reason` 32 chars, `app_version` 64; every JSON blob already
+  goes through its own `sanitize_*`. `/security` pages back 200 events at a time (`?before=<id>`), so a flood can't
+  hide a sign-in attempt.
 - **A catalog app is pinned to its package and signing key (security review M10, server part).** `src/apk.rs` reads
   an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate in the v3, else v2,
   signing block - what `apksigner --print-certs` and the launcher's `SelfUpdate.signers` give). `tracked_apps`

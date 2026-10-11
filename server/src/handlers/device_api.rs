@@ -535,6 +535,49 @@ async fn compute_dns_filter_version(
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// The most installed apps a status report keeps (a phone has a few hundred packages at most).
+pub(crate) const MAX_INSTALLED_APPS: usize = 1500;
+/// The longest app label kept.
+const MAX_APP_LABEL_CHARS: usize = 100;
+
+/// An Android package name as the platform allows it: letters, digits, `_` and `.`, at most 255.
+pub(crate) fn is_package_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.starts_with('.')
+        && !name.ends_with('.')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
+}
+
+/// The installed-apps list within limits (security review M7): entries without a real package
+/// name are dropped, and so are duplicates; labels are clipped, an installer that isn't a package
+/// name is dropped, and at most [MAX_INSTALLED_APPS] are kept.
+fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
+    let reported = apps.len();
+    let mut seen = std::collections::HashSet::new();
+    let capped: Vec<InstalledApp> = apps
+        .into_iter()
+        .filter(|app| is_package_name(&app.package_name))
+        .filter(|app| seen.insert(app.package_name.clone()))
+        .take(MAX_INSTALLED_APPS)
+        .map(|app| InstalledApp {
+            label: crate::audit::clip(&app.label, MAX_APP_LABEL_CHARS).to_string(),
+            installer: app.installer.filter(|installer| is_package_name(installer)),
+            ..app
+        })
+        .collect();
+    if capped.len() < reported {
+        tracing::warn!(
+            reported,
+            kept = capped.len(),
+            "a status report's app list was over the limits"
+        );
+    }
+    capped
+}
+
 /// What a new phone's allowlist starts with, where it has them (security review M10): a clock, a
 /// calculator, a camera and the Vibb music app. Never Settings, a browser, a file manager or a
 /// store; the parent allows the rest on the phone's page.
@@ -732,8 +775,17 @@ pub async fn dns_events(
 pub async fn status(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
-    Json(report): Json<StatusReportRequest>,
+    Json(mut report): Json<StatusReportRequest>,
 ) -> impl IntoResponse {
+    // Security review M7: what a phone (or anything holding its token) sends is stored only within
+    // limits - at most MAX_INSTALLED_APPS apps with real package names, short labels, and short
+    // free-text fields. Everything below works on the capped report.
+    report.installed_apps = report.installed_apps.take().map(cap_installed_apps);
+    report.lock_reason = crate::audit::clip(&report.lock_reason, 32).to_string();
+    report.app_version = report
+        .app_version
+        .as_deref()
+        .map(|version| crate::audit::clip(version, 64).to_string());
     let installed_apps_json = report
         .installed_apps
         .as_ref()
