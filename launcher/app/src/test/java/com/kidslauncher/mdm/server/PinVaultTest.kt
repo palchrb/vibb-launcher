@@ -198,6 +198,30 @@ class PinVaultTest {
     }
 
     @Test
+    fun `a key that fails while a policy is accepted keeps the tag - the lockout carries over at the re-wrap (QA Low 1)`() {
+        vault.accept(policy(hash))
+        val fingerprint = vault.fingerprint()!!
+        lockOut(fingerprint)
+        val lockout = parentPinStatus(store, fingerprint, now).lockoutMs
+        // Two Keystore errors in the sync's accept: unavailable until the next one.
+        key.failures = 2
+        assertEquals(null, vault.accept(policy(hash)).change)
+        assertTrue(vault.rewrapNeeded())
+        assertTrue(vault.configured())
+        // The next sync re-wraps the same PIN: the lockout follows it to the new fingerprint.
+        val accepted = vault.accept(policy(hash))
+        assertFalse(vault.rewrapNeeded())
+        assertTrue(fingerprint in accepted.change!!.from)
+        assertTrue(store.rewriteFingerprint(accepted.change!!.from, accepted.change!!.to))
+        assertEquals(lockout, parentPinStatus(store, vault.fingerprint()!!, now).lockoutMs)
+        // A first PIN whose wrap fails is still set (waiting for its re-wrap).
+        val fresh = PinVaultCore(ParentPinStoreTest.FakePrefs(), FakeKey().apply { failures = 2 }, FakeLegacy()) { _, _ -> }
+        fresh.accept(policy(hash))
+        assertTrue(fresh.configured())
+        assertTrue(fresh.rewrapNeeded())
+    }
+
+    @Test
     fun `a transient keystore error is retried once`() {
         vault.accept(policy(hash))
         key.failures = 1

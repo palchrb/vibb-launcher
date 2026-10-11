@@ -48,6 +48,19 @@ class WindowRelockCallersTest {
     }
 
     @Test
+    fun `a window's alarm and notification don't wait for apply, and only a device owner posts it (QA Low 5, 7)`() {
+        val opened = body("server/WindowRelock.kt", "fun opened(")
+        assertBefore(opened, "lift()", "TimeRuleAlarm.schedule(app)")
+        assertTrue("AppEnforcer" !in opened)
+        assertTrue("if (deviceOwner(app)) postNotification(" in opened)
+        // Not device owner: the relock cancels what an older build posted.
+        val relock = body("server/WindowRelock.kt", "private fun relock(")
+        assertBefore(relock, "cancelNotifications(", "runRelock(")
+        // A process start is `boot` only in a new boot (QA Low 6).
+        assertTrue("BootWitness.newBoot" in sources.getValue("Application.kt"))
+    }
+
+    @Test
     fun `both starters record the window before they lift anything`() {
         val activate = body("server/OfflineOverride.kt", "fun activate(")
         for (lift in listOf("offlineOverrideActive(true)", "offlineOverrideExpiresAt(", "AppEnforcer.apply(")) {

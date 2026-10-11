@@ -130,8 +130,8 @@ object WindowRelock {
      * Called by the starters before anything is lifted (§1.2): commits the marker (`pending`,
      * `gen + 1`, the window) and - while no window was pending - the start snapshot (credential,
      * packages, disabled apps), then runs [lift] (the window's own flags) under the same lock, so a
-     * relock never sees a marker without its window. Then the reset-password token and the "Lock
-     * again" notification. Never throws: the parent's PIN was right, the window opens whatever.
+     * relock never sees a marker without its window. Then the window's end alarm, the
+     * reset-password token and - as device owner - the "Lock again" notification. Never throws: the parent's PIN was right, the window opens whatever.
      * Background thread (inside ParentPin's lock).
      */
     fun opened(context: Context, kind: WindowKind, start: WindowStart, lift: () -> Unit) {
@@ -151,13 +151,26 @@ object WindowRelock {
             Log.e(LOG_TAG, "Recording the window failed", e)
         }
         if (!lifted) lift()
+        // The window's end alarm right after the lift, whatever the starter's apply() does (QA Low 5).
+        try {
+            TimeRuleAlarm.schedule(app)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The window's alarm failed", e)
+        }
         try {
             ensureResetToken(app)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Reset-password token failed", e)
         }
-        postNotification(app, kind, start.untilWallMs)
+        // Only a device owner relocks, so only it offers "Lock again" (QA Low 7).
+        if (deviceOwner(app)) postNotification(app, kind, start.untilWallMs)
         notifyListeners()
+    }
+
+    private fun deviceOwner(app: Context): Boolean = try {
+        dpm(app)?.isDeviceOwnerApp(app.packageName) == true
+    } catch (e: Exception) {
+        false
     }
 
     @Suppress("DEPRECATION") // WifiConfiguration's proxy and SSID
@@ -277,7 +290,11 @@ object WindowRelock {
 
     private fun relock(app: Context, trigger: RelockTrigger) {
         val dpm = dpm(app) ?: return
-        if (!dpm.isDeviceOwnerApp(app.packageName)) return
+        if (!dpm.isDeviceOwnerApp(app.packageName)) {
+            // Not device owner (provisioning failed): no relock, and no notification left behind (QA Low 7).
+            cancelNotifications(app, emptySet())
+            return
+        }
         val asked = askedTrigger.getAndSet(null) ?: trigger
         val outcome = runRelock(store(app), AndroidPlatform(app, dpm), asked)
         val report = outcome.report ?: return

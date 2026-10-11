@@ -26,6 +26,10 @@ fun witnessBoot(state: BootWitnessState, bootCount: Int, nowMs: Long): BootWitne
     }
 }
 
+/** This process start is the first in its boot (QA 24b Low 6): not a crash, LMK or update restart
+ * within a boot the witness had seen. An unknown count or a first record counts as a boot. */
+fun isNewBoot(lastBoot: Int?, bootCount: Int): Boolean = bootCount < 0 || lastBoot == null || bootCount != lastBoot
+
 /**
  * Boots the launcher didn't see (design 24b §3): checked at every process start, early in
  * `Application.onCreate` (right after the call policy - it runs in direct boot too), in
@@ -47,12 +51,19 @@ object BootWitness {
         lastAtMs = if (prefs.contains(LAST_AT)) prefs.getLong(LAST_AT, 0L) else null,
     )
 
+    /** [isNewBoot] for this process, set by [record]: a relock at this start is `boot` only then. */
+    @Volatile
+    var newBoot: Boolean = true
+        private set
+
     /** Process start. Never throws (the call path runs in this process). */
     fun record(context: Context) {
         try {
             val prefs = prefs(context)
             val before = load(prefs)
-            val after = witnessBoot(before, BootClock.bootCount(), System.currentTimeMillis())
+            val bootCount = BootClock.bootCount()
+            newBoot = isNewBoot(before.lastBoot, bootCount)
+            val after = witnessBoot(before, bootCount, System.currentTimeMillis())
             if (after == before) return
             val editor = prefs.edit().putInt(UNSEEN, after.unseen)
             after.lastBoot?.let { editor.putInt(LAST_BOOT, it) }

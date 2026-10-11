@@ -38,6 +38,17 @@ object ParentPin {
         return vault
     }
 
+    /** The vault's one-time migration, from `Application.initRest` on IO (QA 24b Low 11), so the
+     * main thread's [status] only reads. Never throws. */
+    @Synchronized
+    fun prepareVault(context: Context) {
+        try {
+            vault(context.applicationContext)
+        } catch (e: Exception) {
+            android.util.Log.e("ParentPin", "The vault's migration failed", e)
+        }
+    }
+
     /** PBKDF2 (~0.5 s) and the vault's HMAC: never on the main thread. */
     @Synchronized
     fun check(context: Context, entry: ParentPinEntry, pin: String): ParentPinResult {

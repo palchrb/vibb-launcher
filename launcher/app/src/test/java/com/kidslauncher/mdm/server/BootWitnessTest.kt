@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -19,6 +20,16 @@ class BootWitnessTest {
         // The same boot (the process restarted): nothing either.
         assertEquals(start, witnessBoot(start, 10, 1_000L))
         assertEquals(BootWitnessState(lastBoot = 13, unseen = 2, lastAtMs = 2_000L), witnessBoot(start, 13, 2_000L))
+    }
+
+    @Test
+    fun `only the first start in a boot is a boot - a crash or update restart isn't (QA Low 6)`() {
+        assertTrue(isNewBoot(lastBoot = 10, bootCount = 11))
+        assertTrue(isNewBoot(lastBoot = 10, bootCount = 13))
+        assertFalse(isNewBoot(lastBoot = 10, bootCount = 10))
+        // Unknown: a boot (Home is then left where it is, as before).
+        assertTrue(isNewBoot(lastBoot = null, bootCount = 10))
+        assertTrue(isNewBoot(lastBoot = 10, bootCount = -1))
     }
 
     @Test

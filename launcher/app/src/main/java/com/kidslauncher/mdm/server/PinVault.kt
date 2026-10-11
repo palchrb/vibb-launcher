@@ -151,7 +151,11 @@ class PinVaultCore(
         }
         val tag = hmac(PinHash.parseHex(hash)!!, create = true)?.let(::hex)
         if (tag == null) {
-            prefs.edit().remove(TAG).putString(SALT, saltHex).putBoolean(REWRAP, true).commit()
+            // The old tag and salt stay (QA 24b Low 1), as in verify(): the next re-wrap of the same
+            // PIN still carries its lockout over. Without one, the salt marks the PIN as set.
+            val editor = prefs.edit().putBoolean(REWRAP, true)
+            if (previousTag == null) editor.putString(SALT, saltHex)
+            editor.commit()
             return VaultAccept(redacted, null)
         }
         if (tag != previousTag || saltHex != previousSalt || rewrapNeeded()) {

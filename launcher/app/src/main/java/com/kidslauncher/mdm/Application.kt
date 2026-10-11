@@ -318,8 +318,21 @@ class Application : android.app.Application() {
         // (alarms don't survive a reboot or a process kill by an update).
         com.kidslauncher.mdm.timerules.TimeRulesRuntime.init(this)
         com.kidslauncher.mdm.timerules.ScreenTimeTracker.init(this)
-        // A reboot ends every parent-PIN window: it locks again now (design 24b).
-        com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(this, com.kidslauncher.mdm.server.RelockTrigger.BOOT)
+        // A reboot ends every parent-PIN window: it locks again now (design 24b). A restart within
+        // the same boot (a crash, LMK, an update) is a window whose time ran out: Home comes to the
+        // front then (QA Low 6) - a real boot brings Home itself.
+        com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(
+            this,
+            if (com.kidslauncher.mdm.server.BootWitness.newBoot) {
+                com.kidslauncher.mdm.server.RelockTrigger.BOOT
+            } else {
+                com.kidslauncher.mdm.server.RelockTrigger.TIMER
+            },
+        )
+        // The parent PIN's one-time vault migration (Keystore keygen, commits) off the main thread,
+        // before a Settings visit needs it (QA Low 11).
+        val app = this
+        CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.server.ParentPin.prepareVault(app) }
         // Design 24b's fix round (QA High 1): an app that could read the parent PIN, at every start.
         com.kidslauncher.mdm.server.ForeignAccess.checkInBackground(this)
 
