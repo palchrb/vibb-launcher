@@ -9,6 +9,7 @@ mod calls;
 mod cleanup;
 mod deploy_scripts;
 mod device_api;
+mod dns_blocklist;
 mod docker;
 mod edge;
 mod enrollment;

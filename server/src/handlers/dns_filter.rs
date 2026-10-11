@@ -27,12 +27,40 @@ struct BlocklistRow {
     is_override: bool,
 }
 
+/// A feed on the page, with how its last download went (security review M6: a feed that fails
+/// keeps its previous domains, and phones using one that never loaded keep their own list).
+struct FeedRow {
+    list: DnsBlocklist,
+    status: String,
+    failing: bool,
+}
+
+fn feed_status(compiled: &dns_engine::CompiledBlocklist, id: i64) -> (String, bool) {
+    let Some(list) = compiled.lists.iter().find(|list| list.blocklist_id == id) else {
+        return ("Not loaded yet.".to_string(), true);
+    };
+    let count = list.domains.len();
+    match (&list.last_error, list.loaded) {
+        (None, _) => (format!("{count} domains."), false),
+        (Some(err), true) => (
+            format!("The last download failed ({err}); its previous {count} domains are kept."),
+            true,
+        ),
+        (Some(err), false) => (
+            format!(
+                "Not loaded yet ({err}). Phones that use it keep their current list until it loads."
+            ),
+            true,
+        ),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "dns_filter.html")]
 struct DnsFilterTemplate {
     title: String,
     settings: DnsFilterSettings,
-    blocklists: Vec<DnsBlocklist>,
+    blocklists: Vec<FeedRow>,
     blocked_domains: Vec<DnsCustomDomain>,
     allowed_domains: Vec<DnsCustomDomain>,
     devices: Vec<Device>,
@@ -120,6 +148,20 @@ pub async fn show_dns_filter(
         };
 
     let selected_id = selected.as_ref().map(|d| d.id).unwrap_or(0);
+    let blocklists = {
+        let compiled = state.dns_compiled.read().await;
+        blocklists
+            .into_iter()
+            .map(|list| {
+                let (status, failing) = feed_status(&compiled, list.id);
+                FeedRow {
+                    list,
+                    status,
+                    failing,
+                }
+            })
+            .collect()
+    };
 
     Html(
         DnsFilterTemplate {
@@ -469,9 +511,18 @@ pub async fn delete_custom_domain(
 /// *changes* already trigger an immediate recompile themselves; this loop is
 /// only for picking up upstream blocklist content changes over time.
 pub async fn run_blocklist_refresh(state: AppState) {
-    let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {
-        interval.tick().await;
+        // A feed whose download failed is tried again after 5 minutes, not an hour (security
+        // review M6: until it loads, phones that use it keep their own list).
+        let failing = state
+            .dns_compiled
+            .read()
+            .await
+            .lists
+            .iter()
+            .any(|list| list.last_error.is_some());
+        let wait = if failing { 5 * 60 } else { 60 * 60 };
+        tokio::time::sleep(Duration::from_secs(wait)).await;
         dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     }
 }

@@ -542,35 +542,53 @@ async fn compute_dns_filter_version(
 /// device-scoped custom allow domains. Only fetched by the client when
 /// `PolicyResponse.dns_filter_version` changes - see that field's doc
 /// comment - since this can be a large (~100k+ domain) payload.
+///
+/// Never a smaller list than the parent set up (security review M6): 503 while a feed this phone
+/// uses hasn't loaded since the server started, 500 on a database error. The launcher keeps its
+/// own list on any error and asks again at the next sync.
 pub async fn dns_blocklist(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
 ) -> impl IntoResponse {
+    match effective_blocklist(&state, device.id).await {
+        Ok(categories) => Json(categories).into_response(),
+        Err((status, message)) => (status, message).into_response(),
+    }
+}
+
+async fn effective_blocklist(
+    state: &AppState,
+    device_id: i64,
+) -> Result<Vec<DnsBlocklistCategory>, (StatusCode, &'static str)> {
+    let db_error = |err: sqlx::Error| {
+        tracing::error!("dns blocklist for device {device_id}: {err}");
+        (StatusCode::INTERNAL_SERVER_ERROR, "database error")
+    };
     let global_enabled: std::collections::HashMap<i64, bool> =
         sqlx::query_as::<_, (i64, bool)>("SELECT id, enabled FROM dns_blocklists")
             .fetch_all(&state.db)
             .await
-            .unwrap_or_default()
+            .map_err(db_error)?
             .into_iter()
             .collect();
 
     let overrides: std::collections::HashMap<i64, bool> = sqlx::query_as::<_, (i64, bool)>(
         "SELECT blocklist_id, enabled FROM device_blocklist_overrides WHERE device_id = ?",
     )
-    .bind(device.id)
+    .bind(device_id)
     .fetch_all(&state.db)
     .await
-    .unwrap_or_default()
+    .map_err(db_error)?
     .into_iter()
     .collect();
 
     let device_custom = sqlx::query_as::<_, crate::models::DnsCustomDomain>(
         "SELECT * FROM dns_custom_domains WHERE device_id = ?",
     )
-    .bind(device.id)
+    .bind(device_id)
     .fetch_all(&state.db)
     .await
-    .unwrap_or_default();
+    .map_err(db_error)?;
     let device_allow: std::collections::HashSet<String> = device_custom
         .iter()
         .filter(|d| d.list_type == "allow")
@@ -582,23 +600,32 @@ pub async fn dns_blocklist(
         .map(|d| d.domain.to_lowercase())
         .collect();
 
+    let effective = |blocklist_id: i64| {
+        overrides
+            .get(&blocklist_id)
+            .or_else(|| global_enabled.get(&blocklist_id))
+            .copied()
+            .unwrap_or(false)
+    };
+
     let compiled = state.dns_compiled.read().await;
+    for (&blocklist_id, _) in global_enabled.iter() {
+        let loaded = compiled
+            .lists
+            .iter()
+            .any(|list| list.blocklist_id == blocklist_id && list.loaded);
+        if effective(blocklist_id) && !loaded {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "a blocklist this phone uses hasn't loaded yet",
+            ));
+        }
+    }
 
     let mut categories: Vec<DnsBlocklistCategory> = compiled
         .lists
         .iter()
-        .filter(|list| {
-            let effective = overrides
-                .get(&list.blocklist_id)
-                .copied()
-                .unwrap_or_else(|| {
-                    global_enabled
-                        .get(&list.blocklist_id)
-                        .copied()
-                        .unwrap_or(false)
-                });
-            effective
-        })
+        .filter(|list| effective(list.blocklist_id))
         .map(|list| DnsBlocklistCategory {
             category: list.category.clone(),
             domains: list
@@ -628,7 +655,7 @@ pub async fn dns_blocklist(
         });
     }
 
-    Json(categories).into_response()
+    Ok(categories)
 }
 
 /// Ingests a batch of blocked-domain events the device's on-device filter

@@ -24,13 +24,14 @@
 
     <div class="card">
         <h2>Blocklists</h2>
-        {% for list in blocklists %}
-        <form method="post" action="/dns/blocklists/{{ list.id }}/toggle" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        {% for row in blocklists %}
+        <form method="post" action="/dns/blocklists/{{ row.list.id }}/toggle" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
             <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="enabled" value="on" {% if list.enabled %}checked{% endif %} onchange="this.form.submit()">
-                {{ list.name }}
+                <input type="checkbox" name="enabled" value="on" {% if row.list.enabled %}checked{% endif %} onchange="this.form.submit()">
+                {{ row.list.name }}
             </label>
         </form>
+        <p class="{% if row.failing %}error{% else %}subtitle{% endif %}">{{ row.status }}</p>
         {% endfor %}
 
         <details style="margin-top:16px;">

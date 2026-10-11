@@ -493,6 +493,9 @@ audio from the source.
 - **Everyone is signed out once**: sessions from before the update are ended, since older backups hold their ids (M2).
 - `data/` and everything in it become readable by the service user only; the service runs with `UMask=0077` (the
   update adds it as a drop-in). A restore signs everyone out.
+- The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, and until a feed has
+  loaded once after a start (no internet at boot), phones that use it keep the list they have. The DNS/Filters page
+  shows each feed's state.
 - Rolling back to 0.23 means restoring the `update.sh` backup: 0.23 refuses a database with migration 0061.
 
 ## Useful commands on the Pi

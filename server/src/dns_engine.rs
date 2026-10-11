@@ -29,7 +29,16 @@ pub struct CompiledList {
     pub blocklist_id: i64,
     pub category: String,
     pub domains: HashSet<String>,
+    /// A download of this feed has worked since the server started (security review M6): until
+    /// then `device_api::dns_blocklist` answers 503 to a phone that uses it, which keeps its own
+    /// list.
+    pub loaded: bool,
+    /// Why the last download failed (its previous domains are kept); `None` after a good one.
+    pub last_error: Option<String>,
 }
+
+/// The largest feed read, after decompression (the big public lists are around 10 MB).
+pub const MAX_FEED_BYTES: usize = 32 * 1024 * 1024;
 
 /// The server's compiled view of "what could a device's on-device filter
 /// block" - every defined blocklist feed's domains (regardless of that
@@ -70,23 +79,30 @@ pub fn empty_compiled_blocklist() -> SharedCompiledBlocklist {
 /// globally-enabled ones - see [CompiledList]) plus global custom domains,
 /// and swaps the result into `shared` - called after every
 /// settings/blocklist/custom-domain change and on the same hourly refresh as
-/// before (see `handlers::dns_filter::run_blocklist_refresh`). If every feed
-/// fails to download this cycle (e.g. a total network outage), skips the
-/// swap and keeps whatever was compiled last time rather than blanking every
-/// device's filter out to nothing - same "log and keep going" instinct used
-/// elsewhere in this codebase (e.g. `tracked_apps::sync_one_app`).
+/// before (see `handlers::dns_filter::run_blocklist_refresh`).
+///
+/// Fails closed per feed (security review M6): a feed whose download fails (an error, a non-2xx
+/// status, a body over [MAX_FEED_BYTES], or nothing in it that looks like a domain - a captive
+/// portal's page) keeps the domains it had, and one that never loaded stays `loaded: false`. A
+/// database error keeps the whole compiled list.
 pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklist) {
-    let blocklists = sqlx::query_as::<_, DnsBlocklist>("SELECT * FROM dns_blocklists")
+    let feeds = sqlx::query_as::<_, DnsBlocklist>("SELECT * FROM dns_blocklists")
         .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
-
+        .await;
     let custom = sqlx::query_as::<_, DnsCustomDomain>(
         "SELECT * FROM dns_custom_domains WHERE device_id IS NULL",
     )
     .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    .await;
+    let (blocklists, custom) = match (feeds, custom) {
+        (Ok(feeds), Ok(custom)) => (feeds, custom),
+        (Err(err), _) | (_, Err(err)) => {
+            tracing::error!(
+                "DNS blocklist: couldn't read the settings ({err}) - keeping the compiled list"
+            );
+            return;
+        }
+    };
 
     let global_custom_allow: HashSet<String> = custom
         .iter()
@@ -109,43 +125,47 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
     let mut lists = Vec::new();
 
     for list in &blocklists {
-        let mut domains = HashSet::new();
-        match client.get(&list.url).send().await {
-            Ok(resp) => match resp.text().await {
-                Ok(text) => {
-                    for line in text.lines() {
-                        let entry = line.split('#').next().unwrap_or("").trim();
-                        if entry.is_empty() {
-                            continue;
-                        }
-                        let domain = match entry.split_once(' ') {
-                            Some((ip, domain)) if ip.trim() == "0.0.0.0" => domain.trim(),
-                            Some(_) => continue,
-                            None => entry,
-                        };
-                        let domain = domain.trim_end_matches('.').to_lowercase();
-                        if domain.is_empty() || global_custom_allow.contains(&domain) {
-                            continue;
-                        }
-                        domains.insert(domain);
-                    }
-                }
-                Err(e) => tracing::warn!("failed to read blocklist '{}' body: {e}", list.name),
-            },
-            Err(e) => tracing::warn!("failed to download blocklist '{}': {e}", list.name),
-        }
-        lists.push(CompiledList {
-            blocklist_id: list.id,
-            category: list.name.clone(),
-            domains,
+        let fetched = fetch_feed(&client, &list.url).await.and_then(|text| {
+            let domains = parse_feed(&text);
+            if domains.is_empty() {
+                Err("no domains in it".to_string())
+            } else {
+                Ok(domains)
+            }
         });
-    }
-
-    if lists.iter().all(|l| l.domains.is_empty()) && !blocklists.is_empty() {
-        tracing::error!(
-            "DNS blocklist compile produced zero domains across every feed - keeping previous compiled list"
-        );
-        return;
+        let compiled = match fetched {
+            Ok(mut domains) => {
+                domains.retain(|domain| !global_custom_allow.contains(domain));
+                CompiledList {
+                    blocklist_id: list.id,
+                    category: list.name.clone(),
+                    domains,
+                    loaded: true,
+                    last_error: None,
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "DNS blocklist '{}': {err} - keeping its previous domains",
+                    list.name
+                );
+                let previous = shared.read().await;
+                let before = previous
+                    .lists
+                    .iter()
+                    .find(|old| old.blocklist_id == list.id);
+                let mut domains = before.map(|old| old.domains.clone()).unwrap_or_default();
+                domains.retain(|domain| !global_custom_allow.contains(domain));
+                CompiledList {
+                    blocklist_id: list.id,
+                    category: list.name.clone(),
+                    domains,
+                    loaded: before.is_some_and(|old| old.loaded),
+                    last_error: Some(err),
+                }
+            }
+        };
+        lists.push(compiled);
     }
 
     let content_hash = {
@@ -178,4 +198,70 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
         global_custom_allow,
         content_hash,
     };
+}
+
+/// One feed's body: a 2xx answer, at most [MAX_FEED_BYTES] (decompressed).
+async fn fetch_feed(client: &reqwest::Client, url: &str) -> Result<String, String> {
+    let mut response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("download failed: {err}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("the server answered {status}"));
+    }
+    let too_big = || format!("larger than {} MB", MAX_FEED_BYTES / (1024 * 1024));
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_FEED_BYTES as u64)
+    {
+        return Err(too_big());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| format!("download failed: {err}"))?
+    {
+        if body.len() + chunk.len() > MAX_FEED_BYTES {
+            return Err(too_big());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// The domains in a hosts-format feed: `domain` or `0.0.0.0 domain` lines, `#` comments; only
+/// entries shaped like a domain name (so an HTML page parses to nothing).
+pub(crate) fn parse_feed(text: &str) -> HashSet<String> {
+    let mut domains = HashSet::new();
+    for line in text.lines() {
+        let entry = line.split('#').next().unwrap_or("").trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let domain = match entry.split_once(char::is_whitespace) {
+            Some(("0.0.0.0", domain)) => domain.trim(),
+            Some(_) => continue,
+            None => entry,
+        };
+        let domain = domain.trim_end_matches('.').to_lowercase();
+        if looks_like_a_domain(&domain) {
+            domains.insert(domain);
+        }
+    }
+    domains
+}
+
+fn looks_like_a_domain(name: &str) -> bool {
+    name.len() <= 253
+        && name.contains('.')
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
 }
