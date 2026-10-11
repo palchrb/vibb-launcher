@@ -1,6 +1,7 @@
 package me.vibb.music.sonos
 
 import java.io.ByteArrayOutputStream
+import java.util.Locale
 
 /*
  * Time, URI and MIME helpers for the Sonos speaker, ported from palchrb/vibb `pi/sonosd.py` (`_hms`,
@@ -13,7 +14,8 @@ import java.io.ByteArrayOutputStream
 /** `_hms`: whole seconds as `H:MM:SS` (null and negatives are 0; fractions are dropped, as `int()`). */
 fun hms(sec: Double?): String {
     val s = (sec ?: 0.0).toLong().coerceAtLeast(0)
-    return "%d:%02d:%02d".format(s / 3600, s % 3600 / 60, s % 60)
+    // Locale.ROOT: ASCII digits whatever the phone's language (Python's f-string never localizes)
+    return "%d:%02d:%02d".format(Locale.ROOT, s / 3600, s % 3600 / 60, s % 60)
 }
 
 private val HMS_H = Regex("-?[0-9]+")
@@ -120,7 +122,7 @@ fun pyQuote(s: String, safe: String = "/"): String {
     for (b in s.toByteArray(Charsets.UTF_8)) {
         val c = (b.toInt() and 0xFF)
         val ch = c.toChar()
-        if (c < 0x80 && (ch.isLetterOrDigit() || ch in "_.-~" || ch in safe)) out.append(ch) else out.append("%%%02X".format(c))
+        if (c < 0x80 && (ch.isLetterOrDigit() || ch in "_.-~" || ch in safe)) out.append(ch) else out.append("%%%02X".format(Locale.ROOT, c))
     }
     return out.toString()
 }
