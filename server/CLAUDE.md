@@ -252,6 +252,16 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   and puts the new file in place with `mktemp` + `mv -T` (a symlink at the target is replaced, never written
   through); `watcher.sh` ignores a symlinked flag, `backup_sync.sh` a symlinked `data/`, and install.sh writes
   `data/watcher_*` by rename.
+- **No admin session leaves the live database (security review M2).** Every copy goes through
+  `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, which
+  `backup_sync.sh` copies to the drive), `DELETE FROM tower_sessions` with `secure_delete` and the journal in memory,
+  then a rename - backup zips, the live mirror and `pre-migrate-*.db`. A restore forgets every session at the next
+  start (the container's `apply_restore_request`, or `data/restore_applied` that `actions.sh` leaves,
+  `startup::take_restore_applied`, logged `backup_restored`); migration 0061 bumped every `session_epoch` once, for the
+  ids in older backups. The process sets umask 077 first thing in `main` (rustix), the unit has `UMask=0077`
+  (update.sh adds it as a drop-in), install.sh/update.sh `chmod` `data/` 700 and its files 600 as the service user
+  (`runuser`, so a symlink reaches nothing of root's), and `backup_sync.sh` keeps the drive's copies root-only. The
+  2FA secret stays unsealed (design 22 §3.2.8). A new copy of the database anywhere goes through `snapshot`.
 
 ## Data model (SQLite, see `migrations/`)
 

@@ -48,8 +48,33 @@ async fn old_database(dir: &Path, version: i64) -> (String, PathBuf) {
     .execute(&db)
     .await
     .unwrap();
+    // A signed-in session, as the session store keeps it.
+    tower_sessions_sqlx_store::SqliteStore::new(db.clone())
+        .migrate()
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO tower_sessions (id, data, expiry_date) VALUES (?, x'00', 4102444800)")
+        .bind(OLD_SESSION_ID)
+        .execute(&db)
+        .await
+        .unwrap();
     db.close().await;
     (url, path)
+}
+
+const OLD_SESSION_ID: &str = "old-session-id-QA22-M2-probe";
+
+/// The migration versions, oldest first (numbers can have gaps: another branch's migrations).
+fn versions() -> Vec<i64> {
+    let mut versions: Vec<i64> = crate::MIGRATOR.iter().map(|m| m.version).collect();
+    versions.sort();
+    versions
+}
+
+/// The version `back` steps before the newest.
+fn back(back: usize) -> i64 {
+    let versions = versions();
+    versions[versions.len() - 1 - back]
 }
 
 fn pre_migrate_files(dir: &Path) -> Vec<String> {
@@ -69,27 +94,16 @@ fn pre_migrate_files(dir: &Path) -> Vec<String> {
 #[tokio::test]
 async fn pending_migrations_are_backed_up_once_and_three_are_kept() {
     let dir = tempfile::tempdir().unwrap();
-    let latest: i64 = {
-        let probe = tempfile::tempdir().unwrap();
-        let db = crate::connect_db(&format!(
-            "sqlite://{}",
-            probe.path().join("probe.db").display()
-        ))
-        .await;
-        sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
-            .fetch_one(&db)
-            .await
-            .unwrap()
-    };
+    let latest = back(0);
     // A fresh database needs no backup.
     assert!(pre_migrate_files(dir.path()).is_empty());
 
-    let (url, _) = old_database(dir.path(), latest - 2).await;
+    let (url, _) = old_database(dir.path(), back(2)).await;
     let db = crate::try_connect_db(&url).await.unwrap();
     let names = pre_migrate_files(dir.path());
     assert_eq!(
         names,
-        [format!("pre-migrate-{:04}-{latest:04}.db", latest - 2)]
+        [format!("pre-migrate-{:04}-{latest:04}.db", back(2))]
     );
     // It is the database before the migrations: it opens, it has the admin, and it stops at the
     // old version.
@@ -101,13 +115,27 @@ async fn pending_migrations_are_backed_up_once_and_three_are_kept() {
         .fetch_one(&old)
         .await
         .unwrap();
-    assert_eq!(version, latest - 2);
+    assert_eq!(version, back(2));
     let admins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM admin_users")
         .fetch_one(&old)
         .await
         .unwrap();
     assert_eq!(admins, 1);
+    // Security review M2: no session in the copy, not even in its free pages; nothing left
+    // beside the database.
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tower_sessions")
+        .fetch_one(&old)
+        .await
+        .unwrap();
+    assert_eq!(sessions, 0);
     old.close().await;
+    let bytes = std::fs::read(&backup).unwrap();
+    assert!(
+        !bytes
+            .windows(OLD_SESSION_ID.len())
+            .any(|w| w == OLD_SESSION_ID.as_bytes())
+    );
+    assert!(!dir.path().join("data/kidphone.db.pre-migrate-tmp").exists());
     db.close().await;
 
     // Taken once: nothing pending at the next start.
@@ -115,13 +143,13 @@ async fn pending_migrations_are_backed_up_once_and_three_are_kept() {
     assert_eq!(pre_migrate_files(dir.path()).len(), 1);
 
     // Three are kept (each an upgrade from an older version).
-    for back in [5, 4, 3, 1] {
-        let (url, _) = old_database(dir.path(), latest - back).await;
+    for steps in [5, 4, 3, 1] {
+        let (url, _) = old_database(dir.path(), back(steps)).await;
         crate::try_connect_db(&url).await.unwrap().close().await;
     }
     let names = pre_migrate_files(dir.path());
     assert_eq!(names.len(), 3, "{names:?}");
-    assert!(names[2].starts_with(&format!("pre-migrate-{:04}-", latest - 1)));
+    assert!(names[2].starts_with(&format!("pre-migrate-{:04}-", back(1))));
 }
 
 /// A backup zip as `perform_backup` makes it, holding `db_file` as `kidphone.db` (or nothing).

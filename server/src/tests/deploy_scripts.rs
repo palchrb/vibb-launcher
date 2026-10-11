@@ -93,6 +93,44 @@ fn the_root_restore_never_writes_through_data() {
     assert!(heredoc(INSTALL, "WATCHER_EOF").contains("if [ -L \"$FLAG_FILE\" ]"));
 }
 
+/// Security review M2: data/ and what the server writes are the service user's alone, on a new
+/// install and after an update; the restore tells the next start to forget the sessions; the
+/// drive copies are root's.
+#[test]
+fn data_stays_private_and_a_restore_ends_the_sessions() {
+    assert!(INSTALL.contains("\nUMask=0077\n"));
+    assert!(UPDATE.contains("printf '[Service]\\nUMask=0077\\n' >/etc/systemd/system/kid-phone-server.service.d/umask.conf"));
+    for script in [INSTALL, UPDATE] {
+        assert!(script.contains("chmod 700 \"$INSTALL_DIR/data\""));
+        // chmod in data/ runs as the service user: a planted symlink reaches nothing of root's.
+        assert!(
+            script
+                .contains("runuser -u \"$SERVICE_USER\" -- find \"$INSTALL_DIR/data\" -xdev \\\n")
+        );
+    }
+    let actions = heredoc(INSTALL, "ACTIONS_EOF");
+    let restore = &actions[actions.find("action_restore_backup() {").unwrap()..];
+    let restore = &restore[..restore.find("\n}\n").unwrap()];
+    let marker = restore
+        .find("mv -fT \"$incoming\" \"$DATA_DIR/restore_applied\"")
+        .expect("the restore leaves the marker, by rename");
+    assert!(
+        marker
+            > restore
+                .find("mv -fT \"$incoming\" \"$DATA_DIR/kidphone.db\"")
+                .unwrap()
+    );
+    assert_eq!(
+        crate::startup::RESTORE_APPLIED,
+        "restore_applied",
+        "the name actions.sh writes"
+    );
+    let sync = heredoc(INSTALL, "BACKUP_SYNC_EOF");
+    assert!(sync.contains("chmod 700 \"$EXTERNAL_MOUNT\""));
+    assert!(sync.contains("install -d -m 700 \"$EXTERNAL_MOUNT/snapshots\""));
+    assert!(sync.contains("install -d -m 700 \"$EXTERNAL_MOUNT/live\""));
+}
+
 #[tokio::test]
 async fn schedule_times_that_arent_hh_mm_are_refused() {
     let app = TestApp::new().await;

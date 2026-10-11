@@ -4,6 +4,7 @@
 
 mod admin_auth;
 mod app_display;
+mod backup_secrets;
 mod calls;
 mod cleanup;
 mod deploy_scripts;

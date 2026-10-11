@@ -257,6 +257,12 @@ write_data_file watcher_schema_version "$WATCHER_SCHEMA_VERSION"
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 chmod 600 "$INSTALL_DIR/.env"
+# data/ (the database, backups, the live mirror, keys) is the service user's alone (security
+# review M2); an existing install's files are tightened too. Run as that user, so a symlink in
+# data/ can't make chmod touch anything else. The same in update.sh.
+chmod 700 "$INSTALL_DIR/data"
+runuser -u "$SERVICE_USER" -- find "$INSTALL_DIR/data" -xdev \
+    \( -type d -exec chmod 700 {} + \) -o \( -type f -exec chmod 600 {} + \) 2>/dev/null || true
 
 echo "Installing systemd service..."
 cat >/etc/systemd/system/kid-phone-server.service <<EOF
@@ -274,6 +280,8 @@ EnvironmentFile=$INSTALL_DIR/.env
 ExecStart=$INSTALL_DIR/kid_phone_server
 Restart=on-failure
 RestartSec=5
+# Everything the server writes is for the service user alone (security review M2).
+UMask=0077
 
 NoNewPrivileges=true
 PrivateTmp=true
@@ -522,6 +530,12 @@ action_restore_backup() {
     rm -f "$DATA_DIR/kidphone.db-wal" "$DATA_DIR/kidphone.db-shm"
     mv -fT "$incoming" "$DATA_DIR/kidphone.db"
     rm -rf "$restore_tmp"
+    # The next start forgets every admin session the backup holds (security review M2), and logs
+    # the restore. The same new-file-and-rename as above.
+    incoming="$(mktemp "$DATA_DIR/.restore.XXXXXX")"
+    printf '%s' "$filename" >"$incoming"
+    chown kidphone:kidphone "$incoming"
+    mv -fT "$incoming" "$DATA_DIR/restore_applied"
 
     echo "Restore complete (the previous database is in $prerestore_dir)."
 }
@@ -684,13 +698,16 @@ fi
 EXTERNAL_COPY_ENABLED="$(grep -m1 '^EXTERNAL_COPY_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
 CONTINUOUS_MIRROR_ENABLED="$(grep -m1 '^CONTINUOUS_MIRROR_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
 
+# The copies hold the whole database: root's alone on the Pi (security review M2).
+chmod 700 "$EXTERNAL_MOUNT"
+
 if [ "$EXTERNAL_COPY_ENABLED" = "true" ] && [ -d "$DATA_DIR/backups" ]; then
-    mkdir -p "$EXTERNAL_MOUNT/snapshots"
+    install -d -m 700 "$EXTERNAL_MOUNT/snapshots"
     cp -au "$DATA_DIR/backups/." "$EXTERNAL_MOUNT/snapshots/" 2>/dev/null || true
 fi
 
 if [ "$CONTINUOUS_MIRROR_ENABLED" = "true" ] && [ -f "$DATA_DIR/live_mirror.db" ]; then
-    mkdir -p "$EXTERNAL_MOUNT/live"
+    install -d -m 700 "$EXTERNAL_MOUNT/live"
     cp -au "$DATA_DIR/live_mirror.db" "$EXTERNAL_MOUNT/live/kidphone.db" 2>/dev/null || true
 fi
 BACKUP_SYNC_EOF

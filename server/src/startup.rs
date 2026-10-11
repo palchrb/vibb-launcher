@@ -73,6 +73,28 @@ pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<Applie
     apply_restore_request_capped(data_dir, db, RESTORE_MAX_BYTES)
 }
 
+/// Written by the Pi's `actions.sh` after it swapped in a backup (the container's restore is
+/// [apply_restore_request]): the next start forgets every session (security review M2), holding
+/// the backup's name.
+pub const RESTORE_APPLIED: &str = "restore_applied";
+
+/// Takes `data_dir/restore_applied` if it is there: the backup's name (clipped), or `None`.
+pub fn take_restore_applied(data_dir: &Path) -> Option<String> {
+    let marker = data_dir.join(RESTORE_APPLIED);
+    let text = std::fs::read(&marker).ok()?;
+    let _ = std::fs::remove_file(&marker);
+    let text = String::from_utf8_lossy(&text);
+    Some(crate::audit::clip(text.trim(), 100).to_string())
+}
+
+/// After a restore: a backup made before 0.24.0 holds the sessions of its time, and none of them
+/// may come back (security review M2). Everyone signs in again.
+pub async fn forget_sessions(db: &sqlx::SqlitePool) {
+    if let Err(err) = sqlx::query("DELETE FROM tower_sessions").execute(db).await {
+        tracing::error!("couldn't clear the sessions after the restore: {err}");
+    }
+}
+
 /// The largest `kidphone.db` a restore takes out of a zip (QA 22 Low 7; `actions.sh` has the same
 /// cap).
 pub const RESTORE_MAX_BYTES: u64 = 1024 * 1024 * 1024;
@@ -254,12 +276,11 @@ pub async fn pre_migration_backup(
     std::fs::create_dir_all(&dir)
         .map_err(|err| format!("couldn't make {}: {err}", dir.display()))?;
     let target = dir.join(format!("pre-migrate-{from:04}-{latest:04}.db"));
-    // VACUUM INTO refuses an existing file; the same name means the same upgrade again (after a
-    // rollback), and the newest state is the one to keep.
-    let _ = std::fs::remove_file(&target);
-    sqlx::query("VACUUM INTO ?")
-        .bind(target.to_string_lossy().to_string())
-        .execute(db)
+    // The same name means the same upgrade again (after a rollback), and the newest state is the
+    // one to keep. Made beside the database, not in backups/ (which `backup_sync.sh` copies),
+    // with no sessions in it (security review M2).
+    let scratch = with_suffix(db_path, ".pre-migrate-tmp");
+    crate::handlers::backups::snapshot(db, &scratch, &target)
         .await
         .map_err(|err| format!("the pre-migration backup failed: {err}"))?;
     prune_pre_migrate(&dir);

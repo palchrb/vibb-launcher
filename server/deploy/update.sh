@@ -374,6 +374,12 @@ action_restore_backup() {
     rm -f "$DATA_DIR/kidphone.db-wal" "$DATA_DIR/kidphone.db-shm"
     mv -fT "$incoming" "$DATA_DIR/kidphone.db"
     rm -rf "$restore_tmp"
+    # The next start forgets every admin session the backup holds (security review M2), and logs
+    # the restore. The same new-file-and-rename as above.
+    incoming="$(mktemp "$DATA_DIR/.restore.XXXXXX")"
+    printf '%s' "$filename" >"$incoming"
+    chown kidphone:kidphone "$incoming"
+    mv -fT "$incoming" "$DATA_DIR/restore_applied"
 
     echo "Restore complete (the previous database is in $prerestore_dir)."
 }
@@ -517,13 +523,16 @@ fi
 EXTERNAL_COPY_ENABLED="$(grep -m1 '^EXTERNAL_COPY_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
 CONTINUOUS_MIRROR_ENABLED="$(grep -m1 '^CONTINUOUS_MIRROR_ENABLED=' "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
 
+# The copies hold the whole database: root's alone on the Pi (security review M2).
+chmod 700 "$EXTERNAL_MOUNT"
+
 if [ "$EXTERNAL_COPY_ENABLED" = "true" ] && [ -d "$DATA_DIR/backups" ]; then
-    mkdir -p "$EXTERNAL_MOUNT/snapshots"
+    install -d -m 700 "$EXTERNAL_MOUNT/snapshots"
     cp -au "$DATA_DIR/backups/." "$EXTERNAL_MOUNT/snapshots/" 2>/dev/null || true
 fi
 
 if [ "$CONTINUOUS_MIRROR_ENABLED" = "true" ] && [ -f "$DATA_DIR/live_mirror.db" ]; then
-    mkdir -p "$EXTERNAL_MOUNT/live"
+    install -d -m 700 "$EXTERNAL_MOUNT/live"
     cp -au "$DATA_DIR/live_mirror.db" "$EXTERNAL_MOUNT/live/kidphone.db" 2>/dev/null || true
 fi
 BACKUP_SYNC_EOF
@@ -576,6 +585,19 @@ rm -rf "$INSTALL_DIR/static"
 cp -r "$TMP_EXTRACT/static" "$INSTALL_DIR/static"
 
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/kid_phone_server" "$INSTALL_DIR/static"
+
+# data/ is the service user's alone, and so is everything the server writes from now on
+# (security review M2): installs from before 0.24.0 get the unit's UMask as a drop-in and their
+# files tightened. chmod runs as the service user, so a symlink in data/ can't point it anywhere
+# else. The same in install.sh.
+if [ -d "$INSTALL_DIR/data" ] && [ ! -L "$INSTALL_DIR/data" ]; then
+    chmod 700 "$INSTALL_DIR/data"
+    runuser -u "$SERVICE_USER" -- find "$INSTALL_DIR/data" -xdev \
+        \( -type d -exec chmod 700 {} + \) -o \( -type f -exec chmod 600 {} + \) 2>/dev/null || true
+fi
+mkdir -p /etc/systemd/system/kid-phone-server.service.d
+printf '[Service]\nUMask=0077\n' >/etc/systemd/system/kid-phone-server.service.d/umask.conf
+systemctl daemon-reload
 
 echo "Starting service..."
 trap - ERR

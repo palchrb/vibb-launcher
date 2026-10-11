@@ -116,6 +116,9 @@ pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 #[tokio::main]
 async fn main() {
+    // Everything this process writes (the database, backups, the live mirror, keys) is for the
+    // service user alone (security review M2): the systemd unit says so too, the container can't.
+    rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
     dotenvy::dotenv().ok();
     // `info` unless RUST_LOG says otherwise: the startup lines (where the server listens, the
     // generated first password's file, the Storytel key) must reach the journal and `docker
@@ -182,8 +185,8 @@ async fn main() {
         },
         None => None,
     };
-    let db = match try_connect_db(&database_url).await {
-        Ok(db) => db,
+    let (db, restored) = match try_connect_db(&database_url).await {
+        Ok(db) => (db, restored),
         Err(err) => match (&restored, &db_path) {
             (Some(restore), Some(path)) => {
                 tracing::error!(
@@ -195,7 +198,7 @@ async fn main() {
                     tracing::error!("{undo}");
                     std::process::exit(1);
                 }
-                connect_db(&database_url).await
+                (connect_db(&database_url).await, None)
             }
             _ => {
                 tracing::error!("{err}");
@@ -219,6 +222,13 @@ async fn main() {
         .await;
     }
 
+    // The Pi's root helper swapped in a backup while the server was stopped.
+    let restored_on_host = startup::take_restore_applied(std::path::Path::new("data"));
+    if let Some(filename) = &restored_on_host {
+        tracing::info!("restored the backup {filename}");
+        security::record_security_event(&db, "backup_restored", None, None, Some(filename)).await;
+    }
+
     security::bootstrap_admin(&db, std::path::Path::new("data")).await;
 
     let session_store = SqliteStore::new(db.clone());
@@ -226,6 +236,9 @@ async fn main() {
         .migrate()
         .await
         .expect("failed to run session store migrations");
+    if restored.is_some() || restored_on_host.is_some() {
+        startup::forget_sessions(&db).await;
+    }
 
     tokio::task::spawn(
         session_store
@@ -1078,7 +1091,7 @@ pub fn build_admin_router(
 }
 
 /// Every migration in `migrations/`, compiled in.
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 /// Opens the SQLite pool with this app's connection settings and runs all migrations; panics on
 /// failure (tests, subcommands). `main` uses [try_connect_db].
