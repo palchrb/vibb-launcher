@@ -57,7 +57,7 @@ The Pi keeps two axes apart (`renderer.py:1-13`): `output` (local|bt: where *our
 | `play`, `_hush`, `_seek_settled`, `adopt`, `verb` (448-653) | `M/sonos/SonosTransport.kt` | the SOAP sequences, in the actor |
 | `_classify`, `poll_loop`, `_cadence`, `_stall_bookkeeping`, migration (658-984) | `SonosSession.kt` (pure) + `SonosPoller.kt` | the machine is pure and tested with canned polls; the poller is a coroutine |
 | `SoCo` SOAP calls | `M/sonos/Soap.kt` | §2.2 |
-| `renderer.py` `read/write` | `M/sonos/RendererState.kt` | `noBackupFilesDir/renderer.json` |
+| `renderer.py` `read/write` | `M/sonos/RendererChoice.kt` | `noBackupFilesDir/renderer.json` |
 | daemon `_sonos_*` fields (350-420), `_sonos_position`, `_sonos_fresh` (1083-1162) | `SonosRenderer.kt` | §4 |
 | `_sonos_bookmark_now` (1177-1268) | `SonosRenderer.bookmarkNow()` + `M/sonos/SonosBookmarks.kt` (pure) | the holds and the regression guard, §4.4 |
 | `_sonos_body` (1270-1322) | `M/sonos/PlayBody.kt` (pure) | from a `PlayItem` + entry, §2.5 |
@@ -163,13 +163,16 @@ Time is an injected `elapsedMs()` (never wall clock: vibb's `monotonic`, 437-441
   one-time DIDL accepted/rejected log (746-754); ours+live re-arms `migrateTries`, clears `moved`, stamps `oursAt`
   (771-779). Fields = the `/state` snapshot's (contract §3): `armed, uid, kind, seq, measuredAt, reachable, transport,
   relS, durS, uri, ours, foreignUri, groupedAway, coordinator, lostSession, volume, retriedAt, streamMoved?, error?`.
-- **Freshness, defined once (QA H2):** a snapshot is *fresh* while `elapsedMs - measuredAt <= cadence(tr) * 1000 +
-  10_000`. vibb's `SONOS_STALE_S=15` / `stale_s<12` (daemon.py:1083, 4465) were tuned for a daemon re-reading a
+- **Freshness, defined once (QA H2):** a snapshot is *fresh* while `elapsedMs - measuredAt <= measuredCadence + 10 s`,
+  where `measuredAt` is the last **successful** poll of this session and `measuredCadence` the cadence the poller chose
+  after it (`Fields.measuredCadenceMs`); a failed poll never extends it (its backoff cadence would make every failure
+  look fresh and flicker in between, qa-26a-step1-code M2). vibb's `SONOS_STALE_S=15` / `stale_s<12` (daemon.py:1083, 4465) were tuned for a daemon re-reading a
   sidecar every 5 s; in one process with a 15 s cruise they would flicker every poll. Every consumer (`playing`, the
   ours-gate, migration follow, the switch-home live refresh) uses this one predicate.
-- `cadence(tr, snap, fails)` (832-858): PAUSED 15 s; UNREACHABLE `min(5*2^min(fails,6), 300)`; STOPPED 5 s only while
-  a migration transition pends (empty uri, no hint, tries left, within 90 s of `oursAt`), else 60 s; PLAYING 5 s when
-  `dur-rel <= 45` or within 30 s of the last verb/arm, else cruise 15 s. The same with the screen off (user,
+- `cadence(tr, snap, fails)` (832-858): UNREACHABLE `min(5*2^min(fails,6), 300)`; **5 s whatever the state while the
+  speaker reads TRANSITIONING or within 30 s of the last verb/arm** (§9, qa-26a-step1-code M1; vibb fast-polls only
+  PLAYING there); else PAUSED 15 s; STOPPED 5 s only while a migration transition pends (empty uri, no hint, tries
+  left, within 90 s of `oursAt`), else 60 s; PLAYING 5 s when `dur-rel <= 45`, else cruise 15 s. The same with the screen off (user,
   2026-10-11: the position is saved as finely as ever; only the screen needn't follow, §6.3).
 - `stall(fields)` (860-885): PLAYING + ours + `relS` identical for `STALL_POLLS=3` polls and no retry this session ->
   `retriedAt`, then Stop, Play, `seekSettled(rel)` when rel >= 5; one retry per session.
@@ -181,7 +184,8 @@ Time is an injected `elapsedMs()` (never wall clock: vibb's `monotonic`, 437-441
 - `disarm` (814-828): a streak of neither PLAYING nor PAUSED for `DISARM_AFTER_S=600` -> `armed=false`, republished
   at once; only a play or an adopt arms again.
 - `publish()` increments `seq`; `measuredAt` is the poll's elapsed time; a failed poll publishes `reachable=false,
-  transport=UNREACHABLE, error` and keeps the last measured values.
+  transport=UNREACHABLE, error` and keeps the last measured values **of this session**: a play or an adopt starts
+  from nothing measured, no down streak, no failure count and no last real state (qa-26a-step1-code H1, H2, M1).
 
 ### 2.5 Transport sequences (`SonosTransport.kt`) and the play body (`PlayBody.kt`)
 All in the actor (the session lock, 393-394), never on the main thread.
@@ -274,8 +278,10 @@ all existing tests green.
   (app-internal, not in the AIDL). `Commands.OUTPUT` **to a Sonos key is a play** (it starts the speaker), so it joins
   `PLAYS` and is gated by `playAllowed`; to the phone or a headset it stays ungated (a pause-side move). `PlayerHub.State`
   gains `rendererState: RendererState?` (`null`, `GROUPED_AWAY`, `TAKEN_OVER`, `LOST_SESSION`, `UNREACHABLE`; precedence
-  as `daemon.py:2627-2632`), `rooms: List<Room>`, `roomsStale: Boolean`, `scanning: Boolean`; commands `ROOMS_REFRESH`
-  (the sheet opening) and `ROOMS_RESCAN` (the row).
+  as `daemon.py:2627-2632`; the name is this enum's alone - the persisted renderer.json record is `RendererChoice`,
+  §4.1, and a cached room is `sonos.Zone`, apart from Media3's `Player`), `rooms: List<Room>`, `roomsStale: Boolean`,
+  `scanning: Boolean` (from `RoomDirectory.state`, which also publishes the rows when a background round ends); commands
+  `ROOMS_REFRESH` (the sheet opening) and `ROOMS_RESCAN` (the row).
 - `publish()` reads through `renderer`: `playing` on Sonos = fresh and PLAYING and reachable and ours (2605-2611);
   **position and duration are shown only while ours** (2615-2621, `sonos_grouped.py` check 2); a stale snapshot shows
   "not playing" but **keeps** the last ours position and duration (never zeroed, 2612-2621).
@@ -287,7 +293,7 @@ all existing tests green.
 
 ## 4. Controller logic (`SonosRenderer`, from `daemon.py`)
 
-### 4.1 Persisted renderer state (`RendererState.kt`, `renderer.py:23-49`)
+### 4.1 Persisted renderer state (`RendererChoice.kt`, `renderer.py:23-49`)
 `noBackupFilesDir/renderer.json`: `{renderer: "local"|"sonos", uid, name, entryId, itemKey, uri}` with `uri` the
 **built** one (§2.5); anything not sonos-with-uid reads as local. Written before the first SOAP of a switch (order as
 1625-1667), cleared on the way home.
@@ -545,7 +551,7 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
 ## 8. Steps (each a commit set with its tests; branch `music-1b-sonos`)
 
 1. **`sonos/` core**: §2 entirely (Ssdp, Soap, Topology, SpeakerCache, Didl, SonosUris, NrkService, SonosSession,
-   SonosTransport, PlayBody, RendererState), the manifest permissions, the SOAP fixtures and the §7 tests down to
+   SonosTransport, PlayBody, RendererChoice), the manifest permissions, the SOAP fixtures and the §7 tests down to
    `PlayBodyTest`. No change to `PlaybackService`. **The fake speaker** `scripts/fake-sonos.py` (GPL, credited to
    vibb's test fakes in NOTICE): serves N speakers on N ports (`--speakers Stua:1401,Kjøkken:1402`) from one scripted
    topology and the shared fixtures, answers the §2.2 actions with a scripted transport (`--script` lines like
@@ -576,7 +582,9 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
 | Sidecar on 127.0.0.1:3681, `SidecarDown`, `/state?live=1` thread | one process, an actor, a 1.5 s-budget classify | no second process on Android |
 | SoCo | own SSDP + SOAP (§2.2) | no GPL-compatible maintained UPnP library; the surface is ten actions |
 | `soco.discover` | SSDP for one ip, then GetZoneGroupState | that is what discover does; done in the open |
-| `stale_s<12`, `SONOS_STALE_S=15` | fresh = within `cadence + 10 s` of the poll | tuned for a 5 s sidecar re-read; would flicker every 15 s poll here |
+| `stale_s<12`, `SONOS_STALE_S=15` | fresh = within the cadence chosen after the last successful poll + 10 s | tuned for a 5 s sidecar re-read; would flicker every 15 s poll here; a failure's backoff never extends it |
+| `_cadence`: fast (5 s) only for PLAYING in the verb window; TRANSITIONING keeps the last real state's cadence | 5 s whatever the state while TRANSITIONING or within 30 s of a verb/arm | a resume read as PAUSED slept 15 s and a buffering start after an episode end 60 s, past the controller's 8 s optimistic hold (qa-26a-step1-code M1) |
+| `down_since`, `fails` local to `poll_loop`, `_last_tr` kept across sessions | reset by every play and adopt, with the last measurement | a play after a long STOPPED was disarmed by its own first poll, and a failed first poll showed the last episode's position as ours (qa-26a-step1-code H1, H2) |
 | `age + stale_s` | one age term from `measuredAt` | two clocks across the process split, summed; one process has one |
 | bookmark throttle 25 s | a bookmark on every poll | user 2026-10-11: as fine-grained as possible; SD hygiene was the Pi's reason |
 | bookmarks only for the `url` kind (1210) | `nrk_program` bookmarked too, same rules | an NRK series is long-form and resumes on the phone; the Pi's gap was never a decision |
@@ -692,7 +700,7 @@ Android build** (the sandbox can't reach dl.google.com, so no Android SDK or Goo
   `NrkService` with Python's encodings; `SonosSession` (the pure machine: classify, aux every 12 polls, cadence, stall,
   migration probe, disarm, `Fields.fresh`); `SonosTransport` (play, hush, `seekSettled`, adopt, verbs, the stall
   retry, behind one Mutex, over an injected `SonosClock`); `PlayBody` with the speaker-playable filter;
-  `RendererState`; `SonosFiles` (the two `noBackupFilesDir` paths). The manifest gains `CHANGE_WIFI_MULTICAST_STATE`
+  `RendererState` (`RendererChoice` since the fix round); `SonosFiles` (the two `noBackupFilesDir` paths). The manifest gains `CHANGE_WIFI_MULTICAST_STATE`
   and `ACCESS_WIFI_STATE`.
 - **Fixtures and the fake**: 26 canned replies in `music/app/src/test/resources/sonos/` (§7's list, plus GetVolume,
   GetMute, an empty answer, `/status/accounts` and an NRK position); `scripts/fake-sonos.py` builds every answer from
@@ -744,3 +752,39 @@ Choices made while building (each against the spec text, with its reason):
     loopback): inside §5.5's `RINCON_[A-Z0-9]{12,20}`, and nothing on the LAN.
 12. Left for step 3 because they are §4/§6, not §2: the live classify with a 1.5 s budget (switch home, the
     suspension receiver, adopt at startup) and the `x-rincon-queue:` park after a suspension Stop.
+
+### Fix round after QA's code review (qa-26a-step1-code, 2026-10-11)
+
+CI's first Android run (38167939758) built everything (debug, release, R8, lint, `checkDebugHasDebugFeed`) but the
+unit-test compile: `SonosFakes.kt:15` called `.list()` on `parentFile`, which android.jar marks nullable and the JDK
+leaves a platform type - now `parentFile!!`. The review (`docs/design/qa-26a-step1-code.md`: 2 High, 2 Medium, 9 Low)
+is fixed in full:
+- **H1** `played()`/`adopt()` reset the down streak and the failure count (with H2/M1 in one `newSession()`): a play
+  after 595 s STOPPED stays armed, its first failed poll backs off 10 s.
+- **H2** they also drop the last session's measurement (`lastOkAt` and the snapshot's measured fields): a failed first
+  poll after a play publishes `ours=false`, no position, `measuredAt=null`, never fresh.
+- **M1** `lastTr` resets per session; the cadence is 5 s whatever the state while the speaker reads TRANSITIONING or
+  inside the verb/arm window (`Fields.transitioning`). §2.4 and §9 say so.
+- **M2** freshness is anchored on the cadence chosen after the last successful poll (`Fields.measuredCadenceMs`), so
+  failures never extend it; §2.4 and §9 reworded.
+- **L1** `Topology.location` takes IP literals only, `Soap` refuses a non-literal host and maps a bad host or port to
+  `SpeakerUnreachable`, and a body without its series is a `SonosException` (no `requireNotNull`).
+- **L2** `Soap(() -> OkHttpClient)` (the old constructor stays): a Wi-Fi reconnect swaps the provider's value only.
+  `SoapSpeaker(..., budgetMs)` and `SpeakerResolver.speaker(uid, verify, budgetMs)`: one time budget shared by a
+  speaker's calls, for the 1.5 s live classify of step 3.
+- **L3** `RoomDirectory.state: StateFlow<RoomsView>`, published on every refresh and when a round starts and ends.
+- **L4** the scanning flag is cleared in `invokeOnCompletion`, so a scope cancelled before the round ran can't wedge it.
+- **L5** `sonos.Player` -> `Zone`, `RendererState` (renderer.json) -> `RendererChoice` (`RendererChoice.kt`); §1, §3.3,
+  §4.1 and §8 use the new names, §3.3's UI enum keeps `RendererState`.
+- **L6** the speaker-playable filter reads the URL with `toHttpUrlOrNull()` (an unencoded space or `|` plays, as on
+  the phone); an NRK series item without a key drops out ("no program id"); numeric shorthand hosts are accepted and
+  the comment says why.
+- **L7** `SonosSession.snapshot` is `@Volatile` (the actor writes it; main reads whole copies).
+- **L8** `music.yml` runs `python3 -I scripts/fake-sonos.py --selftest` after the build and watches the script;
+  root `CLAUDE.md`'s CI paragraph and `scripts/` list name it.
+- **L9** `SpeakerCacheTest` 1-2 wait on the round's own latch (5 s), not 1 s of polling.
+
+Tests: 109 (+11: H1, H2, M1 x2 and M2 in `SonosSessionTest`; L1 and L2 x2 in `SonosFixturesTest`; L1 in
+`SonosTransportTest`; L4 in `SpeakerCacheTest`; L6 in `PlayBodyTest`; L1's Location cases and L3 joined existing tests).
+The JVM harness (warnings as errors) ran all 109 green plus the interop test against `scripts/fake-sonos.py`; the
+Android wrappers and the debug receiver type-check against the stubs; `--selftest` OK. The Android build runs in CI.
