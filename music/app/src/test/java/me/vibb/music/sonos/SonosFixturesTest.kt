@@ -6,6 +6,7 @@ import me.vibb.music.sonos.SonosFakes.reply
 import me.vibb.music.sonos.SonosFakes.transport
 import me.vibb.music.sonos.SonosFakes.zoneGroupState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -187,6 +188,67 @@ class SonosFixturesTest {
             assertEquals("RINCON_STUA01400", soap.uidOf("127.0.0.1", server.port))
             stua.setMute(true)
             assertTrue(server.requests.last().body.contains("<DesiredMute>1</DesiredMute>"))
+        }
+    }
+
+    // qa-26a-step1-code L1, L2
+
+    @Test
+    fun `only an IP literal is ever called - a name or a bad port is unreachable, never an IllegalArgumentException`() {
+        val soap = Soap(Soap.client())
+        for ((host, port) in listOf("speaker.local" to 1400, "10.0.0.11" to 0, "10.0.0.11" to 70000, "" to 1400, "999.1.1.1" to 1400)) {
+            try {
+                soap.call(host, port, SonosService.AV_TRANSPORT, "Play", emptyList())
+                fail("$host:$port")
+            } catch (_: SpeakerUnreachable) {
+            }
+        }
+        assertTrue(isIpLiteral("10.0.2.2"))
+        assertTrue(isIpLiteral("fe80::1"))
+        assertTrue(isIpLiteral("fd7a:115c:a1e0::1"))
+        assertFalse(isIpLiteral("speaker.local"))
+        assertFalse(isIpLiteral("10.1"))
+    }
+
+    @Test
+    fun `the client comes from the provider on every call (a Wi-Fi reconnect swaps it)`() {
+        TinyHttp { TinyHttp.Response(200, fixture("transport_playing.xml")) }.use { server ->
+            var calls = 0
+            val client = Soap.client()
+            val soap = Soap {
+                calls++
+                client
+            }
+            val spk = SoapSpeaker(soap, "127.0.0.1", server.port, "RINCON_X")
+            spk.transportInfo()
+            spk.transportInfo()
+            assertEquals(2, calls)
+        }
+    }
+
+    @Test
+    fun `a speaker's time budget caps its calls - a slow answer is cut, a spent budget sends nothing`() {
+        TinyHttp {
+            Thread.sleep(1_500)
+            TinyHttp.Response(200, fixture("transport_playing.xml"))
+        }.use { server ->
+            val spk = SoapSpeaker(Soap(Soap.client()), "127.0.0.1", server.port, "RINCON_X", budgetMs = 300)
+            val t0 = System.nanoTime()
+            try {
+                spk.transportInfo()
+                fail("the answer takes 1.5 s, the budget is 0.3 s")
+            } catch (_: SpeakerUnreachable) {
+            }
+            assertTrue("cut by the budget, not the 5 s read timeout", System.nanoTime() - t0 < 1_200_000_000L)
+            val n = server.requests.size
+            Thread.sleep(50)
+            try {
+                spk.transportInfo()
+                fail()
+            } catch (e: SpeakerUnreachable) {
+                assertEquals("time budget spent", e.message)
+            }
+            assertEquals("nothing sent", n, server.requests.size)
         }
     }
 }

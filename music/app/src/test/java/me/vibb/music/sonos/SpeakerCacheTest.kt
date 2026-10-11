@@ -42,6 +42,7 @@ class SpeakerCacheTest {
         val cache = SpeakerCache(tmp.root.resolve("sonos.json"))
         val discovers = AtomicInteger()
         val gate = CountDownLatch(1)
+        val started = CountDownLatch(1)
 
         /** Cached ips never answer; the SSDP round's speakers do. */
         val rooms = RoomDirectory(
@@ -49,6 +50,7 @@ class SpeakerCacheTest {
             { ip, _, _ -> if (ip.startsWith("192.168.1.") && discovers.get() > 0) found else throw SpeakerUnreachable("unreachable") },
             {
                 discovers.incrementAndGet()
+                started.countDown()
                 gate.await(5, TimeUnit.SECONDS)
                 listOf(SsdpHit("192.168.1.17", 1400), SsdpHit("192.168.1.21", 1400))
             },
@@ -72,7 +74,7 @@ class SpeakerCacheTest {
         assertTrue(view.stale)
         assertTrue(view.scanning)
         assertTrue("the request must not wait for SSDP", System.nanoTime() - t0 < 2_000_000_000L)
-        repeat(50) { if (rig.discovers.get() == 0) Thread.sleep(20) }
+        assertTrue("the round started", rig.started.await(5, TimeUnit.SECONDS))
         assertEquals(1, rig.discovers.get())
         rig.gate.countDown()
     }
@@ -84,7 +86,7 @@ class SpeakerCacheTest {
         val view = rig.rooms.refresh()
         assertTrue(view.scanning)
         assertFalse(rig.rooms.rescanInBackground())
-        repeat(50) { if (rig.discovers.get() == 0) Thread.sleep(20) }
+        assertTrue(rig.started.await(5, TimeUnit.SECONDS))
         assertEquals(1, rig.discovers.get())
         rig.gate.countDown()
     }
@@ -92,9 +94,15 @@ class SpeakerCacheTest {
     @Test
     fun `3 the round fills the cache, the plain read serves it, scanning is off`() {
         val rig = Rig()
-        rig.rooms.refresh()
+        assertTrue("the sheet shows the round running", rig.rooms.refresh().scanning)
+        assertTrue(rig.rooms.state.value.scanning)
         rig.gate.countDown()
         rig.waitForRound()
+        assertEquals(
+            "the rows refresh by themselves when the round ends (L3)",
+            RoomsView(listOf(Room("Edith", "RINCON_E", listOf("Edith")), Room("Kjøkken", "RINCON_K", listOf("Kjøkken"))), stale = false, scanning = false),
+            rig.rooms.state.value,
+        )
         val view = rig.rooms.view()
         assertEquals(listOf("Edith", "Kjøkken"), view.rooms.map { it.label })
         assertFalse(view.scanning)
@@ -105,7 +113,7 @@ class SpeakerCacheTest {
     @Test
     fun `4 cached rooms that stopped answering - kept, stale, one new round`() {
         val rig = Rig()
-        rig.cache.seed(listOf(Player("RINCON_E", "10.9.0.17", 1400, "Edith"), Player("RINCON_K", "10.9.0.21", 1400, "Kjøkken")))
+        rig.cache.seed(listOf(Zone("RINCON_E", "10.9.0.17", 1400, "Edith"), Zone("RINCON_K", "10.9.0.21", 1400, "Kjøkken")))
         rig.gate.countDown()
         val view = rig.rooms.refresh()
         assertTrue(view.stale)
@@ -114,6 +122,20 @@ class SpeakerCacheTest {
         assertEquals(1, rig.discovers.get())
         assertEquals("the round healed the ips", "192.168.1.17", rig.cache.resolve("RINCON_E")!!.ip)
         assertFalse("now the topology answers: not stale", rig.rooms.refresh().stale)
+    }
+
+    @Test
+    fun `L4 - a scope cancelled before the round ran never wedges scanning`() {
+        val dead = CoroutineScope(SupervisorJob() + Dispatchers.IO).apply { cancel() }
+        val rooms = RoomDirectory(
+            SpeakerCache(tmp.root.resolve("sonos.json")), { _, _, _ -> throw SpeakerUnreachable("down") },
+            { throw AssertionError("the round must not run in a cancelled scope") }, { true }, dead, System::currentTimeMillis,
+        )
+        assertTrue(rooms.rescanInBackground())
+        repeat(50) { if (rooms.scanning) Thread.sleep(100) }
+        assertFalse(rooms.scanning)
+        assertFalse(rooms.state.value.scanning)
+        assertTrue("not wedged: the next ask may start a round", rooms.rescanInBackground())
     }
 
     @Test
@@ -135,7 +157,7 @@ class SpeakerCacheTest {
     fun `the file round-trips with vibb's keys and the port, written whole`() {
         val file = tmp.root.resolve("sonos.json")
         val cache = SpeakerCache(file, wallS = { 42.0 })
-        cache.seed(listOf(Player("RINCON_FAKE1401", "10.0.2.2", 1401, "Stua")))
+        cache.seed(listOf(Zone("RINCON_FAKE1401", "10.0.2.2", 1401, "Stua")))
         val text = file.readText()
         assertTrue(text, text.contains("\"seen_at\":42.0") && text.contains("\"port\":1401") && text.contains("\"fetched_at\":42.0"))
         assertEquals(CachedPlayer("10.0.2.2", 1401, "Stua", 42.0), SpeakerCache(file).resolve("RINCON_FAKE1401"))
@@ -150,28 +172,28 @@ class SpeakerCacheTest {
     fun `the resolver - the cached ip, the uid compared on the play path only`() {
         TinyHttp { TinyHttp.Response(200, SonosFakes.fixture("device_description.xml")) }.use { server ->
             val cache = SpeakerCache(tmp.root.resolve("sonos.json"))
-            cache.seed(listOf(Player("RINCON_STUA01400", "127.0.0.1", server.port, "Stua"), Player("RINCON_MOVED", "127.0.0.1", server.port, "Bad")))
+            cache.seed(listOf(Zone("RINCON_STUA01400", "127.0.0.1", server.port, "Stua"), Zone("RINCON_MOVED", "127.0.0.1", server.port, "Bad")))
             val speakers = CachedSpeakers(cache, Soap(Soap.client()))
-            assertEquals(server.port, speakers.speaker("RINCON_STUA01400", verify = true).port)
+            assertEquals(server.port, speakers.speaker("RINCON_STUA01400", verify = true, budgetMs = null).port)
             try {
-                speakers.speaker("RINCON_MOVED", verify = true)
+                speakers.speaker("RINCON_MOVED", verify = true, budgetMs = null)
                 org.junit.Assert.fail("the ip now answers with another uid")
             } catch (e: UnknownUid) {
                 assertEquals("RINCON_MOVED", e.uid)
             }
             val n = server.requests.size
-            speakers.speaker("RINCON_MOVED", verify = false)
+            speakers.speaker("RINCON_MOVED", verify = false, budgetMs = null)
             assertEquals("the poll path never asks", n, server.requests.size)
             try {
-                speakers.speaker("RINCON_NONE", verify = false)
+                speakers.speaker("RINCON_NONE", verify = false, budgetMs = null)
                 org.junit.Assert.fail()
             } catch (_: UnknownUid) {
             }
         }
         val cache = SpeakerCache(tmp.root.resolve("sonos2.json"))
         val closed = TinyHttp { TinyHttp.Response(200, "") }.let { it.close(); it.port }
-        cache.seed(listOf(Player("RINCON_DOWN", "127.0.0.1", closed, "Loft")))
-        assertEquals("unreachable: left to the poller", "RINCON_DOWN", CachedSpeakers(cache, Soap(Soap.client())).speaker("RINCON_DOWN", verify = true).uid)
+        cache.seed(listOf(Zone("RINCON_DOWN", "127.0.0.1", closed, "Loft")))
+        assertEquals("unreachable: left to the poller", "RINCON_DOWN", CachedSpeakers(cache, Soap(Soap.client())).speaker("RINCON_DOWN", verify = true, budgetMs = null).uid)
     }
 
     // pi/vibb/renderer.py
@@ -179,17 +201,17 @@ class SpeakerCacheTest {
     @Test
     fun `renderer state - garbage or not sonos-with-uid is local, written tmp + rename`() {
         val file = tmp.root.resolve("renderer.json")
-        assertEquals(RendererState.LOCAL_STATE, RendererState.read(file))
+        assertEquals(RendererChoice.LOCAL_CHOICE, RendererChoice.read(file))
         file.writeText("garbage")
-        assertEquals(RendererState.LOCAL_STATE, RendererState.read(file))
+        assertEquals(RendererChoice.LOCAL_CHOICE, RendererChoice.read(file))
         file.writeText("""{"renderer": "sonos"}""")
-        assertFalse(RendererState.read(file).sonos)
-        val state = RendererState(RendererState.SONOS, "RINCON_A", "Stua", 12, "MKTT81008181", "x-sonos-http:series%3ax%3a1%3aMKTT81008181.unknown?sid=277&flags=0&sn=14", 25)
-        RendererState.write(file, state)
-        assertEquals(state, RendererState.read(file))
+        assertFalse(RendererChoice.read(file).sonos)
+        val state = RendererChoice(RendererChoice.SONOS, "RINCON_A", "Stua", 12, "MKTT81008181", "x-sonos-http:series%3ax%3a1%3aMKTT81008181.unknown?sid=277&flags=0&sn=14", 25)
+        RendererChoice.write(file, state)
+        assertEquals(state, RendererChoice.read(file))
         assertTrue(file.readText().contains("\"entry_id\":12"))
-        RendererState.write(file, RendererState.LOCAL_STATE)
-        assertFalse(RendererState.read(file).sonos)
+        RendererChoice.write(file, RendererChoice.LOCAL_CHOICE)
+        assertFalse(RendererChoice.read(file).sonos)
         assertEquals(listOf("renderer.json"), tmp.root.list()!!.toList())
     }
 }

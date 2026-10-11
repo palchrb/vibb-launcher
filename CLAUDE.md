@@ -20,7 +20,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   runbooks (`google-account.md`: the phone's Google account for Play, backup to Google off).
 - `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
   `push-all.sh` (push the current branch), `smoke-test.sh` (adb/emulator-console smoke test of lock and
-  calls, remote-capable; `docs/testing/emulator.md` §5b).
+  calls, remote-capable; `docs/testing/emulator.md` §5b), `fake-sonos.py` (fake Sonos speakers for the
+  music app on the emulator, answering from the music app's Sonos test fixtures; §6g).
 - `PLAN.md` - the plan and status.
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
@@ -57,7 +58,8 @@ keeps the music app's, the music app sends exactly those.
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read, `music.yml` also
-  on the shared `server/testdata/music_*.json` and the launcher's copy of the bridge AIDL; `server-ci.yml`'s
+  on the shared `server/testdata/music_*.json`, the launcher's copy of the bridge AIDL and `scripts/fake-sonos.py`,
+  whose `--selftest` it runs after the build; `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in
   `server-ci.yml` and `server-release.yml` (security review L9) - move them on deliberately, both files at once.

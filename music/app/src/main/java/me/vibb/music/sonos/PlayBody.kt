@@ -4,6 +4,7 @@ import me.vibb.music.logic.isPrivateAddress
 import me.vibb.music.logic.publicOnly
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.InetAddress
 
 /*
@@ -48,7 +49,8 @@ object PlayBodies {
         val speakerArt = art?.takeIf { it.startsWith("http") }
         val durationS = item.durationMs?.let { it / 1000.0 }
         val slug = if (entry.nrkSerie) nrkSeriesSlug(entry.target) else null
-        if (slug != null && item.key.isNotEmpty()) {
+        if (slug != null) {
+            // speakerDropReason guarantees a program id (the item key) here
             return PlayBody(uid, Kind.NRK_PROGRAM, entry.target!!, item.title, album, speakerArt, durationS, startS, series = slug, programId = item.key)
         }
         return PlayBody(uid, Kind.URL, item.url!!, item.title, album, speakerArt, durationS, startS)
@@ -59,30 +61,38 @@ object PlayBodies {
      * or null when it can. Own files and withdrawn items (no URL) can't; an HLS item only as an NRK
      * series program; a public entry's item never from a private address literal (the speaker
      * fetches by itself, so the phone's address guard moves here, QA M7). Names aren't resolved.
+     * The URL is read as OkHttp and ExoPlayer read it (`toHttpUrlOrNull`: an enclosure with an
+     * unencoded space or `|` plays on the phone, so it goes to the speaker too; qa-26a-step1-code L6).
+     * An NRK series item without a key (its program id) has nothing to hand the service and drops out
+     * rather than falling through to its HLS manifest as a `url`.
      */
     fun speakerDropReason(entry: Entry, item: PlayItem): String? {
         if (item.fileId != null) return "own file"
         val url = item.url ?: return "withdrawn"
-        val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return "bad url"
-        val scheme = uri.scheme?.lowercase()
-        if (scheme != "http" && scheme != "https") return "not http"
+        val http = url.toHttpUrlOrNull() ?: return "not an http url"
         val nrkSeries = entry.nrkSerie && nrkSeriesSlug(entry.target) != null
+        if (nrkSeries && item.key.isEmpty()) return "no program id"
         if (item.hls && !nrkSeries) return "hls"
-        if (publicOnly(entry) && privateLiteral(uri.host)) return "private address"
+        if (publicOnly(entry) && privateLiteral(http.host)) return "private address"
         return null
     }
 
     fun speakerPlayable(entry: Entry, item: PlayItem): Boolean = speakerDropReason(entry, item) == null
 
-    /** [host] (`URI.host`) is an IP literal in a private range (21b §2.7); a name is never looked up. */
-    internal fun privateLiteral(host: String?): Boolean {
-        if (host == null) return false
-        if (host.startsWith("[")) {
-            // java.net.URI has already validated a bracketed IPv6 literal: parsing it does no DNS.
-            val address = runCatching { InetAddress.getByName(host.removePrefix("[").removeSuffix("]")) }.getOrNull() ?: return true
+    /**
+     * [host] (`HttpUrl.host`) is an IP literal in a private range (21b §2.7); a name is never looked
+     * up. Numeric shorthand hosts (`10.1`, `167772161`) count as names here and pass (on the phone the
+     * connect-time guard would catch them; a speaker would fetch them): accepted, since the server
+     * checked the entry's hosts (21b §2.7) and the parent curates the library.
+     */
+    internal fun privateLiteral(host: String): Boolean {
+        val bare = host.removePrefix("[").removeSuffix("]")
+        if (':' in bare) {
+            // HttpUrl has already validated an IPv6 literal: parsing it does no DNS.
+            val address = runCatching { InetAddress.getByName(bare) }.getOrNull() ?: return true
             return isPrivateAddress(address)
         }
-        val octets = host.split('.')
+        val octets = bare.split('.')
         if (octets.size != 4 || octets.any { !Regex("[0-9]{1,3}").matches(it) || it.toInt() > 255 }) return false
         return isPrivateAddress(InetAddress.getByAddress(octets.map { it.toInt().toByte() }.toByteArray()))
     }

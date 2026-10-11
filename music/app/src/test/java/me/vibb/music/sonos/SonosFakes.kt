@@ -12,7 +12,8 @@ object SonosFakes {
 
     /** Every fixture file. */
     fun fixtureNames(): List<String> =
-        File(javaClass.classLoader!!.getResource("sonos/device_description.xml")!!.toURI()).parentFile.list()!!.sorted()
+        // !! on both: android.jar marks parentFile and list() nullable, the JDK leaves them platform types
+        File(javaClass.classLoader!!.getResource("sonos/device_description.xml")!!.toURI()).parentFile!!.list()!!.sorted()
 
     /** A reply's fields, as Soap returns them. */
     fun reply(name: String, action: String): Map<String, String> = Soap.parseResponse(200, fixture(name), action)

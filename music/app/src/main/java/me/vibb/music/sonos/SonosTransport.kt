@@ -66,7 +66,7 @@ class SonosTransport(
      */
     suspend fun play(body: PlayBody): PlayResult = mutex.withLock {
         session.beginPlay(body.uid, body.kind)
-        val spk = speakers.speaker(body.uid, verify = true)
+        val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
         val start = body.startS
         val unhush = hush(spk, start)
         val result = try {
@@ -84,7 +84,9 @@ class SonosTransport(
                     body.uri to built
                 }
                 Kind.NRK_PROGRAM -> {
-                    val uri = nrk.programUri(spk.ip, spk.port, requireNotNull(body.series), requireNotNull(body.programId))
+                    val series = body.series ?: throw SonosException("nrk_program without a series")
+                    val programId = body.programId ?: throw SonosException("nrk_program without a program id")
+                    val uri = nrk.programUri(spk.ip, spk.port, series, programId)
                     val built = didl(
                         uri, body.title, body.artist, body.album, body.art, body.durationS,
                         upnpClass = NrkService.UPNP_CLASS, protocol = NrkService.PROTOCOL, desc = NrkService.DESC,
@@ -200,7 +202,7 @@ class SonosTransport(
         val uid = session.uid
         if (uid == null || (ifUid != null && ifUid != uid)) return@withLock false
         session.stampVerb()
-        block(speakers.speaker(uid, verify = false))
+        block(speakers.speaker(uid, verify = false, budgetMs = null))
         true
     }
 
@@ -209,11 +211,11 @@ class SonosTransport(
      * retry: Stop, Play, and a settled seek back when the frozen position was 5 s or more.
      */
     suspend fun poll(probe: MigrationProbe?): Tick = mutex.withLock {
-        val tick = session.tick({ speakers.speaker(session.uid ?: throw UnknownUid("none"), verify = false) }, probe)
+        val tick = session.tick({ speakers.speaker(session.uid ?: throw UnknownUid("none"), verify = false, budgetMs = null) }, probe)
         val retryAt = (tick as? Tick.Next)?.stallRetryAtS
         if (retryAt != null) {
             try {
-                val spk = speakers.speaker(session.uid ?: throw UnknownUid("none"), verify = false)
+                val spk = speakers.speaker(session.uid ?: throw UnknownUid("none"), verify = false, budgetMs = null)
                 spk.stop()
                 spk.play()
                 if (retryAt >= 5) seekSettled(spk, retryAt)

@@ -20,7 +20,7 @@ class SonosTransportTest {
 
     private fun rig(spk: FakeSpeaker, accounts: String = SonosFakes.fixture("accounts.xml")): SonosTransport {
         val session = SonosSession({ clock.now }, { logs.add(it) })
-        return SonosTransport(session, { _, _ -> spk }, NrkService({ _, _ -> accounts }), clock.clock, { wakes.add("wake") }, { logs.add(it) })
+        return SonosTransport(session, { _, _, _ -> spk }, NrkService({ _, _ -> accounts }), clock.clock, { wakes.add("wake") }, { logs.add(it) })
     }
 
     private val body = PlayBody("RINCON_X", Kind.URL, "http://c/e.mp3", "Sommerfuglen", "Barnas Supersommer", null, 0.0, 0.0)
@@ -260,7 +260,7 @@ class SonosTransportTest {
     @Test
     fun `an unknown uid on the play path is the failed-play path's`() = runBlocking {
         val session = SonosSession({ clock.now })
-        val t = SonosTransport(session, { uid, verify -> assertTrue(verify); throw UnknownUid(uid) }, NrkService({ _, _ -> "" }), clock.clock)
+        val t = SonosTransport(session, { uid, verify, _ -> assertTrue(verify); throw UnknownUid(uid) }, NrkService({ _, _ -> "" }), clock.clock)
         try {
             t.play(body)
             fail()
@@ -268,5 +268,17 @@ class SonosTransportTest {
             assertEquals("RINCON_X", e.uid)
         }
         assertFalse(session.armed)
+    }
+
+    @Test
+    fun `an nrk_program body without its series is a SonosException, inside the failed-play path (L1)`() = runBlocking {
+        val spk = FakeSpeaker("RINCON_X")
+        try {
+            rig(spk).play(PlayBody("RINCON_X", Kind.NRK_PROGRAM, "https://radio.nrk.no/serie/x", "T", null, null, null, 0.0, programId = "MKTT1"))
+            fail()
+        } catch (e: SonosException) {
+            assertEquals("nrk_program without a series", e.message)
+        }
+        assertEquals(emptyList<String>(), spk.commands)
     }
 }

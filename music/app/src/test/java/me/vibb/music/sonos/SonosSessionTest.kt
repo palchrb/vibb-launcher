@@ -213,6 +213,7 @@ class SonosSessionTest {
     fun `migrate 5 - the cadence is fast only while a migration transition pends`() {
         val s = session()
         warm(s)
+        clock.advance(31_000) // past the arm's fast window, inside the 90 s migration window
         val snap = fields(TransportState.STOPPED, "")
         assertEquals("attempts land at seconds, not the 60 s stopped cadence", 5_000L, s.cadenceMs(TransportState.STOPPED, snap, 0))
         assertEquals("an episode-end STOPPED (uri retained) keeps its cadence", 60_000L, s.cadenceMs(TransportState.STOPPED, fields(TransportState.STOPPED, uri), 0))
@@ -237,7 +238,12 @@ class SonosSessionTest {
         assertEquals("no duration, no tail", 15_000L, s.cadenceMs(TransportState.PLAYING, playing.copy(durS = 0.0, relS = 0.0), 0))
         s.stampVerb()
         assertEquals(5_000L, s.cadenceMs(TransportState.PLAYING, playing, 0))
+        assertEquals("after a verb whatever the state (M1)", 5_000L, s.cadenceMs(TransportState.PAUSED_PLAYBACK, playing, 0))
+        assertEquals(5_000L, s.cadenceMs(TransportState.STOPPED, playing, 0))
+        clock.advance(30_000)
         assertEquals(15_000L, s.cadenceMs(TransportState.PAUSED_PLAYBACK, playing, 0))
+        assertEquals(60_000L, s.cadenceMs(TransportState.STOPPED, playing, 0))
+        assertEquals("a TRANSITIONING read polls fast (M1)", 5_000L, s.cadenceMs(TransportState.PAUSED_PLAYBACK, playing.copy(transitioning = true), 0))
         assertEquals(listOf(10_000L, 20_000L, 40_000L, 160_000L, 300_000L, 300_000L), listOf(1, 2, 3, 5, 6, 9).map { s.cadenceMs(TransportState.UNREACHABLE, playing, it) })
     }
 
@@ -392,6 +398,7 @@ class SonosSessionTest {
             armed = true, uid = kid, kind = Kind.URL, seq = 1, measuredAt = clock.now, reachable = true,
             transport = TransportState.PLAYING, relS = 431.0, durS = 1453.0, uri = ep, ours = true, foreignUri = null,
             groupedAway = false, coordinator = null, lostSession = false, volume = 31, retriedAt = null, nextPollMs = 15_000,
+            measuredCadenceMs = 15_000,
         )
         assertEquals("STATE_PLAYING", playing, s.snapshot)
 
@@ -407,7 +414,7 @@ class SonosSessionTest {
             playing.copy(
                 seq = 3, relS = 1234.0, durS = 240.0, uri = "x-rincon:RINCON_PARENT01400", ours = false,
                 foreignUri = "x-rincon:RINCON_PARENT01400", groupedAway = true, coordinator = "RINCON_PARENT01400",
-                nextPollMs = 5_000, // the parent's position is past its own track's end: the tail cadence
+                nextPollMs = 5_000, measuredCadenceMs = 5_000, // the parent's position is past its track's end: the tail
             ),
             s.snapshot,
         )
@@ -417,17 +424,113 @@ class SonosSessionTest {
         spk.position = position("position_stopped_empty.xml")
         spk.transport = transport("transport_stopped.xml")
         s.tick({ spk }, null)
-        val lost = playing.copy(seq = 5, transport = TransportState.STOPPED, relS = 0.0, durS = 0.0, uri = "", ours = false, lostSession = true, nextPollMs = 5_000)
+        val lost = playing.copy(
+            seq = 5, transport = TransportState.STOPPED, relS = 0.0, durS = 0.0, uri = "", ours = false, lostSession = true,
+            nextPollMs = 5_000, measuredCadenceMs = 5_000,
+        )
         assertEquals("STATE_LOST (the migration window: 5 s polls)", lost, s.snapshot)
 
         val probe = Probe().apply { candidates["10.0.0.11"] = TransportState.PLAYING to ep }
         s.tick({ spk }, probe)
-        assertEquals("STATE_MOVED", lost.copy(seq = 6, streamMoved = Moved("RINCON_KITCHEN", "Kjøkken", ep), nextPollMs = 60_000), s.snapshot)
+        assertEquals("STATE_MOVED", lost.copy(seq = 6, streamMoved = Moved("RINCON_KITCHEN", "Kjøkken", ep), nextPollMs = 60_000, measuredCadenceMs = 60_000), s.snapshot)
 
         s.tick({ throw SpeakerUnreachable("timeout") }, null)
         val unreachable = s.snapshot
         assertEquals("STATE_UNREACHABLE", Triple(false, TransportState.UNREACHABLE, 7L), Triple(unreachable.reachable, unreachable.transport, unreachable.seq))
         assertTrue(unreachable.armed && unreachable.uid == kid && unreachable.kind == Kind.URL && unreachable.retriedAt == null)
+    }
+
+    // --- a new session inherits nothing measured (qa-26a-step1-code H1, H2, M1, M2) ------------
+
+    private fun transport(s: SonosSession, spk: FakeSpeaker) = SonosTransport(s, { _, _, _ -> spk }, NrkService({ _, _ -> "" }), clock.clock)
+
+    private fun play(u: String) = PlayBody(kid, Kind.URL, u, "T", null, null, null, 0.0)
+
+    @Test
+    fun `H1 - a play after 595 s STOPPED stays armed, and its first failed poll backs off 10 s`() = runBlocking {
+        val s = session()
+        val stopped = speaker(uri, tr = "STOPPED", rel = "0:00:00")
+        s.tick({ stopped }, null) // the episode ended: the down streak starts
+        clock.advance(595_000)
+        repeat(3) { s.tick({ throw SpeakerUnreachable("blip") }, null) }
+        val next = "https://podkast.example/next.mp3"
+        val spk = FakeSpeaker(kid)
+        transport(s, spk).play(play(next))
+        clock.advance(6_000) // 601 s after the old streak began
+        spk.position = PositionInfo("1", next, "0:00:00", "", "")
+        spk.transport = "STOPPED" // still buffering
+        assertTrue(s.tick({ spk }, null) is Tick.Next)
+        assertTrue("not disarmed by its own first poll", s.armed)
+        val failed = s.tick({ throw SpeakerUnreachable("blip") }, null) as Tick.Next
+        assertEquals("the old session's failures don't count", 10_000L, failed.delayMs)
+        assertEquals(1, s.snapshot.failedPolls)
+    }
+
+    @Test
+    fun `H2 - a failed first poll after a play never shows the last episode's position as ours`() = runBlocking {
+        val ep1 = "https://podkast.example/ep1.mp3"
+        val s = session(u = ep1)
+        s.tick({ speaker(ep1, rel = "0:23:50") }, null)
+        assertEquals(1430.0, s.snapshot.relS!!, 0.0)
+        transport(s, FakeSpeaker(kid)).play(play("https://podkast.example/ep2.mp3"))
+        s.tick({ throw SpeakerUnreachable("blip") }, null)
+        val snap = s.snapshot
+        assertEquals(TransportState.UNREACHABLE, snap.transport)
+        assertFalse(snap.ours)
+        assertNull(snap.relS)
+        assertNull(snap.uri)
+        assertNull(snap.measuredAt)
+        assertFalse(snap.fresh(clock.now))
+        // and an adopt the same
+        s.tick({ speaker("https://podkast.example/ep2.mp3", rel = "0:01:00") }, null)
+        s.adopt(kid, Kind.URL, "https://podkast.example/ep3.mp3")
+        assertNull(s.snapshot.relS)
+        assertNull(s.snapshot.measuredAt)
+    }
+
+    @Test
+    fun `M1 - two sessions in a row - the new one's TRANSITIONING reads PLAYING and polls in 5 s`() = runBlocking {
+        val s = session()
+        s.tick({ speaker(uri, tr = "STOPPED") }, null) // the last episode ended: the last real state is STOPPED
+        clock.advance(40_000)
+        val next = "https://podkast.example/next.mp3"
+        transport(s, FakeSpeaker(kid)).play(play(next))
+        clock.advance(31_000) // past the arm's window
+        val tick = s.tick({ speaker(next, tr = "TRANSITIONING", rel = "0:00:00") }, null) as Tick.Next
+        assertEquals("a fresh start, not the old STOPPED", TransportState.PLAYING, s.snapshot.transport)
+        assertEquals(5_000L, tick.delayMs)
+    }
+
+    @Test
+    fun `M1 - a resume that reads TRANSITIONING (reported PAUSED) re-polls in 5 s, not 15`() {
+        val s = session()
+        clock.advance(31_000)
+        assertEquals(15_000L, (s.tick({ speaker(uri, tr = "PAUSED_PLAYBACK") }, null) as Tick.Next).delayMs)
+        s.stampVerb() // resume
+        val inWindow = s.tick({ speaker(uri, tr = "TRANSITIONING") }, null) as Tick.Next
+        assertEquals("the last real state", TransportState.PAUSED_PLAYBACK, s.snapshot.transport)
+        assertTrue(s.snapshot.transitioning)
+        assertEquals(5_000L, inWindow.delayMs)
+        clock.advance(31_000)
+        assertEquals("still buffering past the window", 5_000L, (s.tick({ speaker(uri, tr = "TRANSITIONING") }, null) as Tick.Next).delayMs)
+    }
+
+    @Test
+    fun `M2 - failed polls never extend freshness`() {
+        val s = session()
+        clock.advance(31_000)
+        s.tick({ speaker(uri) }, null) // cruise: 15 s
+        val measured = clock.now
+        clock.advance(15_000)
+        for (i in 1..6) {
+            val delay = (s.tick({ throw SpeakerUnreachable("down") }, null) as Tick.Next).delayMs
+            val snap = s.snapshot
+            assertEquals(15_000L, snap.measuredCadenceMs)
+            assertEquals("failure $i", clock.now - measured <= 25_000, snap.fresh(clock.now))
+            if (i >= 3) assertFalse("failure $i", snap.fresh(clock.now))
+            clock.advance(delay)
+        }
+        assertTrue(s.armed)
     }
 
     // --- play: uid and kind before the SOAP, the uri only after it ----------------------------
@@ -436,7 +539,7 @@ class SonosSessionTest {
     fun `a play sets uid and kind before the SOAP and the uri only after success`() = runBlocking {
         val s = session(u = uri)
         val spk = FakeSpeaker("RINCON_NEW").apply { failOn = mapOf("seturi" to { UpnpFault(714, "Illegal MIME-type") }) }
-        val t = SonosTransport(s, { _, _ -> spk }, NrkService({ _, _ -> "" }), clock.clock)
+        val t = SonosTransport(s, { _, _, _ -> spk }, NrkService({ _, _ -> "" }), clock.clock)
         try {
             t.play(PlayBody("RINCON_NEW", Kind.URL, "https://podkast.example/new.mp3", "T", null, null, null, 0.0))
             fail()

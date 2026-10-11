@@ -12,10 +12,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import me.vibb.music.data.Store
 import me.vibb.music.model.JSON
-import me.vibb.music.sonos.Player
 import me.vibb.music.sonos.SONOS_PORT
 import me.vibb.music.sonos.SonosFiles
 import me.vibb.music.sonos.SpeakerCache
+import me.vibb.music.sonos.Zone
 import me.vibb.music.sync.Inbox
 import me.vibb.music.sync.Sync
 import java.io.File
@@ -100,7 +100,7 @@ class DebugFeedReceiver : BroadcastReceiver() {
             val o = e as? JsonObject ?: return@mapNotNull null
             val uid = o["uid"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
             val ip = o["ip"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-            Player(uid, ip, o["port"]?.jsonPrimitive?.intOrNull ?: SONOS_PORT, o["name"]?.jsonPrimitive?.contentOrNull)
+            Zone(uid, ip, o["port"]?.jsonPrimitive?.intOrNull ?: SONOS_PORT, o["name"]?.jsonPrimitive?.contentOrNull)
         }
         SpeakerCache(SonosFiles.cache(context)).seed(players)
         Log.i(TAG, "sonos: ${players.size} speaker(s) seeded into the cache")

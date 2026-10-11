@@ -75,8 +75,10 @@ data class Moved(val uid: String, val name: String?, val uri: String)
 
 /**
  * One published snapshot (`/state`, contract §3). [measuredAt] is the elapsed time of the last
- * successful poll (a failed poll keeps it and the last measured values, with [reachable] false);
- * [nextPollMs] is the cadence the poller chose after it, so [fresh] needs nothing else.
+ * successful poll of THIS session (a failed poll keeps it and the last measured values, with
+ * [reachable] false; a new play or adopt clears them); [measuredCadenceMs] is the cadence the poller
+ * chose after that poll, so [fresh] needs nothing else; [nextPollMs] is the delay chosen after the
+ * latest poll, failed or not (the backoff).
  */
 data class Fields(
     val armed: Boolean,
@@ -101,13 +103,17 @@ data class Fields(
     /** Consecutive failed polls (the §3.2 table: the first 3 read BUFFERING). */
     val failedPolls: Int = 0,
     val nextPollMs: Long = SonosSession.POLL_MS,
+    val measuredCadenceMs: Long = SonosSession.POLL_MS,
+    /** The speaker's raw state was TRANSITIONING ([transport] then reports the last real one). */
+    val transitioning: Boolean = false,
 ) {
     /**
-     * Fresh, defined once (QA H2): measured within its cadence plus [FRESH_SLACK_MS]. vibb's
-     * `stale_s < 12` was tuned for a daemon re-reading a sidecar every 5 s; at a 15 s cruise it
-     * would flicker every poll.
+     * Fresh, defined once (QA H2): measured within the cadence chosen after that successful poll,
+     * plus [FRESH_SLACK_MS]. A failed poll never extends it (qa-26a-step1-code M2: the backoff
+     * cadence of a failure would). vibb's `stale_s < 12` was tuned for a daemon re-reading a sidecar
+     * every 5 s; at a 15 s cruise it would flicker every poll.
      */
-    fun fresh(nowMs: Long): Boolean = measuredAt != null && nowMs - measuredAt <= nextPollMs + FRESH_SLACK_MS
+    fun fresh(nowMs: Long): Boolean = measuredAt != null && nowMs - measuredAt <= measuredCadenceMs + FRESH_SLACK_MS
 
     companion object {
         const val FRESH_SLACK_MS = 10_000L
@@ -138,6 +144,11 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
     var uri: String? = null
         private set
 
+    /**
+     * The last published snapshot. Written only by the actor (SonosTransport's mutex); volatile so
+     * another thread reading it sees a whole, current copy (qa-26a-step1-code L7).
+     */
+    @Volatile
     var snapshot: Fields = Fields(armed = false, uid = null, kind = null, seq = 0, measuredAt = null)
         private set
 
@@ -159,6 +170,9 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
     private var oursLogged: String? = null
     private var downSince: Long? = null
     private var fails = 0
+
+    /** The cadence chosen after the last successful poll (freshness). */
+    private var lastCadence = POLL_MS
 
     /** Probe attempts left in this transition (tests). */
     val migrateTriesLeft: Int get() = migrateTries
@@ -191,6 +205,23 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         auxCoordinator = null
         auxN = 0
         fastAt = elapsedMs()
+        newSession()
+    }
+
+    /**
+     * What a new session (a play or an adopt) must not inherit (qa-26a-step1-code H1, H2, M1): the
+     * down streak and the failure count (a play after a long STOPPED would be disarmed by its own
+     * first poll, its first failure backed off 300 s), the last real state (a buffering start would
+     * read the last episode's STOPPED), and the last session's measurement (a failed first poll would
+     * publish the old episode's position as ours). vibb's `down_since` is the same latent bug.
+     */
+    private fun newSession() {
+        downSince = null
+        fails = 0
+        lastTr = null
+        lastOkAt = null
+        lastCadence = POLL_MS
+        snapshot = Fields(armed = armed, uid = uid, kind = kind, seq = seq, measuredAt = null)
     }
 
     /** `adopt()`: re-attach to a session already playing - bookkeeping only. */
@@ -207,6 +238,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         oursAt = null
         auxN = 0
         fastAt = elapsedMs()
+        newSession()
     }
 
     /** A verb went out: poll fast while it settles. */
@@ -267,7 +299,8 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
             return Tick.Disarmed
         }
         val delay = cadenceMs(tr, snap, fails)
-        snapshot = snapshot.copy(nextPollMs = delay)
+        if (snap.reachable) lastCadence = delay
+        snapshot = snapshot.copy(nextPollMs = delay, measuredCadenceMs = lastCadence)
         return Tick.Next(delay, retry)
     }
 
@@ -278,7 +311,8 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
     fun classify(io: SpeakerIo): Fields {
         val pos = io.positionInfo()
         var transport = TransportState.parse(io.transportInfo())
-        if (transport == TransportState.TRANSITIONING) {
+        val transitioning = transport == TransportState.TRANSITIONING
+        if (transitioning) {
             // buffering / track-change limbo: the last REAL state (a pause icon on every fresh start, G1-d)
             transport = lastTr ?: TransportState.PLAYING
         } else {
@@ -339,6 +373,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
             reachable = true, transport = transport, relS = rel, durS = dur, uri = trackUri, ours = ours,
             foreignUri = if (ours) null else trackUri.ifEmpty { null },
             groupedAway = auxGroupedAway, coordinator = auxCoordinator, lostSession = lost, volume = auxVolume,
+            transitioning = transitioning,
         )
     }
 
@@ -358,19 +393,25 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         snapshot = snapshot.copy(
             armed = armed, uid = uid, kind = kind, seq = seq, measuredAt = lastOkAt, reachable = false,
             transport = TransportState.UNREACHABLE, retriedAt = retriedAt, streamMoved = moved, error = error, failedPolls = fails,
+            transitioning = false, measuredCadenceMs = lastCadence,
         )
     }
 
     /**
      * `_cadence`: PAUSED 15 s; UNREACHABLE backs off from 5 s to 300 s; STOPPED 5 s only while a
-     * migration transition pends, else 60 s; PLAYING 5 s near the end (the boundary machinery) or
-     * after a verb or arm, else the 15 s cruise.
+     * migration transition pends, else 60 s; PLAYING 5 s near the end (the boundary machinery), else
+     * the 15 s cruise. Deviation (qa-26a-step1-code M1, design 26a §9): 5 s whatever the state while
+     * the speaker reads TRANSITIONING or inside the window after a verb or an arm - vibb fast-polls
+     * only PLAYING there, so a resume reported as PAUSED (TRANSITIONING keeps the last real state)
+     * slept 15 s, and a start buffering after a STOPPED 60 s, longer than the controller's 8 s hold.
      */
     fun cadenceMs(tr: TransportState?, snap: Fields, fails: Int): Long {
         val now = elapsedMs()
+        if (tr == TransportState.UNREACHABLE) return minOf(POLL_MS * (1L shl minOf(fails, 6)), 300_000L)
+        val fast = fastAt
+        if (snap.transitioning || (fast != null && now - fast < VERB_FAST_MS)) return POLL_MS
         return when (tr) {
             TransportState.PAUSED_PLAYBACK -> POLL_PAUSED_MS
-            TransportState.UNREACHABLE -> minOf(POLL_MS * (1L shl minOf(fails, 6)), 300_000L)
             TransportState.STOPPED -> {
                 val ours = oursAt
                 if (snap.uri.isNullOrEmpty() && moved == null && migrateTries > 0 && ours != null && now - ours <= MIGRATE_WINDOW_MS) POLL_MS else POLL_STOPPED_MS
@@ -379,8 +420,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
                 val rel = snap.relS
                 val dur = snap.durS
                 val tail = rel != null && dur != null && dur != 0.0 && dur - rel <= TAIL_FAST_S
-                val fast = fastAt
-                if (tail || (fast != null && now - fast < VERB_FAST_MS)) POLL_MS else POLL_CRUISE_MS
+                if (tail) POLL_MS else POLL_CRUISE_MS
             }
         }
     }

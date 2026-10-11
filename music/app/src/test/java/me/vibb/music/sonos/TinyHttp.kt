@@ -32,27 +32,35 @@ class TinyHttp(private val handler: (Request) -> Response) : Closeable {
                 } catch (_: SocketException) {
                     break
                 }
-                socket.use { s ->
-                    val input = BufferedInputStream(s.getInputStream())
-                    val head = readHead(input) ?: return@use
-                    val lines = head.split("\r\n")
-                    val (method, path) = lines[0].split(" ").let { it[0] to it[1] }
-                    val headers = lines.drop(1).filter { ':' in it }.associate { it.substringBefore(':').trim().lowercase() to it.substringAfter(':').trim() }
-                    val length = headers["content-length"]?.toIntOrNull() ?: 0
-                    val body = ByteArray(length).also { var n = 0; while (n < length) n += input.read(it, n, length - n) }
-                    val request = Request(method, path, headers, String(body, Charsets.UTF_8))
-                    requests.add(request)
-                    val response = handler(request)
-                    val bytes = response.body.toByteArray(Charsets.UTF_8)
-                    val out = s.getOutputStream()
-                    out.write(
-                        ("HTTP/1.1 ${response.code} X\r\nContent-Type: ${response.contentType}\r\n" +
-                            "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII),
-                    )
-                    out.write(bytes)
-                    out.flush()
+                try {
+                    serve(socket)
+                } catch (_: java.io.IOException) {
+                    // the client hung up (a test's time budget): nothing to answer
                 }
             }
+        }
+    }
+
+    private fun serve(socket: java.net.Socket) {
+        socket.use { s ->
+            val input = BufferedInputStream(s.getInputStream())
+            val head = readHead(input) ?: return@use
+            val lines = head.split("\r\n")
+            val (method, path) = lines[0].split(" ").let { it[0] to it[1] }
+            val headers = lines.drop(1).filter { ':' in it }.associate { it.substringBefore(':').trim().lowercase() to it.substringAfter(':').trim() }
+            val length = headers["content-length"]?.toIntOrNull() ?: 0
+            val body = ByteArray(length).also { var n = 0; while (n < length) n += input.read(it, n, length - n) }
+            val request = Request(method, path, headers, String(body, Charsets.UTF_8))
+            requests.add(request)
+            val response = handler(request)
+            val bytes = response.body.toByteArray(Charsets.UTF_8)
+            val out = s.getOutputStream()
+            out.write(
+                ("HTTP/1.1 ${response.code} X\r\nContent-Type: ${response.contentType}\r\n" +
+                    "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII),
+            )
+            out.write(bytes)
+            out.flush()
         }
     }
 

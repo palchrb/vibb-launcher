@@ -11,14 +11,15 @@ import java.io.File
  * (or later) - see NOTICE.md. Design 26a §4.1. Android-free; the file is
  * `noBackupFilesDir/renderer.json` (SonosFiles.kt); SpeakerCacheTest.
  *
- * The renderer axis is not the output axis: `output` is where OUR player writes audio (the phone,
- * a headset); the renderer is who plays (the phone, or a Sonos room it controls).
+ * Named apart from design 26a §3.3's `RendererState`, the player screen's grouped-away / taken-over
+ * line (qa-26a-step1-code L5). The renderer axis is not the output axis: `output` is where OUR player
+ * writes audio (the phone, a headset); the renderer is who plays (the phone, or a Sonos room).
  */
 
 private val RENDERER_JSON = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
 
 @Serializable
-data class RendererState(
+data class RendererChoice(
     /** "local" or "sonos". */
     val renderer: String = LOCAL,
     val uid: String? = null,
@@ -35,16 +36,16 @@ data class RendererState(
     companion object {
         const val LOCAL = "local"
         const val SONOS = "sonos"
-        val LOCAL_STATE = RendererState()
+        val LOCAL_CHOICE = RendererChoice()
 
         /** `read`: anything that isn't sonos-with-a-uid (a missing file, garbage) is local. */
-        fun read(file: File): RendererState {
+        fun read(file: File): RendererChoice {
             val s = runCatching { RENDERER_JSON.decodeFromString(serializer(), file.readText()) }.getOrNull()
-            return if (s != null && s.sonos) s else LOCAL_STATE
+            return if (s != null && s.sonos) s else LOCAL_CHOICE
         }
 
         /** `write`: tmp + rename. */
-        fun write(file: File, state: RendererState) {
+        fun write(file: File, state: RendererChoice) {
             writeAtomic(file, RENDERER_JSON.encodeToString(serializer(), state).toByteArray())
         }
     }

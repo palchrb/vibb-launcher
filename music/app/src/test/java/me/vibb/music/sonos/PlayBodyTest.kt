@@ -66,7 +66,7 @@ class PlayBodyTest {
         assertEquals("withdrawn", PlayBodies.speakerDropReason(entry(), item(url = null)))
         assertEquals("a non-series HLS item", "hls", PlayBodies.speakerDropReason(entry(), item(hls = true)))
         assertTrue("an NRK series' HLS goes as nrk_program", PlayBodies.speakerPlayable(nrkSerie, item(hls = true, url = "https://nrk-od.example/a.m3u8")))
-        assertEquals("not http", PlayBodies.speakerDropReason(entry(), item(url = "ftp://x/y.mp3")))
+        assertEquals("not an http url", PlayBodies.speakerDropReason(entry(), item(url = "ftp://x/y.mp3")))
         assertNull(PlayBodies.build(entry(), item(url = null), "RINCON_X", 0.0))
     }
 
@@ -80,5 +80,16 @@ class PlayBodyTest {
         assertTrue("a name is never resolved here", PlayBodies.speakerPlayable(entry(), item(url = "http://nas.local/ep.mp3")))
         assertFalse("not an address", PlayBodies.privateLiteral("999.1.1.1"))
         assertFalse(PlayBodies.privateLiteral("podkast.example"))
+    }
+
+    @Test
+    fun `L6 - the URL as OkHttp reads it - an unencoded space or pipe still plays, a key-less series item drops`() {
+        assertTrue(PlayBodies.speakerPlayable(entry(), item(url = "https://cdn.example/Episode 12|final.mp3")))
+        assertEquals("https://cdn.example/Episode 12|final.mp3", PlayBodies.build(entry(), item(url = "https://cdn.example/Episode 12|final.mp3"), "RINCON_X", 0.0)!!.uri)
+        val keyless = item(key = "", url = "https://nrk-od.example/a.m3u8", hls = true, entryId = 7)
+        assertEquals("no program id", PlayBodies.speakerDropReason(nrkSerie, keyless))
+        assertNull(PlayBodies.build(nrkSerie, keyless, "RINCON_X", 0.0))
+        assertFalse("numeric shorthand counts as a name (accepted, see privateLiteral)", PlayBodies.privateLiteral("10.1"))
+        assertTrue(PlayBodies.privateLiteral("fd7a:115c:a1e0::1"))
     }
 }

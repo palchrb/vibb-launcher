@@ -48,7 +48,14 @@ enum class SonosService(val controlPath: String, val serviceType: String) {
 /** Every speaker listens here; only the debug feed (the emulator's fake speaker) sets another port. */
 const val SONOS_PORT = 1400
 
-class Soap(private val client: OkHttpClient) {
+/**
+ * The client comes from [client] on every call, so a Wi-Fi reconnect (a new `Network`, a new socket
+ * factory) needs a new provider value only, not a rebuilt Soap and everything holding it
+ * (qa-26a-step1-code L2).
+ */
+class Soap(private val client: () -> OkHttpClient) {
+    constructor(client: OkHttpClient) : this({ client })
+
     /**
      * One action: POST the envelope, return the response's child elements by local name. A fault
      * is [UpnpFault]; anything that isn't a SOAP answer is [SpeakerUnreachable]. [timeoutMs] caps the
@@ -76,7 +83,7 @@ class Soap(private val client: OkHttpClient) {
         parseUdn(get(ip, port, "/xml/device_description.xml", timeoutMs)) ?: throw SpeakerUnreachable("no UDN at $ip")
 
     private fun execute(request: Request, timeoutMs: Long?): Pair<Int, String> {
-        val call = client.newCall(request)
+        val call = client().newCall(request)
         if (timeoutMs != null) call.timeout().timeout(timeoutMs.coerceAtLeast(1), TimeUnit.MILLISECONDS)
         return try {
             call.execute().use { r -> r.code to (r.body?.string() ?: "") }
@@ -85,8 +92,19 @@ class Soap(private val client: OkHttpClient) {
         }
     }
 
-    private fun url(ip: String, port: Int, path: String): HttpUrl =
-        HttpUrl.Builder().scheme("http").host(ip).port(port).encodedPath(path).build()
+    /**
+     * `http://<ip>:<port><path>` for an IP literal only: a name would be resolved outside the Wi-Fi
+     * binding, and a bad host or port is a [SpeakerUnreachable], never an IllegalArgumentException
+     * escaping the failed-play path (qa-26a-step1-code L1).
+     */
+    private fun url(ip: String, port: Int, path: String): HttpUrl {
+        if (!isIpLiteral(ip)) throw SpeakerUnreachable("not an ip address: $ip")
+        return try {
+            HttpUrl.Builder().scheme("http").host(ip).port(port).encodedPath(path).build()
+        } catch (e: IllegalArgumentException) {
+            throw SpeakerUnreachable("bad address $ip:$port", e)
+        }
+    }
 
     companion object {
         private val XML = "text/xml; charset=\"utf-8\"".toMediaType()
@@ -164,13 +182,31 @@ fun descendant(e: Element, localName: String): Element? {
     return null
 }
 
-/** One speaker over SOAP: what the session polls ([SpeakerIo]) and what the transport commands. */
-class SoapSpeaker(private val soap: Soap, override val ip: String, override val port: Int, override val uid: String) : SpeakerControl {
+/**
+ * One speaker over SOAP: what the session polls ([SpeakerIo]) and what the transport commands.
+ * [budgetMs]: every call of this instance shares one time budget from its creation (each gets what
+ * is left of it; none left is [SpeakerUnreachable]) - the 1.5 s live classify of a switch home, the
+ * suspension stop and the startup adopt (§4.6, §4.7, §6.1). Null: the client's timeouts.
+ */
+class SoapSpeaker(
+    private val soap: Soap,
+    override val ip: String,
+    override val port: Int,
+    override val uid: String,
+    budgetMs: Long? = null,
+) : SpeakerControl {
+    private val deadline = budgetMs?.let { System.nanoTime() + it * 1_000_000 }
+
+    private fun left(): Long? = deadline?.let {
+        val ms = (it - System.nanoTime()) / 1_000_000
+        if (ms <= 0) throw SpeakerUnreachable("time budget spent") else ms
+    }
+
     private fun av(action: String, vararg args: Pair<String, String>) =
-        soap.call(ip, port, SonosService.AV_TRANSPORT, action, listOf("InstanceID" to "0") + args)
+        soap.call(ip, port, SonosService.AV_TRANSPORT, action, listOf("InstanceID" to "0") + args, left())
 
     private fun rc(action: String, vararg args: Pair<String, String>) =
-        soap.call(ip, port, SonosService.RENDERING_CONTROL, action, listOf("InstanceID" to "0") + args)
+        soap.call(ip, port, SonosService.RENDERING_CONTROL, action, listOf("InstanceID" to "0") + args, left())
 
     override fun positionInfo(): PositionInfo = av("GetPositionInfo").let {
         PositionInfo(it["Track"], it["TrackURI"], it["RelTime"], it["TrackDuration"], it["TrackMetaData"])
@@ -180,7 +216,7 @@ class SoapSpeaker(private val soap: Soap, override val ip: String, override val 
 
     /** `spk.group.coordinator.uid`: from this speaker's own view of the household. */
     override fun groupCoordinator(): String? =
-        Topology.coordinatorOf(soap.call(ip, port, SonosService.ZONE_GROUP_TOPOLOGY, "GetZoneGroupState", emptyList())["ZoneGroupState"].orEmpty(), uid)
+        Topology.coordinatorOf(soap.call(ip, port, SonosService.ZONE_GROUP_TOPOLOGY, "GetZoneGroupState", emptyList(), left())["ZoneGroupState"].orEmpty(), uid)
 
     override fun volume(): Int = rc("GetVolume", "Channel" to "Master")["CurrentVolume"]?.trim()?.toIntOrNull()
         ?: throw SpeakerUnreachable("GetVolume: no CurrentVolume")

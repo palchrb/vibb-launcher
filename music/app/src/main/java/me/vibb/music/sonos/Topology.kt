@@ -11,13 +11,16 @@ import org.w3c.dom.Element
  * comes with or without the `<ZoneGroupState><ZoneGroups>` wrapper (firmwares differ, QA L6).
  */
 
-/** A room: [ip] and [port] from its `Location` (http://ip:port/xml/device_description.xml). */
-data class Player(val uid: String, val ip: String, val port: Int, val name: String?)
+/**
+ * A room (a zone player): [ip] and [port] from its `Location` (http://ip:port/xml/device_description.xml).
+ * Not `Player`: Media3's `Player` will share this package's SonosRenderer (qa-26a-step1-code L5).
+ */
+data class Zone(val uid: String, val ip: String, val port: Int, val name: String?)
 
 /** A group as the Sonos app made it: [members] coordinator first, visible rooms only. */
 data class Group(val coordinator: String, val members: List<String>)
 
-data class Household(val players: Map<String, Player>, val groups: List<Group>)
+data class Household(val players: Map<String, Zone>, val groups: List<Group>)
 
 object Topology {
     /**
@@ -27,7 +30,7 @@ object Topology {
      */
     fun parse(zoneGroupState: String): Household? {
         val root = runCatching { parseXml(zoneGroupState).documentElement }.getOrNull() ?: return null
-        val players = linkedMapOf<String, Player>()
+        val players = linkedMapOf<String, Zone>()
         val groups = mutableListOf<Group>()
         for (g in zoneGroups(root)) {
             val coordinator = g.getAttribute("Coordinator").takeIf { it.isNotEmpty() } ?: continue
@@ -56,17 +59,29 @@ object Topology {
         return (0 until nodes.length).mapNotNull { nodes.item(it) as? Element }
     }
 
-    private fun member(m: Element): Player? {
+    private fun member(m: Element): Zone? {
         val uid = m.getAttribute("UUID").takeIf { it.isNotEmpty() } ?: return null
         val (ip, port) = location(m.getAttribute("Location")) ?: return null
-        return Player(uid, ip, port, m.getAttribute("ZoneName").takeIf { it.isNotEmpty() })
+        return Zone(uid, ip, port, m.getAttribute("ZoneName").takeIf { it.isNotEmpty() })
     }
 
-    /** `http://<ip>:<port>/...` -> (ip, port); the port defaults to [SONOS_PORT]. */
+    /**
+     * `http://<ip>:<port>/...` -> (ip, port); the port defaults to [SONOS_PORT]. An IP literal only
+     * (a speaker's Location always is one): a name would be resolved outside the Wi-Fi binding, and an
+     * odd host cached here would fail every later call (qa-26a-step1-code L1).
+     */
     fun location(location: String): Pair<String, Int>? {
-        val m = Regex("^https?://([^/:\\[\\]]+|\\[[0-9A-Fa-f:.]+])(?::([0-9]{1,5}))?(/.*)?$").find(location.trim()) ?: return null
+        val m = Regex("^https?://([0-9.]+|\\[[0-9A-Fa-f:.]+])(?::([0-9]{1,5}))?(/.*)?$").find(location.trim()) ?: return null
         val port = m.groupValues[2].takeIf { it.isNotEmpty() }?.toInt() ?: SONOS_PORT
-        if (port !in 1..65535) return null
-        return m.groupValues[1].removePrefix("[").removeSuffix("]") to port
+        val ip = m.groupValues[1].removePrefix("[").removeSuffix("]")
+        if (port !in 1..65535 || !isIpLiteral(ip)) return null
+        return ip to port
     }
+}
+
+/** A dotted-quad IPv4 or an IPv6 literal (no brackets): an address that needs no DNS. */
+fun isIpLiteral(host: String): Boolean {
+    val octets = host.split('.')
+    if (octets.size == 4 && octets.all { Regex("[0-9]{1,3}").matches(it) && it.toInt() <= 255 }) return true
+    return ':' in host && Regex("[0-9A-Fa-f:.]+").matches(host) && host.count { it == ':' } in 2..7
 }

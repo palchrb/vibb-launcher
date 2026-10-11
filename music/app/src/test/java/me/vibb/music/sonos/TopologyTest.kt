@@ -27,10 +27,10 @@ class TopologyTest {
     @Test
     fun `both wrapper forms parse to the same shape`() {
         val wrapped = Topology.parse(zoneGroupState("zgs_wrapped.xml"))!!
-        assertEquals(Player("RINCON_STUA01400", "10.0.0.11", 1400, "Stua"), wrapped.players["RINCON_STUA01400"])
-        assertEquals(Player("RINCON_KJOKKEN01400", "10.0.0.12", 1400, "Kjøkken"), wrapped.players["RINCON_KJOKKEN01400"])
+        assertEquals(Zone("RINCON_STUA01400", "10.0.0.11", 1400, "Stua"), wrapped.players["RINCON_STUA01400"])
+        assertEquals(Zone("RINCON_KJOKKEN01400", "10.0.0.12", 1400, "Kjøkken"), wrapped.players["RINCON_KJOKKEN01400"])
         val bare = Topology.parse(zoneGroupState("zgs_bare.xml"))!!
-        assertEquals(Player("RINCON_BARNEROM01400", "10.0.0.24", 1400, "Barnerom"), bare.players["RINCON_BARNEROM01400"])
+        assertEquals(Zone("RINCON_BARNEROM01400", "10.0.0.24", 1400, "Barnerom"), bare.players["RINCON_BARNEROM01400"])
         assertNull(Topology.parse("not xml"))
         assertEquals(Household(emptyMap(), emptyList()), Topology.parse("<ZoneGroups/>"))
     }
@@ -53,7 +53,7 @@ class TopologyTest {
     @Test
     fun `1 the topology heals a moved ip and a rename, merges players, replaces groups`() {
         val c = cache()
-        c.seed(listOf(Player("RINCON_STUA01400", "10.0.0.99", 1400, "Gamlestua"), Player("RINCON_OLD01400", "10.0.0.98", 1400, "Loftet")))
+        c.seed(listOf(Zone("RINCON_STUA01400", "10.0.0.99", 1400, "Gamlestua"), Zone("RINCON_OLD01400", "10.0.0.98", 1400, "Loftet")))
         c.applyTopology(Household(emptyMap(), listOf(Group("RINCON_STUA01400", listOf("RINCON_STUA01400", "RINCON_BAD01400")))))
         val doc = c.applyTopology(Topology.parse(zoneGroupState("zgs_wrapped.xml"))!!)
         assertEquals("10.0.0.11", doc.players.getValue("RINCON_STUA01400").ip)
@@ -89,7 +89,7 @@ class TopologyTest {
     @Test
     fun `2 the refresh asks under one budget, 2 s per ip and 6 s in all`() {
         val c = cache()
-        c.seed((1..5).map { Player("RINCON_$it", "10.0.0.$it", 1400, "R$it") })
+        c.seed((1..5).map { Zone("RINCON_$it", "10.0.0.$it", 1400, "R$it") })
         var now = 0L
         val budgets = mutableListOf<Long>()
         val rooms = RoomDirectory(
@@ -107,7 +107,7 @@ class TopologyTest {
     @Test
     fun `the second cached speaker answers when the first doesn't`() {
         val c = cache()
-        c.seed(listOf(Player("RINCON_A", "10.0.0.1", 1400, "A"), Player("RINCON_B", "10.0.0.2", 1401, "B")))
+        c.seed(listOf(Zone("RINCON_A", "10.0.0.1", 1400, "A"), Zone("RINCON_B", "10.0.0.2", 1401, "B")))
         val rooms = RoomDirectory(
             c, { ip, port, _ -> if (ip == "10.0.0.1") throw SpeakerUnreachable("down") else { assertEquals(1401, port); zoneGroupState("zgs_bare.xml") } },
             { emptyList() }, { true }, CoroutineScope(Dispatchers.IO), { 0L },
@@ -120,7 +120,7 @@ class TopologyTest {
     @Test
     fun `without Wi-Fi nothing is asked and nothing scans - the cabin case`() {
         val c = cache()
-        c.seed(listOf(Player("RINCON_A", "10.0.0.1", 1400, "Stua")))
+        c.seed(listOf(Zone("RINCON_A", "10.0.0.1", 1400, "Stua")))
         var asked = 0
         var scans = 0
         val rooms = RoomDirectory(c, { _, _, _ -> asked++; "" }, { scans++; emptyList() }, { false }, CoroutineScope(Dispatchers.IO), { 0L })
@@ -186,6 +186,9 @@ class TopologyTest {
         assertEquals("10.0.0.11" to 1400, Topology.location("http://10.0.0.11/xml/device_description.xml"))
         assertEquals("fe80::1" to 1400, Topology.location("http://[fe80::1]:1400/x"))
         assertNull(Topology.location("ftp://10.0.0.11/x"))
+        assertNull("a name is never cached (L1)", Topology.location("http://sonos-stua.local:1400/x"))
+        assertNull(Topology.location("http://999.0.0.1:1400/x"))
+        assertNull(Topology.location("http://[not:v6]:1400/x"))
         assertNull(Topology.location("http://10.0.0.11:99999/x"))
     }
 }

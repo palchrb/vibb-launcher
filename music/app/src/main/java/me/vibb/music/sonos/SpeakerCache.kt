@@ -1,6 +1,10 @@
 package me.vibb.music.sonos
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -80,7 +84,7 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
     }
 
     /** Players merged in without touching the groups (the debug feed's `sonos.json`). */
-    fun seed(players: Collection<Player>): SpeakerDoc = update { doc ->
+    fun seed(players: Collection<Zone>): SpeakerDoc = update { doc ->
         val now = wallS()
         doc.copy(players = doc.players + players.associate { it.uid to CachedPlayer(it.ip, it.port, it.name, now) }, fetchedAt = now)
     }
@@ -129,7 +133,9 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
  * The household behind the picker: one topology refresh when the sheet opens, the background SSDP
  * round when nobody answers (`pipewire`'s `rescan_in_background`: "the list fills itself"), at most
  * one round in flight. Only on Wi-Fi ([onWifi]); without it the cache is served stale and no round
- * starts (the cabin case, §6.4). Blocking: call off the main thread.
+ * starts (the cabin case, §6.4). [state] is what the sheet shows, published on every refresh and when
+ * a round starts and ends ("the rows refresh when it ends", qa-26a-step1-code L3). Blocking: call
+ * [refresh], [refreshTopology] and [scanNow] off the main thread.
  */
 class RoomDirectory(
     private val cache: SpeakerCache,
@@ -144,11 +150,16 @@ class RoomDirectory(
     private val log: (String) -> Unit = {},
 ) {
     private val roundRunning = AtomicBoolean(false)
+    private val views = MutableStateFlow(RoomsView(emptyList(), stale = false, scanning = false))
+
+    /** The sheet's rows; empty until the first [view] or [refresh] (the file is never read on construction). */
+    val state: StateFlow<RoomsView> = views.asStateFlow()
 
     val scanning: Boolean get() = roundRunning.get()
 
-    /** The cache as it is (a plain read). */
-    fun view(stale: Boolean = false): RoomsView = RoomsView(SpeakerCache.rooms(cache.load()), stale, scanning)
+    /** The cache as it is (a plain read), published. */
+    fun view(stale: Boolean = false): RoomsView =
+        RoomsView(SpeakerCache.rooms(cache.load()), stale, scanning).also { views.value = it }
 
     /**
      * `refresh_topology`: GetZoneGroupState against the cached speakers in uid order until one
@@ -185,18 +196,27 @@ class RoomDirectory(
         view(stale = true)
     }
 
-    /** One SSDP round off the caller's thread; false when one already runs (or no Wi-Fi). */
+    /**
+     * One SSDP round off the caller's thread; false when one already runs (or no Wi-Fi). The flag
+     * is cleared when the job completes in any way - also when the scope was cancelled before the
+     * round ever ran (qa-26a-step1-code L4) - and the rows are published when it ends.
+     */
     fun rescanInBackground(): Boolean {
         if (!onWifi() || !roundRunning.compareAndSet(false, true)) return false
-        scope.launch {
-            try {
-                val doc = scanNow()
-                log("background scan: ${doc.players.size} speaker(s) cached")
+        views.update { it.copy(scanning = true) }
+        val job = scope.launch {
+            val answered = try {
+                round().also { log("background scan: ${if (it) "the household answered" else "nobody answered"}") }
             } catch (e: Exception) {
                 log("background scan failed (${e.javaClass.simpleName})")
-            } finally {
-                roundRunning.set(false)
+                false
             }
+            // the new rows, still stale if no household answered; scanning ends below
+            views.value = RoomsView(SpeakerCache.rooms(cache.load()), stale = !answered && views.value.stale, scanning = true)
+        }
+        job.invokeOnCompletion {
+            views.update { it.copy(scanning = false) }
+            roundRunning.set(false)
         }
         return true
     }
@@ -206,16 +226,22 @@ class RoomDirectory(
      * topology answers (SSDP alone learns neither uids nor groups). Merges into the cache.
      */
     fun scanNow(): SpeakerDoc {
-        val hits = ssdp()
-        for (hit in hits) {
+        round()
+        return cache.load()
+    }
+
+    /** One round; true when a household answered and was merged in. */
+    private fun round(): Boolean {
+        for (hit in ssdp()) {
             try {
                 val household = Topology.parse(zoneGroupState(hit.ip, hit.port, PER_IP_MS)) ?: continue
-                return cache.applyTopology(household, scanned = true)
+                cache.applyTopology(household, scanned = true)
+                return true
             } catch (e: IOException) {
                 log("scan: ${e.javaClass.simpleName} from a speaker - trying the next")
             }
         }
-        return cache.load()
+        return false
     }
 
     companion object {
@@ -226,23 +252,26 @@ class RoomDirectory(
 
 /** A speaker by uid, for the transport. */
 fun interface SpeakerResolver {
-    /** [verify]: compare the uid at the cached ip (the play path only); a mismatch is [UnknownUid]. */
-    fun speaker(uid: String, verify: Boolean): SpeakerControl
+    /**
+     * [verify]: compare the uid at the cached ip (the play path only); a mismatch is [UnknownUid].
+     * [budgetMs]: one time budget for every call of the returned speaker (SoapSpeaker), or null.
+     */
+    fun speaker(uid: String, verify: Boolean, budgetMs: Long?): SpeakerControl
 }
 
 /** `_speaker(uid)`: the cached ip, no discovery; an unreachable speaker is left to the poller. */
 class CachedSpeakers(private val cache: SpeakerCache, private val soap: Soap) : SpeakerResolver {
-    override fun speaker(uid: String, verify: Boolean): SpeakerControl {
+    override fun speaker(uid: String, verify: Boolean, budgetMs: Long?): SpeakerControl {
         val rec = cache.resolve(uid) ?: throw UnknownUid(uid)
         if (verify) {
             val at = try {
-                soap.uidOf(rec.ip, rec.port)
+                soap.uidOf(rec.ip, rec.port, budgetMs)
             } catch (_: SpeakerUnreachable) {
                 null // unreachable: let the caller classify; no rescan here (the play path's failure does it)
             }
             if (at != null && at != uid) throw UnknownUid(uid)
         }
-        return SoapSpeaker(soap, rec.ip, rec.port, uid)
+        return SoapSpeaker(soap, rec.ip, rec.port, uid, budgetMs)
     }
 }
 
