@@ -7,8 +7,14 @@ These steps get Kids Device MDM running on a Raspberry Pi Zero 2 W. Only 64-bit 
 SSH into the Pi, then run:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/install.sh | sudo bash
+curl -fsSLo install.sh https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/install.sh
+less install.sh        # it runs as root: read it first
+sudo bash install.sh
 ```
+
+(Downloaded to a file rather than piped into `sudo bash`, so what runs as root is what you read, and a cut-off
+download never runs half a script. The server it installs is checked against the project's signing key - "Release
+signing" under "Updating".)
 
 This downloads the newest server release (the newest `server-vX.Y.Z` release of the
 [`palchrb/vibb-launcher`](https://github.com/palchrb/vibb-launcher) monorepo), sets it up as a background service that starts on boot, and prints an admin username/password at the end — **save that password**, you'll need it to log in the first time (and you'll be asked to change it immediately after).
@@ -292,7 +298,8 @@ before it gets a version tag, and publishes the GitHub release only after that.
 ## Updating
 
 ```
-curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/update.sh | sudo bash
+curl -fsSLo update.sh https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/update.sh
+sudo bash update.sh
 ```
 
 Downloads the newest stable `server-vX.Y.Z` release (prereleases and drafts are skipped), checks its signature
@@ -305,8 +312,9 @@ backups are pruned (newest 3 kept) only after the new version is running, so fai
 pre-update copy.
 
 To install from a different fork, prefix `bash` with `KPS_REPO=owner/repo` (for both `install.sh` and `update.sh`):
-`... | sudo KPS_REPO=someone/vibb-launcher bash`. The fork must keep this repo's layout (`server/deploy/`) and publish
-server releases as `server-vX.Y.Z`. The root-side updater remembers the repo it was installed from.
+`sudo KPS_REPO=someone/vibb-launcher bash install.sh`, with the fork's own script. The fork must keep this repo's layout
+(`server/deploy/`), publish server releases as `server-vX.Y.Z`, and sign them with its own key, pinned in its scripts
+("Release signing"). The root-side updater remembers the repo it was installed from.
 
 **Installs from before the monorepo** (installed from `palchrb/kid-phone-server`): the server itself follows the move
 (`SERVER_RELEASE_REPO=palchrb/kid-phone-server` and the old `LAUNCHER_APK_URL` in `.env` are read as the new defaults,

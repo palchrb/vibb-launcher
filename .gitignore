@@ -5,3 +5,11 @@
 
 # scripts/smoke-test.sh screenshots (default OUT_DIR).
 smoke-*/
+
+# Signing keys never go into the repo (security review L10): Android keystores, PKCS#12, raw
+# keys - and the server's minisign secret key (server/DEPLOY.md, "Release signing").
+*.jks
+*.keystore
+*.p12
+*.pk8
+*.key

@@ -185,10 +185,15 @@ fn provision_payload_defaults_and_wifi_handling() {
 #[test]
 fn reinstall_hint_uses_configured_repo() {
     let hint = crate::security::reinstall_hint("someone/vibb-launcher");
-    assert!(hint.contains(
-        "raw.githubusercontent.com/someone/vibb-launcher/master/server/deploy/install.sh"
-    ));
+    assert!(
+        hint.contains(
+            "raw.githubusercontent.com/someone/vibb-launcher/main/server/deploy/install.sh"
+        )
+    );
     assert!(hint.contains("KPS_REPO=someone/vibb-launcher"));
+    // Security review L10: never piped into a root shell.
+    assert!(!hint.contains("| sudo"), "{hint}");
+    assert!(hint.ends_with("bash kps-install.sh"), "{hint}");
 }
 
 #[test]

@@ -255,10 +255,11 @@ pub async fn watcher_needs_update() -> bool {
 /// root-side watcher/scheduler scripts are only ever refreshed by re-running
 /// install.sh (the in-app "Update now" button only swaps the app binary). `repo` is
 /// `config::ForkConfig::server_release_repo`. The `KPS_REPO=` prefix keeps a re-run installing
-/// from the same repo even when it isn't install.sh's built-in default.
+/// from the same repo even when it isn't install.sh's built-in default. Downloaded to a file and
+/// then run, never piped into a root shell (security review L10), from `main` - the only branch.
 pub fn reinstall_hint(repo: &str) -> String {
     format!(
-        "curl -fsSL https://raw.githubusercontent.com/{repo}/master/server/deploy/install.sh | sudo KPS_REPO={repo} bash"
+        "curl -fsSLo kps-install.sh https://raw.githubusercontent.com/{repo}/main/server/deploy/install.sh && sudo KPS_REPO={repo} bash kps-install.sh"
     )
 }
 

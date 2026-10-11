@@ -7,8 +7,9 @@
 # An older binary refuses to start against a database that newer migrations
 # have touched, so rolling back means restoring both - see DEPLOY.md.
 #
-# Usage (as root, e.g. via sudo):
-#   curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/update.sh | sudo bash
+# Usage (as root, e.g. via sudo), from a file rather than piped:
+#   curl -fsSLo update.sh https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/update.sh
+#   sudo bash update.sh
 #
 # KPS_REPO=owner/repo picks a different fork (same as install.sh). The
 # root-side updater passes the repo it was installed from, and KPS_TAG=server-vX.Y.Z

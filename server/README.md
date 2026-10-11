@@ -25,7 +25,9 @@ Rust + [Axum](https://github.com/tokio-rs/axum) + SQLite (via `sqlx`, WAL mode) 
 See [DEPLOY.md](DEPLOY.md) for the full walkthrough. Short version, on a 64-bit Raspberry Pi (or any aarch64 Linux box):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/master/server/deploy/install.sh | sudo bash
+curl -fsSLo install.sh https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/install.sh
+less install.sh        # it runs as root: read it first
+sudo bash install.sh
 ```
 
 This installs a systemd service listening on `127.0.0.1:3100` only - put it behind [Tailscale](https://tailscale.com/) (or your own reverse proxy/VPN) to reach it remotely. It prints a one-time admin password on first install; you'll be forced to change it and set up two-factor login before anything else works.

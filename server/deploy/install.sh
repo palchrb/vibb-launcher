@@ -2,11 +2,13 @@
 # Kid Phone Server — installer for a Raspberry Pi / DietPi (or any Linux/
 # systemd box).
 #
-# Usage (as root, e.g. via sudo):
-#   curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/install.sh | sudo bash
+# Usage (as root, e.g. via sudo) - downloaded to a file and read first, never piped into a root
+# shell (security review L10):
+#   curl -fsSLo install.sh https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/install.sh
+#   sudo bash install.sh
 #
 # To install from a different fork, set KPS_REPO=owner/repo (e.g.
-# `... | sudo KPS_REPO=someone/vibb-launcher bash`; the fork must keep
+# `sudo KPS_REPO=someone/vibb-launcher bash install.sh`, the fork's own copy; the fork must keep
 # this monorepo's layout and server-v* release tags). This script never
 # reads the app's .env: that file is writable by the service user, and this
 # runs as root.
