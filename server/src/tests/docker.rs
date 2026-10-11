@@ -179,6 +179,13 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
         .execute(&db)
         .await
         .unwrap();
+    // Everything in the main file before the pool goes: a connection that is still closing
+    // would otherwise checkpoint (and delete -wal) after the restore moved the files. At startup
+    // nothing is open yet, so this is only the test's concern.
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
     db.close().await;
 
     backup_zip(dir.path(), "backup-20261009-020000.zip", Some(&backup_db));
@@ -242,6 +249,13 @@ async fn a_restored_database_that_wont_open_is_put_back() {
         .execute(&db)
         .await
         .unwrap();
+    // Everything in the main file before the pool goes: a connection that is still closing
+    // would otherwise checkpoint (and delete -wal) after the restore moved the files. At startup
+    // nothing is open yet, so this is only the test's concern.
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&db)
+        .await
+        .unwrap();
     db.close().await;
     // A "database" that isn't one.
     let junk = dir.path().join("junk.db");
@@ -262,7 +276,23 @@ async fn a_restored_database_that_wont_open_is_put_back() {
         .expect("applied");
     assert!(crate::try_connect_db(&url).await.is_err(), "junk opened");
     startup::undo_restore(&live, &restored).unwrap();
-    assert_eq!(admin_names(&url).await, ["live"]);
+    let listing = |dir: &Path| -> Vec<String> {
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|e| format!("{:?} {:?}", e.file_name(), e.metadata().map(|m| m.len())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        admin_names(&url).await,
+        ["live"],
+        "data: {:?}, aside: {:?}",
+        listing(&data),
+        listing(&restored.prerestore_dir)
+    );
 }
 
 #[tokio::test]

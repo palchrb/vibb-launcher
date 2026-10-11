@@ -161,12 +161,17 @@ pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<Applie
 
 /// Puts the prerestore copy back (the restored database didn't open): there is no shell in the
 /// container to break a restart loop by hand.
+///
+/// Each file goes back through a temp copy and a rename: a fresh inode, so a connection to the
+/// refused file that is still closing can't touch the database put back.
 pub fn undo_restore(db: &Path, restore: &AppliedRestore) -> Result<(), String> {
     for suffix in DB_SUFFIXES {
         let target = with_suffix(db, suffix);
         let copy = restore.prerestore_dir.join(format!("kidphone.db{suffix}"));
         if copy.exists() {
-            std::fs::copy(&copy, &target)
+            let staged = with_suffix(db, &format!("{suffix}.undo-tmp"));
+            std::fs::copy(&copy, &staged)
+                .and_then(|_| std::fs::rename(&staged, &target))
                 .map_err(|err| format!("couldn't put {} back: {err}", copy.display()))?;
         } else {
             let _ = std::fs::remove_file(&target);
