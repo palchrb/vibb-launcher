@@ -475,7 +475,8 @@ pub async fn device_edge(
     hold_until_done(response, permit)
 }
 
-fn evict_oldest<K: Clone + Eq + std::hash::Hash, V, T: Ord>(
+/// Drops the entry `age` says is oldest (maps capped at their key limit).
+pub(crate) fn evict_oldest<K: Clone + Eq + std::hash::Hash, V, T: Ord>(
     map: &mut HashMap<K, V>,
     age: impl Fn(&V) -> T,
 ) {

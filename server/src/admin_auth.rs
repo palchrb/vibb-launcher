@@ -366,10 +366,7 @@ pub async fn csrf_guard(State(state): State<AppState>, request: Request, next: N
                 "csrf_refused",
                 &client.map(|c| c.key()).unwrap_or_default(),
                 ip.as_deref(),
-                &format!(
-                    "{reason} ({method} {})",
-                    path.chars().take(100).collect::<String>()
-                ),
+                &format!("{reason} ({method} {})", crate::audit::clip(path, 100)),
             )
             .await;
         return (

@@ -14,13 +14,6 @@ use crate::{AppState, admin_auth};
 /// Usernames in the security log are cut to this many characters (security review M7).
 const MAX_LOGGED_USERNAME: usize = 64;
 
-fn clip(text: &str, max: usize) -> &str {
-    match text.char_indices().nth(max) {
-        Some((index, _)) => &text[..index],
-        None => text,
-    }
-}
-
 const BANNED_MESSAGE: &str =
     "Too many failed attempts from your network. Try again in about an hour.";
 
@@ -102,7 +95,7 @@ pub async fn login(
         "INSERT INTO security_events (event_type, username, ip_address) \
          VALUES ('login_failed', ?, ?) RETURNING id",
     )
-    .bind(clip(&form.username, MAX_LOGGED_USERNAME))
+    .bind(crate::audit::clip(&form.username, MAX_LOGGED_USERNAME))
     .bind(&ip)
     .fetch_one(&state.db)
     .await

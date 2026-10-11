@@ -123,7 +123,7 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
                 refusal.as_str(),
                 client.peer,
                 request.method(),
-                truncate(request.uri().path(), 100)
+                crate::audit::clip(request.uri().path(), 100)
             );
             state
                 .audit
@@ -137,13 +137,6 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
                 .await;
             StatusCode::FORBIDDEN.into_response()
         }
-    }
-}
-
-fn truncate(text: &str, max: usize) -> &str {
-    match text.char_indices().nth(max) {
-        Some((index, _)) => &text[..index],
-        None => text,
     }
 }
 

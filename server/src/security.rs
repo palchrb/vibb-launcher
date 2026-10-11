@@ -530,7 +530,7 @@ pub async fn require_device_token(
         let ip = client.map(|c| c.describe());
         let detail = format!(
             "{what} for {}{}",
-            request.uri().path().chars().take(100).collect::<String>(),
+            crate::audit::clip(request.uri().path(), 100),
             if blocked {
                 " - this client is now refused for 10 minutes"
             } else {

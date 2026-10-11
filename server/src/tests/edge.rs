@@ -436,3 +436,47 @@ async fn a_stalled_enroll_body_times_out() {
     assert_eq!(res.status, StatusCode::REQUEST_TIMEOUT);
     assert!(started.elapsed() < Duration::from_secs(10));
 }
+
+/// QA 22 M3: a flood from many addresses writes at most `audit::ROWS_PER_MINUTE` rows of a kind a
+/// minute, plus one summary row that counts the rest.
+#[tokio::test]
+async fn a_flood_from_many_addresses_has_a_row_budget() {
+    let app = TestApp::new().await;
+    for n in 0..10_000u32 {
+        app.state
+            .audit
+            .record(
+                &app.db,
+                "device_auth_failed",
+                &format!("2001:db8:{:x}:{:x}::/64", n / 0x10000, n % 0x10000),
+                Some("2001:db8::1"),
+                "invalid device token",
+            )
+            .await;
+    }
+    app.state.audit.flush(&app.db).await;
+    let rows: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT detail FROM security_events WHERE event_type = 'device_auth_failed' ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(rows.len() as u32, crate::audit::ROWS_PER_MINUTE + 1);
+    let summary = rows.last().unwrap().as_deref().unwrap();
+    assert!(
+        summary.starts_with("9940 more in this minute from at least 1000 addresses"),
+        "{summary}"
+    );
+    // Another kind has its own budget.
+    app.state
+        .audit
+        .record(&app.db, "enroll_failed", "203.0.113.7", None, "typed code")
+        .await;
+    let enroll: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'enroll_failed'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(enroll, 1);
+}

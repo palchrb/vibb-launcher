@@ -575,7 +575,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   believed only from a tailnet client; `/api/devices/*` skips that check (tagged phones have no login). `/healthz`
   (`SELECT 1`, "ok") skips every guard. Refused: empty 403 + `admin_refused` through `AppState.audit`
   (`src/audit.rs`: one row per kind and client key per minute, counts flushed into the detail every 30 s by
-  `audit::run_flusher`).
+  `audit::run_flusher`; at most `ROWS_PER_MINUTE` = 60 such rows per kind and minute across all keys, the rest
+  counted into one summary row - QA 22 M3).
 - **Device edge** (S2, on both listeners, in `device_routes()`): `limits::device_edge` (a request without a valid token -
   looked up in memory - takes one of 64 slots, 503 past it; a valid token takes none, QA 22 M2; 30 s timeout except the SSE stream and file downloads; `Cache-Control` `no-store` unless the route set
   one, `private, no-cache` for an `ETag` route, `private` added to anything else; `nosniff`; CSP `default-src 'none';
