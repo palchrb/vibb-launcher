@@ -37,7 +37,9 @@ struct LocateTemplate {
     last_fix: Option<String>,
     /// `captured_at` of the newest fix ("" if none) - the page waits for a newer one after
     /// "Update location now".
-    last_fix_at: String,
+    /// The newest fix's time as a JavaScript string literal (JSON, with `<`, `>` and `&` escaped),
+    /// for the page's script - never HTML-escaped text inside quotes (security review H2).
+    last_fix_at_js: String,
     /// Just pressed "Update location now": the page polls for a fresh fix.
     waiting_for_fix: bool,
     /// The phone's answer to the newest `locate` command ("fix ±12 m, 3 s old", "location is
@@ -68,6 +70,18 @@ pub async fn locate_result_json(
         Some((cmd, result)) => Json(serde_json::json!({ "id": cmd, "result": result })),
         None => Json(serde_json::json!({})),
     }
+}
+
+/// `value` as a JavaScript string literal safe inside a `<script>` element: JSON with `<`, `>`,
+/// `&` and the line separators escaped, so no value can close the element or the string.
+pub(crate) fn js_string(value: &str) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|_| "\"\"".to_string())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 /// "3 min ago (±12 m)" for a fix captured at `captured_at` (RFC 3339 from the phone).
@@ -167,7 +181,7 @@ async fn render_locate_page(
             location_retention,
             retention_choices: crate::retention::LOCATION_RETENTION_DAYS.to_vec(),
             last_fix,
-            last_fix_at,
+            last_fix_at_js: js_string(&last_fix_at),
             waiting_for_fix,
             locate_result,
         }

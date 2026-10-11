@@ -159,9 +159,12 @@
                 var latlngs = points.map(function (p) { return [p.latitude, p.longitude]; });
                 L.polyline(latlngs, { color: '#3388ff' }).addTo(map);
                 var last = points[points.length - 1];
+                // A DOM node with textContent: the phone's values are never HTML (review H2).
+                var popup = document.createElement('span');
+                popup.textContent = 'Last seen ' + String(last.captured_at);
                 L.marker([last.latitude, last.longitude])
                     .addTo(map)
-                    .bindPopup('Last seen ' + last.captured_at)
+                    .bindPopup(popup)
                     .openPopup();
                 map.fitBounds(latlngs, { maxZoom: 16, padding: [30, 30] });
             })
@@ -170,7 +173,7 @@
     {% if waiting_for_fix %}
     // After "Update location now": look for a fix newer than the one shown, for up to a minute.
     (function () {
-        var shown = "{{ last_fix_at }}";
+        var shown = {{ last_fix_at_js|safe }};
         var tries = 0;
         var timer = setInterval(function () {
             tries += 1;

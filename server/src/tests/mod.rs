@@ -14,6 +14,7 @@ mod enrollment;
 mod hardening;
 mod launcher_ui;
 mod listeners;
+mod locations;
 mod music;
 mod music_sweep;
 mod play;

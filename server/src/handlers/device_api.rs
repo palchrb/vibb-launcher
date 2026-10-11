@@ -954,20 +954,31 @@ pub async fn status(
     // reading available, not just after a `locate` command - see
     // LocationReport's doc comment. Pruned by retention::prune (the phone's
     // location_retention_days, default 7; the newest fix is kept).
+    // Only a fix that is what it says (security review H2): the time is RFC 3339 (stored
+    // normalised, UTC with milliseconds), the coordinates are on Earth and the accuracy isn't
+    // negative. Anything else is dropped (and logged); the rest of the report is kept.
     if let Some(loc) = report.location {
-        sqlx::query(
-            "INSERT INTO device_locations \
-             (device_id, latitude, longitude, accuracy_meters, captured_at) \
-             VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(device.id)
-        .bind(loc.latitude)
-        .bind(loc.longitude)
-        .bind(loc.accuracy_meters)
-        .bind(&loc.captured_at)
-        .execute(&state.db)
-        .await
-        .ok();
+        match crate::models::checked_location(&loc) {
+            Some(captured_at) => {
+                sqlx::query(
+                    "INSERT INTO device_locations \
+                     (device_id, latitude, longitude, accuracy_meters, captured_at) \
+                     VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(device.id)
+                .bind(loc.latitude)
+                .bind(loc.longitude)
+                .bind(loc.accuracy_meters)
+                .bind(captured_at)
+                .execute(&state.db)
+                .await
+                .ok();
+            }
+            None => tracing::warn!(
+                device_id = device.id,
+                "dropped a location that isn't valid (time, coordinates or accuracy)"
+            ),
+        }
     }
 
     StatusCode::NO_CONTENT

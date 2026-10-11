@@ -751,6 +751,32 @@ pub struct LocationReport {
     pub captured_at: String,
 }
 
+/// The fix's time as stored (`YYYY-MM-DDTHH:MM:SS.mmmZ`, so text order is time order), or `None`
+/// when the report isn't a real fix (security review H2): `captured_at` must be RFC 3339 (the
+/// launcher sends `Instant.toString()`), latitude within +-90, longitude within +-180, the
+/// accuracy finite and not negative.
+pub fn checked_location(loc: &LocationReport) -> Option<String> {
+    let finite_in = |value: f64, limit: f64| value.is_finite() && value.abs() <= limit;
+    if !finite_in(loc.latitude, 90.0) || !finite_in(loc.longitude, 180.0) {
+        return None;
+    }
+    if loc
+        .accuracy_meters
+        .is_some_and(|accuracy| !accuracy.is_finite() || accuracy < 0.0)
+    {
+        return None;
+    }
+    if loc.captured_at.len() > 64 {
+        return None;
+    }
+    let time = chrono::DateTime::parse_from_rfc3339(loc.captured_at.trim()).ok()?;
+    Some(
+        time.with_timezone(&chrono::Utc)
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string(),
+    )
+}
+
 #[derive(Deserialize)]
 pub struct CommandResultRequest {
     pub command_id: i64,
