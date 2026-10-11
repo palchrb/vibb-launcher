@@ -173,6 +173,27 @@ internal fun inputMethodPackages(context: Context): Set<String> = try {
 }
 
 /**
+ * The enabled and default keyboards, and which of them are system apps - for the keyboard rule
+ * of design 24b §1.5 ([keptInputMethods]). Empty on an error (then none is kept on purpose; the
+ * parent PIN has its own keypad).
+ */
+internal fun inputMethodsWithSystem(context: Context): Pair<Set<String>, Set<String>> = try {
+    val pm = context.packageManager
+    val enabled = inputMethodPackages(context)
+    val system = enabled.filterTo(mutableSetOf()) { pkg ->
+        try {
+            (pm.getApplicationInfo(pkg, PackageManager.MATCH_UNINSTALLED_PACKAGES).flags and ApplicationInfo.FLAG_SYSTEM) != 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+    enabled to system
+} catch (e: Exception) {
+    Log.w(LOG_TAG, "Couldn't look up the input methods", e)
+    emptySet<String>() to emptySet()
+}
+
+/**
  * Suspends and hides installed apps that aren't on [PolicyResponse.allowlist] (`null` means
  * unmanaged: nothing suspended; `[]` means nothing allowed), and - only when the server says so
  * via [PolicyResponse.kioskDesired] - pins the device to the allowed packages via Android's
@@ -205,6 +226,12 @@ object AppEnforcer {
      * the PIN lock's camera release never lifts one of these (CameraLock). */
     @Volatile
     var lastPlanSuspend: Set<String>? = null
+        private set
+
+    /** The last [apply] set its permitted accessibility and keyboard lists (design 24b §1.5): AOSP
+     * refuses a list that leaves out an enabled non-system service, and the last list stays. */
+    @Volatile
+    var permittedListsOk: Boolean = true
         private set
 
     /**
@@ -267,6 +294,10 @@ object AppEnforcer {
         val ownPackage = context.packageName
         val pm = context.packageManager
         val installedPackages = controllablePackages(pm)
+        // Design 24b §1.6: apps installed or re-signed in a parent-PIN window that failed the
+        // relock's signer check count as not allowlisted - hidden, never pinned, not in the lists.
+        val allowlist = effectiveAllowlist(policy?.allowlist, WindowRelock.blockedPackages(context))
+        val (enabledImes, systemImes) = inputMethodsWithSystem(context)
         var playState = PlayRuntime.state(context)
         if (playState.installMode && scheduleLocked) {
             // A time rule or the used-up budget began during install mode: it ends (QA #3).
@@ -274,7 +305,7 @@ object AppEnforcer {
             playState = playState.copy(installMode = false)
         }
         val plan = computeEnforcementPlan(
-            allowlist = policy?.allowlist,
+            allowlist = allowlist,
             kioskDesired = policy?.kioskDesired == true,
             serverLockTaskFeatures = policy?.lockTaskFeatures ?: 0,
             overrideActive = overrideActive,
@@ -286,7 +317,7 @@ object AppEnforcer {
             smsPackages = smsPackages(CallSystem.defaultSmsPackage(context)),
             scheduleLocked = scheduleLocked,
             alarmApp = alarmAppPackage(context),
-            inputMethods = inputMethodPackages(context),
+            inputMethods = keptInputMethods(enabledImes, systemImes, allowlist),
             lockUsableApps = lock.usableApps,
             ruleBlocksCalls = lock.callsBlocked,
             timeRulesSet = timePolicy != null && (timePolicy.rules.isNotEmpty() || hasBudget(timePolicy)),
@@ -368,6 +399,11 @@ object AppEnforcer {
         }
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
+        // Design 24b §1.5, after hiding (a hidden package's services leave the enabled lists): the
+        // accessibility and keyboard lists, and no hotspot or tethering - while apps are managed
+        // and no window is open. Setting the tethering restriction untethers.
+        permittedListsOk = applyPermittedLists(dpm, admin, plan.permittedAccessibility, plan.permittedInputMethods)
+        setRestriction(dpm, admin, UserManager.DISALLOW_CONFIG_TETHERING, plan.restrictTethering)
         // The PIN lock's camera targets for this phone now (no PackageManager work at screen-off).
         try {
             com.kidslauncher.mdm.lock.CameraLock.refreshTargets(context, installedPackages.toSet())
@@ -710,6 +746,38 @@ object AppEnforcer {
         }
     }
 
+    /**
+     * The permitted accessibility services and keyboards (design 24b §1.5), set only when they
+     * differ. `false` when AOSP refused one (an enabled non-system service outside the list - the
+     * last list stays) or it threw; the relock reports it.
+     */
+    private fun applyPermittedLists(dpm: DevicePolicyManager, admin: ComponentName, accessibility: List<String>?, inputMethods: List<String>?): Boolean {
+        var ok = true
+        try {
+            if (permittedListChanged(dpm.getPermittedAccessibilityServices(admin), accessibility) &&
+                !dpm.setPermittedAccessibilityServices(admin, accessibility)
+            ) {
+                Log.w(LOG_TAG, "setPermittedAccessibilityServices refused - an enabled service is outside the list")
+                ok = false
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the permitted accessibility services", e)
+            ok = false
+        }
+        try {
+            if (permittedListChanged(dpm.getPermittedInputMethods(admin), inputMethods) &&
+                !dpm.setPermittedInputMethods(admin, inputMethods)
+            ) {
+                Log.w(LOG_TAG, "setPermittedInputMethods refused - an enabled keyboard is outside the list")
+                ok = false
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the permitted input methods", e)
+            ok = false
+        }
+        return ok
+    }
+
     /** See [keyguardDisabledFeatures] - set only when it differs. */
     private fun applyKeyguardFeatures(dpm: DevicePolicyManager, admin: ComponentName, managed: Boolean) {
         try {
@@ -1049,6 +1117,7 @@ object AppEnforcer {
         val decision = currentPolicyDecision()
         val overrideActive = OfflineOverride.isActive() || RestrictionsPause.isActive()
         val lock = TimeRulesRuntime.currentLock(context, decision.policy, overrideActive)
+        val relockBlocked = WindowRelock.blockedPackages(context)
         val suspend = shouldSuspendNewPackage(
             packageName = packageName,
             decision = decision,
@@ -1058,6 +1127,7 @@ object AppEnforcer {
             scheduleLocked = lock.locked,
             lockUsableApps = lock.usableApps,
             recentsPackage = systemRecentsPackage(context),
+            relockBlocked = relockBlocked,
         )
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         // A newly installed app can't sneak in its own calls while calls are managed.
@@ -1079,7 +1149,7 @@ object AppEnforcer {
         // Hidden only if not allowed at all - the schedule lock alone just suspends.
         val hide = shouldSuspendNewPackage(
             packageName, decision, overrideActive, context.packageName, systemDialerPackage(context),
-            recentsPackage = systemRecentsPackage(context),
+            recentsPackage = systemRecentsPackage(context), relockBlocked = relockBlocked,
         )
 
         try {

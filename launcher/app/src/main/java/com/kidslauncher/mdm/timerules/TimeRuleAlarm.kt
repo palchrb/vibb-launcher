@@ -64,8 +64,10 @@ object TimeRuleAlarm {
 class TimeRuleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            ACTION_BOUNDARY, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_BOOT_COMPLETED ->
+            ACTION_BOUNDARY, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED ->
                 TimeRulesRuntime.recheck(context.applicationContext)
+            Intent.ACTION_BOOT_COMPLETED ->
+                TimeRulesRuntime.recheck(context.applicationContext, com.kidslauncher.mdm.server.RelockTrigger.BOOT)
             else -> Log.w(LOG_TAG, "Ignoring ${intent.action}")
         }
     }

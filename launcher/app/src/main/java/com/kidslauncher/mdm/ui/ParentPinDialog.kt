@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.ui
 
 import android.content.Context
 import android.view.View
-import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
@@ -20,7 +19,9 @@ import kotlinx.coroutines.withContext
  * §2.4; the PIN lock's "Parent code" has its own layout and uses [resultText]). Every result shows
  * in the dialog's error line - never a toast, which doesn't show while a screen-time budget sets
  * `DISALLOW_CREATE_WINDOWS`. A refusal before any try (no PIN, a running lockout) opens the dialog
- * in that state with OK disabled; after a lockout OK stays disabled - Cancel and reopen.
+ * in that state with OK disabled; after a lockout OK stays disabled - Cancel and reopen. The PIN is
+ * typed on our own keypad ([ParentPinKeypad], design 24b §1.8), never through a keyboard, and the
+ * dialog is kept out of screenshots.
  */
 object ParentPinDialog {
 
@@ -46,9 +47,10 @@ object ParentPinDialog {
             .setNegativeButton(android.R.string.cancel) { _, _ -> onCancel() }
             .setPositiveButton(android.R.string.ok, null)
             .create()
+        ParentPinKeypad.secure(dialog)
         dialog.show()
         val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-        val input = dialog.findViewById<EditText>(R.id.dialog_offline_override_pin_input)
+        val keypad = dialog.findViewById<View>(R.id.dialog_offline_override_pin_keypad)?.let { ParentPinKeypad.bind(it) }
         val error = dialog.findViewById<TextView>(R.id.dialog_offline_override_pin_error)
         fun showError(text: String?) {
             error?.text = text
@@ -57,10 +59,11 @@ object ParentPinDialog {
         opening(context, notConfigured, R.string.lock_unlock_code_locked_out).let {
             showError(it.text)
             ok.isEnabled = it.okEnabled
+            keypad?.setEnabled(it.okEnabled)
         }
         // Set after show() so a wrong PIN keeps the dialog open.
         ok.setOnClickListener {
-            val pin = input?.text?.toString().orEmpty()
+            val pin = keypad?.pin.orEmpty()
             ok.isEnabled = false
             scope.launch {
                 val result = withContext(Dispatchers.Default) { ParentPin.check(context, entry, pin) }
@@ -69,9 +72,10 @@ object ParentPinDialog {
                     onOk()
                     return@launch
                 }
-                if (result is ParentPinResult.Wrong || result is ParentPinResult.LockedOut) input?.text?.clear()
+                if (result is ParentPinResult.Wrong || result is ParentPinResult.LockedOut) keypad?.clear()
                 showError(resultText(context, result, R.string.lock_unlock_code_wrong, notConfigured, R.string.lock_unlock_code_locked_out))
                 ok.isEnabled = okAfter(result)
+                keypad?.setEnabled(okAfter(result))
             }
         }
         return dialog

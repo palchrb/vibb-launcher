@@ -653,8 +653,9 @@ object PinLockRuntime {
                 // Design 19: a command stream that is down or went silent while the phone slept
                 // reconnects now - a lift or a lock matters most while the phone is in use.
                 com.kidslauncher.mdm.server.CommandListenerService.checkStream("screen")
-                // May start the time-rule screen - the PIN lock then goes above it.
-                TimeRulesRuntime.recheck(app)
+                // May start the time-rule screen - the PIN lock then goes above it. A parent-PIN
+                // window that ended in the phone's sleep locks again now (design 24b).
+                TimeRulesRuntime.recheck(app, com.kidslauncher.mdm.server.RelockTrigger.SCREEN_ON)
                 dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase))
                 // Design 16d decision 1: the boot's first screen-on heals the status bar once more.
                 if (intent.action == Intent.ACTION_SCREEN_ON && !screenOnHealed) {

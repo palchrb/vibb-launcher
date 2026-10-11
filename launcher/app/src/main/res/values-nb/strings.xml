@@ -279,4 +279,13 @@
     <string name="music_next">Neste</string>
     <string name="lock_media_unlock">Lås opp</string>
     <string name="lock_media_back">Tilbake til avspilling</string>
+    <!-- Design 24b: et foreldrekode-vindu som låses igjen av seg selv (varsel, banner på Hjem). -->
+    <string name="notification_channel_window">Åpnet med foreldrekoden</string>
+    <string name="window_override_open">Åpnet med foreldrekoden til %1$s</string>
+    <string name="window_pause_open">Alle begrensninger er satt på pause til %1$s</string>
+    <string name="window_notification_text">Telefonen låses igjen av seg selv da.</string>
+    <string name="window_lock_again">Lås igjen</string>
+    <string name="home_window_open">Åpen til %1$s</string>
+    <!-- Design 24b §1.8: foreldrekodens eget tastatur. -->
+    <string name="parent_pin_keypad_dots">%1$d sifre tastet</string>
 </resources>

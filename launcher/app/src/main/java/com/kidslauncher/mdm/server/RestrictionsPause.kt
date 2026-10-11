@@ -101,10 +101,13 @@ object RestrictionsPause {
      * after a correct PIN and its committed `unlocked` event (design 24 §2). Any thread. */
     fun start(context: Context, start: WindowStart) {
         val mdm = LauncherPreferences.mdm()
-        mdm.restrictionsPausedUntil(start.untilWallMs)
-        mdm.restrictionsPausedElapsedStart(start.elapsedStartMs)
-        mdm.restrictionsPausedBoot(start.bootCount)
-        mdm.restrictionsPaused(true)
+        // Design 24b: the relock marker first - the pause locks again by itself when it ends.
+        WindowRelock.opened(context, WindowKind.PAUSE, start) {
+            mdm.restrictionsPausedUntil(start.untilWallMs)
+            mdm.restrictionsPausedElapsedStart(start.elapsedStartMs)
+            mdm.restrictionsPausedBoot(start.bootCount)
+            mdm.restrictionsPaused(true)
+        }
         reapply(context)
     }
 

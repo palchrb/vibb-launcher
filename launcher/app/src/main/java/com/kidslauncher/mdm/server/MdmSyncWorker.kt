@@ -162,6 +162,15 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     mdm.lockKey(lock.key())
     // Derives the same lock from the same policy and suspends apps while it's on.
     AppEnforcer.apply(context, decision.policy, fromSync = true)
+    // Design 24b: a parent-PIN window that ended (this sync ends an override) locks again now,
+    // before the status report, so the report carries the relock.
+    try {
+        WindowRelock.relockInSync(context)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Relock in the sync failed", e)
+    }
     // A lock that began with this policy (a lift ended early, a new rule): show it now, also over
     // an app (not over a call), then re-arm the boundary alarm and the screen-time timer.
     val appContext = context.applicationContext

@@ -387,6 +387,60 @@ class EnforcementPlanTest {
         assertFalse(plan(listOf("org.example.music"), rules = true).restrictCreateWindows)
     }
 
+    // ---- design 24b: windows that lock again --------------------------------------------------
+
+    @Test
+    fun `under an override or pause everything opens as before - apps, kiosk, Settings, the lists`() {
+        val plan = plan(listOf("org.example.music"), overrideActive = true, ime = setOf("com.sideloaded.keyboard"))
+        assertTrue(plan.suspend.isEmpty())
+        assertTrue(plan.hide.isEmpty())
+        assertNull(plan.kioskPackages)
+        assertFalse(plan.restrictTethering)
+        assertNull(plan.permittedAccessibility)
+        assertNull(plan.permittedInputMethods)
+    }
+
+    @Test
+    fun `hotspot and the lists are blocked only while apps are managed and no window is open`() {
+        val managed = plan(listOf("org.example.music", "org.example.keys"))
+        assertTrue(managed.restrictTethering)
+        assertEquals(listOf("org.example.keys", "org.example.music"), managed.permittedAccessibility)
+        assertEquals(listOf("org.example.keys", "org.example.music"), managed.permittedInputMethods)
+        // Nothing allowed: only system services and keyboards.
+        assertEquals(emptyList<String>(), plan(emptyList()).permittedInputMethods)
+        // A time-rule lock doesn't change them.
+        assertTrue(plan(listOf("org.example.music"), locked = true).restrictTethering)
+        // Calls-only or unmanaged phones (QA #4): nothing.
+        for (calls in allCallStates) {
+            val callsOnly = plan(null, calls = calls)
+            assertFalse(callsOnly.restrictTethering)
+            assertNull(callsOnly.permittedAccessibility)
+            assertNull(callsOnly.permittedInputMethods)
+        }
+    }
+
+    @Test
+    fun `a keyboard sideloaded and enabled in a window is hidden outside windows`() {
+        val keyboards = keptInputMethods(setOf("com.android.inputmethod.latin", "com.sideloaded.keyboard"), setOf("com.android.inputmethod.latin"), listOf("org.example.music"))
+        val withKeyboard = listOf(OWN, DIALER, "org.example.music", "com.sideloaded.keyboard", "com.android.inputmethod.latin")
+        val plan = computeEnforcementPlan(listOf("org.example.music"), true, 0, false, withKeyboard, OWN, DIALER, inputMethods = keyboards)
+        assertTrue("com.sideloaded.keyboard" in plan.hide)
+        assertFalse("com.android.inputmethod.latin" in plan.suspend)
+        assertTrue("com.android.inputmethod.latin" in plan.neverRestrict)
+    }
+
+    @Test
+    fun `relock-blocked apps are hidden and never pinned`() {
+        val allowlist = effectiveAllowlist(listOf("org.example.music", "org.example.game"), setOf("org.example.game"))
+        val plan = plan(allowlist)
+        assertTrue("org.example.game" in plan.hide)
+        assertFalse("org.example.game" in plan.kioskPackages.orEmpty())
+        assertFalse("org.example.game" in plan.permittedAccessibility.orEmpty())
+        assertTrue("org.example.music" in plan.kioskPackages.orEmpty())
+        // During a window nothing is blocked.
+        assertTrue(plan(allowlist, overrideActive = true).hide.isEmpty())
+    }
+
     private companion object {
         const val OWN = "me.vibb.launcher"
         const val DIALER = "com.android.dialer"

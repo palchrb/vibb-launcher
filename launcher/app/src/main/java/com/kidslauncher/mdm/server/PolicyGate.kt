@@ -254,6 +254,7 @@ fun shouldSuspendNewPackage(
     scheduleLocked: Boolean = false,
     lockUsableApps: Set<String> = emptySet(),
     recentsPackage: String? = null,
+    relockBlocked: Set<String> = emptySet(),
 ): Boolean {
     if (overrideActive) return false
     if (packageName == ownPackage || packageName == systemDialer || packageName == recentsPackage) return false
@@ -263,5 +264,6 @@ fun shouldSuspendNewPackage(
     if (packageName in com.kidslauncher.mdm.play.PLAY_CORE) return false
     if (scheduleLocked && packageName !in lockUsableApps) return true
     val allowlist = decision.policy?.allowlist ?: return false
-    return packageName !in allowlist
+    // Design 24b §1.6: a relock-blocked package counts as not allowlisted.
+    return packageName !in allowlist || packageName in relockBlocked
 }

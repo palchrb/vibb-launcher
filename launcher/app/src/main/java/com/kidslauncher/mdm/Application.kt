@@ -299,7 +299,8 @@ class Application : android.app.Application() {
         // (alarms don't survive a reboot or a process kill by an update).
         com.kidslauncher.mdm.timerules.TimeRulesRuntime.init(this)
         com.kidslauncher.mdm.timerules.ScreenTimeTracker.init(this)
-        com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(this)
+        // A reboot ends every parent-PIN window: it locks again now (design 24b).
+        com.kidslauncher.mdm.timerules.TimeRulesRuntime.recheck(this, com.kidslauncher.mdm.server.RelockTrigger.BOOT)
 
         // The update fence (step 11): a fence recorded by this or an older build is checked now
         // (process start = boot, update, crash) - before the PIN lock, whose first chrome refresh
