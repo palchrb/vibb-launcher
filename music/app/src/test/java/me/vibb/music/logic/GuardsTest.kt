@@ -67,6 +67,61 @@ class GuardsTest {
         val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
         assertTrue("completed in onCreate", onCreate.contains("rendererReady.complete(Unit)"))
         assertEquals("and nowhere else", 1, Regex("""rendererReady\.complete\(""").findAll(service).count())
+        // step 3b: at once on the phone, after adopt's one classify on a room - and always (finally)
+        assertTrue(onCreate.contains("try {\n                if (choice.sonos) adopt(choice)\n            } finally {\n                rendererReady.complete(Unit)"))
+        assertFalse("no reset of renderer.json at start any more", onCreate.contains("RendererChoice.local"))
+    }
+
+    @Test
+    fun `adopt at start sends nothing and starts nothing - our live stream or the phone`() {
+        // design 26a §4.7: zero transport commands, the bar comes back paused unless the speaker plays on
+        val adopt = service.substringAfter("private suspend fun adopt(choice: RendererChoice) = switching.withLock {").substringBefore("\n    }\n")
+        assertTrue(adopt.contains("sonos.probe(uri) { ourLiveSession(choice, it) }"))
+        assertTrue(adopt.contains("if (uri != null && live != null && ourLiveSession(choice, live)) adoptedQueue(choice, uri) else null"))
+        assertTrue(adopt.contains("home.write(RendererChoice.local(home.choice()))"))
+        for (start in listOf(".play()", "start(", "resumeLast", "playTile", "playPause")) assertFalse(start, adopt.contains(start))
+        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        val probe = renderer.substringAfter("suspend fun probe(").substringBefore("\n    }\n")
+        assertTrue(probe.contains("transport.adoptLive("))
+        val transport = code("src/main/java/me/vibb/music/sonos/SonosTransport.kt")
+        val adoptLive = transport.substringAfter("suspend fun adoptLive(").substringBefore("\n    }\n")
+        for (verb in listOf(".play(", ".pause(", ".stop(", ".seek(", "setAvTransportUri", "setVolume", "setMute")) assertFalse(verb, adoptLive.contains(verb))
+        // resumption on a room starts the speaker (the controller asks mayPlay), never Exo, after the gate
+        val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("val restored = restore()")
+        assertTrue(resumption.contains("if (renderer.kind == RendererKind.SONOS) {"))
+        assertTrue(resumption.substringAfter("if (renderer.kind == RendererKind.SONOS) {").substringBefore("return@launch").contains("resumeLast()\n                        future.setException("))
+    }
+
+    @Test
+    fun `the suspension stops a room with or without the service - the receiver's path`() {
+        // design 26a §6.1 (QA H4, M5)
+        val app = code("src/main/java/me/vibb/music/MusicApp.kt")
+        val receiver = app.substringAfter("class SuspendedReceiver").substringBefore("private companion object")
+        assertTrue(receiver.contains("val pending = goAsync()"))
+        assertTrue(receiver.contains("if (service != null) service().join() else SonosSuspension.standalone(app)"))
+        assertTrue(receiver.contains("withTimeoutOrNull(SUSPEND_BUDGET_MS)"))
+        assertTrue(receiver.contains("} finally {\n                pending.finish()"))
+        assertTrue(service.contains("PlayerHub.suspendStop = { scope.launch { suspendStop() } }"))
+        val stop = service.substringAfter("private suspend fun suspendStop() {").substringBefore("\n    }\n")
+        assertTrue(stop.indexOf("rendererReady.await()") < stop.indexOf("switching.withLock {"))
+        assertTrue(stop.contains("withTimeoutOrNull(HANDOFF_MS) { sonos.park() } ?: run {"))
+        assertTrue(stop.indexOf("sonos.park()") < stop.indexOf("comeHome(sonos, play = false)"))
+        // the standalone path: one classify, the bookmark from it, Stop and the park, renderer.json -> the phone
+        val lifecycle = code("src/main/java/me/vibb/music/sonos/SonosLifecycle.kt")
+        val seq = lifecycle.substringAfter("suspend fun suspensionStop(").substringBefore("\n}\n")
+        assertTrue(seq.contains("transport.adoptLive(uid, kindOfUri(uri), uri, budgetMs) { false }"))
+        assertTrue(seq.contains("if (!ourLiveSession(choice, live)) return false"))
+        assertTrue(seq.indexOf("bookmark(live!!)") < seq.indexOf("transport.park(uid)"))
+        val standalone = code("src/main/java/me/vibb/music/sonos/SonosSuspension.kt")
+        assertTrue(standalone.contains("home.write(RendererChoice.local(choice))"))
+        assertTrue("never more than was measured", standalone.contains("suspensionBookmark(itemKey, live, savedS, SystemClock.elapsedRealtime())"))
+        val transport = code("src/main/java/me/vibb/music/sonos/SonosTransport.kt")
+        val park = transport.substringAfter("suspend fun park(").substringBefore("\n    }\n")
+        assertTrue(park.indexOf("it.stop()") < park.indexOf("it.setAvTransportUri(queueUri(uid), \"\")"))
+        assertTrue(park.contains("session.disarm()"))
+        // the full stop when the service goes (§6.2): the hand-off runs on, the speaker let go after it
+        val destroy = service.substringAfter("override fun onDestroy() {").substringBefore("super.onDestroy()")
+        assertTrue(destroy.contains("handOff(sonos)\n                } finally {\n                    sonos.release()"))
     }
 
     @Test
@@ -123,11 +178,14 @@ class GuardsTest {
         assertTrue(service.contains("Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)"))
         // coming home plays on only when the speaker was PLAYING and nothing forbids it; a failed start never plays
         assertTrue(service.contains("comeHome(sonos, (resume ?: wasPlaying) && playAllowed(suspendedNow()))"))
-        assertEquals(3, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
-        assertEquals(2, Regex("""comeHome\((old|sonos), play = false\)""").findAll(service).count())
-        // the renderer changes only in attach: the phone at start, the room, the phone again
-        assertEquals("attach: defined once, three callers", 4, Regex("""\battach\(""").findAll(service).count())
-        assertTrue(service.contains("attach(SonosRenderer("))
+        assertEquals(4, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
+        assertEquals("lost, nothing playable, the suspension", 3, Regex("""comeHome\((old|sonos), play = false\)""").findAll(service).count())
+        // the renderer changes only in attach: the phone at start, an adopted room, a picked room, the phone again
+        assertEquals("attach: defined once, four callers", 5, Regex("""\battach\(""").findAll(service).count())
+        assertTrue(service.contains("attach(sonosRenderer(uid, name))"))
+        assertTrue(service.contains("attach(sonos)\n        active = a"))
+        assertEquals("every room's renderer holds the locks", 1, Regex("""SonosRenderer\(""").findAll(service).count())
+        assertTrue(service.contains("SonosRenderer(this, home, store, scope, writer, { active }, uid, name, onArmedPlaying = { locks.hold(it) })"))
         assertTrue(service.substringAfter("private suspend fun comeHome(").substringBefore("sonos.release()\n        active = null").contains("if (renderer !== sonos) return\n        attach(local)"))
         // a headset arriving or leaving touches the output choice only, never the renderer (sonos_renderer.py 5)
         val devices = service.substringAfter("private val deviceCallback").substringBefore("private val saveTick")

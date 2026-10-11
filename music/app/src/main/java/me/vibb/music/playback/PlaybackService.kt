@@ -85,7 +85,10 @@ import me.vibb.music.model.PlayItem
 import me.vibb.music.sonos.PlayBodies
 import me.vibb.music.sonos.RendererChoice
 import me.vibb.music.sonos.SonosHome
+import me.vibb.music.sonos.SonosLocks
 import me.vibb.music.sonos.SonosRenderer
+import me.vibb.music.sonos.adoptIndex
+import me.vibb.music.sonos.ourLiveSession
 import me.vibb.music.sync.ItemErrors
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.netCaps
@@ -142,14 +145,17 @@ class PlaybackService : MediaSessionService() {
 
     /** The household: Wi-Fi, the speaker cache, the rooms, renderer.json (design 26a §2.1, §4.1). */
     private lateinit var home: SonosHome
+
+    /** The wake and Wi-Fi locks a Sonos session holds while it plays (design 26a §6.3). */
+    private lateinit var locks: SonosLocks
     private var session: MediaSession? = null
     private val audio by lazy { getSystemService(AudioManager::class.java) }
 
     /**
-     * Who plays is settled (design 26a §4.7): every custom command and playback resumption awaits
-     * it first, so a RESUME after a restart can never start the phone under a playing speaker.
-     * Complete at once in onCreate: step 3a never adopts a speaker session (renderer.json is reset to
-     * the phone there); step 3b completes it after adopt.
+     * Who plays is settled (design 26a §4.7, QA H5): every custom command and playback resumption
+     * awaits it first, so a RESUME after a restart can never start the phone under a playing speaker
+     * (vibb's double-playback trap, `sonos_renderer.py` check 2). Complete at once in onCreate when
+     * renderer.json says the phone; else after [adopt]'s one classify of the stored room.
      */
     private val rendererReady = CompletableDeferred<Unit>()
 
@@ -177,9 +183,7 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         store = Store.get(this)
         home = SonosHome(this)
-        // Design 26a §4.7's trivial part: no speaker session is adopted yet (3b), so after a restart the
-        // phone renders and nothing starts (vibb: no live remote session at start -> the renderer reverts).
-        home.choice().let { if (it.sonos) home.write(RendererChoice.local(it)) }
+        locks = SonosLocks(this)
         attach(LocalRenderer(this, store, scope, writer) { active }.also { local = it })
         val open = PendingIntent.getActivity(
             this, 1,
@@ -190,26 +194,41 @@ class PlaybackService : MediaSessionService() {
         setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(this).build().also { it.setSmallIcon(R.drawable.music_glyph_music_note) })
         audio.registerAudioDeviceCallback(deviceCallback, handler)
         PlayerHub.position = { renderer.positionMs() }
-        PlayerHub.pause = { renderer.pause() }
         LiveBridge.acquire(this)
-        rendererReady.complete(Unit)
+        PlayerHub.suspendStop = { scope.launch { suspendStop() } }
+        // Design 26a §4.7: the phone settles at once; a room only after one classify of it (adopt).
+        val choice = home.choice()
+        scope.launch {
+            try {
+                if (choice.sonos) adopt(choice)
+            } finally {
+                rendererReady.complete(Unit)
+            }
+        }
         scope.launch { home.rooms.state.collect { publish() } }
         publish()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
+    /**
+     * The task swiped away: the place is saved; Media3 then pauses every player and stops the service
+     * unless one plays (a playing Sonos room plays on, as the phone does), and [onDestroy] does the
+     * speaker's full stop (design 26a §6.2).
+     */
     override fun onTaskRemoved(rootIntent: Intent?) {
         renderer.saveNow(force = true)
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        renderer.saveNow(force = true)
+        val sonos = renderer as? SonosRenderer
+        // the phone's place now; a room's after its live classify, below
+        if (sonos == null) renderer.saveNow(force = true)
         handler.removeCallbacksAndMessages(null)
         audio.unregisterAudioDeviceCallback(deviceCallback)
         PlayerHub.position = null
-        PlayerHub.pause = null
+        PlayerHub.suspendStop = null
         PlayerHub.mutableState.value = PlayerHub.State()
         // Not null (that is a queue's end): Home keeps showing it paused (qa-21-step3-code L3).
         reportNowPlaying(forcePaused = true)
@@ -217,10 +236,29 @@ class PlaybackService : MediaSessionService() {
         session?.release()
         session = null
         if (renderer !== local) local.release()
-        renderer.release()
-        home.release()
+        if (sonos != null) {
+            // Design 26a §6.2 (vibb `_sonos_on_term`: box off = music off): the full stop - the live
+            // classify, the bookmark at that second, Stop if ours - goes on after the service, and the
+            // speaker, the household and the writer are let go after it. A crash skips this: the speaker
+            // plays on until the next start adopts it or a suspension edge stops it.
+            val tail = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            tail.launch {
+                try {
+                    handOff(sonos)
+                } finally {
+                    sonos.release()
+                    home.release()
+                    writer.close()
+                    tail.cancel()
+                }
+            }
+        } else {
+            renderer.release()
+            home.release()
+            writer.close()
+            locks.hold(false)
+        }
         scope.cancel()
-        writer.close()
         super.onDestroy()
     }
 
@@ -339,8 +377,11 @@ class PlaybackService : MediaSessionService() {
                 rendererReady.await()
                 switching.withLock {
                     if (renderer.kind == RendererKind.SONOS) {
-                        // design 26a §4.7: on Sonos a Bluetooth play button starts the speaker - step 3b
-                        future.setException(UnsupportedOperationException("resumption on Sonos is step 3b"))
+                        // Design 26a §4.7: on Sonos a Bluetooth play button starts the speaker - the queue it
+                        // holds, else the stored one, gated (playAllowed above; the controller's mayPlay before
+                        // anything is sent) - and hands the session no local items.
+                        resumeLast()
+                        future.setException(UnsupportedOperationException("playing on the Sonos room"))
                         return@launch
                     }
                     val restored = restore()
@@ -976,6 +1017,71 @@ class PlaybackService : MediaSessionService() {
 
     // --- the renderer: the phone or a Sonos room (design 26a §4.6) ---
 
+    private fun sonosRenderer(uid: String, name: String?) =
+        SonosRenderer(this, home, store, scope, writer, { active }, uid, name, onArmedPlaying = { locks.hold(it) })
+
+    /**
+     * Adopt at start (design 26a §4.7, vibb `_sonos_poller`'s reconciliation): renderer.json names a
+     * room. One classify of it (in its actor, [SonosController.LIVE_BUDGET_MS]); our stream there,
+     * playing or paused ([ourLiveSession]) -> adopted with zero transport commands: the stored
+     * entry's queue rebuilt with the speaker-playable filter (the stored queue's order when it is
+     * that entry's), the index by uri equality ([adoptIndex]), the room the session's player.
+     * Anything else - unreachable, late, foreign, stopped, the item gone - renderer.json back to the
+     * phone, nothing starts, the bar comes back paused from the stored row (`NowPlayingRow`).
+     */
+    private suspend fun adopt(choice: RendererChoice) = switching.withLock {
+        val uid = choice.uid ?: return@withLock
+        val uri = choice.uri
+        val sonos = sonosRenderer(uid, choice.name)
+        val live = if (uri.isNullOrEmpty()) null else withTimeoutOrNull(ADOPT_MS) { sonos.probe(uri) { ourLiveSession(choice, it) } }
+        val queue = if (uri != null && live != null && ourLiveSession(choice, live)) adoptedQueue(choice, uri) else null
+        if (queue == null || renderer !== local) {
+            SonosHome.log("sonos: no live session of ours on ${choice.name ?: uid} at start - the phone renders, nothing starts")
+            sonos.release()
+            withContext(writer) { home.write(RendererChoice.local(home.choice())) }
+            return@withLock
+        }
+        val (a, index) = queue
+        attach(sonos)
+        active = a
+        lastIndex = index
+        sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri!!, live!!)
+        publish()
+    }
+
+    /** The stored entry's queue on a room, speaker-playable, and the index of [uri] in it; null when it can't be rebuilt. */
+    private suspend fun adoptedQueue(choice: RendererChoice, uri: String): Pair<Active, Int>? {
+        val (snap, rows) = load()
+        val entry = snap.entries.firstOrNull { it.id == choice.entryId } ?: return null
+        val row = withContext(Dispatchers.IO) { store.db.nowPlaying() }?.takeIf { it.entryId == entry.id }
+        val keys = row?.keys?.split('\n')?.filter { it.isNotEmpty() } ?: snap.order(entry).map { it.key }
+        val a = activeFor(snap, rows, entry, keys, row?.shuffled ?: false, RendererKind.SONOS) ?: return null
+        val index = adoptIndex(entry, a.items, uri) ?: return null
+        return a to index
+    }
+
+    /**
+     * The launcher suspended the app (a time rule; design 26a §6.1), with the service up: on a room,
+     * the hand-off with the park - one live classify (a stood-down session's too), the bookmark, and
+     * for our stream playing or paused Stop and the speaker's own queue as its source - then the
+     * phone, paused (renderer.json back to it). On the phone: the pause, as before.
+     */
+    private suspend fun suspendStop() {
+        rendererReady.await()
+        switching.withLock {
+            val sonos = renderer as? SonosRenderer
+            if (sonos == null) {
+                renderer.pause()
+                return@withLock
+            }
+            withTimeoutOrNull(HANDOFF_MS) { sonos.park() } ?: run {
+                SonosHome.log("sonos: the suspension's stop took too long - Stop queued, the bookmark from the last poll")
+                sonos.abandon()
+            }
+            comeHome(sonos, play = false)
+        }
+    }
+
     /** "Spill av på": a room is a switch to the speaker (gated as a play); the phone or a headset first comes home. */
     private suspend fun output(key: String) {
         val uid = Output.sonosUid(key)
@@ -1030,7 +1136,7 @@ class PlaybackService : MediaSessionService() {
             )
         }
         if (renderer !== old) return
-        attach(SonosRenderer(this, home, store, scope, writer, { active }, uid, name))
+        attach(sonosRenderer(uid, name))
         if (old is SonosRenderer) old.release() else local.clear()
         if (queue == null) {
             active = null
@@ -1112,5 +1218,8 @@ class PlaybackService : MediaSessionService() {
          * poll. Past this the switch goes on and the Stop stays queued (`abandon`).
          */
         const val HANDOFF_MS = 15_000L
+
+        /** Adopt's look at start: the Wi-Fi wait, the 1.5 s classify and the actor's start, with room. */
+        const val ADOPT_MS = 4_000L
     }
 }

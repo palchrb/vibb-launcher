@@ -63,7 +63,10 @@ interface SonosHost {
     /** The sleep ramp runs from [volume] (null: it ended, the volume is back). */
     fun ramp(volume: Int?) {}
 
-    /** Whether the speaker plays for us now (3b holds its wake and Wi-Fi locks across this). */
+    /**
+     * Whether the phone must stay awake for this session (design 26a §6.3): the wake lock and the
+     * Wi-Fi lock are held while true. Called when it changes ([SonosController.armedPlaying] defines it).
+     */
     fun armedPlaying(playing: Boolean) {}
 
     fun log(message: String) {}
@@ -210,6 +213,9 @@ class SonosController(
     private var refusedFlag = false
     private var wasArmedPlaying = false
 
+    /** Our last verb or play: its fast-poll window keeps the locks (§6.3). */
+    private var verbAt = FAR_PAST
+
     // -- what the renderer reads --
 
     /** True once per natural advance: the next index change is an automatic one. */
@@ -296,11 +302,26 @@ class SonosController(
     /** Called by the renderer after each refresh: the playWhenReady it showed (held through transients). */
     fun shown(spec: SonosSpec) {
         heldPwr = spec.playWhenReady
-        val armedPlaying = session && (spec.playWhenReady || seeking || stepping)
-        if (armedPlaying != wasArmedPlaying) {
-            wasArmedPlaying = armedPlaying
-            host.armedPlaying(armedPlaying)
-        }
+        lockFor(armedPlaying(spec, elapsedMs()))
+    }
+
+    /**
+     * The wake and Wi-Fi locks' rule (design 26a §6.3, QA H1): an FGS keeps the network in Doze but
+     * not the CPU, and the poller (every bookmark) needs both. True while a session of ours is
+     * driven and - the player shows it playing (PLAYING, or held through the first failed polls,
+     * §3.2), or a play, a step or a seek is in flight, or we sent a verb or a play less than
+     * [SonosSession.VERB_FAST_MS] ago (the window the session polls fast in, so the pause or resume
+     * is confirmed; the tail's fast window is PLAYING's own). False when it shows paused (once the
+     * verb window is over), stopped, ended, unreachable past the transient, disarmed, handed off or
+     * closed - the switch home and the release say so at once.
+     */
+    fun armedPlaying(spec: SonosSpec, now: Long): Boolean =
+        !closed && session && (spec.playWhenReady || pending != null || stepping || seeking || now - verbAt < SonosSession.VERB_FAST_MS)
+
+    private fun lockFor(want: Boolean) {
+        if (want == wasArmedPlaying) return
+        wasArmedPlaying = want
+        host.armedPlaying(want)
     }
 
     private fun currentDurS(): Double? {
@@ -384,6 +405,38 @@ class SonosController(
         host.changed()
     }
 
+    /**
+     * A session found alive at start (design 26a §4.7, `_sonos_poller`'s adopt-on-start): the
+     * transport has adopted it (bookkeeping, zero transport commands) and [live] is its one classify.
+     * The queue is the stored entry's, speaker-playable, at [idx] (the item whose uri the speaker
+     * plays); the duration comes from the listing when the speaker reports none (durFromListing:
+     * it never decides "heard to the end"). Nothing is sent: a playing speaker plays on, a paused
+     * one stays paused.
+     */
+    fun adopt(entry: Entry, items: List<PlayItem>, idx: Int, uri: String, live: Fields) {
+        if (closed || idx !in items.indices) return
+        this.entry = entry
+        this.items = items
+        index = idx
+        gen++
+        startPending = false
+        session = true
+        ownsSpeaker = true
+        ended = false
+        playing = Playing(entry.id, idx, items[idx].key, uri)
+        pending = null
+        optTr = null
+        optPos = null
+        frozen = null
+        bmHold = null
+        stepWant = null
+        seekWant = null
+        endsNear = 0
+        accept(live)
+        host.log("sonos: adopted a live session on start [${idx + 1}/${items.size}] ${items[idx].title}")
+        host.changed()
+    }
+
     // -- verbs (§4.5) --
 
     /**
@@ -451,6 +504,7 @@ class SonosController(
     private fun resume(fallback: Boolean) {
         if (!mayPlay()) return host.log("sonos: resume refused - playing isn't allowed now")
         val now = elapsedMs()
+        verbAt = now
         optTr = Opt(TransportState.PLAYING, now)
         frozen = null
         val target = uid
@@ -480,6 +534,7 @@ class SonosController(
             frozen = OptPos(spec(now).positionAt(now) / 1000.0, now, snap?.uri)
         }
         optTr = Opt(TransportState.PAUSED_PLAYBACK, now)
+        verbAt = now
         val target = uid
         work.submit({ transport.pause(target) }) { r ->
             r.exceptionOrNull()?.let {
@@ -543,6 +598,7 @@ class SonosController(
         frozen = null
         bmHold = null
         seekAt = now
+        verbAt = now
         if (!seeking) {
             seeking = true
             seekNext()
@@ -643,6 +699,7 @@ class SonosController(
         startPending = false
         session = true
         ended = false
+        verbAt = now
         if (deliberate) seekAt = now
         index = idx
         pending = Pending(item.key, now, null)
@@ -934,20 +991,26 @@ class SonosController(
     // -- switching (§4.6) --
 
     /**
-     * The way off this speaker (`_renderer_to_box`'s first half; room -> room's old room): one live
-     * classify within [LIVE_BUDGET_MS] (any failure keeps the snapshot we have), the bookmark at that
-     * exact second, then Stop - ours-gated - to this uid. [then] gets whether the speaker was PLAYING
-     * (the phone carries on only then). Nothing is sent or written by this controller afterwards.
+     * The way off this speaker (`_renderer_to_box`'s first half; room -> room's old room; the service
+     * going, vibb `_sonos_on_term`): one live classify within [LIVE_BUDGET_MS] (any failure keeps the
+     * snapshot we have), the bookmark at that exact second, then Stop - ours-gated - to this uid.
+     * [then] gets whether the speaker was PLAYING (the phone carries on only then). Nothing is sent
+     * or written by this controller afterwards.
+     *
+     * With [park] (the suspension edge, design 26a §6.1) the look also reads a session that stood
+     * down (a speaker paused for ten minutes is still ours to stop), the gate is ours AND playing or
+     * paused, and the Stop is [SonosTransport.park]: Stop, then the speaker's own queue as its source.
      */
-    fun handOff(then: (wasPlaying: Boolean) -> Unit) {
+    fun handOff(park: Boolean = false, then: (wasPlaying: Boolean) -> Unit) {
         if (closed) return then(false)
-        if (!session && !ownsSpeaker) {
+        if (!park && !session && !ownsSpeaker) {
             closed = true
+            lockFor(false)
             return then(false)
         }
-        work.submit({ transport.liveRefresh(LIVE_BUDGET_MS) }) { r ->
+        work.submit({ transport.liveRefresh(LIVE_BUDGET_MS, armedOnly = !park) }) { r ->
             val wasPlaying = try {
-                r.getOrNull()?.let { live(it) }
+                r.getOrNull()?.let { live(it, anyArmed = park) }
                 bookmarkNow(force = true)
                 val s = snap
                 // our own verb's intent counts (a pause pressed just before the switch, the live read failed; L5)
@@ -956,13 +1019,14 @@ class SonosController(
                 host.log("sonos: hand-off bookkeeping failed (${e.javaClass.simpleName})")
                 false
             }
-            val ours = snap?.ours == true || pending != null
+            val ours = if (park) parkGate() else snap?.ours == true || pending != null
             endSession()
             ownsSpeaker = false
             closed = true
+            lockFor(false)
             val target = uid
             if (ours) {
-                work.submit({ transport.stop(target) }) { stopped ->
+                work.submit({ if (park) transport.park(target) else transport.stop(target) }) { stopped ->
                     stopped.exceptionOrNull()?.let { host.log("sonos: stop failed (${it.javaClass.simpleName}) - the speaker may play on") }
                     then(wasPlaying)
                 }
@@ -972,9 +1036,16 @@ class SonosController(
         }
     }
 
-    /** `_sonos_refresh_live`: a live snapshot replaces ours only when armed and measured. */
-    private fun live(f: Fields) {
-        if (!f.armed || f.relS == null || f.uid != uid || !f.reachable) return
+    /** §6.1's gate: our stream, playing or paused (a play of ours in flight counts) - never a speaker someone else uses. */
+    private fun parkGate(): Boolean {
+        if (pending != null) return true
+        val s = snap ?: return false
+        return s.ours && s.transport?.live == true
+    }
+
+    /** `_sonos_refresh_live`: a live snapshot replaces ours only when armed (or [anyArmed]) and measured. */
+    private fun live(f: Fields, anyArmed: Boolean = false) {
+        if ((!f.armed && !anyArmed) || f.relS == null || f.uid != uid || !f.reachable) return
         pending = null
         accept(f)
     }
@@ -992,17 +1063,19 @@ class SonosController(
         endSession()
         ownsSpeaker = false
         closed = true
+        lockFor(false)
         if (ours) {
             val target = uid
             work.submit({ transport.stop(target) }) { r -> r.exceptionOrNull()?.let { host.log("sonos: stop failed (${it.javaClass.simpleName})") } }
         }
     }
 
-    /** No more SOAP and no more writes (the renderer is going). */
+    /** No more SOAP and no more writes (the renderer is going); the locks go with it. */
     fun close() {
         closed = true
         fade?.set(true)
         endSession()
+        lockFor(false)
     }
 
     // -- volume (§5.3; the cap is step 3b) --
@@ -1045,6 +1118,7 @@ class SonosController(
         fade?.set(true)
         val cancel = AtomicBoolean(false)
         fade = cancel
+        verbAt = now
         bookmarkNow(force = false)
         host.ramp(base)
         val target = uid

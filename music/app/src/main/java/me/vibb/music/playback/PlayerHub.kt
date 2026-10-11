@@ -2,6 +2,7 @@ package me.vibb.music.playback
 
 import android.os.Bundle
 import androidx.media3.session.SessionCommand
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -93,8 +94,12 @@ object PlayerHub {
     /** The live position (ms), read on the main thread; null without a live queue. */
     @Volatile internal var position: (() -> Long)? = null
 
-    /** Pauses the player (main thread); null without a player service. */
-    @Volatile internal var pause: (() -> Unit)? = null
+    /**
+     * The launcher suspended the app (design 26a §6.1): the service's stop - a Sonos room's live
+     * classify, bookmark, Stop and park, then the phone paused; the phone's own pause - started in the
+     * service's scope (main thread). Null without a player service: the receiver's standalone path.
+     */
+    @Volatile internal var suspendStop: (() -> Job)? = null
 
     fun positionMs(): Long? = position?.invoke()
 }

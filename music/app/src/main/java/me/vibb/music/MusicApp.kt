@@ -9,9 +9,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.bridge.LAUNCHER_PACKAGES
+import me.vibb.music.playback.PlayerHub
+import me.vibb.music.sonos.SonosSuspension
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.Sync
 
@@ -59,11 +62,31 @@ class BridgeChangedReceiver : BroadcastReceiver() {
 /**
  * The launcher suspended this app (a time rule, 21 §3): stop the sound at once. The launcher pauses
  * the session itself first where it can; this is the fallback without its notification access
- * (QA #8).
+ * (QA #8). A Sonos room is stopped too, with or without the player service (design 26a §6.1, QA
+ * H4): through the service when it is up ([PlayerHub.suspendStop]), else the standalone path
+ * ([SonosSuspension]) - one live classify, the bookmark, Stop and the park, renderer.json back to
+ * the phone - all within the broadcast's budget ([goAsync]).
  */
 class SuspendedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        android.os.Handler(android.os.Looper.getMainLooper()).post { me.vibb.music.playback.PlayerHub.pause?.invoke() }
+        if (intent.action != Intent.ACTION_MY_PACKAGE_SUSPENDED) return
+        val pending = goAsync()
+        val app = context.applicationContext
+        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+            try {
+                withTimeoutOrNull(SUSPEND_BUDGET_MS) {
+                    val service = PlayerHub.suspendStop
+                    if (service != null) service().join() else SonosSuspension.standalone(app)
+                }
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    private companion object {
+        /** A broadcast receiver has ~10 s; finish inside it (the service's stop carries on in its own scope). */
+        const val SUSPEND_BUDGET_MS = 9_000L
     }
 }
 

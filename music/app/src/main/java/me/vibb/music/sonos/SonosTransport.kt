@@ -165,6 +165,26 @@ class SonosTransport(
         wake()
     }
 
+    /**
+     * Adopt at start (design 26a §4.7) and the suspension's look (§6.1): [adopt]'s bookkeeping (zero
+     * transport commands), then ONE classify of [uid] within [budgetMs], published. [keep] decides
+     * on it: kept, the poller is woken (the session runs on); not kept, the session is disarmed
+     * again. Null when the speaker didn't answer in time (disarmed too).
+     */
+    suspend fun adoptLive(uid: String, kind: Kind, uri: String, budgetMs: Long, keep: (Fields) -> Boolean): Fields? = mutex.withLock {
+        session.adopt(uid, kind, uri)
+        val fields = try {
+            session.classify(speakers.speaker(uid, verify = false, budgetMs = budgetMs))
+        } catch (e: SonosException) {
+            log("adopt: no answer from the room (${e.javaClass.simpleName})")
+            session.disarm()
+            return@withLock null
+        }
+        session.publish(fields)
+        if (keep(session.snapshot)) wake() else session.disarm()
+        session.snapshot
+    }
+
     suspend fun pause(ifUid: String? = null): Boolean = verb(ifUid) {
         it.pause()
         wake()
@@ -179,6 +199,24 @@ class SonosTransport(
     suspend fun stop(ifUid: String? = null): Boolean = verb(ifUid) {
         it.stop()
         session.disarm()
+        wake()
+    }
+
+    /**
+     * The suspension's Stop (design 26a §6.1, QA M5): Stop, then the speaker's own queue as its
+     * source ([queueUri], no metadata), so the speaker's Play button plays that (empty) queue and
+     * never our episode from 0:00 - after a Stop a Sonos keeps its AVTransportURI (sonosd.py
+     * 894-896). Disarmed. A refused queue uri is logged; the Stop already happened.
+     */
+    suspend fun park(ifUid: String? = null): Boolean = verb(ifUid) {
+        it.stop()
+        session.disarm()
+        val uid = session.uid.orEmpty()
+        try {
+            it.setAvTransportUri(queueUri(uid), "")
+        } catch (e: SonosException) {
+            log("park: the queue uri was refused (${e.javaClass.simpleName}) - stopped only")
+        }
         wake()
     }
 
@@ -209,11 +247,12 @@ class SonosTransport(
     /**
      * `/state?live=1` (sonosd.py 1021-1039): one classify within [budgetMs] for the bookmark at the
      * exact second (a switch home, a hand-off); published like a poll. Null when the session isn't
-     * armed or the speaker didn't answer in time - the caller keeps the snapshot it has.
+     * armed ([armedOnly]; the suspension's look also reads a stood-down session's room, §6.1) or the
+     * speaker didn't answer in time - the caller keeps the snapshot it has.
      */
-    suspend fun liveRefresh(budgetMs: Long): Fields? = mutex.withLock {
+    suspend fun liveRefresh(budgetMs: Long, armedOnly: Boolean = true): Fields? = mutex.withLock {
         val uid = session.uid
-        if (!session.armed || uid == null) return@withLock null
+        if ((armedOnly && !session.armed) || uid == null) return@withLock null
         try {
             val fields = session.classify(speakers.speaker(uid, verify = false, budgetMs = budgetMs))
             session.publish(fields)

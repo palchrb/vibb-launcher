@@ -11,6 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 
 /*
@@ -23,17 +26,17 @@ class SonosHome(context: Context) {
     private val app = context.applicationContext
     private val connectivity = app.getSystemService(ConnectivityManager::class.java)
 
-    @Volatile
-    private var wifi: Network? = null
+    private val wifiNet = MutableStateFlow<Network?>(null)
+    private val wifi: Network? get() = wifiNet.value
     private var client: Pair<Network, OkHttpClient>? = null
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            wifi = network
+            wifiNet.value = network
         }
 
         override fun onLost(network: Network) {
-            if (wifi == network) wifi = null
+            wifiNet.compareAndSet(network, null)
         }
     }
 
@@ -47,6 +50,14 @@ class SonosHome(context: Context) {
             Log.w(TAG, "no Wi-Fi tracking (${e.javaClass.simpleName}): Sonos stays unreachable")
         }
     }
+
+    /**
+     * Wi-Fi is known: true at once when it is, else after the network callback's first answer
+     * (registering it delivers the current network within a moment), false after [timeoutMs].
+     * A start's adopt and the suspension receiver ask this before their one classify.
+     */
+    suspend fun awaitWifi(timeoutMs: Long): Boolean =
+        wifi != null || withTimeoutOrNull(timeoutMs) { wifiNet.first { it != null } } != null
 
     /** The client bound to the current Wi-Fi network; none (no Wi-Fi) is [SpeakerUnreachable]. */
     @Synchronized

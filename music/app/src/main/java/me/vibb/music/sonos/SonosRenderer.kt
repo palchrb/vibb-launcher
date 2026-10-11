@@ -59,7 +59,7 @@ internal class SonosRenderer(
     private val queue: () -> Active?,
     uid: String,
     name: String?,
-    /** Step 3b's seam: hold the wake lock and the Wi-Fi lock while true (design 26a §6.3). */
+    /** Hold the wake lock and the Wi-Fi lock while true ([SonosController.armedPlaying], design 26a §6.3). */
     private val onArmedPlaying: (Boolean) -> Unit = {},
 ) : Renderer {
     private val handler = Handler(Looper.getMainLooper())
@@ -191,10 +191,39 @@ internal class SonosRenderer(
     /** A hand-off that timed out: the last bookmark and an ours-gated Stop queued behind the busy actor (M1). */
     fun abandon() = controller.abandon()
 
+    /**
+     * The suspension's stop with the service up (design 26a §6.1): [handOff] with the park - one live
+     * classify (also of a stood-down session), the bookmark, then for our stream playing or paused
+     * Stop and the speaker's own queue as its source.
+     */
+    suspend fun park(): Boolean = suspendCancellableCoroutine { cont -> controller.handOff(park = true) { if (cont.isActive) cont.resume(it) } }
+
+    /**
+     * Adopt at start (design 26a §4.7), the look: [SonosTransport.adoptLive] in the actor - zero
+     * transport commands, one classify of this room within [SonosController.LIVE_BUDGET_MS] once
+     * Wi-Fi is known (the network callback answers within a moment of the service's start). [keep]
+     * decides; kept, the poller runs on. Null: no Wi-Fi or no answer.
+     */
+    suspend fun probe(uri: String, keep: (Fields) -> Boolean): Fields? {
+        if (!home.awaitWifi(WIFI_WAIT_MS)) return null
+        val target = uid
+        return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, keep) }) { }.getOrNull()
+    }
+
+    /** The probe was kept: the queue ([items], the service's MediaItems of `Active.items`) at [index], nothing sent. */
+    fun adopt(items: List<MediaItem>, index: Int, uri: String, live: Fields) {
+        val a = queue() ?: return
+        mediaItems = items
+        lastIndex = -1
+        controller.adopt(a.entry, a.items, index, uri, live)
+    }
+
     override fun release() {
         if (released) return
         released = true
+        // the locks go with it (close() reports the change; once more here, the holder is idempotent)
         controller.close()
+        onArmedPlaying(false)
         poller?.stop()
         // the queued jobs (a hand-off's or an abandon's Stop) still go out; the scope ends after them
         actor.close()
@@ -340,6 +369,9 @@ internal class SonosRenderer(
     companion object {
         /** One volume key press (§5.3). */
         const val VOLUME_STEP = 3
+
+        /** How long a probe waits for the Wi-Fi network at start. */
+        const val WIFI_WAIT_MS = 1_000L
 
         /** §3.2 (QA M1): without the three GET commands the platform metadata is empty. */
         val COMMANDS: Player.Commands = Player.Commands.Builder().addAll(*SONOS_COMMANDS).build()

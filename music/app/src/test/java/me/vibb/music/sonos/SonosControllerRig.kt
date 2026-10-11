@@ -63,6 +63,9 @@ class FakeHost : SonosHost {
     val followed = mutableListOf<Pair<String, String?>>()
     val ramps = mutableListOf<Int?>()
     val logs = mutableListOf<String>()
+
+    /** Every change of the wake/Wi-Fi locks' rule (design 26a §6.3). */
+    val locks = mutableListOf<Boolean>()
     var onFollowed: () -> Unit = {}
 
     override fun changed() {
@@ -80,6 +83,10 @@ class FakeHost : SonosHost {
 
     override fun ramp(volume: Int?) {
         ramps.add(volume)
+    }
+
+    override fun armedPlaying(playing: Boolean) {
+        locks.add(playing)
     }
 
     override fun log(message: String) {

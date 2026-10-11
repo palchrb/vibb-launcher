@@ -129,3 +129,14 @@ fun pyQuote(s: String, safe: String = "/"): String {
 
 /** Python's `xml.sax.saxutils.escape`: `&`, `<` and `>` only (quotes stay). */
 fun xmlEscape(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+/**
+ * The speaker's own queue as its source (`x-rincon-queue:<uid>#0`, the uri a Sonos shows for "the
+ * queue"): after a suspension's Stop the speaker keeps its AVTransportURI (sonosd.py 894-896), so
+ * its Play button would replay our episode from 0:00; with this one it plays the (empty) queue
+ * (design 26a §6.1).
+ */
+fun queueUri(uid: String): String = "x-rincon-queue:$uid#0"
+
+/** The kind of a BUILT uri (what renderer.json stores): the NRK Radio service's, else a plain `url`. */
+fun kindOfUri(uri: String): Kind = if (uri.startsWith("x-sonos-http:")) Kind.NRK_PROGRAM else Kind.URL
