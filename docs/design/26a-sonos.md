@@ -467,12 +467,16 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    full stop path: live refresh, bookmark, ours-gate, `stop` (vibb `_sonos_on_term`, 5340-5364). A crash does not.
 3. **The CPU and Doze (QA H1).** An FGS keeps network access in Doze but not the CPU awake; today's only wake lock is
    ExoPlayer's (`setWakeMode(C.WAKE_MODE_NETWORK)`, 156, 428-431), and a `SimpleBasePlayer` has none. So the Sonos
-   renderer holds a `PARTIAL_WAKE_LOCK` and a `WifiManager.WifiLock` (`WIFI_MODE_FULL_LOW_LATENCY`) **while armed and
-   PLAYING, and inside the verb and tail fast windows**, released on PAUSED, disarm and the switch home
-   (`SourceScanTest` bans only screen wake locks, `SourceScanTest.kt:81-87`). The cadence is vibb's whatever the screen
+   renderer holds a `PARTIAL_WAKE_LOCK` **while armed and PLAYING, and inside the verb and tail fast windows**,
+   released on PAUSED, disarm and the switch home (`SourceScanTest` bans only screen wake locks,
+   `SourceScanTest.kt:81-87`). The partial wake lock - honoured in Doze for a foreground service's process - and the
+   FGS's own network access are what keep the polls running with the screen off. A `WifiManager.WifiLock`
+   (`WIFI_MODE_FULL_LOW_LATENCY`) is held beside it, harmless but doing little: low-latency mode is effective only in
+   the foreground with the screen on, and `WIFI_MODE_FULL_HIGH_PERF` is a no-op since API 34 (qa-26a-step3b-code L5). The cadence is vibb's whatever the screen
    does, and a bookmark lands on every poll (§4.4); what idles with the screen off is the UI (`livePosition` polls only
    while a screen is shown, `MusicRoot.kt:166-182`). [device check] 1 h screen off: polls every 15 s in logcat, the
-   bookmark within 15 s of the truth, battery per hour. If Doze still defers them, the launcher grants the music app
+   bookmark within 15 s of the truth, `vibb:sonos` held in `dumpsys power`, battery per hour (whether Wi-Fi stays up
+   with the screen off is what this check finds out; the Wi-Fi lock is not counted on). If Doze still defers them, the launcher grants the music app
    the battery-optimisation exemption design 19b gives itself.
 4. **Network.** Clients bound to Wi-Fi (§2.1); Wi-Fi gone -> the speaker reads UNREACHABLE (backoff, disarm after
    600 s); the kid's phone away from home keeps the cache (the "cabin case", `sonosd.py:1050-1053`): the sheet lists
@@ -490,10 +494,12 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    (design 17 "Facts": a `CATEGORY_CALL` notification with a ringtone), and design 17 QA #5 forbids trusting
    `MODE_IN_COMMUNICATION` alone (any app can hold it). The launcher already sees both: `VoipCallPlan`'s `RINGING` /
    `IN_CALL` from the notification listener (`L/lock/VoipCallPlan.kt:70-75`) and system calls (`isInManagedCall`,
-   `MODE_IN_CALL`). So the rule lives in the launcher, the same for local and Sonos playback: `MusicSessions` pauses
-   the music session when a VoIP call starts ringing or a system call starts, remembers that it did, and sends play
-   when the call ends only then (a kid who paused during the call stays paused; a pause the kid made before the call
-   is untouched). The music app holds no audio focus while Sonos renders and keeps `AudioManager`'s
+   `MODE_IN_CALL`). So the launcher sees the calls, the same for local and Sonos playback: when a VoIP call starts
+   ringing or a system call starts while the music plays it sends the player `CALL_HOLD`, and `CALL_RELEASE` when that
+   call is over (the session's custom actions, names in `bridge_contract.json`); the player pauses as its own pause
+   (the kid's sleep timer runs on - a plain session pause is the kid's and would end it, qa-26a-step3b-code H1),
+   remembers that it did, and plays again only then (a kid who paused during the call stays paused; a pause the kid
+   made before the call is untouched; not after the sleep timer ended during the hold). The music app holds no audio focus while Sonos renders and keeps `AudioManager`'s
    `OnModeChangedListener` (`MODE_IN_CALL` / `MODE_RINGTONE` only) as a backstop for a system call when the launcher's
    listener access is missing (design 21 QA #8's listener-free fallbacks). Launcher part: step 3b, `MusicMediaPlanTest`.
 
@@ -1053,7 +1059,8 @@ Built on branch `music-1b-sonos` in three code commits, each built and tested on
 build in the sandbox (`7f11626` the lifecycle, `b9f907c` the volume cap, `9bf0487` calls). Music app:
 `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` green at each - **334, 339, then
 346 JVM tests, 0 failures** (317 before: +15 `SonosLifecycleTest`, +2 `GuardsTest`; +3 `SonosLifecycleTest`,
-+1 `BridgeTest`, +1 `GuardsTest`; +6 `CallPauseTest`, +1 `GuardsTest`), lint 0 errors and the same 41 warnings.
++1 `BridgeTest`, +1 `GuardsTest`; +6 `CallPauseTest`, +1 `GuardsTest`), lint 0 errors and the same 40 warnings
+(QA's count; "41" here and in the 3a sections counted the report's `<issues>` root tag).
 Launcher: `assembleDebug testDebugUnitTest` (the tsnet stub) green at the two commits that touch it - **832, then 839
 tests, 0 failures** (830 before: +2 `MusicPlanTest`; +6 `MusicMediaPlanTest`, +1 `MusicSuspensionGuardTest`).
 `python3 -I scripts/fake-sonos.py --selftest` OK. Two mutations (the adopt decision without the PLAYING/PAUSED
@@ -1092,7 +1099,8 @@ KVM here): the checks below are owed.
   the next start to adopt; a stopped speaker isn't adopted). A crash still leaves the speaker playing until the next
   start adopts it or a suspension edge stops it.
 - **Wake locks (§6.3)**: `SonosLocks` - `PARTIAL_WAKE_LOCK` "vibb:sonos" taken with a 10-minute timeout and renewed
-  every 5 minutes while held, and a `WIFI_MODE_FULL_LOW_LATENCY` lock - follow `SonosController.armedPlaying(spec,
+  every 5 minutes while held, and a `WIFI_MODE_FULL_LOW_LATENCY` lock (little use with the screen off: the fix
+  round's L5) - follow `SonosController.armedPlaying(spec,
   now)`: a driven session that is not closed AND (the player shows playWhenReady - PLAYING, or held through the first
   failed polls - or a play, step or seek in flight, or our own verb or play less than `VERB_FAST_MS` = 30 s ago). The
   tail's fast window is PLAYING's own. False on PAUSED once the verb window is over, stopped, ended, unreachable past
@@ -1159,7 +1167,7 @@ Owed checks:
   Stop), the volume keys against the cap and the override, `gsm call` / `gsm cancel`, the locks in `dumpsys power`.
 - Device (Jelly Star, real speakers; the list above stands): **Doze 1 h** screen off while a room plays - polls every
   15 s in logcat (`VibbSonos`), the bookmark after a forced stop within 15 s of the truth, `vibb:sonos` held in
-  `dumpsys power`, battery per hour, and whether the low-latency Wi-Fi lock holds with the screen off (if Doze still
+  `dumpsys power`, battery per hour, and whether Wi-Fi stays up with the screen off without counting on the Wi-Fi lock (if Doze still
   defers the polls, the launcher grants the battery exemption, §6.3); the **FGS timeout** - a paused room keeps its
   notification for 10 minutes, then Media3 lets the service go and `onDestroy`'s full stop stops the paused speaker
   (box off = music off); a bedtime edge with and without the app (the speaker's own Play button plays nothing); an
@@ -1169,3 +1177,34 @@ Open questions: (a) when Media3 ends a service paused for 10 minutes, `onDestroy
 TERM rule; the speaker kept the episode at the pause) - wanted, or should a paused room only be let go? (b) the 3a
 questions (a) and (b) stand. (c) `launcher/CLAUDE.md` names the new restriction only; a line for `MusicCalls` (the
 launcher pausing music on calls) belongs with step 4's docs.
+
+### Fix round after QA's code review (qa-26a-step3b-code, 2026-10-11)
+
+QA (`docs/design/qa-26a-step3b-code.md`: 1 High, 1 Medium, 8 Low; music 346/0, launcher 839/0, contracts
+byte-identical) asked for a fix round; every finding is fixed, none skipped, H1 by option (a) and M1 fixed (not
+documented as a limit), as the main session decided. Two code commits: `2d0bef4` (H1 + L7: launcher, music and both
+contract copies in one) and `9161bbd` (M1, L1-L4, L6, L8: music only). Builds: music `assembleDebug assembleRelease
+testDebugUnitTest lintDebug -PwarningsAsErrors=true` green at each - **348, then 355 tests, 0 failures**, lint 0 errors
+and 40 warnings; launcher `assembleDebug testDebugUnitTest` green - **837 tests, 0 failures** (839 before: the call
+cases shrink with the rule); `fake-sonos.py --selftest` OK.
+- **H1** a call is the player's own pause: the launcher sends `CALL_HOLD` (a call begins while the music plays) and
+  `CALL_RELEASE` (that call is over) as the session's custom actions (names in `bridge_contract.json`); the player
+  grants them only to a launcher signed like itself and runs `callPauseStep` itself - the pause under `selfPausing`
+  (the sleep timer runs on), the release plays again only what it paused, not after the kid's own play during the
+  call, not after the timer ended during the hold (`callTimerEnded`), never while `playAllowed` says no. The launcher's
+  `callHoldStep` is HOLD at the start if playing, RELEASE at the end after a HOLD.
+- **M1** renderer.json goes back to the phone only on a definite answer (`roomVerdict`: OURS_LIVE / OURS_STOPPED /
+  NOT_OURS / NO_ANSWER). No answer keeps the room recorded: the start, every play on the phone (at most every 15 s)
+  and a suspension look again. No built uri stored yet: the speaker playing an item of the stored entry is ours.
+  Ours but its item gone from the library: one Stop, then the phone. The standalone suspension follows the same rule.
+- **L1** the destroy tail clears the renderer's `onEvent` and saves first. **L2** `SonosTail`: the standalone path
+  (5 s) and the next adopt wait for a destroyed service's tail, and our uri on a stopped speaker is parked (the
+  tail's plain Stop otherwise left the Play button replaying it). **L3** the wake lock is renewed only when an owner
+  re-asserted it since the last renewal. **L4** holds are per renderer. **L5** §6.3 and this status corrected: the
+  partial wake lock with the FGS's network access keeps the polls; the low-latency Wi-Fi lock does little with the
+  screen off. **L6** `place()` / `writePlace()`: the one write behind `persistPlace` and the standalone bookmark,
+  pinned. **L7** the call resume goes through the renderer's player's play (the session's entry point). **L8**
+  `RendererGate` (the startup gate, a behavioural test), `adoptPlan` (pure) and the verdicts tested; resumption on a
+  room stays a source pin plus the controller's start tests.
+- QA's deviation verdicts: choices 1, 3, 4, 6, 7, 9-14 accepted; 2 and 5 are M1 (replaced: the item gone stops the
+  speaker; a suspension without an answer keeps the room); 8 is L3.
