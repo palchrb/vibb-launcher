@@ -451,3 +451,22 @@ From "Server implementation status (S0-S4, D1)" in design 22.
   - `docker image inspect` on an index digest under the containerd image store (`deploy/image-smoke.sh:53`).
 
   Run `server-release.yml`'s `workflow_dispatch` dry run on `main` before tagging 0.23.0.
+
+## Fixes (2026-10-11)
+
+Every finding is fixed; QA's probes for H1 and H2 are committed as tests. Simplifications 1-7 are all taken.
+
+| Finding | Commit | Note |
+|---|---|---|
+| H1 | `d1b2a117` | The walk stops at a non-address entry: the client is unknown, never loopback. |
+| H2 | `eb9fc0ab` | `take_totp_attempt` counts the attempt in one `UPDATE ... RETURNING` before the code is checked; the 60-parallel probe is a test. |
+| M1 (+ S1) | `6193aa2d` | The owned permits move into `spawn_blocking`. |
+| M2 (+ S2) | `853bb2ce` | An enroll body has 5 s and waits on its own gate first; unauthenticated requests share 64 slots, a valid token bypasses them. |
+| M3 (+ S3) | `e338700c` | 60 rows a minute per event kind, then one summary row. |
+| M4 | `94805a42` | `reset-2fa` also replaces the password (a new `initial-admin-password`, change forced). |
+| M5 | `058c5f62` | The user's decision: "Reset two-factor login" asks for the current password. Nothing else gets a step-up. |
+| Lows 1-3 (+ S4, S6, S7) | `93688d67` | Username clipped to 64 and a 4 KiB form limit on the signed-out forms; `ADMIN_DEVICE_API=off` without `DEVICE_BIND_ADDR` refuses to start; the stream is checked by its own cap only. |
+| Lows 4-6 | `63178d1a` | One-time tagged keys in DEPLOY and Provisioning; what the gate can't see; `.env.example`. |
+| Low 7 | `2675276f` | 1 GiB cap (as `actions.sh`), 3 prerestore copies. Their permissions, and the pre-migrate copies', come with security M2. |
+| Low 8 | `0d9a1181` | `latest` only for the highest `server-v*`; a dispatch is always a dry run. |
+| Low 9 (+ S5) | `63afd551` | Dismiss returns to the page it came from; Devices and Account show the lock and the failure count to a live session; a password change lifts the lock. |
