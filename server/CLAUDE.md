@@ -616,7 +616,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   account says so (`login_locked` event). The pending state (`pending_admin_id` + `pending_at`) lasts 5 min. After a
   complete login with earlier failures the session carries a banner (`login_warning`, shown on Devices and Account
   via `partials/login_warning.html`, `POST /account/dismiss-warning`). Sessions: `cycle_id()` after each step; the
-  session stores `session_epoch`, and a password change, a 2FA reset (other sessions) and `POST
+  session stores `session_epoch`, and a password change, a 2FA reset (asks for the current password - user
+  decision on QA 22 M5; other sessions) and `POST
   /account/sign-out-everywhere` (all) bump it (`load_active_admin` compares); cookie `__Host-handy` (Secure, Path=/,
   HttpOnly, Strict) or `handy` with `INSECURE_COOKIES` (`security::session_layer`); `SESSION_INACTIVITY_DAYS`
   (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,

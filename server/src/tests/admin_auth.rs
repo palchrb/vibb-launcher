@@ -254,6 +254,31 @@ async fn a_2fa_reset_signs_out_every_other_session() {
     let res = app
         .request_form(Method::POST, "/account/reset-2fa", Some(&first), &[])
         .await;
+    // QA 22 M5 (user decision): it asks for the current password, like a password change.
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("two-factor login was not reset"));
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/reset-2fa",
+            Some(&first),
+            &[("current_password", "not the password")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        app.get_page("/devices", &second).await.status,
+        StatusCode::OK,
+        "nothing changed"
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/reset-2fa",
+            Some(&first),
+            &[("current_password", PASSWORD)],
+        )
+        .await;
     assert_eq!(res.location(), Some("/auth/setup-2fa"));
     assert_eq!(
         app.get_page("/devices", &second).await.location(),

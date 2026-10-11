@@ -43,7 +43,9 @@
         <details>
             <summary class="button-danger" style="display:inline-block; cursor:pointer; list-style:none;">Reset two-factor login&hellip;</summary>
             <form method="post" action="/account/reset-2fa" style="margin-top:12px;">
-                <div class="error">If you've lost access to your authenticator app, resetting starts over with a brand-new QR code — you'll be sent straight to scan and verify it, and won't be able to use the rest of the site until you do.</div>
+                <div class="error">If you've lost access to your authenticator app, resetting starts over with a brand-new QR code — you'll be sent straight to scan and verify it, and won't be able to use the rest of the site until you do. Every other browser and phone is signed out.</div>
+                <label for="reset_current_password">Current password</label>
+                <input type="password" id="reset_current_password" name="current_password" autocomplete="current-password" required>
                 <button type="submit" class="button-danger">Reset two-factor login</button>
             </form>
         </details>

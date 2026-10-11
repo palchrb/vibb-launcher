@@ -694,17 +694,60 @@ pub async fn update_account_password(
     .await
 }
 
+/// The "Reset two-factor login" form: the current password.
+#[derive(Deserialize)]
+pub struct ResetTotpForm {
+    #[serde(default)]
+    current_password: String,
+}
+
 /// Clears the stored TOTP secret and drops `totp_enabled`, which sends the
 /// admin straight back through mandatory 2FA setup (`require_full_auth`
 /// redirects there for any account with `totp_enabled = false`) with a
 /// brand-new QR code - the recovery path for a lost/uninstalled
 /// authenticator app while still signed in. Every other session ends. (Signed out and locked
 /// out: `kid_phone_server reset-2fa <user>`.)
+///
+/// It asks for the current password, like a password change (user decision on QA 22 M5): a
+/// stolen session can't swap in its own authenticator and sign the parent out.
 pub async fn reset_totp(
     State(state): State<AppState>,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-) -> impl IntoResponse {
+    Form(form): Form<ResetTotpForm>,
+) -> axum::response::Response {
+    match state
+        .passwords
+        .verify(&form.current_password, Some(&admin.password_hash))
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            security::record_security_event(
+                &state.db,
+                "totp_reset_refused",
+                Some(&admin.username),
+                None,
+                Some("wrong current password"),
+            )
+            .await;
+            return (
+                StatusCode::BAD_REQUEST,
+                render_account(
+                    &session,
+                    &admin,
+                    Some(
+                        "Current password is incorrect - two-factor login was not reset."
+                            .to_string(),
+                    ),
+                    None,
+                )
+                .await,
+            )
+                .into_response();
+        }
+        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+    }
     sqlx::query(
         "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL \
          WHERE id = ?",
@@ -724,7 +767,7 @@ pub async fn reset_totp(
     )
     .await;
 
-    Redirect::to("/auth/setup-2fa")
+    Redirect::to("/auth/setup-2fa").into_response()
 }
 
 /// "Sign out everywhere" (design 22 §3.2.2): every session of this account ends, this one too.
