@@ -131,6 +131,68 @@ fn data_stays_private_and_a_restore_ends_the_sessions() {
     assert!(sync.contains("install -d -m 700 \"$EXTERNAL_MOUNT/live\""));
 }
 
+/// The text from `start` up to the first line that is exactly `end` (inclusive).
+fn block<'a>(script: &'a str, start: &str, end: &str) -> &'a str {
+    let at = script.find(start).unwrap_or_else(|| panic!("no {start}"));
+    let len = script[at..]
+        .find(&format!("\n{end}\n"))
+        .unwrap_or_else(|| panic!("no end of {start}"));
+    &script[at..at + len + end.len() + 1]
+}
+
+/// Security review M5: root installs and runs only what the pinned key signed - the tarball in
+/// install.sh and update.sh, and update.sh itself in actions.sh - with the trusted comment naming
+/// the file and the tag; the release signs both and checks them against the same key.
+#[test]
+fn root_takes_only_signed_release_files() {
+    let actions = heredoc(INSTALL, "ACTIONS_EOF");
+    let places = [
+        INSTALL,
+        UPDATE,
+        actions,
+        heredoc(UPDATE, "ACTIONS_EOF"),
+    ];
+    let key_lines: Vec<&str> = places
+        .iter()
+        .flat_map(|script| {
+            script
+                .lines()
+                .filter(|line| line.starts_with("SERVER_SIGNING_PUBKEY="))
+        })
+        .collect();
+    // install.sh and update.sh each hold it twice: their own and actions.sh's.
+    assert_eq!(key_lines.len(), 6, "{key_lines:?}");
+    assert!(key_lines.iter().all(|line| *line == key_lines[0]), "{key_lines:?}");
+    let verify = block(INSTALL, "verify_signed() {", "}");
+    for script in places {
+        assert_eq!(block(script, "verify_signed() {", "}"), verify);
+    }
+    assert!(verify.contains("[ \"$comment\" != \"$name $tag\" ]"));
+    assert!(verify.contains("= \"not-set\" ]"), "no key pinned refuses");
+
+    for script in [INSTALL, UPDATE] {
+        let download = block(script, "download_release() {", "}");
+        let signed = download
+            .find("verify_signed \"$dir/$asset\" \"$asset\" \"$TAG\" || exit 1")
+            .expect("the tarball's signature is checked");
+        assert!(signed < download.find("tar -xzf").unwrap());
+    }
+    let update = block(actions, "action_app_update() {", "}");
+    assert!(!update.contains("raw.githubusercontent.com"), "{update}");
+    let checked = update
+        .find("verify_signed \"$dir/update.sh\" update.sh \"$tag\"")
+        .expect("update.sh's signature is checked");
+    assert!(checked < update.find("bash \"$dir/update.sh\"").unwrap());
+    assert!(INSTALL.contains("jq minisign"));
+
+    let release = include_str!("../../../.github/workflows/server-release.yml");
+    assert!(release.contains("secrets.SERVER_MINISIGN_KEY"));
+    assert!(release.contains(r#"minisign -S -s "$key" -m "$file" -t "$file $TAG""#));
+    assert!(release.contains(
+        "kid-phone-server-aarch64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig"
+    ));
+}
+
 #[tokio::test]
 async fn schedule_times_that_arent_hh_mm_are_refused() {
     let app = TestApp::new().await;

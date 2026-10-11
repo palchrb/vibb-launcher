@@ -260,6 +260,14 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   rest of the report kept); migration `0054_location_cleanup.sql` removed rows the old intake let in. The locate
   page builds its popup with `textContent` and gets the newest fix's time as `locate::js_string` (JSON with `<>&`
   escaped). Values in a `<script>` go through `js_string`, never `{{ value }}` inside quotes.
+- **Root takes only signed release files (security review M5).** `verify_signed FILE NAME TAG` (the same text in
+  install.sh, update.sh and both copies of actions.sh, with the pinned `SERVER_SIGNING_PUBKEY`) needs `FILE.minisig`
+  to verify with minisign and its trusted comment to be `NAME TAG`; `download_release` checks the tarball before
+  unpacking it, and `action_app_update` takes `update.sh` + `.minisig` from the release assets (never
+  raw.githubusercontent) and checks it before running it. `server-release.yml`'s publish job signs both with the
+  `SERVER_MINISIGN_KEY` secret and checks them against the key pinned in `deploy/update.sh` - no secret or no pinned
+  key, no release. `"not-set"` (the state until the owner pins a key) refuses everything. `tests::deploy_scripts`
+  keeps the six key lines and the four `verify_signed` equal.
 - **Root scripts never read `data/` as code (security review H1).** `data/` belongs to the service user, so
   `scheduler.sh` reads `schedule.conf` key by key with `grep` and checks each value against a pattern (a bad one
   falls back to its default and is logged; a symlinked file is ignored), and every form that writes a schedule file

@@ -58,7 +58,7 @@ echo "Detected architecture: $(uname -m) -> $TARGET"
 
 echo "Installing prerequisites..."
 apt-get update -qq
-apt-get install -y -qq curl tar unzip iptables jq >/dev/null
+apt-get install -y -qq curl tar unzip iptables jq minisign >/dev/null
 
 # Cleanup for any Pi that ran an installer from before the on-device-filtering
 # migration (see this repo's CLAUDE.md): this server no longer runs a live DNS
@@ -161,13 +161,45 @@ pick_tag() {
     fi
 }
 
-# Downloads the release tarball and its .sha256 into $1 and checks the hash; exits on any failure.
+# Security review M5: every release file root installs or runs is signed with the project's
+# minisign key, pinned here (the same line in install.sh, update.sh and actions.sh - a server test
+# keeps them equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
+# the tag, so a signed file can't be passed off under another name or as another release.
+SERVER_SIGNING_PUBKEY="not-set"
+
+# verify_signed FILE NAME TAG: FILE.minisig must be a good signature of FILE by the pinned key,
+# with the trusted comment "NAME TAG". Anything else - no key pinned, no minisign, no or a bad
+# signature, another comment - refuses.
+verify_signed() {
+    local file="$1" name="$2" tag="$3" comment
+    if [ "$SERVER_SIGNING_PUBKEY" = "not-set" ]; then
+        echo "No release signing key is pinned in this script - refusing $name (server/DEPLOY.md, \"Release signing\")." >&2
+        return 1
+    fi
+    if ! command -v minisign >/dev/null 2>&1; then
+        { apt-get update -qq && apt-get install -y -qq minisign; } >/dev/null 2>&1 || true
+    fi
+    if ! command -v minisign >/dev/null 2>&1; then
+        echo "minisign is missing and couldn't be installed - refusing $name unchecked." >&2
+        return 1
+    fi
+    if ! comment="$(minisign -V -Q -P "$SERVER_SIGNING_PUBKEY" -m "$file" -x "$file.minisig" 2>/dev/null)" ||
+        [ "$comment" != "$name $tag" ]; then
+        echo "$name has no valid signature for $tag - not using it." >&2
+        return 1
+    fi
+}
+
+# Downloads the release tarball, its .sha256 and its .minisig into $1 and checks the signature and
+# the hash; exits on any failure.
 download_release() {
     local dir="$1" asset="kid-phone-server-$TARGET.tar.gz" expected actual
     local url="https://github.com/$REPO/releases/download/$TAG/$asset"
     echo "Downloading $TAG from $url ..."
     curl -fsSL "$url" -o "$dir/$asset"
     curl -fsSL "$url.sha256" -o "$dir/$asset.sha256"
+    curl -fsSL "$url.minisig" -o "$dir/$asset.minisig"
+    verify_signed "$dir/$asset" "$asset" "$TAG" || exit 1
     expected="$(head -c 64 "$dir/$asset.sha256")"
     actual="$(sha256sum "$dir/$asset" | cut -c1-64)"
     if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || [ "$expected" != "$actual" ]; then
@@ -175,7 +207,7 @@ download_release() {
         exit 1
     fi
     tar -xzf "$dir/$asset" -C "$dir"
-    rm -f "$dir/$asset" "$dir/$asset.sha256"
+    rm -f "$dir/$asset" "$dir/$asset.sha256" "$dir/$asset.minisig"
     if [ ! -s "$dir/kid_phone_server" ] || [ ! -d "$dir/static" ]; then
         echo "The download doesn't contain kid_phone_server and static/ - not installing." >&2
         exit 1
@@ -348,23 +380,57 @@ resolve_server_tag() {
             }' || true
 }
 
-# Runs update.sh as it is in the release it installs (not master HEAD), from a file: a failed or
-# truncated download is never executed.
+# Security review M5: every release file root installs or runs is signed with the project's
+# minisign key, pinned here (the same line in install.sh, update.sh and actions.sh - a server test
+# keeps them equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
+# the tag, so a signed file can't be passed off under another name or as another release.
+SERVER_SIGNING_PUBKEY="not-set"
+
+# verify_signed FILE NAME TAG: FILE.minisig must be a good signature of FILE by the pinned key,
+# with the trusted comment "NAME TAG". Anything else - no key pinned, no minisign, no or a bad
+# signature, another comment - refuses.
+verify_signed() {
+    local file="$1" name="$2" tag="$3" comment
+    if [ "$SERVER_SIGNING_PUBKEY" = "not-set" ]; then
+        echo "No release signing key is pinned in this script - refusing $name (server/DEPLOY.md, \"Release signing\")." >&2
+        return 1
+    fi
+    if ! command -v minisign >/dev/null 2>&1; then
+        { apt-get update -qq && apt-get install -y -qq minisign; } >/dev/null 2>&1 || true
+    fi
+    if ! command -v minisign >/dev/null 2>&1; then
+        echo "minisign is missing and couldn't be installed - refusing $name unchecked." >&2
+        return 1
+    fi
+    if ! comment="$(minisign -V -Q -P "$SERVER_SIGNING_PUBKEY" -m "$file" -x "$file.minisig" 2>/dev/null)" ||
+        [ "$comment" != "$name $tag" ]; then
+        echo "$name has no valid signature for $tag - not using it." >&2
+        return 1
+    fi
+}
+
+# Runs update.sh as the release it installs carries it (a release asset, signed - never a branch's
+# copy), from a file: a failed, truncated or unsigned download is never executed.
 action_app_update() {
-    local tag script rc=0
+    local tag dir rc=0
     tag="$(resolve_server_tag)"
     if [ -z "$tag" ]; then
         echo "app_update: no server-vX.Y.Z release found in $REPO" >&2
         return 1
     fi
-    script="$(mktemp)"
-    if ! curl -fsSL "https://raw.githubusercontent.com/$REPO/$tag/server/deploy/update.sh" -o "$script"; then
-        rm -f "$script"
+    dir="$(mktemp -d)"
+    if ! curl -fsSL "https://github.com/$REPO/releases/download/$tag/update.sh" -o "$dir/update.sh" ||
+        ! curl -fsSL "https://github.com/$REPO/releases/download/$tag/update.sh.minisig" -o "$dir/update.sh.minisig"; then
+        rm -rf "$dir"
         echo "app_update: couldn't download update.sh for $tag" >&2
         return 1
     fi
-    KPS_REPO="$REPO" KPS_TAG="$tag" bash "$script" || rc=$?
-    rm -f "$script"
+    if ! verify_signed "$dir/update.sh" update.sh "$tag"; then
+        rm -rf "$dir"
+        return 1
+    fi
+    KPS_REPO="$REPO" KPS_TAG="$tag" bash "$dir/update.sh" || rc=$?
+    rm -rf "$dir"
     return "$rc"
 }
 

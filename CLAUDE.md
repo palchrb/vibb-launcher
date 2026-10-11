@@ -72,7 +72,9 @@ keeps the music app's, the music app sends exactly those.
   `RELEASE_CERT_SHA256` check), versionCode as the launcher's, never "latest". Deploy a server with the music
   catalog row (0.21.0+) before the first stable `music-v*` (design 21 QA #11).
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
-  then the aarch64 tarball and its `.sha256`, never "latest". The server's update check and `install.sh`/`update.sh` find it by tag.
+  then the aarch64 tarball and its `.sha256`, never "latest". Since 0.24.0 the tarball and `update.sh` are signed
+  with minisign (`SERVER_MINISIGN_KEY` secret, public key pinned in `server/deploy/*.sh`; server/DEPLOY.md,
+  "Release signing") - no secret, no release. The server's update check and `install.sh`/`update.sh` find it by tag.
   Since 0.23.0 (design 22) the same run builds the multi-arch image `ghcr.io/<owner>/handy-server`,
   pushes it by digest, smoke-tests it (amd64, arm64 under QEMU), then tags `X.Y.Z`, and `latest` when it is
   the highest `server-v*` tag; the GitHub release is published last. The GHCR package must be made public once by

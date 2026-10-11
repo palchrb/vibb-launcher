@@ -295,9 +295,9 @@ before it gets a version tag, and publishes the GitHub release only after that.
 curl -fsSL https://raw.githubusercontent.com/palchrb/vibb-launcher/main/server/deploy/update.sh | sudo bash
 ```
 
-Downloads the newest stable `server-vX.Y.Z` release (prereleases and drafts are skipped), checks it against the
-release's published `.sha256`, and swaps the binary in place. The in-app "Update now" runs `update.sh` as it is in that
-release (not `master`), from a file, never piped. Doesn't touch your `.env`. The download is unpacked and
+Downloads the newest stable `server-vX.Y.Z` release (prereleases and drafts are skipped), checks its signature
+("Release signing" below) and the release's published `.sha256`, and swaps the binary in place. The in-app "Update
+now" runs the `update.sh` that release carries, signed (not a branch's copy), from a file, never piped. Doesn't touch your `.env`. The download is unpacked and
 checked before the service is stopped, so a failed download leaves the old version running; if anything fails after the
 stop, the service is started again. Before the swap it copies the database and the old binary to
 `/var/backups/kid-phone-server/<timestamp>/`, because the new version may migrate the database on its first start. Old
@@ -318,6 +318,38 @@ root-side updater still fetches `update.sh` from the old repo. Re-run the instal
 Updates only ever go forward: the Updates page, the scheduler and `update.sh` refuse a release that isn't newer than the
 installed one. To go back on purpose (see "Rolling back" below for the database), run `update.sh` with
 `KPS_ALLOW_DOWNGRADE=1` - it then installs the newest release even if older.
+
+### Release signing (server >= 0.24.0)
+
+Root on the Pi installs and runs only release files signed with the project's [minisign](https://jedisct1.github.io/minisign/)
+key (security review M5): `install.sh` and `update.sh` check the tarball, and the root-side updater checks `update.sh`
+before it runs it. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
+trusted comment names the file and the release tag, so a signed file can't be passed off under another name or as
+another release. `server-release.yml` signs both with the `SERVER_MINISIGN_KEY` secret and refuses to publish without
+it, or when it doesn't match the pinned key.
+
+**One-time setup by the repo owner, before the first `server-v0.24.0` tag:**
+1. On your own computer (not the Pi, not CI), with minisign installed (`apt install minisign`, `brew install minisign`):
+   `minisign -G -W -p handy-server.pub -s handy-server.key`. `-W` leaves the secret key without a password, since CI
+   signs unattended; the GitHub secret is what protects it. Keep `handy-server.key` somewhere safe offline (a password
+   manager) and never in the repo.
+2. GitHub > the repo > Settings > Secrets and variables > Actions > New repository secret: name
+   `SERVER_MINISIGN_KEY`, value the whole content of `handy-server.key` (both lines).
+3. Pin the public key, the second line of `handy-server.pub` (it starts with `RW`), in both scripts (six places,
+   actions.sh's copies included):
+   `KEY='RW...'; sed -i "s|^SERVER_SIGNING_PUBKEY=.*|SERVER_SIGNING_PUBKEY=\"$KEY\"|" server/deploy/install.sh server/deploy/update.sh`,
+   then `cargo test deploy_scripts` (from `server/`) and commit.
+4. Optional, as the review suggests: turn on immutable releases (Settings > General > Releases), and move the secret
+   into an environment with required reviewers.
+
+Until the key is pinned, the scripts refuse every release ("No release signing key is pinned").
+
+- **The way in**: a Pi on 0.23 or older updates to 0.24.0 the old way (its `actions.sh` takes `update.sh` from the
+  tag), but 0.24.0's `update.sh` already checks the tarball's signature, installs `minisign`, and rewrites
+  `actions.sh` to check every later `update.sh`. A fresh install from `main` refuses releases older than 0.24.0 (they
+  aren't signed).
+- **A new key** (lost or leaked): make a new pair, replace the secret and the pinned key, release, and re-run
+  `install.sh` on every Pi - an installed `actions.sh` refuses anything the old key didn't sign, by design.
 
 ### Rolling back the server
 
@@ -502,7 +534,9 @@ audio from the source.
   the app's page lets the next release set them again.
 - **A new phone starts with only its clock, calculator, camera and Vibb Music allowed** (never Settings, a browser or a
   file manager); allow the rest on its page. Phones already set up keep their lists.
-- Rolling back to 0.23 means restoring the `update.sh` backup: 0.23 refuses a database with migration 0061.
+- **Signed releases**: from 0.24.0 on, root installs and runs only release files signed with the project's key
+  ("Release signing" under "Updating"; the repo owner sets the key up once before tagging 0.24.0).
+- Rolling back to 0.23 means restoring the `update.sh` backup: 0.23 refuses a database that 0.24 migrated (0061, 0062).
 
 ## Useful commands on the Pi
 
