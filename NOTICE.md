@@ -54,3 +54,12 @@ header. vibb is licensed under the MIT License, Copyright (c) 2026 palchrb; its 
 app, and covers the server's port above too. The music app uses AndroidX Media3,
 Room, WorkManager and Jetpack Compose (Apache License 2.0), OkHttp (Apache License 2.0) and kotlinx.serialization
 (Apache License 2.0).
+
+The music app's Sonos control (`music/app/src/main/java/me/vibb/music/sonos/`, design 26a) reimplements in Kotlin,
+under the GPL-3.0 (or later), the behaviour of [palchrb/vibb](https://github.com/palchrb/vibb)'s `pi/sonosd.py` (the
+Sonos sidecar: the uid -> ip cache, discovery and the zone topology, the DIDL and the NRK Radio service recipe, the
+session's poll machine with its stall, migration and disarm rules, and the transport sequences), `pi/vibb/renderer.py`
+(the renderer state) and the Sonos controller in `pi/daemon.py` (`_sonos_body` and the speaker-playable filter); its
+unit tests port vibb's `tests/sonos_*.py`. The UPnP client is written here, with no third-party UPnP library.
+`scripts/fake-sonos.py`, the fake speakers for the emulator, is modelled on vibb's test fakes (`tests/sonos_renderer.py`
+and `tests/sonos_contract.py`). vibb's MIT License, Copyright (c) 2026 palchrb, and its notice above cover these too.

@@ -674,3 +674,73 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
 - Volume keys: ±3 per press, the slider, the cap holds, a louder speaker set from the Sonos app is left alone.
 - An incoming call during Sonos playback (per the user's answer to §10 item 6).
 - VPN filter on: discovery and control still work.
+
+## Step 1 implementation status (2026-10-11)
+
+Built on branch `music-1b-sonos`; compiled and tested in the sandbox with a pure-JVM harness, **not yet with the
+Android build** (the sandbox can't reach dl.google.com, so no Android SDK or Google Maven): the AGP build, the module's
+`testDebugUnitTest` (with android.jar on the classpath), lint, R8 and `checkReleaseHasNoDebugFeed` run in CI. No
+`PlaybackService`, `PlayerHub`, UI or launcher change: nothing uses the package yet.
+- **In** (`M/sonos/`, 13 files): `Ssdp` (SoCo's M-SEARCH sent three times, `SERVER` must name Sonos, `LOCATION` ->
+  ip + port, a round over an `SsdpIo`) and the Android `SsdpScanner` (MulticastLock for the round only, the socket
+  bound to the Wi-Fi `Network`); `Soap` (OkHttp, one pooled client, 2 s/5 s, no proxy, a `SocketFactory` for the
+  Wi-Fi binding, `HttpUrl.Builder`, javax.xml DOM, `UpnpFault`/`SpeakerUnreachable`/`UnknownUid`, `SoapSpeaker` for
+  the §2.2 actions); `Topology` (both wrapper forms, invisible members and satellites out, coordinator first);
+  `SpeakerCache` (`sonos.json` with `port`, per-row lenient read, players merge / groups replace, the picker rows of
+  `_sonos_choices`), `RoomDirectory` (the topology refresh under 2 s per ip and 6 s in all, stale + one background
+  SSDP round, only on Wi-Fi) and `CachedSpeakers` (the uid check on the play path only); `SonosUris`, `Didl`,
+  `NrkService` with Python's encodings; `SonosSession` (the pure machine: classify, aux every 12 polls, cadence, stall,
+  migration probe, disarm, `Fields.fresh`); `SonosTransport` (play, hush, `seekSettled`, adopt, verbs, the stall
+  retry, behind one Mutex, over an injected `SonosClock`); `PlayBody` with the speaker-playable filter;
+  `RendererState`; `SonosFiles` (the two `noBackupFilesDir` paths). The manifest gains `CHANGE_WIFI_MULTICAST_STATE`
+  and `ACCESS_WIFI_STATE`.
+- **Fixtures and the fake**: 26 canned replies in `music/app/src/test/resources/sonos/` (§7's list, plus GetVolume,
+  GetMute, an empty answer, `/status/accounts` and an NRK position); `scripts/fake-sonos.py` builds every answer from
+  those files (`--selftest`, `--print-seed`, `--script` with grouped-away, takeover, migration, drop/back, stall and
+  volume events); the debug feed merges `debug-feed/sonos.json` into the cache; `docs/testing/emulator.md` §6g.
+- **Tests**: 98 new JVM tests in 9 classes - `SonosFixturesTest` 11 (every fixture, the client on the wire against a
+  loopback socket server), `DidlTest` 6 (expected strings printed by vibb's own `didl()`), `SonosUrisTest` 7 (values
+  printed by vibb's own functions), `SsdpTest` 4, `TopologyTest` 12 (`sonos_groups.py` 1-4), `SpeakerCacheTest` 8
+  (`sonos_hold_scan.py` 1-4, the file, the resolver, `renderer.json`), `SonosSessionTest` 23 (`sonos_grouped.py` 1,
+  1b, 1c; `sonos_migrate_probe.py` 1, 2, 2b, 2c, 4, 5; `sonos_contract.py`'s canonical snapshots as `Fields`; stall,
+  disarm, cadence, freshness, the failed poll), `SonosTransportTest` 20 (`sonos_hush.py` 1-4, the 701/710/711 rule),
+  `PlayBodyTest` 7. Not ported, by design: `sonos_migrate_probe.py` 3 and `sonos_hush.py` 5 (`spotify_sharelink`,
+  phase 3), `sonos_groups.py` 5-6 and `sonos_grouped.py` 2-3 (the Pi screen and the controller: `SonosRendererTest`,
+  step 3).
+- **What ran here**: a Gradle project in the session scratchpad with Kotlin 2.1.20 (`allWarningsAsErrors`),
+  kotlinx.serialization 1.8.1, OkHttp 4.12.0, coroutines 1.10.2, JUnit 4.13.2, JDK 21 targeting 17, compiling every
+  `sonos/` file except `SsdpScanner.kt` and `SonosFiles.kt`, plus `model/*.kt` and `logic/Addresses.kt` they use (one
+  JDK-21-only warning in the existing `Addresses.kt` suppressed there: JDK 21's `InetAddress` is sealed); all 98 tests
+  green, and two mutations (the one-retry rule, the 701 retry set) turned 4 of them red. `SsdpScanner.kt`,
+  `SonosFiles.kt` and the changed `DebugFeedReceiver.kt` type-checked against hand-written stubs of the android.jar
+  members they call (not the real SDK). A harness-only test drove the Kotlin client against `scripts/fake-sonos.py`
+  (seed, topology refresh, a hushed play with a settled seek, polls, grouped away, the migration probe, adopt, pause,
+  stop): green. `python3 -I scripts/fake-sonos.py --selftest`: OK.
+- **Device checks**: none new (the list above stands); the emulator's are in §6g, from step 3a on.
+
+Choices made while building (each against the spec text, with its reason):
+1. **The port comes from the topology's `Location` too**, not only from the debug feed (§2.1 says only the feed sets
+   one): a real speaker's `Location` always says 1400, and the fake's topology names its own ports, so a refresh keeps
+   the debug-seeded port instead of resetting it to 1400.
+2. **The snapshot carries `nextPollMs` and `failedPolls`**: freshness (§2.4, `cadence + 10 s`) and §3.2's "the first 3
+   failed polls" are then computed from the published snapshot alone, on main, without reaching into the actor.
+3. **`volume` doesn't wake the poller** (§2.5 says every verb does): vibb's `verb("volume")` doesn't, since the set
+   value goes straight into the snapshot; the other verbs wake it.
+4. **`TransportState.UNKNOWN`** for anything outside the closed set (NO_MEDIA_PRESENT, ...): vibb passes the raw string
+   and its daemon maps unknowns to the conservative branch; an enum needs the member. An empty state is STOPPED.
+5. **`retriedAt` is elapsed time**, not vibb's wall clock: one clock in the machine; it is only a "retried" marker.
+6. **The stall retry runs after the publish** (vibb: before it, under the same lock): the transport does the SOAP, the
+   machine stays pure; the next poll sees the effect either way.
+7. **`PlayBody.build` takes `art` as a parameter**: the listing's `art` is parsed (`ListingItem.art`) but Room doesn't
+   keep it (`ItemRow` has no art column), so step 3 passes it or null (null = no `albumArtURI`, as a non-http art).
+8. **The picker's group rule is vibb's code** (`_sonos_choices`: unknown members dropped, a row while two known rooms
+   remain): §2.1 says "a group naming an unknown uid gives no row", which is the same for a two-member group (vibb's
+   test case) but keeps a row for a three-member group with one unknown member.
+9. **`fault_500.xml` is a SOAP fault with UPnP code 500** (the "not retried" case); an HTTP error without a SOAP fault
+   (an HTML page, a 503) is `SpeakerUnreachable`.
+10. **Tests use a plain-socket `TinyHttp` and `runBlocking`**: android.jar has no `com.sun.net.httpserver`, and
+    MockWebServer and coroutines-test aren't music dependencies; no build change.
+11. **The fake's uids are `RINCON_FAKE<port>01400`** and it binds 127.0.0.1 (the emulator's 10.0.2.2 is the host's
+    loopback): inside §5.5's `RINCON_[A-Z0-9]{12,20}`, and nothing on the LAN.
+12. Left for step 3 because they are §4/§6, not §2: the live classify with a 1.5 s budget (switch home, the
+    suspension receiver, adopt at startup) and the `x-rincon-queue:` park after a suspension Stop.
