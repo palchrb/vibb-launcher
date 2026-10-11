@@ -267,12 +267,13 @@ object MusicSessions {
 
 /**
  * Step 4's process-wide part (from `Application.initRest`, main thread): the volume cap's receivers,
- * and "the player is in front" ends at every screen-off (21 §3).
+ * the call rule (design 26a §6.7) and "the player is in front" ends at every screen-off (21 §3).
  */
 object MusicMedia {
     fun init(app: Context) {
         try {
             VolumeCap.init(app)
+            MusicCalls.init(app)
             ContextCompat.registerReceiver(
                 app,
                 object : BroadcastReceiver() {

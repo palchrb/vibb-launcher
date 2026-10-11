@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.music
 
 import android.app.admin.DevicePolicyManager
 import android.media.session.PlaybackState
+import com.kidslauncher.mdm.lock.VoipPhase
 import java.util.Locale
 
 /*
@@ -129,3 +130,42 @@ fun pauseBeforeSuspend(pkg: String, shouldBeSuspended: Boolean, currentlySuspend
  * else back to the phone's own choice (the default state keeps the current grant). */
 fun notificationGrantState(managed: Boolean): Int =
     if (managed) DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED else DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
+
+/**
+ * A call the music session pauses for (design 26a §6.7; user 2026-10-11: Element X voice and video
+ * calls included): a VoIP call ringing or up (`VoipCalls.phase`: its ring is a CALL notification, no
+ * audio mode changes until it connects - design 17), a call of our own dialer, or a system call
+ * (Telecom's managed call, else the audio mode IN_CALL - `managedCallActive`; never
+ * MODE_IN_COMMUNICATION alone, design 17 QA #5). The same for local and Sonos playback: a Sonos
+ * room holds no audio focus.
+ */
+fun musicCallActive(voip: VoipPhase, ourCall: Boolean, systemCall: Boolean): Boolean =
+    voip != VoipPhase.NONE || ourCall || systemCall
+
+/** [pausedByCall]: the launcher paused the music for this call; [pauseSent]: and the pause hasn't shown yet. */
+data class CallHold(val inCall: Boolean = false, val pausedByCall: Boolean = false, val pauseSent: Boolean = false)
+
+enum class CallMusicAction { NONE, PAUSE, PLAY }
+
+/**
+ * One look at the call and the music session ([play]: null without one). A call starting while it
+ * plays -> PAUSE, remembered. During the call a play the kid makes (seen after our pause showed)
+ * forgets it: their own pause afterwards stays. The call ending -> PLAY only when we paused, the
+ * session is still paused and the app [usable] (a time rule in between keeps it quiet). A pause the
+ * kid made before the call is never ours to undo.
+ */
+fun callHoldStep(state: CallHold, inCall: Boolean, play: SessionPlay?, usable: Boolean): Pair<CallHold, CallMusicAction> {
+    val playing = play == SessionPlay.PLAYING
+    return when {
+        !state.inCall && inCall ->
+            if (playing) CallHold(inCall = true, pausedByCall = true, pauseSent = true) to CallMusicAction.PAUSE else CallHold(inCall = true) to CallMusicAction.NONE
+        state.inCall && inCall -> when {
+            state.pauseSent && !playing -> state.copy(pauseSent = false) to CallMusicAction.NONE
+            state.pausedByCall && !state.pauseSent && playing -> state.copy(pausedByCall = false) to CallMusicAction.NONE
+            else -> state to CallMusicAction.NONE
+        }
+        state.inCall && !inCall ->
+            CallHold() to (if (state.pausedByCall && play == SessionPlay.PAUSED && usable) CallMusicAction.PLAY else CallMusicAction.NONE)
+        else -> state to CallMusicAction.NONE
+    }
+}

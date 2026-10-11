@@ -247,4 +247,18 @@ class GuardsTest {
         assertTrue(sonos.substringAfter("fun adjustVolume(delta: Int) {").substringBefore("\n    }\n").contains("setVolume(base + delta)"))
         assertTrue(renderer.contains("handling { controller.setVolume(deviceVolume) }"))
     }
+
+    @Test
+    fun `a Sonos room holds no audio focus, and the call backstop resumes only what it paused`() {
+        // design 26a §6.7: the phone's player stands down to IDLE (a paused Exo keeps its focus)
+        assertTrue(service.contains("if (old is SonosRenderer) old.release() else local.standDown()"))
+        val local = code("src/main/java/me/vibb/music/playback/LocalRenderer.kt")
+        assertTrue(local.substringAfter("fun standDown() {").substringBefore("\n    }\n").contains("exo.stop()"))
+        assertTrue(service.contains("audio.addOnModeChangedListener(mainExecutor, modeListener)"))
+        assertTrue(service.contains("audio.removeOnModeChangedListener(modeListener)"))
+        val step = service.substringAfter("private fun callStep(inCall: Boolean) {").substringBefore("\n    }\n")
+        assertTrue(step.contains("callPauseStep(callPause, inCall, playing, paused, playAllowed(suspendedNow()))"))
+        assertTrue(step.contains("CallAction.PLAY -> if (callRenderer === sonos) sonos.play()"))
+        assertTrue("the service's own pause (the sleep timer stays)", step.contains("selfPausing = true\n                sonos.pause()"))
+    }
 }

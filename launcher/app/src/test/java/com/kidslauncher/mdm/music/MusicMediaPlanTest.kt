@@ -113,6 +113,62 @@ class MusicMediaPlanTest {
         assertEquals(DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED, notificationGrantState(managed = true))
         assertEquals(DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT, notificationGrantState(managed = false))
     }
+
+    // Calls (design 26a §6.7).
+
+    private fun calls(steps: List<Pair<Boolean, SessionPlay?>>, usable: Boolean = true): List<CallMusicAction> {
+        var state = CallHold()
+        return steps.map { (inCall, play) ->
+            val (next, action) = callHoldStep(state, inCall, play, usable)
+            state = next
+            action
+        }
+    }
+
+    @Test
+    fun `a VoIP ring or call, our dialer's call or a system call pauses the music`() {
+        assertTrue("Element X ringing: no audio mode yet", musicCallActive(com.kidslauncher.mdm.lock.VoipPhase.RINGING, ourCall = false, systemCall = false))
+        assertTrue(musicCallActive(com.kidslauncher.mdm.lock.VoipPhase.IN_CALL, ourCall = false, systemCall = false))
+        assertTrue(musicCallActive(com.kidslauncher.mdm.lock.VoipPhase.NONE, ourCall = true, systemCall = false))
+        assertTrue(musicCallActive(com.kidslauncher.mdm.lock.VoipPhase.NONE, ourCall = false, systemCall = true))
+        assertFalse(musicCallActive(com.kidslauncher.mdm.lock.VoipPhase.NONE, ourCall = false, systemCall = false))
+        // a system call as the lock decides it: Telecom when known, else MODE_IN_CALL - never MODE_IN_COMMUNICATION
+        assertFalse(com.kidslauncher.mdm.lock.managedCallActive(null, android.media.AudioManager.MODE_IN_COMMUNICATION))
+    }
+
+    @Test
+    fun `music playing when a call starts is paused, and played again when it ends`() {
+        val actions = calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.PAUSED))
+        assertEquals(listOf(CallMusicAction.PAUSE, CallMusicAction.NONE, CallMusicAction.PLAY), actions)
+    }
+
+    @Test
+    fun `a pause made before the call is untouched, nothing playing is nothing to do`() {
+        assertEquals(listOf(CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to SessionPlay.PAUSED, false to SessionPlay.PAUSED)))
+        assertEquals(listOf(CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to null, false to null)))
+        assertEquals("no call, no look", listOf(CallMusicAction.NONE), calls(listOf(false to SessionPlay.PLAYING)))
+    }
+
+    @Test
+    fun `the kid's own play and pause during the call stay theirs`() {
+        val actions = calls(
+            listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.PAUSED),
+        )
+        assertEquals(List(4) { if (it == 0) CallMusicAction.PAUSE else CallMusicAction.NONE } + CallMusicAction.NONE, actions)
+    }
+
+    @Test
+    fun `our pause not shown yet is not the kid's play - the ring's re-reads while the session still plays`() {
+        val actions = calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.PAUSED))
+        assertEquals(listOf(CallMusicAction.PAUSE, CallMusicAction.NONE, CallMusicAction.NONE, CallMusicAction.PLAY), actions)
+    }
+
+    @Test
+    fun `after the call nothing plays in a suspended app, nor a session that stopped`() {
+        assertEquals(CallMusicAction.NONE, calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.PAUSED), usable = false).last())
+        assertEquals(CallMusicAction.NONE, calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to SessionPlay.STOPPED)).last())
+        assertEquals(CallMusicAction.NONE, calls(listOf(true to SessionPlay.PLAYING, true to SessionPlay.PAUSED, false to null)).last())
+    }
 }
 
 /**
@@ -154,5 +210,15 @@ class MusicSuspensionGuardTest {
         val pause = block.indexOf("MusicSessions.pauseBeforeSuspend(context, packageName)")
         val suspend = block.indexOf("dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)")
         assertTrue("pause at $pause, suspend at $suspend", pause in 0 until suspend)
+    }
+
+    @Test
+    fun `the call rule watches every call the launcher sees, from process start`() {
+        val calls = file("music/MusicCalls.kt")
+        val init = body(calls, "fun init(")
+        for (source in listOf("VoipCalls.addListener", "OngoingCalls.addListener", "addOnModeChangedListener")) assertTrue(source, init.contains(source))
+        assertTrue(body(calls, "private fun evaluate(").contains("musicCallActive(VoipCalls.phase, OngoingCalls.hasLiveCall, systemCall(ctx))"))
+        assertTrue(body(calls, "private fun systemCall(").contains("managedCallActive(managed, mode)"))
+        assertTrue(file("music/MusicSessions.kt").contains("VolumeCap.init(app)\n            MusicCalls.init(app)"))
     }
 }

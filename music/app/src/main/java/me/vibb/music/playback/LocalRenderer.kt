@@ -131,6 +131,17 @@ internal class LocalRenderer(
     override fun seekTo(ms: Long) = exo.seekTo(ms)
     override fun clear() = exo.clearMediaItems()
 
+    /**
+     * A Sonos room renders now (design 26a §6.7): the player back to IDLE with no queue - a paused but
+     * prepared ExoPlayer keeps the audio focus it was granted (Media3 1.7.1 `AudioFocusManager`
+     * abandons it only in IDLE), and the phone must hold none while the speaker plays. The next
+     * [load] prepares it again.
+     */
+    fun standDown() {
+        exo.stop()
+        exo.clearMediaItems()
+    }
+
     /** Store where the current item is (its position, the entry's bookmark, the now-playing queue). */
     override fun saveNow(force: Boolean) {
         val a = queue() ?: return

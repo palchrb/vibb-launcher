@@ -53,12 +53,16 @@ import me.vibb.music.data.PositionRow
 import me.vibb.music.data.ShuffleRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
+import me.vibb.music.logic.CallAction
+import me.vibb.music.logic.CallPause
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.NetCaps
 import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.Playability
 import me.vibb.music.logic.QueuePlan
 import me.vibb.music.logic.TransportAction
+import me.vibb.music.logic.callMode
+import me.vibb.music.logic.callPauseStep
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
@@ -196,6 +200,7 @@ class PlaybackService : MediaSessionService() {
         PlayerHub.position = { renderer.positionMs() }
         LiveBridge.acquire(this)
         PlayerHub.suspendStop = { scope.launch { suspendStop() } }
+        audio.addOnModeChangedListener(mainExecutor, modeListener)
         // Design 26a §4.7: the phone settles at once; a room only after one classify of it (adopt).
         val choice = home.choice()
         scope.launch {
@@ -227,6 +232,7 @@ class PlaybackService : MediaSessionService() {
         if (sonos == null) renderer.saveNow(force = true)
         handler.removeCallbacksAndMessages(null)
         audio.unregisterAudioDeviceCallback(deviceCallback)
+        audio.removeOnModeChangedListener(modeListener)
         PlayerHub.position = null
         PlayerHub.suspendStop = null
         PlayerHub.mutableState.value = PlayerHub.State()
@@ -792,7 +798,10 @@ class PlaybackService : MediaSessionService() {
                 renderer.saveNow()
             }
             RendererEvent.InterruptionEnded -> if (renderer.player.playWhenReady) applyOverlap()
-            is RendererEvent.IsPlaying -> onIsPlayingChanged(event.playing)
+            is RendererEvent.IsPlaying -> {
+                onIsPlayingChanged(event.playing)
+                if (callPause.inCall) callStep(callPause.inCall)
+            }
             is RendererEvent.Error -> onError(event.code)
             RendererEvent.Lost -> scope.launch { lost() }
             RendererEvent.StateChanged -> publish()
@@ -829,6 +838,45 @@ class PlaybackService : MediaSessionService() {
         }
         if (renderer.player.playWhenReady) startedPlaying(a, index)
         renderer.saveNow()
+    }
+
+    // --- calls on a Sonos room (design 26a §6.7) ---
+
+    private var callPause = CallPause()
+
+    /** The room we paused for the call: only it is resumed. */
+    private var callRenderer: Renderer? = null
+
+    /** The backstop for a system call (the launcher holds the rule; without its listener access only this). */
+    private val modeListener = AudioManager.OnModeChangedListener { mode -> callStep(callMode(mode)) }
+
+    /**
+     * The call rule's step ([callPauseStep]) while a Sonos room renders: the phone's own player
+     * pauses for a call through its audio focus, and the room holds none. Our pause and resume are
+     * the service's own (the sleep timer runs on), and the resume asks `playAllowed`.
+     */
+    private fun callStep(inCall: Boolean) {
+        val sonos = renderer as? SonosRenderer
+        if (sonos == null) {
+            callPause = CallPause(inCall = inCall)
+            callRenderer = null
+            return
+        }
+        val playing = sonos.showsPlaying
+        val paused = !playing && sonos.itemCount() > 0 && sonos.rendererState == null
+        val (next, action) = callPauseStep(callPause, inCall, playing, paused, playAllowed(suspendedNow()))
+        callPause = next
+        when (action) {
+            CallAction.PAUSE -> {
+                callRenderer = sonos
+                selfPausing = true
+                sonos.pause()
+                selfPausing = false
+            }
+            CallAction.PLAY -> if (callRenderer === sonos) sonos.play()
+            CallAction.NONE -> Unit
+        }
+        if (!next.pausedByCall) callRenderer = null
     }
 
     private fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1137,7 +1185,8 @@ class PlaybackService : MediaSessionService() {
         }
         if (renderer !== old) return
         attach(sonosRenderer(uid, name))
-        if (old is SonosRenderer) old.release() else local.clear()
+        // the phone's player stands down to IDLE: a paused Exo keeps its audio focus (§6.7)
+        if (old is SonosRenderer) old.release() else local.standDown()
         if (queue == null) {
             active = null
             lastIndex = -1
