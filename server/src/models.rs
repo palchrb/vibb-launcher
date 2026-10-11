@@ -820,13 +820,20 @@ pub fn checked_location(loc: &LocationReport) -> Option<String> {
     if loc.captured_at.len() > 64 {
         return None;
     }
-    let time = chrono::DateTime::parse_from_rfc3339(loc.captured_at.trim()).ok()?;
-    Some(
-        time.with_timezone(&chrono::Utc)
-            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-            .to_string(),
-    )
+    let time = chrono::DateTime::parse_from_rfc3339(loc.captured_at.trim())
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    // A fix from the future would stay "the newest" for good: the map's last-seen point, never
+    // pruned (QA of the security wave, Low 3). The launcher sends when the fix was taken; a few
+    // minutes cover a phone clock that runs ahead.
+    if time > chrono::Utc::now() + chrono::Duration::minutes(MAX_FIX_AHEAD_MINUTES) {
+        return None;
+    }
+    Some(time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
 }
+
+/// How far past the server's time a location fix's `captured_at` may be.
+const MAX_FIX_AHEAD_MINUTES: i64 = 5;
 
 #[derive(Deserialize)]
 pub struct CommandResultRequest {

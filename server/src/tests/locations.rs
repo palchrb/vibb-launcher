@@ -45,6 +45,11 @@ async fn only_real_fixes_are_stored() {
                "captured_at": "2026-10-10T12:00:00Z"}),
         json!({"latitude": 59.9, "longitude": 10.7, "accuracy_meters": -1.0,
                "captured_at": "2026-10-10T12:00:00Z"}),
+        // From the future (QA of the security wave, Low 3): it would stay "the newest fix".
+        json!({"latitude": 59.9, "longitude": 10.7, "accuracy_meters": 5.0,
+               "captured_at": "9999-12-31T23:59:59Z"}),
+        json!({"latitude": 59.9, "longitude": 10.7, "accuracy_meters": 5.0,
+               "captured_at": (chrono::Utc::now() + chrono::Duration::minutes(10)).to_rfc3339()}),
     ] {
         report(&app, &token, bad.clone()).await;
         assert!(stored(&app, id).await.is_empty(), "stored {bad}");
@@ -55,7 +60,7 @@ async fn only_real_fixes_are_stored() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(reports, 6);
+    assert_eq!(reports, 8);
 
     // What the launcher sends (Instant.toString()), stored normalised to UTC milliseconds.
     report(
@@ -72,6 +77,20 @@ async fn only_real_fixes_are_stored() {
                "captured_at": "2026-10-10T14:00:01+02:00"}),
     )
     .await;
+    // A phone clock a minute ahead is still a fix.
+    let ahead = chrono::Utc::now() + chrono::Duration::minutes(1);
+    report(
+        &app,
+        &token,
+        json!({"latitude": 1.0, "longitude": 2.0, "accuracy_meters": 3.0,
+               "captured_at": ahead.to_rfc3339()}),
+    )
+    .await;
+    assert_eq!(stored(&app, id).await.len(), 3);
+    sqlx::query("DELETE FROM device_locations WHERE latitude = 1.0")
+        .execute(&app.db)
+        .await
+        .unwrap();
     assert_eq!(
         stored(&app, id).await,
         [
@@ -224,4 +243,31 @@ async fn a_delivered_command_is_not_shown_as_done() {
         "{}",
         row("locate")
     );
+}
+
+/// QA of the security wave, Low 3: a future fix stored before the intake refused them is pruned,
+/// so the real newest fix is the map's again.
+#[tokio::test]
+async fn a_stored_future_fix_is_pruned() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    report(
+        &app,
+        &token,
+        json!({"latitude": 59.9, "longitude": 10.7, "accuracy_meters": 5.0,
+               "captured_at": chrono::Utc::now().to_rfc3339()}),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO device_locations (device_id, latitude, longitude, captured_at) \
+         VALUES (?, 1.0, 2.0, '9999-12-31T23:59:59.000Z')",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    crate::retention::prune(&app.db).await.unwrap();
+    let left = stored(&app, id).await;
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert_eq!((left[0].1, left[0].2), (59.9, 10.7));
 }

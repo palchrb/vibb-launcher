@@ -56,19 +56,29 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
-    let locations = sqlx::query(
+    // A fix dated in the future (stored before the intake refused them - QA of the security wave,
+    // Low 3) would be "the newest" for good, so it goes first.
+    let future = sqlx::query(
         "DELETE FROM device_locations \
+         WHERE captured_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 minutes')",
+    )
+    .execute(db)
+    .await?
+    .rows_affected();
+    let locations = future
+        + sqlx::query(
+            "DELETE FROM device_locations \
          WHERE received_at < datetime('now', '-' || MAX(1, COALESCE( \
                  (SELECT p.location_retention_days FROM device_policy p \
                   WHERE p.device_id = device_locations.device_id), ?)) || ' days') \
            AND id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER ( \
                  PARTITION BY device_id ORDER BY captured_at DESC, id DESC) AS newest \
                FROM device_locations) WHERE newest = 1)",
-    )
-    .bind(DEFAULT_LOCATION_RETENTION_DAYS)
-    .execute(db)
-    .await?
-    .rows_affected();
+        )
+        .bind(DEFAULT_LOCATION_RETENTION_DAYS)
+        .execute(db)
+        .await?
+        .rows_affected();
     // Also kept: the newest report per phone that said it enforces calls - the calls warning
     // "stopped reporting that it enforces calls" (a downgraded launcher) rests on it (qa-cleanup #7).
     let status_reports = sqlx::query(

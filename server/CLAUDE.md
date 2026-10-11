@@ -274,7 +274,9 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `YYYY-MM-DDTHH:MM:SS.mmmZ`; latitude +-90, longitude +-180, accuracy finite and >= 0; else dropped and logged, the
   rest of the report kept); migration `0054_location_cleanup.sql` removed rows the old intake let in. The locate
   page builds its popup with `textContent` and gets the newest fix's time as `locate::js_string` (JSON with `<>&`
-  escaped). Values in a `<script>` go through `js_string`, never `{{ value }}` inside quotes.
+  escaped). Values in a `<script>` go through `js_string`, never `{{ value }}` inside quotes. A fix more than 5
+  minutes past the server's time is dropped too, and `retention::prune` deletes stored ones first (QA of the security
+  wave, Low 3: it stayed "the newest fix" for good).
 - **Root takes only signed release files (security review M5).** `verify_signed FILE NAME TAG` (the same text in
   install.sh, update.sh and both copies of actions.sh, with the pinned `SERVER_SIGNING_PUBKEY`) needs `FILE.minisig`
   to verify with minisign and its trusted comment to be `NAME TAG`; `download_release` checks the tarball before
