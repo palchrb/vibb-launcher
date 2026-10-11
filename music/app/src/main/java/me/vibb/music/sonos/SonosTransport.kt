@@ -207,6 +207,24 @@ class SonosTransport(
     }
 
     /**
+     * `/state?live=1` (sonosd.py 1021-1039): one classify within [budgetMs] for the bookmark at the
+     * exact second (a switch home, a hand-off); published like a poll. Null when the session isn't
+     * armed or the speaker didn't answer in time - the caller keeps the snapshot it has.
+     */
+    suspend fun liveRefresh(budgetMs: Long): Fields? = mutex.withLock {
+        val uid = session.uid
+        if (!session.armed || uid == null) return@withLock null
+        try {
+            val fields = session.classify(speakers.speaker(uid, verify = false, budgetMs = budgetMs))
+            session.publish(fields)
+            session.snapshot
+        } catch (e: SonosException) {
+            log("live refresh failed (${e.javaClass.simpleName}) - keeping the last snapshot")
+            null
+        }
+    }
+
+    /**
      * One poll (`poll_loop`'s body) and, when the stall bookkeeping asks for it, the one in-place
      * retry: Stop, Play, and a settled seek back when the frozen position was 5 s or more.
      */

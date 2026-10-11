@@ -1,0 +1,134 @@
+package me.vibb.music.sonos
+
+import kotlinx.coroutines.runBlocking
+import me.vibb.music.model.PlayItem
+
+/** The actor without threads: jobs wait in [jobs] until [drain] runs them in order, results handed back at once. */
+class FakeWork : SonosWork {
+    val jobs = ArrayDeque<() -> Unit>()
+    val afters = mutableListOf<Pair<Long, () -> Unit>>()
+
+    /** The next job fails with this instead of running. */
+    var failNext: Exception? = null
+
+    override fun <T> submit(job: suspend () -> T, then: (Result<T>) -> Unit) {
+        jobs.addLast {
+            val fail = failNext
+            failNext = null
+            val r = if (fail != null) Result.failure(fail) else runCatching { runBlocking { job() } }
+            then(r)
+        }
+    }
+
+    override fun after(delayMs: Long, block: () -> Unit) {
+        afters.add(delayMs to block)
+    }
+
+    /** Run every queued job (and the ones they queue), and the delayed blocks too when [afters]. */
+    fun drain(afters: Boolean = true) {
+        while (true) {
+            val job = jobs.removeFirstOrNull()
+            if (job != null) {
+                job()
+                continue
+            }
+            if (!afters || this.afters.isEmpty()) return
+            val pending = this.afters.toList()
+            this.afters.clear()
+            pending.forEach { it.second() }
+        }
+    }
+}
+
+/** The bookmark rows as Room would get them, with the speaker's command count at the moment of each write. */
+class FakeStore(private val spk: FakeSpeaker) : SonosStore {
+    data class Write(val index: Int, val itemKey: String, val posMs: Long, val durationMs: Long?, val force: Boolean, val commandsBefore: Int)
+
+    val saved = mutableMapOf<String, Long>()
+    val writes = mutableListOf<Write>()
+    var throwOnSave: RuntimeException? = null
+
+    override fun savedPosMs(itemKey: String): Long = saved[itemKey] ?: 0L
+
+    override fun save(index: Int, itemKey: String, posMs: Long, durationMs: Long?, shownDurationMs: Long?, force: Boolean) {
+        throwOnSave?.let { throw it }
+        writes.add(Write(index, itemKey, posMs, durationMs, force, spk.commands.size))
+        saved[itemKey] = posMs
+    }
+}
+
+class FakeHost : SonosHost {
+    var changes = 0
+    val played = mutableListOf<Pair<String, String>>()
+    val followed = mutableListOf<Pair<String, String?>>()
+    val ramps = mutableListOf<Int?>()
+    val logs = mutableListOf<String>()
+    var onFollowed: () -> Unit = {}
+
+    override fun changed() {
+        changes++
+    }
+
+    override fun played(itemKey: String, uri: String) {
+        played.add(itemKey to uri)
+    }
+
+    override fun followed(uid: String, name: String?) {
+        onFollowed()
+        followed.add(uid to name)
+    }
+
+    override fun ramp(volume: Int?) {
+        ramps.add(volume)
+    }
+
+    override fun log(message: String) {
+        logs.add(message)
+    }
+}
+
+/**
+ * A controller on a recording speaker, the real SonosSession and SonosTransport, a clock that moves
+ * when told, and three RSS episodes of 24:13.
+ */
+class ControllerRig(val uid: String = "RINCON_KID01400") {
+    val clock = FakeClock()
+    val spk = FakeSpeaker(uid)
+    val work = FakeWork()
+    val store = FakeStore(spk)
+    val host = FakeHost()
+    val session = SonosSession({ clock.now })
+    var resolvedUids = mutableListOf<String>()
+    val transport = SonosTransport(session, { u, _, _ -> resolvedUids.add(u); spk }, NrkService({ _, _ -> SonosFakes.fixture("accounts.xml") }), clock.clock)
+    val c = SonosController(transport, work, store, { clock.now }, uid, "Barnerom", host, sleep = clock.clock.sleep)
+
+    val entry = SonosFakes.entry()
+    val items: List<PlayItem> = (1..3).map { SonosFakes.item(key = "ep$it", url = "https://podkast.example/ep$it.mp3") }
+
+    fun url(i: Int) = items[i].url!!
+
+    val now: Long get() = clock.now
+
+    /** Load the queue at [index], [startMs] and play it; the play runs in the actor. */
+    fun start(index: Int = 0, startMs: Long = 0, drain: Boolean = true) {
+        c.load(entry, items, index, startMs)
+        c.playTile()
+        if (drain) work.drain()
+    }
+
+    /** What the speaker reports next. */
+    fun speaker(rel: String, transport: String = "PLAYING", uri: String? = url(c.index), dur: String = "0:24:13") {
+        spk.position = PositionInfo("1", uri ?: "", rel, dur, "<DIDL-Lite/>")
+        spk.transport = transport
+    }
+
+    /** One poll, its snapshot handed to the controller as the actor would. */
+    fun poll(): Tick {
+        val tick = runBlocking { transport.poll(null) }
+        c.onPoll(tick, session.snapshot)
+        work.drain()
+        return tick
+    }
+
+    fun advance(ms: Long) = clock.advance(ms)
+}

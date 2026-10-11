@@ -92,4 +92,13 @@ class PlayBodyTest {
         assertFalse("numeric shorthand counts as a name (accepted, see privateLiteral)", PlayBodies.privateLiteral("10.1"))
         assertTrue(PlayBodies.privateLiteral("fd7a:115c:a1e0::1"))
     }
+
+    @Test
+    fun `the plan follows the filter - the start item kept at its place, else the next kept one from 0, nothing left is null`() {
+        val plan = me.vibb.music.logic.QueuePlan(listOf("a", "b", "c", "d"), 1, 42_000)
+        assertEquals(me.vibb.music.logic.QueuePlan(listOf("a", "b", "d"), 1, 42_000), PlayBodies.speakerPlan(plan) { it != "c" })
+        assertEquals("b dropped: c from 0", me.vibb.music.logic.QueuePlan(listOf("a", "c", "d"), 1, 0), PlayBodies.speakerPlan(plan) { it != "b" })
+        assertEquals("wraps", me.vibb.music.logic.QueuePlan(listOf("a"), 0, 0), PlayBodies.speakerPlan(plan) { it == "a" })
+        assertNull(PlayBodies.speakerPlan(plan) { false })
+    }
 }

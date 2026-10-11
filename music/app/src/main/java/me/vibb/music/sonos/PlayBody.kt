@@ -1,5 +1,6 @@
 package me.vibb.music.sonos
 
+import me.vibb.music.logic.QueuePlan
 import me.vibb.music.logic.isPrivateAddress
 import me.vibb.music.logic.publicOnly
 import me.vibb.music.model.Entry
@@ -78,6 +79,25 @@ object PlayBodies {
     }
 
     fun speakerPlayable(entry: Entry, item: PlayItem): Boolean = speakerDropReason(entry, item) == null
+
+    /**
+     * A queue plan with only the keys a speaker can play ([kept]): the planned start item at its
+     * planned position when it is kept, else the next kept one after it (wrapping) from 0; null when
+     * nothing is left (`nothing-remote-playable`: `Message.CANT_PLAY_ON_SONOS`, the renderer stays).
+     * The filter is applied with the renderer passed explicitly (design 26a §9: vibb's global
+     * `PREFER_REMOTE` raced a thread).
+     */
+    fun speakerPlan(plan: QueuePlan, kept: (String) -> Boolean): QueuePlan? {
+        val keys = plan.keys.filter(kept)
+        if (keys.isEmpty()) return null
+        val n = plan.keys.size
+        val start = plan.startIndex.coerceIn(0, n - 1)
+        for (step in 0 until n) {
+            val key = plan.keys[(start + step) % n]
+            if (kept(key)) return QueuePlan(keys, keys.indexOf(key), if (step == 0) plan.startPosMs else 0)
+        }
+        return null
+    }
 
     /**
      * [host] (`HttpUrl.host`) is an IP literal in a private range (21b §2.7); a name is never looked
