@@ -5,7 +5,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 
-/** Who makes the sound (design 26a §0): the phone's own player, or a Sonos room (step 3). */
+/** Who makes the sound (design 26a §0): the phone's own player, or a Sonos room. */
 enum class RendererKind { LOCAL, SONOS }
 
 /**
@@ -63,9 +63,30 @@ interface Renderer {
      */
     fun saveNow(force: Boolean = false)
 
-    /** The sleep timer's fade (0..1): a local gain only; a remote renderer ignores it (its fade is
-     * `fadeOutAndPause`, step 3a), so the speaker's volume never sees these steps. */
-    fun setFadeGain(gain: Float)
+    /**
+     * The play/pause button, the launcher's `setNowPlaying` and screen time (design 26a §3.3): the
+     * phone shows the intent (play-when-ready, not ended); a Sonos room only a fresh, reachable,
+     * PLAYING stream of ours - so a stale snapshot shows "not playing" while the player itself holds
+     * play-when-ready through a transient (§3.2).
+     */
+    val showsPlaying: Boolean
+
+    /** Why a remote renderer isn't playing what we sent it (the player's one quiet line); null on the phone. */
+    val rendererState: RendererState?
+
+    /** The Sonos room this renderer plays in, as the player's output (`sonos:<uid>`); null on the phone. */
+    val room: Output?
+
+    /** How long [fadeOutAndPause] takes: the sleep timer starts it this long before its end. */
+    val fadeMs: Long
+
+    /**
+     * The sleep timer's end (design 26a §5.2): fade out over [fadeMs], pause, and call [done] on the
+     * main thread. The phone fades its own gain over 10 s; a Sonos room steps `SetVolume` three times,
+     * pauses and puts the volume back. [cancelFade] stops a fade in progress (a pause, a new timer).
+     */
+    fun fadeOutAndPause(done: () -> Unit)
+    fun cancelFade()
 
     // The phone's own player only; a remote renderer ignores them (design 26a §3.2).
     fun setAudioAttributes(attributes: AudioAttributes)
@@ -98,6 +119,9 @@ sealed interface RendererEvent {
 
     /** The current item failed, with the `item_errors` code (`MediaCache.errorCode`). */
     data class Error(val code: String) : RendererEvent
+
+    /** The renderer can't play at all (a Sonos room's failed start, design 26a §4.2): back to the phone, paused. */
+    data object Lost : RendererEvent
 
     /** After every batch of the events above (Media3's `onEvents`): time to publish. */
     data object StateChanged : RendererEvent

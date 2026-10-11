@@ -2,6 +2,9 @@ package me.vibb.music.playback
 
 import android.content.Context
 import android.media.AudioDeviceInfo
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -18,7 +21,10 @@ import me.vibb.music.data.BookmarkRow
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.PositionRow
 import me.vibb.music.data.Store
+import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.save
+import me.vibb.music.logic.showsPlaying
+import me.vibb.music.logic.sleepVolume
 import me.vibb.music.media.ItemMediaSourceFactory
 import me.vibb.music.media.MediaCache
 
@@ -133,27 +139,89 @@ internal class LocalRenderer(
         if (exo.mediaItemCount == 0) return
         val pos = exo.currentPosition
         val duration = exo.duration.takeIf { it > 0 } ?: a.durations[item.key] ?: item.durationMs
-        val (rec, bookmark) = save(item.key, pos, duration)
-        a.positions[item.key] = rec
-        val now = System.currentTimeMillis()
-        val position = PositionRow(a.entry.key, item.key, rec.posMs, rec.done, now)
-        val mark = BookmarkRow(a.entry.key, bookmark.itemKey, bookmark.posMs, now)
-        val stored = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, pos, duration, a.shuffled, now)
-        Resumable.set(context, true)
-        val write: suspend () -> Unit = {
-            store.db.upsertPosition(position)
-            store.db.upsertBookmark(mark)
-            store.db.upsertNowPlaying(stored)
-        }
-        if (force) runBlocking(writer) { write() } else scope.launch(writer) { write() }
+        persistPlace(context, store, scope, writer, a, index, pos, duration, duration, force)
     }
 
-    override fun setFadeGain(gain: Float) {
-        exo.volume = gain
+    override val showsPlaying: Boolean get() = showsPlaying(exo.playWhenReady, exo.playbackState == Player.STATE_ENDED)
+    override val rendererState: RendererState? get() = null
+    override val room: Output? get() = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var fade: Runnable? = null
+
+    override val fadeMs: Long get() = SLEEP_FADE_MS
+
+    /** Today's fade (design 21 §4.6): the gain down over [fadeMs] in 250 ms steps, then pause, gain back to 1. */
+    override fun fadeOutAndPause(done: () -> Unit) {
+        cancelFade()
+        val start = SystemClock.elapsedRealtime()
+        val tick = object : Runnable {
+            override fun run() {
+                val left = fadeMs - (SystemClock.elapsedRealtime() - start)
+                exo.volume = sleepVolume(left)
+                if (left > 0) {
+                    handler.postDelayed(this, FADE_STEP_MS)
+                    return
+                }
+                fade = null
+                exo.pause()
+                exo.volume = 1f
+                done()
+            }
+        }
+        fade = tick
+        handler.post(tick)
+    }
+
+    override fun cancelFade() {
+        fade?.let { handler.removeCallbacks(it) }
+        fade = null
+        exo.volume = 1f
     }
 
     override fun setAudioAttributes(attributes: AudioAttributes) = exo.setAudioAttributes(attributes, true)
     override fun setWakeMode(wakeMode: Int) = exo.setWakeMode(wakeMode)
     override fun setPreferredAudioDevice(device: AudioDeviceInfo?) = exo.setPreferredAudioDevice(device)
-    override fun release() = exo.release()
+    override fun release() {
+        cancelFade()
+        exo.release()
+    }
+
+    private companion object {
+        const val FADE_STEP_MS = 250L
+    }
+}
+
+/**
+ * Persist where item [index] of [a] is: its position (`Bookmarks.save`, "heard to the end" decided
+ * by [durationMs]), the entry's bookmark and the stored now-playing queue ([shownDurationMs]). The one
+ * write behind `Renderer.saveNow` for both renderers (design 26a §3.1, QA H3); with [force] it lands
+ * before this returns.
+ */
+internal fun persistPlace(
+    context: Context,
+    store: Store,
+    scope: CoroutineScope,
+    writer: CoroutineDispatcher,
+    a: Active,
+    index: Int,
+    posMs: Long,
+    durationMs: Long?,
+    shownDurationMs: Long?,
+    force: Boolean,
+) {
+    val item = a.items.getOrNull(index) ?: return
+    val (rec, bookmark) = save(item.key, posMs, durationMs)
+    a.positions[item.key] = rec
+    val now = System.currentTimeMillis()
+    val position = PositionRow(a.entry.key, item.key, rec.posMs, rec.done, now)
+    val mark = BookmarkRow(a.entry.key, bookmark.itemKey, bookmark.posMs, now)
+    val stored = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, posMs, shownDurationMs, a.shuffled, now)
+    Resumable.set(context, true)
+    val write: suspend () -> Unit = {
+        store.db.upsertPosition(position)
+        store.db.upsertBookmark(mark)
+        store.db.upsertNowPlaying(stored)
+    }
+    if (force) runBlocking(writer) { write() } else scope.launch(writer) { write() }
 }

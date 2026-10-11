@@ -1,0 +1,332 @@
+package me.vibb.music.sonos
+
+import android.content.Context
+import android.media.AudioDeviceInfo
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import androidx.annotation.OptIn
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.DeviceInfo
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.SimpleBasePlayer
+import androidx.media3.common.util.UnstableApi
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import me.vibb.music.data.Store
+import me.vibb.music.logic.resumeFrom
+import me.vibb.music.playback.Active
+import me.vibb.music.playback.Output
+import me.vibb.music.playback.OutputKind
+import me.vibb.music.playback.Renderer
+import me.vibb.music.playback.RendererEvent
+import me.vibb.music.playback.RendererKind
+import me.vibb.music.playback.RendererState
+import me.vibb.music.playback.persistPlace
+import kotlin.coroutines.resume
+
+/*
+ * A Sonos room as the session's player (design 26a §3.2): a Media3 SimpleBasePlayer built on the main
+ * looper (MediaSession.setPlayer checks the application looper), driven by the poller's snapshots.
+ * The rules are SonosController's (pure, tested); this class is the Android side: the actor and the
+ * poller, the player's State from SonosController.spec (the §3.2 table), the RendererEvents the
+ * service reads, and the bookmark's rows (persistPlace, the same write as the phone's).
+ *
+ * Handlers return completed futures at once (SimpleBasePlayer ignores invalidateState while one is
+ * pending) and only set intent; the player re-reads its state as the handler returns, and the
+ * RendererEvents of a handler are posted - emitted outside it (Renderer.onEvent's contract).
+ */
+@OptIn(UnstableApi::class)
+internal class SonosRenderer(
+    private val context: Context,
+    private val home: SonosHome,
+    private val store: Store,
+    /** The service's main scope and its writer (the bookmark rows, renderer.json). */
+    private val scope: CoroutineScope,
+    private val writer: CoroutineDispatcher,
+    /** The service's queue (`Active`): the items given to [load] are its items, speaker-playable. */
+    private val queue: () -> Active?,
+    uid: String,
+    name: String?,
+    /** Step 3b's seam: hold the wake lock and the Wi-Fi lock while true (design 26a §6.3). */
+    private val onArmedPlaying: (Boolean) -> Unit = {},
+) : Renderer {
+    private val handler = Handler(Looper.getMainLooper())
+    private val actorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val clock: () -> Long = SystemClock::elapsedRealtime
+    private val session = SonosSession(clock, SonosHome::log)
+    private var poller: SonosPoller? = null
+    private val transport = SonosTransport(session, home.speakers, home.nrk, SonosClock(clock), wake = { poller?.wake() }, log = SonosHome::log)
+    private val actor = SonosActor(actorScope, Dispatchers.IO, post = { block -> handler.post { block() } }, postDelayed = { ms, block -> handler.postDelayed({ block() }, ms) })
+    private var released = false
+
+    private val sonosStore = object : SonosStore {
+        override fun savedPosMs(itemKey: String): Long = resumeFrom(queue()?.positions?.get(itemKey))
+
+        override fun save(index: Int, itemKey: String, posMs: Long, durationMs: Long?, shownDurationMs: Long?, force: Boolean) {
+            val a = queue() ?: return
+            if (a.items.getOrNull(index)?.key != itemKey) return
+            persistPlace(context, store, scope, writer, a, index, posMs, durationMs, shownDurationMs, force)
+        }
+    }
+
+    private val host = object : SonosHost {
+        override fun changed() = this@SonosRenderer.changed()
+
+        override fun played(itemKey: String, uri: String) {
+            val entryId = queue()?.entry?.id
+            writeChoice { it.copy(entryId = entryId, itemKey = itemKey, uri = uri) }
+        }
+
+        override fun followed(uid: String, name: String?) = writeChoice { it.copy(uid = uid, name = name) }
+
+        override fun ramp(volume: Int?) = writeChoice { it.copy(volume = volume) }
+
+        override fun armedPlaying(playing: Boolean) = onArmedPlaying(playing)
+
+        override fun log(message: String) = SonosHome.log(message)
+    }
+
+    val controller = SonosController(transport, actor, sonosStore, clock, uid, name, host, sleep = { delay(it) }, restoreVolume = home.choice().volume)
+
+    /** The room this renderer commands (migration follow may move it). */
+    val uid: String get() = controller.uid
+
+    private val sbp = SonosPlayer(Looper.getMainLooper())
+
+    /** The MediaItems the service built for the queue: the player's metadata (title, artist, art, duration). */
+    private var mediaItems: List<MediaItem> = emptyList()
+
+    init {
+        poller = SonosPoller(actorScope, actor, { transport.poll(home.probe) to session.snapshot }) { tick, fields -> controller.onPoll(tick, fields) }
+            .also { it.start() }
+    }
+
+    override val player: Player get() = sbp
+    override val kind: RendererKind get() = RendererKind.SONOS
+    override var onEvent: ((RendererEvent) -> Unit)? = null
+
+    override fun load(items: List<MediaItem>, startIndex: Int, startMs: Long, playNow: Boolean) {
+        val a = queue() ?: return
+        mediaItems = items
+        lastIndex = -1
+        controller.load(a.entry, a.items, startIndex, startMs)
+        if (playNow) controller.playTile()
+    }
+
+    override fun reorder(keep: Int, after: List<MediaItem>) {
+        val a = queue() ?: return
+        val byKey = a.order.associateBy { it.key }
+        controller.reorder(keep, after.mapNotNull { byKey[it.mediaId.substringAfter('/')] })
+        mediaItems = listOfNotNull(mediaItems.getOrNull(keep)) + after
+    }
+
+    override fun positionMs(): Long {
+        val now = clock()
+        return controller.spec(now).positionAt(now)
+    }
+
+    override fun durationMs(): Long? = controller.spec(clock()).durationMs
+    override fun currentIndex(): Int = controller.index
+    override fun itemCount(): Int = controller.items.size
+
+    /** A tap on the loaded entry, RESUME, or the first play after [load] (the same-tile rule). */
+    override fun play() = controller.playTile()
+    override fun pause() = controller.pause()
+    override fun prepare() = Unit
+
+    /** Another item is a step (coalesced, at 0); the current one a seek. */
+    override fun seekTo(index: Int, ms: Long) = if (index == controller.index) controller.seek(ms) else controller.stepTo(index, ms)
+    override fun seekTo(ms: Long) = controller.seek(ms)
+
+    override fun clear() {
+        controller.clear()
+        mediaItems = emptyList()
+    }
+
+    /** The bookmark (`bookmarkNow`): the only write of a Sonos position. */
+    override fun saveNow(force: Boolean) = controller.bookmarkNow(force)
+
+    override val showsPlaying: Boolean get() = controller.showsPlaying(clock())
+    override val rendererState: RendererState? get() = controller.rendererState(clock())
+    override val room: Output get() = Output(Output.sonosKey(controller.uid), OutputKind.SONOS, controller.name)
+
+    override val fadeMs: Long get() = 3 * SonosController.RAMP_STEP_MS
+    override fun fadeOutAndPause(done: () -> Unit) = controller.fadeOutAndPause(done)
+    override fun cancelFade() = controller.cancelFade()
+
+    // The phone's own player only (§3.2).
+    override fun setAudioAttributes(attributes: AudioAttributes) = Unit
+    override fun setWakeMode(wakeMode: Int) = Unit
+    override fun setPreferredAudioDevice(device: AudioDeviceInfo?) = Unit
+
+    /**
+     * The way off this speaker (§4.6): a live classify, the bookmark, Stop if ours; true when the
+     * speaker was PLAYING. Afterwards this renderer sends and writes nothing.
+     */
+    suspend fun handOff(): Boolean = suspendCancellableCoroutine { cont -> controller.handOff { if (cont.isActive) cont.resume(it) } }
+
+    override fun release() {
+        if (released) return
+        released = true
+        controller.close()
+        poller?.stop()
+        actor.close()
+        actorScope.cancel()
+        handler.removeCallbacksAndMessages(null)
+        onEvent = null
+    }
+
+    private fun writeChoice(change: (RendererChoice) -> RendererChoice) {
+        scope.launch(writer) {
+            val current = home.choice()
+            if (current.sonos) home.write(change(current))
+        }
+    }
+
+    // -- events --
+
+    private var inHandler = 0
+    private var flushPosted = false
+    private var lastIndex = -1
+    private var lastPwr = false
+    private var lastShows = false
+
+    private fun changed() {
+        if (released) return
+        if (inHandler > 0) postFlush() else flush()
+    }
+
+    private fun postFlush() {
+        if (flushPosted) return
+        flushPosted = true
+        handler.post {
+            flushPosted = false
+            if (!released) flush()
+        }
+    }
+
+    /** The player re-reads its state, then the service hears what changed (the local renderer's events, in kind). */
+    private fun flush() {
+        val now = clock()
+        val spec = controller.spec(now)
+        controller.shown(spec)
+        sbp.refresh()
+        val events = mutableListOf<RendererEvent>()
+        if (controller.items.isNotEmpty() && controller.index != lastIndex) {
+            lastIndex = controller.index
+            events += RendererEvent.ItemChanged(lastIndex, controller.takeAuto())
+        }
+        val ended = controller.takeEnded()
+        if (spec.playWhenReady != lastPwr) {
+            lastPwr = spec.playWhenReady
+            if (!ended) events += if (lastPwr) RendererEvent.Resumed else RendererEvent.Paused(controller.pauseCause(now))
+        }
+        val shows = controller.showsPlaying(now)
+        if (shows != lastShows) {
+            lastShows = shows
+            events += RendererEvent.IsPlaying(shows)
+        }
+        if (ended) events += RendererEvent.Ended
+        if (controller.takeLost() != null) events += RendererEvent.Lost
+        events += RendererEvent.StateChanged
+        for (e in events) onEvent?.invoke(e)
+    }
+
+    private fun handling(block: () -> Unit): ListenableFuture<*> {
+        inHandler++
+        try {
+            block()
+        } finally {
+            inHandler--
+        }
+        postFlush()
+        return Futures.immediateVoidFuture()
+    }
+
+    /** The session's player: its State is SonosController.spec's (§3.2's table); every handler only sets intent. */
+    private inner class SonosPlayer(looper: Looper) : SimpleBasePlayer(looper) {
+        fun refresh() = invalidateState()
+
+        override fun getState(): State {
+            val now = clock()
+            val spec = controller.spec(now)
+            val b = State.Builder()
+                .setAvailableCommands(COMMANDS)
+                .setDeviceInfo(DEVICE_INFO)
+                .setDeviceVolume(controller.deviceVolume())
+                .setPlayWhenReady(spec.playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+            val items = mediaItems
+            if (items.isEmpty() || items.size != controller.items.size) {
+                return b.setPlaybackState(if (spec.phase == PlayPhase.ENDED) Player.STATE_ENDED else Player.STATE_IDLE).build()
+            }
+            val index = spec.index.coerceIn(items.indices)
+            val playlist = items.mapIndexed { i, mi ->
+                val durationMs = if (i == index) spec.durationMs else mi.mediaMetadata.durationMs
+                MediaItemData.Builder(mi.mediaId.ifEmpty { "item$i" })
+                    .setMediaItem(mi)
+                    .setMediaMetadata(mi.mediaMetadata)
+                    .setDurationUs(durationMs?.let { it * 1000 } ?: C.TIME_UNSET)
+                    .setIsSeekable(durationMs != null)
+                    .build()
+            }
+            return b.setPlaylist(playlist)
+                .setCurrentMediaItemIndex(index)
+                .setPlaybackState(
+                    when (spec.phase) {
+                        PlayPhase.IDLE -> Player.STATE_IDLE
+                        PlayPhase.BUFFERING -> Player.STATE_BUFFERING
+                        PlayPhase.READY -> Player.STATE_READY
+                        PlayPhase.ENDED -> Player.STATE_ENDED
+                    },
+                )
+                // anchored at the poll's measuredAt, so a controller's own extrapolation (the launcher's
+                // positionNow) agrees with ours
+                .setContentPositionMs { spec.positionAt(clock()) }
+                .build()
+        }
+
+        override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> =
+            handling { if (playWhenReady) controller.playPause() else controller.pause() }
+
+        override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> = handling {
+            if (mediaItemIndex == C.INDEX_UNSET || mediaItemIndex == controller.index) {
+                controller.seek(positionMs.coerceAtLeast(0))
+            } else {
+                controller.stepTo(mediaItemIndex, 0)
+            }
+        }
+
+        override fun handleStop(): ListenableFuture<*> = handling { controller.stop() }
+
+        override fun handleSetDeviceVolume(deviceVolume: Int, flags: Int): ListenableFuture<*> = handling { controller.setVolume(deviceVolume) }
+
+        override fun handleIncreaseDeviceVolume(flags: Int): ListenableFuture<*> = handling { controller.adjustVolume(VOLUME_STEP) }
+
+        override fun handleDecreaseDeviceVolume(flags: Int): ListenableFuture<*> = handling { controller.adjustVolume(-VOLUME_STEP) }
+
+        override fun handlePrepare(): ListenableFuture<*> = Futures.immediateVoidFuture()
+
+        override fun handleRelease(): ListenableFuture<*> = Futures.immediateVoidFuture()
+    }
+
+    companion object {
+        /** One volume key press (§5.3). */
+        const val VOLUME_STEP = 3
+
+        /** §3.2 (QA M1): without the three GET commands the platform metadata is empty. */
+        val COMMANDS: Player.Commands = Player.Commands.Builder().addAll(*SONOS_COMMANDS).build()
+
+        private val DEVICE_INFO = DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE).setMinVolume(0).setMaxVolume(100).build()
+    }
+}

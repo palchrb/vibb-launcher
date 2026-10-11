@@ -55,7 +55,6 @@ import me.vibb.music.logic.NetCaps
 import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.Playability
 import me.vibb.music.logic.QueuePlan
-import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.TransportAction
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.coverTapPlan
@@ -73,8 +72,6 @@ import me.vibb.music.logic.restoredQueue
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.resumeOverlapMs
 import me.vibb.music.logic.seekGate
-import me.vibb.music.logic.showsPlaying
-import me.vibb.music.logic.sleepVolume
 import me.vibb.music.logic.streamAllowed
 import me.vibb.music.logic.toggledQueue
 import me.vibb.music.media.ItemTag
@@ -213,11 +210,17 @@ class PlaybackService : MediaSessionService() {
             selfPausing = true
             old.pause()
             selfPausing = false
+            old.cancelFade()
             old.onEvent = null
         }
         next.onEvent = { onRendererEvent(it) }
         renderer = next
         session?.setPlayer(KidPlayer(next.player))
+        // a sleep timer runs on: its fade is the new renderer's
+        if (sleepEndsAt != null) {
+            handler.removeCallbacks(sleepTick)
+            handler.post(sleepTick)
+        }
     }
 
     /** This app is suspended now (a time rule, design 21 step 4): nothing may start playing. */
@@ -556,7 +559,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun setSleep(minutes: Int) {
         handler.removeCallbacks(sleepTick)
-        renderer.setFadeGain(1f)
+        renderer.cancelFade()
         if (minutes <= 0) {
             sleepEndsAt = null
             sleepMinutes = null
@@ -568,24 +571,24 @@ class PlaybackService : MediaSessionService() {
         publish()
     }
 
+    /** The timer's end: the renderer's own fade and pause ([Renderer.fadeOutAndPause]: the phone 10 s, a Sonos room 3 s). */
     private val sleepTick = object : Runnable {
         override fun run() {
             val end = sleepEndsAt ?: return
             val left = end - SystemClock.elapsedRealtime()
-            renderer.setFadeGain(sleepVolume(left))
-            if (left <= 0) {
-                selfPausing = true
-                renderer.pause()
-                selfPausing = false
-                renderer.setFadeGain(1f)
-                sleepEndsAt = null
-                sleepMinutes = null
-                renderer.saveNow()
-                publish()
-            } else {
-                handler.postDelayed(this, if (left > SLEEP_FADE_MS + 1_000) minOf(left - SLEEP_FADE_MS, 30_000) else 250)
+            if (left > renderer.fadeMs) {
+                handler.postDelayed(this, minOf(left - renderer.fadeMs, 30_000))
+                return
             }
+            renderer.fadeOutAndPause { sleepEnded() }
         }
+    }
+
+    private fun sleepEnded() {
+        sleepEndsAt = null
+        sleepMinutes = null
+        renderer.saveNow()
+        publish()
     }
 
     private fun outputKind(type: Int): OutputKind? = when (type) {
@@ -677,6 +680,7 @@ class PlaybackService : MediaSessionService() {
             RendererEvent.InterruptionEnded -> if (renderer.player.playWhenReady) applyOverlap()
             is RendererEvent.IsPlaying -> onIsPlayingChanged(event.playing)
             is RendererEvent.Error -> onError(event.code)
+            RendererEvent.Lost -> Unit // a Sonos room's failed start: wired with the switch (the next commit)
             RendererEvent.StateChanged -> publish()
         }
     }
@@ -848,7 +852,8 @@ class PlaybackService : MediaSessionService() {
     private fun reportNowPlaying(forcePaused: Boolean = false, refresh: Boolean = false) {
         val a = active
         val item = a?.items?.getOrNull(renderer.currentIndex())
-        val playing = !forcePaused && renderer.player.playWhenReady && renderer.player.playbackState != Player.STATE_ENDED
+        // the same predicate as the play button (§3.3): on Sonos grouped away, taken over or stale is not playing
+        val playing = !forcePaused && renderer.showsPlaying
         val key = Triple(a?.entry?.id, item?.key, playing)
         if (key == sentNowPlaying && !refresh) return
         sentNowPlaying = key
@@ -874,19 +879,23 @@ class PlaybackService : MediaSessionService() {
         reportNowPlaying()
         val a = active
         val outputs = outputs()
-        val output = outputs.firstOrNull { it.key == chosenOutput } ?: outputs.firstOrNull { it.kind == OutputKind.BLUETOOTH || it.kind == OutputKind.WIRED } ?: Output.PHONE
+        val output = renderer.room
+            ?: outputs.firstOrNull { it.key == chosenOutput }
+            ?: outputs.firstOrNull { it.kind == OutputKind.BLUETOOTH || it.kind == OutputKind.WIRED }
+            ?: Output.PHONE
         PlayerHub.mutableState.value = PlayerHub.State(
             live = a != null && renderer.itemCount() > 0,
             entryId = a?.entry?.id,
             keys = a?.items?.map { it.key }.orEmpty(),
             index = renderer.currentIndex(),
             shuffled = a?.shuffled ?: false,
-            playing = showsPlaying(renderer.player.playWhenReady, renderer.player.playbackState == Player.STATE_ENDED),
+            playing = renderer.showsPlaying,
             durationMs = renderer.durationMs() ?: a?.items?.getOrNull(renderer.currentIndex())?.durationMs,
             sleepEndsAt = sleepEndsAt,
             sleepMinutes = sleepMinutes,
             outputs = outputs,
             output = output,
+            rendererState = renderer.rendererState,
         )
     }
 }
