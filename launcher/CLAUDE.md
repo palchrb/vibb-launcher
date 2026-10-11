@@ -329,6 +329,10 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `ui/home/MusicCa
 - **Boot witness** (H4, `server/BootWitness.kt`, `BootWitnessTest`): early in `Application.onCreate` (after the call policy, also in direct boot) `BOOT_COUNT` against device-protected prefs `boot_witness`: a jump > 1 adds `jump - 1` to a count that only goes up; the first start of the build counts nothing. Status `unseen_boots` (`{count, last_at_ms}`). `DISALLOW_SAFE_BOOT` by default is design 24b S4, held back until device check 6 (design 04) passes.
 - **Not device-tested**: design 24b §7 - the alarm with the screen off and airplane mode on, the unswipeable notification, each surface reset (proxy with location off, APN proxy reported, CA certificate, an Android PIN removed and handy's lock back, a sideloaded keyboard gone, a sideloaded accessibility service refused in a window, hotspot off), the foreign-admin backstop, certificates and proxies from before a window kept, the same-name sideload case, a reboot in a window, the vault upgrade and key deletion, check 6.
 
+## Security review, launcher wave (2026-10-11, `docs/review/security-review-2026-10-10.md`, at the monorepo root)
+
+- **The bearer stays home** (L8, `server/ServerAuth.kt`, `ServerAuthTest`): `bearerInterceptor` adds `Authorization` only to requests for the server's own origin (scheme, host, port - `sameOrigin`); `createMdmApi` and `createMusicServer` both use it, so an absolute `@Url` elsewhere never gets the device token. The SSE request builds its URL from the base itself.
+
 ## Background connection (design 19b phase 1, `docs/design/19b-doze-exemption.md`, at the monorepo root)
 
 - Every status report sends `battery_optimization_exempt` (`PowerManager.isIgnoringBatteryOptimizations`, left out when unreadable; `PolicyResponseCompatTest`). The manifest declares `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (`PushManifestTest`) - without it Android's dialog finishes silently.
