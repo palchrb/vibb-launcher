@@ -173,6 +173,11 @@
     <string name="toast_mdm_sync_failed">Synkroniseringen mislyktes – fikk ikke kontakt med serveren.</string>
     <string name="settings_mdm_restrictions_paused">Sett alle begrensninger på pause</string>
     <string name="settings_mdm_restrictions_paused_summary">Slår av kioskmodus, tidsreglene og app-begrensningene i 2 timer (samtaler er fortsatt bare til de godkjente kontaktene), så slås de på igjen av seg selv. Krever telefonens PIN-kode, og er ikke tilgjengelig når det ikke er satt noen PIN-kode på serveren. Forelderen ser på serveren at pausen er på. Bare til nødbruk, for eksempel hvis en oppdatering skaper problemer.</string>
+    <string name="settings_mdm_background_connection">Bakgrunnstilkobling</string>
+    <string name="settings_mdm_background_connection_exempt">Ubegrenset - endringer kommer fram mens telefonen sover</string>
+    <string name="settings_mdm_background_connection_ask">Batterioptimalisering er på - trykk for å tillate</string>
+    <string name="settings_mdm_background_connection_pause_first">Sett alle begrensninger på pause først (Androids innstillinger er skjult mens telefonen er styrt), trykk her, og avslutt pausen etterpå</string>
+    <string name="settings_mdm_background_connection_unknown">Ukjent</string>
     <string name="settings_mdm_restrictions_paused_pin_title">Skriv inn PIN-koden for å sette begrensningene på pause</string>
     <string name="toast_mdm_pause_needs_pin">Pause krever en PIN-kode. Sett en for denne telefonen på serveren først.</string>
     <string name="settings_gate_dialog_title">Skriv inn koden for å åpne innstillingene</string>

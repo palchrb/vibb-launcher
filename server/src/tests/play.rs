@@ -444,3 +444,56 @@ async fn dns_blocklist_never_blocks_fcm() {
     assert!(!body.contains("mtalk"), "{body}");
     assert!(body.contains("\"googleapis.com\""), "{body}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Design 19b phase 1: the battery-optimisation exemption
+// ---------------------------------------------------------------------------------------------
+
+/// `battery_optimization_exempt`: true and false are stored and shown as a plain line on the
+/// "Play and kiosk" card; a report without the key (an older launcher, or unreadable) stores NULL
+/// and shows nothing.
+#[tokio::test]
+async fn battery_exemption_is_stored_and_shown() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let stored = |app: &TestApp| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<bool>>(
+                "SELECT battery_optimization_exempt FROM device_status WHERE device_id = ? \
+                 ORDER BY id DESC LIMIT 1",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+
+    post_status(
+        &app,
+        &token,
+        json!({ "battery_optimization_exempt": false }),
+    )
+    .await;
+    assert_eq!(stored(&app).await, Some(false));
+    let html = device_page(&app, id).await;
+    assert!(
+        html.contains("Battery optimisation: on - instant changes may lag"),
+        "{html}"
+    );
+    assert!(html.contains("Background connection"), "{html}");
+
+    post_status(&app, &token, json!({ "battery_optimization_exempt": true })).await;
+    assert_eq!(stored(&app).await, Some(true));
+    let html = device_page(&app, id).await;
+    assert!(
+        html.contains("Battery optimisation: off for the launcher."),
+        "{html}"
+    );
+    assert!(!html.contains("instant changes may lag"), "{html}");
+
+    post_status(&app, &token, json!({})).await;
+    assert_eq!(stored(&app).await, None);
+    assert!(!device_page(&app, id).await.contains("Battery optimisation"));
+}

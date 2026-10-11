@@ -213,6 +213,12 @@
     <string name="toast_mdm_scan_qr_cancelled">Scan cancelled.</string>
 
     <string name="settings_mdm_sync_now">Sync now</string>
+    <!-- Design 19b: the launcher on Android's power-save allowlist. -->
+    <string name="settings_mdm_background_connection">Background connection</string>
+    <string name="settings_mdm_background_connection_exempt">Unrestricted - changes arrive while the phone sleeps</string>
+    <string name="settings_mdm_background_connection_ask">Battery optimisation is on - tap to allow</string>
+    <string name="settings_mdm_background_connection_pause_first">Pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then end the pause</string>
+    <string name="settings_mdm_background_connection_unknown">Unknown</string>
     <string name="toast_mdm_sync_done">Sync complete.</string>
     <string name="toast_mdm_sync_failed">Sync failed - couldn\'t reach the server.</string>
 

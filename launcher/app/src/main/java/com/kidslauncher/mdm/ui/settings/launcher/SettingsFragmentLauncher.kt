@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.Preference
@@ -21,7 +22,10 @@ import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.copyToClipboard
 import com.kidslauncher.mdm.getDeviceInfo
+import com.kidslauncher.mdm.server.BatteryExemption
+import com.kidslauncher.mdm.server.BatteryRow
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.batteryRowState
 import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RestrictionsPause
@@ -42,6 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val LOG_TAG = "SettingsFragmentLauncher"
+private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -66,6 +71,17 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     // throws, per the Activity Result API's own contract.
     private val scanSetupQrLauncher = registerForActivityResult(ScanContract()) { result ->
         handleSetupQrScanResult(result)
+    }
+
+    /** Design 19b: the exemption before Android's dialog opened - a change on return is reported
+     * at once (a sync), so the parent's page follows within seconds. */
+    private var exemptBeforeDialog: Boolean? = null
+    private val batteryDialogLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val context = context ?: return@registerForActivityResult
+        if (BatteryExemption.exempt(context) != exemptBeforeDialog) {
+            com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "battery_exemption")
+        }
+        updateBatteryRow()
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -146,6 +162,25 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
+        // Design 19b: Android's battery-optimisation dialog, opened only when it resolves to an
+        // unsuspended system package - on a managed phone that is during the pause; otherwise
+        // the summary says to pause first. Never through the parent-PIN gate itself.
+        findPreference<Preference>(BACKGROUND_CONNECTION)?.setOnPreferenceClickListener {
+            val context = requireContext()
+            val intent = BatteryExemption.dialogIntent(context)
+            val exempt = BatteryExemption.exempt(context)
+            if (intent != null && batteryRowState(exempt, dialogAvailable = true) == BatteryRow.CAN_ASK) {
+                exemptBeforeDialog = exempt
+                try {
+                    batteryDialogLauncher.launch(intent)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Couldn't open the battery dialog", e)
+                }
+            }
+            updateBatteryRow()
+            true
+        }
+
         val restrictionsPaused = findPreference<SwitchPreference>(mdm.keys().restrictionsPaused())
         // isActive() clears a pause that has run out, so the switch never shows a stale "on".
         restrictionsPaused?.isChecked = RestrictionsPause.isActive()
@@ -208,6 +243,26 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
 
     private fun String?.orNotSet(): String = this?.takeIf { it.isNotBlank() }
         ?: getString(R.string.settings_mdm_not_set)
+
+    override fun onResume() {
+        super.onResume()
+        // Re-read every time: a pause started or ended, or the dialog answered.
+        updateBatteryRow()
+    }
+
+    private fun updateBatteryRow() {
+        val context = context ?: return
+        val row = findPreference<Preference>(BACKGROUND_CONNECTION) ?: return
+        val state = batteryRowState(BatteryExemption.exempt(context), BatteryExemption.dialogIntent(context) != null)
+        row.summary = getString(
+            when (state) {
+                BatteryRow.EXEMPT -> R.string.settings_mdm_background_connection_exempt
+                BatteryRow.CAN_ASK -> R.string.settings_mdm_background_connection_ask
+                BatteryRow.PAUSE_FIRST -> R.string.settings_mdm_background_connection_pause_first
+                BatteryRow.UNKNOWN -> R.string.settings_mdm_background_connection_unknown
+            },
+        )
+    }
 
     private fun updateInstallModeSummary(preference: Preference?) {
         preference ?: return

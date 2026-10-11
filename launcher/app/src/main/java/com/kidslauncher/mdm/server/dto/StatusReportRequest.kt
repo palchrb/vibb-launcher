@@ -59,6 +59,9 @@ data class StatusReportRequest(
     /** Vibb music (design 21 §1.3, capability `music_v1`): the music app's last report and the
      * bridge; null without a music app. */
     val musicState: kotlinx.serialization.json.JsonObject? = null,
+    /** Design 19b: the launcher is on Android's power-save allowlist
+     * (`PowerManager.isIgnoringBatteryOptimizations`); `null` = unreadable (left out). */
+    val batteryOptimizationExempt: Boolean? = null,
 )
 
 /**

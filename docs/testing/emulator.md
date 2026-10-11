@@ -54,6 +54,9 @@ adb install -r ~/repos/handy/launcher/app/build/outputs/apk/debug/app-debug.apk
 adb shell dpm set-device-owner $P/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
 adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeListenerService
+# Design 19b: the launcher on the power-save allowlist ("battery: Unrestricted"); expect "Added: ...".
+# Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.
+adb shell dumpsys deviceidle whitelist +$P
 # Step 9 (B2): the device owner can't switch off the camera gesture - do it before enrolling
 # (Settings -> System -> Gestures -> "Quickly open camera" off), or with adb:
 adb shell settings put secure camera_double_tap_power_gesture_disabled 1

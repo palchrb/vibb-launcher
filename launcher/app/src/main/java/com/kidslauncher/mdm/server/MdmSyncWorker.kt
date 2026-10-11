@@ -232,6 +232,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     Log.w(LOG_TAG, "Music report failed", e)
                     null
                 },
+                batteryOptimizationExempt = BatteryExemption.exempt(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,

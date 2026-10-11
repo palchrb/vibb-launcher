@@ -307,6 +307,9 @@ pub struct DeviceStatus {
     pub app_downloads_json: Option<String>,
     /// The phone's `music_state` (design 21, migrations/0049), see `music::MusicState`.
     pub music_state_json: Option<String>,
+    /// The launcher is exempt from battery optimisation (design 19b, migrations/0055). `None`
+    /// from older launchers, or when the phone couldn't read it.
+    pub battery_optimization_exempt: Option<bool>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -731,6 +734,10 @@ pub struct StatusReportRequest {
     /// launcher - opaque, stored through the known fields only (`music::sanitize_music_state`).
     #[serde(default)]
     pub music_state: Option<serde_json::Value>,
+    /// Design 19b: `PowerManager.isIgnoringBatteryOptimizations` for the launcher. Absent from
+    /// older launchers and when the phone couldn't read it.
+    #[serde(default)]
+    pub battery_optimization_exempt: Option<bool>,
 }
 
 /// `StatusReportRequest.install_mode`.

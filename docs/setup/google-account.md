@@ -31,6 +31,13 @@ for recovery and 2-Step Verification. The kid doesn't know the password.
 comes after it; and before enrolling nothing is blocked yet (the first policy blocks account
 changes and starts the kiosk).
 
+**Battery (design 19b), in the same adb session:** `adb shell dumpsys deviceidle whitelist
++me.vibb.launcher` ("Added: ..."), so the launcher's connection to the server isn't held back
+while the phone sleeps. Without adb (QR provisioning, or later): launcher Settings -> "Pause all
+restrictions" -> "Background connection" ("Bakgrunnstilkobling") -> Allow, then end the pause. The
+device page's "Play and kiosk" card says which it is. Android's own battery page shows the launcher
+as "Unrestricted" whatever the real state - trust the device page.
+
 **With the provisioning QR there is no "before enrolling":** the QR enrolls the phone by itself,
 and its first policy blocks accounts and starts the kiosk at once. Untick "Block adding or removing
 accounts" on the device row before scanning, then follow the enrolled-phone steps below.

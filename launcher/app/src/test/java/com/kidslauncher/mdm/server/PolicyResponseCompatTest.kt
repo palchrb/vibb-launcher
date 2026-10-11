@@ -96,6 +96,19 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `battery_optimization_exempt is reported under the server's key and left out when unknown (19b)`() {
+        for (exempt in listOf(true, false)) {
+            val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, batteryOptimizationExempt = exempt)
+            val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+            assertEquals("$exempt", json["battery_optimization_exempt"].toString())
+        }
+        // Unreadable: absent, like a report from an older launcher (the server stores NULL).
+        val unknown = StatusReportRequest(lockReason = "NONE", kioskEngaged = true)
+        val unknownJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), unknown)).jsonObject
+        assertTrue("battery_optimization_exempt" !in unknownJson)
+    }
+
+    @Test
     fun `ringer_mode and interruption_filter are reported under the server's keys and left out when unknown (18)`() {
         val report = StatusReportRequest(
             lockReason = "NONE", kioskEngaged = true,

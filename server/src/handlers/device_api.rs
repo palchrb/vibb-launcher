@@ -748,8 +748,9 @@ pub async fn status(
           install_mode_until_ms, play_window_active, play_store_suspendable, lock_state_json, \
           screen_timeout_seconds, ringer_mode, interruption_filter, update_fence_json, \
           notification_cancels_json, \
-          backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
+          battery_optimization_exempt) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -782,6 +783,7 @@ pub async fn status(
     .bind(&app_downloads_json)
     .bind(&boot_cover_json)
     .bind(&music_state_json)
+    .bind(report.battery_optimization_exempt)
     .execute(&state.db)
     .await
     .ok();

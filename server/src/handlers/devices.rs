@@ -769,6 +769,9 @@ pub(crate) async fn play_card(
     let mut lines = vec![crate::streams::instant_changes_line(
         state.command_streams.state(device_id),
     )];
+    if let Some(line) = battery_line(latest.and_then(|s| s.battery_optimization_exempt)) {
+        lines.push(line.to_string());
+    }
     let mut warnings = Vec::new();
     let now_ms = chrono::Utc::now().timestamp_millis();
     if let Some(until) = latest
@@ -810,6 +813,20 @@ pub(crate) async fn play_card(
         lines,
         warnings,
         block_activity_start,
+    }
+}
+
+/// Design 19b: the launcher's battery-optimisation exemption as the phone last reported it - a
+/// plain line for now (19b open question 1); nothing from an older launcher or when unreadable.
+pub(crate) fn battery_line(exempt: Option<bool>) -> Option<&'static str> {
+    match exempt? {
+        true => Some("Battery optimisation: off for the launcher."),
+        false => Some(
+            "Battery optimisation: on - instant changes may lag while the phone sleeps. To fix: on \
+             the phone, launcher Settings -> Pause all restrictions -> Background connection -> \
+             Allow, then end the pause (or, with USB debugging allowed: adb shell dumpsys \
+             deviceidle whitelist +me.vibb.launcher).",
+        ),
     }
 }
 
