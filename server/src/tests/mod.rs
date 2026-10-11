@@ -149,6 +149,7 @@ impl TestApp {
             command_notify,
             config: std::sync::Arc::new(ForkConfig::for_tests()),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
+            dns_feed_dir: std::sync::Arc::new(dir.path().join("dns_feeds")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
             command_streams: Default::default(),
             app_syncs: Default::default(),

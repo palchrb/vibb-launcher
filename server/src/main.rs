@@ -72,6 +72,9 @@ pub struct AppState {
     /// Where contact photos are stored (`data/contact_photos`; a temp dir in tests) - see
     /// `photos`.
     pub photo_dir: std::sync::Arc<std::path::PathBuf>,
+    /// Each DNS blocklist feed's last good domains (`dns_engine`, QA of the security wave, Low 8):
+    /// a feed that can't be downloaded after a restart is loaded from here.
+    pub dns_feed_dir: std::sync::Arc<std::path::PathBuf>,
     /// Where wallpaper images are stored (`data/wallpapers`; a temp dir in tests) - its own
     /// directory, because `photos::prune` deletes every file there no contact references.
     pub wallpaper_dir: std::sync::Arc<std::path::PathBuf>,
@@ -313,6 +316,7 @@ async fn main() {
         command_notify,
         config: std::sync::Arc::new(fork_config),
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
+        dns_feed_dir: std::sync::Arc::new(std::path::PathBuf::from("data/dns_feeds")),
         wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
         command_streams: Default::default(),
         app_syncs: Default::default(),

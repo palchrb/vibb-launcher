@@ -542,9 +542,10 @@ audio from the source.
 - **Everyone is signed out once**: sessions from before the update are ended, since older backups hold their ids (M2).
 - `data/` and everything in it become readable by the service user only; the service runs with `UMask=0077` (the
   update adds it as a drop-in). A restore signs everyone out.
-- The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, and until a feed has
-  loaded once after a start (no internet at boot), phones that use it keep the list they have. The DNS/Filters page
-  shows each feed's state.
+- The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, also across a restart
+  without internet (the server keeps each feed's last good copy in `data/dns_feeds/`). A feed that has never loaded
+  (a mistyped URL) is left out until it does, the rest still reaches the phones. The DNS/Filters page shows each
+  feed's state. Feeds may also be `127.0.0.1` hosts files or adblock `||domain^` lists.
 - **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
   (releases already cached are pinned at the first start): a later release of another package or signed with another
   key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone

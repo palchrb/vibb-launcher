@@ -712,9 +712,11 @@ pub(crate) fn installed_by_launcher(state: &AppState, installer: Option<&str>) -
 /// `PolicyResponse.dns_filter_version` changes - see that field's doc
 /// comment - since this can be a large (~100k+ domain) payload.
 ///
-/// Never a smaller list than the parent set up (security review M6): 503 while a feed this phone
-/// uses hasn't loaded since the server started, 500 on a database error. The launcher keeps its
-/// own list on any error and asks again at the next sync.
+/// Never a smaller list than the parent set up (security review M6): a feed that can't be
+/// downloaded keeps its last good domains, across restarts too (`dns_engine`); one that never
+/// loaded on this server is left out - no phone got it from here (QA of the security wave, Low 8:
+/// a 503 for it froze every phone's list, custom blocks included). A database error is a 500. The
+/// launcher keeps its own list on any error and asks again at the next sync.
 pub async fn dns_blocklist(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
@@ -778,18 +780,6 @@ async fn effective_blocklist(
     };
 
     let compiled = state.dns_compiled.read().await;
-    for (&blocklist_id, _) in global_enabled.iter() {
-        let loaded = compiled
-            .lists
-            .iter()
-            .any(|list| list.blocklist_id == blocklist_id && list.loaded);
-        if effective(blocklist_id) && !loaded {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                "a blocklist this phone uses hasn't loaded yet",
-            ));
-        }
-    }
 
     let mut categories: Vec<DnsBlocklistCategory> = compiled
         .lists

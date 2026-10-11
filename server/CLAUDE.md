@@ -176,11 +176,14 @@ No prior programming experience - build features directly rather than explaining
 - **DNS**: `dns_blocklist` never delivers the exact FCM hosts (for other apps' FCM - Element X - since design 19) (mtalk*, alt*-mtalk, fcm/fcmtoken/fcmregistrations/firebaseinstallations/android.googleapis.com, android.apis.google.com, android.clients.google.com) as blocked (`play::is_fcm_protected`, QA 07 #10). Parents (`google.com`, `googleapis.com`) **are** delivered as set - dropping them opened all of `*.google.com` (fix round #1); the launcher exempts the exact FCM hosts before its suffix walk. Every DNS write (upstream, blocklist create/toggle/delete, custom domain, device override) nudges the affected devices; the hourly blocklist refresh and new catalog releases don't - phones get those with the 30-min backstop.
 - **The DNS blocklist fails closed, per feed (security review M6).** `compile_blocklist`: a feed whose download fails
   (an error, a non-2xx, over `MAX_FEED_BYTES` = 32 MB decompressed, or nothing that `parse_feed` takes for a domain
-  - a captive portal's page) keeps its previous domains (`CompiledList.last_error`); one that never loaded since the
-  start stays `loaded: false`; a DB error keeps the whole compiled list. `device_api::dns_blocklist` answers 503 while
-  a feed the phone uses isn't loaded and 500 on a DB error - never a shorter list; the launcher keeps its own list on
-  any non-2xx and asks again at the next sync. The DNS page shows each feed's state; the refresh retries a failing
-  feed after 5 minutes instead of an hour.
+  - a captive portal's page) keeps its previous domains (`CompiledList.last_error`): in memory, else its last good
+  copy in `data/dns_feeds/<id>.txt` (`save_feed` after each changed download, `source_hash`; a deleted feed's copy
+  goes), so a restart without internet keeps them. One that never loaded on this server stays `loaded: false`, empty,
+  and is left out - no phone got it from here (QA of the security wave, Low 8: a 503 for it froze every phone's list,
+  custom blocks included). A DB error keeps the whole compiled list, and `device_api::dns_blocklist` answers 500 -
+  never a shorter list; the launcher keeps its own list on any non-2xx and asks again at the next sync. `parse_feed`
+  takes `0.0.0.0`/`127.0.0.1` hosts lines, bare domains and adblock's `||domain^`. The DNS page shows each feed's
+  state; the refresh retries a failing feed after 5 minutes instead of an hour.
 - **Fix round (qa-step7-code.md)** (the FCM parts gone with design 19): migration `0027`: `device_push.rejected_token_hash` - a token FCM rejected is ignored when the phone re-reports it until it renews (no re-store, test nudge or security event per report); a unique partial index on `fcm_token` + `record_report` clears a newly stored token from every other row (re-enrolled phone); health ticks and `Lagged` fan-out only use rows of devices with a bearer token. `SSE_KEEPALIVE_SECS` is capped at 240 (`MAX_SSE_KEEPALIVE_SECS`, 60 s under the launcher's 300 s read timeout); other values fall back to the default with a log line (240 since design 19, 120 before).
 
 ## Wallpapers (handy step 8, design `docs/design/08-ui-polish.md`, at the monorepo root)
