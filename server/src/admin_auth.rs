@@ -16,8 +16,9 @@
 //! - [csrf_guard] and [admin_headers]: middleware on the admin listener.
 //! - [reset_2fa]: the `kid_phone_server reset-2fa <user>` recovery command.
 
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
+
+use tokio::sync::Semaphore;
 
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
@@ -47,17 +48,21 @@ pub const LOGIN_WARNING_KEY: &str = "login_warning";
 #[derive(Debug)]
 pub struct Busy;
 
-#[derive(Default)]
+/// Two semaphores: admission (one running plus the queue; past it, 429) and the run slot. Both
+/// permits are owned and move into the blocking task, so they are released when argon2 ends - not
+/// when the request does. A client that hangs up mid-login can't start argon2 runs past the
+/// bound (QA 22 M1).
 pub struct PasswordGate {
-    admitted: AtomicUsize,
-    running: OnceLock<tokio::sync::Semaphore>,
+    admission: Arc<Semaphore>,
+    running: Arc<Semaphore>,
 }
 
-struct Admitted<'a>(&'a AtomicUsize);
-
-impl Drop for Admitted<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+impl Default for PasswordGate {
+    fn default() -> Self {
+        PasswordGate {
+            admission: Arc::new(Semaphore::new(PASSWORD_RUNNING + PASSWORD_QUEUE)),
+            running: Arc::new(Semaphore::new(PASSWORD_RUNNING)),
+        }
     }
 }
 
@@ -74,16 +79,19 @@ impl PasswordGate {
         &self,
         work: impl FnOnce() -> T + Send + 'static,
     ) -> Result<T, Busy> {
-        if self.admitted.fetch_add(1, Ordering::SeqCst) >= PASSWORD_RUNNING + PASSWORD_QUEUE {
-            self.admitted.fetch_sub(1, Ordering::SeqCst);
-            return Err(Busy);
-        }
-        let _admitted = Admitted(&self.admitted);
-        let running = self
-            .running
-            .get_or_init(|| tokio::sync::Semaphore::new(PASSWORD_RUNNING));
-        let _slot = running.acquire().await.map_err(|_| Busy)?;
-        tokio::task::spawn_blocking(work).await.map_err(|_| Busy)
+        let admitted = Arc::clone(&self.admission)
+            .try_acquire_owned()
+            .map_err(|_| Busy)?;
+        let slot = Arc::clone(&self.running)
+            .acquire_owned()
+            .await
+            .map_err(|_| Busy)?;
+        tokio::task::spawn_blocking(move || {
+            let _held = (admitted, slot);
+            work()
+        })
+        .await
+        .map_err(|_| Busy)
     }
 
     /// Whether `password` matches `hash`; `None` (an unknown user) verifies against a dummy hash
@@ -487,6 +495,60 @@ mod tests {
             headers.insert(*name, HeaderValue::from_str(value).unwrap());
         }
         headers
+    }
+
+    /// QA 22 M1: a request dropped while argon2 runs keeps its slot until the work ends.
+    #[tokio::test]
+    async fn a_cancelled_run_keeps_its_slot_until_the_work_ends() {
+        let gate = Arc::new(PasswordGate::default());
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let first = {
+            let gate = Arc::clone(&gate);
+            tokio::spawn(async move {
+                gate.run(move || {
+                    let _ = wait.recv();
+                })
+                .await
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        // The first job's work still runs: a second can't start.
+        let second =
+            tokio::time::timeout(std::time::Duration::from_millis(300), gate.run(|| 42)).await;
+        assert!(
+            second.is_err(),
+            "ran while the cancelled job's argon2 was running"
+        );
+        release.send(()).unwrap();
+        assert_eq!(gate.run(|| 7).await.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn past_the_queue_a_run_is_refused() {
+        let gate = Arc::new(PasswordGate::default());
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let wait = Arc::new(std::sync::Mutex::new(wait));
+        let mut jobs = Vec::new();
+        for _ in 0..(PASSWORD_RUNNING + PASSWORD_QUEUE) {
+            let gate = Arc::clone(&gate);
+            let wait = Arc::clone(&wait);
+            jobs.push(tokio::spawn(async move {
+                gate.run(move || {
+                    let _ = wait.lock().unwrap().recv();
+                })
+                .await
+            }));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(gate.run(|| ()).await.is_err(), "one more than the queue");
+        for _ in 0..(PASSWORD_RUNNING + PASSWORD_QUEUE) {
+            release.send(()).unwrap();
+        }
+        for job in jobs {
+            assert!(job.await.unwrap().is_ok());
+        }
     }
 
     #[test]

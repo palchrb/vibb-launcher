@@ -723,3 +723,41 @@ async fn a_burst_of_codes_checks_at_most_five() {
     let (failures, locks, locked) = counters(&app).await;
     assert_eq!((failures, locks, locked), (5, 1, true));
 }
+
+/// QA 22 M1: a client that hangs up while argon2 runs still leaves its failed attempt, so the IP
+/// ban still comes.
+#[tokio::test]
+async fn a_login_dropped_mid_verify_still_counts() {
+    let app = TestApp::new().await;
+    app.admin_cookie().await;
+    let router = app.router.clone();
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri("/login")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!("username={USER}&password=wrong")))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(LOOPBACK_PEER));
+    let login = tokio::spawn(async move { tower::ServiceExt::oneshot(router, request).await });
+    let rows = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'login_failed'",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let started = std::time::Instant::now();
+    while rows().await == 0 && started.elapsed() < Duration::from_secs(10) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    login.abort();
+    let _ = login.await;
+    assert_eq!(rows().await, 1, "the dropped attempt counts");
+    // A good login takes its own attempt back.
+    let (res, _) = password_step(&app, PASSWORD).await;
+    assert_eq!(res.location(), Some("/auth/verify-2fa"));
+    assert_eq!(rows().await, 1);
+}

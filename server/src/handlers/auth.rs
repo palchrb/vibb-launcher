@@ -11,6 +11,16 @@ use crate::models::AdminUser;
 use crate::security::{self, CurrentAdmin};
 use crate::{AppState, admin_auth};
 
+/// Usernames in the security log are cut to this many characters (security review M7).
+const MAX_LOGGED_USERNAME: usize = 64;
+
+fn clip(text: &str, max: usize) -> &str {
+    match text.char_indices().nth(max) {
+        Some((index, _)) => &text[..index],
+        None => text,
+    }
+}
+
 const BANNED_MESSAGE: &str =
     "Too many failed attempts from your network. Try again in about an hour.";
 
@@ -68,6 +78,9 @@ pub async fn login(
 ) -> axum::response::Response {
     let ip = state.net.client(&headers, addr.ip()).key();
 
+    // Earlier attempts count before this one runs, also those whose client hung up mid-verify
+    // (their row stays: QA 22 M1).
+    security::check_and_ban_ip_if_needed(&state.db, &ip).await;
     if security::is_ip_banned(&state.db, &ip).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
@@ -83,6 +96,27 @@ pub async fn login(
         .ok()
         .flatten();
 
+    // The attempt is recorded before argon2 runs and taken back only when the password is right:
+    // a client that hangs up mid-verify still counts toward the ban (QA 22 M1).
+    let attempt: Option<i64> = sqlx::query_scalar(
+        "INSERT INTO security_events (event_type, username, ip_address) \
+         VALUES ('login_failed', ?, ?) RETURNING id",
+    )
+    .bind(clip(&form.username, MAX_LOGGED_USERNAME))
+    .bind(&ip)
+    .fetch_one(&state.db)
+    .await
+    .ok();
+    let take_back = || async {
+        if let Some(id) = attempt {
+            sqlx::query("DELETE FROM security_events WHERE id = ?")
+                .bind(id)
+                .execute(&state.db)
+                .await
+                .ok();
+        }
+    };
+
     let valid = match state
         .passwords
         .verify(
@@ -92,22 +126,18 @@ pub async fn login(
         .await
     {
         Ok(valid) => valid,
-        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+        Err(admin_auth::Busy) => {
+            take_back().await;
+            return admin_auth::busy_response();
+        }
     };
 
     let Some(admin) = admin.filter(|_| valid) else {
-        security::record_security_event(
-            &state.db,
-            "login_failed",
-            Some(&form.username),
-            Some(&ip),
-            None,
-        )
-        .await;
         security::check_and_ban_ip_if_needed(&state.db, &ip).await;
         return render_login(Some("Incorrect username or password.".to_string())).into_response();
     };
 
+    take_back().await;
     if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
         security::record_security_event(
             &state.db,
