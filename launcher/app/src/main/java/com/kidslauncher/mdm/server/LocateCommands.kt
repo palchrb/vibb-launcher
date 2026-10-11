@@ -387,12 +387,21 @@ object LocateCommands {
         }
     }
 
-    /** Irreversible - the caller never gets an acknowledgement back, since the device is gone. */
-    fun wipe(dpm: DevicePolicyManager, admin: ComponentName) {
-        try {
-            dpm.wipeData(0)
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to wipe device", e)
+    /**
+     * Factory-resets the phone (security review M8: `wipeDevice` on API 34+, [wipeCall]). Irreversible;
+     * normally it never returns - the phone reboots into the reset. When it does return or throw,
+     * the result says what happened, so the parent sees a refused wipe instead of believing a lost
+     * phone is erased ([wipeOutcome], [wipeResultMessage]).
+     */
+    fun wipe(dpm: DevicePolicyManager): Pair<WipeOutcome, String> = try {
+        when (wipeCall(Build.VERSION.SDK_INT)) {
+            WipeCall.WIPE_DEVICE -> dpm.wipeDevice(WIPE_FLAGS)
+            WipeCall.WIPE_DATA -> dpm.wipeData(WIPE_FLAGS)
         }
+        WipeOutcome.STARTED to wipeResultMessage(WipeOutcome.STARTED)
+    } catch (e: Exception) {
+        Log.e(LOG_TAG, "Failed to wipe device", e)
+        val outcome = wipeOutcome(e.javaClass.simpleName, e.cause?.javaClass?.simpleName)
+        outcome to wipeResultMessage(outcome, "${e.javaClass.simpleName}: ${e.message}")
     }
 }

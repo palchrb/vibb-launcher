@@ -493,6 +493,16 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   paused, and one tap continues. The report the step-3 bridge will send is
   `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
 
+## 6g. The launcher's security wave (`docs/review/security-review-2026-10-10.md`)
+
+Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - the wipe is real.
+
+1. **Remote wipe (M8)**, API 34 and API 36 images, launcher as device owner and enrolled, with `adb logcat -s
+   LocateCommands DevicePolicyManagerService` running: Locate page -> Wipe. Expect the emulator to reboot into the
+   factory reset (the AVD comes back at the setup wizard) and no "Failed to wipe device" in the log. If a wipe is
+   ever refused, the phone keeps running and the Locate page must say "Failed ...: wipe failed, the phone keeps its
+   data: <the exception>" - never "Done". Restore the snapshot after each run.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and

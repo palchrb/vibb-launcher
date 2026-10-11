@@ -319,8 +319,8 @@ private suspend fun reportBlockedDnsEvents(context: Context, api: MdmApi) {
  * and Find My Device's ring/stop_ring/lock/wipe, or `locate` (nothing here:
  * the sync takes a fresh fix for the status report - bypassing the throttle - and answers the
  * command after the report with the fix's accuracy and age; the PWA's "Update location now"
- * queues it). No result is ever reported for `wipe` - the device is gone by the time it would
- * report back.
+ * queues it). A `wipe` that works never reports - the phone reboots into the reset; one the
+ * platform refuses reports the failure (security review M8).
  */
 private suspend fun dispatchPendingCommand(
     context: Context,
@@ -354,7 +354,12 @@ private suspend fun dispatchPendingCommand(
             reportCommandResult(api, pending.id, ok, message)
         }
 
-        "wipe" -> LocateCommands.wipe(dpm, admin)
+        // Only reached when the wipe didn't take the phone down at once: a refusal (or a call
+        // that returned) is reported, so the parent sees it (security review M8).
+        "wipe" -> {
+            val (outcome, message) = LocateCommands.wipe(dpm)
+            reportCommandResult(api, pending.id, success = outcome != WipeOutcome.FAILED, message = message)
+        }
 
         // Design 24b: "Lock the phone again now" - the pause or override and Play install mode
         // end, and the phone locks again (the relock right after this sync's apply, or the worker).

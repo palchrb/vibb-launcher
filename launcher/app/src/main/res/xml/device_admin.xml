@@ -5,5 +5,8 @@
         <!-- onPasswordChanged: an Android screen lock removed (step 10 migration) switches
              handy's own lock on at once (QA 10 #15). -->
         <watch-login />
+        <!-- Find My Device's wipe (security review M8): AOSP 14 without the policy-engine flag
+             accepts a wipe only from an admin that declares it, device owner or not. -->
+        <wipe-data />
     </uses-policies>
 </device-admin>
