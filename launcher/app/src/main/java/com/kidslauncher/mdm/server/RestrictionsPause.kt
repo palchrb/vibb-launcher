@@ -3,7 +3,11 @@ package com.kidslauncher.mdm.server
 import android.content.Context
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /** How long one "pause all restrictions" lasts. Re-entering the PIN starts a new window. */
 const val RESTRICTIONS_PAUSE_DURATION_MS = 2 * 60 * 60 * 1000L
@@ -71,8 +75,8 @@ object BootClock {
 /**
  * The Settings "pause all restrictions" kill-switch: an escape hatch for a broken policy or
  * launcher update. Upstream's switch was open to anyone in Settings when no PIN was configured,
- * never expired and was never reported. Here it can only be turned on after entering the device's
- * offline-override PIN (so it's unavailable while the server has no PIN set), it ends by itself
+ * never expired and was never reported. Here it can only be turned on through the parent PIN's
+ * gate ([ParentPin], so it's unavailable while the server has no PIN set), it ends by itself
  * after [RESTRICTIONS_PAUSE_DURATION_MS] by the wall clock *and* by elapsed time since boot (see
  * [timedWindowActive]), and every status report says whether it's on. [AppEnforcer] and the lock
  * decision treat it exactly like the offline override.
@@ -93,14 +97,36 @@ object RestrictionsPause {
         return false
     }
 
-    /** Call only after [OfflineOverride.verifyPin] succeeded. */
-    fun start() {
+    /** Starts the pause from [start] and re-applies at once - called only by [ParentPin.check]
+     * after a correct PIN and its committed `unlocked` event (design 24 §2). Any thread. */
+    fun start(context: Context, start: WindowStart) {
         val mdm = LauncherPreferences.mdm()
-        val start = BootClock.windowStart(RESTRICTIONS_PAUSE_DURATION_MS)
         mdm.restrictionsPausedUntil(start.untilWallMs)
         mdm.restrictionsPausedElapsedStart(start.elapsedStartMs)
         mdm.restrictionsPausedBoot(start.bootCount)
         mdm.restrictionsPaused(true)
+        reapply(context)
+    }
+
+    /**
+     * Re-runs enforcement right away, offline, after the pause changed - rather than waiting for
+     * the next sync. On a background coroutine: AppEnforcer.apply() can (re)start KidVpnService,
+     * whose onCreate() reads the blocklist from disk synchronously - on the main thread that froze
+     * the UI for seconds (an ANR). Ending a pause with no usable cached policy re-locks to the
+     * last-enforced plan.
+     */
+    fun reapply(context: Context) {
+        val app = context.applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // apply() releases everything itself while the pause is active.
+                AppEnforcer.apply(app, currentPolicyDecision().policy)
+                reevaluateLockReasonFromCache(app)
+                com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(app)
+            } catch (e: Exception) {
+                Log.w("RestrictionsPause", "Re-applying after a pause change failed", e)
+            }
+        }
     }
 
     fun clear() {

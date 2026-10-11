@@ -71,6 +71,10 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             post(handlers::device_api::crash_reports),
         )
         .route(
+            "/api/devices/pin-events",
+            post(handlers::parent_pin::pin_events),
+        )
+        .route(
             "/api/devices/music/library",
             get(handlers::music_api::library),
         )

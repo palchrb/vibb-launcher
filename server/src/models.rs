@@ -104,6 +104,12 @@ pub struct DevicePolicy {
     pub music_mobile_data: bool,
     pub music_volume_cap_pct: Option<i64>,
     pub music_storytel: bool,
+    /// The parent PIN is easy to guess (design 24 §4, migrations/0056): a warning on the device
+    /// page; `None` = not checked yet (the startup sweep) or no PIN. Not in the policy JSON.
+    pub override_pin_easy: Option<bool>,
+    /// When the parent PIN was last saved or removed here (ms; `None` = before this existed): the
+    /// Status card's parent-PIN notices start after it (qa-24-code Low 4).
+    pub override_pin_set_at_ms: Option<i64>,
 }
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.
@@ -307,6 +313,9 @@ pub struct DeviceStatus {
     pub app_downloads_json: Option<String>,
     /// The phone's `music_state` (design 21, migrations/0049), see `music::MusicState`.
     pub music_state_json: Option<String>,
+    /// The launcher is exempt from battery optimisation (design 19b, migrations/0055). `None`
+    /// from older launchers, or when the phone couldn't read it.
+    pub battery_optimization_exempt: Option<bool>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -731,6 +740,10 @@ pub struct StatusReportRequest {
     /// launcher - opaque, stored through the known fields only (`music::sanitize_music_state`).
     #[serde(default)]
     pub music_state: Option<serde_json::Value>,
+    /// Design 19b: `PowerManager.isIgnoringBatteryOptimizations` for the launcher. Absent from
+    /// older launchers and when the phone couldn't read it.
+    #[serde(default)]
+    pub battery_optimization_exempt: Option<bool>,
 }
 
 /// `StatusReportRequest.install_mode`.

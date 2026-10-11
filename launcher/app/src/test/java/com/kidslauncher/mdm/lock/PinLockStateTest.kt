@@ -106,9 +106,20 @@ class PinLockStateTest {
 
     @Test
     fun `unlock rechecks the time rules`() {
-        assertEquals(LockStep(LockMode.UNLOCKED, recheckTimeRules = true), step(LockMode.LOCKED, LockEvent.Unlocked))
-        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.Unlocked))
-        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.Unlocked))
+        assertEquals(LockStep(LockMode.UNLOCKED, recheckTimeRules = true), step(LockMode.LOCKED, LockEvent.Unlocked(0, 0)))
+        assertEquals(LockStep(LockMode.UNLOCKED), step(LockMode.UNLOCKED, LockEvent.Unlocked(0, 0)))
+        assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.Unlocked(0, 0)))
+    }
+
+    @Test
+    fun `an unlock checked before a screen-off is ignored (design 24 QA 4)`() {
+        // The PIN (or the parent code) was typed, then power within the ~0.5 s PBKDF2 takes: the
+        // late Ok must not open the lock with the screen dark.
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.Unlocked(checkedAt = 3, screenOffs = 4)))
+        assertEquals(
+            LockStep(LockMode.UNLOCKED, recheckTimeRules = true),
+            step(LockMode.LOCKED, LockEvent.Unlocked(checkedAt = 4, screenOffs = 4)),
+        )
     }
 
     @Test

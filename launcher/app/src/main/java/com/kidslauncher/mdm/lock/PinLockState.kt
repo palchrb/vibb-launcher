@@ -60,8 +60,12 @@ sealed interface LockEvent {
     /** The lock screen came to the front. */
     data class LockResumed(val ourCall: Boolean, val voip: VoipPhase = VoipPhase.NONE) : LockEvent
 
-    /** The correct kid PIN, or the parent code. */
-    data object Unlocked : LockEvent
+    /**
+     * The correct kid PIN, or the parent code. [checkedAt]: the runtime's screen-off count when
+     * the check started; [screenOffs]: the count now. A check that comes back after a screen-off
+     * is ignored, so the lock never opens with the screen dark (design 24 QA #4).
+     */
+    data class Unlocked(val checkedAt: Int, val screenOffs: Int) : LockEvent
 
     /** Our last call ended; [interactive] = the screen is on. Ended with the screen off means it
      * went off (power button/timeout) during the call - the phone locks (qa-10-code #2). */
@@ -172,8 +176,12 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
         showVoipCall = mode == LockMode.LOCKED && !event.ourCall && event.voip == VoipPhase.IN_CALL,
     )
 
-    LockEvent.Unlocked ->
-        if (mode == LockMode.LOCKED) LockStep(LockMode.UNLOCKED, recheckTimeRules = true) else LockStep(mode)
+    is LockEvent.Unlocked ->
+        if (mode == LockMode.LOCKED && event.checkedAt == event.screenOffs) {
+            LockStep(LockMode.UNLOCKED, recheckTimeRules = true)
+        } else {
+            LockStep(mode)
+        }
 
     // A call answered from the lock never unlocks it: the lock comes back when it ends (QA 10 #5).
     is LockEvent.CallsEnded -> when {

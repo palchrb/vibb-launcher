@@ -7,24 +7,20 @@ import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
-import android.widget.EditText
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
-import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.lock.PinLockRuntime
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.databinding.ActivityLockBinding
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.OfflineOverride
+import com.kidslauncher.mdm.server.ParentPin
+import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -79,49 +75,17 @@ class LockActivity : UIObjectActivity() {
         binding.lockEmergencyButton.setOnClickListener { EmergencyCall.confirm(this) }
     }
 
+    /** The parent PIN (design 24): checked with the escalating lockout by [ParentPin], which also
+     * starts the override; every result shows in the dialog. A wrong code keeps it open - the
+     * whole point of a failsafe is not making the parent re-type everything after one typo. */
     private fun showUnlockCodeDialog() {
-        if (!OfflineOverride.isConfigured()) {
-            Toast.makeText(this, R.string.lock_unlock_code_not_configured, Toast.LENGTH_LONG).show()
-            return
-        }
-        if (OfflineOverride.isLockedOut()) {
-            Toast.makeText(this, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
-            return
-        }
-
-        val dialog = AlertDialog.Builder(this, R.style.AlertDialogCustom).apply {
-            setTitle(R.string.lock_unlock_code_dialog_title)
-            setView(R.layout.dialog_offline_override_pin)
-            setNegativeButton(android.R.string.cancel) { d, _ -> d.cancel() }
-            setPositiveButton(android.R.string.ok, null)
-        }.create()
-        dialog.show()
-
-        // Overriding the positive button's listener after show() (rather than in the builder)
-        // keeps the dialog open on a wrong code instead of dismissing - the whole point of a
-        // failsafe is not making the parent re-open the dialog and re-type everything after one
-        // typo.
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { button ->
-            val input = dialog.findViewById<EditText>(R.id.dialog_offline_override_pin_input)
-            val pin = input?.text?.toString().orEmpty()
-            // PBKDF2 takes about half a second: off the main thread (QA 10 #6).
-            button.isEnabled = false
-            lifecycleScope.launch {
-                val ok = withContext(Dispatchers.Default) { OfflineOverride.verifyPin(pin) }
-                button.isEnabled = true
-                if (ok) {
-                    OfflineOverride.activate(this@LockActivity)
-                    dialog.dismiss()
-                    finish()
-                } else if (OfflineOverride.isLockedOut()) {
-                    Toast.makeText(this@LockActivity, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
-                    dialog.dismiss()
-                } else {
-                    Toast.makeText(this@LockActivity, R.string.lock_unlock_code_wrong, Toast.LENGTH_SHORT).show()
-                    input?.text?.clear()
-                }
-            }
-        }
+        ParentPinDialog.show(
+            this,
+            lifecycleScope,
+            ParentPinEntry.OVERRIDE,
+            title = R.string.lock_unlock_code_dialog_title,
+            notConfigured = R.string.lock_unlock_code_not_configured,
+        ) { finish() }
     }
 
     override fun onStart() {

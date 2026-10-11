@@ -6,8 +6,8 @@ package com.kidslauncher.mdm.lock
  *
  * Tries 1-4 are free; after the 5th wrong PIN the phone waits 30 s, then 1, 2, 5 and 15 minutes
  * (cap) - about 100 tries a day, so about 50 days on average for one 4-digit PIN (accepted, QA 10
- * #12). It never wipes. The parent code on the lock has its own counter (OfflineOverride) and
- * works during the wait.
+ * #12). It never wipes. The parent code on the lock has its own counter (ParentPin, design 24)
+ * and works during the wait.
  *
  * The clock only extends a wait, unlike timedWindowActive (RestrictionsPause.kt), whose windows
  * end on a reboot or a forward clock jump: here a different boot count restarts the full wait

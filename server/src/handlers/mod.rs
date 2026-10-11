@@ -10,6 +10,7 @@ pub mod locate;
 pub mod music;
 pub mod music_api;
 pub mod music_import;
+pub mod parent_pin;
 pub mod provisioning;
 pub mod schedules;
 pub mod settings;

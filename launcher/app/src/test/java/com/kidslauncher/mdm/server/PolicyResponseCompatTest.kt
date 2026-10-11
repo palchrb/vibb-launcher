@@ -6,6 +6,8 @@ import com.kidslauncher.mdm.server.dto.CallState
 import com.kidslauncher.mdm.server.dto.LauncherUi
 import com.kidslauncher.mdm.server.dto.PolicyContact
 import com.kidslauncher.mdm.server.dto.KidLock
+import com.kidslauncher.mdm.server.dto.ParentPinEvent
+import com.kidslauncher.mdm.server.dto.ParentPinEventBatch
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import kotlinx.serialization.json.jsonArray
@@ -93,6 +95,38 @@ class PolicyResponseCompatTest {
         val unknown = StatusReportRequest(lockReason = "NONE", kioskEngaged = true)
         val unknownJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), unknown)).jsonObject
         assertTrue("backup_service_enabled" !in unknownJson)
+    }
+
+    @Test
+    fun `the parent-PIN events capability is the string the server looks for (qa-24-code Low 6)`() {
+        assertEquals("parent_pin_events_v1", PARENT_PIN_EVENTS_CAPABILITY)
+        assertTrue(PARENT_PIN_EVENTS_CAPABILITY in STATUS_CAPABILITIES)
+    }
+
+    @Test
+    fun `parent PIN events use the server's keys - design 24's literal`() {
+        val batch = ParentPinEventBatch(
+            listOf(ParentPinEvent("0123456789abcdef0123456789abcdef", "unlocked", "override", 1_760_000_000_000, 1_760_007_200_000, null, null)),
+        )
+        val literal = """{ "events": [ { "id": "0123456789abcdef0123456789abcdef", "kind": "unlocked", "entry": "override",
+                "at_ms": 1760000000000, "until_ms": 1760007200000, "failures": null, "level": null } ] }"""
+        assertEquals(
+            ServerJson.parseToJsonElement(literal),
+            ServerJson.parseToJsonElement(ServerJson.encodeToString(ParentPinEventBatch.serializer(), batch)),
+        )
+    }
+
+    @Test
+    fun `battery_optimization_exempt is reported under the server's key and left out when unknown (19b)`() {
+        for (exempt in listOf(true, false)) {
+            val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, batteryOptimizationExempt = exempt)
+            val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+            assertEquals("$exempt", json["battery_optimization_exempt"].toString())
+        }
+        // Unreadable: absent, like a report from an older launcher (the server stores NULL).
+        val unknown = StatusReportRequest(lockReason = "NONE", kioskEngaged = true)
+        val unknownJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), unknown)).jsonObject
+        assertTrue("battery_optimization_exempt" !in unknownJson)
     }
 
     @Test

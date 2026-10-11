@@ -107,7 +107,14 @@
     <string name="quick_controls_brightness">Lysstyrke</string>
     <string name="quick_controls_manage_networks">Velg nettverk</string>
     <string name="quick_controls_manage_devices">Velg enheter</string>
-    <string name="lock_unlock_code_locked_out">For mange feil koder. Prøv igjen om 15 minutter.</string>
+    <string name="lock_unlock_code_locked_out">For mange feil koder. Prøv igjen om %1$s, eller lagre en ny foreldrekode på foreldresiden.</string>
+    <string name="parent_pin_last_try">Feil kode. Ett feilforsøk til låser den i %1$s.</string>
+    <string name="parent_pin_one_try_left">Ett feilforsøk til låser den i %1$s.</string>
+    <string name="parent_pin_too_short">Skriv inn minst 6 sifre.</string>
+    <string name="parent_pin_unavailable">Klarte ikke å sjekke koden. Prøv igjen.</string>
+    <string name="parent_pin_storage_full">Telefonens lagringsplass er full. Frigjør litt plass og prøv igjen.</string>
+    <string name="parent_pin_unit_hours">t</string>
+    <string name="parent_pin_unit_minutes">min</string>
 
     <!-- Wi-Fi networks -->
     <string name="wifi_networks_title">Wi-Fi-nettverk</string>
@@ -167,6 +174,11 @@
     <string name="toast_mdm_sync_failed">Synkroniseringen mislyktes – fikk ikke kontakt med serveren.</string>
     <string name="settings_mdm_restrictions_paused">Sett alle begrensninger på pause</string>
     <string name="settings_mdm_restrictions_paused_summary">Slår av kioskmodus, tidsreglene og app-begrensningene i 2 timer (samtaler er fortsatt bare til de godkjente kontaktene), så slås de på igjen av seg selv. Krever telefonens PIN-kode, og er ikke tilgjengelig når det ikke er satt noen PIN-kode på serveren. Forelderen ser på serveren at pausen er på. Bare til nødbruk, for eksempel hvis en oppdatering skaper problemer.</string>
+    <string name="settings_mdm_background_connection">Bakgrunnstilkobling</string>
+    <string name="settings_mdm_background_connection_exempt">Ubegrenset - endringer kommer fram mens telefonen sover</string>
+    <string name="settings_mdm_background_connection_ask">Batterioptimalisering er på - trykk for å tillate</string>
+    <string name="settings_mdm_background_connection_pause_first">Sett alle begrensninger på pause først (Androids innstillinger er skjult mens telefonen er styrt), trykk her, og avslutt pausen etterpå</string>
+    <string name="settings_mdm_background_connection_unknown">Ukjent</string>
     <string name="settings_mdm_restrictions_paused_pin_title">Skriv inn PIN-koden for å sette begrensningene på pause</string>
     <string name="toast_mdm_pause_needs_pin">Pause krever en PIN-kode. Sett en for denne telefonen på serveren først.</string>
     <string name="settings_gate_dialog_title">Skriv inn koden for å åpne innstillingene</string>
@@ -240,7 +252,7 @@
     <string name="pin_lock_emergency">Nødsamtale</string>
     <string name="pin_lock_parent_code">Foreldrekode</string>
     <string name="pin_lock_parent_wrong">Det er ikke foreldrekoden.</string>
-    <string name="pin_lock_parent_locked_out">For mange feil koder. Prøv igjen om 15 minutter.</string>
+    <string name="pin_lock_parent_locked_out">For mange feil koder. Prøv igjen om %1$s, eller lagre en ny foreldrekode på foreldresiden.</string>
     <string name="pin_lock_parent_not_set">Ingen foreldrekode er satt for denne telefonen.</string>
     <string name="pin_lock_delete">Slett</string>
     <string name="pin_lock_dots">%1$d av %2$d siffer</string>

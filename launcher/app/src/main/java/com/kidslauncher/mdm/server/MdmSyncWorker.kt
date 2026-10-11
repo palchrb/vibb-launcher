@@ -232,6 +232,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     Log.w(LOG_TAG, "Music report failed", e)
                     null
                 },
+                batteryOptimizationExempt = BatteryExemption.exempt(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -249,6 +250,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     // Crashes since the last sync (hash + short trace, no personal data) for the device page.
     com.kidslauncher.mdm.crash.CrashReports.upload(context, api)
+    // Parent-PIN uses, wrong tries and lockouts (design 24): with the sync, never on their own.
+    ParentPinEvents.upload(context, api)
     // Retention (cleanup 2026-10-06): blocked calls older than 30 days leave the call log.
     com.kidslauncher.mdm.calls.BlockedCallLog.pruneIfDue(context)
 

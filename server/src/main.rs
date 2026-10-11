@@ -22,6 +22,7 @@ mod music_secret;
 mod music_sources;
 mod music_sweep;
 mod net;
+mod parent_pin;
 mod phone;
 mod photos;
 mod play;
@@ -353,6 +354,11 @@ async fn main() {
     tokio::task::spawn(retention::run_pruning(state.clone()));
     // The music sweep (design 21b): lists every NRK/RSS entry, its first pass 60 s from now.
     tokio::task::spawn(music_sweep::run(state.clone()));
+    // Design 24: parent PINs stored before the easy-PIN check get it once.
+    tokio::task::spawn(parent_pin::run_easy_sweep(
+        state.db.clone(),
+        parent_pin::easy_candidates(),
+    ));
     // Counts of throttled security events (refused admin requests, failed enrollments).
     tokio::task::spawn(audit::run_flusher(state.clone()));
 
@@ -670,6 +676,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/kid-lock",
             post(handlers::devices::update_kid_lock),
+        )
+        .route(
+            "/devices/{id}/parent-pin",
+            post(handlers::parent_pin::update_parent_pin),
         )
         .route(
             "/devices/{id}/regenerate-code",

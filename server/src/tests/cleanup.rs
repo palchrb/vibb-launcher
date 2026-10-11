@@ -371,6 +371,7 @@ async fn pruning_keeps_only_what_retention_allows() {
             status_reports: 2,
             crashes: 0,
             security_events: 0,
+            pin_events: 0,
         }
     );
     assert_eq!(count(db, "SELECT COUNT(*) FROM device_dns_events").await, 1);

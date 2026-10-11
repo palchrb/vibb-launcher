@@ -8,6 +8,7 @@ import com.kidslauncher.mdm.server.dto.DnsEventReport
 import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.EnrollResponse
 import com.kidslauncher.mdm.server.dto.InstallProgressReport
+import com.kidslauncher.mdm.server.dto.ParentPinEventBatch
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
 import okhttp3.MediaType.Companion.toMediaType
@@ -94,6 +95,10 @@ interface MdmApi {
     /** Launcher crashes (hash + short trace, no personal data) - see [com.kidslauncher.mdm.crash.CrashReports]. */
     @POST("api/devices/crashes")
     suspend fun sendCrashReports(@Body batch: CrashReportBatch): Response<Unit>
+
+    /** Parent-PIN uses, wrong tries and lockouts (design 24) - see [ParentPinEvents]. */
+    @POST("api/devices/pin-events")
+    suspend fun sendPinEvents(@Body batch: ParentPinEventBatch): Response<Unit>
 }
 
 /** [token] is omitted for the enroll-only call (no token exists yet); pass it for every

@@ -96,8 +96,9 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // override started - see server.timedWindowActive (clock set-back guard).
                         @Preference(name = "offline_override_elapsed_start", type = long.class, defaultValue = "0"),
                         @Preference(name = "offline_override_boot", type = int.class, defaultValue = "-1"),
-                        // Purely local brute-force throttling for the offline PIN entry dialog -
-                        // never synced to the server, since this must keep working with zero network.
+                        // Legacy (design 24): the old 5/15-minute counter of the parent PIN. Read once
+                        // by server.ParentPinStore's migration into its own CE prefs
+                        // (parent_pin_state), then zeroed - nothing else may read or write them.
                         @Preference(name = "offline_override_failed_attempts", type = int.class, defaultValue = "0"),
                         @Preference(name = "offline_override_locked_until", type = long.class, defaultValue = "0"),
                         // Set by LockActivity when the offline override is used; reported once via

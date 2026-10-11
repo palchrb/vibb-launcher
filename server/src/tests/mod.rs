@@ -17,6 +17,7 @@ mod listeners;
 mod locations;
 mod music;
 mod music_sweep;
+mod parent_pin;
 mod play;
 mod provisioning;
 mod sound_mode;

@@ -6,21 +6,24 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
-import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.SettingsBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.OfflineOverride
+import com.kidslauncher.mdm.server.ParentPin
+import com.kidslauncher.mdm.server.ParentPinEntry
+import com.kidslauncher.mdm.ui.ParentPinDialog
 import com.kidslauncher.mdm.ui.UIObjectActivity
 
 /**
  * The [SettingsActivity] holds all of the app's settings on a single page.
  *
  * Gated by [settingsAccess] on every `onCreate`/`onStart`: open only before the phone's first
- * policy (setup), otherwise behind the offline-override PIN - and shut entirely when the server
- * has no PIN for this phone or the PIN is locked out - so a kid can't tamper with
+ * policy (setup), otherwise behind the parent PIN ([ParentPin], design 24) - and shut entirely
+ * when the server has no PIN for this phone or the PIN is locked out (the gate's dialog then says
+ * so, OK disabled) - so a kid can't tamper with
  * enrollment/sync/the restrictions-pause switch below through any entry point (drawer, the
  * exported `APPLICATION_PREFERENCES` filter, an explicit intent, recents, a restore after process
  * death). A passed gate lasts until `onStop` (kept across a configuration change only): leaving
@@ -45,6 +48,10 @@ class SettingsActivity : UIObjectActivity() {
     private var gatePassed = false
     private var pinDialog: AlertDialog? = null
 
+    /** Bumped by every real `onStop`: a check that comes back from an ended session sets nothing
+     * (design 24 QA #4 - the parent taps OK and presses power within the ~0.5 s PBKDF2 takes). */
+    private var session = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setRecentsScreenshotEnabled(false)
@@ -65,11 +72,12 @@ class SettingsActivity : UIObjectActivity() {
 
     private fun currentAccess(): SettingsAccess {
         val mdm = LauncherPreferences.mdm()
+        val pin = ParentPin.status(this)
         return settingsAccess(
             // A cached policy also counts, for a phone whose cache predates the flag.
             policyEverApplied = mdm.policyEverApplied() || !mdm.kidModePolicy().isNullOrBlank(),
-            pinConfigured = OfflineOverride.isConfigured(),
-            lockedOut = OfflineOverride.isLockedOut(),
+            pinConfigured = pin.configured,
+            lockedOut = pin.lockoutMs > 0L,
         )
     }
 
@@ -81,51 +89,34 @@ class SettingsActivity : UIObjectActivity() {
     }
 
     private fun enforceGate() {
-        when (currentAccess()) {
-            SettingsAccess.OPEN -> binding.root.visibility = View.VISIBLE
-            SettingsAccess.REQUIRE_PIN -> if (gatePassed) {
-                binding.root.visibility = View.VISIBLE
-            } else {
-                binding.root.visibility = View.INVISIBLE
-                if (pinDialog?.isShowing != true) showPinGate()
-            }
-            SettingsAccess.REFUSE_NO_PIN -> refuse(R.string.settings_gate_no_pin)
-            SettingsAccess.REFUSE_LOCKED_OUT -> if (!gatePassed) refuse(R.string.lock_unlock_code_locked_out)
+        val access = currentAccess()
+        // No PIN on the server or a running lockout: the gate's dialog opens in that state (OK
+        // disabled, Cancel finishes) instead of a toast (design 24 §2.4).
+        val open = access == SettingsAccess.OPEN ||
+            (gatePassed && access != SettingsAccess.REFUSE_NO_PIN)
+        if (open) {
+            binding.root.visibility = View.VISIBLE
+        } else {
+            binding.root.visibility = View.INVISIBLE
+            if (pinDialog?.isShowing != true) showPinGate()
         }
     }
 
-    private fun refuse(message: Int) {
-        binding.root.visibility = View.INVISIBLE
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-        finish()
-    }
-
     private fun showPinGate() {
-        val dialog = AlertDialog.Builder(this, R.style.AlertDialogCustom).apply {
-            setTitle(R.string.settings_gate_dialog_title)
-            setView(R.layout.dialog_offline_override_pin)
-            setCancelable(false)
-            setNegativeButton(android.R.string.cancel) { _, _ -> finish() }
-            setPositiveButton(android.R.string.ok, null)
-        }.create()
-        pinDialog = dialog
-        dialog.show()
-
-        // Overridden after show() so a wrong PIN re-prompts instead of dismissing/finishing.
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val input = dialog.findViewById<EditText>(R.id.dialog_offline_override_pin_input)
-            val pin = input?.text?.toString().orEmpty()
-            if (OfflineOverride.verifyPin(pin)) {
+        val gateSession = session
+        pinDialog = ParentPinDialog.show(
+            this,
+            lifecycleScope,
+            ParentPinEntry.SETTINGS,
+            title = R.string.settings_gate_dialog_title,
+            notConfigured = R.string.settings_gate_no_pin,
+            cancelable = false,
+            onCancel = { finish() },
+        ) {
+            // Its `unlocked` event stays either way.
+            if (gateSession == session && !isFinishing) {
                 gatePassed = true
                 binding.root.visibility = View.VISIBLE
-                dialog.dismiss()
-            } else if (OfflineOverride.isLockedOut()) {
-                Toast.makeText(this, R.string.lock_unlock_code_locked_out, Toast.LENGTH_LONG).show()
-                dialog.dismiss()
-                finish()
-            } else {
-                Toast.makeText(this, R.string.lock_unlock_code_wrong, Toast.LENGTH_SHORT).show()
-                input?.text?.clear()
             }
         }
     }
@@ -140,6 +131,7 @@ class SettingsActivity : UIObjectActivity() {
         // Leaving Settings (Home, recents, another activity, screen off) ends the session: the
         // next onStart asks for the PIN again. A configuration change keeps it (see onCreate).
         if (!isChangingConfigurations) {
+            session++
             gatePassed = false
             pinDialog?.dismiss()
             pinDialog = null

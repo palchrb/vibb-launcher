@@ -43,6 +43,8 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
         if (response.isSuccessful && body != null) {
             mdm.deviceToken(body.deviceToken)
             mdm.enrolled(true)
+            // A new enrollment: the queued parent-PIN events were about the old one (design 24).
+            ParentPin.clearEvents(context)
             Result.success(Unit)
         } else {
             Result.failure(Exception("HTTP ${response.code()}"))

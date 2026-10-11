@@ -55,6 +55,14 @@ class PushManifestTest {
     }
 
     @Test
+    fun `Android's battery-optimisation dialog has its permission (19b)`() {
+        // Without it the dialog finishes silently.
+        val perms = doc.getElementsByTagName("uses-permission")
+        val names = (0 until perms.length).map { (perms.item(it) as Element).getAttributeNS(android, "name") }
+        assertTrue("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" in names)
+    }
+
+    @Test
     fun `the Play link blocker declares the filters it is made preferred for`() {
         val blocker = component("activity", ".play.PlayLinkBlockedActivity")!!
         val schemes = blocker.getElementsByTagName("data").let { d -> (0 until d.length).map { (d.item(it) as Element).getAttributeNS(android, "scheme") } }

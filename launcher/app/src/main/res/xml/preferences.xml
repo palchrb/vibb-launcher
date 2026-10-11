@@ -39,6 +39,11 @@
         android:key="settings_mdm_sync_now"
         android:title="@string/settings_mdm_sync_now" />
 
+    <!-- Design 19b: the battery-optimisation exemption; the summary is set in code. -->
+    <Preference
+        android:key="settings_mdm_background_connection"
+        android:title="@string/settings_mdm_background_connection" />
+
     <Preference
         android:key="settings_play_install_mode"
         android:title="@string/settings_play_install_mode"
