@@ -90,6 +90,9 @@
         </form>
         <p class="subtitle">Opens the phone - apps, Settings, Play - without typing the parent PIN on it, like the pause in its Settings (accessibility services stay limited to checked apps). It locks again by itself after 2 hours, or press "Lock the phone again now".</p>
         {% endif %}
+        {% for line in relock.answers %}
+        <p class="subtitle">{{ line }}</p>
+        {% endfor %}
         {% else %}
         <p class="subtitle">No status reported yet.</p>
         {% if let Some(text) = relock.notice %}

@@ -355,6 +355,74 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
+/// QA Low 10: "Allow these apps" goes once the phone answered one pressed after the relock, and
+/// each command's answer - or that there is none - shows on the Status card.
+#[tokio::test]
+async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    sqlx::query(
+        "UPDATE device_policy SET allowlist_json = '[\"com.example.app\"]' WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    post_status(
+        &app,
+        &token,
+        json!({ "relock": literal(now_ms() - 3_600_000) }),
+    )
+    .await;
+    let button = format!("action=\"/devices/{id}/allow-blocked\"");
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/allow-blocked"),
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    // Sent, not answered: the button stays, and the card says so.
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(status_card(&html).contains(&button));
+    assert!(
+        status_card(&html).contains("no answer from the phone yet."),
+        "{html}"
+    );
+    // The phone takes it and answers.
+    let res = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await;
+    let command_id = res.json()["pending_command"]["id"].as_i64().unwrap();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/command-result",
+            Some(&token),
+            Some(
+                json!({ "command_id": command_id, "success": true, "message": "allowed: 1 apps" }),
+            ),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(!card.contains(&button), "{card}");
+    assert!(
+        card.contains("the phone answered &#34;allowed: 1 apps&#34;."),
+        "{card}"
+    );
+    // The warning itself stays with the report it came from.
+    assert!(card.contains("Blocked: com.example.app"), "{card}");
+}
+
 #[tokio::test]
 async fn the_pause_button_shows_while_no_pause_is_on() {
     let app = TestApp::new().await;

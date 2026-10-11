@@ -517,6 +517,51 @@ pub fn log_line(device_id: i64, r: &RelockReport) -> String {
     .collect()
 }
 
+/// The last of one of this design's commands (QA Low 10): when it was pressed (server time) and,
+/// once the phone answered, when and what.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandAnswer {
+    pub command: String,
+    pub requested_ms: i64,
+    pub acknowledged_ms: Option<i64>,
+    pub result: Option<String>,
+}
+
+fn command_label(command: &str) -> Option<&'static str> {
+    match command {
+        END_WINDOWS => Some("Lock the phone again now"),
+        ALLOW_BLOCKED => Some("Allow these apps"),
+        START_PAUSE => Some("Pause restrictions for 2 hours"),
+        _ => None,
+    }
+}
+
+/// The Status card's line for [answer] while it is under 7 days old: what was pressed when, and
+/// the phone's answer or that there is none yet - so a command the phone never ran doesn't look
+/// like one that worked.
+pub fn answer_line(answer: &CommandAnswer, now_ms: i64) -> Option<String> {
+    let label = command_label(&answer.command)?;
+    if now_ms - answer.requested_ms > WARN_MS {
+        return None;
+    }
+    let when = crate::parent_pin::when_text(answer.requested_ms, now_ms);
+    let said = match (answer.acknowledged_ms, answer.result.as_deref()) {
+        (Some(_), Some(result)) => {
+            let result: String = result.chars().take(120).collect();
+            format!("the phone answered \"{result}\"")
+        }
+        (Some(_), None) => "the phone answered".to_string(),
+        (None, _) => "no answer from the phone yet".to_string(),
+    };
+    Some(format!("\"{label}\" pressed {when}: {said}."))
+}
+
+/// "Allow these apps" stays only until the phone has answered one pressed after the relock - the
+/// report doesn't change, but the blocks it lists are gone (QA Low 10).
+pub fn allowed_since_relock(answer: Option<&CommandAnswer>, relock_at_ms: i64) -> bool {
+    answer.is_some_and(|a| a.acknowledged_ms.is_some() && a.requested_ms > relock_at_ms)
+}
+
 /// The one-shot message after a command was queued (`?notice=`), shown in the Status card.
 pub fn flash_text(code: &str) -> Option<&'static str> {
     match code {
@@ -711,6 +756,49 @@ mod tests {
         assert!(flash_text("allow_blocked_sent").is_some());
         assert!(flash_text("start_pause_sent").is_some());
         assert_eq!(flash_text("parent_pin_saved"), None);
+    }
+
+    #[test]
+    fn command_answers_say_what_the_phone_said_or_that_it_said_nothing() {
+        let answer = |ack: Option<i64>, result: Option<&str>| CommandAnswer {
+            command: END_WINDOWS.to_string(),
+            requested_ms: NOW - 2 * 60 * 60 * 1000,
+            acknowledged_ms: ack,
+            result: result.map(str::to_string),
+        };
+        assert_eq!(
+            answer_line(&answer(Some(NOW), Some("ended: pause")), NOW).unwrap(),
+            "\"Lock the phone again now\" pressed 2025-10-10 13:40 UTC (2 h ago): the phone \
+             answered \"ended: pause\"."
+        );
+        assert!(
+            answer_line(&answer(None, None), NOW)
+                .unwrap()
+                .ends_with("no answer from the phone yet.")
+        );
+        // A week later: gone. Another command: no line.
+        assert_eq!(answer_line(&answer(Some(NOW), None), NOW + WARN_MS), None);
+        let ring = CommandAnswer {
+            command: "ring".to_string(),
+            ..answer(None, None)
+        };
+        assert_eq!(answer_line(&ring, NOW), None);
+        // "Allow these apps" goes once an answered one is newer than the relock.
+        let allowed = CommandAnswer {
+            command: ALLOW_BLOCKED.to_string(),
+            ..answer(Some(NOW), Some("allowed: 1 apps"))
+        };
+        assert!(allowed_since_relock(
+            Some(&allowed),
+            NOW - 3 * 60 * 60 * 1000
+        ));
+        assert!(!allowed_since_relock(Some(&allowed), NOW - 60 * 60 * 1000));
+        let unanswered = CommandAnswer {
+            command: ALLOW_BLOCKED.to_string(),
+            ..answer(None, None)
+        };
+        assert!(!allowed_since_relock(Some(&unanswered), 0));
+        assert!(!allowed_since_relock(None, 0));
     }
 
     #[test]

@@ -110,6 +110,15 @@ async fn kid_pin_saved_sent_and_safe_boot_blocked() {
     assert!(location.contains("notice=saved_safe_boot"), "{location}");
     assert!(safe_boot(&app, id).await);
     assert_eq!(events(&app, "kid_pin_changed").await, 1);
+    // When it went on, for the unseen-boots advice (design 24b's fix round, QA Low 12).
+    let since: Option<i64> = sqlx::query_scalar(
+        "SELECT disallow_safe_boot_set_at_ms FROM device_policy WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(since.is_some());
 
     let policy = policy(&app, &token).await;
     let kid_lock = &policy["kid_lock"];

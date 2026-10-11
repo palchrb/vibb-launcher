@@ -30,10 +30,13 @@ pub struct RelockCard {
     pub pause_button: bool,
     /// The phone refuses the parent PIN ([window_relock::foreign_note]).
     pub foreign: Option<ForeignNote>,
+    /// The last answer to each command, under a week old ([window_relock::answer_line]).
+    pub answers: Vec<String>,
 }
 
 pub async fn card(
     db: &sqlx::SqlitePool,
+    device_id: i64,
     latest: Option<&DeviceStatus>,
     notice: Option<&str>,
     now_ms: i64,
@@ -46,8 +49,17 @@ pub async fn card(
     let open = latest.is_some_and(|s| {
         s.restrictions_paused || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
     });
+    let answers = last_answers(db, device_id).await;
     let notes = match window_relock::parse_relock(latest.and_then(|s| s.relock_json.as_deref())) {
-        Some(r) => window_relock::relock_notes(&r, now_ms, &catalog_pins(db).await),
+        Some(r) => {
+            let mut notes = window_relock::relock_notes(&r, now_ms, &catalog_pins(db).await);
+            // Pressed after this relock and answered: the blocks it lists are gone (QA Low 10).
+            let allowed = answers.iter().find(|a| a.command == ALLOW_BLOCKED);
+            if window_relock::allowed_since_relock(allowed, r.at_ms) {
+                notes.allow_button = false;
+            }
+            notes
+        }
         None => RelockNotes::default(),
     };
     let foreign =
@@ -62,7 +74,49 @@ pub async fn card(
         notes,
         pause_button: capable && !latest.is_some_and(|s| s.restrictions_paused),
         foreign,
+        answers: answers
+            .iter()
+            .filter_map(|a| window_relock::answer_line(a, now_ms))
+            .collect(),
     }
+}
+
+/// The newest of each of this design's commands for [device_id], with the phone's answer. Empty on
+/// a database error.
+async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_relock::CommandAnswer> {
+    let [end_windows, allow_blocked, start_pause] = window_relock::OWN_INSERT_COMMANDS;
+    let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT command, requested_at, acknowledged_at, result FROM device_commands \
+         WHERE id IN (SELECT MAX(id) FROM device_commands WHERE device_id = ? \
+                      AND command IN (?, ?, ?) GROUP BY command) \
+         ORDER BY id",
+    )
+    .bind(device_id)
+    .bind(end_windows)
+    .bind(allow_blocked)
+    .bind(start_pause)
+    .fetch_all(db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id, %err, "can't read the window commands");
+        Vec::new()
+    });
+    // SQLite's datetime('now'): UTC, "YYYY-MM-DD HH:MM:SS".
+    let ms = |text: &str| {
+        chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .map(|t| t.and_utc().timestamp_millis())
+    };
+    rows.into_iter()
+        .filter_map(|(command, requested, acknowledged, result)| {
+            Some(window_relock::CommandAnswer {
+                command,
+                requested_ms: ms(&requested)?,
+                acknowledged_ms: acknowledged.as_deref().and_then(ms),
+                result,
+            })
+        })
+        .collect()
 }
 
 /// The catalog's pinned signers (M10): package -> signing key. Empty on a database error (then no

@@ -23,12 +23,15 @@ pub fn sanitize(value: &Value) -> Option<(i64, Option<i64>)> {
     Some((count, last_at_ms))
 }
 
-/// The Status card's warning: `None` without an unseen boot in the last 30 days.
+/// The Status card's warning: `None` without an unseen boot in the last 30 days. [blocked_since]:
+/// when "Block safe mode" was turned on (`None` = unknown) - only a boot noticed after it was
+/// probably a start cut short (QA Low 12); before it, or unknown, it may have been either.
 pub fn warning(
     count: Option<i64>,
     last_at_ms: Option<i64>,
     now_ms: i64,
     safe_boot_blocked: bool,
+    blocked_since: Option<i64>,
 ) -> Option<String> {
     let count = count.filter(|n| *n > 0)?;
     let last = last_at_ms.filter(|at| now_ms - at <= WARN_MS)?;
@@ -37,10 +40,16 @@ pub fn warning(
     } else {
         format!("{count} times")
     };
-    let advice = if safe_boot_blocked {
-        "Safe mode is blocked, so it was probably a start cut short - ask your child if it repeats."
-    } else {
-        "Turn on \"Block safe mode\" under Phone hardening."
+    let advice = match (safe_boot_blocked, blocked_since) {
+        (true, Some(since)) if last > since => {
+            "Safe mode is blocked, so it was probably a start cut short - ask your child if it \
+             repeats."
+        }
+        (true, _) => {
+            "Safe mode is blocked now, but maybe not yet at that start: it was safe mode or a \
+             start cut short - ask your child."
+        }
+        (false, _) => "Turn on \"Block safe mode\" under Phone hardening.",
     };
     Some(format!(
         "The phone started {times} without the launcher running, last noticed {}. That happens in \
@@ -88,19 +97,45 @@ mod tests {
     fn both_warning_variants_and_their_expiry() {
         let at = NOW - 3 * 60 * 60 * 1000;
         assert_eq!(
-            warning(Some(1), Some(at), NOW, false).unwrap(),
+            warning(Some(1), Some(at), NOW, false, None).unwrap(),
             "The phone started 1 time without the launcher running, last noticed 2025-10-10 09:40 UTC \
              (3 h ago). That happens in safe mode, which skips every app, call and time rule, or with a \
              start cut short (battery, a system update rolling back). Turn on \"Block safe mode\" under \
              Phone hardening."
         );
-        assert!(warning(Some(3), Some(at), NOW, true).unwrap().ends_with(
+        assert!(warning(Some(3), Some(at), NOW, true, Some(at - 1)).unwrap().ends_with(
             "The phone started 3 times without the launcher running, last noticed 2025-10-10 09:40 UTC (3 h ago). That happens in safe mode, which skips every app, call and time rule, or with a start cut short (battery, a system update rolling back). Safe mode is blocked, so it was probably a start cut short - ask your child if it repeats."
         ));
-        assert_eq!(warning(Some(2), Some(NOW - WARN_MS - 1), NOW, false), None);
-        assert_eq!(warning(Some(0), Some(at), NOW, false), None);
-        assert_eq!(warning(None, None, NOW, false), None);
-        assert_eq!(warning(Some(2), None, NOW, false), None);
+        assert_eq!(
+            warning(Some(2), Some(NOW - WARN_MS - 1), NOW, false, None),
+            None
+        );
+        assert_eq!(warning(Some(0), Some(at), NOW, false, None), None);
+        assert_eq!(warning(None, None, NOW, false, None), None);
+        assert_eq!(warning(Some(2), None, NOW, false, None), None);
+    }
+
+    #[test]
+    fn the_advice_follows_the_switch_in_force_at_the_boot() {
+        let at = NOW - 3 * 60 * 60 * 1000;
+        let both = "Safe mode is blocked now, but maybe not yet at that start: it was safe mode or a \
+                    start cut short - ask your child.";
+        // Turned on after the boot (S4's migration, or the parent), or when is unknown: both.
+        assert!(
+            warning(Some(1), Some(at), NOW, true, Some(at + 1))
+                .unwrap()
+                .ends_with(both)
+        );
+        assert!(
+            warning(Some(1), Some(at), NOW, true, None)
+                .unwrap()
+                .ends_with(both)
+        );
+        assert!(
+            warning(Some(1), Some(at), NOW, true, Some(at - 1))
+                .unwrap()
+                .ends_with("so it was probably a start cut short - ask your child if it repeats.")
+        );
     }
 
     #[test]

@@ -3,3 +3,6 @@
 -- noticed one. NULL from older launchers.
 ALTER TABLE device_status ADD COLUMN unseen_boots_count INTEGER;
 ALTER TABLE device_status ADD COLUMN unseen_boots_last_at_ms INTEGER;
+-- The fix round (QA Low 12): when "Block safe mode" was last turned on (ms; NULL = off, or on since
+-- before this column), so the warning's advice follows the switch in force at the boot.
+ALTER TABLE device_policy ADD COLUMN disallow_safe_boot_set_at_ms INTEGER;
