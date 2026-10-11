@@ -31,7 +31,6 @@ import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -94,8 +93,13 @@ import me.vibb.music.sonos.RendererChoice
 import me.vibb.music.sonos.SonosHome
 import me.vibb.music.sonos.SonosLocks
 import me.vibb.music.sonos.SonosRenderer
+import me.vibb.music.sonos.RoomVerdict
+import me.vibb.music.sonos.SonosSuspension
+import me.vibb.music.sonos.SonosTail
 import me.vibb.music.sonos.adoptIndex
+import me.vibb.music.sonos.adoptPlan
 import me.vibb.music.sonos.ourLiveSession
+import me.vibb.music.sonos.roomVerdict
 import me.vibb.music.sync.ItemErrors
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.netCaps
@@ -164,7 +168,7 @@ class PlaybackService : MediaSessionService() {
      * (vibb's double-playback trap, `sonos_renderer.py` check 2). Complete at once in onCreate when
      * renderer.json says the phone; else after [adopt]'s one classify of the stored room.
      */
-    private val rendererReady = CompletableDeferred<Unit>()
+    private val rendererReady = RendererGate()
 
     /**
      * One command at a time where the renderer matters (qa-26a-step3a-code M2): a switch suspends for
@@ -208,9 +212,9 @@ class PlaybackService : MediaSessionService() {
         val choice = home.choice()
         scope.launch {
             try {
-                if (choice.sonos) adopt(choice)
+                if (startupLook(choice)) adopt(choice)
             } finally {
-                rendererReady.complete(Unit)
+                rendererReady.settle()
             }
         }
         scope.launch { home.rooms.state.collect { publish() } }
@@ -246,26 +250,33 @@ class PlaybackService : MediaSessionService() {
         session = null
         if (renderer !== local) local.release()
         if (sonos != null) {
+            // the dead service hears nothing more (qa-26a-step3b-code L1); the place now, from the last
+            // poll (its age term capped at 5 s), and the live second's again in the hand-off
+            sonos.onEvent = null
+            sonos.saveNow(force = true)
             // Design 26a §6.2 (vibb `_sonos_on_term`: box off = music off): the full stop - the live
             // classify, the bookmark at that second, Stop if ours - goes on after the service, and the
             // speaker, the household and the writer are let go after it. A crash skips this: the speaker
             // plays on until the next start adopts it or a suspension edge stops it.
+            // Process-wide (SonosTail, L2): a suspension's standalone path and the next service's adopt wait for it.
             val tail = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-            tail.launch {
-                try {
-                    handOff(sonos)
-                } finally {
-                    sonos.release()
-                    home.release()
-                    writer.close()
-                    tail.cancel()
-                }
-            }
+            SonosTail.started(
+                tail.launch {
+                    try {
+                        handOff(sonos)
+                    } finally {
+                        sonos.release()
+                        home.release()
+                        writer.close()
+                        tail.cancel()
+                    }
+                },
+            )
         } else {
             renderer.release()
             home.release()
             writer.close()
-            locks.hold(false)
+            locks.releaseAll()
         }
         scope.cancel()
         super.onDestroy()
@@ -364,6 +375,8 @@ class PlaybackService : MediaSessionService() {
             scope.launch {
                 rendererReady.await()
                 switching.withLock {
+                    // a room still recorded after an unanswered look: one more look before the phone plays (M1)
+                    if (customCommand.customAction in Commands.PLAYS) lookAgainBeforePlaying()
                     when (customCommand.customAction) {
                         Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY))
                         Commands.PLAY_ITEM -> playItem(args.getLong(Commands.ARG_ENTRY), args.getString(Commands.ARG_KEY).orEmpty())
@@ -392,6 +405,7 @@ class PlaybackService : MediaSessionService() {
             scope.launch {
                 rendererReady.await()
                 switching.withLock {
+                    lookAgainBeforePlaying()
                     if (renderer.kind == RendererKind.SONOS) {
                         // Design 26a §4.7: on Sonos a Bluetooth play button starts the speaker - the queue it
                         // holds, else the stored one, gated (playAllowed above; the controller's mayPlay before
@@ -1093,47 +1107,88 @@ class PlaybackService : MediaSessionService() {
 
     // --- the renderer: the phone or a Sonos room (design 26a §4.6) ---
 
-    private fun sonosRenderer(uid: String, name: String?) =
-        SonosRenderer(this, home, store, scope, writer, { active }, uid, name, onArmedPlaying = { locks.hold(it) })
+    /** A room's renderer; its holds on the service's locks are its own (qa-26a-step3b-code L4). */
+    private fun sonosRenderer(uid: String, name: String?): SonosRenderer {
+        val owner = Any()
+        return SonosRenderer(this, home, store, scope, writer, { active }, uid, name, onArmedPlaying = { locks.hold(owner, it) })
+    }
+
+    /** When the stored room was last looked at (elapsed; [lookAtRoom]). */
+    private var lastRoomLook = Long.MIN_VALUE / 2
+
+    /** Adopt at start ([lookAtRoom] under the switch lock). */
+    private suspend fun adopt(choice: RendererChoice) = switching.withLock { lookAtRoom(choice) }
 
     /**
-     * Adopt at start (design 26a §4.7, vibb `_sonos_poller`'s reconciliation): renderer.json names a
-     * room. One classify of it (in its actor, [SonosController.LIVE_BUDGET_MS]); our stream there,
-     * playing or paused ([ourLiveSession]) -> adopted with zero transport commands: the stored
-     * entry's queue rebuilt with the speaker-playable filter (the stored queue's order when it is
-     * that entry's), the index by uri equality ([adoptIndex]), the room the session's player.
-     * Anything else - unreachable, late, foreign, stopped, the item gone - renderer.json back to the
-     * phone, nothing starts, the bar comes back paused from the stored row (`NowPlayingRow`).
+     * The look at the room renderer.json names (design 26a §4.7, vibb `_sonos_poller`'s
+     * reconciliation): a destroyed service's stop finished first ([SonosTail]), then one classify of
+     * the room in its actor ([SonosController.LIVE_BUDGET_MS]) and [roomVerdict]:
+     * - our stream playing or paused -> adopted with zero transport commands: the stored entry's
+     *   queue rebuilt ([adoptPlan]: the stored order and shuffle, the speaker-playable filter, the
+     *   index by uri), the room the session's player; with no built uri stored yet, the speaker's own
+     *   when it plays an item of the stored entry. Ours but its item gone from the library: one Stop
+     *   (box off = music off) and the phone;
+     * - a definite other answer (foreign, empty, stopped) -> renderer.json back to the phone;
+     * - no answer (no Wi-Fi, unreachable, late) -> the phone renders, but the room stays recorded:
+     *   the next start, the next play ([lookAgainBeforePlaying]) and the suspension look again
+     *   (qa-26a-step3b-code M1: a transient never orphans a speaker playing our stream).
+     * Nothing ever starts here; the bar comes back paused from the stored row unless the room plays on.
      */
-    private suspend fun adopt(choice: RendererChoice) = switching.withLock {
-        val uid = choice.uid ?: return@withLock
-        val uri = choice.uri
+    private suspend fun lookAtRoom(choice: RendererChoice) {
+        SonosTail.join()
+        lastRoomLook = SystemClock.elapsedRealtime()
+        val uid = choice.uid ?: return
+        if (renderer !== local) return
+        val (snap, rows) = load()
+        val entry = snap.entries.firstOrNull { it.id == choice.entryId }
+        val order = entry?.let { snap.order(it) }.orEmpty()
+        val ofEntry: (String) -> Boolean = { u -> entry != null && adoptIndex(entry, order, u) != null }
         val sonos = sonosRenderer(uid, choice.name)
-        val live = if (uri.isNullOrEmpty()) null else withTimeoutOrNull(ADOPT_MS) { sonos.probe(uri) { ourLiveSession(choice, it) } }
-        val queue = if (uri != null && live != null && ourLiveSession(choice, live)) adoptedQueue(choice, uri) else null
-        if (queue == null || renderer !== local) {
-            SonosHome.log("sonos: no live session of ours on ${choice.name ?: uid} at start - the phone renders, nothing starts")
+        val live = withTimeoutOrNull(ADOPT_MS) {
+            sonos.probe(choice.uri.orEmpty()) { f -> if (ourLiveSession(choice, f, ofEntry)) choice.uri?.takeIf { it.isNotEmpty() } ?: f.uri else null }
+        }
+        val verdict = roomVerdict(choice, live, ofEntry)
+        val uri = choice.uri?.takeIf { it.isNotEmpty() } ?: live?.uri.orEmpty()
+        val queue = if (verdict == RoomVerdict.OURS_LIVE && entry != null) adoptedQueue(snap, rows, entry, uri) else null
+        if (queue == null || live == null || renderer !== local) {
+            if (verdict == RoomVerdict.OURS_LIVE) sonos.stopUnadopted()
             sonos.release()
+            if (verdict == RoomVerdict.NO_ANSWER) {
+                SonosHome.log("sonos: no answer from ${choice.name ?: uid} - the phone renders, the room stays recorded and is looked at again")
+                return
+            }
+            SonosHome.log("sonos: no live session of ours on ${choice.name ?: uid} ($verdict) - the phone renders, nothing starts")
             withContext(writer) { home.write(RendererChoice.local(home.choice())) }
-            return@withLock
+            return
         }
         val (a, index) = queue
+        if (uri != choice.uri) withContext(writer) { home.write(choice.copy(uri = uri, itemKey = a.items[index].key)) }
         attach(sonos)
         active = a
         lastIndex = index
-        sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri!!, live!!)
+        sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live)
         publish()
     }
 
-    /** The stored entry's queue on a room, speaker-playable, and the index of [uri] in it; null when it can't be rebuilt. */
-    private suspend fun adoptedQueue(choice: RendererChoice, uri: String): Pair<Active, Int>? {
-        val (snap, rows) = load()
-        val entry = snap.entries.firstOrNull { it.id == choice.entryId } ?: return null
+    /** The stored entry's queue on a room ([adoptPlan]) and the index of [uri] in it; null when it can't be rebuilt. */
+    private suspend fun adoptedQueue(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, uri: String): Pair<Active, Int>? {
         val row = withContext(Dispatchers.IO) { store.db.nowPlaying() }?.takeIf { it.entryId == entry.id }
-        val keys = row?.keys?.split('\n')?.filter { it.isNotEmpty() } ?: snap.order(entry).map { it.key }
-        val a = activeFor(snap, rows, entry, keys, row?.shuffled ?: false, RendererKind.SONOS) ?: return null
-        val index = adoptIndex(entry, a.items, uri) ?: return null
-        return a to index
+        val stored = row?.keys?.split('\n')?.filter { it.isNotEmpty() }
+        val plan = adoptPlan(entry, snap.order(entry), stored, row?.shuffled == true, uri) ?: return null
+        val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS) ?: return null
+        if (a.items.map { it.key } != plan.keys) return null
+        return a to plan.index
+    }
+
+    /**
+     * A room still recorded after an unanswered look (M1): before the phone plays, one more look -
+     * at most every [ROOM_LOOK_MS] - so Home's RESUME never starts the phone under our stream still
+     * playing there (§4.7's trap). Nothing recorded: nothing to do.
+     */
+    private suspend fun lookAgainBeforePlaying() {
+        if (renderer !== local || SystemClock.elapsedRealtime() - lastRoomLook < ROOM_LOOK_MS) return
+        val choice = withContext(writer) { home.choice() }
+        if (choice.sonos) lookAtRoom(choice)
     }
 
     /**
@@ -1148,6 +1203,8 @@ class PlaybackService : MediaSessionService() {
             val sonos = renderer as? SonosRenderer
             if (sonos == null) {
                 renderer.pause()
+                // a room still recorded after an unanswered look (M1): the standalone look, stop and park
+                if (withContext(writer) { home.choice() }.sonos) SonosSuspension.standalone(this@PlaybackService)
                 return@withLock
             }
             withTimeoutOrNull(HANDOFF_MS) { sonos.park() } ?: run {
@@ -1298,5 +1355,8 @@ class PlaybackService : MediaSessionService() {
 
         /** Adopt's look at start: the Wi-Fi wait, the 1.5 s classify and the actor's start, with room. */
         const val ADOPT_MS = 4_000L
+
+        /** A recorded room is looked at again before a play at most this often (the cabin case: no speaker answers). */
+        const val ROOM_LOOK_MS = 15_000L
     }
 }

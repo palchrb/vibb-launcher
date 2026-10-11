@@ -11,19 +11,62 @@ import me.vibb.music.model.PlayItem
  * Android-free SOAP sequence; SonosLifecycleTest.
  */
 
+/** What one live classify of the room renderer.json names says (design 26a §4.7, §6.1; qa-26a-step3b-code M1). */
+enum class RoomVerdict {
+    /** Our stream, PLAYING or PAUSED: adopt it; at a suspension bookmark, Stop and park it. */
+    OURS_LIVE,
+
+    /** Our uri retained on a stopped speaker: nothing to adopt; a suspension parks it (its Play button would replay ours from 0:00). */
+    OURS_STOPPED,
+
+    /** A definite answer that it isn't ours (foreign, empty): renderer.json goes back to the phone. */
+    NOT_OURS,
+
+    /** No answer (no Wi-Fi, unreachable, late, another room answering): nothing is known - the room stays recorded. */
+    NO_ANSWER,
+}
+
 /**
- * The one live classify of the stored room found OUR stream there, playing or paused (vibb: "armed
- * and PLAYING/PAUSED_PLAYBACK"): measured just now (the classify answered within its budget - the
- * fresh-equivalent of a start, when no poll has run yet), the room renderer.json names, and the
- * speaker's TrackURI equal to the stored built uri through `normUri`. A failed or late classify, a
- * foreign or empty uri, a STOPPED speaker: no. What adopt at start (§4.7) and the suspension's
- * Stop (§6.1) both ask before they touch anything.
+ * [live] is the one classify of the stored room (vibb keeps `renderer = sonos` on a transport
+ * failure and reverts only on a definite not-armed or not-PLAYING/PAUSED answer, qa-26a-step3b-code
+ * M1): measured just now (the fresh-equivalent of a start, when no poll has run yet) by the room
+ * renderer.json names, or else NO_ANSWER. Ours = the speaker's TrackURI equal to the stored built
+ * uri through `normUri`; with no stored uri yet (a process gone between the switch's write and the
+ * play's result, after SetAVTransportURI and Play went out) [ofEntry] says whether the speaker plays
+ * an item of the stored entry.
  */
-fun ourLiveSession(choice: RendererChoice, live: Fields?): Boolean {
-    val uri = choice.uri
-    if (!choice.sonos || uri.isNullOrEmpty() || live == null) return false
-    return live.reachable && live.measuredAt != null && live.uid == choice.uid &&
-        !live.uri.isNullOrEmpty() && normUri(live.uri) == normUri(uri) && live.transport?.live == true
+fun roomVerdict(choice: RendererChoice, live: Fields?, ofEntry: (String) -> Boolean = { false }): RoomVerdict {
+    if (!choice.sonos) return RoomVerdict.NOT_OURS
+    if (live == null || !live.reachable || live.measuredAt == null || live.uid != choice.uid) return RoomVerdict.NO_ANSWER
+    val uri = live.uri.orEmpty()
+    if (uri.isEmpty()) return RoomVerdict.NOT_OURS
+    val stored = choice.uri
+    val ours = if (!stored.isNullOrEmpty()) normUri(uri) == normUri(stored) else ofEntry(uri)
+    return when {
+        !ours -> RoomVerdict.NOT_OURS
+        live.transport?.live == true -> RoomVerdict.OURS_LIVE
+        else -> RoomVerdict.OURS_STOPPED
+    }
+}
+
+/** Our stream there, playing or paused ([roomVerdict] OURS_LIVE): what adopt at start keeps. */
+fun ourLiveSession(choice: RendererChoice, live: Fields?, ofEntry: (String) -> Boolean = { false }): Boolean =
+    roomVerdict(choice, live, ofEntry) == RoomVerdict.OURS_LIVE
+
+/** What adopt rebuilds (design 26a §4.7): the queue's keys, speaker-playable, its shuffle flag, the index of the adopted uri. */
+data class AdoptPlan(val keys: List<String>, val shuffled: Boolean, val index: Int)
+
+/**
+ * The adopted queue: the stored queue's order ([storedKeys], the stored entry's `NowPlayingRow`,
+ * with its shuffle flag) when there is one, else the entry's play [order]; through the
+ * speaker-playable filter (§4.2); the index by [adoptIndex]. Null when the speaker's item isn't in
+ * it any more (left the library).
+ */
+fun adoptPlan(entry: Entry, order: List<PlayItem>, storedKeys: List<String>?, storedShuffled: Boolean, uri: String): AdoptPlan? {
+    val byKey = order.associateBy { it.key }
+    val items = (storedKeys ?: order.map { it.key }).mapNotNull { byKey[it] }.filter { PlayBodies.speakerPlayable(entry, it) }
+    val index = adoptIndex(entry, items, uri) ?: return null
+    return AdoptPlan(items.map { it.key }, storedKeys != null && storedShuffled, index)
 }
 
 /**
@@ -57,22 +100,33 @@ private const val NO_SEEK = Long.MIN_VALUE / 2
 
 /**
  * The suspension edge with no player service (§6.1, H4/M5): one live classify of the stored room
- * within [budgetMs]; only OUR stream PLAYING or PAUSED ([ourLiveSession]) is touched - [bookmark]
- * with that classify first, then Stop, then the speaker's own queue as its source ([queueUri]) so
- * its Play button plays the empty queue, not the episode from 0:00. The session is disarmed either
- * way. Writing renderer.json back to the phone is the caller's. True when it stopped the speaker.
+ * within [budgetMs] ([roomVerdict]). Our stream PLAYING or PAUSED: [bookmark] with that classify
+ * first, then Stop and the speaker's own queue as its source ([queueUri]) so its Play button plays
+ * the empty queue, not the episode from 0:00; our uri on a stopped speaker: the park alone (the same
+ * Play button). Anything else is left alone. The session is disarmed either way. The verdict goes
+ * back: renderer.json returns to the phone on any definite answer, and stays on the room after none
+ * (the caller's; qa-26a-step3b-code M1).
  */
-suspend fun suspensionStop(transport: SonosTransport, choice: RendererChoice, budgetMs: Long, bookmark: suspend (Fields) -> Unit): Boolean {
-    val uid = choice.uid ?: return false
-    val uri = choice.uri?.takeIf { it.isNotEmpty() } ?: return false
-    val live = transport.adoptLive(uid, kindOfUri(uri), uri, budgetMs) { false }
-    if (!ourLiveSession(choice, live)) return false
-    try {
-        bookmark(live!!)
-    } catch (e: Exception) {
-        // the Stop matters more than the place: never left playing over a failed write
+suspend fun suspensionStop(
+    transport: SonosTransport,
+    choice: RendererChoice,
+    budgetMs: Long,
+    ofEntry: (String) -> Boolean = { false },
+    bookmark: suspend (Fields) -> Unit,
+): RoomVerdict {
+    val uid = choice.uid ?: return RoomVerdict.NOT_OURS
+    val uri = choice.uri.orEmpty()
+    val live = transport.adoptLive(uid, kindOfUri(uri), uri, budgetMs) { null }
+    val verdict = roomVerdict(choice, live, ofEntry)
+    if (verdict == RoomVerdict.OURS_LIVE) {
+        try {
+            bookmark(live!!.copy(ours = true))
+        } catch (e: Exception) {
+            // the Stop matters more than the place: never left playing over a failed write
+        }
     }
-    return transport.park(uid)
+    if (verdict == RoomVerdict.OURS_LIVE || verdict == RoomVerdict.OURS_STOPPED) transport.park(uid)
+    return verdict
 }
 
 /**

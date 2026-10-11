@@ -4,59 +4,79 @@ import android.content.Context
 import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import me.vibb.music.data.BookmarkRow
-import me.vibb.music.data.PositionRow
 import me.vibb.music.data.Store
 import me.vibb.music.logic.resumeFrom
-import me.vibb.music.logic.save
+import me.vibb.music.playback.place
+import me.vibb.music.playback.writePlace
 
 /*
- * The suspension edge without the player service (design 26a §6.1, QA H4): the launcher suspended
- * the app (a time rule) while a Sonos room may still play for us and no service is up to stop it
- * (the process died, or never started the player). A small standalone path over SonosHome and
- * SonosTransport: the one live classify, the bookmark from it, Stop and the park
- * ([suspensionStop]); renderer.json back to the phone. The receiver runs it on IO within its
- * broadcast budget.
+ * The suspension edge without a Sonos renderer in the player service (design 26a §6.1, QA H4): the
+ * launcher suspended the app (a time rule) while a Sonos room may still play for us and nothing
+ * drives it - the process died or never started the player, or the service runs on the phone with
+ * the room still recorded (an unanswered look at start). A small standalone path over SonosHome and
+ * SonosTransport: a destroyed service's stop finished first ([SonosTail]), the one live classify,
+ * the bookmark from it, Stop and the park ([suspensionStop]); renderer.json back to the phone only on
+ * a definite answer - after none the room stays recorded for the next look (qa-26a-step3b-code M1).
+ * The receiver runs it on IO within its broadcast budget.
  */
 object SonosSuspension {
+    /** How long the receiver waits for a destroyed service's tail (its budget is ~9 s). */
+    private const val TAIL_WAIT_MS = 5_000L
+
     suspend fun standalone(context: Context) = withContext(Dispatchers.IO) {
         val app = context.applicationContext
+        // the tail's own Stop leaves our uri on a stopped speaker: the look below parks it (OURS_STOPPED)
+        SonosTail.join(TAIL_WAIT_MS)
         val home = SonosHome(app)
         try {
             val choice = home.choice()
             if (!choice.sonos) return@withContext
-            if (home.awaitWifi(SonosRenderer.WIFI_WAIT_MS)) {
+            val store = Store.get(app)
+            val verdict = if (home.awaitWifi(SonosRenderer.WIFI_WAIT_MS)) {
                 val clock: () -> Long = SystemClock::elapsedRealtime
                 val transport = SonosTransport(SonosSession(clock, SonosHome::log), home.speakers, home.nrk, SonosClock(clock), log = SonosHome::log)
-                val stopped = suspensionStop(transport, choice, SonosController.LIVE_BUDGET_MS) { live -> bookmark(app, choice, live) }
-                SonosHome.log("sonos: suspended with no player - ${if (stopped) "our stream stopped and parked" else "nothing of ours playing"}")
+                val ofEntry = entryMatcher(store, choice)
+                suspensionStop(transport, choice, SonosController.LIVE_BUDGET_MS, ofEntry) { live -> bookmark(app, store, choice, live) }
             } else {
-                SonosHome.log("sonos: suspended with no player and no Wi-Fi - the speaker is out of reach")
+                RoomVerdict.NO_ANSWER
             }
-            home.write(RendererChoice.local(choice))
+            SonosHome.log("sonos: suspended without a room renderer - $verdict")
+            if (verdict != RoomVerdict.NO_ANSWER) home.write(RendererChoice.local(choice))
         } finally {
             home.release()
         }
     }
 
+    /** With no built uri stored yet: whether a speaker's uri is one of the stored entry's items. */
+    internal suspend fun entryMatcher(store: Store, choice: RendererChoice): (String) -> Boolean {
+        if (!choice.uri.isNullOrEmpty()) return { false }
+        val snap = store.snapshot()
+        val entry = snap.entries.firstOrNull { it.id == choice.entryId } ?: return { false }
+        val order = snap.order(entry)
+        return { uri -> adoptIndex(entry, order, uri) != null }
+    }
+
     /**
-     * The place the classify measured, written as the player writes it (`Bookmarks.save`: the item's
-     * position, the entry's bookmark, the stored queue's position when it is on that item) - through
-     * [suspensionBookmark]'s rules, never more than was measured.
+     * The place the classify measured, written the one way a place is written ([writePlace]: the
+     * item's position, the entry's bookmark, the stored queue's row when it is on that item) -
+     * through [suspensionBookmark]'s rules, never more than was measured.
      */
-    private suspend fun bookmark(context: Context, choice: RendererChoice, live: Fields) {
-        val store = Store.get(context)
+    private suspend fun bookmark(context: Context, store: Store, choice: RendererChoice, live: Fields) {
         val snap = store.snapshot()
         val entry = snap.entries.firstOrNull { it.id == choice.entryId } ?: return
-        val itemKey = choice.itemKey ?: return
+        // no built uri stored yet: the item the speaker plays, found by its uri in the entry
+        val itemKey = if (choice.uri.isNullOrEmpty()) {
+            val order = snap.order(entry)
+            adoptIndex(entry, order, live.uri.orEmpty())?.let { order[it].key }
+        } else {
+            choice.itemKey
+        } ?: return
         val savedS = resumeFrom(snap.positions[entry.key]?.get(itemKey)) / 1000.0
         val w = suspensionBookmark(itemKey, live, savedS, SystemClock.elapsedRealtime()) ?: return
-        val (rec, mark) = save(w.itemKey, w.posMs, w.durationMs)
         val now = System.currentTimeMillis()
-        store.db.upsertPosition(PositionRow(entry.key, w.itemKey, rec.posMs, rec.done, now))
-        store.db.upsertBookmark(BookmarkRow(entry.key, mark.itemKey, mark.posMs, now))
-        store.db.nowPlaying()?.takeIf { row -> row.entryId == entry.id && row.keys.split('\n').getOrNull(row.index) == w.itemKey }?.let { row ->
-            store.db.upsertNowPlaying(row.copy(posMs = w.posMs, updatedAt = now))
-        }
+        val row = store.db.nowPlaying()
+            ?.takeIf { it.entryId == entry.id && it.keys.split('\n').getOrNull(it.index) == w.itemKey }
+            ?.copy(posMs = w.posMs, updatedAt = now)
+        writePlace(context, store, place(entry.key, w.itemKey, w.posMs, w.durationMs, now, row))
     }
 }

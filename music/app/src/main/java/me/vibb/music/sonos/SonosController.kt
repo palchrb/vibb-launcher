@@ -65,7 +65,8 @@ interface SonosHost {
 
     /**
      * Whether the phone must stay awake for this session (design 26a §6.3): the wake lock and the
-     * Wi-Fi lock are held while true. Called when it changes ([SonosController.armedPlaying] defines it).
+     * Wi-Fi lock are held while true. True on every refresh while it holds, false once when it ends
+     * ([SonosController.armedPlaying] defines it).
      */
     fun armedPlaying(playing: Boolean) {}
 
@@ -323,8 +324,9 @@ class SonosController(
     fun armedPlaying(spec: SonosSpec, now: Long): Boolean =
         !closed && session && (spec.playWhenReady || pending != null || stepping || seeking || now - verbAt < SonosSession.VERB_FAST_MS)
 
+    /** True is re-asserted on every refresh (the holder renews its timeout only on these, qa-26a-step3b-code L3); false once, on the change. */
     private fun lockFor(want: Boolean) {
-        if (want == wasArmedPlaying) return
+        if (!want && !wasArmedPlaying) return
         wasArmedPlaying = want
         host.armedPlaying(want)
     }

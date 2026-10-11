@@ -71,17 +71,17 @@ class SonosLifecycleTest {
     fun `adopt sends no transport command - kept, the session runs on - not kept, it is disarmed`() {
         val r = ControllerRig(uid)
         r.speaker("0:07:11", uri = ep)
-        val kept = runBlocking { r.transport.adoptLive(uid, Kind.URL, ep, 1_500) { ourLiveSession(choice, it) } }
+        val kept = runBlocking { r.transport.adoptLive(uid, Kind.URL, ep, 1_500) { if (ourLiveSession(choice, it)) ep else null } }
         assertNotNull(kept)
         assertTrue(kept!!.ours)
         assertTrue(r.session.armed)
         assertEquals("only reads", emptyList<String>(), r.spk.commands)
         r.speaker("0:07:11", uri = "x-sonosapi-stream:s1234")
-        val foreign = runBlocking { r.transport.adoptLive(uid, Kind.URL, ep, 1_500) { ourLiveSession(choice, it) } }
+        val foreign = runBlocking { r.transport.adoptLive(uid, Kind.URL, ep, 1_500) { if (ourLiveSession(choice, it)) ep else null } }
         assertFalse(foreign!!.ours)
         assertFalse(r.session.armed)
         r.spk.failOn = mapOf("getposition" to { SpeakerUnreachable("down") })
-        assertNull(runBlocking { r.transport.adoptLive(uid, Kind.URL, ep, 1_500) { true } })
+        assertNull(runBlocking { r.transport.adoptLive(uid, Kind.URL, ep, 1_500) { ep } })
         assertFalse(r.session.armed)
         assertEquals(emptyList<String>(), r.spk.commands)
     }
@@ -90,7 +90,7 @@ class SonosLifecycleTest {
     fun `adopted - the queue at the speaker's item, playing on with nothing sent, the listing's duration never deciding done`() {
         val r = ControllerRig(uid)
         r.speaker("0:07:11", uri = r.url(1), dur = "0:00:00")
-        val f = runBlocking { r.transport.adoptLive(uid, Kind.URL, r.url(1), 1_500) { true } }!!
+        val f = runBlocking { r.transport.adoptLive(uid, Kind.URL, r.url(1), 1_500) { r.url(1) } }!!
         r.c.adopt(r.entry, r.items, 1, r.url(1), f)
         assertEquals(1, r.c.index)
         assertTrue(r.c.session)
@@ -111,7 +111,7 @@ class SonosLifecycleTest {
     fun `adopted paused - stays paused, the next play is one resume`() {
         val r = ControllerRig(uid)
         r.speaker("0:07:11", transport = "PAUSED_PLAYBACK", uri = r.url(0))
-        val f = runBlocking { r.transport.adoptLive(uid, Kind.URL, r.url(0), 1_500) { true } }!!
+        val f = runBlocking { r.transport.adoptLive(uid, Kind.URL, r.url(0), 1_500) { r.url(0) } }!!
         r.c.adopt(r.entry, r.items, 0, r.url(0), f)
         assertFalse(r.c.showsPlaying(r.now))
         assertFalse(r.c.spec(r.now).playWhenReady)
@@ -128,13 +128,13 @@ class SonosLifecycleTest {
         r.speaker("0:07:11", transport = "PAUSED_PLAYBACK", uri = ep)
         var bookmarked: Fields? = null
         var commandsAtBookmark = -1
-        val stopped = runBlocking {
+        val verdict = runBlocking {
             suspensionStop(r.transport, choice, 1_500) {
                 bookmarked = it
                 commandsAtBookmark = r.spk.commands.size
             }
         }
-        assertTrue(stopped)
+        assertEquals(RoomVerdict.OURS_LIVE, verdict)
         assertEquals(listOf("stop", "seturi"), r.spk.commands)
         assertEquals("the bookmark first", 0, commandsAtBookmark)
         assertEquals(431.0, bookmarked!!.relS!!, 0.0)
@@ -144,20 +144,95 @@ class SonosLifecycleTest {
     }
 
     @Test
-    fun `suspension without the player - a foreign, stopped or unreachable speaker is not touched`() {
-        for ((what, setUp) in listOf<Pair<String, (ControllerRig) -> Unit>>(
-            "foreign" to { r -> r.speaker("0:01:00", uri = "x-sonosapi-stream:s1234") },
-            "stopped" to { r -> r.speaker("0:00:00", transport = "STOPPED", uri = ep) },
-            "unreachable" to { r -> r.spk.failOn = mapOf("getposition" to { SpeakerUnreachable("down") }) },
+    fun `suspension without the player - a foreign, empty or unreachable speaker is not touched`() {
+        for ((what, setUp, expected) in listOf<Triple<String, (ControllerRig) -> Unit, RoomVerdict>>(
+            Triple("foreign", { r -> r.speaker("0:01:00", uri = "x-sonosapi-stream:s1234") }, RoomVerdict.NOT_OURS),
+            Triple("empty", { r -> r.speaker("0:00:00", transport = "STOPPED", uri = "") }, RoomVerdict.NOT_OURS),
+            Triple("unreachable", { r -> r.spk.failOn = mapOf("getposition" to { SpeakerUnreachable("down") }) }, RoomVerdict.NO_ANSWER),
         )) {
             val r = ControllerRig(uid)
             setUp(r)
             var bookmarked = false
-            assertFalse(what, runBlocking { suspensionStop(r.transport, choice, 1_500) { bookmarked = true } })
+            assertEquals(what, expected, runBlocking { suspensionStop(r.transport, choice, 1_500) { bookmarked = true } })
             assertFalse(what, bookmarked)
             assertEquals(what, emptyList<String>(), r.spk.commands)
         }
-        assertFalse("renderer.json says the phone", runBlocking { suspensionStop(ControllerRig(uid).transport, RendererChoice.local(choice), 1_500) { } })
+        assertEquals("renderer.json says the phone", RoomVerdict.NOT_OURS, runBlocking { suspensionStop(ControllerRig(uid).transport, RendererChoice.local(choice), 1_500) { } })
+    }
+
+    @Test
+    fun `suspension without the player - our uri on a stopped speaker is parked, with no bookmark (L2)`() {
+        // a destroyed service's tail sent its plain Stop: the speaker's Play button would replay ours from 0:00
+        val r = ControllerRig(uid)
+        r.speaker("0:00:00", transport = "STOPPED", uri = ep)
+        var bookmarked = false
+        assertEquals(RoomVerdict.OURS_STOPPED, runBlocking { suspensionStop(r.transport, choice, 1_500) { bookmarked = true } })
+        assertFalse(bookmarked)
+        assertEquals(listOf("stop", "seturi"), r.spk.commands)
+        assertEquals(queueUri(uid), r.spk.lastUri)
+    }
+
+    @Test
+    fun `no built uri stored yet - the speaker playing an item of the stored entry is ours (M1)`() {
+        val r = ControllerRig(uid)
+        r.speaker("0:07:11", uri = r.url(2))
+        val bare = choice.copy(uri = null)
+        val ofEntry: (String) -> Boolean = { u -> adoptIndex(r.entry, r.items, u) != null }
+        var bookmarked: Fields? = null
+        assertEquals(RoomVerdict.OURS_LIVE, runBlocking { suspensionStop(r.transport, bare, 1_500, ofEntry) { bookmarked = it } })
+        assertTrue("the bookmark sees it as ours", bookmarked!!.ours)
+        assertEquals(listOf("stop", "seturi"), r.spk.commands)
+        val other = ControllerRig(uid)
+        other.speaker("0:07:11", uri = "https://elsewhere.example/x.mp3")
+        assertEquals(RoomVerdict.NOT_OURS, runBlocking { suspensionStop(other.transport, bare, 1_500, ofEntry) { } })
+        assertEquals(emptyList<String>(), other.spk.commands)
+    }
+
+    @Test
+    fun `adopt with no built uri stored goes on with the speaker's own, ours from then on`() {
+        val r = ControllerRig(uid)
+        r.speaker("0:07:11", uri = r.url(1))
+        val f = runBlocking { r.transport.adoptLive(uid, Kind.URL, "", 1_500) { it.uri } }!!
+        assertTrue(f.ours)
+        assertTrue(r.session.armed)
+        assertEquals(r.url(1), r.session.uri)
+        assertEquals("only reads", emptyList<String>(), r.spk.commands)
+    }
+
+    @Test
+    fun `the room's verdict - renderer json goes to the phone only on a definite answer (M1)`() {
+        assertEquals(RoomVerdict.OURS_LIVE, roomVerdict(choice, live()))
+        assertEquals(RoomVerdict.OURS_LIVE, roomVerdict(choice, live(transport = TransportState.PAUSED_PLAYBACK)))
+        assertEquals(RoomVerdict.OURS_STOPPED, roomVerdict(choice, live(transport = TransportState.STOPPED)))
+        assertEquals(RoomVerdict.NOT_OURS, roomVerdict(choice, live(uri = "x-sonosapi-stream:s1234")))
+        assertEquals(RoomVerdict.NOT_OURS, roomVerdict(choice, live(uri = "", transport = TransportState.STOPPED)))
+        for (none in listOf(null, live(reachable = false), live(measured = false), live(liveUid = "RINCON_OTHER01400"))) {
+            assertEquals("no answer keeps the room recorded", RoomVerdict.NO_ANSWER, roomVerdict(choice, none))
+        }
+        assertEquals(RoomVerdict.NOT_OURS, roomVerdict(RendererChoice.local(choice), live()))
+        assertEquals("no stored uri, nothing of the entry", RoomVerdict.NOT_OURS, roomVerdict(choice.copy(uri = null), live()))
+        assertEquals(RoomVerdict.OURS_LIVE, roomVerdict(choice.copy(uri = null), live()) { it == ep })
+    }
+
+    @Test
+    fun `adopt plan - the stored order and shuffle, the speaker-playable filter, the index by uri, nothing when the item is gone`() {
+        val entry = SonosFakes.entry()
+        val order = listOf(
+            SonosFakes.item(key = "ep1", url = "https://podkast.example/ep1.mp3"),
+            SonosFakes.item(key = "own", url = null, fileId = 7),
+            SonosFakes.item(key = "ep2", url = "https://podkast.example/ep2.mp3"),
+            SonosFakes.item(key = "ep3", url = "https://podkast.example/ep3.mp3"),
+        )
+        val stored = adoptPlan(entry, order, listOf("ep3", "own", "ep1", "ep2"), true, "https://podkast.example/ep1.mp3")!!
+        assertEquals(listOf("ep3", "ep1", "ep2"), stored.keys)
+        assertTrue(stored.shuffled)
+        assertEquals(1, stored.index)
+        val plain = adoptPlan(entry, order, null, true, "https://podkast.example/ep2.mp3")!!
+        assertEquals("the entry's play order, own files out", listOf("ep1", "ep2", "ep3"), plain.keys)
+        assertFalse("no stored queue, no shuffle", plain.shuffled)
+        assertEquals(1, plain.index)
+        assertNull("the item left the library", adoptPlan(entry, order, null, false, "https://podkast.example/ep9.mp3"))
+        assertNull("a stored key gone, its item not in the order", adoptPlan(entry, order.filter { it.key != "ep2" }, listOf("ep1", "ep2"), false, "https://podkast.example/ep2.mp3"))
     }
 
     @Test
@@ -165,7 +240,7 @@ class SonosLifecycleTest {
         val r = ControllerRig(uid)
         r.speaker("0:07:11", uri = ep)
         r.spk.failOn = mapOf("seturi" to { UpnpFault(714, null) })
-        assertTrue(runBlocking { suspensionStop(r.transport, choice, 1_500) { throw IllegalStateException("disk full") } })
+        assertEquals(RoomVerdict.OURS_LIVE, runBlocking { suspensionStop(r.transport, choice, 1_500) { throw IllegalStateException("disk full") } })
         assertEquals(listOf("stop"), r.spk.commands)
         assertFalse(r.session.armed)
     }
@@ -252,6 +327,8 @@ class SonosLifecycleTest {
         assertTrue(r.c.armedPlaying(playing, r.now))
         r.c.shown(playing)
         assertEquals(listOf(true), r.host.locks)
+        r.c.shown(playing)
+        assertEquals("re-asserted on every refresh (the holder renews only on these, L3)", listOf(true, true), r.host.locks)
         r.advance(60_000)
         r.speaker("0:08:11")
         r.poll()
@@ -267,7 +344,8 @@ class SonosLifecycleTest {
         val later = r.c.spec(r.now)
         assertFalse("paused, the window over", r.c.armedPlaying(later, r.now))
         r.c.shown(later)
-        assertEquals(listOf(true, false), r.host.locks)
+        r.c.shown(later)
+        assertEquals("false once", listOf(true, true, false), r.host.locks)
     }
 
     @Test

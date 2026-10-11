@@ -21,6 +21,7 @@ import me.vibb.music.data.BookmarkRow
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.PositionRow
 import me.vibb.music.data.Store
+import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.save
 import me.vibb.music.logic.showsPlaying
@@ -222,17 +223,31 @@ internal fun persistPlace(
     force: Boolean,
 ) {
     val item = a.items.getOrNull(index) ?: return
-    val (rec, bookmark) = save(item.key, posMs, durationMs)
-    a.positions[item.key] = rec
     val now = System.currentTimeMillis()
-    val position = PositionRow(a.entry.key, item.key, rec.posMs, rec.done, now)
-    val mark = BookmarkRow(a.entry.key, bookmark.itemKey, bookmark.posMs, now)
     val stored = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, posMs, shownDurationMs, a.shuffled, now)
-    Resumable.set(context, true)
-    val write: suspend () -> Unit = {
-        store.db.upsertPosition(position)
-        store.db.upsertBookmark(mark)
-        store.db.upsertNowPlaying(stored)
-    }
+    val place = place(a.entry.key, item.key, posMs, durationMs, now, stored)
+    a.positions[item.key] = place.record
+    val write: suspend () -> Unit = { writePlace(context, store, place) }
     if (force) runBlocking(writer) { write() } else scope.launch(writer) { write() }
+}
+
+/** One place as its rows: the item's position ([record], `Bookmarks.save`), the entry's bookmark, the stored queue's row. */
+internal class Place(val record: ItemPosition, val position: PositionRow, val bookmark: BookmarkRow, val queue: NowPlayingRow?)
+
+/** [posMs] of [itemKey] in entry [entryKey] as a [Place]; [durationMs] decides "heard to the end". */
+internal fun place(entryKey: String, itemKey: String, posMs: Long, durationMs: Long?, now: Long, queue: NowPlayingRow?): Place {
+    val (rec, bookmark) = save(itemKey, posMs, durationMs)
+    return Place(rec, PositionRow(entryKey, itemKey, rec.posMs, rec.done, now), BookmarkRow(entryKey, bookmark.itemKey, bookmark.posMs, now), queue)
+}
+
+/**
+ * The ONE write of a place (qa-26a-step3b-code L6): [persistPlace] (both renderers' `saveNow`) and
+ * the suspension's standalone bookmark (`SonosSuspension`) - the position, the bookmark, the stored
+ * queue's row, and "something to resume" for the media buttons.
+ */
+internal suspend fun writePlace(context: Context, store: Store, place: Place) {
+    Resumable.set(context, true)
+    store.db.upsertPosition(place.position)
+    store.db.upsertBookmark(place.bookmark)
+    place.queue?.let { store.db.upsertNowPlaying(it) }
 }

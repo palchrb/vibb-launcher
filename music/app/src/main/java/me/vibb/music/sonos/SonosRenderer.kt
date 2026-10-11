@@ -205,12 +205,22 @@ internal class SonosRenderer(
      * Adopt at start (design 26a §4.7), the look: [SonosTransport.adoptLive] in the actor - zero
      * transport commands, one classify of this room within [SonosController.LIVE_BUDGET_MS] once
      * Wi-Fi is known (the network callback answers within a moment of the service's start). [keep]
-     * decides; kept, the poller runs on. Null: no Wi-Fi or no answer.
+     * decides and names the uri the session goes on with; kept, the poller runs on. Null: no Wi-Fi or
+     * no answer.
      */
-    suspend fun probe(uri: String, keep: (Fields) -> Boolean): Fields? {
+    suspend fun probe(uri: String, keep: (Fields) -> String?): Fields? {
         if (!home.awaitWifi(WIFI_WAIT_MS)) return null
         val target = uid
         return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, keep) }) { }.getOrNull()
+    }
+
+    /**
+     * A kept probe that can't be adopted (our stream, its item gone from the library;
+     * qa-26a-step3b-code M1): box off = music off - one Stop to the room, then let it go.
+     */
+    suspend fun stopUnadopted() {
+        val target = uid
+        actor.call({ transport.stop(target) }) { }
     }
 
     /** The probe was kept: the queue ([items], the service's MediaItems of `Active.items`) at [index], nothing sent. */
@@ -224,9 +234,8 @@ internal class SonosRenderer(
     override fun release() {
         if (released) return
         released = true
-        // the locks go with it (close() reports the change; once more here, the holder is idempotent)
+        // the locks go with it: close() reports false when this renderer held them (never for another's, qa L4)
         controller.close()
-        onArmedPlaying(false)
         poller?.stop()
         // the queued jobs (a hand-off's or an abandon's Stop) still go out; the scope ends after them
         actor.close()

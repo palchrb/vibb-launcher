@@ -167,11 +167,12 @@ class SonosTransport(
 
     /**
      * Adopt at start (design 26a §4.7) and the suspension's look (§6.1): [adopt]'s bookkeeping (zero
-     * transport commands), then ONE classify of [uid] within [budgetMs], published. [keep] decides
-     * on it: kept, the poller is woken (the session runs on); not kept, the session is disarmed
-     * again. Null when the speaker didn't answer in time (disarmed too).
+     * transport commands), then ONE classify of [uid] within [budgetMs], published. [keep] decides on
+     * it and names the uri the session goes on with (the stored built uri, or the speaker's own when
+     * none was stored yet - then the published snapshot is ours): kept, the poller is woken; null, the
+     * session is disarmed again. Null when the speaker didn't answer in time (disarmed too).
      */
-    suspend fun adoptLive(uid: String, kind: Kind, uri: String, budgetMs: Long, keep: (Fields) -> Boolean): Fields? = mutex.withLock {
+    suspend fun adoptLive(uid: String, kind: Kind, uri: String, budgetMs: Long, keep: (Fields) -> String?): Fields? = mutex.withLock {
         session.adopt(uid, kind, uri)
         val fields = try {
             session.classify(speakers.speaker(uid, verify = false, budgetMs = budgetMs))
@@ -181,7 +182,17 @@ class SonosTransport(
             return@withLock null
         }
         session.publish(fields)
-        if (keep(session.snapshot)) wake() else session.disarm()
+        val kept = keep(session.snapshot)
+        if (kept == null) {
+            session.disarm()
+        } else {
+            if (kept != uri) {
+                // the uri renderer.json didn't hold yet: the session's from now on
+                session.adopt(uid, kindOfUri(kept), kept)
+                session.publish(fields.copy(ours = true, foreignUri = null))
+            }
+            wake()
+        }
         session.snapshot
     }
 
