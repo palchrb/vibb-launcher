@@ -129,6 +129,8 @@ class MainActivity : ComponentActivity() {
         override fun toggleShuffle() = if (PlayerHub.state.value.live) command(Commands.SHUFFLE) else restoreThen(Commands.THEN_SHUFFLE)
         override fun sleep(minutes: Int) = command(Commands.SLEEP, bundleOf(Commands.ARG_MINUTES to minutes))
         override fun output(key: String) = command(Commands.OUTPUT, bundleOf(Commands.ARG_OUTPUT to key))
+        override fun refreshRooms() = command(Commands.ROOMS_REFRESH)
+        override fun rescanRooms() = command(Commands.ROOMS_RESCAN)
         override fun backHome() = finish()
     }
 }
@@ -143,7 +145,13 @@ interface Actions {
     fun seekTo(ms: Long)
     fun toggleShuffle()
     fun sleep(minutes: Int)
-    /** An `Output.key`. */
+    /** An `Output.key`; a Sonos room's starts the speaker (design 26a §3.3). */
     fun output(key: String)
+
+    /** "Spill av på" opened: one topology refresh (design 26a §5.1). */
+    fun refreshRooms()
+
+    /** "Se etter høyttalere": one SSDP round. */
+    fun rescanRooms()
     fun backHome()
 }

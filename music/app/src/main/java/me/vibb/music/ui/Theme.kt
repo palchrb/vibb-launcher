@@ -90,6 +90,9 @@ object Icons {
     val speaker = stroked("speaker", 2.2f, "M11 5L6 9H3v6h3l5 4z", "M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13")
     val speakerSmall = stroked("speakerSmall", 2.2f, "M11 5L6 9H3v6h3l5 4z", "M15.5 8.5a5 5 0 0 1 0 7")
     val headphones = stroked("headphones", 2.2f, "M4 15v-3a8 8 0 0 1 16 0v3", rect(3f, 14f, 4f, 6f, 1.5f), rect(17f, 14f, 4f, 6f, 1.5f))
+
+    /** A Sonos room (design 26a §5.1): a speaker cabinet in the player's stroked set (not a Material Symbol: a filled glyph would stand out in this bar). */
+    val roomSpeaker = stroked("roomSpeaker", 2.2f, rect(6f, 3f, 12f, 18f, 2.5f), circle(12f, 14f, 3.2f), "M12 7.4v.2")
     val check = stroked("check", 3f, "M5 12l5 5 9-10")
     val downloadAll = stroked("downloadAll", 2.4f, "M12 4v11M7 10l5 5 5-5M5 20h14")
     val downloaded = stroked("downloaded", 3f, "M12 5v10M7 11l5 5 5-5")

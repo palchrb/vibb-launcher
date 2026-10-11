@@ -22,6 +22,7 @@
     <string name="hint_from_start">%1$s · starter fra begynnelsen</string>
     <string name="cant_play">Kan ikke spilles nå</string>
     <string name="not_downloaded">Ikke lastet ned - trenger Wi-Fi</string>
+    <string name="cant_play_on_sonos">Kan ikke spilles på Sonos</string>
 
     <!-- Avspilling -->
     <string name="play">Spill</string>
@@ -48,6 +49,13 @@
     <string name="output_wired">Hodetelefoner</string>
     <string name="output_wired_sub">Kablet · tilkoblet</string>
     <string name="output_sonos">Sonos</string>
+    <string name="output_sonos_stale">Sonos · svarer ikke</string>
+    <string name="rooms_rescan">Se etter høyttalere</string>
+    <string name="rooms_scanning">Søker etter høyttalere…</string>
+    <string name="renderer_grouped_away">Spilles i en annen gruppe</string>
+    <string name="renderer_taken_over">Noen andre bruker høyttaleren</string>
+    <string name="renderer_lost_session">Høyttaleren stoppet</string>
+    <string name="renderer_unreachable">Får ikke kontakt med høyttaleren</string>
 
     <!-- Liste -->
     <string name="back_player">Tilbake til avspilling</string>

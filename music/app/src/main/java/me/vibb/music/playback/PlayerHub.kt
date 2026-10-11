@@ -18,6 +18,12 @@ object Commands {
     const val SLEEP = "me.vibb.music.SLEEP"
     const val OUTPUT = "me.vibb.music.OUTPUT"
 
+    /** "Spill av på" opened: one topology refresh (design 26a §2.1, §5.1). */
+    const val ROOMS_REFRESH = "me.vibb.music.ROOMS_REFRESH"
+
+    /** "Se etter høyttalere": one SSDP round in the background. */
+    const val ROOMS_RESCAN = "me.vibb.music.ROOMS_RESCAN"
+
     const val ARG_ENTRY = "entry"
     const val ARG_KEY = "key"
     const val ARG_MINUTES = "minutes"
@@ -33,9 +39,14 @@ object Commands {
     const val THEN_SEEK = "seek"
     const val THEN_SHUFFLE = "shuffle"
 
-    val ALL: List<SessionCommand> = listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT).map { SessionCommand(it, Bundle.EMPTY) }
+    val ALL: List<SessionCommand> =
+        listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN).map { SessionCommand(it, Bundle.EMPTY) }
 
-    /** The commands that start playing - refused while the app is suspended (`playAllowed`). */
+    /**
+     * The commands that start playing - refused while the app is suspended (`playAllowed`). [OUTPUT]
+     * to a Sonos room starts the speaker too: that depends on its argument, so the service's command
+     * gate reads [ARG_OUTPUT] (`Output.sonosUid`) beside this set (design 26a §3.3).
+     */
     val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)
 }
 
@@ -61,14 +72,17 @@ object PlayerHub {
         val outputs: List<Output> = listOf(Output.PHONE),
         /** The output in use (the chosen one, else where the system routes). */
         val output: Output = Output.PHONE,
-        /** Design 26a step 3 (§3.3, §4.8); null on the phone. */
+        /** Why the Sonos room isn't playing what we sent it (design 26a §3.3, §4.8); null on the phone. */
         val rendererState: RendererState? = null,
-        /** Design 26a step 3: the Sonos rows of "Spill av på", stale and scanning (`RoomDirectory.state`). */
+        /** The Sonos rows of "Spill av på", stale and scanning (`RoomDirectory.state`, design 26a §5.1). */
         val rooms: RoomsView = RoomsView(emptyList(), stale = false, scanning = false),
     )
 
-    /** NOT_DOWNLOADED: not on the phone and no network to stream it; CANT_PLAY: it failed anyway. */
-    enum class Message { NOT_DOWNLOADED, CANT_PLAY }
+    /**
+     * NOT_DOWNLOADED: not on the phone and no network to stream it; CANT_PLAY: it failed anyway;
+     * CANT_PLAY_ON_SONOS: nothing of it a speaker can play, or the speaker refused (design 26a §4.2).
+     */
+    enum class Message { NOT_DOWNLOADED, CANT_PLAY, CANT_PLAY_ON_SONOS }
 
     internal val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState

@@ -24,6 +24,7 @@
     <string name="hint_from_start">%1$s · starts from the beginning</string>
     <string name="cant_play">Can\'t play right now</string>
     <string name="not_downloaded">Not downloaded - needs Wi-Fi</string>
+    <string name="cant_play_on_sonos">Can\'t play on Sonos</string>
 
     <!-- Player -->
     <string name="play">Play</string>
@@ -50,6 +51,13 @@
     <string name="output_wired">Headphones</string>
     <string name="output_wired_sub">Wired · connected</string>
     <string name="output_sonos">Sonos</string>
+    <string name="output_sonos_stale">Sonos · not responding</string>
+    <string name="rooms_rescan">Look for speakers</string>
+    <string name="rooms_scanning">Looking for speakers…</string>
+    <string name="renderer_grouped_away">Playing in another group</string>
+    <string name="renderer_taken_over">Someone else is using the speaker</string>
+    <string name="renderer_lost_session">The speaker stopped</string>
+    <string name="renderer_unreachable">Can\'t reach the speaker</string>
 
     <!-- List -->
     <string name="back_player">Back to the player</string>

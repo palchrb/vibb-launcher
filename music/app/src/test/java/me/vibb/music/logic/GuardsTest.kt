@@ -27,7 +27,10 @@ class GuardsTest {
         assertTrue(kid.contains("override fun play() {\n            if (playAllowed(suspendedNow())) super.play()"))
         assertTrue(kid.contains("if (!playWhenReady || playAllowed(suspendedNow())) super.setPlayWhenReady(playWhenReady)"))
         val command = service.substringAfter("override fun onCustomCommand(").substringBefore("when (customCommand.customAction)")
-        assertTrue(command.contains("customCommand.customAction in Commands.PLAYS && !playAllowed(suspendedNow())"))
+        // OUTPUT to a Sonos room starts the speaker (design 26a §3.3): the synchronous prefix reads its argument
+        assertTrue(command.contains("val toRoom = customCommand.customAction == Commands.OUTPUT && Output.sonosUid(args.getString(Commands.ARG_OUTPUT)) != null"))
+        assertTrue(command.contains("if ((customCommand.customAction in Commands.PLAYS || toRoom) && !playAllowed(suspendedNow())) {"))
+        assertTrue("before the command coroutine", command.indexOf("!playAllowed(suspendedNow())") < command.indexOf("scope.launch {"))
         val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("val future")
         assertTrue(resumption.contains("if (!playAllowed(suspendedNow())) return"))
         // (Commands itself builds SessionCommands with Android Bundles: read, not loaded.)
@@ -107,5 +110,47 @@ class GuardsTest {
         val tick = service.substringAfter("private val saveTick").substringBefore("private fun onRendererEvent")
         assertTrue(tick.contains("renderer.saveNow()"))
         assertTrue(tick.contains("reportNowPlaying(refresh = true)"))
+    }
+
+    private val sonos by lazy { code("src/main/java/me/vibb/music/sonos/SonosController.kt") }
+
+    @Test
+    fun `every way onto a Sonos room is gated, and a switch home plays on only when allowed`() {
+        // design 26a §3.3, §4.6: the room is reached only from the OUTPUT command (gated above)
+        assertEquals("toRoom: defined once, called once", 2, Regex("""\btoRoom\(""").findAll(service).count())
+        assertTrue(service.contains("if (uid != null) return toRoom(uid)"))
+        assertEquals("output: defined once, called from OUTPUT only", 2, Regex("""\boutput\(""").findAll(service).count())
+        assertTrue(service.contains("Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)"))
+        // coming home plays on only when the speaker was PLAYING and nothing forbids it; a failed start never plays
+        assertTrue(service.contains("comeHome(sonos, (resume ?: wasPlaying) && playAllowed(suspendedNow()))"))
+        assertEquals(3, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
+        assertEquals(2, Regex("""comeHome\((old|sonos), play = false\)""").findAll(service).count())
+        // the renderer changes only in attach: the phone at start, the room, the phone again
+        assertEquals("attach: defined once, three callers", 4, Regex("""\battach\(""").findAll(service).count())
+        assertTrue(service.contains("attach(SonosRenderer("))
+        assertTrue(service.contains("if (renderer === sonos) attach(local)"))
+        // a headset arriving or leaving touches the output choice only, never the renderer (sonos_renderer.py 5)
+        val devices = service.substringAfter("private val deviceCallback").substringBefore("private val saveTick")
+        assertFalse(devices.contains("renderer."))
+    }
+
+    @Test
+    fun `a Sonos position is persisted only by bookmarkNow, from the measured snapshot`() {
+        // design 26a §4.4 (QA H3): saveNow is bookmarkNow; never a seek's target, the pause freeze or the extrapolation
+        assertEquals(1, Regex("""store\.save\(""").findAll(sonos).count())
+        val bookmark = sonos.substringAfter("fun bookmarkNow(force: Boolean) {").substringBefore("\n    }\n")
+        assertTrue(bookmark.contains("store.save("))
+        assertTrue(bookmark.contains("BookmarkInput(pl.itemKey, s.ours, s.transport, s.relS, s.durS, durFromListing, age)"))
+        for (guess in listOf("optPos", "frozen", "positionAt", "spec(", "startPosMs")) assertFalse(guess, bookmark.contains(guess))
+        assertTrue("the seed of our own play is not a measurement", bookmark.contains("if (seeded ||"))
+        // the snapshot is only ever replaced by accept (a poll, a live classify) or the seed of a play
+        assertEquals(2, Regex("""\bsnap = """).findAll(sonos).count())
+        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        assertTrue(renderer.contains("override fun saveNow(force: Boolean) = controller.bookmarkNow(force)"))
+        // one write behind both renderers' saveNow
+        val main = moduleFile("src/main/java").walk().filter { it.isFile && it.extension == "kt" }
+            .map { f -> f.name to f.readText().replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("//[^\\n]*"), "") }.toList()
+        val calls = main.flatMap { (name, text) -> Regex("""persistPlace\(""").findAll(text).map { name }.toList() }
+        assertEquals(listOf("LocalRenderer.kt", "LocalRenderer.kt", "SonosRenderer.kt"), calls.sorted())
     }
 }

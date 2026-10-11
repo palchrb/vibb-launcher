@@ -39,6 +39,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.music.R
 import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.bridge.NowPlayingKeys
@@ -71,6 +72,7 @@ import me.vibb.music.logic.publicOnly
 import me.vibb.music.logic.restoredQueue
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.resumeOverlapMs
+import me.vibb.music.logic.rotatedTo
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.streamAllowed
 import me.vibb.music.logic.toggledQueue
@@ -78,6 +80,10 @@ import me.vibb.music.media.ItemTag
 import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
+import me.vibb.music.sonos.PlayBodies
+import me.vibb.music.sonos.RendererChoice
+import me.vibb.music.sonos.SonosHome
+import me.vibb.music.sonos.SonosRenderer
 import me.vibb.music.sync.ItemErrors
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.netCaps
@@ -116,9 +122,9 @@ internal class Active(
  *   the next sync fetches it again;
  * - the sleep timer fades out over ~10 s and pauses; a manual pause cancels it;
  * - "Spill av på": the phone or a connected Bluetooth/wired output (`setPreferredAudioDevice`)
- *   until that device goes - or, for the phone, until headphones arrive.
- * Who plays is the [Renderer] (design 26a §0): the phone's [LocalRenderer] (the ExoPlayer) until
- * Sonos (step 3); the session wraps `KidPlayer(renderer.player)`.
+ *   until that device goes - or, for the phone, until headphones arrive; or a Sonos room.
+ * Who plays is the [Renderer] (design 26a §0): the phone's [LocalRenderer] (the ExoPlayer) or a
+ * Sonos room's [SonosRenderer], changed only by [attach]; the session wraps `KidPlayer(renderer.player)`.
  * Nothing here ever starts playback by itself.
  */
 @OptIn(UnstableApi::class)
@@ -128,13 +134,20 @@ class PlaybackService : MediaSessionService() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var store: Store
     private lateinit var renderer: Renderer
+
+    /** The phone's player: the renderer unless a Sonos room plays, and where "Spill av på"'s output axis applies. */
+    private lateinit var local: LocalRenderer
+
+    /** The household: Wi-Fi, the speaker cache, the rooms, renderer.json (design 26a §2.1, §4.1). */
+    private lateinit var home: SonosHome
     private var session: MediaSession? = null
     private val audio by lazy { getSystemService(AudioManager::class.java) }
 
     /**
      * Who plays is settled (design 26a §4.7): every custom command and playback resumption awaits
      * it first, so a RESUME after a restart can never start the phone under a playing speaker.
-     * Complete at once while only the phone renders; step 3b completes it after adopt.
+     * Complete at once in onCreate: step 3a never adopts a speaker session (renderer.json is reset to
+     * the phone there); step 3b completes it after adopt.
      */
     private val rendererReady = CompletableDeferred<Unit>()
 
@@ -154,7 +167,11 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         store = Store.get(this)
-        attach(LocalRenderer(this, store, scope, writer) { active })
+        home = SonosHome(this)
+        // Design 26a §4.7's trivial part: no speaker session is adopted yet (3b), so after a restart the
+        // phone renders and nothing starts (vibb: no live remote session at start -> the renderer reverts).
+        if (home.choice().sonos) home.write(RendererChoice.LOCAL_CHOICE)
+        attach(LocalRenderer(this, store, scope, writer) { active }.also { local = it })
         val open = PendingIntent.getActivity(
             this, 1,
             Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN, MainActivity.OPEN_PLAYER),
@@ -167,6 +184,7 @@ class PlaybackService : MediaSessionService() {
         PlayerHub.pause = { renderer.pause() }
         LiveBridge.acquire(this)
         rendererReady.complete(Unit)
+        scope.launch { home.rooms.state.collect { publish() } }
         publish()
     }
 
@@ -189,7 +207,9 @@ class PlaybackService : MediaSessionService() {
         LiveBridge.release(this)
         session?.release()
         session = null
+        if (renderer !== local) local.release()
         renderer.release()
+        home.release()
         scope.cancel()
         writer.close()
         super.onDestroy()
@@ -271,7 +291,9 @@ class PlaybackService : MediaSessionService() {
             customCommand: SessionCommand,
             args: Bundle,
         ): ListenableFuture<SessionResult> {
-            if (customCommand.customAction in Commands.PLAYS && !playAllowed(suspendedNow())) {
+            // OUTPUT to a Sonos room starts the speaker: a play too (design 26a §3.3), read from its argument here.
+            val toRoom = customCommand.customAction == Commands.OUTPUT && Output.sonosUid(args.getString(Commands.ARG_OUTPUT)) != null
+            if ((customCommand.customAction in Commands.PLAYS || toRoom) && !playAllowed(suspendedNow())) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
             if (Commands.ALL.none { it.customAction == customCommand.customAction }) {
@@ -287,7 +309,9 @@ class PlaybackService : MediaSessionService() {
                     Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION))
                     Commands.SHUFFLE -> toggleShuffle()
                     Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
-                    Commands.OUTPUT -> setOutput(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
+                    Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
+                    Commands.ROOMS_REFRESH -> launch(Dispatchers.IO) { home.rooms.refresh() }
+                    Commands.ROOMS_RESCAN -> home.rooms.rescanInBackground()
                 }
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -302,6 +326,11 @@ class PlaybackService : MediaSessionService() {
             val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
             scope.launch {
                 rendererReady.await()
+                if (renderer.kind == RendererKind.SONOS) {
+                    // design 26a §4.7: on Sonos a Bluetooth play button starts the speaker - step 3b
+                    future.setException(UnsupportedOperationException("resumption on Sonos is step 3b"))
+                    return@launch
+                }
                 val restored = restore()
                 if (restored == null) {
                     Resumable.set(this@PlaybackService, false)
@@ -323,10 +352,16 @@ class PlaybackService : MediaSessionService() {
 
     private suspend fun load(): Pair<Snapshot, List<DownloadRow>> = withContext(Dispatchers.IO) { store.snapshot() to store.db.downloads() }
 
-    private suspend fun activeFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, keys: List<String>, shuffled: Boolean): Active? {
+    /**
+     * The queue of [keys] as renderer [kind] plays it. A Sonos room gets only what a speaker can play
+     * (design 26a §4.2, `PlayBodies.speakerPlayable`: own files, withdrawn items, HLS outside an NRK
+     * series and a public entry's private addresses drop out) - the renderer passed explicitly, never
+     * read from a global (§9). The renderer never filters (`Renderer.currentIndex`).
+     */
+    private suspend fun activeFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, keys: List<String>, shuffled: Boolean, kind: RendererKind): Active? {
         val order = snap.order(entry)
         val byKey = order.associateBy { it.key }
-        val items = keys.mapNotNull { byKey[it] }
+        val items = keys.mapNotNull { byKey[it] }.filter { kind == RendererKind.LOCAL || PlayBodies.speakerPlayable(entry, it) }
         if (items.isEmpty()) return null
         val hashes = (listOfNotNull(entry.cover) + order.mapNotNull { it.artHash }).toSet()
         val art = withContext(writer) { hashes.associateWith { artwork(it) } }
@@ -340,6 +375,27 @@ class PlaybackService : MediaSessionService() {
         )
     }
 
+    /**
+     * [plan] of [entry] on the renderer [kind]: on a Sonos room only the speaker-playable items, the
+     * plan's start moved with them (§4.2); nothing left is "Kan ikke spilles på Sonos" and nothing
+     * changes (vibb's `nothing-remote-playable`: the renderer stays).
+     */
+    private suspend fun queueFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, plan: QueuePlan, shuffled: Boolean, kind: RendererKind): Pair<Active, QueuePlan>? {
+        val p = if (kind == RendererKind.SONOS) {
+            val byKey = snap.order(entry).associateBy { it.key }
+            val dropped = plan.keys.mapNotNull { k -> byKey[k]?.let { PlayBodies.speakerDropReason(entry, it) } }
+            if (dropped.isNotEmpty()) SonosHome.log("sonos: ${dropped.size} item(s) a speaker can't play left out (${dropped.distinct().joinToString()})")
+            PlayBodies.speakerPlan(plan) { k -> byKey[k]?.let { PlayBodies.speakerPlayable(entry, it) } == true } ?: run {
+                PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+                return null
+            }
+        } else {
+            plan
+        }
+        val a = activeFor(snap, rows, entry, p.keys, shuffled, kind) ?: return null
+        return a to p
+    }
+
     private suspend fun playEntry(entryId: Long) {
         val current = active
         if (current != null && current.entry.id == entryId && renderer.itemCount() > 0) {
@@ -350,7 +406,8 @@ class PlaybackService : MediaSessionService() {
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val plan = coverTapPlan(snap.order(entry).map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return
-        start(activeFor(snap, rows, entry, plan.keys, shuffle) ?: return, plan)
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, renderer.kind) ?: return
+        start(a, p)
     }
 
     private suspend fun playItem(entryId: Long, key: String) {
@@ -360,7 +417,8 @@ class PlaybackService : MediaSessionService() {
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val current = active?.takeIf { it.entry.id == entryId && it.shuffled }?.items?.map { it.key }
         val plan = pickPlan(snap.order(entry).map { it.key }, key, entry.resume, snap.positions[entry.key]?.get(key), if (shuffle) current else null) ?: return
-        start(activeFor(snap, rows, entry, plan.keys, shuffle) ?: return, plan)
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, renderer.kind) ?: return
+        start(a, p)
     }
 
     private suspend fun resumeLast() {
@@ -394,9 +452,9 @@ class PlaybackService : MediaSessionService() {
         val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return null
         val stored = row.keys.split('\n').filter { it.isNotEmpty() }
         val (keys, index) = restoredQueue(stored, row.index, snap.order(entry).map { it.key }.toSet()) ?: return null
-        val a = activeFor(snap, rows, entry, keys, row.shuffled) ?: return null
-        val pos = if (keys[index] == stored.getOrNull(row.index)) row.posMs else startPos(a, index)
-        return Triple(a, index, pos)
+        val pos = if (keys[index] == stored.getOrNull(row.index)) row.posMs else startPos(entry, snap.positions[entry.key]?.get(keys[index]))
+        val (a, p) = queueFor(snap, rows, entry, QueuePlan(keys, index, pos), row.shuffled, renderer.kind) ?: return null
+        return Triple(a, p.startIndex, p.startPosMs)
     }
 
     private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {
@@ -428,12 +486,15 @@ class PlaybackService : MediaSessionService() {
     }
 
     /** Where item [index] starts when the queue jumps to it: its own position when resume is on. */
-    private fun startPos(a: Active, index: Int): Long =
-        if (a.entry.resume) seekGate(resumeFrom(a.positions[a.items[index].key])) else 0
+    private fun startPos(a: Active, index: Int): Long = startPos(a.entry, a.positions[a.items[index].key])
+
+    private fun startPos(entry: Entry, position: ItemPosition?): Long = if (entry.resume) seekGate(resumeFrom(position)) else 0
 
     private fun hasCopy(a: Active, item: PlayItem) = item.fileId != null || item.key in a.copies
 
     private fun playable(a: Active, index: Int, caps: NetCaps? = netCaps(this), mobileData: Boolean = store.mobileData): Boolean {
+        // A speaker fetches by itself and its queue holds only what it can play (§4.2): the phone's gate is the phone's.
+        if (renderer.kind == RendererKind.SONOS) return true
         val item = a.items[index]
         return playability(hasCopy(a, item), item.url != null, caps, mobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
     }
@@ -614,7 +675,7 @@ class PlaybackService : MediaSessionService() {
             key == Output.PHONE_KEY -> key
             else -> Output.deviceKey(device.id)
         }
-        renderer.setPreferredAudioDevice(device)
+        local.setPreferredAudioDevice(device)
         publish()
     }
 
@@ -624,7 +685,7 @@ class PlaybackService : MediaSessionService() {
             // would route it (qa-21-step2-code M3): a story never stays loud by an old choice.
             if (chosenOutput == Output.PHONE_KEY && addedDevices.any { outputKind(it.type) != null }) {
                 chosenOutput = null
-                renderer.setPreferredAudioDevice(null)
+                local.setPreferredAudioDevice(null)
             }
             publish()
         }
@@ -633,7 +694,7 @@ class PlaybackService : MediaSessionService() {
             // The chosen device went: back to system routing.
             if (removedDevices.any { Output.deviceKey(it.id) == chosenOutput }) {
                 chosenOutput = null
-                renderer.setPreferredAudioDevice(null)
+                local.setPreferredAudioDevice(null)
             }
             publish()
         }
@@ -680,7 +741,7 @@ class PlaybackService : MediaSessionService() {
             RendererEvent.InterruptionEnded -> if (renderer.player.playWhenReady) applyOverlap()
             is RendererEvent.IsPlaying -> onIsPlayingChanged(event.playing)
             is RendererEvent.Error -> onError(event.code)
-            RendererEvent.Lost -> Unit // a Sonos room's failed start: wired with the switch (the next commit)
+            RendererEvent.Lost -> scope.launch { lost() }
             RendererEvent.StateChanged -> publish()
         }
     }
@@ -707,8 +768,9 @@ class PlaybackService : MediaSessionService() {
             }
             return
         }
-        if (auto) {
-            // A natural advance resumes an item heard before (vibb: in-session jumps resume too).
+        if (auto && renderer.kind == RendererKind.LOCAL) {
+            // A natural advance resumes an item heard before (vibb: in-session jumps resume too); on a
+            // speaker the next item starts at 0 (vibb `_sonos_poller`, design 26a §4.3).
             val pos = startPos(a, index)
             if (pos > 0) renderer.seekTo(index, pos)
         }
@@ -896,6 +958,120 @@ class PlaybackService : MediaSessionService() {
             outputs = outputs,
             output = output,
             rendererState = renderer.rendererState,
+            rooms = home.rooms.state.value,
         )
+    }
+
+    // --- the renderer: the phone or a Sonos room (design 26a §4.6) ---
+
+    /** "Spill av på": a room is a switch to the speaker (gated as a play); the phone or a headset first comes home. */
+    private suspend fun output(key: String) {
+        val uid = Output.sonosUid(key)
+        if (uid != null) return toRoom(uid)
+        if (renderer.kind == RendererKind.SONOS) toPhone(resume = null)
+        setOutput(key)
+    }
+
+    /**
+     * Phone -> room, or room -> room (`_renderer_to_sonos`, 1625-1667): the place first (the phone's
+     * position flushed; the old room's live bookmark and its Stop), the speaker-playable queue (nothing
+     * left: "Kan ikke spilles på Sonos", nothing changes), renderer.json before the first SOAP, the
+     * session on the speaker, then the start at the saved place. With no queue the stored one comes
+     * back first, as RESUME does (QA ambiguity 4). The room we're on is the same-tile rule.
+     */
+    private suspend fun toRoom(uid: String) {
+        val old = renderer
+        if (old is SonosRenderer && old.uid == uid) {
+            old.play()
+            publish()
+            return
+        }
+        val name = withContext(Dispatchers.IO) { home.label(uid) }
+        val current = active?.takeIf { old.itemCount() > 0 }?.let { a0 -> a0.items.getOrNull(old.currentIndex())?.let { a0 to it } }
+        if (old is SonosRenderer) {
+            withTimeoutOrNull(HANDOFF_MS) { old.handOff() }
+        } else {
+            old.saveNow(force = true)
+        }
+        val (snap, rows) = load()
+        val place = if (current != null) {
+            val (a0, item) = current
+            a0.entry to QueuePlan(a0.items.map { it.key }, a0.items.indexOf(item), resumeFrom(a0.positions[item.key]))
+        } else {
+            withContext(Dispatchers.IO) { store.db.nowPlaying() }?.let { row ->
+                val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return@let null
+                val stored = row.keys.split('\n').filter { it.isNotEmpty() }
+                val (keys, index) = restoredQueue(stored, row.index, snap.order(entry).map { it.key }.toSet()) ?: return@let null
+                entry to QueuePlan(keys, index, if (keys[index] == stored.getOrNull(row.index)) row.posMs else 0)
+            }
+        }
+        val queue = place?.let { (entry, plan) -> queueFor(snap, rows, entry, plan, shuffled = false, RendererKind.SONOS)?.let { entry to it } }
+        if (place != null && queue == null) {
+            // nothing a speaker can play: the phone stays (an old room is already stopped: back home, paused)
+            if (old is SonosRenderer) comeHome(old, play = false)
+            publish()
+            return
+        }
+        withContext(writer) {
+            home.write(RendererChoice(RendererChoice.SONOS, uid, name, queue?.first?.id, queue?.second?.let { (a, p) -> a.items.getOrNull(p.startIndex)?.key }))
+        }
+        attach(SonosRenderer(this, home, store, scope, writer, { active }, uid, name))
+        if (old is SonosRenderer) old.release() else local.clear()
+        if (queue == null) {
+            active = null
+            lastIndex = -1
+        } else {
+            val (a, p) = queue.second
+            start(a, p)
+        }
+        publish()
+    }
+
+    /**
+     * Room -> phone (`_renderer_to_box`, 1669-1708): the live classify, the bookmark and the Stop
+     * (ours-gated), renderer.json back to the phone, the phone's player, and the queue on the phone
+     * from that bookmark - playing on only if the speaker was PLAYING (a paused speaker comes home
+     * paused, design 26a §9), or as [resume] says.
+     */
+    private suspend fun toPhone(resume: Boolean?) {
+        val sonos = renderer as? SonosRenderer ?: return
+        val wasPlaying = withTimeoutOrNull(HANDOFF_MS) { sonos.handOff() } ?: false
+        // the switch is the kid's own tap; still nothing starts while the app is suspended
+        comeHome(sonos, (resume ?: wasPlaying) && playAllowed(suspendedNow()))
+    }
+
+    private suspend fun comeHome(sonos: SonosRenderer, play: Boolean) {
+        val a0 = active?.takeIf { sonos.itemCount() > 0 }
+        val item = a0?.items?.getOrNull(sonos.currentIndex())
+        withContext(writer) { home.write(RendererChoice.LOCAL_CHOICE) }
+        if (renderer === sonos) attach(local)
+        sonos.release()
+        active = null
+        lastIndex = -1
+        if (a0 == null || item == null) {
+            publish()
+            return
+        }
+        val (snap, rows) = load()
+        val keys = rotatedTo(snap.order(a0.entry).map { it.key }, item.key)
+        val a = activeFor(snap, rows, a0.entry, keys, shuffled = false, RendererKind.LOCAL)
+        if (a == null) {
+            publish()
+            return
+        }
+        start(a, QueuePlan(keys, keys.indexOf(item.key).coerceAtLeast(0), resumeFrom(a0.positions[item.key])), play = play)
+    }
+
+    /** A start on the speaker failed (§4.2): back to the phone, paused, and one topology refresh for the sheet. */
+    private suspend fun lost() {
+        val sonos = renderer as? SonosRenderer ?: return
+        PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+        comeHome(sonos, play = false)
+        withContext(Dispatchers.IO) { home.rooms.refresh() }
+    }
+
+    private companion object {
+        /** A hand-off is a 1.5 s classify, a bookmark and a Stop; past this the switch goes on without it. */
+        const val HANDOFF_MS = 8_000L
     }
 }

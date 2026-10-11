@@ -94,4 +94,31 @@ class FitTest {
         }
         assertEquals("the mockup's 46 dp on the Jelly Star", 46f, carouselPeek(288f), 0.001f)
     }
+
+    @Test
+    fun `a Sonos room in the bar - a long name or a three-member group gives way, Liste and Sov stay whole`() {
+        // design 26a §5.1: the room's label is the output's name; widths of Nunito ExtraBold 14 sp as above,
+        // a three-member label like "Kjøkken + Stua + Bad" and a long room name both far wider than the slot
+        val labels = listOf(150f, 260f)
+        val liste = 32.0f
+        val sov30 = 81.4f
+        for (screen in widths) {
+            val room = available(screen).toInt() - 2 * 8
+            for (label in labels) {
+                val w = flexWidths(room, listOf(1f, 1f, 1.2f), listOf(bar(liste), bar(sov30), 0))
+                assertEquals("$screen: the row is filled", room, w.sum())
+                assertTrue("$screen: Liste whole", w[0] >= bar(liste))
+                assertTrue("$screen: Sov whole", w[1] >= bar(sov30))
+                assertTrue("$screen: the room keeps its glyph and some name", w[2] > icon)
+                assertTrue("$screen: the label is cut, never pushes", w[2] < bar(label))
+            }
+        }
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue("the output's slot shrinks", player.contains("FlexBar(listOf(1f, 1f, 1.2f), shrinks = listOf(false, false, true), gap = 8.dp)"))
+        assertTrue("a room's name is its label", player.contains("OutputKind.SONOS -> output.name ?: stringResource(R.string.output_sonos)"))
+        val bar = player.substringAfter("private fun BarButton(").substringBefore("\n}\n")
+        assertTrue("one line, ellipsized (Line's default)", bar.contains("Line(label, 14, 800, fg)"))
+        val widgets = moduleFile("src/main/java/me/vibb/music/ui/Widgets.kt").readText()
+        assertTrue(widgets.contains("maxLines: Int = 1") && widgets.contains("overflow = TextOverflow.Ellipsis"))
+    }
 }

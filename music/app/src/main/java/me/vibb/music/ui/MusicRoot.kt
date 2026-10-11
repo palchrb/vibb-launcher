@@ -73,7 +73,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
             Screen.PLAYER -> now?.let { n ->
                 val order = listOrder(s, n)
                 PlayerScreen(
-                    n, order.indexOfFirst { it.key == n.item.key } + 1, order.size, livePosition(n), hub.sleepMinutes, hub.output,
+                    n, order.indexOfFirst { it.key == n.item.key } + 1, order.size, livePosition(n), hub.sleepMinutes, hub.output, hub.rendererState,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,
@@ -86,7 +86,13 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 )
                 when (vm.sheet) {
                     SheetKind.SLEEP -> SleepSheet(hub.sleepMinutes, { actions.sleep(it); vm.sheet = null }, { vm.sheet = null })
-                    SheetKind.OUTPUT -> OutputSheet(hub.outputs, hub.output, { actions.output(it.key); vm.sheet = null }, { vm.sheet = null })
+                    SheetKind.OUTPUT -> OutputSheet(
+                        hub.outputs, hub.rooms, hub.output,
+                        onOpen = actions::refreshRooms,
+                        onPick = { actions.output(it.key); vm.sheet = null },
+                        onRescan = actions::rescanRooms,
+                        onDismiss = { vm.sheet = null },
+                    )
                     null -> Unit
                 }
             }
@@ -126,7 +132,11 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp, start = 16.dp, end = 16.dp)
                     .clip(RoundedCornerShape(16.dp)).background(Palette.selected).padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
-                val text = if (m == PlayerHub.Message.CANT_PLAY) R.string.cant_play else R.string.not_downloaded
+                val text = when (m) {
+                    PlayerHub.Message.CANT_PLAY -> R.string.cant_play
+                    PlayerHub.Message.NOT_DOWNLOADED -> R.string.not_downloaded
+                    PlayerHub.Message.CANT_PLAY_ON_SONOS -> R.string.cant_play_on_sonos
+                }
                 Line(stringResource(text), 14, 800, Palette.fg, maxLines = 2, center = true)
             }
         }

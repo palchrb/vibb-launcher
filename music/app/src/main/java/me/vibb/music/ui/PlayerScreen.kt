@@ -1,5 +1,12 @@
 package me.vibb.music.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
@@ -21,11 +28,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
@@ -39,12 +51,15 @@ import me.vibb.music.logic.Kind
 import me.vibb.music.logic.kindOf
 import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
+import me.vibb.music.playback.RendererState
+import me.vibb.music.sonos.RoomsView
 
 /**
  * The player (design 21 §4.2, `Main.dc.html` v12 `onPlayer`): back + entry title, the cover
  * (it shrinks to fit the Jelly Star), the item's marquee title, "Episode|Spor N av M", the seek
  * line, [shuffle] previous / play-pause / next [slot] (v15's compact sizes on a 320 dp phone, [controlRow]),
- * then Liste / Sov / "Spill av på".
+ * then Liste / Sov / "Spill av på". On a Sonos room a quiet line under the entry name says why the
+ * speaker isn't playing what we sent it ([rendererState], design 26a §5.2); nothing acts on it but the kid.
  */
 @Composable
 fun PlayerScreen(
@@ -55,6 +70,7 @@ fun PlayerScreen(
     positionMs: Long,
     sleepMinutes: Int?,
     output: Output,
+    rendererState: RendererState?,
     onBack: () -> Unit,
     onSeek: (Long) -> Unit,
     onShuffle: () -> Unit,
@@ -71,7 +87,10 @@ fun PlayerScreen(
     ) {
         Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, stringResource(R.string.back_library), onBack)
-            Line(now.entry.name, 15, 800, Palette.sub, Modifier.weight(1f).padding(end = 44.dp), center = true)
+            Column(Modifier.weight(1f).padding(end = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Line(now.entry.name, 15, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
+                rendererState?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }
+            }
         }
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Cover(
@@ -164,8 +183,17 @@ private fun BarButton(
 }
 
 fun outputIcon(output: Output): ImageVector = when (output.kind) {
-    OutputKind.PHONE, OutputKind.SONOS -> Icons.speaker
+    OutputKind.PHONE -> Icons.speaker
+    OutputKind.SONOS -> Icons.roomSpeaker
     OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
+}
+
+/** The player's one line for a Sonos room that isn't playing what we sent it (design 26a §5.2). */
+fun rendererStateText(state: RendererState): Int = when (state) {
+    RendererState.GROUPED_AWAY -> R.string.renderer_grouped_away
+    RendererState.TAKEN_OVER -> R.string.renderer_taken_over
+    RendererState.LOST_SESSION -> R.string.renderer_lost_session
+    RendererState.UNREACHABLE -> R.string.renderer_unreachable
 }
 
 @Composable
@@ -198,42 +226,84 @@ fun SleepSheet(current: Int?, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
     }
 }
 
-/** "Spill av på": the phone and the connected Bluetooth or wired outputs (Sonos is phase 1b). */
+/**
+ * "Spill av på" (design 26a §5.1): the phone and the connected Bluetooth or wired outputs, then the
+ * Sonos rooms (a group is one row, "Kjøkken + Stua"; "Sonos · svarer ikke" while nobody answered),
+ * then "Se etter høyttalere" ("Søker etter høyttalere…" while a round runs). Opening it asks for one
+ * topology refresh ([onOpen]); picking a room is a play on it.
+ */
 @Composable
-fun OutputSheet(outputs: List<Output>, current: Output, onPick: (Output) -> Unit, onDismiss: () -> Unit) {
+fun OutputSheet(
+    outputs: List<Output>,
+    rooms: RoomsView,
+    current: Output,
+    onOpen: () -> Unit,
+    onPick: (Output) -> Unit,
+    onRescan: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    LaunchedEffect(Unit) { onOpen() }
     Sheet(stringResource(R.string.output), onDismiss, 8.dp) {
         for (o in outputs) {
-            val on = o.key == current.key
+            val sub = when (o.kind) {
+                OutputKind.PHONE -> R.string.output_phone_sub
+                OutputKind.BLUETOOTH -> R.string.output_bluetooth_sub
+                OutputKind.WIRED -> R.string.output_wired_sub
+                OutputKind.SONOS -> R.string.output_sonos
+            }
+            val glyph = when (o.kind) {
+                OutputKind.PHONE -> Icons.speakerSmall
+                OutputKind.SONOS -> Icons.roomSpeaker
+                OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
+            }
+            SheetRow(glyph, outputName(o), stringResource(sub), o.key == current.key) { onPick(o) }
+        }
+        for (room in rooms.rooms) {
+            val o = Output(Output.sonosKey(room.uid), OutputKind.SONOS, room.label)
+            SheetRow(Icons.roomSpeaker, room.label, stringResource(if (rooms.stale) R.string.output_sonos_stale else R.string.output_sonos), o.key == current.key) { onPick(o) }
+        }
+        if (rooms.scanning) {
             Row(
-                Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(16.dp)).background(if (on) Palette.selected else Palette.sheetRow)
-                    .semantics { selected = on }.button(null) { onPick(o) }.padding(horizontal = 14.dp, vertical = 6.dp),
+                Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Box(Modifier.size(34.dp).clip(CircleShape).background(if (on) Palette.peach else Palette.track), contentAlignment = Alignment.Center) {
-                    val glyph = when (o.kind) {
-                        OutputKind.PHONE, OutputKind.SONOS -> Icons.speakerSmall
-                        OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
-                    }
-                    Glyph(glyph, 18.dp, if (on) Palette.bg else Palette.fg)
-                }
-                Column(Modifier.weight(1f)) {
-                    Line(outputName(o), 15, 800, Palette.white)
-                    Line(
-                        stringResource(
-                            when (o.kind) {
-                                OutputKind.PHONE -> R.string.output_phone_sub
-                                OutputKind.BLUETOOTH -> R.string.output_bluetooth_sub
-                                OutputKind.WIRED -> R.string.output_wired_sub
-                                OutputKind.SONOS -> R.string.output_sonos
-                            },
-                        ),
-                        12, 700, Palette.sub,
-                    )
-                }
-                if (on) Glyph(Icons.check, 22.dp, Palette.peach)
+                Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) { Spinner(20.dp, Palette.sub) }
+                Line(stringResource(R.string.rooms_scanning), 15, 800, Palette.sub, Modifier.weight(1f))
             }
+        } else {
+            SheetRow(Icons.search, stringResource(R.string.rooms_rescan), null, selected = false, onClick = onRescan)
         }
         Spacer(Modifier.width(0.dp))
+    }
+}
+
+@Composable
+private fun SheetRow(glyph: ImageVector, title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(16.dp)).background(if (selected) Palette.selected else Palette.sheetRow)
+            .semantics { this.selected = selected }.button(null, onClick).padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(34.dp).clip(CircleShape).background(if (selected) Palette.peach else Palette.track), contentAlignment = Alignment.Center) {
+            Glyph(glyph, 18.dp, if (selected) Palette.bg else Palette.fg)
+        }
+        Column(Modifier.weight(1f)) {
+            Line(title, 15, 800, Palette.white)
+            subtitle?.let { Line(it, 12, 700, Palette.sub) }
+        }
+        if (selected) Glyph(Icons.check, 22.dp, Palette.peach)
+    }
+}
+
+/** A turning arc (Compose foundation has no progress indicator; no Material here). */
+@Composable
+private fun Spinner(size: Dp, color: Color) {
+    val turn by rememberInfiniteTransition(label = "spinner").animateFloat(
+        0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart), label = "turn",
+    )
+    Canvas(Modifier.size(size).rotate(turn)) {
+        drawArc(color, 0f, 270f, useCenter = false, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round))
     }
 }
