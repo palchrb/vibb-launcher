@@ -139,6 +139,11 @@ both, so phase 2's inventory can cite either. The `storytel` branch is older tha
      downloads and keeps positions. Cost: two "devices" on the account.
    - **B:** the phone reports the normalised shelf over the bridge and the PWA shows it. A phone must be logged in and
      synced before anything can be picked; a new phone can't bootstrap.
+   **Decided: A** (user, 2026-10-11). The server logs in with its own stable `deviceId` (never the phones'), only for
+   `login.action` and `bookshelf`, never bookmarks or audio; the shelf is normalised with vibb's `normalize_shelf`
+   (`storytel.py:424-490`: `model.id` not the format id, series grouping, the kids/locked/geo flags as data) for the
+   PWA's picker. The phone keeps everything else: the CDN url minted per play, downloads, positions. Phase 2's
+   architect writes it up in that spec.
    Also for phase 2: `_encrypt_password` shells out to `openssl`; on Android it is `javax.crypto` (AES-128-CBC, PKCS#7,
    UPPERCASE hex) with `tests/storytel_api.py`'s vector ported as is, and `storytel_subprocess.py` is a deviation. The 302
    from `assets/v2/consumables/<id>/abook` is captured with `followRedirects=false`, as vibb does, never left to OkHttp's
