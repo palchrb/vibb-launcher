@@ -64,11 +64,13 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
     inputs.emergencyFlow -> RefrontAction.Yield("emergency")
-    inputs.sosFlow -> RefrontAction.Yield("sos")
     inputs.alarmRinging -> RefrontAction.Yield("alarm")
-    // Last: a phone call, the emergency flow and the alarm always win over a VoIP call
+    // A phone call, the emergency flow and the alarm always win over a VoIP call
     // (qa-16-17-code #1 - and the alarm's exemption ends only on a yield named "alarm").
     inputs.voipCall -> RefrontAction.Yield("voip")
+    // Last (qa-25b-25f M2): a probable SOS never hides a woken alarm, a call or a VoIP call - their
+    // yields end their own exemptions (the alarm's on a yield named "alarm").
+    inputs.sosFlow -> RefrontAction.Yield("sos")
     else -> RefrontAction.Refront(refrontDelayMs(attempt + 1))
 }
 

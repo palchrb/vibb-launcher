@@ -88,6 +88,11 @@ class LockUpTest {
             telecomInCall = false, emergencyFlow = false, alarmRinging = false, sosFlow = true)
         assertEquals(RefrontAction.Yield("sos"), refrontAction(inputs, 0))
         assertEquals("its emergency call", RefrontAction.Yield("system_call"), refrontAction(inputs.copy(telecomInCall = true), 0))
+        // qa-25b-25f M2: a woken alarm (and a VoIP call) win over a probable SOS, so the alarm's
+        // exemption still ends when the lock is back after it.
+        assertEquals(RefrontAction.Yield("alarm"), refrontAction(inputs.copy(alarmRinging = true), 0))
+        assertEquals(RefrontAction.Yield("voip"), refrontAction(inputs.copy(voipCall = true), 0))
+        assertEquals(null, alarmAfterResume(remembered = 1_000L, yieldedTo = refrontAction(inputs.copy(alarmRinging = true), 0).let { (it as RefrontAction.Yield).reason }))
         assertEquals(RefrontAction.Stop, refrontAction(inputs.copy(lockResumed = true), 0))
         assertTrue(refrontAction(inputs.copy(sosFlow = false), 0) is RefrontAction.Refront)
         // Only a stop marks it: Recents (the Overview button right after waking) only pauses the lock.
