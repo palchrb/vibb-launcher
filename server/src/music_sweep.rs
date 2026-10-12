@@ -142,7 +142,17 @@ pub struct Sweep {
     art_per_check: std::sync::atomic::AtomicU32,
     /// The tests' fake clock; `None` = the real one.
     clock: std::sync::Mutex<Option<DateTime<Utc>>>,
+    /// The tests' stop right before a check commits (`pause_before_commit`).
+    #[cfg(test)]
+    before_commit: std::sync::Mutex<Option<CommitPause>>,
 }
+
+/// Says "reached", then waits for "go".
+#[cfg(test)]
+type CommitPause = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+);
 
 impl Default for Sweep {
     fn default() -> Self {
@@ -153,6 +163,8 @@ impl Default for Sweep {
             spacing_ms: (ENTRY_SPACING.as_millis() as u64).into(),
             art_per_check: ART_PER_CHECK.into(),
             clock: Default::default(),
+            #[cfg(test)]
+            before_commit: Default::default(),
         }
     }
 }
@@ -176,6 +188,30 @@ impl Sweep {
 
     fn art_per_check(&self) -> u32 {
         self.art_per_check.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The tests' knob: the next check stops right before its commit (the store locks held, the
+    /// pictures written) and says so on the first channel; it goes on when the second is sent to.
+    #[cfg(test)]
+    pub fn pause_before_commit(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (reached, reached_rx) = tokio::sync::oneshot::channel();
+        let (go, go_rx) = tokio::sync::oneshot::channel();
+        *self.before_commit.lock().unwrap() = Some((reached, go_rx));
+        (reached_rx, go)
+    }
+
+    #[cfg(test)]
+    async fn at_commit(&self) {
+        let pause = self.before_commit.lock().unwrap().take();
+        if let Some((reached, go)) = pause {
+            let _ = reached.send(());
+            let _ = go.await;
+        }
     }
 
     /// The tests' fake clock (`None` = the real one again).
@@ -2962,6 +2998,8 @@ async fn finish(
     .bind(entry_id)
     .execute(&mut *tx)
     .await?;
+    #[cfg(test)]
+    state.music_sweep.at_commit().await;
     tx.commit().await?;
     drop(cover_lock);
     drop(art_lock);

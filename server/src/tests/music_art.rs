@@ -1058,7 +1058,8 @@ async fn nrk_episodes_listed_before_get_the_512_picture_once() {
 // ------------------------------------------------------------------------------------------------
 
 /// The store's lock is held from writing the file to the commit (photos' rule), so a prune never
-/// deletes a picture between the two.
+/// deletes a picture between the two: the check is stopped right before its commit (code QA L3),
+/// the lock is taken, and a prune started then waits and keeps the file.
 #[tokio::test]
 async fn the_store_lock_is_held_until_the_commit() {
     let app = TestApp::new().await;
@@ -1068,16 +1069,34 @@ async fn the_store_lock_is_held_until_the_commit() {
     app.fetch
         .answer(feed, 200, art_feed(None, &[("l", Some(url))]));
     app.fetch.answer(url, 200, png(0b0100_0100, 300, 300));
-    let guard = crate::photos::MUSIC_ART.lock().await;
+    let (reached, go) = app.state.music_sweep.pause_before_commit();
     let state = app.state.clone();
     let task = tokio::spawn(async move { sweep::check_entry(&state, id, t0()).await });
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    assert!(!task.is_finished(), "waits for the store's lock");
+    reached.await.unwrap();
+    let files: Vec<_> = std::fs::read_dir(&*app.state.music_art_dir)
+        .unwrap()
+        .collect();
+    assert_eq!(files.len(), 1, "written before the commit");
     assert!(items(&app, id).await.is_empty(), "nothing committed yet");
-    drop(guard);
+    // One poll: the lock is taken.
+    assert!(
+        tokio::time::timeout(std::time::Duration::ZERO, crate::photos::MUSIC_ART.lock())
+            .await
+            .is_err(),
+        "the store's lock is held"
+    );
+    let state = app.state.clone();
+    let prune = tokio::spawn(async move {
+        crate::photos::MUSIC_ART
+            .prune(&state.db, &state.music_art_dir)
+            .await
+    });
+    tokio::task::yield_now().await;
+    go.send(()).unwrap();
     task.await.unwrap().unwrap().unwrap();
+    prune.await.unwrap();
     let hash = items(&app, id).await[0].art_hash.clone().unwrap();
-    assert!(stored(&app, &hash));
+    assert!(stored(&app, &hash), "the prune ran after the commit");
 }
 
 /// Pruned with the items (after a delete), never in a backup zip, and after a restore the rows
