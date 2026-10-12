@@ -6,12 +6,13 @@ sessions" paragraph, item 5), design 20 (its decision sections win: "Storytel an
 content", "Offline marks"; user decision 2: no position mirroring), design 21 (§1.4, §2 Storytel, the step 3 bridge),
 21b (§2.7 addresses, §4-§6), 26a (the renderer axis this plugs into) and its QA files, `music/CLAUDE.md`, and vibb
 **`pipewire` `1fcadac`** (`storytel.py` and `bookmarks.py` are identical on `main`): `pi/vibb/storytel.py` (828 lines,
-all of it), `pi/vibb/bookmarks.py`, the Storytel parts of `pi/vibb/library.py` (87-89, 862-883, 948), `pi/vibb/content.py`
-(334-340, 365-376, 500-509, 999-1007), `pi/daemon.py` (1423-1476 `_sonos_body`, 1477-1560 `_sonos_play_entry`, 1669-1715
-`sonos_start_target`, 2084-2105 `_sonos_known_duration`, 3424-3431 and 3824-3881 the routes, 4497-4570 adopt, 4657-4672
-the duration lookup, 4774-4833 the mirror) and `tests/storytel_{api,expand,routes,sync,bookmark_sync,subprocess,sonos}.py`
-plus `pi/web/app.js` 505-535 and 746-990 (the picker). **This is a port**: every behaviour names its vibb source; a
-deviation is listed in §9 with its reason. `M/` = `music/app/src/main/java/me/vibb/music/`, `S/` = `server/src/`, `L/` =
+all of it), `pi/vibb/bookmarks.py`, the Storytel parts of `pi/vibb/library.py` (87-89, 862-883, 948),
+`pi/vibb/content.py` (334-340, 365-376, 500-509, 999-1007), `pi/daemon.py` (1423-1476 `_sonos_body`, 1477-1560
+`_sonos_play_entry`, 1669-1715 `sonos_start_target`, 2084-2105 `_sonos_known_duration`, 3424-3431 and 3824-3881 the
+routes, 4497-4570 adopt, 4657-4672 the duration lookup, 4774-4833 the mirror) and
+`tests/storytel_{api,expand,routes,sync,bookmark_sync,subprocess,sonos}.py` plus `pi/web/app.js` 505-535 and 746-990
+(the picker). **This is a port**: every behaviour names its vibb source; a deviation is listed in §9 with its reason.
+`M/` = `music/app/src/main/java/me/vibb/music/`, `S/` = `server/src/`, `L/` =
 `launcher/app/src/main/java/com/kidslauncher/mdm/`. [device check] = needs the Jelly Star and the family's real account.
 
 **In:** the server's Storytel client (login, bookshelf, `normalize_shelf`, the JWT cache, the refused-login cooldown,
@@ -55,6 +56,17 @@ Option A splits vibb's one process in two (design 26 review item 4):
   reach a log, `music_state`, an event, a page, Room, a file other than the sealed login, or an error message. The PWA
   never shows the login back (phase 1). Fake tokens in tests never look like real ones (`FAKE-JWT-1`, `FAKE-SIG-1`,
   `*.example.invalid`; never `eyJ...`).
+- **Secrets in `toString` and `Debug`** (QA L9): every type that holds one prints it redacted - phase 1's
+  `StorytelLogin.Login` (a data class whose generated `toString` prints the email and the password: overridden), the new
+  `StorytelRequest` (the `pwd=` URL and the bearer header), `StorytelResponse` (the login body holds the JWT) and
+  `Mint.Url`; `SourceScanTest` pins an explicit `toString()` on each. On the server neither `StoredLogin` nor the JWT
+  holder derives `Debug` (a hand-written redacting one where a `Debug` bound needs it).
+- **Logs we don't write ourselves** (QA L10): reqwest logs each redirect's URLs at `debug`, so `RUST_LOG=debug` would
+  print `login.action?...pwd=`: the server's default filter floors `reqwest=info` whatever `RUST_LOG` says for the rest
+  (`main.rs`'s tracing setup), and `server/CLAUDE.md` says why (`DEPLOY.md` is the main session's). Media3 keeps a
+  redirected upstream URI in the cache index (`exo_redir`) when the CDN redirects; the minted URL itself is never
+  written there (the cache key is the item), but a CDN redirect target could be - accepted (app-private
+  `noBackupFilesDir`, a short-lived token), and the emulator's §6h check greps the cache index for `token=`.
 
 ## 1. Behaviour map (vibb -> Rust / Kotlin)
 
@@ -78,7 +90,7 @@ Option A splits vibb's one process in two (design 26 review item 4):
 | `_LOGIN_COOLDOWN_S`, `_cooldown_*` | server `music_storytel.login_refused_at` + `_generation`; phone `noBackupFilesDir/storytel_refused.json` | 1 h, active while `0 < now - at < 1 h` and the generation is the stored login's |
 | `bookshelf` | `storytel::Account::bookshelf` (server only) | POST, body `{"items":[]}` under `Content-Type: application/x-www-form-urlencoded`, bearer, `Accept: */*` |
 | `bookshelf_cached`, `RAW_SHELF_TTL_S` | `Account::shelf(max_age)` (in memory, 300 s; a failed fetch falls back to the last good shelf) | the sweep reads it, so a pass fetches the shelf once |
-| `asset_url` | `StorytelApi.assetUrl(cid, timeoutMs)` (phone only) | GET with bearer, no redirect followed, the `Location` or `NoAudio(status)`; 6 s on the Sonos path |
+| `asset_url` | `StorytelApi.assetUrl(cid, timeoutMs)` (phone only) | GET with bearer, no redirect followed, the `Location` or a status class (§4.1: `NoAudio`/`Failed`); 6 s on the Sonos path |
 | `_cover`, `normalize_shelf` | `storytel::normalize_shelf` (server only) | `model.id`, abook format only, series grouping in first-seen order, books by `(orderInSeries, title)`, kids/locked/geo as data |
 | `write_shelf`, `read_shelf`, `_SHELF_JSON` | the listing: `music_items` (server), Room `items` (phone) | |
 | `shelf_durations` | not ported | mirroring only (§9); the listing's `duration_ms` serves the display |
@@ -126,25 +138,32 @@ Option A splits vibb's one process in two (design 26 review item 4):
 - **Targets**: `parse_target(&str) -> Option<(TargetKind, String)>` (`Series`/`Book`, the id `[A-Za-z0-9_-]+`, nothing
   else), `series_target(id)`, `book_target(id)`.
 - **`normalize_shelf(raw: &[u8]) -> Result<Vec<Group>, ShelfError>`**, vibb 424-480 line by line: `raw.items` is an
-  **object read in document order** (a `serde::de::MapAccess` visitor into `Vec<(String, Value)>`; `serde_json::Map` is a
-  `BTreeMap` here and would sort by key, and the `preserve_order` feature must not be switched on - it reorders every map
-  the server serialises); `model = item.model || item`; the first format with `type == "abook"`, else skip (ebook only);
-  `Book { consumable_id: model.id as a string (a JSON number in decimal, a string as is; skipped when absent or not
-  [A-Za-z0-9_-]{1,64}), title, order: seriesInfo.orderInSeries as f64 (else 0), duration_ms: the format's
-  durationInMilliseconds (else 0), cover: the format's cover.url else model.cover.url, kids: model.kidsBook, locked: the
-  format's isLockedContent, geo: isGeoRestricted }`; group key `("series", seriesInfo.id)` else `("book",
-  consumable_id)`; a new group takes `kind`, `series_id`, `target`, `name = seriesInfo.name || model.title`, `cover` (the
-  first-seen book's); groups in first-seen order; books sorted by `(order, title)` (`f64::total_cmp`, then the title's
-  code points); `kids = any(book.kids)`. A group whose target fails `parse_target` is dropped (logged). Nothing is
-  filtered for locked or geo: they are data (vibb).
+  **object read in document order** (a `serde::de::MapAccess` visitor into `Vec<(String, Value)>`; `serde_json::Map` is
+  a `BTreeMap` here and would sort by key, and the `preserve_order` feature must not be switched on - it reorders every
+  map the server serialises); `model = item.model || item`; the first format with `type == "abook"`, else skip (ebook
+  only); `Book { consumable_id: model.id as a string (a JSON number in decimal, a string as is; skipped when absent or
+  not [A-Za-z0-9_-]{1,64} - vibb writes "None", §9), title, order: seriesInfo.orderInSeries as f64 (else 0),
+  duration_ms: the format's durationInMilliseconds (else 0), cover: the format's cover.url else model.cover.url, kids:
+  model.kidsBook, locked: the abook format's isLockedContent, geo: the abook format's isGeoRestricted (vibb 459-460) }`;
+  group key `("series", sid)` else `("book", consumable_id)`, where `sid` is `seriesInfo.id` **stringified the same way
+  as `model.id`** (a number in decimal, a string as is - never `Value::to_string()`, whose quotes would fail the
+  grammar) and **Python-falsy rules** decide "no series": absent, null, `""` or `0` -> a standalone book (QA L1;
+  likewise a null, `0` or `""` `orderInSeries` is 0, a missing or empty `seriesInfo.name` falls back to the title,
+  booleans are `bool(...)` of whatever is there); a new group takes `kind`, `series_id`, `target`, `name =
+  seriesInfo.name || model.title`, `cover` (the first-seen book's); groups in first-seen order; books sorted by `(order,
+  title)` (`f64::total_cmp`, then the title's code points); `kids = any(book.kids)`. **A consumable id seen twice keeps
+  the first** (21b's dedupe rule; `music_items`' primary key `(entry_id, key)` would fail the check's write). A group
+  whose target fails `parse_target` is dropped (logged). Nothing is filtered for locked or geo: they are data (vibb).
 - **The account** `pub struct Account` (`AppState.storytel: Arc<storytel::Account>`):
   - `credentials(state) -> Result<StoredLogin, StorytelError>` reads the `music_storytel` row and opens it with
     `state.music_key` (`NotConfigured` without a login or a key, `KeyUnusable` when sealed with another key).
+  - `login_with(state, email, password)`: the request and its outcome without touching the DB (the save's probe uses it
+    with the entered login, §2.3); `login(state)` = `credentials` + the cooldown + `login_with` + the stamps.
   - `login(state) -> Result<String, _>`: cooldown first (`music_storytel.login_refused_at` within 1 h of `Sweep::now()`
     and `login_refused_generation = generation` -> `Cooldown { until }` with **no request**); then GET
-    `LOGIN_URL?m=1&uid=<email>&pwd=<encrypt_password(pw)>` (`form_urlencoded::Serializer`, so `@` is `%40` as in Python's
-    `urlencode`), `Kind::Login`, redirects followed (vibb). Not 200 -> stamp the cooldown for this generation and
-    `Refused(status)` (a 5xx counts too, as vibb's "a refusal, not an outage"); 200 without a non-empty
+    `LOGIN_URL?m=1&uid=<email>&pwd=<encrypt_password(pw)>` (`form_urlencoded::Serializer`, so `@` is `%40` as in
+    Python's `urlencode`), `Kind::Login`, redirects followed (vibb). Not 200 -> stamp the cooldown for this generation
+    and `Refused(status)` (a 5xx counts too, as vibb's "a refusal, not an outage"); 200 without a non-empty
     `accountInfo.jwt` -> `NoJwt` (no cooldown); a transport error -> `Fetch` (no cooldown). On success the JWT is kept
     with `tokio::time::Instant::now() + 1 h` and the generation it was made for; `login_ok_at` stamped, `login_error`
     cleared.
@@ -154,13 +173,16 @@ Option A splits vibb's one process in two (design 26 review item 4):
   - `bookshelf(state) -> Result<Vec<Group>, _>`: POST `BOOKSHELF`, body exactly `{"items":[]}`, `Content-Type:
     application/x-www-form-urlencoded` (a JSON content type is a 400, field-verified), `Kind::Shelf`; not 200 ->
     `Status(code)`; truncated -> `TooBig`; then `normalize_shelf`. Stored in the shelf cache.
-  - `shelf(state, max_age)`: the cache when younger than `max_age` (300 s for the sweep), else `bookshelf`; a failed
-    fetch returns the last good shelf whatever its age (vibb "stale beats dead"), else the error.
+  - `shelf(state, max_age)`: the cache when younger than `max_age` (300 s for a routine sweep check, **0 for Check now**
+    so a book added in Storytel's app a minute ago shows, QA L5), else `bookshelf`; a failed fetch returns the last good
+    shelf whatever its age (vibb "stale beats dead"), else the error. The cache's age and the JWT's expiry run on
+    `tokio::time::Instant` (the tests pause it); only the DB stamps use `Sweep::now()`.
   - `forget()`: drops the JWT and the shelf (save and clear call it; the generation check covers a race).
-- **Errors** carry codes for the card and the sweep: `storytel_off` (no login or no key), `login_refused`
-  (`Refused`/`Cooldown`), `no_jwt`, `network`, `timeout`, `http_<code>`, `too_big`, `bad_shelf`, `not_on_shelf` (§2.4).
-  **No message ever holds a URL**: `music_net::network_error` builds its text from `err.without_url()` for every request
-  (the login URL carries the email and `pwd=`; reqwest's `Display` prints the URL).
+- **Errors** carry codes for the card and the sweep: `storytel_off` (no login or no key), `storytel_key` (sealed with
+  another key: "enter the login again", QA L4), `login_refused` (`Refused`/`Cooldown`), `no_jwt`, `network`, `timeout`,
+  `http_<code>`, `too_big`, `bad_shelf`, `not_on_shelf` (§2.4). `music_storytel.login_error` holds such a code, never a
+  message. **No message ever holds a URL**: `music_net::network_error` builds its text from `err.without_url()` for
+  every request (the login URL carries the email and `pwd=`; reqwest's `Display` prints the URL).
 
 ### 2.2 `music_net` (extended, not forked)
 - `SourceRequest` gains `method` (GET default), `headers: Vec<(HeaderName, String)>`, `body: Option<Vec<u8>>`;
@@ -172,23 +194,25 @@ Option A splits vibb's one process in two (design 26 review item 4):
 
 ### 2.3 The PWA (`handlers::music`, `templates/music.html`, new `templates/music_storytel.html`)
 - **Save (`POST /music/storytel`)**, vibb's probe (`/storytel/credentials`, 3824-3845): after phase 1's field checks and
-  **before anything is stored**, one probe with the entered login - `Account::login` with these credentials (the
-  cooldown doesn't apply to a probe; a probe never stamps it) and one `bookshelf`. Outcomes:
+  **before anything is stored**, one probe with the entered login - `Account::login_with` with these credentials (the
+  cooldown doesn't apply to a probe; a probe never stamps it) and one `bookshelf` - **within 45 s in all**, the wait for
+  the one gate included (it can sit behind a feed fetch of up to 120 s; QA L4): past it the probe counts as unreachable.
+  Outcomes:
   - accepted: sealed and stored (generation + 1, `login_refused_at` cleared), the probe's JWT and shelf kept for the new
     generation, the phones nudged, `storytel_login_saved`; the card says "Saved - Storytel shows N series and books".
   - refused (not 200) or `NoJwt`: **nothing stored, the saved login unchanged** (§9: vibb forgets the account here), the
     error by the field "Storytel refused that e-mail and password. The saved login is unchanged.", event
     `storytel_login_refused` (no detail beyond the status).
-  - unreachable (a transport error or the shelf failing): stored as in "accepted" (vibb saves, then 502s), the notice
-    "Saved, but Storytel couldn't be reached to check it".
+  - unreachable (a transport error, the shelf failing, or the 45 s passed): stored as in "accepted" (vibb saves, then
+    502s), the notice "Saved, but Storytel couldn't be reached to check it".
 - **Clear (`POST /music/storytel/clear`)**: as phase 1 (generation + 1) plus `Account::forget`; the phones' libraries
   drop their Storytel entries (§2.7), which deletes the books (vibb's logout `forget_downloads`).
 - **The card `#storytel`** gains a status line from `login_ok_at` / `login_refused_at` / `login_error`: "Storytel
   accepted the login (12 Oct, 10:02 UTC)", "Storytel refused the login at 10:02 UTC. Nothing is tried again before 11:02
   UTC - save the password again to try now.", "Storytel couldn't be reached (10:02 UTC)"; the link "Pick books from the
-  Storytel shelf" (`/music/storytel`) while a usable login is stored; two hint lines: "One Storytel login for the family.
-  Two phones listening at the same time need Storytel Family, which isn't supported yet." and "Use a password you use
-  only for Storytel: each phone keeps it to log in."
+  Storytel shelf" (`/music/storytel`) while a usable login is stored; two hint lines: "One Storytel login for the
+  family. Two phones listening at the same time need Storytel Family, which isn't supported yet." and "Use a password
+  you use only for Storytel: each phone keeps it to log in."
 - **The picker (`GET /music/storytel[?all=1]`)**, vibb's `/storytel/shelf` + `renderStorytelShelf`: a fresh
   `bookshelf` (it refreshes the cache). Without a usable login: a pointer to `#storytel`. An error: its text (refused,
   waiting until HH:MM UTC, unreachable). Else one form, one row per group, in shelf order; **kids' books only** unless
@@ -198,28 +222,36 @@ Option A splits vibb's one process in two (design 26 review item 4):
   flags). A group already in the library is checked and disabled with "In the library" linking to `/music#entry-<id>`.
   Below: the category select (default the first category whose `default_kind` is `audiobook` - Lydbøker; else the
   first) and "Add checked". Text only: no remote images (the page's CSP; covers come later through the sweep).
-- **Add (`POST /music/storytel/add`, `target` repeated, `category`)**: the shelf from `Account::shelf(300 s)`; each
-  target must name a group on it (an arbitrary target is refused - vibb's 4c rule that a raw target is privileged);
-  skipped when already in the library; within `MAX_ENTRIES` (the INSERT's own `WHERE`, phase 1); the entry: source
-  `storytel`, target, key `state_key(target)`, name = the group's name cut to `MAX_NAME_CHARS`, the category, order
-  `auto` (= oldest first for Storytel), cache `-1`, resume on, sort next; one `music_entry_added` event each ("Storytel:
-  <name>"); the sweep woken; back to `/music/storytel?added=N#added` ("Added N - tick them for a phone on its Music
-  card"). No phone is ticked by itself (design 20 decision 6).
-- **The entry page** for a Storytel entry: name, category, order, resume, cover, delete, Check now; offline depth
-  offers vibb's Storytel choices only - "All books" (-1), "The first 5", "10", "20" (and the stored value when it is
-  another one, from an import); a stored or posted 0 is saved as -1 (vibb 87-89). No "add by link" for Storytel: a
-  pasted link stays `parse_link`'s (refused as today); the add form gets a hint "Storytel: pick from the shelf".
+- **Add (`POST /music/storytel/add`, `target` repeated, `category`)**: the form is read as `Form<Vec<(String, String)>>`
+  like `save_device_sonos_rooms` (`FormMap` is a `HashMap` and keeps one `target`; QA L3); the shelf from
+  `Account::shelf(300 s)`; each target must name a group on it (an arbitrary target is refused - vibb's 4c rule that a
+  raw target is privileged); skipped when already in the library; within `MAX_ENTRIES` (the INSERT's own `WHERE`, phase
+  1); the entry: source `storytel`, target, key `state_key(target)`, name = the group's name cut to `MAX_NAME_CHARS`,
+  the category, order `auto` (= oldest first for Storytel), cache `-1`, resume on, sort next; one `music_entry_added`
+  event each ("Storytel: <name>"); the sweep woken; back to `/music/storytel?added=N#added` ("Added N - tick them for a
+  phone on its Music card"). No phone is ticked by itself (design 20 decision 6).
+- **The entry page** for a Storytel entry: name, category, order, resume, cover, delete, Check now; offline depth offers
+  vibb's Storytel choices only - "All books" (-1), "The first 5", "10", "20" (and the stored value when it is another
+  one, from an import); a stored or posted 0 is saved as -1 (vibb 87-89) - on the entry page **and** in the library
+  card's offline select (`save_offline`, which offers the same Storytel choices; QA M3). No "add by link" for Storytel:
+  a pasted link stays `parse_link`'s (refused as today); the add form gets a hint "Storytel: pick from the shelf".
 - **The library card** (`partials/music_card.html`): `kind_label` "Storytel series" / "Storytel book"; "N books"; the
   sweep's error texts (§2.4); per-phone lines from `music_state.downloads` ("3 of 5 books on the phone · waiting for
-  Wi-Fi"). **The device card** (`#music`): with ticked Storytel entries and the phone's Storytel switch off, "Storytel is
-  off on this phone: its N Storytel entries aren't sent"; with the switch on and no login, "No Storytel login is saved";
-  the phone's `music_state.storytel` as words (`none` "no login on the phone", `refused` "Storytel refused the phone's
-  login - it waits an hour; saving the password again retries at once").
+  Wi-Fi"). **The device card** (`#music`): with ticked Storytel entries and the phone's Storytel switch off, "Storytel
+  is off on this phone: its N Storytel entries aren't sent"; with the switch on and no login, "No Storytel login is
+  saved"; the phone's `music_state.storytel` as words (`none` "no login on the phone", `refused` "Storytel refused the
+  phone's login - it waits an hour; saving the password again retries at once"). The mobile-data switch's help text
+  (`device_detail.html`, "Music may use mobile data: ...") gains: "This includes Storytel books, often several hundred
+  MB each." (QA L14; the main session's decision: Storytel follows the parent's switch like every other download).
 
 ### 2.4 Entries and the listing (`music.rs`, `music_sweep.rs`)
 - `Link` gains `Storytel { kind, id }`; `music::entry_link(source, target)` returns it for a `storytel` entry (and
   `parse_link`'s result for the others); `schedule_one`, `check_entry`, `run_check`, `cover` and every `match link` use
   it. `Link::target()` is the grammar's string, `source()` "storytel". `parse_link` (pasted links) is unchanged.
+- **Every place that filters to NRK/RSS today takes Storytel too** (QA M3): `music_sweep::schedule`'s `WHERE e.source
+  IN ('nrk', 'rss')` (else a Storytel entry is never scheduled), `check_entry`'s source check, `device_listing`'s `IN`,
+  `handlers::music`'s `SweepView::card` (the status, "N books", the per-phone lines), `check_now` (today "Only NRK and
+  RSS entries are checked"), `cards` (`GET /music/cards`) and `save_offline` (§2.3); plus §2.7's three gates.
 - **The Storytel check** (vibb `sync` minus the downloads): `Account::shelf(300 s)` - so a pass with several Storytel
   entries fetches the shelf once (vibb `tests/storytel_sync.py` 6b) - then the group whose target is the entry's. Not on
   the shelf -> the check fails `not_on_shelf` and the last good list stays (21b §2.4; vibb leaves the old `shelf.json`).
@@ -228,8 +260,10 @@ Option A splits vibb's one process in two (design 26 review item 4):
   when `media_url_ok`; a book that left the shelf leaves the list (no `gone`: Storytel books aren't episodes that were
   withdrawn, and the phone prunes what the list no longer names). Every book is listed - locked and geo included (vibb
   1b: the server decides at download). The listing's `title` = the group's name, `cover_candidate` = the group's cover
-  (fetched by 21b §2.6's machinery, `Reach::Public` plus `public_media`), `anchored_at_start = true` (a cut drops the
-  end), `keep_end`/`capped` unset. Requests count against the check's budget like any other.
+  (fetched by 21b §2.6's machinery, `Reach::Public` plus `public_media`), **`keep_end = 'first'`** - `finish()` and
+  `device_listing` derive the anchor from it, so a cut drops the end (QA L2; `effective_order` reacts only to `/serie/`
+  targets, so the order is untouched) - and `capped` unset. Requests count against the check's budget like any other.
+  A routine check reads `Account::shelf(300 s)`, **Check now `shelf(0)`** (§2.1).
 - Cadence: `interval()` already gives a non-NRK entry the setting `I` (vibb sweeps Storytel with everything else);
   Check now works as for NRK/RSS. A login failure fails the check (`login_refused`, `storytel_off`) and backs off;
   inside the cooldown it costs no request.
@@ -241,8 +275,9 @@ Option A splits vibb's one process in two (design 26 review item 4):
 - `item_error_code` also accepts `no_audio` (the mint got no audio URL: locked, not in this country, gone), shown as
   "Storytel gave no audio for this book".
 - `Download.waiting` also accepts `login` ("waiting for the Storytel login on the phone").
-- `music_state.storytel` stays a word: the phone sends `none`, `ok` or `refused` (§4.5). `server/testdata/music_state.json`
-  is unchanged (every field is already there); the sanitizer test gains the two new values.
+- `music_state.storytel` stays a word: the phone sends `none`, `ok` or `refused` (§4.5).
+  `server/testdata/music_state.json` is unchanged (every field is already there); the sanitizer test gains the two new
+  values.
 
 ### 2.6 The import (`music_import.rs`, design 21a)
 `Skip::Storytel` goes: a `storytel:` target that `parse_target` accepts imports as a Storytel entry (name, order,
@@ -250,12 +285,13 @@ resume; cache 0 -> -1, anything else valid kept); one it refuses is `Skip::BadLi
 sweep lists it (and reports `storytel_off` without a login).
 
 ### 2.7 What a phone gets
-- **The library** (`LIBRARY_ENTRIES`): Storytel entries are included **only while this phone's `music_storytel` switch
-  is on and a login is stored** (`ciphertext IS NOT NULL`): `AND (e.source != 'storytel' OR EXISTS (SELECT 1 FROM
-  device_policy p, music_storytel s WHERE p.device_id = ? AND p.music_storytel = 1 AND s.id = 1 AND s.ciphertext IS NOT
-  NULL))`. So the switch off, or the login cleared, drops them from the phone's library - and phase 1's prune deletes the
-  books (vibb: the books go with the account). `LibEntry` for Storytel: `source "storytel"`, `target`, `cache` (0 sent as
-  -1), `items` = the listing version, `cover` = the parent's or the listing's, `lan false`.
+- **The library** (`LIBRARY_ENTRIES`): its `e.source IN ('nrk', 'rss', 'own')` gains `'storytel'`, and Storytel entries
+  are included **only while this phone's `music_storytel` switch is on and a login is stored** (`ciphertext IS NOT
+  NULL`): `AND (e.source != 'storytel' OR EXISTS (SELECT 1 FROM device_policy p, music_storytel s WHERE p.device_id = ?
+  AND p.music_storytel = 1 AND s.id = 1 AND s.ciphertext IS NOT NULL))`. So the switch off, or the login cleared, drops
+  them from the phone's library - and phase 1's prune deletes the books (vibb: the books go with the account).
+  `LibEntry` for Storytel: `source "storytel"`, `target`, `cache` (0 sent as -1), `items` = the listing version, `cover`
+  = the parent's or the listing's, `lan false`.
 - `device_listing` and `cover_in_library` use the same condition (an entry the phone can't have is a 404).
 - Revision triggers (migration, §2.8) on the switch and on the login's presence, so the cached library is rebuilt.
 - The policy's `storytel_generation` is unchanged (phase 1).
@@ -263,7 +299,10 @@ sweep lists it (and reports `storytel_off` without a login).
 ### 2.8 Migration `0066_music_storytel.sql` (renumbered after the final rebase; main ends at 0064, 1b holds 0065)
 ```sql
 -- The server's own Storytel session (design 26b §2.1): the refused-login cooldown (vibb
--- storytel-login-refused.json) for the login generation it refused, and the card's last outcome.
+-- storytel-login-refused.json) for the login generation it refused, and the card's last outcome
+-- (a code, never text: `login_error`).
+-- Also from 0066 on: a Storytel entry's music_items rows are state 'ok' with url NULL (listed and
+-- playable; the phone mints the audio URL), which 0051's comment ("ok (it has a URL)") predates.
 ALTER TABLE music_storytel ADD COLUMN login_refused_at TEXT;
 ALTER TABLE music_storytel ADD COLUMN login_refused_generation INTEGER;
 ALTER TABLE music_storytel ADD COLUMN login_ok_at TEXT;
@@ -277,8 +316,10 @@ WHEN (OLD.ciphertext IS NULL) IS NOT (NEW.ciphertext IS NULL)
 BEGIN UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1; END;
 ```
 `music_entries.source` already allows `storytel` (0049). `music_items.state 'ok'` with `url NULL` is new usage, not a
-schema change (the comment "ok (it has a URL)" becomes "ok (listed and playable; a Storytel book has no URL)").
-Stamps are `Sweep::now()` text (the tests' fake clock). The JWT and the shelf are never stored.
+schema change: the note goes into 0066's header (above) and `music_sweep::Item`'s doc. **Applied migrations are never
+edited** (QA H1): sqlx checks the checksum of every applied file, so one changed comment in 0051 stops every upgraded
+server at start, and no test catches it (they all run on fresh databases). Stamps are `Sweep::now()` text (the tests'
+fake clock). The JWT and the shelf are never stored.
 
 ## 3. The phone: data and rules (`M/model`, `M/logic`, `M/data`; pure)
 
@@ -292,9 +333,10 @@ pruned (qa-21-step2-code H1). `publicOnly(entry)` is true (Storytel's API and CD
 - **Visibility follows the renderer** (vibb `entries_for(remote)`, `PREFER_REMOTE`): `Snapshot.forRenderer(remote:
   Boolean)` returns a copy whose `visible`, `order` and `entries` use it. A Storytel item is visible **locally only with
   a copy on the phone** (download-only: never streamed from an expiring URL - phase 1's url-null rule already says so,
-  since a Storytel item has `url == null`) and **on a Sonos room always** (the speaker fetches from the CDN). Every other
-  source is unchanged. Callers pass the renderer explicitly (26a §9): the service's `load(kind)`, the UI from
-  `PlayerHub.State` (the shown output is a Sonos room), the standalone suspension `true`, the Nytt notifier `false`.
+  since a Storytel item has `url == null`) and **on a Sonos room always** (the speaker fetches from the CDN). Every
+  other source is unchanged. Callers pass the renderer explicitly (26a §9): the service at each call site named in §5.6
+  (adopt and phone -> room included, QA H2), the UI from `PlayerHub.State` (the shown output is a Sonos room), the
+  standalone suspension `true`, the Nytt notifier `false`.
 - "N av M lastet ned" and the list's offline marks keep phase 1's rules over the visible items (on a room they show what
   is on the phone).
 
@@ -307,12 +349,14 @@ pruned (qa-21-step2-code H1). `publicOnly(entry)` is true (Storytel's API and CD
   (phase 1's rule for every entry). Download order: the bookmarked book first, then reading order (vibb `for b in
   books`), not newest first.
 - **The source id** `sourceId(entry, item)`: the item's url, or `storytel:book:<cid>` for a Storytel book. The download
-  row's `url`, the failure's `failedUrl` and `mayRetry` use it, so a minted URL (new every attempt) never reads as "a new
-  url" and never discards a partial copy (§4.3).
-- **Retry**: a Storytel `no_audio` is permanent (a day, `permanentFailure`), a CDN `http_<code>` is transient (2 min
-  doubling, at most 6 h): every attempt mints a fresh URL, so a 403 from an expired token heals on the next attempt.
-- **Room**: `STORYTEL_FREE_FLOOR` = 1.5 GB (vibb `DISK_FLOOR`): no Storytel book starts below it (the run stops,
-  `waiting: storage`).
+  row's `url`, the failure's `failedUrl` and `mayRetry` use it, so a minted URL (new every attempt) never reads as "a
+  new url" and never discards a partial copy (§4.3).
+- **Retry** (QA M7): a Storytel `no_audio` is permanent (a day, `permanentFailure`); a Storytel `http_<code>` - from the
+  asset call (401 after the re-login, 408, 429, 5xx) or from the CDN (any status) - is transient (2 min doubling, at
+  most 6 h): every attempt mints a fresh URL, so a 403 from an expired token heals on the next attempt.
+- **Room**: `STORYTEL_FREE_FLOOR` = 1.5 GB (vibb `DISK_FLOOR`, which is Storytel's own: `storytel.py:701, 789-791`): no
+  Storytel book starts below it (the Storytel books of the run stop, `waiting: storage`); NRK/RSS downloads keep
+  phase 1's rule (storage-not-low).
 
 ### 3.4 NY and Nytt
 `applyListing`'s news eligibility (`items with url != null`) is "fetchable" instead, so a new book in a Storytel series
@@ -323,8 +367,11 @@ downloaded; the NY badge follows the tray (phase 1).
 ### 3.5 Words (`logic/LibraryView.kt`, strings in `values` and `values-nb`)
 `Kind.AUDIOBOOK` for Storytel: `kind_audiobook` "Lydbok" / "Audiobook"; the hint `hint_part` "%1$s · del %2$d av %3$d" /
 "%1$s · part %2$d of %3$d" (design 20: "Lydbok · del 3 av 5"); the player's line `part_of` "Del %1$d av %2$d" / "Part
-%1$d of %2$d"; the Nytt row `new_book` "Ny bok" / "New book". Shuffle stays off (`canShuffle`: own files only). The
-thin overall-progress line and resume are phase 1's.
+%1$d of %2$d"; the Nytt row `new_book` "Ny bok" / "New book". Shuffle stays off (`canShuffle`: own files only).
+**For Storytel, N, M, `started` and the thin overall-progress line - and the player's "Del N av M" - count the series'
+reading order (`snap.listed`, every book), not the visible list** (QA M5): book 3 of 5 with books 1 and 3 downloaded
+reads "del 3 av 5", and a bookmark on a book not on the phone (heard on a room) still reads as started with its line.
+Resume itself is phase 1's (the queue is the visible books).
 
 ## 4. The phone: its Storytel client, downloads, playback
 
@@ -339,8 +386,10 @@ sealed interface Mint {
     data class Url(val url: String) : Mint          // the signed CDN URL: used once, never stored or logged
     data object NotConfigured : Mint                 // no login on the phone (or it can't be opened)
     data class Refused(val untilWallMs: Long) : Mint // refused now or inside the cooldown
-    data class NoAudio(val status: Int) : Mint       // no Location (locked, geo, gone): item error `no_audio`
-    data class Unreachable(val reason: String) : Mint // transport failure, timeout, no JWT: item error `network`
+    data class LoginFailed(val reason: String) : Mint // login unreachable, timed out, or 200 without a JWT: no cooldown
+    data class NoAudio(val status: Int) : Mint       // 3xx without Location, 403, 404, 410, 451: item error `no_audio`
+    data class Failed(val status: Int) : Mint        // the asset call: 401 after the re-login, 408, 429, 5xx, other: `http_<status>`
+    data class Unreachable(val reason: String) : Mint // the asset call's transport failure or timeout: `network`
 }
 
 class StorytelApi(
@@ -350,7 +399,8 @@ class StorytelApi(
     elapsedMs: () -> Long, wallMs: () -> Long,
     endpoints: Endpoints = Endpoints.STORYTEL,
 ) {
-    fun assetUrl(cid: String, timeoutMs: Long, deadlineMs: Long = Long.MAX_VALUE): Mint
+    /** [timeoutMs] bounds the asset request; [deadlineMs] (elapsed time) bounds the whole mint, login included. */
+    fun assetUrl(cid: String, timeoutMs: Long, deadlineMs: Long): Mint
 }
 ```
 - Constants as vibb's block (`LOGIN_URL`, `API`, `ASSET = /assets/v2/consumables/{cid}/abook`, the AES key and IV,
@@ -359,27 +409,36 @@ class StorytelApi(
   UPPERCASE hex out.
 - `login()`: the cooldown first (`CooldownStore.refusedAt(generation)`: `0 < wall - at < 1 h` -> `Refused`, **no
   request**); then GET `<LOGIN_URL>?m=1&uid=<email>&pwd=<hex>` built with `HttpUrl.Builder.addQueryParameter` in that
-  order, follow on, 20 s. Not 200 -> `CooldownStore.setRefused(generation, wall)` and `Refused`; 200 without a non-empty
-  `accountInfo.jwt` -> `Unreachable("no jwt")` (no cooldown); `IOException` -> `Unreachable` (no cooldown). The JWT is
-  kept **in memory only** with `elapsed + 1 h` and the login's generation.
+  order, follow on, 20 s (less when the deadline is nearer). Not 200 -> `CooldownStore.setRefused(generation, wall)` and
+  `Refused`; 200 without a non-empty `accountInfo.jwt` -> `LoginFailed("no jwt")` (no cooldown); `IOException` or the
+  deadline -> `LoginFailed` (no cooldown). The JWT is kept **in memory only** with `elapsed + 1 h` and the login's
+  generation.
 - `bearer(force)`: the kept JWT unless forced, expired or of another generation; else `login()`.
 - `assetUrl(cid, timeoutMs)`: GET `API/assets/v2/consumables/<cid>/abook`, `Authorization: Bearer <jwt>`, `Accept:
-  */*`, **follow = false**; a 401 -> `bearer(force = true)` and one retry; then the `Location` (absolute http(s), else
-  `NoAudio`) or `NoAudio(status)`. The deadline bounds the whole call (login included).
+  */*`, **follow = false**; a 401 -> `bearer(force = true)` and one retry; then a `Location` (absolute http(s)) is
+  `Url`; else the status decides (QA M7): a 3xx without a usable `Location`, 403, 404, 410 or 451 -> `NoAudio(status)`
+  (locked, geo, gone: permanent for a day); 401 after the re-login, 408, 429, 5xx and anything else -> `Failed(status)`
+  (transient); an `IOException` or the deadline -> `Unreachable`. The deadline bounds the whole call (login included).
 - Endpoints: `Endpoints.STORYTEL` (the real hosts); the debug feed may point both at the fake (§4.6).
-- `M/storytel/StorytelHttp.kt`: `OkHttpStorytelHttp` over `MediaCache.guarded(...)` (the public-only client: Storytel's
-  API is public) with `followRedirects(false)` + `followSslRedirects(false)` for `follow = false`, the call timeout per
-  request, the body read up to 64 KB. Never a logging interceptor. JVM-testable against `TinyHttp` (the 1b test server).
+- `M/storytel/StorytelHttp.kt`: `OkHttpStorytelHttp(client: OkHttpClient, userAgent: String)` - the client is a
+  parameter (QA M2): `StorytelAccount` passes `MediaCache.guarded(...)` (the public-only client: Storytel's API is
+  public), the debug switch (§4.6) the LAN client, `StorytelHttpTest` a plain client against `TinyHttp` on 127.0.0.1.
+  `followRedirects(false)` + `followSslRedirects(false)` for `follow = false`, the call timeout per request, the body
+  read up to 64 KB, the `User-Agent` set on every request (`VibbMusic/<version>`: MediaCache sets it on its
+  `OkHttpDataSource.Factory`, not on the client, so without it the API would see `okhttp/x`; QA L8). Never a logging
+  interceptor.
 
 ### 4.2 `M/storytel/StorytelAccount.kt` (Android)
 The process-wide account: `StorytelApi` over `StorytelLogin.load(context)` (phase 1's Keystore-sealed login, read per
 login), a `CooldownStore` in `noBackupFilesDir/storytel_refused.json` (`{generation, at}`, tmp + rename), the clocks
 `SystemClock.elapsedRealtime` and `System.currentTimeMillis`, and a `Mutex` around the login and the JWT it guards (the
-download worker and a Sonos actor never log in twice at once; an asset call holds no lock, so a minting download never
-makes a Sonos play wait out its budget). `suspend fun mint(cid, timeoutMs, deadlineMs): Mint` (IO), `fun state():
-String` = `none` (no login stored) / `refused` (the cooldown runs for the stored generation) / `ok`. A new generation from
-the bridge needs no call: the JWT and the cooldown are per generation (vibb `save_credentials` clears both). Generation 0
-deletes the login (phase 1); the same sync's library has no Storytel entries any more (§2.7).
+download worker and a Sonos actor never log in twice at once; an asset call holds no lock). The wait for that `Mutex`
+counts against the caller's deadline (a download's login may hold it up to 20 s; a Sonos mint then fails at its 10 s, QA
+L6). The one signature: `suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint` (IO) - downloads `(15
+s, now + 60 s)`, the Sonos path `(6 s, now + 10 s)`. `fun state(): String` = `none` (no login stored) / `refused` (the
+cooldown runs for the stored generation) / `ok`. A new generation from the bridge needs no call: the JWT and the
+cooldown are per generation (vibb `save_credentials` clears both). Generation 0 deletes the login (phase 1); the same
+sync's library has no Storytel entries any more (§2.7).
 
 ### 4.3 Downloads (`M/sync/DownloadPlan.kt`, `Downloads.kt`)
 - The plan (§3.3): Storytel books are fetchable; the keep set is the first N in reading order plus the bookmark and the
@@ -387,21 +446,26 @@ deletes the login (phase 1); the same sync's library has no Storytel entries any
 - `DownloadWorker.fetchOne` for a Storytel book, **one book at a time** (vibb's radio budget; the worker is sequential
   already):
   1. `storytelRoom(free space of noBackupFilesDir)` - below 1.5 GB the run stops (`waiting: storage`).
-  2. `StorytelAccount.mint(cid, 15 s)` - **a fresh URL every attempt** (vibb `sync`: the token is single-use and
-     short-lived; the path is stable). `NotConfigured` / `Refused`: no Storytel book is tried again this run, no item
-     error, the entries report `waiting: login` and the report's `storytel` says why; `NoAudio`: item error `no_audio`
-     (the status goes to the log only), the next book goes on (vibb: a genuine failure skips that book); `Unreachable`:
-     item error `network`.
+  2. `StorytelAccount.mint(cid, 15 s, now + 60 s)` - **a fresh URL every attempt** (vibb `sync`: the token is
+     single-use and short-lived; the path is stable). `NotConfigured`, `Refused` or `LoginFailed`: no Storytel book is
+     tried again this run (vibb's `sync` stops on a login failure: it catches only `OSError`, `storytel.py:802-807`),
+     no item error, the entries report `waiting: login` (§4.5) and the report's `storytel` says why; `NoAudio`: item
+     error `no_audio` (the status goes to the log only), the next book goes on (vibb: a genuine failure skips that
+     book); `Failed(status)`: item error `http_<status>` (transient); `Unreachable`: item error `network`.
   3. `Downloads.fetch` with the minted URL: `ProgressiveDownloader`, `customCacheKey = itemCacheKey(entry.key, cid)`,
      `MediaCache.downloadFactory(publicOnly = true, ...)`. MediaCache's clients never add an `Authorization` header, so
      no bearer reaches the CDN (vibb's rule; `SourceScanTest`).
   4. The row's `url` is `sourceId` (`storytel:book:<cid>`): phase 1's "a partial copy from another url may be another
      file" (qa-21-step2-code L7) compares source ids, so the partial survives a re-mint and the next attempt resumes
      with Range from the cached bytes against the new token. `http_416` drops the partial and fetches once from 0
-     (phase 1). An interrupted download (the network gate, WorkManager stopping a job at its 10-minute limit, a
-     dropped connection) leaves the partial; the next job mints again and continues - design 20 §5's "a 300 MB book
-     over interrupted Wi-Fi resumes after its URL expires".
-- Gates unchanged: UNMETERED unless the parent's mobile-data switch, storage not low, never roaming (phase 1).
+     (phase 1) **with a freshly minted URL** - phase 1's retry reuses its URL, and vibb treats the token as single-use
+     (`storytel.py:799-801`; QA L7). An interrupted download (the network gate, WorkManager stopping a job at its
+     10-minute limit, a dropped connection) leaves the partial; the next job mints again and continues - design 20 §5's
+     "a 300 MB book over interrupted Wi-Fi resumes after its URL expires".
+- Gates unchanged: UNMETERED unless the parent's mobile-data switch, storage not low, never roaming (phase 1). **With
+  the switch on, Storytel books download over mobile data like every other download** (the main session's decision on
+  QA L14: the parent chose it; design 20 decision 4 says "downloads and streaming"). A book is often several hundred MB,
+  so the switch's help text on the device card says so (§2.3), and `music/CLAUDE.md` notes it.
 - A book the listing no longer names (it left the shelf) and every book of an entry the library dropped (switch off,
   login cleared, entry deleted) are pruned by phase 1's rules.
 
@@ -414,8 +478,13 @@ with `url == null` play only with a copy (`playable`) and gives a copy `WAKE_MOD
 the sleep timer, calls: phase 1/1b, unchanged. `audioAttributes(speech = entry.resume)`: speech for a book.
 
 ### 4.5 The report (`M/logic/Report.kt`, `M/sync/Sync.kt`)
-`storytel` = `StorytelAccount.state()` (`none`, `ok`, `refused`); `downloads[].waiting` may be `login` (§2.5). Never the
-email, a JWT or a URL. `item_errors` for Storytel books: `no_audio`, `network`, `http_<code>` (from the CDN).
+`storytel` = `StorytelAccount.state()` (`none`, `ok`, `refused`). Never the email, a JWT or a URL. `item_errors` for
+Storytel books: `no_audio`, `network`, `http_<code>` (the asset call's transient statuses and the CDN's).
+**`waiting` per Storytel entry** (QA M4): `Sync.writeReport` computes one `waiting` for every entry today (the network
+caps and `LOW_STORAGE_BYTES` 500 MB); a Storytel entry with books still wanted gets the pure
+`storytelWaiting(account, freeBytes, shared)` instead: `login` when `StorytelAccount.state() != "ok"` (no login, or
+refused and waiting out the cooldown), `storage` below the 1.5 GB floor, else the shared rule (a `LoginFailed` run is a
+network matter and reads as the shared rule says). `ReportTest` pins each. §4.3's "`waiting: login`" means this.
 
 ### 4.6 The emulator: a fake Storytel (`scripts/fake-storytel.py`, debug feed)
 No account can be used in the sandbox or by QA, so the chain is exercised against a fake, built like
@@ -426,12 +495,19 @@ compares `pwd` with the fixture's hex):
 - `/api/login.action` (200 with `FAKE-JWT-1`; `--refuse` = 403; `--no-jwt`), `/assets/v2/consumables/<cid>/abook`
   (the bearer checked; 302 to `http://10.0.2.2:<port>/cdn/<cid>.wav?consumableId=<cid>&token=FAKE-SIG-<n>`; a cid in
   `--locked` = 403 without Location), `/cdn/<cid>.wav` (a generated silent WAV of `--books 111:300,222:5` MB, Range, the
-  token valid `--token-ttl` seconds after its mint, then 403; `--drop-at 40` closes each book's first transfer at 40 %).
-- The debug feed (`src/debug`, never in a release): `config.json` `"storytel_base": "http://10.0.2.2:8730"` sets the
-  endpoints to the fake and its CDN to the LAN client (a `StorytelEndpoints.debugBase` that only `src/debug` assigns,
-  pinned in `SourceScanTest` like the feed); `storytel.json` `{"email", "password"}` seeds a login (generation 1) for a
-  run without a launcher. The library and the listing come from `server/testdata/` (the snapshot's Storytel entry, §8
-  step 2b) or by hand, as §6f.
+  token valid `--token-ttl` seconds after its mint, then 403; `--drop-at 40` closes each book's first transfer at 40 %;
+  `--slow-mint 5` delays every 302 by 5 s, for step 4b's mint-in-flight checks).
+- **One debug-only switch** (QA M2; the fake is on `10.0.2.2`, a private address the address guard refuses):
+  `StorytelEndpoints.debugBase: String?` in main code, `null` unless the debug feed's `config.json` sets
+  `"storytel_base": "http://10.0.2.2:8730"`. Exactly four readers, all of that one field: (a) the login and API
+  endpoints point at it; (b) `StorytelAccount` builds `OkHttpStorytelHttp` over `MediaCache`'s LAN client instead of the
+  guarded one; (c) Storytel downloads use `publicOnly = false`; (d) §5.1's minted-URL check accepts a private literal.
+  `SourceScanTest` pins that only `src/debug` assigns it and that nothing else reads it; a release build has no feed
+  (`checkReleaseHasNoDebugFeed`), so it stays `null` there.
+- `storytel.json` `{"email", "password"}` seeds a login (generation 1) for a run without a launcher - **fake values
+  only** (`login_request.json`'s `k@example.invalid` / `hemmelig`), and the receiver deletes the file once read (it sits
+  on shared external storage; QA L13). The library and the listing come from `server/testdata/` (the snapshot's Storytel
+  entry, §8 step 2b) or by hand, as §6f.
 - `music.yml` watches `scripts/fake-storytel.py` and runs its `--selftest` after the build.
 
 ## 5. Storytel on Sonos (1b's renderer axis)
@@ -443,13 +519,26 @@ compares `pwd` with the fixture's hex):
   item.art when http, durationS = the listing's)` - the shelf's length rides along, since a speaker reads 0:00 for an
   extension-less signed URL (vibb 9).
 - `SonosController.playIndex`'s actor job resolves the mint **inside the job, right before** `transport.play` (vibb:
-  "milliseconds before the SOAP /play"): `StorytelMinter.mint(cid, MINT_BUDGET_MS)` (the account's, asset 6 s - vibb's
-  Sonos timeout - and the whole mint, a login included, within `MINT_BUDGET_MS = 10_000`); a `Url` that passes
-  `safeUrl` and isn't a private literal becomes `body.copy(uri = url, mint = null)`; anything else fails the job with
+  "milliseconds before the SOAP /play"): `StorytelMinter.mint(cid, 6_000, elapsed + MINT_BUDGET_MS)` - the account's
+  one signature (§4.2): the asset call 6 s (vibb's Sonos timeout), the whole mint, the login and the login `Mutex`'s
+  wait included, within `MINT_BUDGET_MS = 10_000`; a `Url` that passes `safeUrl` and isn't a private literal (unless the
+  debug switch, §4.6 (d)) becomes `body.copy(uri = url, mint = null)`; anything else fails the job with
   `StorytelUnavailable(code)`, which is 1b's failed play (a first start is Lost: "Kan ikke spilles på Sonos", the phone,
   paused; a step or an advance is dropped). **One mint per play** (vibb 5: two mints meant a second failure after the
   speaker played); **never an exception out of the actor** (vibb 4).
-- `PlaybackService.HANDOFF_MS` 15 s -> 25 s: a hand-off can now queue behind a play that mints.
+- **The play is gated again after the mint** (QA M6): the mint adds up to 10 s between `playIndex`'s `mayPlay()` (on
+  main) and the SOAP, during which a newer play, a release or a suspension can arrive. The job carries a thread-safe
+  token - the generation it was queued at (an `AtomicLong` the controller bumps with `gen`), the renderer's `closed`
+  (`@Volatile`, set by `abandon`/`close`/`release`) and the `mayPlay` lambda (`playAllowed(suspendedNow())`, safe off
+  main) - and checks it **before the mint** (a superseded job doesn't mint at all) and **again after the mint, before
+  `SetAVTransportURI`**; a failed check ends the job as superseded (no SOAP, no failed-play path). So a step during a
+  mint gives one `SetAVTransportURI`, and a play queued before a suspension or `onDestroy` never sounds after it (the
+  actor's drain, `SonosActor.DRAIN_MS` 30 s, outlasts the standalone suspension's 5 s wait for the tail; the token
+  makes the drained job a no-op). `DRAIN_MS` 30 s still covers a mint (10 s) plus a hushed play with its settled seek
+  (~10 s), so it stays.
+- `PlaybackService.HANDOFF_MS` 15 s -> 25 s: a hand-off can now queue behind a play that mints. On the service path that
+  is longer than the suspension receiver's `goAsync` budget (`SUSPEND_BUDGET_MS` 9 s, `MusicApp.kt`): the receiver
+  finishes, the service's `suspendStop` runs on in its own scope (1b), and the token above keeps a queued play silent.
 
 ### 5.2 Re-minting: exactly vibb's
 A URL is minted for every play the controller sends - a start, a full start from the tile, play on a STOPPED or
@@ -461,14 +550,18 @@ or lost, and the kid's next play starts from the bookmark with a fresh URL (vibb
 
 ### 5.3 What is persisted, and adopt (`RendererChoice`, `SonosLifecycle.kt`, `SonosTransport.kt`, `SonosSuspension.kt`)
 - `renderer.json`'s `uri` for a Storytel play is the marker **`storytel:book:<cid>`**, never the signed URL (vibb keeps
-  signed URLs out of its state files: `entries_for`'s docstring): `storedUri(entry, item, builtUri)` (`logic/Storytel.kt`)
-  goes to `host.played`. `Playing.uri` and the session's `uri` (memory) keep the minted URL, so a live session is ours by
-  `normUri` equality as in 1b (vibb's sidecar).
+  signed URLs out of its state files: `entries_for`'s docstring). **Every write of `RendererChoice.uri` goes through
+  `storedUri(entry, item, uri)`** (`logic/Storytel.kt`; QA M1): `host.played` (`SonosRenderer.kt:92-94`) and
+  `lookAtRoom`'s rewrite after an adopt (`PlaybackService.kt:1224`, which today copies the live uri in - and on its
+  no-stored-uri branch, `:1210`, already would); `followed` keeps the stored uri (fine). `GuardsTest` pins that no other
+  line constructs or copies a `RendererChoice` with a `uri`; `SonosLifecycleTest` checks renderer.json still holds
+  `storytel:book:<cid>` after a Storytel adopt. `Playing.uri` and the session's `uri` (memory) keep the minted URL, so a
+  live session is ours by `normUri` equality as in 1b (vibb's sidecar).
 - Every reading of the stored room compares through **`sameStream(stored, live)`**: a marker matches when the live
-  TrackURI's `consumableId` query parameter (parsed, exact - never a substring: the token can hold another book's digits,
-  vibb 7/14) is the marker's cid; anything else is 1b's `normUri` equality. Users: `roomVerdict`/`ourLiveSession`,
-  `adoptIndex` (a Storytel queue item whose key is the `consumableId`), the standalone suspension, the look before a
-  play (`lookAgainBeforePlaying`), the room scope's leave.
+  TrackURI's `consumableId` query parameter (parsed, exact - never a substring: the token can hold another book's
+  digits, vibb 7/14) is the marker's cid; anything else is 1b's `normUri` equality. Users:
+  `roomVerdict`/`ourLiveSession`, `adoptIndex` (a Storytel queue item whose key is the `consumableId`), the standalone
+  suspension, the look before a play (`lookAgainBeforePlaying`), the room scope's leave.
 - **Adopt takes the session uri from the live TrackURI** (vibb posts `snap.uri` to `/adopt`), so the polls after an
   adopt are ours by `normUri`; for NRK/RSS nothing changes (the two are equal). A live URI without `consumableId` is not
   ours: nothing is adopted, the phone, paused (1b). [device check: Storytel's Location carries it]
@@ -480,7 +573,7 @@ For a Storytel session the duration comes first from the queue item named by the
 (same uri only, a falsy speaker value never erases one). Adopt restores the length the same way (vibb 13). A listing
 duration never decides "done" (1b, vibb 19).
 
-### 5.5 Art (`M/data/MusicDb.kt`, `PlayItem`, `Sync.applyListing`)
+### 5.5 Art (`M/data/MusicDb.kt`, `PlayItem`, `Sync.applyListing`; step 4a)
 Room's `items` gains `art` (nullable): `@Database(version = 2, autoMigrations = [AutoMigration(from = 1, to = 2)])`,
 `app/schemas/me.vibb.music.data.MusicDb/2.json` exported - never a destructive migration (positions live in Room).
 `applyListing` stores the listing's `art`; `PlayItem.art`; `PlayBodies.build` sends `item.art` when http **for every
@@ -488,11 +581,24 @@ source** (vibb `_sonos_body`: `art_url or art`; 1b choice 7 passed null only for
 screens keep the entry cover (phase 1).
 
 ### 5.6 Visibility on a room, and coming home (`PlaybackService`)
-`load(kind)` returns `store.snapshot().forRenderer(kind == SONOS)`, and `queueFor`/`activeFor`/`playEntry`/`playItem`/
-`restore`/`toRoom` read it: on a room every Storytel book is in the queue (vibb `PREFER_REMOTE`, set by the play path
-itself, 1687; 26a §9's "renderer passed explicitly"). **Room -> phone** (1b §4.6) with the current book not on the phone:
-the hand-off and its bookmark as 1b, then the phone **paused**, no queue started, "Ikke lastet ned - trenger Wi-Fi"
-(`NOT_DOWNLOADED`) - not another book from 0 (§9).
+`load(kind)` returns `store.snapshot().forRenderer(kind == SONOS)` (vibb `PREFER_REMOTE`, set by the play path itself,
+1687; 26a §9's "renderer passed explicitly"). **Every call site, with the renderer it passes** (QA H2):
+
+| Call site | Snapshot | Why |
+|---|---|---|
+| `playEntry`, `playItem`, `restore`, `resumeLast`, `restoreThen` | `renderer.kind` | the queue for whoever plays now |
+| `queueFor` / `activeFor` | the `kind` they are given | as today, never re-read from the renderer |
+| `lookAtRoom` and `adoptedQueue` (adopt at start) | `true` | the stored room is a room: an undownloaded book playing there must be found, or `lookAtRoom` sends `stopUnadopted()` and stops the kid's book |
+| `toRoom` (phone -> room) | `true` | for a Storytel entry it **re-plans over the entry's remote order** (`homePlan`-like: the current item first, at its position), never `a0.items`; other entries keep 1b's `a0.items` plan (their local and remote visibility are the same, and a shuffled queue keeps its order) (the local queue holds only the downloaded books, so the room would skip the others and end early, where 1b's natural end clears the partial positions) |
+| `comeHome`'s `homePlan` (room -> phone) | `false` | it is the phone |
+| `SonosSuspension.entryMatcher` / `bookmark` (standalone) | `true` | the stored room |
+| `leaveDisallowedRoom`, `lost` | `false` for the queue the phone takes | it comes home |
+| the UI (`MusicViewModel`) | the shown output is a Sonos room | |
+
+**Room -> phone** (1b §4.6) with the current book not on the phone: the hand-off and its bookmark as 1b, then the phone
+**paused**, no queue started, "Ikke lastet ned - trenger Wi-Fi" (`NOT_DOWNLOADED`) - not another book from 0 (§9).
+Tests: a Storytel adopt of an undownloaded book keeps playing (no Stop); phone -> room with books 1 and 3 of five
+downloaded puts all five on the room, at the current book and place.
 
 ### 5.7 Logs
 Every Sonos log line that prints a uri goes through `redactUri` (scheme, host and path; the query - the token - cut):
@@ -502,13 +608,17 @@ the session's "not-ours?" line today (`SonosSession.kt:327`).
 
 1. **Secrets** (§0): `SourceScanTest` pins that `Authorization`/`Bearer` appear only in `M/storytel/StorytelApi.kt`; the
    asset client sets `followRedirects(false)` and `followSslRedirects(false)`; no log call in `M/storytel/` or `M/sync/`
-   interpolates `password`, `email`, `jwt`, `bearer`, `token`, `location` or a minted url; `fallbackToDestructiveMigration`
-   appears nowhere.
+   interpolates `password`, `email`, `jwt`, `bearer`, `token`, `location` or a minted url;
+   `fallbackToDestructiveMigration` appears nowhere.
 2. **Network.** Storytel's API and CDN through the public-only client; downloads Wi-Fi-only unless the parent's switch
-   (phase 1). The launcher's `KidVpnService` filters DNS: `www.storytel.com`, `api.storytel.net` and the CDN host must not
-   be on a blocklist the family uses. [device check]
+   (phase 1). The launcher's `KidVpnService` filters DNS: `www.storytel.com`, `api.storytel.net` and the CDN host must
+   not be on a blocklist the family uses. [device check]
 3. **Background.** Downloads stay WorkManager jobs (21 QA #1: never a dataSync FGS); a long book spans several jobs and
-   resumes in each (§4.3). Logins and mints never run on the main thread.
+   resumes in each (§4.3). Logins and mints never run on the main thread. A job runs at most 10 minutes; with the screen
+   off only in Doze's maintenance windows, and under App Standby's job quotas if the app falls to the rare or restricted
+   bucket (the launcher has seen WorkManager not fire overnight, `launcher/CLAUDE.md`). Whether a multi-GB series gets
+   onto the phone in a reasonable time is measured, not assumed: the device check "Downloads under Doze" (QA M9). If it
+   stalls, that is a user decision (downloads only while charging, or design 19b's battery exemption for the music app).
 4. **Storage.** The 1.5 GB floor and storage-not-low. A 20-book series is several GB: the parent's "first N" is the
    lever (vibb's choice set).
 5. **Kiosk.** Nothing opens: no Storytel app, no links, no web views (`SourceScanTest`, phase 1).
@@ -586,86 +696,131 @@ book, a geo-flagged book and a numeric `model.id`, with `items` keys deliberatel
 
 New (no vibb counterpart, from this design):
 - Rust: `storytel::tests::no_secret_in_errors` (a failing login over a loopback server: the `FetchError` text holds
-  neither the email nor `pwd=`), `music_net` existing tests green with `without_url`, `music::tests::library_gates_storytel`
-  (switch off / no login / both on; the revision triggers), `device_listing`/`cover_in_library` 404 for a gated phone,
-  `music_sweep` tests (the list: reading order, `url` null, art, a book leaving the shelf leaves the list, `not_on_shelf`
-  keeps the last good list, `login_refused` inside the cooldown sends nothing, a cover fetched, `flag_reports` ignores
-  Storytel), `music_import::tests` (a Storytel entry imported, a bad target skipped), the sanitizer (`no_audio`,
-  `login`), `music_library_snapshot` with a Storytel entry.
+  neither the email nor `pwd=`), `music_net` existing tests green with `without_url`,
+  `music::tests::library_gates_storytel` (switch off / no login / both on; the revision triggers),
+  `device_listing`/`cover_in_library` 404 for a gated phone, `music_sweep` tests (the list: reading order, `url` null,
+  art, a book leaving the shelf leaves the list, `not_on_shelf` keeps the last good list, `login_refused` inside the
+  cooldown sends nothing, a cover fetched, `flag_reports` ignores Storytel), `music_import::tests` (a Storytel entry
+  imported, a bad target skipped), the sanitizer (`no_audio`, `login`), `music_library_snapshot` with a Storytel entry.
 - Kotlin: `StorytelApiTest` (the login URL exactly `...login.action?m=1&uid=k%40example.invalid&pwd=AC6C...`; the JWT
   kept 1 h, re-login after, per generation; `NoJwt` without cooldown; a relative or missing Location = `NoAudio`; the
   deadline), `StorytelRulesTest` (`sameStream`, `storedUri`, `redactUri`, `sourceId`, retry classes),
   `StorytelDownloadTest` (the plan and `fetchOne`'s decisions with a fake minter and a fake fetch: `NotConfigured` stops
-  Storytel without item errors, the report says `none`/`refused` and `waiting: login`), `ReportTest` (`storytel` values),
-  `LibraryViewTest` (`Kind.AUDIOBOOK`, "del N av M"), `ContractFilesTest` (the snapshot's Storytel entry parses),
-  `SonosLifecycleTest` (`roomVerdict` and the standalone suspension with a marker; adopt sets the session uri from the
-  live one), `SonosSessionTest` (the not-ours log redacted), `GuardsTest` (a Storytel copy plays `copyOnly`; the mint only
-  inside the actor job), `SourceScanTest` (§6.1; the debug base assigned only in `src/debug`; the strings in nb), a
-  schema test (`app/schemas/.../1.json` -> `2.json` differ only by the nullable `items.art`; the database declares the
+  Storytel without item errors, the report says `none`/`refused` and `waiting: login`), `ReportTest` (`storytel`
+  values), `LibraryViewTest` (`Kind.AUDIOBOOK`, "del N av M"), `ContractFilesTest` (the snapshot's Storytel entry
+  parses), `SonosLifecycleTest` (`roomVerdict` and the standalone suspension with a marker; adopt sets the session uri
+  from the live one; renderer.json keeps the marker after a Storytel adopt, M1), `SonosSessionTest` (the not-ours log
+  redacted), `GuardsTest` (a Storytel copy plays `copyOnly`; the mint only inside the actor job; every
+  `RendererChoice.uri` write through `storedUri`, M1), `SourceScanTest` (§6.1; the debug base assigned only in
+  `src/debug` and read only by §4.6's four readers, M2; the redacted `toString`s, L9; the strings in nb), a schema test
+  (`app/schemas/.../1.json` -> `2.json` differ only by the nullable `items.art`; the database declares the
   auto-migration).
+- After QA (2026-10-12): the service's adopt keeps an undownloaded Storytel book playing (no Stop) and phone -> room
+  puts all five books of a series with books 1 and 3 downloaded on the room (H2, a `GuardsTest` pin on each call site's
+  `forRenderer` plus `RendererGate`-style behavioural tests where the service's pure plan helpers allow);
+  `SonosControllerTest`: a step during a mint sends one `SetAVTransportURI`, a suspension (or `release`) during a mint
+  sends no `Play`, a superseded job never mints (M6); `StorytelApiTest`/`StorytelDownloadTest`: no JWT and an
+  unreachable login stop Storytel for the run with no item error, each asset status maps to its class, the `http_416`
+  retry mints again (M7, L7); `ReportTest`: `storytelWaiting` gives `login`, `storage` between 0.5 and 1.5 GB, else the
+  shared rule (M4); `LibraryViewTest`: "del 3 av 5" with books 1 and 3 downloaded, a bookmark on an undownloaded book is
+  started (M5); `StorytelHttpTest`: the `User-Agent` on every request (L8); Rust: `seriesInfo.id` as a number and as a
+  string, `""` and `0` as no series, a duplicate consumable id kept once (L1), the anchor from `keep_end` (L2), Add with
+  two targets (L3), the probe's 45 s bound and `storytel_key` (L4), Check now reads a fresh shelf (L5), `schedule`,
+  `check_now`, `SweepView::card`, `/music/cards` and `save_offline` take Storytel (M3).
 
 ## 8. Steps (each one implementer, one sitting, its tests, the suites green; branch `music-2-storytel`)
 
 Suites: server `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets`; music `./gradlew assembleDebug
 assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`; launcher `./gradlew assembleDebug
-testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` reads `server/testdata/music_library.json`).
-No launcher code changes in phase 2.
+testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` reads
+`server/testdata/music_library.json`). No launcher code changes in phase 2.
 
-1. **Music core, Android-free** (no visible change). Files: `M/storytel/StorytelApi.kt`, `M/storytel/StorytelHttp.kt`,
-   `M/logic/Storytel.kt` (grammar, fetchable, the Storytel keep set and download order, `sourceId`, retry classes,
-   `storytelRoom`, `consumableIdOf`, `sameStream`, `storedUri`, `redactUri`, `durationByConsumableId`), `M/model/Library.kt`
-   (`Source.STORYTEL`), `M/logic/PlayOrder.kt`, `M/logic/LibraryView.kt` + `M/ui/*` words (`Kind.AUDIOBOOK`; strings en/nb),
+1. **Music core, Android-free** (no visible change). Files: `M/storytel/StorytelApi.kt` (with `Mint`'s classes, M7),
+   `M/storytel/StorytelHttp.kt` (the client and the User-Agent as parameters), `M/storytel/StorytelEndpoints.kt` (the
+   real hosts; `debugBase` declared, unread until step 3), `M/logic/Storytel.kt` (grammar, fetchable, the Storytel keep
+   set and download order, `sourceId`, retry classes, `storytelRoom`, `storytelWaiting`, `consumableIdOf`,
+   `sameStream`, `storedUri`, `redactUri`, `durationByConsumableId`), `M/model/Library.kt` (`Source.STORYTEL`),
+   `M/logic/PlayOrder.kt`, `M/logic/LibraryView.kt` + `M/ui/LibraryScreen.kt`, `PlayerScreen.kt`, `ListScreens.kt` words
+   (`Kind.AUDIOBOOK`; strings in `values` and `values-nb`), `M/bridge/StorytelLogin.kt` (the redacted `toString`, L9),
    the fixtures in `src/test/resources/storytel/`. `DownloadPlan` is **not** wired yet (it keeps `url != null`, so no
    Storytel book is fetched and every Storytel item stays hidden). Tests: `StorytelApiTest`, `StorytelHttpTest`,
-   `StorytelRulesTest`, `LibraryViewTest`, `SourceScanTest` (strings). Acceptance: the music suite green; a library
-   with a Storytel entry parses and shows nothing. Owed: none.
+   `StorytelRulesTest`, `LibraryViewTest`, `SourceScanTest` (strings, `toString`s). Acceptance: the music suite green; a
+   library with a Storytel entry parses and shows nothing. Owed: none.
 2. **a. Server: the client, the login, the picker.** Files: `S/storytel.rs`, `S/music_net.rs` (§2.2, `without_url`),
-   `S/main.rs` (`AppState.storytel`, the routes `GET /music/storytel`, `POST /music/storytel/add`), `S/handlers/music.rs`
-   (the probe, clear, the card, the picker, add, the entry page's choices, cache 0 -> -1), `templates/music.html`,
-   `music_storytel.html`, `music_entry.html`, `migrations/0066_music_storytel.sql`, `Cargo.toml` (`aes = "0.9"`),
-   `server/testdata/storytel/`, `S/tests/music_storytel.rs` (+ `tests/mod.rs`, `CannedFetch`'s request record). The
-   library still leaves Storytel out. Acceptance: the server suite green; the PWA pages at 360 px (no horizontal scroll,
-   a 400 by its field, no jump). Owed [device check]: the real login saved (accepted, "N series"), a wrong password
-   refused with the old one kept, the picker on the real shelf (kids filter), a series and a standalone book added.
-   **b. Server: the listing, the library, the contract, the import.** Files: `S/music.rs` (`Link::Storytel`,
-   `entry_link`, `LIBRARY_ENTRIES` and the two other gates, `kind_label`, the codes, the texts), `S/music_sweep.rs`
-   (the Storytel check, `flag_reports`), `S/music_import.rs`, `partials/music_card.html`, the device card;
-   `server/testdata/music_library.json` regenerated (`MUSIC_LIBRARY_SNAPSHOT_WRITE=1`) with a Storytel entry and copied
-   byte-identically to `music/app/src/test/resources/`, `ContractFilesTest` extended, and the launcher's
-   `MusicPlanTest` (it reads the server's copy: the Storytel entry's listing version now passes through `libraryHead`,
-   which is the proof that the courier carries Storytel listings, and the cover count) - **one commit** (root
-   CLAUDE.md). Acceptance: the server, music and launcher suites green. Owed [device check]: the sweep lists a real
-   series (Check now); a book added to the series in Storytel's app shows on the next check.
+   `S/main.rs` (`AppState.storytel`, the routes `GET /music/storytel`, `POST /music/storytel/add`, the tracing filter's
+   `reqwest=info` floor, L10), `S/handlers/music.rs` (the probe with its 45 s bound, clear, the card, the picker, add
+   with a `Vec` form, the entry page's choices, cache 0 -> -1), `templates/music.html`, `music_storytel.html`,
+   `music_entry.html`, `migrations/0066_music_storytel.sql`, `Cargo.toml` (`aes = "0.9"`), `server/testdata/storytel/`,
+   `S/tests/music_storytel.rs` (+ `tests/mod.rs`, `CannedFetch`'s request record). The library, the sweep and the cards
+   still leave Storytel out. Acceptance: the server suite green; the PWA pages at 360 px (no horizontal scroll, a 400 by
+   its field, no jump). Owed [device check]: the real login saved (accepted, "N series"), a wrong password refused with
+   the old one kept, the picker on the real shelf (kids filter), a series and a standalone book added.
+   **b. Server: the listing, the library, the cards, the contract, the import.** Files: `S/music.rs` (`Link::Storytel`,
+   `entry_link`, `LIBRARY_ENTRIES`' `IN` and its gate, `cover_in_library`, `kind_label`, `item_error_code`, the waiting
+   values, the texts), `S/music_sweep.rs` (`schedule`'s SQL, `check_entry`, the Storytel check with `keep_end = 'first'` and Check
+   now's fresh shelf, `device_listing`, `flag_reports`), `S/music_import.rs`, `S/handlers/music.rs` (`SweepView::card`,
+   `check_now`, `cards`, `save_offline`, the device card's Storytel lines; M3), `templates/partials/music_card.html`,
+   `templates/device_detail.html` (the Storytel lines, the mobile-data help text, L14). **The shared-contract commit**:
+   `server/testdata/music_library.json` regenerated (`MUSIC_LIBRARY_SNAPSHOT_WRITE=1`) with a Storytel entry (resume on,
+   cache -1, so the string replacements below still hit only what they meant) and copied byte-identically to
+   `music/app/src/test/resources/`, with the tests that read it: the server's `music_library_snapshot`, music's
+   `ContractFilesTest` (the Storytel entry parses; `entryIds` and the entry count now four), `OfflineTest` ("an entry
+   the app can't read keeps its copies", a `"cache": 3` replacement) and `BookmarksTest` (6, `"resume"` replacements)
+   re-checked against the new file (L12), and the launcher's `MusicPlanTest` (the Storytel entry's listing version
+   passes through `libraryHead` - the proof that the courier carries Storytel listings - and the cover count) - **one
+   commit** (root CLAUDE.md). Acceptance: the server, music and launcher suites green; Check now on a Storytel card
+   lists the series (CannedFetch). Owed [device check]: the sweep lists a real series (Check now); a book added to the
+   series in Storytel's app shows on the next Check now.
 3. **Music: the account, downloads, local playback, the report, the fake.** Files: `M/storytel/StorytelAccount.kt`,
-   `M/sync/{DownloadPlan,Downloads,Sync}.kt`, `M/media/{MediaCache,ItemMediaSourceFactory}.kt`, `M/data/Snapshot.kt`
-   (`forRenderer`; the service and the UI pass `false` for now), `M/playback/PlaybackService.kt` (`mediaItem`),
-   `M/logic/Report.kt`, `src/debug/.../DebugFeedReceiver.kt` (`storytel_base`, `storytel.json`),
-   `scripts/fake-storytel.py`, `.github/workflows/music.yml`, `docs/testing/emulator.md` §6h. Tests:
-   `StorytelDownloadTest`, `OfflineTest`, `NewItemsTest`, `ReportTest`, `GuardsTest`, `SourceScanTest`. Acceptance: the
-   music suite green, `python3 -I scripts/fake-storytel.py --selftest` OK. Emulator (§6h): a 3-book series downloads in
-   reading order with the bookmark's book first; `--drop-at 40 --token-ttl 30`: the book resumes with Range against a
-   fresh token (the fake's log), the bytes complete; `--locked 222`: `no_audio` for it, the others download;
-   `--refuse`: `storytel: refused`, one login in an hour; airplane mode: the downloaded books play, the others are
-   hidden; the switch off in the library (a hand-edited library without the entry): the books deleted; logcat holds no
-   `FAKE-JWT`, `pwd=`, `token=` or the email. Owed [device check]: §"Device checks" download items.
-4. **Music: Storytel on Sonos.** Files: `M/sonos/{PlayBody,SonosController,SonosRenderer,SonosLifecycle,SonosTransport,
-   SonosSuspension,SonosSession}.kt`, `M/playback/PlaybackService.kt` (`load(kind)` with `forRenderer`, coming home with a
-   book not on the phone, `HANDOFF_MS`), `M/ui/MusicViewModel.kt`/`MusicRoot.kt` (the remote snapshot on a room),
-   `M/data/MusicDb.kt` (`items.art`, the auto-migration, `app/schemas/.../2.json`), `M/model/PlayItem.kt`,
-   `M/sync/Sync.kt` (`art`). Tests: `PlayBodyTest`, `SonosControllerTest`, `SonosLifecycleTest`, `SonosSessionTest`,
-   `StorytelRulesTest`, `GuardsTest`, the schema test. Acceptance: the music suite green, both fakes' selftests OK.
-   Emulator (§6g + §6h together): a book not downloaded plays on Stua (one mint in the fake's log, the DIDL's duration
-   and art), next/previous mint again, pause/resume doesn't, a stopped Stua plays from the bookmark with a new mint, the
-   app killed and restarted while Stua plays (adopt by `consumableId`, no transport command, the right book), room ->
-   phone with that book not downloaded (paused, "Ikke lastet ned"), `renderer.json` holds `storytel:book:<cid>`; an
-   upgrade from a step-3 build keeps every position (the migration). Owed [device check]: the Sonos items below.
+   `M/storytel/StorytelEndpoints.kt` (the four readers of `debugBase`, M2), `M/logic/Offline.kt` (`KeepItem.fetchable`,
+   the Storytel keep set wired), `M/sync/{DownloadPlan,Downloads,Sync}.kt` (the plan, `fetchOne`'s classes, the re-mint
+   on 416, the news eligibility, `storytelWaiting` in `writeReport`), `M/media/{MediaCache,ItemMediaSourceFactory}.kt`
+   (`copyOnly`), `M/data/Snapshot.kt` (`forRenderer`; the service and the UI pass `false` until step 4b),
+   `M/playback/PlaybackService.kt` (`mediaItem`), `M/ui/UiModel.kt` + `M/logic/LibraryView.kt` (the series' reading
+   order for "del N av M" and the line, M5), `M/logic/Report.kt`, `src/debug/.../DebugFeedReceiver.kt` (`storytel_base`,
+   `storytel.json` read then deleted), `scripts/fake-storytel.py`, `.github/workflows/music.yml`,
+   `docs/testing/emulator.md` §6h. Tests: `StorytelDownloadTest`, `OfflineTest`, `NewItemsTest`, `ReportTest`,
+   `LibraryViewTest`, `GuardsTest`, `SourceScanTest`. Acceptance: the music suite green, `python3 -I
+   scripts/fake-storytel.py --selftest` OK. Emulator (§6h): a 3-book series downloads in reading order with the
+   bookmark's book first; `--drop-at 40 --token-ttl 30`: the book resumes with Range against a fresh token (the fake's
+   log), the bytes complete; `--locked 222`: `no_audio` for it, the others download; `--refuse`: `storytel: refused`,
+   `waiting: login`, one login in an hour; airplane mode: the downloaded books play, the others are hidden, the tile
+   still says "del N av 3"; the switch off in the library (a hand-edited library without the entry): the books deleted;
+   logcat and the cache index (`no_backup/media/*.exo` metadata) hold no `FAKE-JWT`, `pwd=`, `token=` or the email.
+   Owed [device check]: §"Device checks" download items, "Downloads under Doze".
+4. **a. Music: item art in Room** (QA M8; independent of Storytel). Files: `M/data/MusicDb.kt` (`items.art`, version 2,
+   `@AutoMigration(from = 1, to = 2)`), `app/schemas/me.vibb.music.data.MusicDb/2.json`, `M/model/PlayItem.kt`,
+   `M/data/Snapshot.kt` (the art into `PlayItem`), `M/sync/Sync.kt` (`applyListing` stores it), `M/sonos/PlayBody.kt`
+   and `SonosController.kt` (`item.art` when http, for every source). Tests: the schema test, `PlayBodyTest`, a
+   `SourceScanTest` pin (no destructive migration). Acceptance: the music suite green. Emulator: an upgrade from a
+   step-3 build keeps every position and bookmark; an RSS episode on Stua shows its art in the fake's DIDL. Owed: none.
+   **b. Music: Storytel on Sonos.** Files: `M/sonos/{PlayBody,SonosController,SonosRenderer,SonosLifecycle,
+   SonosTransport,SonosSuspension,SonosSession}.kt` (the mint body, the job's token, `sameStream`, adopt's live uri,
+   `storedUri` on every write, the duration lookup, the redacted log), `M/storytel/StorytelAccount.kt` (the minter the
+   controller gets), `M/playback/PlaybackService.kt` (§5.6's call sites, `toRoom`'s re-plan, `lookAtRoom`'s write,
+   coming home with a book not on the phone, `HANDOFF_MS`), `M/ui/MusicViewModel.kt`/`MusicRoot.kt` (the remote
+   snapshot on a room). Tests: `PlayBodyTest`, `SonosControllerTest`, `SonosLifecycleTest`, `SonosSessionTest`,
+   `StorytelRulesTest`, `GuardsTest`. Acceptance: the music suite green, both fakes' selftests OK. Emulator (§6g + §6h
+   together): a book not downloaded plays on Stua (one mint in the fake's log, the DIDL's duration and art),
+   next/previous mint again, pause/resume doesn't, a step mashed during a slow mint (`--slow-mint 5`) sends one
+   `SetAVTransportURI`, a stopped Stua plays from the bookmark with a new mint, phone -> Stua with books 1 and 3 of five
+   downloaded queues all five, the app killed and restarted while Stua plays an undownloaded book (adopted by
+   `consumableId`, no transport command, the right book, no Stop), room -> phone with that book not downloaded (paused,
+   "Ikke lastet ned"), `renderer.json` holds `storytel:book:<cid>` after the play and after the adopt. Owed [device
+   check]: the Sonos items below.
 5. **Docs and release.** `music/CLAUDE.md` (the `storytel/` package, download-only, visibility per renderer, the mint
-   rules, the secrets rule, the fake), `server/CLAUDE.md` (the Storytel client, the picker, the listing, the gates,
-   migration 0066), `launcher/CLAUDE.md` (one line: Storytel listings ride the courier unchanged), root `CLAUDE.md`
+   rules and the job's token, the secrets rule, the debug switch, the fake, Storytel over mobile data with the parent's
+   switch), `server/CLAUDE.md` (the Storytel client, the picker, the listing, the gates, migration 0066, the `reqwest`
+   log floor), `launcher/CLAUDE.md` (one line: Storytel listings ride the courier unchanged), root `CLAUDE.md`
    (`scripts/fake-storytel.py`, `music.yml`'s paths), `NOTICE.md` (the ports of `storytel.py`, the Storytel parts of
    `library.py`, `content.py` and `daemon.py`, crediting vibb (MIT, palchrb) and its upstream storytel-player 1.3.0 by
    debba (MIT), with its notice beside `MIT-vibb.txt`), design 21's "Out: Storytel playback (2)" -> points here, design
    26's status, `PLAN.md`. Then the release below.
+
+Shared contracts: only step 2b changes one (the library snapshot, three directories, one commit). No step touches the
+AIDL, `bridge_contract.json`, `music_listing.json`, `music_state.json` or the policy shape. Each step is one sitting:
+1 (pure Kotlin), 2a (one new module plus its PWA), 2b (wiring Storytel through existing paths plus the contract
+commit), 3 (the phone's download path), 4a (one column), 4b (the Sonos wiring) - 4 was split for that (M8).
 
 ## 9. Deviations from vibb (each with its reason)
 
@@ -694,14 +849,19 @@ No launcher code changes in phase 2.
 | (no item errors on the Pi; 21b's codes `http_*`, `bad_media`, `network`) | `no_audio` and `waiting: login` added | the phone's own mint failure and login wait must be visible to the parent |
 | log lines carry what they carry | Storytel logs carry cids and statuses; Sonos logs redact the query | design 20 §5: no credentials or JWT in logs, and a signed URL is a bearer |
 | an honest UA `vibb/1 (+codeberg...)` | the server's and the app's own honest UAs | vibb's rule (never a pinned app version), our names |
+| a book is never deleted on its own: only the whole target at logout or removal (`prune_cache`, `forget_downloads`) | phase 1's keep rule deletes a finished book outside the first N + the bookmarked book + the next | phase 1's keep/prune applies to every entry; with the default "All books" nothing is pruned (QA L11) |
+| the picker adds `order: oldest_first` (`app.js:978`) | `auto` | `auto` is oldest first for Storytel (§3.2) and keeps the parent's order select meaningful; the effect is the same (QA L11) |
+| a missing `model.id` becomes the id `"None"` (`str(None)`, `storytel.py:453`) | the book is skipped (logged) | its asset call could only fail; a `"None"` key would be a book nobody can play (QA L1/L11) |
 
-## 10. Questions for the user (few; each with a recommendation)
+## 10. Questions for the user - decided (main session, 2026-10-12)
 
-1. **Single books out of a series.** vibb's picker adds a series or a standalone book, never one book of a series
-   (`normalize_shelf` has no group for it, so `sync` would say "not on the shelf"); the "first N" setting limits what is
-   downloaded. **Recommended: keep vibb's rule.**
-2. **Storytel Family (a login per phone).** §6.6 designs it; it matters only when two kids listen at the same time.
-   **Recommended: not now** - build it as one server step when the family takes Storytel Family.
+1. **Single books out of a series: no, keep vibb's rule.** vibb's picker adds a series or a standalone book, never one
+   book of a series (`normalize_shelf` has no group for it, so `sync` would say "not on the shelf"); the "first N"
+   setting limits what is downloaded.
+2. **Storytel Family (a login per phone): not now.** §6.6 designs it; it matters only when two kids listen at the same
+   time, and it is one server step when the family takes Storytel Family.
+3. (From QA L14, decided by the main session) **Storytel follows the parent's mobile-data switch** like every other
+   download; the switch's help text says books are large (§2.3, §4.3).
 
 ## 11. Corrections to the brief and the code (found while writing)
 
@@ -710,8 +870,8 @@ No launcher code changes in phase 2.
   and the phone's core is the client, the grammar and the rules (step 1).
 - Design 26 item 4 says the server logs in "with its own stable `deviceId`"; its later "Accounts and sessions" paragraph
   is right: `login.action` takes none, and without the bookmark POST nothing needs one.
-- `music_net::network_error` puts reqwest's error text into `FetchError`, and reqwest prints the URL: harmless for feeds,
-  but the login URL carries the email and `pwd=` (§2.1: `without_url`).
+- `music_net::network_error` puts reqwest's error text into `FetchError`, and reqwest prints the URL: harmless for
+  feeds, but the login URL carries the email and `pwd=` (§2.1: `without_url`).
 - `serde_json::Map` sorts keys in this build (no `preserve_order`): vibb's first-seen group order and each group's cover
   need a document-order read of `items` (§2.1).
 - Phase 1's `fetchOne` drops a partial copy when the row's URL differs (qa-21-step2-code L7); with a URL minted per
@@ -721,8 +881,8 @@ No launcher code changes in phase 2.
   `SonosSession` logs both uris on "not-ours?" (§5.7).
 - 1b's `PlayBodies.build` never gets art (Room has no column, 1b choice 7) though vibb sends it (§5.5).
 - `music_items.state 'ok'` is documented as "it has a URL"; a Storytel book is listed and playable without one (§2.8).
-- Design 20 §5's check "the position shows in Storytel's app" and its §2.5 "the server mints URLs" are void (no mirroring;
-  option A).
+- Design 20 §5's check "the position shows in Storytel's app" and its §2.5 "the server mints URLs" are void (no
+  mirroring; option A).
 - `music_import`'s `Skip::Storytel` ("a later version of the music app") is lifted (§2.6).
 
 ## Device checks (Jelly Star, the family's account; after the step that owes them)
@@ -745,8 +905,16 @@ No launcher code changes in phase 2.
   from 0 on a re-tap.
 - The phone's Storytel switch off: the books and the login go; on again: they come back.
 - **No secrets**: `adb logcat -d | grep -E 'pwd=|eyJ|Bearer |token=|<the email>'` (a real JWT starts `eyJ`) and the
-  same over the server's `journalctl` find nothing after a day of use; `music_state` on the device page holds none of them.
+  same over the server's `journalctl` find nothing after a day of use; `music_state` on the device page holds none of
+  them.
 - The DNS filter on (`KidVpnService`): the login, the mint and the CDN all work.
+- **Downloads under Doze** (QA M9): a 5-book series (several GB) ticked in the evening, the phone left screen off
+  overnight, once on the charger and once off it; `adb shell am get-standby-bucket me.vibb.music` before and after, and
+  `adb shell dumpsys jobscheduler | grep -A5 me.vibb.music` for the jobs' runs and stops. Expected: on the charger the
+  series completes overnight in 10-minute jobs (each resuming its book with a fresh mint); off the charger it advances in
+  maintenance windows, slower but steadily, with the parent's card showing have/want rising. If it stalls (the bucket
+  falls to rare or restricted, or no job runs for hours), the user decides between downloads only while charging and
+  design 19b's battery exemption for the music app.
 - Sonos: a book not downloaded plays in a room (title, cover and progress bar in the Sonos app), next/previous, pause for
   two hours then play (if the speaker fails, one more tap starts from the bookmark), the app killed while a book plays
   (reopen: adopted, the right book and place), the signed Location carries `consumableId` (logcat's redacted line and
@@ -774,10 +942,13 @@ for the gaps below.
 - **H2** §3.2/§5.6: adopt (`lookAtRoom`, `adoptedQueue`) and phone -> room (`toRoom`) read the local snapshot: a restart stops an undownloaded book; the room skips undownloaded books.
 - **M1** §5.3: `lookAtRoom`'s renderer.json write (`PlaybackService.kt:1224`) would store the signed URL once adopt takes the live uri.
 - **M2** §4.6: the fake at 10.0.2.2 is refused by the API client, the downloads and §5.1's private-literal check; specify one debug-only switch.
-- **M3** §2.4/step 2b: Storytel is still filtered out by `schedule`'s SQL, `SweepView::card`, `check_now`, `/music/cards`, `save_offline`, `LIBRARY_ENTRIES`' `IN`.
-- **M4** §2.5/§4.5: `waiting: login` and the 1.5 GB floor never reach the report (`writeReport` has one `waiting` for all entries).
+- **M3** §2.4/step 2b: Storytel is still filtered out by `schedule`'s SQL, `SweepView::card`, `check_now`,
+  `/music/cards`, `save_offline`, `LIBRARY_ENTRIES`' `IN`.
+- **M4** §2.5/§4.5: `waiting: login` and the 1.5 GB floor never reach the report (`writeReport` has one `waiting` for
+  all entries).
 - **M5** §3.5: "del N av M" and the progress line count the downloaded books, not the series.
-- **M6** §5.1: nothing gates a play between the mint and the SOAP (superseded plays, the actor's drain after a suspension).
+- **M6** §5.1: nothing gates a play between the mint and the SOAP (superseded plays, the actor's drain after a
+  suspension).
 - **M7** §4.1/§4.3: no JWT means a login per book; every asset status becomes `no_audio` for a day.
 - **M8** §8: step 4 is too big; split the `items.art` migration out (4a/4b).
 - **M9** §4.3: no device check of download progress for gigabytes under Doze and job quotas.
@@ -795,3 +966,68 @@ for the gaps below.
 - **L12** §8: name the step 2b test churn (string replacements over the library snapshot).
 - **L13** §4.6: the debug feed's plaintext login file: fake values, deleted once read.
 - **L14** §4.3: GB-sized books over mobile data when the parent's switch is on: confirm with the user.
+
+## 13. Decisions after QA review (2026-10-12)
+
+Every finding is taken; where the fix differs from QA's proposal the line says how and why. The main session decided H1,
+M8, M9, L14 and §10's two questions.
+
+- **H1**: §2.8 no longer touches 0051; the note sits in 0066's header comment and `music_sweep::Item`'s doc, and §2.8
+  says applied migrations are never edited (sqlx checksums).
+- **H2**: §5.6 is a table of every call site and the snapshot it passes - adopt (`lookAtRoom`, `adoptedQueue`) and the
+  standalone suspension read `forRenderer(true)`, `toRoom` re-plans over the entry's remote order at the current item
+  and place (never `a0.items`), `comeHome` and the leave read `false`; §3.2 points there; §7 and step 4b carry the two
+  tests.
+- **M1**: §5.3: every write of `RendererChoice.uri` goes through `storedUri` (`host.played` and `lookAtRoom`'s rewrite,
+  both of its branches); a `GuardsTest` pin and a `SonosLifecycleTest` check after an adopt.
+- **M2**: §4.6: one debug-only `StorytelEndpoints.debugBase` with exactly four readers (endpoints, the LAN client for
+  the API, `publicOnly = false` for Storytel downloads, §5.1's private-literal check); `OkHttpStorytelHttp` takes its
+  client; `SourceScanTest` pins the writer (`src/debug` only) and the readers.
+- **M3**: §2.4 lists every NRK/RSS-only filter (`schedule`'s SQL, `check_entry`, `device_listing`, `SweepView::card`,
+  `check_now`, `cards`, `save_offline`), §2.7 adds `'storytel'` to `LIBRARY_ENTRIES`' `IN`, §2.3 gives `save_offline`
+  the Storytel choices; step 2b's files include `handlers/music.rs` and `device_detail.html`, its acceptance "Check now
+  lists the series".
+- **M4**: §4.5: `storytelWaiting` per Storytel entry in `writeReport` (`login` while the account isn't `ok`, `storage`
+  below 1.5 GB, else the shared rule); §3.3 says the floor stops Storytel books only. Difference from QA: an unreachable
+  login (`LoginFailed`) is not reported as `login` - it is a network matter, and the shared rule already says `wifi`
+  when the network is the cause.
+- **M5**: §3.5: for Storytel, "del N av M", `started`, the progress line and the player's "Del N av M" count the
+  series' reading order (`snap.listed`); `LibraryViewTest` rows; done in step 3 (`UiModel.kt`, `LibraryView.kt`).
+- **M6**: §5.1: the play job carries a thread-safe token (generation, `closed`, `mayPlay`) checked before the mint (a
+  superseded job never mints) and after it, before `SetAVTransportURI`; `DRAIN_MS` 30 s rechecked and kept; the
+  receiver's 9 s vs `HANDOFF_MS` 25 s explained. `SonosControllerTest` rows; the fake's `--slow-mint` for the emulator.
+- **M7**: §4.1: `Mint.LoginFailed` (no JWT, login unreachable or past the deadline) stops Storytel for the run like
+  `Refused`, without item errors; asset statuses split into `NoAudio` (3xx without `Location`, 403, 404, 410, 451:
+  permanent) and `Failed` (401 after the re-login, 408, 429, 5xx, other: transient `http_<code>`); §3.3 and §4.3 follow.
+- **M8**: step 4 is split into 4a (`items.art`: Room v2, the schema, `PlayItem`, `applyListing`, art to the speaker for
+  every source) and 4b (Storytel on Sonos).
+- **M9**: the device check "Downloads under Doze" (a 5-book series overnight on and off the charger, the standby bucket
+  and `dumpsys jobscheduler`, the expected outcome, and the user decision if it stalls); §6.3 points to it.
+- **L1**: §2.1: `seriesInfo.id` stringified like `model.id`, Python's falsy rules, `geo` from the abook format, a
+  duplicate consumable id kept once; the missing-id skip is a §9 row.
+- **L2**: §2.4: Storytel listings set `keep_end = 'first'` (the anchor `finish()` and `device_listing` read); no
+  separate flag.
+- **L3**: §2.3: Add reads `Form<Vec<(String, String)>>`.
+- **L4**: §2.3: the probe is bounded at 45 s in all (the gate's wait included) and uses `Account::login_with`;
+  `login_error` holds a code; `KeyUnusable` has its own code `storytel_key` and card text.
+- **L5**: §2.1/§2.4: Check now reads `shelf(0)`; the cache and the JWT run on `tokio::time::Instant`.
+- **L6**: one minter signature, `mint(cid, timeoutMs, deadlineMs)` - downloads `(15 s, +60 s)`, Sonos `(6 s, +10 s)`;
+  the login `Mutex`'s wait counts against the deadline (§4.2, §5.1); §7's "one call with 6 s" matches it.
+- **L7**: §4.3: the `http_416` retry from 0 mints a fresh URL.
+- **L8**: §4.1: `OkHttpStorytelHttp` sets the `User-Agent` itself; `StorytelHttpTest` checks it.
+- **L9**: §0: redacted `toString` on `StorytelLogin.Login`, `StorytelRequest`, `StorytelResponse`, `Mint.Url` (pinned);
+  no derived `Debug` on the server's `StoredLogin` or JWT holder.
+- **L10**: §0: the server floors `reqwest=info` in its tracing filter (`server/CLAUDE.md` says why; not `DEPLOY.md`, the
+  main session's file); Media3's `exo_redir` is named and accepted, and step 3's emulator check greps the cache index.
+- **L11**: §9 gains three rows (a finished book pruned beyond first N + bookmark + next; `auto` for vibb's
+  `oldest_first`; the missing-id skip).
+- **L12**: step 2b names the tests that read the library snapshot (`music_library_snapshot`, `ContractFilesTest`,
+  `OfflineTest`'s and `BookmarksTest`'s string replacements, the launcher's `MusicPlanTest`), and the new entry's
+  values are chosen so those replacements still hit only what they meant.
+- **L13**: §4.6: the debug feed's `storytel.json` holds fake values only and is deleted once read.
+- **L14**: §4.3 and §10: Storytel follows the parent's mobile-data switch (the main session's decision); the switch's
+  help text on the device card says books are often several hundred MB (§2.3, step 2b).
+- **§10**: both questions recorded as decided (single books: no, vibb's rule; Family: not now).
+- **§8 re-checked**: each step's file list is complete for what it changes (M3's handlers and templates, M2's endpoints
+  file, L9's `StorytelLogin.kt`, M5's `UiModel.kt`), the only shared-contract commit is named (2b), and each step is one
+  sitting (4 split).
