@@ -108,25 +108,48 @@ class WallpaperInkTest {
         assertEquals(0xBF1B1B1F.toInt(), InkChoice(INK_DARK, 0.0, false).inkDim)
     }
 
-    /** Design 25, "Lock background": the lock's white ink reaches 4.5:1 on every background. */
+    /** Design 25, "Lock background" (qa-25b-25f M3): every ink the lock draws on the wallpaper
+     * reaches 4.5:1 - white, the dim date, "Foreldrekode" at 75 %, the red emergency link. */
     @Test
-    fun `the lock's scrim gives white 4_5 to 1 on any background, as light as it can`() {
-        fun whiteOn(lum: Double, alpha: Double) = contrastRatio(1.0, underScrim(lum, alpha, towardsWhite = false))
-        for (argb in listOf(0xFFFFFFFF.toInt(), 0xFFFFF3B0.toInt(), 0xFF1C7ED6.toInt(), 0xFF14213D.toInt(), 0xFF0C0C14.toInt(), 0xFF000000.toInt())) {
+    fun `the lock's scrim gives every lock ink 4_5 to 1 on any background`() {
+        fun ground(lum: Double, alpha: Double) = underScrim(lum, ((alpha * 255).toInt()) / 255.0, towardsWhite = false)
+        val backgrounds = listOf(0xFFFFFFFF.toInt(), 0xFFFFF3B0.toInt(), 0xFF1C7ED6.toInt(), 0xFFF76707.toInt(),
+            0xFF862E9C.toInt(), 0xFF14213D.toInt(), 0xFF0C0C14.toInt(), 0xFF000000.toInt())
+        for (argb in backgrounds) {
             val alpha = lockScrimForColours(listOf(argb))
-            assertTrue("%08x: %.2f".format(argb, alpha), whiteOn(relativeLuminance(argb), alpha) >= LABEL_CONTRAST)
             assertTrue(alpha <= LOCK_MAX_SCRIM)
+            for (ink in LOCK_INKS) {
+                val c = inkContrastOn(ink, ground(relativeLuminance(argb), alpha))
+                assertTrue("%08x on %08x at %.2f: %.2f".format(ink, argb, alpha, c), c >= LABEL_CONTRAST)
+            }
         }
-        // Dark grounds need none, white needs the most - and the cap still reaches it.
+        // QA's table: Sky and Sunset gave the emergency link about 2:1 - not any more.
+        for (stops in listOf(listOf(0xFF1C7ED6.toInt(), 0xFF14213D.toInt()), listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt()))) {
+            val alpha = lockScrimForColours(stops)
+            val lightest = stops.maxOf(::relativeLuminance)
+            assertTrue(inkContrastOn(0xFFFF8A8A.toInt(), ground(lightest, alpha)) >= LABEL_CONTRAST)
+        }
+        // Dark grounds need none; the cap reaches every ink even on white.
         assertEquals(0.0, lockScrimForColours(listOf(0xFF0C0C14.toInt())), 1e-9)
-        assertTrue(whiteOn(1.0, LOCK_MAX_SCRIM) >= LABEL_CONTRAST)
-        assertTrue(lockScrimForColours(listOf(0xFFFFFFFF.toInt())) > lockScrimForColours(listOf(0xFF1C7ED6.toInt())))
-        // A gradient is judged on its lightest stop; a photo on its light side, at least the photo minimum.
-        assertEquals(lockScrimForColours(listOf(0xFFF76707.toInt())), lockScrimForColours(listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt())), 1e-9)
-        assertEquals(MIN_IMAGE_SCRIM, lockScrimForImage(LuminanceStats(0.01, 0.0)), 1e-9)
+        for (ink in LOCK_INKS) assertTrue(inkContrastOn(ink, ground(1.0, LOCK_MAX_SCRIM)) >= LABEL_CONTRAST)
+        // A photo: its light side, at least the photo minimum.
+        assertEquals(MIN_IMAGE_SCRIM, lockScrimForImage(LuminanceStats(0.001, 0.0)), 1e-9)
         val busy = LuminanceStats(0.5, 0.3)
-        assertTrue(whiteOn(0.8, lockScrimForImage(busy)) >= LABEL_CONTRAST)
+        for (ink in LOCK_INKS) assertTrue(inkContrastOn(ink, ground(0.8, lockScrimForImage(busy))) >= LABEL_CONTRAST)
         assertEquals(0, blackScrimArgb(0.0))
-        assertEquals(0x99000000.toInt(), blackScrimArgb(0.6))
+        assertEquals(0xCC000000.toInt(), blackScrimArgb(0.8))
+        // An opaque ink's contrast is the plain ratio.
+        assertEquals(contrastRatio(1.0, 0.2), inkContrastOn(0xFFFFFFFF.toInt(), 0.2), 1e-6)
+    }
+
+    /** The inks in [LOCK_INKS] are the lock's colours. */
+    @Test
+    fun `LOCK_INKS are the lock's text colours`() {
+        val colours = listOf("src/main", "app/src/main").map { java.io.File(it, "res/values/colors_kid.xml") }.first { it.exists() }.readText()
+        assertTrue(colours.contains("<color name=\"kid_core_dim\">#C7FBE4DC</color>"))
+        assertTrue(colours.contains("<color name=\"kid_emergency_text\">#FF8A8A</color>"))
+        assertTrue(colours.contains("<color name=\"kid_ink\">#FFFFFF</color>"))
+        val keypad = listOf("src/main", "app/src/main").map { java.io.File(it, "res/layout/activity_pin_lock.xml") }.first { it.exists() }.readText()
+        assertTrue(keypad.substringAfter("@+id/pin_parent_code").substringBefore("/>").contains("android:alpha=\"0.75\""))
     }
 }

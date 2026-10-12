@@ -1053,11 +1053,12 @@ design 08).
   shows it whatever the kid picks for Home.
   - If it is unticked, deleted, not yet downloaded or unreadable, the lock falls back to Home's wallpaper.
   - Only wallpapers the phone may use can be chosen, because the image route only serves a ticked wallpaper.
-- **Legibility:** the lock keeps its light ink (white clock, the dark cards, the keys) on every background.
-  - A black scrim is laid over the wallpaper: the lightest one that gives white text 4.5:1 against the wallpaper's
-    lightest part (`lockScrim`, pure).
-  - Photos always get at least `MIN_IMAGE_SCRIM`, as on Home. The cap is 0.6, which reaches 4.5:1 even on white, so
-    no label shadow is needed.
+- **Legibility:** the lock keeps its light inks (white clock, the dark cards, the keys) on every background.
+  - A black scrim is laid over the wallpaper: the lightest one that gives *every* ink drawn on the wallpaper 4.5:1
+    against its lightest part (`lockScrim`, pure; `LOCK_INKS`). Those inks are white, the dim date and "more" line,
+    "Foreldrekode" at 75 % and the red "Nødsamtale" (qa-25b-25f M3: it was white only).
+  - Photos always get at least `MIN_IMAGE_SCRIM`, as on Home. The cap is 0.8, which reaches 4.5:1 for every ink even
+    on white.
   - The cards (rows, music tile, keys) keep their own opaque backgrounds.
 - **What draws it:** the lock draws the wallpaper itself (`WallpaperRender.GroundDrawable`, the one decoded photo of the
   store or a second one for a separate lock photo). It never shows through to Android's wallpaper: the lock's window
