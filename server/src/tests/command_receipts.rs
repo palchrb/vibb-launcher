@@ -606,3 +606,41 @@ async fn an_answer_counts_only_for_the_command_it_names() {
     assert_eq!(res.status, StatusCode::NO_CONTENT);
     assert!(row(&app, new).await.0.is_some());
 }
+
+/// QA Low 4: the phone reports whether it can wipe itself yet (Android 14 grants the new wipe
+/// policy at the next restart); the Locate page says so while it can't.
+#[tokio::test]
+async fn the_locate_page_says_when_a_wipe_would_be_refused() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let warning = "Remote wipe works after the phone restarts once";
+    for (ready, shown) in [(Some(false), true), (Some(true), false), (None, false)] {
+        let mut report = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
+        if let Some(ready) = ready {
+            report["remote_wipe_ready"] = json!(ready);
+        }
+        let res = app
+            .request(
+                Method::POST,
+                "/api/devices/status",
+                Some(&token),
+                Some(report),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT);
+        let stored: Option<bool> = sqlx::query_scalar(
+            "SELECT remote_wipe_ready FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(device)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(stored, ready);
+        let page = app
+            .get_page(&format!("/devices/locate?device={device}"), &cookie)
+            .await
+            .text();
+        assert_eq!(page.contains(warning), shown, "{ready:?}");
+    }
+}

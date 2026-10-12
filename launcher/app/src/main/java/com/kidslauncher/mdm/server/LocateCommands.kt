@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import android.app.PendingIntent
+import android.app.admin.DeviceAdminInfo
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -385,6 +386,20 @@ object LocateCommands {
             Log.w(LOG_TAG, "Failed to lock device", e)
             false
         }
+    }
+
+    /** [remoteWipeReady] for this phone; `null` when we aren't device owner or it can't be read. */
+    fun remoteWipeReady(context: Context): Boolean? = try {
+        val dpm = context.getSystemService(DevicePolicyManager::class.java)
+        if (dpm == null || !dpm.isDeviceOwnerApp(context.packageName)) {
+            null
+        } else {
+            val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
+            remoteWipeReady(Build.VERSION.SDK_INT, dpm.hasGrantedPolicy(admin, DeviceAdminInfo.USES_POLICY_WIPE_DATA))
+        }
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't read the wipe policy", e)
+        null
     }
 
     /**

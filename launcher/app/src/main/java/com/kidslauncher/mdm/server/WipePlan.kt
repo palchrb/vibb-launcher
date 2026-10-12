@@ -10,6 +10,16 @@ package com.kidslauncher.mdm.server
  * admin that set the restriction wipe anyway.
  */
 
+/**
+ * Whether a remote wipe would work now (QA of the launcher wave, Low 4), for the status report.
+ * On API 35+ a device owner holds `MANAGE_DEVICE_POLICY_WIPE_DATA` (AOSP's DEVICE_OWNER_PERMISSIONS)
+ * whatever its admin declares. On 34, without the policy-engine flag, `wipeDataWithReason` needs
+ * the admin's `<wipe-data />` policy - and a device owner's `DeviceAdminInfo` is parsed at boot, so
+ * after the update that added it, only a restart grants it ([policyGranted] =
+ * `DevicePolicyManager.hasGrantedPolicy(admin, USES_POLICY_WIPE_DATA)`, `null` = unreadable).
+ */
+fun remoteWipeReady(sdkInt: Int, policyGranted: Boolean?): Boolean? = if (sdkInt >= 35) true else policyGranted
+
 /** Which DevicePolicyManager call factory-resets the phone. */
 enum class WipeCall { WIPE_DEVICE, WIPE_DATA }
 

@@ -504,6 +504,10 @@ Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - 
    factory reset (the AVD comes back at the setup wizard) and no "Failed to wipe device" in the log. If a wipe is
    ever refused, the phone keeps running and the Locate page must say "Failed ...: wipe failed, the phone keeps its
    data: <the exception>" - never "Done". Restore the snapshot after each run.
+   On API 34 also the update path (QA of the launcher wave, Low 4): install the build before this wave, make it device
+   owner and enroll, update it in place to this build *without a reboot*: the Locate page says "Remote wipe works after
+   the phone restarts once" (the report's `remote_wipe_ready` is false) and a Wipe comes back "Failed ...
+   SecurityException"; after one restart the warning is gone and the wipe works.
 2. **Command receipts (L12)**: Locate page -> Lock. The Recent commands row goes "Delivered ..., not confirmed yet" ->
    "Done ... (locked ...)" within seconds; `adb logcat -s CommandAnswers MdmSyncWorker` shows no "Couldn't send". A
    wipe (snapshot!) reads "Received ... - the phone is wiping now" before the emulator reboots. A lost answer: on the

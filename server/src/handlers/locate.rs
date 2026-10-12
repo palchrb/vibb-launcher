@@ -43,6 +43,8 @@ struct LocateTemplate {
     last_fix_at_js: String,
     /// Just pressed "Update location now": the page polls for a fresh fix.
     waiting_for_fix: bool,
+    /// The phone's last report said it can't wipe itself yet (QA of the launcher wave, Low 4).
+    wipe_not_ready: bool,
     /// The phone's answer to the newest `locate` command ("fix ±12 m, 3 s old", "location is
     /// off for this device", "no location fix"), once it has answered (QA step 6 #7).
     locate_result: Option<String>,
@@ -181,6 +183,17 @@ async fn render_locate_page(
         .map(|l| describe_fix(&l.captured_at, l.accuracy_meters, chrono::Utc::now()));
     let last_fix_at = newest.map(|l| l.captured_at).unwrap_or_default();
     let locate_result = latest_locate(state, selected_id).await.and_then(|(_, r)| r);
+    let wipe_not_ready = sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT remote_wipe_ready FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(selected_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+        == Some(false);
 
     Html(
         LocateTemplate {
@@ -199,6 +212,7 @@ async fn render_locate_page(
             last_fix_at_js: js_string(&last_fix_at),
             waiting_for_fix,
             locate_result,
+            wipe_not_ready,
         }
         .render()
         .unwrap(),

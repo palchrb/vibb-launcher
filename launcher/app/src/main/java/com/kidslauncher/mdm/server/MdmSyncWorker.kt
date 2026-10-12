@@ -242,6 +242,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 relock = WindowRelock.lastReport(context),
                 unseenBoots = BootWitness.report(context),
                 foreignAccess = ForeignAccess.report(context),
+                remoteWipeReady = LocateCommands.remoteWipeReady(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,

@@ -326,6 +326,9 @@ pub struct DeviceStatus {
     /// A device admin or accessibility service of an app outside the allowlist (design 24b's fix
     /// round), see `window_relock::ForeignAccess`. `None` = nothing found.
     pub foreign_access_json: Option<String>,
+    /// The launcher can wipe the phone remotely now (QA of the launcher wave, Low 4; migration
+    /// 0065). `None` from older launchers or when the phone couldn't tell.
+    pub remote_wipe_ready: Option<bool>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -877,6 +880,11 @@ pub struct StatusReportRequest {
     /// older launchers and when the phone couldn't read it.
     #[serde(default)]
     pub battery_optimization_exempt: Option<bool>,
+    /// QA of the launcher wave, Low 4: the launcher can wipe the phone remotely now - false on
+    /// Android 14 until the phone restarts once after the update that declared the wipe policy.
+    /// Absent from older launchers and when the phone couldn't tell.
+    #[serde(default)]
+    pub remote_wipe_ready: Option<bool>,
     /// Design 24b: the last relock of a parent-PIN window - opaque, stored through the known
     /// fields only (`window_relock::sanitize_relock`).
     #[serde(default)]

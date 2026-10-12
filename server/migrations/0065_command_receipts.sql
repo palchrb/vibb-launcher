@@ -14,3 +14,7 @@ ALTER TABLE device_commands ADD COLUMN succeeded INTEGER;
 UPDATE device_commands SET deliveries = 3, first_delivered_at = delivered_at
  WHERE delivered_at IS NOT NULL;
 UPDATE device_commands SET received_at = acknowledged_at WHERE acknowledged_at IS NOT NULL;
+-- QA of the launcher wave, Low 4: whether the launcher can wipe the phone remotely now. On Android
+-- 14 the device owner's new `<wipe-data />` policy only counts after the phone restarts once. NULL
+-- from older launchers and when the phone couldn't tell.
+ALTER TABLE device_status ADD COLUMN remote_wipe_ready INTEGER;

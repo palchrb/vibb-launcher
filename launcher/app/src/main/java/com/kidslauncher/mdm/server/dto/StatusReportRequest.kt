@@ -71,6 +71,10 @@ data class StatusReportRequest(
     /** Design 24b's fix round (QA High 1): a device admin or accessibility service of an app
      * outside the allowlist - the phone refuses the parent PIN meanwhile; `null` = none (left out). */
     val foreignAccess: ForeignAccessReport? = null,
+    /** QA of the launcher wave, Low 4: whether a remote wipe would work now ([remoteWipeReady]):
+     * on Android 14 the admin's new `<wipe-data />` policy counts only after the phone restarts
+     * once. `null` = not device owner or unreadable (left out). */
+    val remoteWipeReady: Boolean? = null,
 )
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the

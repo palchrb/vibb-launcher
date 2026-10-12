@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -14,6 +15,23 @@ class WipePlanTest {
         assertEquals(WipeCall.WIPE_DEVICE, wipeCall(36))
         assertEquals(WipeCall.WIPE_DEVICE, wipeCall(37))
         assertEquals("before 34 wipeDevice doesn't exist", WipeCall.WIPE_DATA, wipeCall(33))
+    }
+
+    /** QA Low 4: on Android 14 the wipe policy counts after a restart; 35+ needs no policy. */
+    @Test
+    fun `whether a remote wipe would work now`() {
+        assertEquals(false, remoteWipeReady(34, policyGranted = false))
+        assertEquals(true, remoteWipeReady(34, policyGranted = true))
+        assertEquals(null, remoteWipeReady(34, policyGranted = null))
+        assertEquals(true, remoteWipeReady(35, policyGranted = false))
+        assertEquals(true, remoteWipeReady(36, policyGranted = null))
+        val report = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(
+                com.kidslauncher.mdm.server.dto.StatusReportRequest.serializer(),
+                com.kidslauncher.mdm.server.dto.StatusReportRequest(lockReason = "NONE", kioskEngaged = true, remoteWipeReady = false),
+            ),
+        ).jsonObject
+        assertEquals("false", report["remote_wipe_ready"].toString())
     }
 
     @Test
