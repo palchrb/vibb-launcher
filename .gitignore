@@ -13,3 +13,6 @@ smoke-*/
 *.p12
 *.pk8
 *.key
+
+# Python bytecode (scripts/fake-sonos.py run without -B).
+__pycache__/
