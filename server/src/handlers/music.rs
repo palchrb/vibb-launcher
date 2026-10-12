@@ -230,6 +230,11 @@ pub struct StorytelCard {
     pub stale: bool,
     pub phones: i64,
     pub error: Option<String>,
+    /// How the last save went (a session flash): "Saved - Storytel shows 4 series and books".
+    pub notice: Option<String>,
+    /// What Storytel last said about the login (design 26b §2.3), and whether it is bad news.
+    pub status: Option<String>,
+    pub status_error: bool,
 }
 
 pub struct CatalogCard {
@@ -273,6 +278,7 @@ struct Entered {
     /// A refused category save: its id, the values and the error.
     category: Option<(i64, String, String, String, String, &'static str)>,
     storytel_error: Option<String>,
+    storytel_notice: Option<String>,
     import: Option<super::music_import::ImportCard>,
 }
 
@@ -287,12 +293,15 @@ pub async fn show(State(state): State<AppState>, session: tower_sessions::Sessio
         .await
         .ok()
         .flatten();
+    let storytel_notice: Option<String> =
+        session.remove(STORYTEL_NOTICE_FLASH).await.ok().flatten();
     let entered = Entered {
         import: result.map(|result| super::music_import::ImportCard {
             open: true,
             result: Some(result),
             ..Default::default()
         }),
+        storytel_notice,
         ..Default::default()
     };
     render_music(&state, StatusCode::OK, entered).await
@@ -422,8 +431,21 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
         })
         .collect();
 
-    let stored: (Option<Vec<u8>>, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT ciphertext, key_fingerprint, saved_at FROM music_storytel WHERE id = 1",
+    type StoredRow = (
+        Option<Vec<u8>>,
+        Option<String>,
+        Option<String>,
+        i64,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let stored: StoredRow = sqlx::query_as(
+        "SELECT ciphertext, key_fingerprint, saved_at, generation, login_refused_at, \
+         login_refused_generation, login_ok_at, login_error, login_error_at FROM music_storytel \
+         WHERE id = 1",
     )
     .fetch_one(&state.db)
     .await?;
@@ -444,12 +466,29 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
             .music_key
             .as_ref()
             .is_none_or(|key| stored.1.as_deref() != Some(key.fingerprint.as_str()));
+    let (status, status_error) = if stored.0.is_some() && !stale {
+        storytel_status(
+            stored.3,
+            stored.4.as_deref(),
+            stored.5,
+            stored.6.as_deref(),
+            stored.7.as_deref(),
+            stored.8.as_deref(),
+            state.music_sweep.now(),
+        )
+        .map_or((None, false), |(text, bad)| (Some(text), bad))
+    } else {
+        (None, false)
+    };
     let storytel = StorytelCard {
         key_available: state.music_key.is_some(),
         saved_on,
         stale,
         phones: storytel_phones,
         error: entered.storytel_error,
+        notice: entered.storytel_notice,
+        status,
+        status_error,
     };
 
     let catalog = match music_app_row(&state.db).await? {
@@ -999,6 +1038,9 @@ pub async fn delete_category(
 // Storytel
 // ------------------------------------------------------------------------------------------------
 
+/// The session key of the Storytel card's one-time notice after a save.
+const STORYTEL_NOTICE_FLASH: &str = "storytel_notice";
+
 async fn storytel_phones(db: &sqlx::SqlitePool) -> Vec<i64> {
     sqlx::query_scalar("SELECT device_id FROM device_policy WHERE music_storytel = 1")
         .fetch_all(db)
@@ -1006,13 +1048,78 @@ async fn storytel_phones(db: &sqlx::SqlitePool) -> Vec<i64> {
         .unwrap_or_default()
 }
 
-/// `POST /music/storytel` (`email`, `password`): seals the family's login with the server's key and
-/// bumps the generation. Never shown back, never logged; the fields are never prefilled.
+/// The card's line about the stored login (design 26b §2.3) from `music_storytel`'s stamps and
+/// `login_error` (a code): `(text, bad news)`, `None` while Storytel hasn't been asked.
+fn storytel_status(
+    generation: i64,
+    refused_at: Option<&str>,
+    refused_generation: Option<i64>,
+    ok_at: Option<&str>,
+    error: Option<&str>,
+    error_at: Option<&str>,
+    now: DateTime<Utc>,
+) -> Option<(String, bool)> {
+    // " (10:02 UTC)" from `login_error_at`.
+    let when = error_at
+        .and_then(crate::music_sweep::parse_stamp)
+        .map(|at| format!(" ({})", utc_time(at, now)))
+        .unwrap_or_else(|| " at the last try".to_string());
+    let Some(code) = error else {
+        let at = crate::music_sweep::parse_stamp(ok_at?)?;
+        return Some((
+            format!("Storytel accepted the login ({}).", utc_time(at, now)),
+            false,
+        ));
+    };
+    let text = match code {
+        "login_refused" => {
+            let at = refused_at
+                .and_then(crate::music_sweep::parse_stamp)
+                .filter(|_| refused_generation == Some(generation));
+            match (
+                at,
+                crate::storytel::cooldown_until(refused_at, refused_generation, generation, now),
+            ) {
+                (Some(at), Some(until)) => format!(
+                    "Storytel refused the login at {}. Nothing is tried again before {} - save \
+                     the password again to try now.",
+                    utc_time(at, now),
+                    until.format("%H:%M UTC")
+                ),
+                (Some(at), None) => format!(
+                    "Storytel refused the login at {}. It is tried again the next time the shelf \
+                     is read - save the password again if it changed.",
+                    utc_time(at, now)
+                ),
+                _ => "Storytel refused the login - save the password again.".to_string(),
+            }
+        }
+        "storytel_key" => {
+            "The saved login was locked with another key - enter it again.".to_string()
+        }
+        "no_jwt" => format!("Storytel took the login but sent no session{when}."),
+        "network" | "timeout" => format!("Storytel couldn't be reached{when}."),
+        code => match code.strip_prefix("http_") {
+            Some(status) => format!("Storytel answered {status}{when}."),
+            None => format!("Storytel's shelf couldn't be read{when}."),
+        },
+    };
+    Some((text, true))
+}
+
+/// `POST /music/storytel` (`email`, `password`): before anything is stored, one probe with the
+/// entered login (vibb `/storytel/credentials`: a login and one bookshelf, at most
+/// [crate::storytel::PROBE_BUDGET] in all). Refused: nothing stored, the saved login unchanged, a
+/// 400 with the reason by the field. Accepted or unreachable: sealed with the server's key, the
+/// generation bumped (the cooldown cleared), the probe's JWT and shelf kept, the phones nudged,
+/// and a one-time notice on the card. Never shown back, never logged; the fields never prefilled.
 pub async fn save_storytel(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    session: tower_sessions::Session,
     Form(form): Form<FormMap>,
 ) -> Response {
+    use crate::storytel::Probe;
     let refuse = |error: &str| Entered {
         storytel_error: Some(error.to_string()),
         ..Default::default()
@@ -1037,20 +1144,66 @@ pub async fn save_storytel(
         let entered = refuse("Enter the Storytel password.");
         return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
     }
+    let probe =
+        crate::storytel::probe(&state, &email, &password, crate::storytel::PROBE_BUDGET).await;
+    let (jwt, shelf, error_code, notice) = match probe {
+        Probe::Refused { status } => {
+            // A typo must not cut every phone off (26b §9): the saved login stays as it was.
+            let detail = match status {
+                Some(status) => format!("Storytel answered {status}"),
+                None => "Storytel sent no session".to_string(),
+            };
+            log_event(&state, &admin, "storytel_login_refused", &detail).await;
+            // Worded by status (QA L5): a 503 or a 429 is Storytel's trouble, not a wrong
+            // password. Nothing is stored either way.
+            let text = match status {
+                None | Some(401) | Some(403) => {
+                    "Storytel refused that e-mail and password. The saved login is unchanged."
+                        .to_string()
+                }
+                Some(status) => format!(
+                    "Storytel answered {status} - nothing was saved; the saved login is \
+                     unchanged. Try again later."
+                ),
+            };
+            let entered = refuse(&text);
+            return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
+        }
+        Probe::Accepted { jwt, shelf } => {
+            let notice = format!("Saved - Storytel shows {} series and books.", shelf.len());
+            (Some(jwt), Some(shelf), None, notice)
+        }
+        Probe::Unreachable { code, jwt } => (
+            jwt,
+            None,
+            Some(code),
+            "Saved, but Storytel couldn't be reached to check it.".to_string(),
+        ),
+    };
+    let now = crate::music_sweep::stamp(state.music_sweep.now());
+    let ok_at = jwt.as_ref().map(|_| now.clone());
+    let error_at = error_code.as_ref().map(|_| now.clone());
     let plain = serde_json::json!({"email": email, "password": password}).to_string();
     let (ciphertext, nonce) = key.seal(plain.as_bytes());
-    let saved = sqlx::query(
+    let saved: Result<i64, sqlx::Error> = sqlx::query_scalar(
         "UPDATE music_storytel SET ciphertext = ?, nonce = ?, key_fingerprint = ?, \
-         saved_at = datetime('now'), generation = generation + 1 WHERE id = 1",
+         saved_at = datetime('now'), generation = generation + 1, login_refused_at = NULL, \
+         login_refused_generation = NULL, login_ok_at = ?, login_error = ?, login_error_at = ? \
+         WHERE id = 1 RETURNING generation",
     )
     .bind(&ciphertext)
     .bind(&nonce)
     .bind(&key.fingerprint)
-    .execute(&state.db)
+    .bind(ok_at)
+    .bind(error_code)
+    .bind(error_at)
+    .fetch_one(&state.db)
     .await;
-    if let Err(err) = saved {
-        return server_error(err, "couldn't save the Storytel login");
-    }
+    let generation = match saved {
+        Ok(generation) => generation,
+        Err(err) => return server_error(err, "couldn't save the Storytel login"),
+    };
+    state.storytel.keep(generation, jwt, shelf);
     nudge(&state, &storytel_phones(&state.db).await);
     log_event(
         &state,
@@ -1059,23 +1212,30 @@ pub async fn save_storytel(
         "Storytel login saved",
     )
     .await;
+    if let Err(err) = session.insert(STORYTEL_NOTICE_FLASH, notice).await {
+        tracing::warn!(%err, "couldn't keep the Storytel notice for the page");
+    }
     Redirect::to("/music#storytel").into_response()
 }
 
-/// `POST /music/storytel/clear`: forgets the login; the phones delete theirs (generation 0).
+/// `POST /music/storytel/clear`: forgets the login (and the server's session with it); the phones
+/// delete theirs (generation 0).
 pub async fn clear_storytel(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let cleared = sqlx::query(
         "UPDATE music_storytel SET ciphertext = NULL, nonce = NULL, key_fingerprint = NULL, \
-         saved_at = NULL, generation = generation + 1 WHERE id = 1",
+         saved_at = NULL, generation = generation + 1, login_refused_at = NULL, \
+         login_refused_generation = NULL, login_ok_at = NULL, login_error = NULL, \
+         login_error_at = NULL WHERE id = 1",
     )
     .execute(&state.db)
     .await;
     if let Err(err) = cleared {
         return server_error(err, "couldn't clear the Storytel login");
     }
+    state.storytel.forget().await;
     nudge(&state, &storytel_phones(&state.db).await);
     log_event(
         &state,
@@ -1085,6 +1245,381 @@ pub async fn clear_storytel(
     )
     .await;
     Redirect::to("/music#storytel").into_response()
+}
+
+/// One book in a picker row's details.
+pub struct PickerBook {
+    pub order: String,
+    pub title: String,
+    pub duration: String,
+    pub flags: String,
+}
+
+/// One group of the shelf (a series or a standalone book).
+pub struct PickerRow {
+    pub index: usize,
+    pub target: String,
+    pub name: String,
+    /// "Series · 5 books" or "Book".
+    pub what: String,
+    pub kids: bool,
+    pub checked: bool,
+    /// "2 books marked locked by Storytel - each is tried anyway".
+    pub notes: Vec<String>,
+    pub books: Vec<PickerBook>,
+    /// The library entry it already is.
+    pub in_library: Option<i64>,
+}
+
+#[derive(Template)]
+#[template(path = "music_storytel.html")]
+struct StorytelPickerTemplate {
+    title: String,
+    /// No login stored (or no key): a pointer to the Storytel card instead of the shelf.
+    no_login: bool,
+    /// Storytel's answer when the shelf couldn't be read.
+    error: Option<String>,
+    rows: Vec<PickerRow>,
+    /// Groups on the shelf in all (the kids filter hides some).
+    shelf_total: usize,
+    all: bool,
+    categories: Vec<(i64, String)>,
+    category: i64,
+    /// After an add: how many, and whether the library got full.
+    added: Option<i64>,
+    full: bool,
+    max_entries: i64,
+    form_error: Option<String>,
+}
+
+fn book_order(order: f64) -> String {
+    if order == 0.0 {
+        String::new()
+    } else if order.fract() == 0.0 && order.abs() < 1e15 {
+        format!("{}", order as i64)
+    } else {
+        order.to_string()
+    }
+}
+
+/// "1:05" (hours and minutes).
+fn book_duration(ms: i64) -> String {
+    if ms <= 0 {
+        return String::new();
+    }
+    let minutes = ms / 60_000;
+    format!("{}:{:02}", minutes / 60, minutes % 60)
+}
+
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// What the picker shows after a read of the shelf, and what a refused add brings back.
+struct PickerView {
+    all: bool,
+    added: Option<i64>,
+    full: bool,
+    form_error: Option<String>,
+    category: Option<i64>,
+    ticked: std::collections::HashSet<String>,
+}
+
+async fn render_picker(
+    state: &AppState,
+    status: StatusCode,
+    shelf: Result<std::sync::Arc<Vec<crate::storytel::Group>>, crate::storytel::StorytelError>,
+    view: PickerView,
+) -> Response {
+    use crate::storytel::{StorytelError, TargetKind};
+    let page: Result<StorytelPickerTemplate, sqlx::Error> = async {
+        let categories: Vec<MusicCategory> =
+            sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
+                .fetch_all(&state.db)
+                .await?;
+        let in_library: HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
+            "SELECT target, id FROM music_entries WHERE source = 'storytel' AND target IS NOT NULL",
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
+        let category = view
+            .category
+            .filter(|id| categories.iter().any(|c| c.id == *id))
+            .or_else(|| music::default_category(&categories, "storytel").map(|c| c.id))
+            .unwrap_or(-1);
+        let (no_login, error, groups) = match shelf {
+            Ok(groups) => (false, None, groups),
+            Err(StorytelError::NotConfigured) => (true, None, Default::default()),
+            Err(err) => (false, Some(err.message()), Default::default()),
+        };
+        let rows = groups
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| view.all || g.kids)
+            .map(|(index, g)| {
+                let locked = g.books.iter().filter(|b| b.locked).count();
+                let geo = g.books.iter().filter(|b| b.geo).count();
+                let mut notes = Vec::new();
+                if locked > 0 {
+                    notes.push(format!(
+                        "{} - each is tried anyway",
+                        plural(
+                            locked,
+                            "book marked locked by Storytel",
+                            "books marked locked by Storytel"
+                        )
+                    ));
+                }
+                if geo > 0 {
+                    notes.push(format!(
+                        "{} (per Storytel)",
+                        plural(
+                            geo,
+                            "book not available in this country",
+                            "books not available in this country"
+                        )
+                    ));
+                }
+                PickerRow {
+                    index,
+                    target: g.target.clone(),
+                    name: if g.name.trim().is_empty() {
+                        g.target.clone()
+                    } else {
+                        g.name.clone()
+                    },
+                    what: match g.kind {
+                        TargetKind::Series => {
+                            format!("Series · {}", plural(g.books.len(), "book", "books"))
+                        }
+                        TargetKind::Book => "Book".to_string(),
+                    },
+                    kids: g.kids,
+                    checked: view.ticked.contains(&g.target),
+                    notes,
+                    books: g
+                        .books
+                        .iter()
+                        .map(|b| PickerBook {
+                            order: book_order(b.order),
+                            title: b.title.clone(),
+                            duration: book_duration(b.duration_ms),
+                            flags: [
+                                b.locked.then_some("marked locked"),
+                                b.geo.then_some("not in this country"),
+                            ]
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>()
+                            .join(" · "),
+                        })
+                        .collect(),
+                    in_library: in_library.get(&g.target).copied(),
+                }
+            })
+            .collect();
+        Ok(StorytelPickerTemplate {
+            title: "Storytel shelf".to_string(),
+            no_login,
+            error,
+            rows,
+            shelf_total: groups.len(),
+            all: view.all,
+            categories: categories.iter().map(|c| (c.id, c.name.clone())).collect(),
+            category,
+            added: view.added,
+            full: view.full,
+            max_entries: MAX_ENTRIES,
+            form_error: view.form_error,
+        })
+    }
+    .await;
+    match page {
+        Ok(page) => (status, Html(page.render().unwrap())).into_response(),
+        Err(err) => server_error(err, "couldn't load the Storytel shelf page"),
+    }
+}
+
+/// `GET /music/storytel[?all=1][&added=N]`: the shelf picker (vibb `/storytel/shelf` and
+/// `renderStorytelShelf`): a fresh bookshelf, one row per series or standalone book in shelf
+/// order, kids' books only unless `all=1`; what is already in the library is ticked and
+/// disabled. Text only: no remote images.
+pub async fn storytel_shelf(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let shelf = state.storytel.bookshelf(&state).await;
+    let view = PickerView {
+        all: query.get("all").is_some_and(|v| v == "1"),
+        added: query.get("added").and_then(|v| v.parse().ok()),
+        full: query.get("full").is_some_and(|v| v == "1"),
+        form_error: None,
+        category: None,
+        ticked: Default::default(),
+    };
+    render_picker(&state, StatusCode::OK, shelf, view).await
+}
+
+/// `POST /music/storytel/add` (`target` repeated, `category`, `all`): each ticked group of the
+/// shelf becomes a library entry (source `storytel`, order `auto` = oldest first, every book
+/// downloaded, resume on), skipped when already in the library, within the entry limit. A target
+/// that isn't on the shelf refuses the whole form (vibb 4c: a raw target is privileged). No phone
+/// is ticked by itself (design 20 decision 6).
+pub async fn add_storytel(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Response {
+    // A repeated field: `FormMap` would keep one `target` (QA L3). At most `MAX_ENTRIES` of them
+    // are read (code QA L6: the library can't take more, and a huge form costs nothing then).
+    let mut targets: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut fields = 0;
+    let mut too_many = false;
+    for (name, value) in &form {
+        if name != "target" {
+            continue;
+        }
+        fields += 1;
+        if fields > MAX_ENTRIES {
+            too_many = true;
+            break;
+        }
+        if seen.insert(value.as_str()) {
+            targets.push(value.clone());
+        }
+    }
+    let value = |key: &str| {
+        form.iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("")
+    };
+    let all = value("all") == "1";
+    let picked = value("category").to_string();
+    let shelf = state
+        .storytel
+        .shelf(&state, crate::storytel::SHELF_TTL)
+        .await;
+    let refuse = |error: String| PickerView {
+        all,
+        added: None,
+        full: false,
+        form_error: Some(error),
+        category: picked.trim().parse().ok(),
+        ticked: targets.iter().cloned().collect(),
+    };
+    let groups = match &shelf {
+        Ok(groups) => groups.clone(),
+        Err(_) => {
+            let view = refuse("Nothing was added: the shelf couldn't be read.".to_string());
+            return render_picker(&state, StatusCode::SERVICE_UNAVAILABLE, shelf, view).await;
+        }
+    };
+    if too_many {
+        let view = refuse(format!(
+            "More than {MAX_ENTRIES} rows are ticked - nothing was added."
+        ));
+        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+    }
+    if targets.is_empty() {
+        let view = refuse("Tick a series or a book first.".to_string());
+        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+    }
+    let mut chosen = Vec::new();
+    for target in &targets {
+        match groups.iter().find(|g| &g.target == target) {
+            Some(group) => chosen.push(group),
+            None => {
+                let view = refuse(
+                    "Something you ticked isn't on the Storytel shelf (any more) - nothing was \
+                     added."
+                        .to_string(),
+                );
+                return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+            }
+        }
+    }
+    let category = match pick_category(&state.db, &picked, "storytel").await {
+        Ok(Ok(id)) => id,
+        Ok(Err(error)) => {
+            let view = refuse(error.to_string());
+            return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+        }
+        Err(err) => return server_error(err, "music category lookup failed"),
+    };
+    let mut added = 0;
+    let mut full = false;
+    for group in chosen {
+        let exists: bool =
+            match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM music_entries WHERE target = ?)")
+                .bind(&group.target)
+                .fetch_one(&state.db)
+                .await
+            {
+                Ok(exists) => exists,
+                Err(err) => return server_error(err, "music entry lookup failed"),
+            };
+        if exists {
+            continue;
+        }
+        let name = music::cut_title(&group.name, MAX_NAME_CHARS).unwrap_or_else(|| {
+            match group.kind {
+                crate::storytel::TargetKind::Series => "Storytel series",
+                crate::storytel::TargetKind::Book => "Storytel book",
+            }
+            .to_string()
+        });
+        // The limit is the INSERT's own condition (phase 1).
+        let inserted: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(&format!(
+            "INSERT INTO music_entries (name, category_id, source, target, key, play_order, \
+             cache, resume, sort) SELECT ?, ?, 'storytel', ?, ?, 'auto', -1, 1, {NEXT_SORT} \
+             {BELOW_ENTRY_LIMIT} RETURNING id"
+        ))
+        .bind(&name)
+        .bind(category)
+        .bind(&group.target)
+        .bind(music::state_key(&group.target))
+        .bind(MAX_ENTRIES)
+        .fetch_optional(&state.db)
+        .await;
+        let id = match inserted {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                full = true;
+                break;
+            }
+            // Added by another request since the check above.
+            Err(sqlx::Error::Database(err)) if err.is_unique_violation() => continue,
+            Err(err) => return server_error(err, "couldn't add a Storytel entry"),
+        };
+        added += 1;
+        log_event(
+            &state,
+            &admin,
+            "music_entry_added",
+            &format!("entry {id}: Storytel: {name} ({})", group.target),
+        )
+        .await;
+    }
+    if full && added == 0 {
+        let view = refuse(format!(
+            "The library has {MAX_ENTRIES} entries - delete one first."
+        ));
+        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+    }
+    if added > 0 {
+        state.music_sweep.wake();
+    }
+    Redirect::to(&format!(
+        "/music/storytel?{}added={added}{}#added",
+        if all { "all=1&" } else { "" },
+        if full { "&full=1" } else { "" }
+    ))
+    .into_response()
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1116,6 +1651,8 @@ struct EntryTemplate {
     entry: MusicEntry,
     kind: &'static str,
     own: bool,
+    /// A Storytel entry: its own offline choices (books in reading order), the target as text.
+    storytel: bool,
     form: EntryForm,
     categories: Vec<(i64, String)>,
     orders: Vec<(&'static str, &'static str)>,
@@ -1206,11 +1743,17 @@ async fn render_entry(
         .fetch_all(&state.db)
         .await?;
         let view = SweepView::load(state, state.music_sweep.now()).await?;
+        let storytel = entry.source == "storytel";
         let form = entered.form.unwrap_or_else(|| EntryForm {
             name: entry.name.clone(),
             category: entry.category_id,
             order: entry.play_order.clone(),
-            cache: entry.cache,
+            // A stored 0 is "all" for Storytel (vibb library.py 87-89).
+            cache: if storytel {
+                crate::storytel::cache_value(entry.cache)
+            } else {
+                entry.cache
+            },
             resume: entry.resume,
             error: None,
             error_field: "",
@@ -1243,10 +1786,13 @@ async fn render_entry(
             title: entry.name.clone(),
             kind: music::kind_label(&entry.source, entry.target.as_deref()),
             own: entry.source == "own",
+            storytel,
             form,
             categories,
             orders: ORDERS.to_vec(),
-            caches: {
+            caches: if storytel {
+                storytel_caches(entry.cache)
+            } else {
                 let mut caches: Vec<(i64, String)> = CACHE_CHOICES
                     .iter()
                     .map(|(value, label)| (*value, label.to_string()))
@@ -1276,8 +1822,22 @@ async fn render_entry(
     }
 }
 
+/// A Storytel entry's offline choices (vibb's: all, the first 5, 10, 20), plus its own value when it
+/// is none of them (an import keeps the Vibb box's); a stored 0 is "all".
+fn storytel_caches(stored: i64) -> Vec<(i64, String)> {
+    let mut caches: Vec<(i64, String)> = crate::storytel::CACHE_CHOICES
+        .iter()
+        .map(|(value, label)| (*value, label.to_string()))
+        .collect();
+    let stored = crate::storytel::cache_value(stored);
+    if !caches.iter().any(|(value, _)| *value == stored) {
+        caches.push((stored, format!("The first {stored} (from Vibb)")));
+    }
+    caches
+}
+
 /// `POST /music/entries/{id}`: name, category, play order and offline depth (not for own files:
-/// always in order, always all) and resume.
+/// always in order, always all; for Storytel vibb's choices, 0 saved as -1) and resume.
 pub async fn save_entry(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1290,6 +1850,7 @@ pub async fn save_entry(
         Err(err) => return server_error(err, "music entry lookup failed"),
     };
     let own = entry.source == "own";
+    let storytel = entry.source == "storytel";
     let name_text = field(&form, "name");
     let category = field(&form, "category").trim().parse::<i64>().unwrap_or(-1);
     let order = if own {
@@ -1300,10 +1861,16 @@ pub async fn save_entry(
     let cache = if own {
         -1
     } else {
-        field(&form, "cache")
+        let cache = field(&form, "cache")
             .trim()
             .parse::<i64>()
-            .unwrap_or(i64::MIN)
+            .unwrap_or(i64::MIN);
+        // Download-only: an entry that keeps nothing plays nothing (vibb library.py 87-89).
+        if storytel {
+            crate::storytel::cache_value(cache)
+        } else {
+            cache
+        }
     };
     let resume = form.get("resume").is_some_and(|v| v == "on");
     let refuse = |error: String, error_field: &'static str| EntryEntered {
@@ -1343,7 +1910,14 @@ pub async fn save_entry(
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
     }
     // One of the choices, or the value it already has (an import keeps the Vibb box's, 21a).
-    if !own && !music::valid_cache(cache) && cache != entry.cache {
+    let choice = if storytel {
+        crate::storytel::CACHE_CHOICES
+            .iter()
+            .any(|(value, _)| *value == cache)
+    } else {
+        music::valid_cache(cache)
+    };
+    if !own && !choice && cache != entry.cache {
         let entered = refuse("Pick one of the offline choices.".to_string(), "cache");
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
     }

@@ -218,12 +218,6 @@ struct StorytelLogin {
     password: String,
 }
 
-#[derive(serde::Deserialize)]
-pub(crate) struct StoredLogin {
-    pub email: String,
-    pub password: String,
-}
-
 pub async fn storytel(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
@@ -258,7 +252,7 @@ pub async fn storytel(
     };
     let Some(login) = key
         .open(&ciphertext, &nonce, &fingerprint)
-        .and_then(|plain| serde_json::from_slice::<StoredLogin>(&plain).ok())
+        .and_then(|plain| serde_json::from_slice::<crate::storytel::StoredLogin>(&plain).ok())
     else {
         // Sealed with another key (a restored database, a new key file): re-enter it in the PWA.
         tracing::warn!(

@@ -5,6 +5,9 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]
+# Vibb music (design 26b): Storytel's login password is AES-128-CBC with a public key (CBC and the
+# padding by hand over the block cipher); already in the tree through aes-gcm.
+aes = "0.9"
 # Vibb music (design 21): the Storytel login at rest, AES-256-GCM with the server's own key.
 aes-gcm = "0.11"
 argon2 = "0.5.3"

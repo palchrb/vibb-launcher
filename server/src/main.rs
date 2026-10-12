@@ -32,6 +32,7 @@ mod retention;
 mod security;
 mod sound_mode;
 mod startup;
+mod storytel;
 mod streams;
 #[cfg(test)]
 mod tests;
@@ -102,6 +103,9 @@ pub struct AppState {
     pub music_sweep: std::sync::Arc<music_sweep::Sweep>,
     /// Each phone's built music library, under the library revision (`music::LibraryCache`).
     pub music_libraries: std::sync::Arc<music::LibraryCache>,
+    /// The server's one Storytel session (design 26b §2.1): the JWT and the last shelf in memory,
+    /// one login at a time (`storytel::Account`).
+    pub storytel: std::sync::Arc<storytel::Account>,
     /// Where this server listens and whom it believes (design 22 §2): `net::NetConfig`.
     pub net: std::sync::Arc<net::NetConfig>,
     /// Security events that come in floods, written at most once a minute per client
@@ -120,6 +124,34 @@ pub struct AppState {
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
+/// The log filter: `rust_log` (RUST_LOG) or `info`, with reqwest never logging below `info`
+/// (design 26b QA L10, code QA L2): the Storytel login's URL carries the e-mail and the encrypted
+/// password (`pwd=`), and a reqwest version may log URLs at `debug` (0.12 logged each redirect's;
+/// the 0.13 in the lock doesn't). Every `reqwest`/`reqwest::*` directive of `rust_log` is dropped
+/// first, so a more specific one can't get past the floor. Defence in depth: it covers reqwest's
+/// own events only.
+pub fn log_filter(rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
+    let own: Option<String> = rust_log.map(|value| {
+        value
+            .split(',')
+            .filter(|directive| {
+                let target = directive
+                    .trim()
+                    .split(['[', '='])
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                target != "reqwest" && !target.starts_with("reqwest::")
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    });
+    own.filter(|value| !value.trim().is_empty())
+        .and_then(|value| tracing_subscriber::EnvFilter::try_new(value).ok())
+        .unwrap_or_else(|| tracing_subscriber::EnvFilter::new("info"))
+        .add_directive("reqwest=info".parse().expect("a valid directive"))
+}
+
 #[tokio::main]
 async fn main() {
     // Everything this process writes (the database, backups, the live mirror, keys) is for the
@@ -128,12 +160,10 @@ async fn main() {
     dotenvy::dotenv().ok();
     // `info` unless RUST_LOG says otherwise: the startup lines (where the server listens, the
     // generated first password's file, the Storytel key) must reach the journal and `docker
-    // logs`. tracing-subscriber's own default is errors only.
+    // logs`. tracing-subscriber's own default is errors only. reqwest never logs below `info`
+    // here, whatever RUST_LOG says (`log_filter`).
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(log_filter(std::env::var("RUST_LOG").ok().as_deref()))
         .init();
 
     // Subcommands (design 22 §3.2.3, §6): run against the same .env and database, then exit.
@@ -334,6 +364,7 @@ async fn main() {
         )),
         music_sweep: Default::default(),
         music_libraries: Default::default(),
+        storytel: Default::default(),
         net: std::sync::Arc::new(net_config),
         audit: Default::default(),
         limits: Default::default(),
@@ -921,7 +952,11 @@ pub fn build_admin_router(
             "/music/categories/{id}/delete",
             post(handlers::music::delete_category),
         )
-        .route("/music/storytel", post(handlers::music::save_storytel))
+        .route(
+            "/music/storytel",
+            get(handlers::music::storytel_shelf).post(handlers::music::save_storytel),
+        )
+        .route("/music/storytel/add", post(handlers::music::add_storytel))
         .route(
             "/music/storytel/clear",
             post(handlers::music::clear_storytel),

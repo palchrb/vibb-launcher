@@ -74,6 +74,7 @@ input, select { max-width: 100%; }
             {% endfor %}
         </select>
         <button type="submit">Add</button>
+        <p class="hint" style="margin-top:8px;">Storytel: pick from the shelf - <a href="/music/storytel">the Storytel shelf</a> (the login goes in the Storytel card below).</p>
     </form>
 
     <form method="post" action="/music/own" class="card" id="own">
@@ -125,7 +126,7 @@ input, select { max-width: 100%; }
         {% for entry in entries %}
         {% include "partials/music_card.html" %}
         {% endfor %}
-        <p class="hint" style="margin-top:12px;">The order here is the order of the covers on the phones. Times are UTC.</p>
+        <p class="hint" style="margin-top:12px;">The order here is the order of the covers on the phones.</p>
     </div>
     <script src="/static/music-cards.js?v=1" defer></script>
 
@@ -196,9 +197,12 @@ input, select { max-width: 100%; }
 
     <div class="card" id="storytel">
         <h2>Storytel</h2>
-        <p class="subtitle">The family's Storytel login, for the phones where it's switched on (each phone's Music card). It is kept encrypted on this server and never shown again - not here, not in a log. Audiobooks from Storytel come in a later version of the music app.</p>
+        <p class="subtitle">The family's Storytel login, for this server's shelf picker and for the phones where it's switched on (each phone's Music card). It is kept encrypted on this server and never shown again - not here, not in a log. Saving checks it with Storytel first.</p>
         {% if let Some(error) = storytel.error %}
         <div class="error">{{ error }}</div>
+        {% endif %}
+        {% if let Some(notice) = storytel.notice %}
+        <div class="success">{{ notice }}</div>
         {% endif %}
         {% if !storytel.key_available %}
         <div class="error">Storytel is off: this server has no key to keep the login safe. It makes one itself (data/keys/music-secret.key) unless MUSIC_SECRET_KEY is set in .env - the server's log says why that failed ("Storytel logins are off: ..."). See DEPLOY.md.</div>
@@ -208,6 +212,12 @@ input, select { max-width: 100%; }
         {% endif %}
         {% if let Some(saved) = storytel.saved_on %}
         <p>Saved {{ saved }} · on {{ storytel.phones }} phone{% if storytel.phones != 1 %}s{% endif %}</p>
+        {% if let Some(status) = storytel.status %}
+        <p class="music-status{% if storytel.status_error %} music-status-error{% endif %}" style="min-height:0;">{{ status }}</p>
+        {% endif %}
+        {% if !storytel.stale %}
+        <p><a href="/music/storytel">Pick books from the Storytel shelf</a></p>
+        {% endif %}
         <form method="post" action="/music/storytel/clear" onsubmit="return confirm('Remove the Storytel login from this server and every phone?')">
             <button type="submit" class="button-small button-danger">Remove</button>
         </form>
@@ -221,6 +231,8 @@ input, select { max-width: 100%; }
             <input type="password" id="storytel_password" name="password" autocomplete="new-password" required>
             <button type="submit">{% if storytel.saved_on.is_some() %}Replace the login{% else %}Save the login{% endif %}</button>
         </form>
+        <p class="hint" style="margin-top:8px;">One Storytel login for the family. Two phones listening at the same time need Storytel Family, which isn't supported yet.</p>
+        <p class="hint">Use a password you use only for Storytel: each phone keeps it to log in.</p>
         {% endif %}
     </div>
 

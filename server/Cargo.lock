@@ -1294,6 +1294,7 @@ dependencies = [
 name = "kid_phone_server"
 version = "0.24.0"
 dependencies = [
+ "aes",
  "aes-gcm",
  "argon2",
  "askama",
