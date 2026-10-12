@@ -94,8 +94,11 @@ fun lockStageDue(interactive: Boolean, decidedAtScreenOffs: Int?, screenOffs: In
  */
 fun glanceTile(session: MusicSession?, shown: Boolean): Boolean = session != null && (session.playing || shown)
 
-/** The page's progress ticks once a second only while it shows a tile of a playing session. */
-fun glanceTicks(tileShown: Boolean, session: MusicSession?): Boolean = tileShown && session?.playing == true
+/** The page's progress ticks once a second only while it shows a tile ([tileShown]) of a playing
+ * session - and only while the page itself shows ([pageShown]: not behind the keypad stage, whose
+ * compact row has no progress - code QA Low 7). */
+fun glanceTicks(tileShown: Boolean, pageShown: Boolean, session: MusicSession?): Boolean =
+    tileShown && pageShown && session?.playing == true
 
 // ---- the fit -------------------------------------------------------------------------------------
 
@@ -219,6 +222,18 @@ fun glancePrompt(usable: Boolean, waiting: Boolean, checking: Boolean, wrong: Bo
  */
 fun glanceTargetTaken(timeRule: Boolean, usableUnderRule: Boolean): Boolean = !timeRule || usableUnderRule
 
+/**
+ * Whether the time lock [lock] leaves [target] usable (QA Q1, for the tap and the hand-over): no time
+ * lock - yes; a conversation - its app among the lock's usable apps (the budget's messaging and music
+ * apps, a rule's exempt apps); missed calls - calls managed ([callsManaged]) and allowed by the rule
+ * (the time-rule screen's own condition for its phone book).
+ */
+fun glanceUsableUnderLock(lock: com.kidslauncher.mdm.timerules.TimeLock, target: GlanceTarget, callsManaged: Boolean): Boolean = when {
+    !lock.locked -> true
+    target is GlanceTarget.Conversation -> target.packageName in lock.usableApps
+    else -> lock.callsAllowed && callsManaged
+}
+
 /** Where the open after the code runs from. */
 enum class GlanceOpenFrom {
     /** The lock's unlock path ([PinLockActivity]'s leave step). */
@@ -254,8 +269,11 @@ data class GlanceOpenFacts(
     /** From the time-rule screen: the rule leaves the target usable (the app is among its usable
      * apps; for missed calls, calls are managed and the rule allows them). */
     val usableUnderRule: Boolean,
-    /** Kiosk on and the lock was the lock-task root (the 1 s fallback) - read before its stop. */
+    /** Kiosk on and the lock was the lock-task root (the 1 s fallback) - read before its stop; it
+     * travels with a hand-over (code QA Low 1). */
     val lockWasRoot: Boolean,
+    /** Kiosk on but no lock task running at the open (code QA Low 1): the app would run outside it. */
+    val kioskWithoutLockTask: Boolean,
     val installed: Boolean,
     val suspended: Boolean,
     val hidden: Boolean,
@@ -264,7 +282,8 @@ data class GlanceOpenFacts(
     val intentIsActivity: Boolean,
     /** The intent's creator is the notification's own app (QA Low 10). */
     val intentFromApp: Boolean,
-    /** The send already threw ([GlanceOpen.SEND] failed): the launch intent instead. */
+    /** The send threw, or was refused (code QA Low 2: our own window was back in front after it):
+     * the launch intent instead. */
     val sendFailed: Boolean,
     val hasLaunchIntent: Boolean,
 )
@@ -274,19 +293,22 @@ data class GlanceOpenStep(val open: GlanceOpen, val reason: String)
 
 /**
  * §1.4's table, with QA Q1 (a time rule hands the target to the time-rule screen), QA Medium 2 (no
- * launch intent: nothing) and QA Low 10 (only the app's own intent is sent):
+ * launch intent: nothing), QA Low 10 (only the app's own intent is sent) and code QA Low 1 (the
+ * lock-task checks hold for the hand-over too):
+ * | kiosk on and the lock was the lock-task root   | nothing (the app would cover Home)            |
  * | a time rule locks the phone (from the lock)    | the time-rule screen opens it over itself    |
  * | from the time-rule screen, not usable under it | nothing                                      |
- * | kiosk on and the lock was the lock-task root   | nothing (the app would cover Home)            |
+ * | kiosk on and no lock task running now          | nothing (the app would run outside it)        |
  * | missed calls                                   | one contact's sheet, else the phone book      |
  * | not installed, suspended or hidden             | nothing                                      |
  * | an activity intent created by the app itself   | sent from our visible window                 |
- * | otherwise, or the send threw                   | the app's launch intent; none: nothing       |
+ * | otherwise, or the send failed or was refused   | the app's launch intent; none: nothing       |
  */
 fun glanceOpenStep(f: GlanceOpenFacts): GlanceOpenStep = when {
+    f.lockWasRoot -> GlanceOpenStep(GlanceOpen.NOTHING, "the lock was the lock-task root")
     f.from == GlanceOpenFrom.LOCK && f.timeRule -> GlanceOpenStep(GlanceOpen.HAND_TO_TIME_RULE_SCREEN, "time rule")
     f.from == GlanceOpenFrom.TIME_RULE_SCREEN && !f.usableUnderRule -> GlanceOpenStep(GlanceOpen.NOTHING, "not usable under the time rule")
-    f.from == GlanceOpenFrom.LOCK && f.lockWasRoot -> GlanceOpenStep(GlanceOpen.NOTHING, "the lock was the lock-task root")
+    f.kioskWithoutLockTask -> GlanceOpenStep(GlanceOpen.NOTHING, "lock task not running")
     f.missedCalls -> GlanceOpenStep(GlanceOpen.MISSED_CALLS, "missed calls")
     !f.installed -> GlanceOpenStep(GlanceOpen.NOTHING, "not installed")
     f.suspended -> GlanceOpenStep(GlanceOpen.NOTHING, "suspended")
@@ -294,4 +316,31 @@ fun glanceOpenStep(f: GlanceOpenFacts): GlanceOpenStep = when {
     f.hasIntent && f.intentIsActivity && f.intentFromApp && !f.sendFailed -> GlanceOpenStep(GlanceOpen.SEND, "intent")
     f.hasLaunchIntent -> GlanceOpenStep(GlanceOpen.LAUNCH, "app")
     else -> GlanceOpenStep(GlanceOpen.NOTHING, "no launch intent")
+}
+
+/** How long after a send the opener looks whether it opened anything (code QA Low 2). */
+const val GLANCE_SEND_CHECK_MS = 1_500L
+
+/** What a send turned out to be, [GLANCE_SEND_CHECK_MS] after it. */
+enum class GlanceSendCheck {
+    /** One of our own windows is in front again (Home, the time-rule screen): the start was refused
+     * (a positive result code - `PendingIntent.send` throws only for a negative one) - the launch
+     * intent instead. */
+    REFUSED,
+
+    /** Something else is in front, and below the lock was Home or the time-rule screen: the app
+     * opened - the row is marked opened. */
+    OPENED,
+
+    /** Something else is in front, but with the kiosk off that may be the app the kid had open before
+     * the lock: nothing is concluded (the app clears its notification when the room opens). */
+    UNKNOWN,
+}
+
+/** [ourWindowInFront]: an activity of ours other than the lock is resumed now; [confirmable]: the
+ * kiosk is on (the lock left through Home) or the send came from the time-rule screen. */
+fun glanceSendCheck(ourWindowInFront: Boolean, confirmable: Boolean): GlanceSendCheck = when {
+    ourWindowInFront -> GlanceSendCheck.REFUSED
+    confirmable -> GlanceSendCheck.OPENED
+    else -> GlanceSendCheck.UNKNOWN
 }

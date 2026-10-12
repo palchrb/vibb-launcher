@@ -33,6 +33,7 @@ class MusicLockPanel(
     private var session: MusicSession? = null
     private var usable = false
     private var tile = GlanceTileSize.NONE
+    private var pageShown = false
     private var shownArt: Bitmap? = null
     private var artShown = false
     private val ticker = Runnable { render() }
@@ -73,9 +74,11 @@ class MusicLockPanel(
         return session
     }
 
-    /** The glance panel's choice: the full tile, the compact one or none. */
-    fun show(size: GlanceTileSize) {
+    /** The glance panel's choice: the full tile, the compact one or none; [page]: the glance page
+     * shows (not the keypad stage) - the progress ticks only then. */
+    fun show(size: GlanceTileSize, page: Boolean) {
         tile = size
+        pageShown = page
         render()
     }
 
@@ -127,6 +130,6 @@ class MusicLockPanel(
             button.contentDescription = playLabel
         }
         row.lockMediaRowEntry.text = s.entry ?: s.item
-        if (glanceTicks(shown != GlanceTileSize.NONE, s)) handler.postDelayed(ticker, 1_000)
+        if (glanceTicks(shown != GlanceTileSize.NONE, pageShown, s)) handler.postDelayed(ticker, 1_000)
     }
 }

@@ -1,12 +1,17 @@
 package com.kidslauncher.mdm.lock
 
 import android.app.Activity
+import android.app.ActivityManager
+import android.app.Application
 import android.app.PendingIntent
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.kidslauncher.mdm.badges.GlanceStore
@@ -45,12 +50,24 @@ class PendingOpen(val target: GlanceTarget, val captured: PendingIntent?, val lo
  * contact's sheet or the phone book. Never a notification action, a reply, a mark-as-read or a
  * dismiss. It never throws (QA Medium 2): it runs inside the unlock's dispatch, where a crash would
  * count for the lock's crash guard. The log names the package and the reason only.
+ *
+ * A send that the platform refuses returns normally (a positive result such as START_ABORTED -
+ * `PendingIntent.send` throws only for a negative one, its `OnFinished` reports 0 for an activity,
+ * and the result-returning send is hidden). So [GLANCE_SEND_CHECK_MS] after a send the opener looks
+ * whether one of our own windows is in front again ([glanceSendCheck], code QA Low 2): then the start
+ * was refused and the launch intent goes instead, from that window; otherwise, when Home or the
+ * time-rule screen was below, the row is marked opened.
  */
 object GlanceOpener {
 
     /** A target the lock handed to the time-rule screen, and when (elapsed realtime). */
     private var handedOver: PendingOpen? = null
     private var handedOverAt = 0L
+
+    private val main = Handler(Looper.getMainLooper())
+
+    /** The last send, watched until its check (code QA Low 2). */
+    private var watch: SendWatch? = null
 
     /** From [PinLockActivity]'s leave step only (the mode is UNLOCKED there). */
     fun open(activity: Activity, pending: PendingOpen) = guarded { run(activity, pending, GlanceOpenFrom.LOCK) }
@@ -74,14 +91,8 @@ object GlanceOpener {
      * calls when calls are managed and the rule allows them (the time-rule screen's phone book). No
      * time lock: usable.
      */
-    fun usableUnderTimeRule(context: Context, target: GlanceTarget): Boolean {
-        val lock = TimeRulesRuntime.snapshot(context, currentPolicyDecision().policy).lock
-        if (!lock.locked) return true
-        return when (target) {
-            is GlanceTarget.Conversation -> target.packageName in lock.usableApps
-            is GlanceTarget.MissedCalls -> lock.callsAllowed && CallPolicyStore.state.managed
-        }
-    }
+    fun usableUnderTimeRule(context: Context, target: GlanceTarget): Boolean =
+        glanceUsableUnderLock(TimeRulesRuntime.snapshot(context, currentPolicyDecision().policy).lock, target, CallPolicyStore.state.managed)
 
     private fun run(activity: Activity, pending: PendingOpen, from: GlanceOpenFrom) {
         val target = pending.target
@@ -92,8 +103,8 @@ object GlanceOpener {
         val intent = conversation?.let { GlanceStore.contentIntent(it.conversation) ?: pending.captured }
         val facts = facts(activity, pending, from, intent)
         var step = glanceOpenStep(facts)
-        if (step.open == GlanceOpen.SEND && intent != null && !send(activity, intent)) {
-            step = glanceOpenStep(facts.copy(sendFailed = true))
+        if (step.open == GlanceOpen.SEND && intent != null) {
+            if (send(activity, intent)) watchSend(activity, pending, from) else step = glanceOpenStep(facts.copy(sendFailed = true))
         }
         when (step.open) {
             GlanceOpen.HAND_TO_TIME_RULE_SCREEN -> {
@@ -107,17 +118,90 @@ object GlanceOpener {
                 activity.startActivity(PhoneBookActivity.missedCallsIntent(activity, number))
                 Log.i(LOG_TAG, "Glance: opened $what")
             }
-            GlanceOpen.SEND -> openedThroughGlance(conversation, "intent")
-            GlanceOpen.LAUNCH -> {
-                val launch = conversation?.let { activity.packageManager.getLaunchIntentForPackage(it.packageName) }
-                if (launch == null) {
-                    Log.i(LOG_TAG, "Glance: nothing opened (no launch intent)")
-                } else {
-                    activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    openedThroughGlance(conversation, "app")
-                }
+            GlanceOpen.SEND -> Log.i(LOG_TAG, "Glance: sent the intent of $what")
+            GlanceOpen.LAUNCH -> conversation?.let { launch(activity, it) }
+        }
+    }
+
+    /** The app's launch intent, from our visible [activity]; the row is marked opened. */
+    private fun launch(activity: Activity, conversation: GlanceTarget.Conversation) {
+        val launch = activity.packageManager.getLaunchIntentForPackage(conversation.packageName)
+        if (launch == null) {
+            Log.i(LOG_TAG, "Glance: nothing opened (no launch intent)")
+            return
+        }
+        activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        openedThroughGlance(conversation, "app")
+    }
+
+    /**
+     * Watches our activities for [GLANCE_SEND_CHECK_MS] after a send: one of them resumed (Home, with
+     * the kiosk on; the time-rule screen that sent it, staying in front) means the start was refused.
+     * The lock itself is finishing and never counts.
+     */
+    private fun watchSend(sender: Activity, pending: PendingOpen, from: GlanceOpenFrom) {
+        watch?.let { end(it) }
+        val confirmable = from == GlanceOpenFrom.TIME_RULE_SCREEN || LockTaskChrome.kioskOn
+        val next = SendWatch(sender.application, pending, from, confirmable)
+        if (below(sender) && !sender.isFinishing) next.resumed += sender
+        sender.application.registerActivityLifecycleCallbacks(next)
+        watch = next
+        main.postDelayed({ guarded { checkSend(next) } }, GLANCE_SEND_CHECK_MS)
+    }
+
+    private fun checkSend(sent: SendWatch) {
+        if (watch !== sent) return
+        end(sent)
+        val conversation = sent.pending.target as? GlanceTarget.Conversation ?: return
+        val front = sent.resumed.firstOrNull { !it.isFinishing && !it.isDestroyed }
+        when (glanceSendCheck(front != null, sent.confirmable)) {
+            GlanceSendCheck.OPENED -> openedThroughGlance(conversation, "intent")
+            GlanceSendCheck.UNKNOWN -> Unit
+            GlanceSendCheck.REFUSED -> {
+                if (front == null || PinLockRuntime.mode == LockMode.LOCKED) return
+                val step = glanceOpenStep(facts(front, sent.pending, sent.from, null).copy(sendFailed = true))
+                Log.i(LOG_TAG, "Glance: the intent of ${conversation.packageName} didn't open (${step.reason})")
+                if (step.open == GlanceOpen.LAUNCH) launch(front, conversation)
             }
         }
+    }
+
+    private fun end(sent: SendWatch) {
+        if (watch === sent) watch = null
+        sent.app.unregisterActivityLifecycleCallbacks(sent)
+    }
+
+    /** The windows the lock leaves to: Home (kiosk on, or below the lock) and the time-rule screen.
+     * Never the lock, a call screen or a page the kid opens later. */
+    private fun below(activity: Activity): Boolean = activity.javaClass.name in BELOW_THE_LOCK
+
+    private val BELOW_THE_LOCK = setOf("com.kidslauncher.mdm.ui.HomeActivity", "com.kidslauncher.mdm.ui.LockActivity")
+
+    /** Our resumed windows below the lock while a send is watched (main thread). */
+    private class SendWatch(
+        val app: Application,
+        val pending: PendingOpen,
+        val from: GlanceOpenFrom,
+        val confirmable: Boolean,
+    ) : Application.ActivityLifecycleCallbacks {
+        val resumed = LinkedHashSet<Activity>()
+
+        override fun onActivityResumed(activity: Activity) {
+            if (GlanceOpener.below(activity)) resumed += activity
+        }
+
+        override fun onActivityPaused(activity: Activity) {
+            resumed -= activity
+        }
+
+        override fun onActivityDestroyed(activity: Activity) {
+            resumed -= activity
+        }
+
+        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+        override fun onActivityStarted(activity: Activity) = Unit
+        override fun onActivityStopped(activity: Activity) = Unit
+        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
     }
 
     /** Opened through the glance: the row stays hidden until the conversation's next message. */
@@ -153,6 +237,7 @@ object GlanceOpener {
             timeRule = LauncherPreferences.mdm().lockReason() != LockReason.NONE,
             usableUnderRule = from == GlanceOpenFrom.TIME_RULE_SCREEN && usableUnderTimeRule(context, target),
             lockWasRoot = pending.lockWasRoot,
+            kioskWithoutLockTask = LockTaskChrome.kioskOn && lockTaskNone(context),
             installed = installed,
             suspended = installed && pm.isPackageSuspended(pkg!!),
             hidden = installed && hidden(context, pkg!!),
@@ -163,6 +248,10 @@ object GlanceOpener {
             hasLaunchIntent = installed && pm.getLaunchIntentForPackage(pkg!!) != null,
         )
     }
+
+    /** No lock task running now (code QA Low 1: with the kiosk on the app must start inside it). */
+    private fun lockTaskNone(context: Context): Boolean =
+        context.getSystemService(ActivityManager::class.java)?.lockTaskModeState == ActivityManager.LOCK_TASK_MODE_NONE
 
     /** Hidden by the device owner (not allowed): never started. */
     private fun hidden(context: Context, pkg: String): Boolean = try {

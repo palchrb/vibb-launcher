@@ -229,7 +229,7 @@ class GlancePanel(
             rowViews.forEach { it.root.visibility = View.GONE }
         }
         // The tile's content first (the fit measures it), then the fit decides which tile shows.
-        music.show(fit?.tile?.takeIf { tileUp } ?: if (tileUp) GlanceTileSize.FULL else GlanceTileSize.NONE)
+        music.show(fit?.tile?.takeIf { tileUp } ?: if (tileUp) GlanceTileSize.FULL else GlanceTileSize.NONE, page = shown)
         fitFor = 0
         fitNow()
     }
@@ -479,7 +479,7 @@ class GlancePanel(
     private fun apply(fit: GlanceFit, shownRows: List<ViewLockGlanceRowBinding>) {
         glance.lockGlanceClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (fit.bigClock) CLOCK_BIG_SP else CLOCK_SMALL_SP)
         glance.lockGlanceDate.visibility = if (fit.date) View.VISIBLE else View.GONE
-        music.show(fit.tile)
+        music.show(fit.tile, page = true)
         val list = glance.lockGlanceList
         list.visibility = if (fit.rows == 0 && fit.more == 0) View.GONE else View.VISIBLE
         val top = dp(if (fit.tile == GlanceTileSize.NONE) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)

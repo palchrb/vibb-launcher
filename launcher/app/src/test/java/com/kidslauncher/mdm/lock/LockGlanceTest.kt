@@ -57,9 +57,11 @@ class LockGlanceTest {
         assertTrue("paused while shown", glanceTile(paused, shown = true))
         assertFalse("no session (no listener access, suspended, gone)", glanceTile(null, shown = true))
         assertFalse(glanceTile(null, shown = false))
-        assertTrue(glanceTicks(tileShown = true, session = playing))
-        assertFalse(glanceTicks(tileShown = true, session = paused))
-        assertFalse(glanceTicks(tileShown = false, session = playing))
+        assertTrue(glanceTicks(tileShown = true, pageShown = true, session = playing))
+        assertFalse(glanceTicks(tileShown = true, pageShown = true, session = paused))
+        assertFalse(glanceTicks(tileShown = false, pageShown = true, session = playing))
+        // Behind the keypad stage the hidden tile doesn't tick (code QA Low 7).
+        assertFalse(glanceTicks(tileShown = true, pageShown = false, session = playing))
     }
 
     /** §1.2's model at 320x569 dp (LockGlanceLayoutTest pins it from the XML). */
@@ -153,7 +155,7 @@ class LockGlanceTest {
 
     private val app = GlanceOpenFacts(
         from = GlanceOpenFrom.LOCK, missedCalls = false, timeRule = false, usableUnderRule = false, lockWasRoot = false,
-        installed = true, suspended = false, hidden = false, hasIntent = true, intentIsActivity = true, intentFromApp = true,
+        kioskWithoutLockTask = false, installed = true, suspended = false, hidden = false, hasIntent = true, intentIsActivity = true, intentFromApp = true,
         sendFailed = false, hasLaunchIntent = true,
     )
 
@@ -169,11 +171,18 @@ class LockGlanceTest {
         assertEquals(GlanceOpen.SEND, glanceOpenStep(screen.copy(usableUnderRule = true)).open)
         assertEquals(GlanceOpen.MISSED_CALLS, glanceOpenStep(screen.copy(usableUnderRule = true, missedCalls = true)).open)
         assertEquals(GlanceOpen.NOTHING, glanceOpenStep(screen.copy(usableUnderRule = false, missedCalls = true)).open)
-        // The time-rule screen is never the kiosk's root lock: wasRoot only counts from the lock.
-        assertEquals(GlanceOpen.SEND, glanceOpenStep(screen.copy(usableUnderRule = true, lockWasRoot = true)).open)
-        // Kiosk on and the lock was the lock-task root: nothing (the app would cover Home).
+        // Kiosk on and the lock was the lock-task root: nothing (the app would cover Home) - also
+        // through the hand-over (code QA Low 1), and before it.
         assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(lockWasRoot = true)).open)
         assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(lockWasRoot = true, missedCalls = true)).open)
+        assertEquals(GlanceOpenStep(GlanceOpen.NOTHING, "the lock was the lock-task root"), glanceOpenStep(app.copy(lockWasRoot = true, timeRule = true)))
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(screen.copy(usableUnderRule = true, lockWasRoot = true)).open)
+        // Kiosk on but no lock task running at the open: nothing, from either place (code QA Low 1).
+        assertEquals(GlanceOpenStep(GlanceOpen.NOTHING, "lock task not running"), glanceOpenStep(app.copy(kioskWithoutLockTask = true)))
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(screen.copy(usableUnderRule = true, kioskWithoutLockTask = true)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(kioskWithoutLockTask = true, missedCalls = true)).open)
+        // A rule still hands over first; the time-rule screen checks lock task when it opens.
+        assertEquals(GlanceOpen.HAND_TO_TIME_RULE_SCREEN, glanceOpenStep(app.copy(timeRule = true, kioskWithoutLockTask = true)).open)
         // Missed calls: the contact's sheet or the phone book (no app checks).
         assertEquals(GlanceOpen.MISSED_CALLS, glanceOpenStep(app.copy(missedCalls = true, installed = false, hasLaunchIntent = false)).open)
         // Not installed, suspended, hidden: nothing.
@@ -189,6 +198,46 @@ class LockGlanceTest {
         assertEquals(GlanceOpenStep(GlanceOpen.NOTHING, "no launch intent"), glanceOpenStep(app.copy(intentIsActivity = false, hasLaunchIntent = false)))
         assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(sendFailed = true, hasLaunchIntent = false)).open)
         assertEquals(GlanceOpen.SEND, glanceOpenStep(app.copy(hasLaunchIntent = false)).open)
+    }
+
+    @Test
+    fun `a send is checked afterwards - our window in front means refused (code QA Low 2)`() {
+        assertEquals(GlanceSendCheck.REFUSED, glanceSendCheck(ourWindowInFront = true, confirmable = true))
+        assertEquals("kiosk off: Home behind the lock came back", GlanceSendCheck.REFUSED, glanceSendCheck(ourWindowInFront = true, confirmable = false))
+        assertEquals(GlanceSendCheck.OPENED, glanceSendCheck(ourWindowInFront = false, confirmable = true))
+        assertEquals("kiosk off: maybe the app the kid had open", GlanceSendCheck.UNKNOWN, glanceSendCheck(ourWindowInFront = false, confirmable = false))
+        // A refused send falls back to the launch intent - or nothing without one.
+        assertEquals(GlanceOpen.LAUNCH, glanceOpenStep(app.copy(hasIntent = false, sendFailed = true)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(hasIntent = false, sendFailed = true, hasLaunchIntent = false)).open)
+        assertEquals(1_500L, GLANCE_SEND_CHECK_MS)
+    }
+
+    @Test
+    fun `what a time rule leaves usable - the tap and the hand-over (QA Q1, code QA Low 4)`() {
+        val element = conversation
+        val missed = GlanceTarget.MissedCalls("+4790000002")
+        val free = com.kidslauncher.mdm.timerules.UNLOCKED
+        assertTrue(glanceUsableUnderLock(free, element, callsManaged = false))
+        assertTrue(glanceUsableUnderLock(free, missed, callsManaged = false))
+        // The budget: the contacts' messaging apps (and music) stay usable, calls too.
+        val budget = com.kidslauncher.mdm.timerules.TimeLock(
+            com.kidslauncher.mdm.server.LockReason.SCREEN_TIME, budgetExhausted = true, callsAllowed = true,
+            usableApps = setOf("io.element.android.x", "me.vibb.music"),
+        )
+        assertTrue(glanceUsableUnderLock(budget, element, callsManaged = true))
+        assertTrue(glanceUsableUnderLock(budget, missed, callsManaged = true))
+        assertFalse("calls unmanaged: no phone book on the time-rule screen", glanceUsableUnderLock(budget, missed, callsManaged = false))
+        val other = GlanceTarget.Conversation(GlanceConversation("no.example.school", "k"), "k", 1)
+        assertFalse(glanceUsableUnderLock(budget, other, callsManaged = true))
+        // Bedtime with Element X exempt but no calls; school with nothing exempt.
+        val bedtime = com.kidslauncher.mdm.timerules.TimeLock(
+            com.kidslauncher.mdm.server.LockReason.BEDTIME, callsAllowed = false, usableApps = setOf("io.element.android.x"),
+        )
+        assertTrue(glanceUsableUnderLock(bedtime, element, callsManaged = true))
+        assertFalse(glanceUsableUnderLock(bedtime, missed, callsManaged = true))
+        val school = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, callsAllowed = true)
+        assertFalse(glanceUsableUnderLock(school, element, callsManaged = true))
+        assertTrue(glanceUsableUnderLock(school, missed, callsManaged = true))
     }
 
     @Test
