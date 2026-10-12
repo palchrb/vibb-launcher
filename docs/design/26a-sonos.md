@@ -1303,7 +1303,8 @@ shared files, root CLAUDE.md's rule) and this docs commit, with the real builds 
   existing `GuardsTest` pins follow the new `comeHome` caller, the `SonosRenderer` call and the belt), lint 0 errors
   and the same 40 warnings. `python3 -I scripts/fake-sonos.py --selftest` OK.
 - **Migration `0065_music_sonos_rooms.sql`**: numbered above both this branch (0062) and main (0064) - **renumber it
-  after the final rebase** if main has moved on (root rule).
+  after the final rebase** if main has moved on (root rule). (Renumbered `0071_music_sonos_rooms.sql` at the merge of
+  2026-10-12: main's 0065 is `0065_command_receipts.sql`.)
 
 What is in it:
 - **The phone reports the rooms it knows**: `music_state.sonos_rooms` = `[{uid, name}]` from the speaker cache's
@@ -1403,8 +1404,9 @@ Docs and the merge, no code change. Built on branch `music-1b-sonos`:
   design 25's spec. No conflicts; the six files both sides touched (root `CLAUDE.md`, `launcher/CLAUDE.md`,
   `server/CLAUDE.md`, design 26, `server/src/main.rs`'s routes, `device_detail.html`) merged by themselves in separate
   places. Main's migrations end at `0063_window_relock.sql` and `0064_unseen_boots.sql`, so
-  **`0065_music_sonos_rooms.sql` keeps its number**. Main changed none of the shared contract files
-  (`music_library.json`, `music_state.json`, the bridge AIDL and `bridge_contract.json`) and nothing in `music/`.
+  **`0065_music_sonos_rooms.sql` keeps its number** (until the next merge: it is `0071` since 2026-10-12). Main
+  changed none of the shared contract files (`music_library.json`, `music_state.json`, the bridge AIDL and
+  `bridge_contract.json`) and nothing in `music/`.
   After the merge: server `cargo test` **540 tests, 0 failures**, `cargo fmt --check` clean, `cargo clippy
   --all-targets` 12 warnings, none in this branch's or the merge's code (local Rust 1.97); launcher `assembleDebug
   testDebugUnitTest` (the tsnet stub) **900, 0 failures**; music `assembleDebug assembleRelease testDebugUnitTest
@@ -1567,7 +1569,7 @@ review (#5) planned `music-v0.1.0` on `main` before 1b so phase 1's device check
 branch.
 
 Deploy order:
-1. **Server.** 3c's server part (migration 0065, the card, the library's `sonos_rooms`, the report's rooms, the event)
+1. **Server.** 3c's server part (migration 0071, the card, the library's `sonos_rooms`, the report's rooms, the event)
    rides in **0.24.0**: `server/Cargo.toml` says 0.24.0 on both sides and `server-v0.24.0` isn't tagged yet. If it is
    tagged before this merge, bump `server/Cargo.toml` (and `Cargo.lock`) to 0.25.0 on `main` for the next one. Not
    required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an

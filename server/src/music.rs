@@ -818,7 +818,7 @@ pub async fn library_for(
         })
         .collect();
     // The parent's Sonos room scope (design 26a §5.5): in the library, so a change moves its
-    // version (migration 0065's trigger moves the revision).
+    // version (migration 0071's trigger moves the revision).
     let rooms_json: Option<Option<String>> =
         sqlx::query_scalar("SELECT music_sonos_rooms_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
@@ -911,7 +911,7 @@ pub fn is_sonos_uid(uid: &str) -> bool {
     })
 }
 
-/// `device_policy.music_sonos_rooms_json` (migration 0065): `None` (NULL) = every room, the
+/// `device_policy.music_sonos_rooms_json` (migration 0071): `None` (NULL) = every room, the
 /// default; else the uids the phone may play on. The server is its only writer; anything
 /// unreadable is no room at all (fail closed), logged.
 pub fn sonos_rooms_allowed(device_id: i64, json: Option<&str>) -> Option<Vec<String>> {

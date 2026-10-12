@@ -4,8 +4,9 @@
 -- phone's library (`sonos_rooms`), so a change moves the library revision (migration 0050's rule
 -- for anything a library is built from).
 --
--- Numbered 0065 on the branch `music-1b-sonos` (main had 0063-0064 when it was written); renumber
--- it after the final rebase if main has moved on.
+-- Written as 0065 on the branch `music-1b-sonos` (main had 0063-0064 then); renumbered 0071 at the
+-- merge of main on 2026-10-12 (main's 0065-0069 are the security wave's and design 25's, 0070 is
+-- claimed by design 27's episode art).
 --
 -- A new column and a trigger only: safe on an existing database.
 ALTER TABLE device_policy ADD COLUMN music_sonos_rooms_json TEXT;

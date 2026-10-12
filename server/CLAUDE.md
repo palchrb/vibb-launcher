@@ -520,7 +520,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   <= 200), `music_files` (own uploads, <= 300 per entry, `missing`), `device_music_entries` (ticks),
   `device_policy.music_mobile_data/music_volume_cap_pct/music_storytel`, `music_storytel` singleton,
   `device_status.music_state_json`, `tracked_apps.release_tag_prefix`; `device_policy.music_sonos_rooms_json`
-  (migration `0065`, design 26a §5.5: NULL = every Sonos room, else a JSON array of speaker uids; its trigger moves
+  (migration `0071`, design 26a §5.5: NULL = every Sonos room, else a JSON array of speaker uids; its trigger moves
   `music_library_revision`; read fail-closed by `music::sonos_rooms_allowed` - a value that isn't a list of strings is
   no room, logged). `music_state.sonos_rooms` (the speakers the phone knows) is kept by `sanitize_music_state` as
   Sonos-shaped uids (`is_sonos_uid`, `RINCON_[A-Z0-9]{12,20}`) once each, names cut like `cut_title` (40), at most 32;
