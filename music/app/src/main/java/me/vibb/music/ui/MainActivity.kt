@@ -3,7 +3,9 @@ package me.vibb.music.ui
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
+import android.graphics.Color
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -38,7 +40,12 @@ class MainActivity : ComponentActivity() {
     private val pending = mutableListOf<(MediaController) -> Unit>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        // The app is always dark (Palette.bg), so the system bars' icons are always light: the default
+        // follows the phone's theme and drew dark icons on the dark background.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
         open(intent, restored = savedInstanceState != null)
         setContent { MusicRoot(vm, actions) }
