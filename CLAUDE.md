@@ -21,7 +21,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
 - `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
   `push-all.sh` (push the current branch), `smoke-test.sh` (adb/emulator-console smoke test of lock and
   calls, remote-capable; `docs/testing/emulator.md` §5b), `fake-sonos.py` (fake Sonos speakers for the
-  music app on the emulator, answering from the music app's Sonos test fixtures; §6h).
+  music app on the emulator, answering from the music app's Sonos test fixtures; §6h), `fake-storytel.py` (a fake
+  Storytel - the login, the asset call's 302, a CDN of silent books - answering from the music app's Storytel test
+  fixtures; §6i).
 - `PLAN.md` - the plan and status.
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
@@ -69,7 +71,8 @@ keeps the music app's, the music app sends exactly those.
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, `music/gradle/` and `music.yml`; `music.yml` also on the shared `server/testdata/music_*.json`,
-  the launcher's copy of the bridge AIDL and `scripts/fake-sonos.py`, whose `--selftest` it runs after the build;
+  the launcher's copy of the bridge AIDL and `bridge_contract.json`, `scripts/fake-sonos.py` and
+  `scripts/fake-storytel.py`, whose `--selftest`s it runs after the build;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in
