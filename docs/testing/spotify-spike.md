@@ -352,7 +352,7 @@ without a user gesture, keeps the renderer important with the screen off, and fi
 Setup: the dashboard app has **Web API** and **Web Playback SDK** checked (§4). Item 10 can run in **K-** (Spotify's
 app hidden) - that is the point.
 1. Main screen: Save the client ID and a playlist URI. **Web Playback probe**.
-2. Token: **Get token (PKCE)** opens Spotify's login in an in-app WebView (log in with the kid's account by e-mail and
+2. Token: **Get token (PKCE)** opens Spotify's login full-screen in an in-app WebView (Back cancels it; log in with the kid's account by e-mail and
    password; Google/Facebook/Apple sign-in may refuse a WebView) and fills the token field after the redirect - scopes
    `streaming user-read-email user-read-private user-modify-playback-state user-read-playback-state`. Or paste a token
    with those scopes obtained elsewhere. The token is never logged (it is scrubbed from every log line).

@@ -21,6 +21,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -41,6 +43,13 @@ class WebPlaybackActivity : Activity() {
     private var lastEvent: String = "-"
     private var userAgent: String = "-"
     private var pkce: WebApi.Pkce? = null
+
+    /** While the full-screen login is up, Back cancels it instead of closing the probe. */
+    private val cancelLogin = OnBackInvokedCallback {
+        SpikeLog.log("PKCE: login cancelled (Back)")
+        pkce = null
+        hideLogin()
+    }
 
     /** The token the page gets (read on a WebView thread, so not from the EditText). */
     @Volatile
@@ -139,11 +148,17 @@ class WebPlaybackActivity : Activity() {
         SpikeLog.log("PKCE: opening Spotify's login in an in-app WebView (setup step; the parent logs in)")
         loginWeb.visibility = View.VISIBLE
         loginWeb.loadUrl(p.authorizeUrl)
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, cancelLogin)
+    }
+
+    private fun hideLogin() {
+        onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cancelLogin)
+        loginWeb.visibility = View.GONE
+        loginWeb.loadUrl("about:blank")
     }
 
     private fun onRedirect(url: Uri) {
-        loginWeb.visibility = View.GONE
-        loginWeb.loadUrl("about:blank")
+        hideLogin()
         val p = pkce ?: return
         pkce = null
         val error = url.getQueryParameter("error")

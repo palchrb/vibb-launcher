@@ -1,12 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Vibb Spotify engine spike. Copyright (C) 2026 palchrb. SPDX-License-Identifier: GPL-3.0-or-later -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- The probe's controls scroll above a fixed-height player WebView (always visible: a hidden or
+     0-height WebView can be throttled); the PKCE login WebView covers the whole screen on top. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fitsSystemWindows="true"
+    android:fitsSystemWindows="true">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+<ScrollView
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="12dp">
-
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -110,16 +125,18 @@
         android:fontFamily="monospace"
         android:textIsSelectable="true" />
 
+</LinearLayout>
+</ScrollView>
+
     <WebView
         android:id="@+id/player_web"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_height="240dp" />
+</LinearLayout>
 
     <WebView
         android:id="@+id/login_web"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="3"
+        android:layout_height="match_parent"
         android:visibility="gone" />
-</LinearLayout>
+</FrameLayout>
