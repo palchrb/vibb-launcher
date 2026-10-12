@@ -176,12 +176,13 @@ Option A splits vibb's one process in two (design 26 review item 4):
   - `shelf(state, max_age)`: the cache when younger than `max_age` (300 s for a routine sweep check, **0 for Check now**
     so a book added in Storytel's app a minute ago shows, QA L5), else `bookshelf`; a failed fetch returns the last good
     shelf whatever its age (vibb "stale beats dead"), else the error. The cache's age and the JWT's expiry run on
-    `tokio::time::Instant` (the tests pause it); only the DB stamps use `Sweep::now()`.
+    `tokio::time::Instant` plus a per-account offset the tests move (`Account::advance`; a paused runtime would
+    auto-advance while sqlx waits on its worker thread); only the DB stamps use `Sweep::now()`.
   - `forget()`: drops the JWT and the shelf (save and clear call it; the generation check covers a race).
 - **Errors** carry codes for the card and the sweep: `storytel_off` (no login or no key), `storytel_key` (sealed with
   another key: "enter the login again", QA L4), `login_refused` (`Refused`/`Cooldown`), `no_jwt`, `network`, `timeout`,
   `http_<code>`, `too_big`, `bad_shelf`, `not_on_shelf` (§2.4). `music_storytel.login_error` holds such a code, never a
-  message. **No message ever holds a URL**: `music_net::network_error` builds its text from `err.without_url()` for
+  message, and `login_error_at` its time (code QA, the main session's decision). **No message ever holds a URL**: `music_net::network_error` builds its text from `err.without_url()` for
   every request (the login URL carries the email and `pwd=`; reqwest's `Display` prints the URL).
 
 ### 2.2 `music_net` (extended, not forked)
@@ -207,7 +208,8 @@ Option A splits vibb's one process in two (design 26 review item 4):
     502s), the notice "Saved, but Storytel couldn't be reached to check it".
 - **Clear (`POST /music/storytel/clear`)**: as phase 1 (generation + 1) plus `Account::forget`; the phones' libraries
   drop their Storytel entries (§2.7), which deletes the books (vibb's logout `forget_downloads`).
-- **The card `#storytel`** gains a status line from `login_ok_at` / `login_refused_at` / `login_error`: "Storytel
+- **The card `#storytel`** gains a status line from `login_ok_at` / `login_refused_at` / `login_error` (with
+  `login_error_at`, the time on the error lines): "Storytel
   accepted the login (12 Oct, 10:02 UTC)", "Storytel refused the login at 10:02 UTC. Nothing is tried again before 11:02
   UTC - save the password again to try now.", "Storytel couldn't be reached (10:02 UTC)"; the link "Pick books from the
   Storytel shelf" (`/music/storytel`) while a usable login is stored; two hint lines: "One Storytel login for the
@@ -263,7 +265,11 @@ Option A splits vibb's one process in two (design 26 review item 4):
   (fetched by 21b §2.6's machinery, `Reach::Public` plus `public_media`), **`keep_end = 'first'`** - `finish()` and
   `device_listing` derive the anchor from it, so a cut drops the end (QA L2; `effective_order` reacts only to `/serie/`
   targets, so the order is untouched) - and `capped` unset. Requests count against the check's budget like any other.
-  A routine check reads `Account::shelf(300 s)`, **Check now `shelf(0)`** (§2.1).
+  A routine check reads `Account::shelf(300 s)`, **Check now `shelf(0)`** (§2.1). **The cooldown first** (code QA of
+  2a): `Account::shelf` falls back to the last good shelf of this generation on *every* fetch error, `Refused` and
+  `Cooldown` included (vibb `bookshelf_cached` too), so the Storytel check reads the row's cooldown
+  (`storytel::credentials(..).cooldown_until(now)`) before calling `shelf` and fails `login_refused` without a request
+  while it is active; otherwise a kept shelf would hide the refusal until a restart or a save.
 - Cadence: `interval()` already gives a non-NRK entry the setting `I` (vibb sweeps Storytel with everything else);
   Check now works as for NRK/RSS. A login failure fails the check (`login_refused`, `storytel_off`) and backs off;
   inside the cooldown it costs no request.
@@ -300,13 +306,14 @@ sweep lists it (and reports `storytel_off` without a login).
 ```sql
 -- The server's own Storytel session (design 26b §2.1): the refused-login cooldown (vibb
 -- storytel-login-refused.json) for the login generation it refused, and the card's last outcome
--- (a code, never text: `login_error`).
+-- (a code, never text: `login_error`, with its time `login_error_at`).
 -- Also from 0066 on: a Storytel entry's music_items rows are state 'ok' with url NULL (listed and
 -- playable; the phone mints the audio URL), which 0051's comment ("ok (it has a URL)") predates.
 ALTER TABLE music_storytel ADD COLUMN login_refused_at TEXT;
 ALTER TABLE music_storytel ADD COLUMN login_refused_generation INTEGER;
 ALTER TABLE music_storytel ADD COLUMN login_ok_at TEXT;
 ALTER TABLE music_storytel ADD COLUMN login_error TEXT;
+ALTER TABLE music_storytel ADD COLUMN login_error_at TEXT;
 -- A phone's library holds Storytel entries only with its switch on and a login stored (§2.7).
 CREATE TRIGGER device_policy_storytel_revision AFTER UPDATE OF music_storytel ON device_policy
 WHEN OLD.music_storytel IS NOT NEW.music_storytel
@@ -663,10 +670,10 @@ book, a geo-flagged book and a numeric `model.id`, with `items` keys deliberatel
 | `storytel_routes.py` 1 the three POSTs privileged | `tests::music_storytel::routes_need_a_session` | - |
 | 2 save validates with a probe, never echoes the password | `tests::music_storytel::save_probes_then_seals` (accepted, refused - old login kept, unreachable - saved with the notice), the page never holds the password | - |
 | 3 0600 at rest, the open status leaks nothing | phase 1's sealed-login tests; `the_card_shows_no_login` (no email, no JWT on any page) | - |
-| 4 the picker groups the shelf, in-library vs downloaded | `tests::music_storytel::picker_lists_groups` (kids filter, `?all=1`, in-library rows disabled); per-phone downloads on the card | - |
+| 4 the picker groups the shelf, in-library vs downloaded | `tests::music_storytel::picker_lists_groups` (2a: kids filter, `?all=1`, in-library rows disabled); **2b**: per-phone downloads on the card | - |
 | 4b the artwork proxy never serves audio | n/a (the server holds no Storytel audio; the phone's copies are app-private) | - |
 | 4c a raw target is privileged | `tests::music_storytel::add_takes_only_shelf_targets` | - |
-| 5 logout clears the account and the books; a bad login is refused and forgotten | `tests::music_storytel::clear_drops_storytel_from_libraries` (the revision moves; the library loses the entries) | `OfflineTest` (the dropped entry's books pruned); `BridgeTest` (generation 0 deletes the login, phase 1) |
+| 5 logout clears the account and the books; a bad login is refused and forgotten | `tests::music_storytel::clear_drops_storytel_from_libraries` (2a: the revision moves, the session forgotten; **2b**: the library loses the entries) | `OfflineTest` (the dropped entry's books pruned); `BridgeTest` (generation 0 deletes the login, phase 1) |
 | `storytel_sync.py` 1/1b every book attempted (the locked flag isn't trusted), a genuine failure skips only that book, the list keeps all | `music_sweep` test: locked and geo books listed | `StorytelDownloadTest` (a `NoAudio` book gets `no_audio`, the next downloads) |
 | 2 the URL re-minted per book, the download resumable | - | `StorytelDownloadTest` (one mint per attempt; the row's url is the source id; the partial survives a new URL) |
 | 3 a re-sync skips books on disk | - | `OfflineTest` (phase 1's `wantedDownloads`) |
@@ -1074,7 +1081,8 @@ contract snapshot still leave Storytel out (step 2b).
 
 Choices made while building (each against the spec text, with its reason):
 1. **The card's error lines carry no time** ("Storytel couldn't be reached at the last try."): §2.8's columns (kept
-   exactly) have no time for `login_error`. The refused line has its times (`login_refused_at`), the accepted line
+   exactly) have no time for `login_error`. *Superseded in the fix round: 0066 gained `login_error_at` (the main
+   session's decision) and the lines show it.* The refused line has its times (`login_refused_at`), the accepted line
    `login_ok_at`. Times read "10:02 UTC" today and "12 Oct 10:02 UTC" otherwise (the cards' `utc_time`).
 2. **`login_error` also holds the shelf's last outcome** (`http_503`, `too_big`, `bad_shelf`, `network`), cleared by a
    good shelf: the probe's "unreachable" includes the shelf failing, and with the JWT kept for an hour a login-only code
@@ -1113,3 +1121,43 @@ books"), a wrong password refused with the old one kept, the picker on the real 
 lines), a series and a standalone book added; `/music#storytel`, `/music/storytel` and a Storytel entry's page at 360
 px (no horizontal scroll, the 400s by their field, no jump) - no browser in the sandbox; `journalctl` with
 `RUST_LOG=debug` holds no `pwd=`, e-mail or JWT after a save and a picker visit.
+
+### Fix round after QA's code review (qa-26b-step2a-code, 2026-10-12)
+
+All seven findings fixed, and the main session's decision on choice 1. The choices list above has **11** items (the
+handback said 10). `cargo test` 561 of 562 - the one failure is the pre-existing, time-dependent
+`tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list` (left to its owner); the Storytel tests 24 of 24 (2
+new). `cargo fmt --check` clean, clippy's 12 warnings are the branch's own.
+- **M1** (the login URL in a `Referer`): `HttpSource::new` builds both clients with `.referer(false)`.
+  `storytel::tests::the_login_sends_no_referer`: a loopback login URL redirecting to `localhost:<port>/next`, whose
+  request carries no `Referer` (red with `.referer(true)`: it held `pwd=`).
+- **L1** (the picker's read unbounded; `keep` waiting behind it): `Account::bookshelf` = `bookshelf_within(READ_BUDGET
+  = 45 s)`, the session's lock and the gate's wait included; past it `timeout` ("Storytel didn't answer in time").
+  `keep` is synchronous and uses `try_lock`: while a read holds the session it keeps nothing (the generation check
+  makes the old session harmless; the cost is one login). `storytel::tests::the_read_is_bounded_and_keep_never_waits`.
+- **L2** (the log floor): `log_filter` drops every `reqwest`/`reqwest::*` directive from `RUST_LOG` (any spacing, with
+  or without a span filter) before adding `reqwest=info`; the test now emits real events through the filter and a
+  capturing layer (`debug`/`trace` at `reqwest::async_impl::client`, `reqwest::connect::verbose`, `reqwest` dropped
+  under `debug`, `trace`, `reqwest=trace`, `reqwest`, `reqwest::async_impl=debug`, `debug,reqwest::connect=trace`,
+  ...; `info` at `reqwest::connect` and our own `debug` kept) - red without the stripping. The comment in `main.rs` and
+  `server/CLAUDE.md` now say what it is: defence in depth for reqwest's own events (0.12 logged redirect URLs; the 0.13
+  in the lock doesn't).
+- **L3** (the text scan): `secret_types_have_no_debug` is a compile-time autoref probe - `StoredLogin`, `Jwt`,
+  `Credentials`, `SourceRequest` have neither `Debug` nor `Display` (the probe checked on `String`).
+- **L4** (`SourceResponse`'s `Debug` held the body - a login's JWT): a hand-written `Debug` with `status`,
+  `body_len`, `truncated` and the validators; pinned in the same test.
+- **L5** (an outage worded as a wrong password): the save's refusal text by status - 401, 403 and no JWT keep
+  "Storytel refused that e-mail and password. The saved login is unchanged."; any other status "Storytel answered
+  503 - nothing was saved; the saved login is unchanged. Try again later." Nothing is stored either way
+  (`save_probes_then_seals`: 503 and 429).
+- **L6** (Add's unbounded `target`s, quadratic dedupe): more than `MAX_ENTRIES` target fields (repeats counted) is a
+  400 ("More than 200 rows are ticked - nothing was added."), read with a `HashSet` beside the `Vec`
+  (`add_takes_only_shelf_targets`: 201 refused, 200 repeats of one target add one entry).
+- **Choice 1** (the main session): 0066 (unreleased) gains `login_error_at TEXT`; every write of `login_error` sets
+  or clears it (the account's outcomes, the save, clear), and the card's error lines read "Storytel couldn't be
+  reached (10:02 UTC).", "Storytel answered 503 (10:02 UTC)." (`utc_time`; "at the last try" only for a row without
+  the time). §2.8's block is byte-identical to the file again.
+- **Spec text**: §2.1 (the offset clock instead of "the tests pause it"; `login_error_at`), §2.3 (the error lines'
+  time and its column), §2.4 (the rule for 2b: the Storytel check reads the row's cooldown before `Account::shelf`,
+  which falls back to the last good shelf on `Refused`/`Cooldown` too), §2.8 (the column), §7 rows 4 and 5 (their 2b
+  parts marked).

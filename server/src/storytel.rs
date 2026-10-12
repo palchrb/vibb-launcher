@@ -63,6 +63,9 @@ pub const SHELF_TTL: Duration = Duration::from_secs(300);
 /// The save's probe (login + shelf), the wait for the gate included (QA L4): past it the probe
 /// counts as "couldn't be reached".
 pub const PROBE_BUDGET: Duration = Duration::from_secs(45);
+/// The picker's fresh read of the shelf (QA L1): the wait for the session and the gate included,
+/// so the page answers within this whatever the sweep is fetching.
+pub const READ_BUDGET: Duration = Duration::from_secs(45);
 
 /// A Storytel entry's offline choices (vibb `app.js` 513-535: download-only, so no "none"): value
 /// and label. A stored or posted 0 means all ([cache_value]).
@@ -650,21 +653,23 @@ async fn record(state: &AppState, generation: i64, outcome: Outcome<'_>) {
     let now = stamp(state.music_sweep.now());
     let query = match outcome {
         Outcome::LoginOk => sqlx::query(
-            "UPDATE music_storytel SET login_ok_at = ?, login_error = NULL \
+            "UPDATE music_storytel SET login_ok_at = ?, login_error = NULL, login_error_at = NULL \
              WHERE id = 1 AND generation = ?",
         )
         .bind(now),
         Outcome::Refused => sqlx::query(
-            "UPDATE music_storytel SET login_refused_at = ?, login_refused_generation = generation, \
-             login_error = 'login_refused' WHERE id = 1 AND generation = ?",
+            "UPDATE music_storytel SET login_refused_at = ?1, login_refused_generation = generation, \
+             login_error = 'login_refused', login_error_at = ?1 WHERE id = 1 AND generation = ?2",
         )
         .bind(now),
         Outcome::Failed(code) => sqlx::query(
-            "UPDATE music_storytel SET login_error = ? WHERE id = 1 AND generation = ?",
+            "UPDATE music_storytel SET login_error = ?, login_error_at = ? \
+             WHERE id = 1 AND generation = ?",
         )
-        .bind(code.to_string()),
+        .bind(code.to_string())
+        .bind(now),
         Outcome::ShelfOk => sqlx::query(
-            "UPDATE music_storytel SET login_error = NULL \
+            "UPDATE music_storytel SET login_error = NULL, login_error_at = NULL \
              WHERE id = 1 AND generation = ? AND login_error IS NOT NULL",
         ),
     };
@@ -931,7 +936,28 @@ impl Account {
     }
 
     /// A fresh bookshelf (the picker): fetched now, kept as the last good shelf.
+    /// The picker's fresh read: [Account::bookshelf_within] [READ_BUDGET].
     pub async fn bookshelf(&self, state: &AppState) -> Result<Arc<Vec<Group>>, StorytelError> {
+        self.bookshelf_within(state, READ_BUDGET).await
+    }
+
+    /// A fresh bookshelf within `budget` (the session's lock and the gate's wait included); past
+    /// it a `timeout` ("Storytel didn't answer in time").
+    pub async fn bookshelf_within(
+        &self,
+        state: &AppState,
+        budget: Duration,
+    ) -> Result<Arc<Vec<Group>>, StorytelError> {
+        match tokio::time::timeout(budget, self.read_fresh(state)).await {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::warn!("storytel: the shelf took too long");
+                Err(StorytelError::Fetch(FetchError::Timeout))
+            }
+        }
+    }
+
+    async fn read_fresh(&self, state: &AppState) -> Result<Arc<Vec<Group>>, StorytelError> {
         let mut session = self.session.lock().await;
         let credentials = credentials(state).await?;
         let groups = Arc::new(self.fetch_shelf(state, &mut session, &credentials).await?);
@@ -986,9 +1012,16 @@ impl Account {
 
     /// After a save: the probe's JWT and shelf (when it got them) for the new generation; nothing
     /// else of the old login stays.
-    pub async fn keep(&self, generation: i64, jwt: Option<Jwt>, shelf: Option<Vec<Group>>) {
+    ///
+    /// Never waits (QA L1): while a read holds the session (it may sit behind the gate), what the
+    /// probe got is dropped - the generation check keeps the old session from being used, so the
+    /// cost is one more login.
+    pub fn keep(&self, generation: i64, jwt: Option<Jwt>, shelf: Option<Vec<Group>>) {
         let now = self.now();
-        let mut session = self.session.lock().await;
+        let Ok(mut session) = self.session.try_lock() else {
+            tracing::debug!("storytel: the session is busy, the probe's login isn't kept");
+            return;
+        };
         session.jwt = jwt.map(|jwt| KeptJwt {
             jwt,
             expires: now + JWT_TTL,
@@ -1075,49 +1108,58 @@ mod tests {
         );
     }
 
-    /// QA L9: the types that hold the login, the JWT or the login URL derive no `Debug` (and have
-    /// no `Display`), so no `{:?}` can print them.
+    /// The autoref probe (code QA L3): `has_debug()` resolves to the inherent method when `T:
+    /// Debug`, else to the trait's `false` - decided by the compiler, whatever the spelling of a
+    /// derive or an impl.
+    struct Has<T>(std::marker::PhantomData<T>);
+    trait Lacks {
+        fn has_debug(&self) -> bool {
+            false
+        }
+        fn has_display(&self) -> bool {
+            false
+        }
+    }
+    impl<T> Lacks for Has<T> {}
+    impl<T: std::fmt::Debug> Has<T> {
+        fn has_debug(&self) -> bool {
+            true
+        }
+    }
+    impl<T: std::fmt::Display> Has<T> {
+        fn has_display(&self) -> bool {
+            true
+        }
+    }
+
+    /// QA L9: the types that hold the login, the JWT or the login URL have no `Debug` and no
+    /// `Display` (the compiler then refuses a derived `Debug` on anything holding them).
     #[test]
     fn secret_types_have_no_debug() {
-        for (file, types) in [
-            (
-                "src/storytel.rs",
-                &[
-                    "pub struct StoredLogin",
-                    "pub struct Jwt",
-                    "pub struct Credentials",
-                    "struct KeptJwt",
-                    "struct Session",
-                    "pub struct Account",
-                    "pub enum Probe",
-                ][..],
-            ),
-            ("src/music_net.rs", &["pub struct SourceRequest"][..]),
-        ] {
-            let source = std::fs::read_to_string(file).unwrap();
-            let lines: Vec<&str> = source.lines().collect();
-            for name in types {
-                let at = lines
-                    .iter()
-                    .position(|l| l.starts_with(name))
-                    .unwrap_or_else(|| panic!("{file}: {name}"));
-                let attributes = lines[..at]
-                    .iter()
-                    .rev()
-                    .take_while(|l| l.starts_with("#[") || l.starts_with("///"))
-                    .any(|l| l.starts_with("#[") && l.contains("Debug"));
-                assert!(!attributes, "{file}: {name} derives Debug");
-                let bare = name.rsplit(' ').next().unwrap();
-                for forbidden in [
-                    format!("impl std::fmt::Debug for {bare}"),
-                    format!("impl std::fmt::Display for {bare}"),
-                    format!("impl Debug for {bare}"),
-                    format!("impl Display for {bare}"),
-                ] {
-                    assert!(!source.contains(&forbidden), "{file}: {forbidden}");
-                }
-            }
-        }
+        use std::marker::PhantomData;
+        // The probe itself works.
+        assert!(Has::<String>(PhantomData).has_debug());
+        assert!(Has::<String>(PhantomData).has_display());
+        assert!(!Has::<StoredLogin>(PhantomData).has_debug());
+        assert!(!Has::<StoredLogin>(PhantomData).has_display());
+        assert!(!Has::<Jwt>(PhantomData).has_debug());
+        assert!(!Has::<Jwt>(PhantomData).has_display());
+        assert!(!Has::<Credentials>(PhantomData).has_debug());
+        assert!(!Has::<Credentials>(PhantomData).has_display());
+        assert!(!Has::<SourceRequest>(PhantomData).has_debug());
+        assert!(!Has::<SourceRequest>(PhantomData).has_display());
+        // The response holds the login's body (the JWT): its Debug leaves the body out (L4).
+        let response = crate::music_net::SourceResponse {
+            status: 200,
+            body: LOGIN_OK.to_vec(),
+            ..Default::default()
+        };
+        let printed = format!("{response:?}");
+        assert!(
+            !printed.contains("FAKE") && !printed.contains("70, 65"),
+            "{printed}"
+        );
+        assert!(printed.contains("body_len"), "{printed}");
     }
 
     #[test]
@@ -1652,5 +1694,93 @@ mod tests {
             let storytel = StorytelError::Fetch(err);
             assert!(!format!("{storytel:?} {}", storytel.message()).contains("pwd="));
         }
+    }
+
+    /// Code QA M1: a redirect of the login never carries the login URL (e-mail, `pwd=`) in a
+    /// `Referer` to the next host.
+    #[tokio::test]
+    async fn the_login_sends_no_referer() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        use axum::response::IntoResponse;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let next = format!("http://localhost:{}/next", addr.port());
+        let app = axum::Router::new()
+            .route(
+                "/api/login.action",
+                axum::routing::get(move || {
+                    let next = next.clone();
+                    async move { axum::response::Redirect::temporary(&next).into_response() }
+                }),
+            )
+            .route(
+                "/next",
+                axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                    let referer = headers
+                        .get("referer")
+                        .map(|v| v.to_str().unwrap_or("?").to_string())
+                        .unwrap_or_default();
+                    format!(r#"{{"referer":"{referer}"}}"#)
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let url = login_url(&format!("http://{addr}/api/login.action"), EMAIL, PASSWORD);
+        let response = crate::music_net::HttpSource::new()
+            .get(SourceRequest::new(url, Kind::Login, Reach::Any))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            String::from_utf8_lossy(&response.body),
+            r#"{"referer":""}"#,
+            "the redirect target got a Referer"
+        );
+    }
+
+    /// Code QA L1: the picker's read is bounded (the session's lock and the gate included), and
+    /// a save's `keep` never waits for a read in progress.
+    #[tokio::test]
+    async fn the_read_is_bounded_and_keep_never_waits() {
+        let app = TestApp::new().await;
+        assert_eq!(READ_BUDGET, Duration::from_secs(45));
+        store(&app, EMAIL, PASSWORD, 1).await;
+        app.fetch.answer(&login(EMAIL, PASSWORD), 200, LOGIN_OK);
+        app.fetch.answer(BOOKSHELF, 200, fixture("bookshelf.json"));
+        let account = &app.state.storytel;
+        app.fetch.delay(300);
+        let err = account
+            .bookshelf_within(&app.state, Duration::from_millis(100))
+            .await
+            .unwrap_err();
+        assert_eq!(err, StorytelError::Fetch(FetchError::Timeout));
+        assert_eq!(
+            err.message(),
+            "Storytel didn't answer in time - try again later."
+        );
+        app.fetch.delay(0);
+        // A read holds the session: keep returns at once and keeps nothing.
+        let held = account.session.lock().await;
+        let kept = tokio::time::timeout(Duration::from_secs(1), async {
+            account.keep(2, Some(Jwt("FAKE-JWT-2".into())), Some(Vec::new()))
+        })
+        .await;
+        assert!(kept.is_ok());
+        assert!(held.jwt.is_none() && held.shelf.is_none());
+        drop(held);
+        // Free: kept for its generation.
+        account.keep(1, Some(Jwt("FAKE-JWT-2".into())), None);
+        assert_eq!(
+            account
+                .session
+                .lock()
+                .await
+                .jwt
+                .as_ref()
+                .map(|k| k.generation),
+            Some(1)
+        );
+        app.fetch.clear_calls();
+        account.bookshelf(&app.state).await.unwrap();
+        assert_eq!(calls_to(&app, LOGIN_URL), 0, "the kept JWT is used");
     }
 }

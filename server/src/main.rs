@@ -124,11 +124,29 @@ pub struct AppState {
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
-/// The log filter: `rust_log` (RUST_LOG) or `info`, with reqwest never below `info` (design 26b
-/// QA L10): reqwest logs each redirect's URLs at `debug`, and the Storytel login's URL carries the
-/// e-mail and the encrypted password (`pwd=`), so `RUST_LOG=debug` must not print it.
+/// The log filter: `rust_log` (RUST_LOG) or `info`, with reqwest never logging below `info`
+/// (design 26b QA L10, code QA L2): the Storytel login's URL carries the e-mail and the encrypted
+/// password (`pwd=`), and a reqwest version may log URLs at `debug` (0.12 logged each redirect's;
+/// the 0.13 in the lock doesn't). Every `reqwest`/`reqwest::*` directive of `rust_log` is dropped
+/// first, so a more specific one can't get past the floor. Defence in depth: it covers reqwest's
+/// own events only.
 pub fn log_filter(rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
-    rust_log
+    let own: Option<String> = rust_log.map(|value| {
+        value
+            .split(',')
+            .filter(|directive| {
+                let target = directive
+                    .trim()
+                    .split(['[', '='])
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                target != "reqwest" && !target.starts_with("reqwest::")
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    });
+    own.filter(|value| !value.trim().is_empty())
         .and_then(|value| tracing_subscriber::EnvFilter::try_new(value).ok())
         .unwrap_or_else(|| tracing_subscriber::EnvFilter::new("info"))
         .add_directive("reqwest=info".parse().expect("a valid directive"))
@@ -142,8 +160,8 @@ async fn main() {
     dotenvy::dotenv().ok();
     // `info` unless RUST_LOG says otherwise: the startup lines (where the server listens, the
     // generated first password's file, the Storytel key) must reach the journal and `docker
-    // logs`. tracing-subscriber's own default is errors only. reqwest is floored at `info`
-    // whatever RUST_LOG says (`log_filter`).
+    // logs`. tracing-subscriber's own default is errors only. reqwest never logs below `info`
+    // here, whatever RUST_LOG says (`log_filter`).
     tracing_subscriber::fmt()
         .with_env_filter(log_filter(std::env::var("RUST_LOG").ok().as_deref()))
         .init();

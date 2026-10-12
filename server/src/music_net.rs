@@ -108,13 +108,26 @@ impl SourceRequest {
 
 /// An answer: the status, the body's first `kind.limit()` bytes (`truncated` = there was more) and
 /// the validators.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SourceResponse {
     pub status: u16,
     pub body: Vec<u8>,
     pub truncated: bool,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+}
+
+/// Without the body (design 26b QA L4): a Storytel login's body holds the session token.
+impl std::fmt::Debug for SourceResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourceResponse")
+            .field("status", &self.status)
+            .field("body_len", &self.body.len())
+            .field("truncated", &self.truncated)
+            .field("etag", &self.etag)
+            .field("last_modified", &self.last_modified)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,7 +339,10 @@ impl HttpSource {
                 .no_proxy()
                 .connect_timeout(Duration::from_secs(10))
                 .read_timeout(Duration::from_secs(30))
-                .redirect(redirect_policy(reach));
+                .redirect(redirect_policy(reach))
+                // No `Referer` on a redirect (design 26b QA M1): reqwest copies the previous URL
+                // with its query, and the Storytel login's carries the e-mail and `pwd=`.
+                .referer(false);
             match reach {
                 Reach::Public => builder.dns_resolver(Arc::new(PublicResolver)),
                 Reach::Any => builder,

@@ -632,24 +632,29 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Refused-login cooldown**: a login answered with anything but 200 stamps `music_storytel.login_refused_at` +
   `login_refused_generation`; for an hour no login is tried for that generation (no request). A new save (generation
   + 1) clears it. `login_ok_at`/`login_error` (a code: `login_refused`, `network`, `http_503`, `storytel_key`, ...)
-  feed the card's status line.
+  and `login_error_at` feed the card's status line.
 - **PWA**: saving the login (`POST /music/storytel`) probes it first (one login + one bookshelf, 45 s in all, the
-  gate's wait included): refused = a 400 and nothing stored (the old login kept, `storytel_login_refused`); accepted
-  or unreachable = sealed, the probe's JWT and shelf kept, a one-time notice (session flash). `GET /music/storytel`
-  is the shelf picker (a fresh bookshelf, kids' books unless `?all=1`, in-library groups disabled, text only), `POST
-  /music/storytel/add` reads a repeated `target` (`Form<Vec<(String, String)>>`) and adds only groups on the shelf
+  gate's wait included): not 200 = a 400 and nothing stored (the old login kept, `storytel_login_refused`; worded as
+  a wrong password only for 401/403/no JWT); accepted or unreachable = sealed, the probe's JWT and shelf kept (unless
+  a read holds the session: `keep` never waits), a one-time notice (session flash). `GET /music/storytel` is the shelf
+  picker (a fresh bookshelf within 45 s, kids' books unless `?all=1`, in-library groups disabled, text only), `POST
+  /music/storytel/add` reads a repeated `target` (`Form<Vec<(String, String)>>`, at most 200) and adds only groups on the shelf
   (`storytel` entries: order `auto`, cache -1, resume on, Lydbøker by default). A Storytel entry's offline choices are
   all / the first 5, 10, 20; a 0 is saved as -1. Step 2a leaves Storytel out of the library, the sweep and the cards
   (step 2b).
 - **Secrets**: the password, `pwd=` (AES with a public key: as good as the password), the e-mail and the JWT never
   reach a log, an error text, an event or a page. `music_net::network_error` drops the URL from every transport error
   (`without_url`: reqwest prints the URL, and the login's carries the e-mail and `pwd=`); `StoredLogin`, `Jwt`,
-  `SourceRequest` and their holders have no `Debug` (`storytel::tests::secret_types_have_no_debug`). **The log filter
-  floors `reqwest=info` whatever `RUST_LOG` says** (`main::log_filter`): reqwest logs each redirect's URLs at
-  `debug`, so `RUST_LOG=debug` would otherwise print the login URL. Test fakes never look real (`FAKE-JWT-1`,
-  `*.example.invalid`).
+  `SourceRequest` have no `Debug` or `Display` (a compile-time probe, `storytel::tests::secret_types_have_no_debug`),
+  `SourceResponse`'s `Debug` leaves the body (a login's JWT) out, and the source clients send no `Referer` on a
+  redirect (`.referer(false)`: reqwest would copy the login URL into it). **reqwest never logs below `info` here,
+  whatever `RUST_LOG` says** (`main::log_filter` drops every `reqwest`/`reqwest::*` directive, then adds
+  `reqwest=info`): a future reqwest could log a URL at `debug` (0.12 logged each redirect's; the 0.13 in the lock
+  doesn't), and the login's carries `pwd=`. It is defence in depth for reqwest's own events only. Test fakes never
+  look real (`FAKE-JWT-1`, `*.example.invalid`).
 - Tests: `storytel::tests` (AES vectors, targets, normalising, the request's shape, 401, cooldown, cache, probe
-  bound, no secret in errors), `src/tests/music_storytel.rs` (save/probe, card, picker, add, clear, entry page),
+  bound, the picker's read bound, no secret in errors, no Referer), `src/tests/music_storytel.rs` (save/probe, card,
+  picker, add, clear, entry page, the log floor by real events),
   fixtures in `testdata/storytel/`. `tests::music::CannedFetch` records each request (`requests`) and has
   `answer_once`.
 

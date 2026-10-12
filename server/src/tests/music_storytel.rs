@@ -220,6 +220,24 @@ async fn save_probes_then_seals() {
     );
     let (_, generation, refused_at, _, _, _) = row(&app).await;
     assert_eq!((generation, refused_at), (1, None));
+    // Storytel down or rate-limiting (code QA L5): nothing stored either, but not called a wrong
+    // password.
+    for status in [503, 429] {
+        app.fetch.answer(&login(EMAIL, "tom"), status, "");
+        let res = save(&app, &cookie, EMAIL, "tom").await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        let text = res.text().replace("&#39;", "'");
+        assert!(
+            text.contains(&format!(
+                "Storytel answered {status} - nothing was saved; the saved login is unchanged. \
+                 Try again later."
+            )),
+            "{status}"
+        );
+        assert!(!text.contains("refused that e-mail and password"));
+    }
+    assert_eq!(row(&app).await.1, 1);
+    assert_eq!(stored(&app).await, Some((EMAIL.into(), PASSWORD.into())));
 
     // Unreachable: saved anyway, with the notice; the card says Storytel couldn't be reached.
     app.fetch.fail(
@@ -240,7 +258,15 @@ async fn save_probes_then_seals() {
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("Saved, but Storytel couldn't be reached to check it."));
-    assert!(page.contains("Storytel couldn't be reached at the last try."));
+    assert!(
+        page.contains("Storytel couldn't be reached (10:02 UTC)."),
+        "{page}"
+    );
+    let error_at: Option<String> = sqlx::query_scalar("SELECT login_error_at FROM music_storytel")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(error_at.as_deref(), Some("2026-10-12 10:02:00"));
     // The login works but the shelf doesn't: unreachable too, the login's time kept.
     app.fetch
         .answer(&login(EMAIL, "pw3"), 200, fixture("login_ok.json"));
@@ -257,7 +283,7 @@ async fn save_probes_then_seals() {
             .await
             .text()
             .replace("&#39;", "'")
-            .contains("Storytel answered 503 at the last try.")
+            .contains("Storytel answered 503 (10:02 UTC).")
     );
 
     // A refusal in use starts the cooldown (shown with its times); a new save retries at once.
@@ -595,6 +621,36 @@ async fn add_takes_only_shelf_targets() {
             .contains("That category doesn't exist any more.")
     );
 
+    // At most MAX_ENTRIES target fields are read (code QA L6), repeats included.
+    let many: Vec<(&str, &str)> = std::iter::repeat_n(("target", "storytel:book:999"), 201)
+        .chain([("category", "3")])
+        .collect();
+    let res = app
+        .request_form(Method::POST, "/music/storytel/add", Some(&cookie), &many)
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(
+        res.text()
+            .contains("More than 200 rows are ticked - nothing was added.")
+    );
+    assert_eq!(storytel_entries(&app).await.len(), 3);
+    let two_hundred: Vec<(&str, &str)> =
+        std::iter::repeat_n(("target", "storytel:book:999"), 200).collect();
+    let res = app
+        .request_form(
+            Method::POST,
+            "/music/storytel/add",
+            Some(&cookie),
+            &two_hundred,
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+    assert_eq!(storytel_entries(&app).await.len(), 4, "the repeats are one");
+    sqlx::query("DELETE FROM music_entries WHERE target = 'storytel:book:999'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
     // The entry limit is the INSERT's own condition.
     sqlx::query(
         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 197) \
@@ -654,6 +710,11 @@ async fn clear_drops_storytel_from_libraries() {
         (None, None, None, None, None)
     );
     assert_eq!(generation, 3);
+    let error_at: Option<String> = sqlx::query_scalar("SELECT login_error_at FROM music_storytel")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(error_at, None);
     // The session went with it: the picker asks Storytel nothing.
     app.fetch.clear_calls();
     let page = app
@@ -766,18 +827,73 @@ async fn the_entry_page_offers_storytels_choices() {
     assert!(page.contains("<option value=\"-1\" selected>All books</option>"));
 }
 
+/// Every event the log filter for `rust_log` lets through, as "LEVEL target".
+fn emitted(rust_log: Option<&str>) -> Vec<String> {
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::layer::SubscriberExt;
+    struct Capture(Arc<Mutex<Vec<String>>>);
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Capture {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let meta = event.metadata();
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("{} {}", meta.level(), meta.target()));
+        }
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = tracing_subscriber::registry()
+        .with(crate::log_filter(rust_log))
+        .with(Capture(seen.clone()));
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::debug!(target: "reqwest::async_impl::client", "redirecting");
+        tracing::trace!(target: "reqwest::connect::verbose", "raw bytes");
+        tracing::debug!(target: "reqwest", "top level");
+        tracing::info!(target: "reqwest::connect", "host only");
+        tracing::debug!(target: "kid_phone_server::storytel", "ours");
+    });
+    seen.lock().unwrap().clone()
+}
+
 #[test]
 fn the_log_floors_reqwest_at_info() {
-    // QA L10: reqwest logs a redirect's URLs at debug - the login's `pwd=`.
+    // QA L10, code QA L2: reqwest never logs below info, whatever RUST_LOG says - a more
+    // specific reqwest directive included.
     for rust_log in [
         None,
         Some("debug"),
         Some("trace"),
         Some("reqwest=trace"),
+        Some("reqwest"),
+        Some("reqwest::async_impl=debug"),
+        Some("debug,reqwest::connect=trace"),
+        Some("info, reqwest::connect::verbose = trace"),
+        Some("info,reqwest[request]=trace"),
         Some("bad=["),
     ] {
-        let filter = crate::log_filter(rust_log).to_string();
-        assert!(filter.contains("reqwest=info"), "{rust_log:?}: {filter}");
-        assert!(!filter.contains("reqwest=trace"), "{rust_log:?}: {filter}");
+        let seen = emitted(rust_log);
+        assert!(
+            seen.contains(&"INFO reqwest::connect".to_string()),
+            "{rust_log:?}: {seen:?}"
+        );
+        assert!(
+            !seen
+                .iter()
+                .any(|e| e.starts_with("DEBUG reqwest") || e.starts_with("TRACE reqwest")),
+            "{rust_log:?}: {seen:?}"
+        );
     }
+    // The rest of RUST_LOG still applies.
+    for rust_log in ["debug", "kid_phone_server=debug,reqwest=trace"] {
+        let seen = emitted(Some(rust_log));
+        assert!(
+            seen.contains(&"DEBUG kid_phone_server::storytel".to_string()),
+            "{rust_log}: {seen:?}"
+        );
+    }
+    assert!(!emitted(None).contains(&"DEBUG kid_phone_server::storytel".to_string()));
 }

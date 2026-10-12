@@ -440,10 +440,12 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
         Option<i64>,
         Option<String>,
         Option<String>,
+        Option<String>,
     );
     let stored: StoredRow = sqlx::query_as(
         "SELECT ciphertext, key_fingerprint, saved_at, generation, login_refused_at, \
-         login_refused_generation, login_ok_at, login_error FROM music_storytel WHERE id = 1",
+         login_refused_generation, login_ok_at, login_error, login_error_at FROM music_storytel \
+         WHERE id = 1",
     )
     .fetch_one(&state.db)
     .await?;
@@ -471,6 +473,7 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
             stored.5,
             stored.6.as_deref(),
             stored.7.as_deref(),
+            stored.8.as_deref(),
             state.music_sweep.now(),
         )
         .map_or((None, false), |(text, bad)| (Some(text), bad))
@@ -1053,8 +1056,14 @@ fn storytel_status(
     refused_generation: Option<i64>,
     ok_at: Option<&str>,
     error: Option<&str>,
+    error_at: Option<&str>,
     now: DateTime<Utc>,
 ) -> Option<(String, bool)> {
+    // " (10:02 UTC)" from `login_error_at`.
+    let when = error_at
+        .and_then(crate::music_sweep::parse_stamp)
+        .map(|at| format!(" ({})", utc_time(at, now)))
+        .unwrap_or_else(|| " at the last try".to_string());
     let Some(code) = error else {
         let at = crate::music_sweep::parse_stamp(ok_at?)?;
         return Some((
@@ -1088,11 +1097,11 @@ fn storytel_status(
         "storytel_key" => {
             "The saved login was locked with another key - enter it again.".to_string()
         }
-        "no_jwt" => "Storytel took the login but sent no session at the last try.".to_string(),
-        "network" | "timeout" => "Storytel couldn't be reached at the last try.".to_string(),
+        "no_jwt" => format!("Storytel took the login but sent no session{when}."),
+        "network" | "timeout" => format!("Storytel couldn't be reached{when}."),
         code => match code.strip_prefix("http_") {
-            Some(status) => format!("Storytel answered {status} at the last try."),
-            None => "Storytel's shelf couldn't be read at the last try.".to_string(),
+            Some(status) => format!("Storytel answered {status}{when}."),
+            None => format!("Storytel's shelf couldn't be read{when}."),
         },
     };
     Some((text, true))
@@ -1145,8 +1154,19 @@ pub async fn save_storytel(
                 None => "Storytel sent no session".to_string(),
             };
             log_event(&state, &admin, "storytel_login_refused", &detail).await;
-            let entered =
-                refuse("Storytel refused that e-mail and password. The saved login is unchanged.");
+            // Worded by status (QA L5): a 503 or a 429 is Storytel's trouble, not a wrong
+            // password. Nothing is stored either way.
+            let text = match status {
+                None | Some(401) | Some(403) => {
+                    "Storytel refused that e-mail and password. The saved login is unchanged."
+                        .to_string()
+                }
+                Some(status) => format!(
+                    "Storytel answered {status} - nothing was saved; the saved login is \
+                     unchanged. Try again later."
+                ),
+            };
+            let entered = refuse(&text);
             return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
         }
         Probe::Accepted { jwt, shelf } => {
@@ -1160,29 +1180,30 @@ pub async fn save_storytel(
             "Saved, but Storytel couldn't be reached to check it.".to_string(),
         ),
     };
-    let ok_at = jwt
-        .as_ref()
-        .map(|_| crate::music_sweep::stamp(state.music_sweep.now()));
+    let now = crate::music_sweep::stamp(state.music_sweep.now());
+    let ok_at = jwt.as_ref().map(|_| now.clone());
+    let error_at = error_code.as_ref().map(|_| now.clone());
     let plain = serde_json::json!({"email": email, "password": password}).to_string();
     let (ciphertext, nonce) = key.seal(plain.as_bytes());
     let saved: Result<i64, sqlx::Error> = sqlx::query_scalar(
         "UPDATE music_storytel SET ciphertext = ?, nonce = ?, key_fingerprint = ?, \
          saved_at = datetime('now'), generation = generation + 1, login_refused_at = NULL, \
-         login_refused_generation = NULL, login_ok_at = ?, login_error = ? WHERE id = 1 \
-         RETURNING generation",
+         login_refused_generation = NULL, login_ok_at = ?, login_error = ?, login_error_at = ? \
+         WHERE id = 1 RETURNING generation",
     )
     .bind(&ciphertext)
     .bind(&nonce)
     .bind(&key.fingerprint)
     .bind(ok_at)
     .bind(error_code)
+    .bind(error_at)
     .fetch_one(&state.db)
     .await;
     let generation = match saved {
         Ok(generation) => generation,
         Err(err) => return server_error(err, "couldn't save the Storytel login"),
     };
-    state.storytel.keep(generation, jwt, shelf).await;
+    state.storytel.keep(generation, jwt, shelf);
     nudge(&state, &storytel_phones(&state.db).await);
     log_event(
         &state,
@@ -1206,7 +1227,8 @@ pub async fn clear_storytel(
     let cleared = sqlx::query(
         "UPDATE music_storytel SET ciphertext = NULL, nonce = NULL, key_fingerprint = NULL, \
          saved_at = NULL, generation = generation + 1, login_refused_at = NULL, \
-         login_refused_generation = NULL, login_ok_at = NULL, login_error = NULL WHERE id = 1",
+         login_refused_generation = NULL, login_ok_at = NULL, login_error = NULL, \
+         login_error_at = NULL WHERE id = 1",
     )
     .execute(&state.db)
     .await;
@@ -1450,10 +1472,22 @@ pub async fn add_storytel(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Response {
-    // A repeated field: `FormMap` would keep one `target` (QA L3).
+    // A repeated field: `FormMap` would keep one `target` (QA L3). At most `MAX_ENTRIES` of them
+    // are read (code QA L6: the library can't take more, and a huge form costs nothing then).
     let mut targets: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut fields = 0;
+    let mut too_many = false;
     for (name, value) in &form {
-        if name == "target" && !targets.contains(value) {
+        if name != "target" {
+            continue;
+        }
+        fields += 1;
+        if fields > MAX_ENTRIES {
+            too_many = true;
+            break;
+        }
+        if seen.insert(value.as_str()) {
             targets.push(value.clone());
         }
     }
@@ -1485,6 +1519,12 @@ pub async fn add_storytel(
             return render_picker(&state, StatusCode::SERVICE_UNAVAILABLE, shelf, view).await;
         }
     };
+    if too_many {
+        let view = refuse(format!(
+            "More than {MAX_ENTRIES} rows are ticked - nothing was added."
+        ));
+        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+    }
     if targets.is_empty() {
         let view = refuse("Tick a series or a book first.".to_string());
         return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
