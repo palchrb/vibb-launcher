@@ -213,7 +213,9 @@ class StatusBarHealTest {
             assertTrue(trigger.name, runtime.contains("healStatusBar(app, HealTrigger.${trigger.name})") ||
                 runtime.contains("healStatusBar(context, HealTrigger.${trigger.name})"))
         }
-        val screenOff = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("} else {")
+        // Bug 25b-B: the screen-off heal runs in the deferred screen-off work, while the screen is still off.
+        val screenOff = runtime.substringAfter("private val screenOffWork = Runnable {").substringBefore("\n    }\n")
+        assertTrue(screenOff.contains("if (!screenOffWorkDue(interactive(app))) return@Runnable"))
         assertTrue(screenOff.contains("healStatusBar(app, HealTrigger.SCREEN_OFF)"))
         val resumed = body(runtime, "onLockResumed")
         assertTrue(resumed.contains("if (lockResumedHealDue(lockResumedHealAt, now, afterScreenOffHeal))"))

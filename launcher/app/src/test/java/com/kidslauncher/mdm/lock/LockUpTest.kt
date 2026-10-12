@@ -116,6 +116,27 @@ class LockUpTest {
     }
 
     @Test
+    fun `at a screen-off the lock goes first - the rest waits, and is dropped if the screen came back on`() {
+        assertEquals(400L, SCREEN_OFF_WORK_DELAY_MS)
+        assertTrue(screenOffWorkDue(interactive = false))
+        assertFalse(screenOffWorkDue(interactive = true))
+        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        val off = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("} else {")
+        val lockUp = off.indexOf("dispatch(app, LockEvent.ScreenOff(")
+        assertTrue(lockUp >= 0 && lockUp < off.indexOf("handler.postDelayed(screenOffWork, SCREEN_OFF_WORK_DELAY_MS)"))
+        for (deferred in listOf("SelfUpdate.onScreenOff(app)", "reevaluateLockReasonFromCache(app)", "healStatusBar(app", "UpdateFence.onFront(app)")) {
+            assertFalse("$deferred runs later", off.contains(deferred))
+        }
+        val work = runtime.substringAfter("private val screenOffWork = Runnable {").substringBefore("\n    }\n")
+        for (deferred in listOf("SelfUpdate.onScreenOff(app)", "reevaluateLockReasonFromCache(app)", "healStatusBar(app, HealTrigger.SCREEN_OFF)",
+            "UpdateFence.onFront(app)", "screenOffHealed = true")) {
+            assertTrue(deferred, work.contains(deferred))
+        }
+        val on = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringAfter("} else {")
+        assertTrue(on.substringBefore("PlayRuntime.suspendStoreAtScreenOn(app)").contains("handler.removeCallbacks(screenOffWork)"))
+    }
+
+    @Test
     fun `the glance page never draws a frame before its fit`() {
         val panel = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt")
         assertTrue(panel.contains("glance.root.viewTreeObserver.addOnPreDrawListener {"))

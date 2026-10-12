@@ -636,24 +636,16 @@ object PinLockRuntime {
                 dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app), VoipCalls.phase))
                 syncVoipRinger(app)
                 ScreenTimeTracker.update(app)
-                // Step 11: a screen-off may end the update fence in the new build, and starts the
-                // wait for the self-update window.
-                com.kidslauncher.mdm.server.UpdateFence.onFront(app)
-                com.kidslauncher.mdm.server.SelfUpdate.onScreenOff(app)
-                // The nightly Play update window opens when the screen goes off inside it.
-                try {
-                    reevaluateLockReasonFromCache(app)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Re-check at screen off failed", e)
-                }
-                // Design 16d decision 1: lock task's status-bar flags sent to SystemUI again while
-                // the screen is off - a SystemUI or quickstep restart isn't visible to an app.
-                healStatusBar(app, HealTrigger.SCREEN_OFF)
-                // The lock-up after the next screen-on needs no visible heal of its own (bug 25b-C).
-                screenOffHealed = true
+                // Bug 25b-B: the rest waits until the lock just started has had the main thread for
+                // its first frame - the activity's creation runs only after this receiver returns.
+                handler.removeCallbacks(screenOffWork)
+                handler.postDelayed(screenOffWork, SCREEN_OFF_WORK_DELAY_MS)
             } else {
                 // First, synchronously: end the Play update window before anything else (QA
                 // step 7 #8); the full re-apply follows in the background.
+                // Back on before the screen-off's deferred work ran: it is dropped (the screen-on's
+                // own re-checks follow; a status-bar heal now would be visible).
+                handler.removeCallbacks(screenOffWork)
                 if (intent.action == Intent.ACTION_SCREEN_ON) {
                     lastScreenOnElapsed = SystemClock.elapsedRealtime()
                     PlayRuntime.suspendStoreAtScreenOn(app)
@@ -679,6 +671,30 @@ object PinLockRuntime {
                 }
             }
         }
+    }
+
+    /**
+     * The screen-off's work that the lock doesn't need first (bug 25b-B), [SCREEN_OFF_WORK_DELAY_MS]
+     * after it; dropped if the screen came back on meanwhile ([screenOffWorkDue]).
+     */
+    private val screenOffWork = Runnable {
+        val app = appContext ?: return@Runnable
+        if (!screenOffWorkDue(interactive(app))) return@Runnable
+        // Step 11: a screen-off may end the update fence in the new build, and starts the
+        // wait for the self-update window.
+        com.kidslauncher.mdm.server.UpdateFence.onFront(app)
+        com.kidslauncher.mdm.server.SelfUpdate.onScreenOff(app)
+        // The nightly Play update window opens when the screen goes off inside it.
+        try {
+            reevaluateLockReasonFromCache(app)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Re-check at screen off failed", e)
+        }
+        // Design 16d decision 1: lock task's status-bar flags sent to SystemUI again while
+        // the screen is off - a SystemUI or quickstep restart isn't visible to an app.
+        healStatusBar(app, HealTrigger.SCREEN_OFF)
+        // The lock-up after the next screen-on needs no visible heal of its own (bug 25b-C).
+        screenOffHealed = true
     }
 
     private val callsListener: () -> Unit = {

@@ -180,3 +180,15 @@ const val SOS_FLOW_MS = 60_000L
 /** The lock left the front [leftFrontAtMs] (elapsed) probably because of the SOS gesture. */
 fun sosGestureLikely(lastScreenOnAtMs: Long?, leftFrontAtMs: Long, sosAppPresent: Boolean): Boolean =
     sosAppPresent && lastScreenOnAtMs != null && leftFrontAtMs - lastScreenOnAtMs in 0..SOS_GESTURE_WINDOW_MS
+
+/**
+ * Bug 25b-B: at a screen-off the lock is started first; the rest of the screen-off's work (the
+ * update fence and self-update wait, the cached policy's re-check, the status-bar heal) runs this
+ * much later, so the lock's creation and first frame - which wait for the main thread - come first
+ * and the lock is drawn before a quick screen-on.
+ */
+const val SCREEN_OFF_WORK_DELAY_MS = 400L
+
+/** The deferred screen-off work runs only while the screen is still off (a heal with the screen on
+ * would be visible, the self-update wait would start with the phone in use). */
+fun screenOffWorkDue(interactive: Boolean): Boolean = !interactive
