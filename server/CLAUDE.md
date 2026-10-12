@@ -348,7 +348,7 @@ latest`) would take no backup first. A new migration takes the next number after
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"
-- `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep"
+- `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)
 - `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (and design 24b's `end_windows`/`allow_blocked`/`start_pause`) (`requested_at`/`delivered_at` (the last delivery)/`deliveries`/`received_at`/`acknowledged_at`/`result`/`succeeded`/`cancelled_at`/`cancel_reason`/`payload` - `allow_blocked`'s list), see the Find My Device architecture bullet above
 
 ## Device-facing API (plain JSON, no envelope)
@@ -623,6 +623,43 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - Tests: `src/tests/music_sweep.rs` (incl. a simulated day per setting through `run_pass` itself, with the fake
   clock, against 21b's request counts, and one with a flagged failing feed and a failing NRK page),
   `music_sweep`/`music_sources`/`music_net::tests` (loopback server for the address rules).
+
+## Vibb music: episode art (design 27, `docs/design/27-music-episode-art.md`, migration `0070_music_episode_art.sql`)
+
+- **What**: the sweep fetches each NRK/RSS item's own picture (`art_url`: NRK's smallest variant of at least 512 px
+  of `squareImage` else `image`, `music_sources::EPISODE_ART_WIDTH`; an RSS item's `itunes:image`) as a 512 px JPEG
+  in `photos::MUSIC_ART` (`AppState.music_art_dir`, `data/music_art`; its own lock; **not backed up**:
+  `recover_missing` forgets lost ones and the sweep fetches them again). The listing's item `art` is the 64-hex hash
+  of that picture, or null (none, the series picture, not fetched yet, failed) - `testdata/music_listing.json`, the
+  music app's copy and the launcher's `MusicPlanTest` version pin change together. Served by the cover route:
+  `cover_in_library` first, else `music::art_in_library` (a listed, non-pending item of a listed NRK/RSS entry the
+  phone has ticked) from `music_art_dir`.
+- **The pass** (`music_sweep::art_pass`, after the listing, manifests and cover; not on recheck-only checks): the
+  first `ART_WINDOW` (200) `ok` items in play order (`effective_order`'s rule), this check's new items first; due =
+  `art_from != art_url` (untried) or `failed` with `art_fails < 3` a day after `art_at`. Step 1: the URL is the
+  cover's or NRK's 16:9 picture's -> `same`, no request. Step 2: another item (this entry's, else any entry's, one
+  with a file first) has a print for that URL -> judged against this entry's reference prints, no request; a `same`
+  elsewhere has no file, so an `own` here needs the request (QA L1 c). Step 3: one GET (`Kind::Image`,
+  `public_media` unless a LAN feed), `process_limited(Square)`, `photos::print` (9x8 dHash); within
+  `SAME_PICTURE_BITS` (5) of a reference -> `same` (nothing stored), else `own`, deduplicated by print within the
+  entry (QA M2: one picture under many URLs is one hash). A failure never fails the check. Budgets:
+  `ART_PER_CHECK` 20 (`Sweep::set_art_per_check` in the tests; 0 in tests that count listing requests),
+  `ART_PER_DAY` 400 counted from `art_fetched_at` (requests only, QA L1 a); a request the budget stops leaves its item
+  untried (QA L1 b). The log line adds `, art N (o own, s same)`.
+- **Reference prints** (QA M2, `music_listings`): `cover_print` (of a newly fetched cover, else read once from the
+  stored file), `cover_alt_url`/`cover_alt_print` (NRK's 16:9 `image` when the cover is its `squareImage`,
+  `Root::wide_image`, one request when its URL changes, at most daily) and `old_prints` (JSON, up to 3 earlier
+  covers). `art_refs` is the set the items were judged against; a change re-judges every item from its stored print
+  with no request (`own` that matches -> `same`, its file pruned; `same` that no longer matches -> untried).
+- **Backlog** (`art_backlog`, `art_same_run`, `art_backlog_at`): 5 fetched pictures in a row that are the series
+  picture with no `own` in the entry -> only new items are tried; an `own` turns it back on, and so does a month
+  (QA L1 e). **Refresh** (`art_refresh`, set by 0070 for NRK entries, QA M3): the next check walks the episode pages
+  from the kept end once more and updates `art_url` of known keys (untried), nothing added or dropped; cleared when
+  the walk finished within the budget.
+- **Stored** with the items in `finish` (the `MUSIC_ART` lock from writing the files to the commit; a hash copied
+  from another item that is no longer on disk is left untried), pruned after a `finish` that changed an art reference
+  and after an entry is deleted. The card's count line adds "· N with episode art".
+- Tests: `src/tests/music_art.rs`, `photos::tests` (the print), `music_sources::tests` (the 512 pick, `wide_image`).
 
 ## Parent PIN (design 24, `docs/design/24-parent-pin-hardening.md`, migrations `0056_parent_pin_easy.sql`, `0057_device_pin_events.sql`)
 

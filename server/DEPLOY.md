@@ -525,6 +525,25 @@ audio from the source.
 - Rolling back to 0.21 means restoring the `update.sh` backup: 0.21 refuses to start on a database with migration
   0051.
 
+## Vibb music: episode art (design 27, migration 0070)
+
+The sweep also fetches each NRK/RSS episode's own picture and the phones show it in the player.
+
+- **What it fetches**: an episode's picture (NRK's 512 px variant, an RSS item's `itunes:image`) from gfx.nrk.no or
+  the feed's image host, at most 20 a check and 400 a day server-wide, the first 200 episodes of each entry in play
+  order, newest first. A picture that is the series cover (by URL, or by its print under another URL or size) costs
+  nothing more. The first days after the update fill the back catalogue (30 NRK entries x 100 episodes is at most
+  about 3,000 requests, so a week or more); after that it is one request per new episode with a new picture. Once,
+  right after the update, each NRK entry's next check reads its episode pages again for the bigger picture (2-3
+  requests per entry). The log line says `, art 7 (3 own, 4 same)`.
+- **Storage**: `data/music_art/` holds the pictures (512 px JPEGs, about 40-70 KB each; expect up to ~150 MB for 30
+  NRK entries with pictures for every episode). It is **not** in the backups: after a restore the server forgets
+  the pictures it can't find and fetches them again, a few at a time. Pruned with the episodes.
+- **Checks on the Pi after the update**: an NRK podcast with episode pictures, one without (the log says `same`), an
+  RSS feed with per-item pictures; the log lines and `requests`; `du -sh data/music_art` after a day.
+- Rolling back means restoring the `update.sh` backup: an older server refuses to start on a database with migration
+  0070.
+
 ## Server 0.23.0 (design 22): two listeners, the admin gate, Docker
 
 - **What changes for an existing Pi**: nothing has to be done - the admin keeps answering on `127.0.0.1:3100` behind
