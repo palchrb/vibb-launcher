@@ -495,16 +495,21 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (nrk/rss/own; `target` unique, NULL for own; `key` = vibb's `state_key`, `own-<id>`; `cache` -1/0/1-100, own = -1;
   <= 200), `music_files` (own uploads, <= 300 per entry, `missing`), `device_music_entries` (ticks),
   `device_policy.music_mobile_data/music_volume_cap_pct/music_storytel`, `music_storytel` singleton,
-  `device_status.music_state_json`, `tracked_apps.release_tag_prefix`.
+  `device_status.music_state_json`, `tracked_apps.release_tag_prefix`; `device_policy.music_sonos_rooms_json`
+  (migration `0065`, design 26a §5.5: NULL = every Sonos room, else a JSON array of speaker uids; its trigger moves
+  `music_library_revision`).
 - **PWA** (`handlers::music`, `templates/music*.html`): `/music` (add by link - one GET, `AppState.music_fetch`,
   canned in tests; own-files entries; categories; Storytel; the music app's catalog row), `/music/entries/{id}`
   (settings, cover, uploads), device page card `#music` (app switch = `toggle_app` with `anchor=music`, auto-saving
-  ticks, mobile data, volume cap Off/90/80/70/60 - NULL = off, Storytel switch, the phone's `music_state`). Every form
+  ticks, mobile data, volume cap Off/90/80/70/60 - NULL = off, Storytel switch, the Sonos rooms at `#music-sonos`
+  - "All rooms" or one tick per room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event
+  `music_sonos_rooms_changed`, "The phone hasn't seen any speakers yet" before a report - the phone's `music_state`). Every form
   redirects to its anchor; a 400 re-renders with the values and the error by the autofocused field. Changes nudge the
   phones they reach and log `music_*` / `storytel_login_*` events. PWA text is English like the rest.
 - **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, volume_cap_pct, storytel_generation}` (always the
   key; `null` when the library query fails, QA #3; `policy_json_keys_snapshot`). The library (`music::library_for`):
-  16 hex of SHA-256 over the JSON **without** its `version` (QA #4), pinned by `music_library_snapshot` in
+  16 hex of SHA-256 over the JSON **without** its `version` (QA #4; `sonos_rooms` - null or the allowed uids - is
+  hashed like every other field), pinned by `music_library_snapshot` in
   `testdata/music_library.json` (the music app keeps a copy). Ticks and uploads that would push a phone's library
   past 3 MB are refused / taken back. Own files not on disk are listed `missing` (startup check, and on a 404 while
   serving), never dropped.

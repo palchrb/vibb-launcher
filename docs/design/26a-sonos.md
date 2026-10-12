@@ -690,6 +690,10 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
 - An incoming phone call and an Element X voice/video call during Sonos playback and during local playback: paused
   at the ring, played again after only when it was playing; the kid's own pause during the call stays.
 - VPN filter on: discovery and control still work.
+- Room scope (step 3c, §5.5): the device card before the phone has seen a speaker ("The phone hasn't seen any speakers
+  yet") and after (the real rooms under "All rooms"); "All rooms" off and one room unticked -> after the next sync the
+  sheet lacks it, a session playing there was bookmarked, stopped and came home paused; a group whose coordinator is
+  unticked has no row; picking a restricted room is refused ("Kan ikke spilles på Sonos", the speaker untouched).
 
 ## Step 1 implementation status (2026-10-11)
 
@@ -1208,3 +1212,81 @@ cases shrink with the rule); `fake-sonos.py --selftest` OK.
   room stays a source pin plus the controller's start tests.
 - QA's deviation verdicts: choices 1, 3, 4, 6, 7, 9-14 accepted; 2 and 5 are M1 (replaced: the item gone stops the
   speaker; a suspension without an answer keeps the room); 8 is L3.
+
+## Step 3c implementation status (2026-10-11)
+
+Built on branch `music-1b-sonos` in one code commit for the contract (`600c9f0`: server, launcher, music app and the
+shared files, root CLAUDE.md's rule) and this docs commit, with the real builds in the sandbox:
+- **Server**: `cargo test` **508 tests, 0 failures** (505 before: +3 - `the_room_scope_reads_fail_closed`,
+  `music_state_keeps_sonos_rooms_checked`, `the_device_card_scopes_sonos_rooms`; `music_library_snapshot`,
+  `the_version_ignores_itself_and_follows_every_field` and `music_state_keeps_every_field_the_phone_sends` extended),
+  `cargo fmt --check` clean, `cargo clippy --all-targets` the same 13 warnings as before (none in the new code;
+  local Rust 1.97).
+- **Launcher**: `assembleDebug testDebugUnitTest` (the tsnet stub) **837 tests, 0 failures** (unchanged count:
+  `MusicPlanTest`'s `music_state` test extended; its end-to-end test runs the new fixture key through).
+- **Music app**: `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **362 tests, 0
+  failures** (355 before: +4 `RoomScopeTest`, +1 `ReportTest`, +1 `ContractFilesTest`, +1 `GuardsTest`; three
+  existing `GuardsTest` pins follow the new `comeHome` caller, the `SonosRenderer` call and the belt), lint 0 errors
+  and the same 40 warnings. `python3 -I scripts/fake-sonos.py --selftest` OK.
+- **Migration `0065_music_sonos_rooms.sql`**: numbered above both this branch (0062) and main (0064) - **renumber it
+  after the final rebase** if main has moved on (root rule).
+
+What is in it:
+- **The phone reports the rooms it knows**: `music_state.sonos_rooms` = `[{uid, name}]` from the speaker cache's
+  players, with every report (`Sync.writeReport` -> `Report.reportedRooms`: uids `RINCON_[A-Z0-9]{12,20}` only, names
+  cleaned as the server cleans them - whitespace collapsed, control characters out, cut to 40 characters, never inside
+  one - by name, at most 32; never an ip). The launcher's `musicState` passes the key on; the server's
+  `sanitize_music_state` keeps Sonos-shaped uids once each, names cut, at most 32 (one bad row drops that row);
+  stored with the rest of `music_state` in `device_status.music_state_json`. `server/testdata/music_state.json` has
+  two rooms; `ReportTest`/`BridgeTest`/`MusicPlanTest`/`music_state_keeps_every_field_the_phone_sends` read it.
+- **The parent picks** (device page, Music card, `#music-sonos`): before any reported room "The phone hasn't seen any
+  speakers yet ... Until then every room is allowed"; then "All rooms" (on = `music_sonos_rooms_json` NULL) and, off,
+  one auto-saving tick per reported room. `POST /devices/{id}/music/sonos-rooms` (`all`, repeated `room`) stores
+  NULL or the JSON list, nudges the phone, logs `music_sonos_rooms_changed` ("device 3: only Stua, Kjøkken" / "no
+  room" / "all rooms") and redirects to `#music-sonos`. The column's trigger moves `music_library_revision` (migration
+  0050's rule), so the cached library is rebuilt.
+- **The phone obeys**: the library's `sonos_rooms` (null or the uids, after `covers`) is hashed into
+  `library_version`; `music_library.json` regenerated (the snapshot phone is scoped to one room) and copied
+  byte-identically. `Library.sonosRooms`: absent or null = every room, a list = those (strings, once each). In the
+  player service (`sonos/RoomScope.kt`, pure): the sheet's rows go through `allowedRooms` (a group row only when its
+  coordinator - the uid the row targets - is allowed); `toRoom` refuses a room outside the scope with
+  `CANT_PLAY_ON_SONOS` before anything moves (no hand-off, no save, no renderer.json); a new scope from the sync
+  (`Store.libraries()`, distinct) re-publishes the sheet and, once the renderer is settled and under the switch lock,
+  `leaveDisallowedRoom()` hands a session on a dropped room off (the live classify, the bookmark at that second, the
+  ours-gated Stop) and comes home paused - 3a/3b's `handOff` + `comeHome(play = false)`, as a failed start does.
+
+Choices made while building (each against the spec text, with its reason):
+1. **The PWA text is English** ("The phone hasn't seen any speakers yet."): the PWA has no i18n and is English
+   throughout (server/CLAUDE.md); the spec's Norwegian line is its meaning.
+2. **"All rooms" sends every listed room as a hidden field**: turning the switch off then stores every room the phone
+   reported (nothing changes for the kid) and the parent unticks the ones to forbid; without it the switch's own
+   auto-save would store `[]` and silence every speaker at once. **No room ticked is `[]`** - no speaker allowed; the
+   card says "No room ticked: the music plays only on the phone and headphones".
+3. **A room in the stored scope that the phone no longer reports stays listed** ("- not seen by the phone lately",
+   ticked), so the parent can still take it out.
+4. **The save accepts any Sonos-shaped uid** (at most 32, a non-Sonos value is 400), not only the latest report's:
+   a report landing between the page and the click must not drop a room the parent just ticked. The phone only ever
+   matches uids it has seen.
+5. **Fail closed on both ends**: a stored scope that isn't a JSON list of strings is no room (logged); a library
+   `sonos_rooms` that is neither null nor a list is no room. Absent (an older server) is every room, per §5.5.
+6. **The leave also runs after an adopt** (renderer.json still naming a room the scope dropped while the app was
+   dead): adopted, then handed off and home, paused - nothing starts. It shows `CANT_PLAY_ON_SONOS` ("Kan ikke
+   spilles på Sonos") so the kid sees why the music came home.
+7. **A belt in the controller**: the room's `mayPlay` also asks the scope (`roomScope`, the current uid - a
+   migration follow included), so no play reaches a dropped room in the moment between the sync and the leave.
+8. **Only `sonos_rooms` is new in the library document**; `v` stays 1 (an older app ignores the field: it then
+   allows every room, which is the server's default too).
+9. One route line in `server/src/main.rs` (`/devices/{id}/music/sonos-rooms`) besides the music files, the card
+   template, the migration and the tests: the form needs a route.
+
+Owed checks:
+- Emulator (§6g, now listing 3c's): the card without and with reported rooms, the scope narrowed while Kjøkken plays
+  (the bookmark and one Stop in the fake's log, home paused), `--group Kjøkken+Stua` with Kjøkken unticked (no group
+  row).
+- Device (the list above): a restricted room refused, a group with a disallowed coordinator hidden, the card with and
+  without reported rooms.
+
+Open questions: (a) a group row whose coordinator is allowed is listed even when a member is not (§5.5 says "by its
+coordinator") - playing there sounds in the forbidden room too; should a group need every member allowed? (b) the
+leave reuses "Kan ikke spilles på Sonos" - or a line of its own ("Høyttaleren er ikke tillatt")? (c) 3a's (a)/(b)
+and 3b's (a) stand.

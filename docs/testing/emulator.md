@@ -553,7 +553,13 @@ t+15 volume 60
   service going (the task swiped while paused: one Stop), the volume keys against the cap (set on the device page: no
   `SetVolume` above it, the override lifts it at once; a `volume 90` script line is left alone), a call (`gsm call
   <number>` in the emulator console: Pause, and Play after `gsm cancel` only when it played) and the locks (`adb shell
-  dumpsys power | grep vibb:sonos` while playing, gone 30 s after a pause).
+  dumpsys power | grep vibb:sonos` while playing, gone 30 s after a pause). With step 3c (the parent's room scope):
+  the device page's Music card shows "The phone hasn't seen any speakers yet" before the first report with rooms, then
+  Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken unticked -> after the next sync the sheet lists only
+  Stua, a session playing on Kjøkken got a bookmark and one Stop and came home paused ("Kan ikke spilles på Sonos");
+  with `--group Kjøkken+Stua` (Kjøkken the coordinator) and only Stua allowed the sheet shows no group row; with the
+  sheet open while the sync lands, Kjøkken's row goes (the switch's own refusal - the message, nothing in the fake's
+  log - is pinned in the JVM tests: the sheet no longer offers the room).
 - Real speakers stay a device check (design 26a, "Device checks"): SSDP, Wi-Fi binding, the NRK service, Doze.
 
 ## 6b. Step 7: Play (optional)
