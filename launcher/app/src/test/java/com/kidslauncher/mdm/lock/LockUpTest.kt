@@ -194,4 +194,15 @@ class LockUpTest {
         assertFalse(theme.contains("windowShowWallpaper"))
         assertFalse(theme.contains("windowIsTranslucent"))
     }
+
+    /** qa-25b-25f L2: after a process start the first frame waits for the background, bounded. */
+    @Test
+    fun `the first frame waits briefly for the lock's background`() {
+        assertTrue(holdForLockGround(lockReady = false, heldSinceMs = 1_000L, nowMs = 1_100L))
+        assertFalse("ready", holdForLockGround(lockReady = true, heldSinceMs = 1_000L, nowMs = 1_000L))
+        assertFalse("never longer than the bound", holdForLockGround(false, 1_000L, 1_000L + LOCK_GROUND_WAIT_MS))
+        assertTrue(LOCK_GROUND_WAIT_MS <= 200L)
+        val onCreate = body(code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt"), "onCreate")
+        assertTrue(onCreate.contains("if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false"))
+    }
 }
