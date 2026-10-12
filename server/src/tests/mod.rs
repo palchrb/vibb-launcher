@@ -20,6 +20,7 @@ mod intake_limits;
 mod launcher_ui;
 mod listeners;
 mod locations;
+mod lock_glance;
 mod music;
 mod music_sweep;
 mod parent_pin;

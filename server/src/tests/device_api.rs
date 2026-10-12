@@ -319,6 +319,7 @@ async fn policy_json_keys_snapshot() {
             "kiosk_desired",
             "launcher_ui",
             "location_policy",
+            "lock_glance",
             "lock_task_features",
             "music",
             "notification_auto_cancel",
@@ -349,6 +350,7 @@ async fn policy_json_keys_snapshot() {
         "kiosk_desired",
         "launcher_ui",
         "location_policy",
+        "lock_glance",
         "lock_task_features",
         "music",
         "notification_auto_cancel",
@@ -402,6 +404,13 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         object["location_policy"],
         serde_json::json!({"mode": "on_request", "interval_minutes": 30})
+    );
+
+    // The lock's glance page (design 25): always an object, a fresh phone's default - Element X,
+    // the sender only. The launcher's `lockGlancePolicy` decodes exactly this shape.
+    assert_eq!(
+        object["lock_glance"],
+        serde_json::json!({ "apps": ["io.element.android.x"], "show_text": false })
     );
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's
