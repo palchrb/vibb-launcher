@@ -34,7 +34,9 @@ Option A splits vibb's one process in two (design 26 review item 4):
   readers: the parent's picker (`/music/storytel`) and the sweep, which **lists** every Storytel entry exactly as it
   lists NRK and RSS (21b: the server is the brain for metadata, the phone never lists a source). The listing is the
   existing document (`GET /api/devices/music/entries/{id}/items`): one item per book, key = the book's `model.id`, `url:
-  null` (a signed URL expires, so it is never listed), the shelf's `duration_ms`, the book's http cover as `art`.
+  null` (a signed URL expires, so it is never listed), the shelf's `duration_ms`, the book's cover as the item's
+  `art_url` (server-side; since design 27 the listing's `art` is the 64-hex hash of the item's own stored picture -
+  step 4a has the art pass fetch a book's cover so it arrives as that hash).
 - **The phone** gets the library and the listing through the launcher as today (no launcher change: `MusicPlan`'s
   `libraryHead` already passes every non-`own` entry's `items`). It logs in by itself with the login the bridge sealed
   into the Keystore (phase 1, `bridge/StorytelLogin.kt`), mints the CDN URL (`assets/v2/consumables/<id>/abook`, the 302
@@ -571,8 +573,9 @@ compares `pwd` with the fixture's hex):
 ### 5.1 The body and the late mint (`PlayBody.kt`, `SonosController.kt`)
 - `PlayBodies.speakerDropReason`: a Storytel item is speaker-playable, downloaded or not (vibb's exemption of the
   http-only filter, 1693-1699); everything else as 1b.
-- `PlayBodies.build` for a Storytel item: `PlayBody(kind = URL, uri = "", mint = cid, title, album = entry.name, art =
-  item.art when http, durationS = the listing's)` - the shelf's length rides along, since a speaker reads 0:00 for an
+- `PlayBodies.build` for a Storytel item: `PlayBody(kind = URL, uri = "", mint = cid, title, album = entry.name, no art
+  (design 27: the listing carries a hash the server serves only to the phone's bearer - 26a §9; vibb sends `art_url`),
+  durationS = the listing's)` - the shelf's length rides along, since a speaker reads 0:00 for an
   extension-less signed URL (vibb 9).
 - `SonosController.playIndex`'s actor job resolves the mint **inside the job, right before** `transport.play` (vibb:
   "milliseconds before the SOAP /play"): `StorytelMinter.mint(cid, 6_000, elapsed + MINT_BUDGET_MS)` - the account's
@@ -629,12 +632,16 @@ For a Storytel session the duration comes first from the queue item named by the
 (same uri only, a falsy speaker value never erases one). Adopt restores the length the same way (vibb 13). A listing
 duration never decides "done" (1b, vibb 19).
 
-### 5.5 Art (`M/data/MusicDb.kt`, `PlayItem`, `Sync.applyListing`; step 4a)
-Room's `items` gains `art` (nullable): `@Database(version = 2, autoMigrations = [AutoMigration(from = 1, to = 2)])`,
-`app/schemas/me.vibb.music.data.MusicDb/2.json` exported - never a destructive migration (positions live in Room).
-`applyListing` stores the listing's `art`; `PlayItem.art`; `PlayBodies.build` sends `item.art` when http **for every
-source** (vibb `_sonos_body`: `art_url or art`; 1b choice 7 passed null only for want of the column). The phone's own
-screens keep the entry cover (phase 1).
+### 5.5 Art (server: `S/music_sweep.rs`, `S/music.rs`; step 4a - rebuilt on design 27 at the merge of 2026-10-12)
+A book's own cover reaches the phone the way design 27 brings an NRK/RSS episode's picture: the server's art pass
+fetches it (the book's `art_url`, the shelf's cover) into `photos::MUSIC_ART` and the listing's item `art` is its
+64-hex hash; the phone's want set (`sync/ArtPlan.kt`'s `artWant`, a Storytel series' kept books in download order
+since the merge) sends it as `wantArt`, the launcher's `syncArt` fetches it into the shared covers dir, and every
+surface shows `artHash ?: entry.cover` (the carousel, the player's art, the session's artwork, `setNowPlaying`, Nytt,
+search). **The phone needs no change and Room no column** (design 27 owns Room version 2, `items.artHash`). **The
+speaker gets no art** for any source (26a §9: a hash has no LAN-reachable http URL; the cheapest later path, a frozen
+`art_src` beside the hash, fits Storytel's public cover URL unchanged). The abandoned first 4a (its own `items.art`
+URL column and its own Room version 2, branch `abandoned/26b-step4a`) is not applied.
 
 ### 5.6 Visibility on a room, and coming home (`PlaybackService`)
 `load(kind)` returns `store.snapshot().forRenderer(kind == SONOS)` (vibb `PREFER_REMOTE`, set by the play path itself,
@@ -710,7 +717,7 @@ book, a geo-flagged book and a numeric `model.id`, with `items` keys deliberatel
 | 10b a refused login parks a 1 h cooldown, no request; a new password retries at once | `storytel::tests::refused_login_cooldown` (stamp, no request inside, a save's new generation clears) | `StorytelApiTest` (the store's stamp, a new generation clears: the store is keyed by generation, so the old stamp no longer applies; step 3's file may keep one `{generation, at}` record) |
 | 11 unconfigured degrades cleanly | `storytel::tests::not_configured` (no login, no key, another key) | `StorytelApiTest` (`NotConfigured`, no request) |
 | `storytel_expand.py` 1 only downloaded books, reading order, keyed by id | - | `StorytelRulesTest` (`Snapshot.visible` in step 1; `forRenderer(false)` from step 3) |
-| 2 per-book art beats the series cover | the listing's `art` per book (`music_sweep` test) | `PlayBodyTest` (the book's art to the speaker); the phone's screens keep the entry cover (§9) |
+| 2 per-book art beats the series cover | the listing's `art` hash per book (step 4a, `music_storytel` tests) | none needed: every surface shows `artHash ?: entry.cover` (design 27); no art to the speaker (§9) |
 | 3/4 prune keeps the dir while in the library, removes it once not | - | `OfflineTest` (Storytel copies kept while listed, pruned when the library drops the entry or the list drops the book) |
 | 5 `collection_image` local only | n/a (covers come through the bridge, phase 1) | n/a |
 | 6 natural order oldest first | - | `StorytelRulesTest` |
@@ -736,7 +743,7 @@ book, a geo-flagged book and a numeric `model.id`, with `items` keys deliberatel
 | 7 a finished book keeps a `done` record holding the duration; 8 it re-taps from 0 | - | `BookmarksTest` 4 and "an item that ends by itself" (phase 1) |
 | 9 a completion survives the end-of-queue clear; 10 nothing finished = nothing left | - | `BookmarksTest` "clear_state at a queue's end keeps only the done marks" (phase 1) |
 | `storytel_sonos.py` 1 local: only downloaded, local paths | - | `StorytelRulesTest` |
-| 2 for Sonos every book; the queue key stays local; the http cover rides | - | `StorytelRulesTest` (`forRenderer(true)`), `PlayBodyTest` (art; `storedUri` is the marker) |
+| 2 for Sonos every book; the queue key stays local; the http cover rides | - | `StorytelRulesTest` (`forRenderer(true)`), `PlayBodyTest` (no art - §9; `storedUri` is the marker) |
 | 3 one mint, an http cover, a short timeout | - | `SonosControllerTest` (a fake minter: one call with 6 s, the body's uri the minted URL) |
 | 4 a failed mint (unreachable, refused) never raises, no uri handed over | - | `SonosControllerTest` (no `SetAVTransportURI`, the failed-play path, the actor alive) |
 | 5 the body built once per play | - | `SonosControllerTest` (one mint per play, also for a step and an advance) |
@@ -768,9 +775,8 @@ New (no vibb counterpart, from this design):
   from the live one; renderer.json keeps the marker after a Storytel adopt, M1), `SonosSessionTest` (the not-ours log
   redacted), `GuardsTest` (a Storytel copy plays `copyOnly`; the mint only inside the actor job; every
   `RendererChoice.uri` write through `storedUri`, M1), `SourceScanTest` (§6.1; the debug base assigned only in
-  `src/debug` and read only by §4.6's four readers, M2; the redacted `toString`s, L9; the strings in nb), a schema test
-  (`app/schemas/.../1.json` -> `2.json` differ only by the nullable `items.art`; the database declares the
-  auto-migration).
+  `src/debug` and read only by §4.6's four readers, M2; the redacted `toString`s, L9; the strings in nb), (design 27's schema test covers Room version 2,
+  `items.artHash`; this design adds no column).
 - After QA (2026-10-12): the service's adopt keeps an undownloaded Storytel book playing (no Stop) and phone -> room
   puts all five books of a series with books 1 and 3 downloaded on the room (H2, a `GuardsTest` pin on each call site's
   `forRenderer` plus `RendererGate`-style behavioural tests where the service's pure plan helpers allow);
@@ -848,12 +854,28 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    recursive `grep -raE`); a job stopped at its 10-minute limit (`cmd jobscheduler timeout`) resumes its book with a
    fresh mint.
    Owed [device check]: §"Device checks" download items, "Downloads under Doze".
-4. **a. Music: item art in Room** (QA M8; independent of Storytel). Files: `M/data/MusicDb.kt` (`items.art`, version 2,
-   `@AutoMigration(from = 1, to = 2)`), `app/schemas/me.vibb.music.data.MusicDb/2.json`, `M/model/PlayItem.kt`,
-   `M/data/Snapshot.kt` (the art into `PlayItem`), `M/sync/Sync.kt` (`applyListing` stores it), `M/sonos/PlayBody.kt`
-   and `SonosController.kt` (`item.art` when http, for every source). Tests: the schema test, `PlayBodyTest`, a
-   `SourceScanTest` pin (no destructive migration). Acceptance: the music suite green. Emulator: an upgrade from a
-   step-3 build keeps every position and bookmark; an RSS episode on Stua shows its art in the fake's DIDL. Owed: none.
+4. **a. Server: a book's own cover as its `art` hash** (QA M8; rebuilt on design 27 at the merge of music-1b-sonos
+   with design 27, 2026-10-12 - see that section). Files: `S/music_sweep.rs` - `art_candidate` takes a Storytel book
+   (`ok`, `url` NULL, `art_url` = the shelf's cover; it needs the entry's source or a flag, the `Item` alone can't
+   tell a book from a withdrawn episode), `art_pass`'s order reads Storytel as oldest first (reading order: today the
+   `auto` arm makes every non-series link newest first), and `storytel_check` carries each kept book's `art_*` fields
+   (`art_from`, `art_hash`, `art_print`, `art_tone`, `art_state`, `art_at`, `art_fails`) over from the old item instead
+   of `..Item::new(..)` (else every check drops the hash and fetches the picture again); `S/music.rs` -
+   `art_in_library` serves `source IN ('nrk', 'rss', 'storytel')`. (The other way, the Storytel check storing the
+   hash itself through `photos::MUSIC_ART`'s store and lock, duplicates the pass's fetch, judging and budgets; take it
+   only if the pass can't be widened cleanly.) The judging stays design 27's: a book whose cover is the series' is
+   `same` (no hash, the entry cover shows - the same picture), the others `own`; budgets `ART_PER_CHECK`/`ART_PER_DAY`
+   unchanged (a 40-book series fills over two checks). **The shared-contract commit**: `server/testdata/music_listing.json`
+   regenerated (`MUSIC_LISTING_SNAPSHOT_WRITE=1`) only if its fixture gains a Storytel item, and then copied
+   byte-identically to `music/app/src/test/resources/` (the launcher's `MusicPlanTest` version pin with it), one commit.
+   Tests: `src/tests/music_storytel.rs` (a series check fetches each book's cover once, the listing's `art` is the hash
+   for an own cover and null for the series' own, a second check fetches nothing and keeps the hashes, the cover route
+   serves a ticked phone the book's picture and 404s an unticked one), `src/tests/music_art.rs` (a Storytel book is a
+   candidate, in reading order), `the_sweep_lists_a_series_like_a_feed`'s null `art` becomes the hash. No music or
+   launcher code. Acceptance: the server suite green (the music and launcher suites only if a shared file changed).
+   Emulator (§6i): a series' books show their own covers in the carousel and in Nytt (the fake Storytel's shelf with
+   per-book covers); an upgrade from a step-3 build (Room 1 -> main's 2) keeps every position and bookmark (the
+   `ReapplyListings` migration re-applies the listings, with the hashes). Owed: none.
    **b. Music: Storytel on Sonos.** Files: `M/sonos/{PlayBody,SonosController,SonosRenderer,SonosLifecycle,
    SonosTransport,SonosSuspension,SonosSession}.kt` (the mint body, the job's token, `sameStream`, adopt's live uri,
    `storedUri` on every write, the duration lookup, the redacted log), `M/storytel/StorytelAccount.kt` (the minter the
@@ -861,7 +883,7 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    coming home with a book not on the phone, `HANDOFF_MS`), `M/ui/MusicViewModel.kt`/`MusicRoot.kt` (the remote
    snapshot on a room). Tests: `PlayBodyTest`, `SonosControllerTest`, `SonosLifecycleTest`, `SonosSessionTest`,
    `StorytelRulesTest`, `GuardsTest`. Acceptance: the music suite green, both fakes' selftests OK. Emulator (§6h + §6i
-   together): a book not downloaded plays on Stua (one mint in the fake's log, the DIDL's duration and art),
+   together): a book not downloaded plays on Stua (one mint in the fake's log, the DIDL's duration; no art, 26a §9),
    next/previous mint again, pause/resume doesn't, a step mashed during a slow mint (`--slow-mint 5`) sends one
    `SetAVTransportURI`, a stopped Stua plays from the bookmark with a new mint, phone -> Stua with books 1 and 3 of five
    downloaded queues all five, the app killed and restarted while Stua plays an undownloaded book (adopted by
@@ -877,10 +899,11 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    debba (MIT), with its notice beside `MIT-vibb.txt`), design 21's "Out: Storytel playback (2)" -> points here, design
    26's status, `PLAN.md`. Then the release below.
 
-Shared contracts: only step 2b changes one (the library snapshot, three directories, one commit). No step touches the
-AIDL, `bridge_contract.json`, `music_listing.json`, `music_state.json` or the policy shape. Each step is one sitting:
+Shared contracts: step 2b changes one (the library snapshot, three directories, one commit), and step 4a the listing
+snapshot if its fixture gains a Storytel item (both copies, one commit). No step touches the AIDL,
+`bridge_contract.json`, `music_state.json` or the policy shape. Each step is one sitting:
 1 (pure Kotlin), 2a (one new module plus its PWA), 2b (wiring Storytel through existing paths plus the contract
-commit), 3 (the phone's download path), 4a (one column), 4b (the Sonos wiring) - 4 was split for that (M8).
+commit), 3 (the phone's download path), 4a (the server's art pass for books), 4b (the Sonos wiring) - 4 was split for that (M8).
 
 ## 9. Deviations from vibb (each with its reason)
 
@@ -898,7 +921,8 @@ commit), 3 (the phone's download path), 4a (one column), 4b (the Sonos wiring) -
 | `_download` follows a CDN redirect (`urlopen`) | a Storytel book's CDN request never follows one: a 3xx fails the attempt as a transient `http_30x`, the next attempt mints again; [device check] that the real CDN answers without a redirect | Media3 writes a followed redirect's target (a token) into the cache's metadata (`exo_redir`, §0); if the real CDN does redirect, the fix is a thin `DataSource` whose `getUri()` returns the requested URI, never following blindly (qa-26b-step3-code choice 6) |
 | `shelf.json` per target dir, the mp3 named by cid | the listing in `music_items` and Room; the copy keyed `<entry key>:<cid>` | 21b: the server lists, the phone downloads |
 | a book that left the shelf stays on disk, unlisted | it leaves the list and its copy is pruned | the same for the kid (unplayable either way); no orphaned gigabytes |
-| per-book `<cid>.jpg` on the box's screen | per-book covers go to the speaker only; the phone's screens keep the entry cover | phase 1's screens show the entry cover and have no image loader; the mockup is locked |
+| per-book `<cid>.jpg` on the box's screen | per-book covers on the phone's screens (carousel, player, Nytt, the session) from step 4a, through design 27's item art; none to the speaker | design 27 gave the phone item art; the speaker can't fetch a hash (26a §9) |
+| `_sonos_body` sends the book's `art_url` as `albumArtURI` | no art in the DIDL | the listing carries a hash the server serves only to the phone's bearer (design 27 §1.5); 26a §9's later path (`art_src`) would carry Storytel's public cover unchanged |
 | `count` = the first N books only | the first N plus the bookmarked book and the next | phase 1's keep rule for every entry: the book in progress is never deleted |
 | `newest_book_id` changes -> NY | every new book key joins Nytt (and NY) | phase 1's per-key port of `_mark_new_seen` |
 | a pasted link | the shelf picker; a raw target is refused unless it is on the shelf | vibb's picker is the only way on the Pi too; 4c's rule |
@@ -976,7 +1000,7 @@ commit), 3 (the phone's download path), 4a (one column), 4b (the Sonos wiring) -
   maintenance windows, slower but steadily, with the parent's card showing have/want rising. If it stalls (the bucket
   falls to rare or restricted, or no job runs for hours), the user decides between downloads only while charging and
   design 19b's battery exemption for the music app.
-- Sonos: a book not downloaded plays in a room (title, cover and progress bar in the Sonos app), next/previous, pause for
+- Sonos: a book not downloaded plays in a room (title and progress bar in the Sonos app; no cover, §9), next/previous, pause for
   two hours then play (if the speaker fails, one more tap starts from the bookmark), the app killed while a book plays
   (reopen: adopted, the right book and place), the signed Location carries `consumableId` (logcat's redacted line and
   the parsed id), room -> phone with the book downloaded (continues) and not downloaded (paused, "Ikke lastet ned").
@@ -984,15 +1008,17 @@ commit), 3 (the phone's download path), 4a (one column), 4b (the Sonos wiring) -
 ## Release
 
 - **Server**: phase 2's server part (migration **0072**, the client, the picker, the listing) needs a version after
-  whatever `main` has tagged when this merges: today (checked 2026-10-12 at the merge of music-1b-sonos) `server/Cargo.toml`
-  is 0.24.0 untagged (the highest server tag is `server-v0.19.0`) and main's 0065-0069 and 1b's 0071 ride in it; if
-  0.24.0 is tagged first, bump `server/Cargo.toml` and `Cargo.lock` to the next minor. **The backup hazard** (as 26a's
-  Release section, qa-26a-merge-code M1): `startup::pre_migration_backup` compares only `MAX(version)` with the highest
-  compiled one, so a lower-numbered migration reaching a server that has already run 0072 - design 27's reserved 0070,
-  or 1b's 0071 if this branch's server were deployed without 1b's - is applied out of order by sqlx with no
-  pre-migration backup (design 22 §6's "no migration without its backup" broken, silently). So 1b's and design 27's
-  servers ship before or together with this one (this branch holds 0071 already), or the backup check compares the
-  set of applied versions (a main-session change; documented here and in `server/CLAUDE.md`, not made). Deploy the
+  whatever `main` has tagged when this merges: today (checked 2026-10-12 at the merge of music-1b-sonos with design
+  27) `server/Cargo.toml` is 0.24.0 untagged (the highest server tag is `server-v0.19.0`) and main's 0065-0070 (0070 is
+  design 27's episode art) and 1b's 0071 ride in it; if 0.24.0 is tagged first, bump `server/Cargo.toml` and
+  `Cargo.lock` to the next minor. Step 4a (a book's cover as its `art` hash) adds no migration: it uses 0070's columns.
+  **The backup hazard** (as 26a's Release section, qa-26a-merge-code M1): `startup::pre_migration_backup` compares
+  only `MAX(version)` with the highest compiled one, so a lower-numbered migration reaching a server that has already
+  run 0072 is applied out of order by sqlx with no pre-migration backup (design 22 §6's "no migration without its
+  backup" broken, silently). Every build of this branch since the merge of 2026-10-12 carries 0070-0072 and applies
+  them in order; never deploy one from before it (0071/0072 without 0070). 1b's and design 27's servers ship before or
+  together with this one, or the backup check compares the set of applied versions (a main-session change;
+  documented here and in `server/CLAUDE.md`, not made). Deploy the
   server first: an older server sends no Storytel entries, so an older or newer music app simply has none.
 - **Launcher**: no code change; nothing to release for phase 2.
 - **Music**: `music-v0.3.0-rc.1` on the merge commit on `main`, after 1b's `music-v0.2.0` line (26a "Release"):
@@ -1071,7 +1097,8 @@ M8, M9, L14 and §10's two questions.
   `Refused`, without item errors; asset statuses split into `NoAudio` (3xx without `Location`, 403, 404, 410, 451:
   permanent) and `Failed` (401 after the re-login, 408, 429, 5xx, other: transient `http_<code>`); §3.3 and §4.3 follow.
 - **M8**: step 4 is split into 4a (`items.art`: Room v2, the schema, `PlayItem`, `applyListing`, art to the speaker for
-  every source) and 4b (Storytel on Sonos).
+  every source) and 4b (Storytel on Sonos). (4a was rebuilt on design 27 as server work at the merge of 2026-10-12:
+  §8, and "Merge of music-1b-sonos with design 27".)
 - **M9**: the device check "Downloads under Doze" (a 5-book series overnight on and off the charger, the standby bucket
   and `dumpsys jobscheduler`, the expected outcome, and the user decision if it stalls); §6.3 points to it.
 - **L1**: §2.1: `seriesInfo.id` stringified like `model.id`, Python's falsy rules, `geo` from the abook format, a
@@ -1851,3 +1878,120 @@ Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -Pwarnin
 failures** (499 before: +1 `StorytelDownloadTest`), lint 0 errors and the same 40 warnings;
 `python3 -I -B scripts/fake-sonos.py --selftest` and `python3 -I -B scripts/fake-storytel.py --selftest` OK. Server and
 launcher untouched in this round (no file their tests read changed).
+
+## Merge of music-1b-sonos with design 27 (2026-10-12)
+
+`origin/music-1b-sonos` at `50958b0` (26a's merge of `origin/main` at `620e578` - design 27 and its QA fix round - with
+its own QA and fix round; 36 commits after `39b59dd`, the 1b head this branch merged last) merged into
+`music-2-storytel` at `7ad8b26` as one merge commit, `45ca74e` (no rebase), with the adaptation and its tests in it; this section
+and the spec's edits for it (§0, §5.1, §5.5, §7, §8, §9, §13, the device checks, "Release") in the next commit.
+
+**What came in:** design 27 (`docs/design/27-music-episode-art.md`, `qa-27-code.md`) through 1b: migration
+`0070_music_episode_art.sql` and the server's art pass (`music_sweep.rs`'s `art_pass`/`art_candidate`,
+`photos::MUSIC_ART`, `music::art_in_library` behind the covers route, `music_sources.rs`' 512 px pick,
+`src/tests/music_art.rs`); the listing's item `art` as the 64-hex hash of the item's own 512 px JPEG
+(`server/testdata/music_listing.json` and the music copy); Room version 2 (`items.artHash`, `AutoMigration(1, 2)` with
+`ReapplyListings`, `schemas/.../2.json`); `wantArt` appended to `IMusicBridge.aidl` and `want_art` in both
+`bridge_contract.json` copies; the launcher's courier (`MusicPlan.artToFetch`/`artToDelete`, `MusicSync.syncArt`,
+`MusicBridgeService.wantArt`); the music app's `logic/EpisodeArt.kt`, `sync/ArtPlan.kt`, `ui/EpisodeCarousel.kt`, the
+player's art, `Cover`'s fallback, `Store.coversVersion`; and 26a's adaptation of it to the renderer axis (`SKIP_TO` /
+`THEN_SKIP_TO` under `switching` and in `Commands.MOVES`, `goTo` -> `renderer.seekTo`; `Renderer.itemAt` /
+`replaceItem` for the late picture; `Switch.kt`'s `via`; `swipeSwitch`/`toIndex` with `onRoom`; `playerNumberOf`;
+`toRoom`'s lookup by key, qa-26a-merge27-code L1), 0071 frozen (L2), 26a §9's no-art-to-the-speaker row (L3). Also
+main's lock and wallpaper fixes that 1b took with design 27, and the launcher's tests for them.
+
+**Conflicts and how they were resolved** (eight files; git merged the rest - `MusicRoot.kt`, `Snapshot.kt`,
+`music/CLAUDE.md`, `music.yml`, `docs/testing/emulator.md`, `PLAN.md`, `GuardsTest`, `SourceScanTest`, `Fixtures`,
+`Sync.kt`, `music.rs`, `handlers/music*.rs` - and each was read through):
+- `ui/UiModel.kt`: the numbering, resolved by qa-26a-merge27-code's instruction ("The Storytel seam"): one private
+  `countedKeys(snap, now)` = `countedOrder(now.entry, listOrder(snap, now).map { it.key }, snap.listed[now.entry.id]
+  .orEmpty().map { it.key })`; `playerNumberOf(snap, now, item) = countedKeys(snap, now).indexOf(item.key) + 1`;
+  `playerNumber(snap, now) = playerNumberOf(snap, now, now.item) to countedKeys(snap, now).size`. Storytel's order
+  inside, 1b's two-function shape outside, so the carousel's landing page and the player can't disagree.
+- `ui/PlayerScreen.kt`: 1b's `numberOf: (PlayItem) -> Int` (main's signature) replaces Storytel's `number: Int`;
+  main's `PlayerArt`/`Crossfade` block replaces the old cover + `PrefetchCovers` (the carousel prefetches now), and its
+  number line takes Storytel's `when (kindOf(now.entry))` (`track_of`/`part_of`/`episode_of`), so the landing page says
+  "Del N av M" for a book. `MusicRoot.kt` merged by itself to 1b's call (`{ item -> playerNumberOf(s, n, item) }, of`).
+- `playback/PlaybackService.kt`: one import hunk (`smallArtMissing` and `sourceId` both). The rest merged by itself and
+  was read: Storytel's `mediaItem` branch (`copyOnly`, the source id as uri) gets design 27's `artUri(a, item)` like
+  every item; `load()` keeps `forRenderer(false)` (the service's snapshot is the phone's until 4b); `refreshArt`,
+  `skipTo`, `sendWantArt` are 1b's renderer versions.
+- `ui/SwitchViewTest.kt`: both sides' tests kept (Storytel's two, 1b's three swipe tests).
+- `src/debug/.../DebugFeedReceiver.kt`: 1b's "cover JPEGs and episode pictures" line with Storytel's
+  `storytel_base`/`storytel.json` lines, and the §6h/§6i reference.
+- `server/CLAUDE.md`: both new sections (Storytel's and design 27's episode art); the migrations paragraph takes 1b's
+  text (0070 is design 27's, the frozen-file rule) plus 0072's line: every build of this branch since this merge
+  carries 0070-0072 in order; never deploy one from before it.
+- `server/src/music_sweep.rs`: the module header credits both `storytel.py` and the `pipewire` branch's art helpers.
+- `server/src/tests/mod.rs`: `mod music_art;` and `mod music_storytel;`.
+- Byte-identical, checked after the merge: both AIDL copies and `bridge_contract.json` (main's, via 1b: `want_art`
+  beside 1b's names; this branch appends nothing), `music_library.json` (this branch's Storytel entry; main didn't
+  change it), `music_listing.json` (main's, with the art hash; this branch didn't change it) and `music_icons.json`.
+  No snapshot needed regenerating: `music_library_snapshot` and `music_listing_snapshot` pass on the merged tree (the
+  listing fixture has no Storytel item, so 27's hash and this branch's entry don't meet in one file).
+
+**The adaptation:**
+- **The numbering seam** (above), with a `SwitchViewTest` case: books 1 and 3 of five on the phone, each with its own
+  art hash so the player shows the carousel; the landing page for book 3 says "3 av 5" (`playerNumberOf` over the view
+  that shows), the swipe's switch says "3 av 5", the player after arrival "3 av 5", and book 1's page from there "1".
+  With `playerNumberOf` over `listOrder` alone the landing page would say "2 av 5".
+- **Storytel's switches vs 1b's swipe.** `playSwitch` reads `snap.forRenderer(onRoom)` (this branch's); `skipSwitch`,
+  `swipeSwitch(..., onRoom)` and `toIndex(..., onRoom)` count in the hub's queue (`now.queue`, the service's
+  `Active.items`), right for both renderers as before. A swipe on a room of a Storytel queue goes through the same
+  `SKIP_TO` -> `goTo` -> `renderer.seekTo` (today no Storytel book reaches a room's queue: `speakerDropReason`, 4b).
+- **`Snapshot.forRenderer` vs 27's art and 1b's hidden position.** `forRenderer` is a `copy(remote = ...)` of the
+  snapshot, so `PlayItem.artHash` (now filled by `buildSnapshot` from `ItemRow.artHash`) is the same on both views;
+  `hidesPosition` is the controller's (a not-ours speaker shows 0 with no duration) and never reads the snapshot.
+- **The art want set for a Storytel series** (`sync/ArtPlan.kt`'s `artWant`): it walked every non-own entry with
+  phase 1's `keepSet`/`wantedDownloads` (newest `cache` items, newest first), so a series kept as "the first 5 books"
+  would want the art of the newest five. It now uses `downloadPlan`'s own rule for a Storytel entry
+  (`storytelKeepSet` + `storytelWanted`: the bookmarked book first, then reading order), so the pictures wanted are
+  the books on the phone. Today a Storytel item has no `artHash` (the server serves none until 4a), so nothing
+  changes until then. `EpisodeArtTest` +1 (five books, cache 2, the bookmark on book 4: wants 4, 1, 2, 5; not 3).
+- **No double booking of the network gate.** The phone never fetches art itself: `artWant` only names hashes,
+  `wantArt` carries them over the AIDL, and the launcher's `syncArt` fetches them in its own sync (≤ 1 MB each,
+  hash-checked). `DownloadRun`/`DownloadPlan` (audio, Storytel's mints included) are the only network the music app
+  plans; nothing in `ArtPlan` touches the network gate, WorkManager or `DownloadRun`'s backoff.
+- **Room and `SourceScanTest`.** Room is main's version 2 (`schemas/.../2.json` untouched, no 3.json); this branch had
+  no "version 1" pin (its pins are `fallbackToDestructiveMigration` absent, `SourceScanTest`, and design 27's
+  `EpisodeArtTest` schema/migration pins, both green). The abandoned 4a (`items.art`, its own Room 2, branch
+  `abandoned/26b-step4a`) is not applied.
+- **The server's Storytel listing test.** Design 27 made the listing's `art` the hash of a stored picture and the art
+  pass takes only items with a `url`; a Storytel book's `art_url` (its cover, still stored) therefore reaches no phone
+  until 4a. `the_sweep_lists_a_series_like_a_feed` now expects a null `art` (it expected the URL) - the check still
+  makes one request (the series cover) and the stored `art_url`s are unchanged.
+- **Spec text.** §0, §5.1, §5.5, §7's rows, §8's 4a and 4b, "Shared contracts", §9 (a row for `_sonos_body`'s art
+  and the per-book covers row), §13 M8, the Sonos device check and "Release" follow: no art to the speaker (26a §9), and
+  4a is server work (below).
+
+**Step 4a, rebuilt on design 27** (from 26a's "For the Storytel branch" list; §8 step 4a and §5.5 now say this):
+- **Where a book's cover comes from**: the item's `art` hash in its listing, nothing else. The phone needs nothing:
+  `PlayItem.artHash` is "the item's own art" (`ItemRow.artHash`, Room 2) and every surface does `artHash ?:
+  entry.cover` (the carousel - `showsCarousel` wants two different pictures on its pages, the entry's cover counting
+  as one -, the player, the session's artwork, `setNowPlaying`'s `artOrCover`, Nytt, search); the courier (`artWant` ->
+  `wantArt` -> the launcher's `syncArt` -> `GET /api/devices/music/covers/{hash}`) carries it; the prune follows the
+  want set. Room gets no column; no AIDL or `bridge_contract.json` change.
+- **Server, one step with its tests**: widen `art_candidate` to a Storytel book (`ok`, `url` NULL, `art_url` = the
+  shelf's cover; it needs the source or a flag - the `Item` alone can't tell a book from a withdrawn episode);
+  `art_pass`'s order reads a Storytel entry as oldest first (reading order; the `auto` arm makes every non-series link
+  newest first today); `storytel_check` carries the kept book's `art_*` fields over from the old item (it builds each
+  `Item` from `..Item::new(..)`, which would drop the hash every check and refetch the picture); `art_in_library`
+  serves `source IN ('nrk', 'rss', 'storytel')`. Design 27's judging applies unchanged (a book whose cover is the
+  series' is `same`: no hash, the entry cover shows; budgets as for NRK/RSS). The alternative - the Storytel check
+  storing `music_items.art_hash` itself through `photos::MUSIC_ART`'s store and lock - duplicates the pass's fetch,
+  judging, budget and prune; only if the pass can't be widened cleanly. Tests in `music_storytel.rs` and
+  `music_art.rs` (§8); `the_sweep_lists_a_series_like_a_feed`'s null `art` becomes the hash. The listing snapshot is
+  regenerated (`MUSIC_LISTING_SNAPSHOT_WRITE=1`) in both copies, one commit, only if its fixture gains a Storytel item.
+- **The speaker gets no art** (26a §9); 26a's later `art_src` path would carry Storytel's public cover URL unchanged.
+- **Owed emulator checks** (§6i): a series' books show their own covers in the carousel and in Nytt; an upgrade from a
+  step-3 build keeps every position and bookmark (Room 1 -> 2 is main's `AutoMigration(1, 2)`; `ReapplyListings`
+  re-applies the listings with their hashes at the next sync).
+
+**Tests after the merge** (local Rust, the sandbox's JDK 21): server `cargo test` **655 passed, 0 failures** (628 before; +27 from 1b's merge of design 27, the Storytel listing test adapted; the time-dependent `parent_pin` passed this run), `cargo fmt --check`
+clean, `cargo clippy --all-targets` the same 12 warnings (`models.rs`, `dns_engine.rs`, `handlers/devices.rs`); music
+`assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **542 JVM tests, 0 failures** (500
+before; 540 with the merge alone, +2 for the adaptation: `SwitchViewTest` "3 av 5", `EpisodeArtTest` a Storytel
+series' want set), lint 0 errors and the same 40 warnings; `python3 -I -B scripts/fake-sonos.py --selftest` and
+`python3 -I -B scripts/fake-storytel.py --selftest` OK; launcher `assembleDebug testDebugUnitTest` (the tsnet stub)
+**1035 tests, 0 failures** (1012 before; 1b's count) - its `assembleRelease` needs `app/libs/tsnet.aar`, which CI
+builds: not run.
