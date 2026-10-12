@@ -7,7 +7,10 @@ CLAUDE.md files. **In**: server library + PWA; the music app with NRK, RSS and o
 speaker + Bluetooth; launcher integration. **Out**: Storytel playback (2), Spotify (3), NRK live, position mirroring.
 **Sonos is 1b**, after phase 1's device checks: `sonosd.py` (uid -> ip cache, discovery only on a miss, `url`/
 `nrk_program` sid 277, stall and group-migration handling) needs a Kotlin UPnP/SSDP client, SSDP through
-`KidVpnService` and a LAN URL for own files (question 3).
+`KidVpnService` and a LAN URL for own files (question 3). **Now design 26a** (`26a-sonos.md`, the buildable spec
+and each step's status; built on branch `music-1b-sonos`, to be released as `music-v0.2.0`): its own UPnP client,
+SSDP beside the VPN (which routes only its own address), and own files on Sonos left out ("Decisions after QA
+review" below).
 
 ## 1. Server
 It holds the library *definition* and the parent's own uploads (audio, covers). The phone fetches NRK and RSS (later

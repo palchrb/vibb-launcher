@@ -98,6 +98,15 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
   and the library the parent edits in the PWA,
 - includes it in schedules (e.g. allowed at bedtime for audiobooks).
 
+**Status (2026-10-12)**: the player is the Vibb music app in this repo (`music/`, designs 20/21/21b, ported from
+vibb). Phase 1 (NRK, RSS, own files, the launcher bridge, Home card, lock view, volume cap) is on `main`, its Jelly
+Star checks and `music-v0.1.0` still to come. **Phase 1b, Sonos** (design 26a: rooms in "Spill av på", the phone as
+UPnP controller, adopt after a restart, bedtime stops the speaker, calls pause it, the parent's volume cap and room
+scope) is built and QA'd on branch `music-1b-sonos`, main merged in; owed: the emulator checks against
+`scripts/fake-sonos.py` and the device checks with real speakers. Release after the user's merge: server (migration
+0065, in 0.24.0 unless that is tagged first), a launcher release, then `music-v0.2.0-rc.1` on the merge commit
+(26a "Release"). Phases 2 (Storytel) and 3 (Spotify) follow design 26.
+
 ## Repos
 
 - One repo since 2026-10-05: `palchrb/vibb-launcher` (this one, local dir

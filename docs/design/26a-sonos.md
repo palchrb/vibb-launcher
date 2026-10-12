@@ -1335,3 +1335,56 @@ Owed checks (replacing the 3c list's group line): a group with **any** forbidden
 or Stua leading); a forbidden room grouped into the playing one from the Sonos app stops the session within a minute
 ("Rommet er ikke lenger tillatt", one Stop, the phone paused); a migration follow onto a forbidden coordinator the
 same; the card's notices (`?music_notice=sonos_too_many`) and the "no longer knows" row.
+
+## Step 4 implementation status (2026-10-12)
+
+Docs and the merge, no code change. Built on branch `music-1b-sonos`:
+- **Main merged in** (`e539e76`, one merge commit, no rebase): the security wave's QA, design 24b (the override relock),
+  design 25's spec. No conflicts; the six files both sides touched (root `CLAUDE.md`, `launcher/CLAUDE.md`,
+  `server/CLAUDE.md`, design 26, `server/src/main.rs`'s routes, `device_detail.html`) merged by themselves in separate
+  places. Main's migrations end at `0063_window_relock.sql` and `0064_unseen_boots.sql`, so
+  **`0065_music_sonos_rooms.sql` keeps its number**. Main changed none of the shared contract files
+  (`music_library.json`, `music_state.json`, the bridge AIDL and `bridge_contract.json`) and nothing in `music/`.
+  After the merge: server `cargo test` **540 tests, 0 failures**, `cargo fmt --check` clean, `cargo clippy
+  --all-targets` 12 warnings, none in this branch's or the merge's code (local Rust 1.97); launcher `assembleDebug
+  testDebugUnitTest` (the tsnet stub) **900, 0 failures**; music `assembleDebug assembleRelease testDebugUnitTest
+  lintDebug -PwarningsAsErrors=true` **362, 0 failures** (`ContractFilesTest`, `BridgeTest`, `MusicPlanTest`: the
+  copies still byte-identical); `python3 -I scripts/fake-sonos.py --selftest` OK.
+- **Docs**: `music/CLAUDE.md` (the `sonos/` package and the renderer axis in the layout, the SOAP fixtures shared with
+  the fake, the rules: `attach`, `saveNow`, `showsPlaying`, the actor, renderer.json and the startup look, every play
+  path gated, never a guess in Room, the suspension and destroy paths, the locks, the volume cap, calls, the room
+  scope, discovery); `launcher/CLAUDE.md` (`MusicCalls`, `volume_cap_pct` pushed on a change of the cap in force,
+  `sonos_rooms` in `music_state`, the suspension on a room); `server/CLAUDE.md` (the fail-closed scope read, the
+  report's `sonos_rooms`, the library field); NOTICE.md (what was ported from `sonosd.py`, `renderer.py` and
+  `daemon.py`'s controller, and what was written here); design 21's "Sonos is 1b" note points here; design 26's
+  status; PLAN.md.
+
+## Release
+
+`music-v0.2.0-rc.1` is the user's tag, **on the merge commit on `main`** (`music.yml` refuses a tag whose commit isn't
+on `main`; root `CLAUDE.md`): versionName `0.2.0-rc.1`, versionCode 1999, a prerelease, never "latest". Design 26's
+review (#5) planned `music-v0.1.0` on `main` before 1b so phase 1's device checks test a fixed build; GitHub has no
+`music-v*` tag yet (2026-10-12), so if phase 1 is to keep a release of its own, tag it on `main` **before** merging this
+branch.
+
+Deploy order:
+1. **Server.** 3c's server part (migration 0065, the card, the library's `sonos_rooms`, the report's rooms, the event)
+   rides in **0.24.0**: `server/Cargo.toml` says 0.24.0 on both sides and `server-v0.24.0` isn't tagged yet. If it is
+   tagged before this merge, bump `server/Cargo.toml` (and `Cargo.lock`) to 0.25.0 on `main` for the next one. Not
+   required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an
+   older server every room is allowed and the parent just has no card. Required before the parent can limit rooms,
+   and the music catalog row (0.21.0+) before any **stable** `music-v*` (design 21 QA #11).
+2. **Launcher** (a `launcher-v*` on `main` after the merge), before or with the music RC: the `volume_cap_pct`
+   restriction (an older launcher sends none: no cap on a Sonos room), `CALL_HOLD`/`CALL_RELEASE` (none: a VoIP call
+   doesn't pause a room; the music app's audio-mode backstop covers only system calls) and `sonos_rooms` in
+   `music_state` (an older launcher drops the key: the card keeps saying the phone hasn't seen any speakers). Nothing
+   breaks without it; those three are missing.
+3. **Music app** `music-v0.2.0-rc.1`, installed through the catalog (the `release` environment's deployment rule must
+   allow `music-v*` tags, design 21 §5). The stable `music-v0.2.0` after the emulator and device checks below.
+
+Owed before the stable tag: the emulator checks (`docs/testing/emulator.md` §6g with 3a's, 3b's and 3c's lists, and
+§6f's smoke for the local sleep fade) and the device checks (the "Device checks" section, plus 3b's Doze hour, the
+FGS timeout, bedtime with and without the app, calls, adopt after a kill, and 3c's fix round's group and regroup
+checks). Open questions still standing: 3a (a) steps on a room start at 0 (vibb) while the phone's resume an item's
+place; 3a (b) picking the room already playing is the same-tile rule, not vibb's re-transfer; 3b (a) Media3 ending a
+service paused for 10 minutes stops the paused speaker (vibb's TERM rule).

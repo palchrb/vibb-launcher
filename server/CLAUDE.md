@@ -507,7 +507,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `device_policy.music_mobile_data/music_volume_cap_pct/music_storytel`, `music_storytel` singleton,
   `device_status.music_state_json`, `tracked_apps.release_tag_prefix`; `device_policy.music_sonos_rooms_json`
   (migration `0065`, design 26a §5.5: NULL = every Sonos room, else a JSON array of speaker uids; its trigger moves
-  `music_library_revision`).
+  `music_library_revision`; read fail-closed by `music::sonos_rooms_allowed` - a value that isn't a list of strings is
+  no room, logged). `music_state.sonos_rooms` (the speakers the phone knows) is kept by `sanitize_music_state` as
+  Sonos-shaped uids (`is_sonos_uid`, `RINCON_[A-Z0-9]{12,20}`) once each, names cut like `cut_title` (40), at most 32;
+  a bad row drops only itself.
 - **PWA** (`handlers::music`, `templates/music*.html`): `/music` (add by link - one GET, `AppState.music_fetch`,
   canned in tests; own-files entries; categories; Storytel; the music app's catalog row), `/music/entries/{id}`
   (settings, cover, uploads), device page card `#music` (app switch = `toggle_app` with `anchor=music`, auto-saving
@@ -519,11 +522,11 @@ needed to manage the phone, delete on a schedule, never store notification or me
   phones they reach and log `music_*` / `storytel_login_*` events. PWA text is English like the rest.
 - **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, volume_cap_pct, storytel_generation}` (always the
   key; `null` when the library query fails, QA #3; `policy_json_keys_snapshot`). The library (`music::library_for`):
-  16 hex of SHA-256 over the JSON **without** its `version` (QA #4; `sonos_rooms` - null or the allowed uids - is
-  hashed like every other field), pinned by `music_library_snapshot` in
-  `testdata/music_library.json` (the music app keeps a copy). Ticks and uploads that would push a phone's library
-  past 3 MB are refused / taken back. Own files not on disk are listed `missing` (startup check, and on a 404 while
-  serving), never dropped.
+  16 hex of SHA-256 over the JSON **without** its `version` (QA #4; `sonos_rooms` - null or the allowed uids, after
+  `covers`, ignored by an older music app, which then allows every room - is hashed like every other field), pinned
+  by `music_library_snapshot` in `testdata/music_library.json` (the music app keeps a copy). Ticks and uploads that
+  would push a phone's library past 3 MB are refused / taken back. Own files not on disk are listed `missing` (startup
+  check, and on a 404 while serving), never dropped.
 - **Uploads**: streamed to `.part` (hashed, <= 1 GB, the free space re-checked every 64 MB - stopped below 1 GB free,
   `rustix` statvfs), read by content with `lofty` in `spawn_blocking` (mp3/m4a/m4b/ogg/opus/flac/wav, else deleted and
   listed), embedded art and parent covers in `photos::MUSIC_COVERS` (backed up, `recover_missing`); the audio is never

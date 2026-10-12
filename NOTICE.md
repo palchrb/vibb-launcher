@@ -57,9 +57,19 @@ Room, WorkManager and Jetpack Compose (Apache License 2.0), OkHttp (Apache Licen
 
 The music app's Sonos control (`music/app/src/main/java/me/vibb/music/sonos/`, design 26a) reimplements in Kotlin,
 under the GPL-3.0 (or later), the behaviour of [palchrb/vibb](https://github.com/palchrb/vibb)'s `pi/sonosd.py` (the
-Sonos sidecar: the uid -> ip cache, discovery and the zone topology, the DIDL and the NRK Radio service recipe, the
-session's poll machine with its stall, migration and disarm rules, and the transport sequences), `pi/vibb/renderer.py`
-(the renderer state) and the Sonos controller in `pi/daemon.py` (`_sonos_body` and the speaker-playable filter); its
-unit tests port vibb's `tests/sonos_*.py`. The UPnP client is written here, with no third-party UPnP library.
-`scripts/fake-sonos.py`, the fake speakers for the emulator, is modelled on vibb's test fakes (`tests/sonos_renderer.py`
-and `tests/sonos_contract.py`). vibb's MIT License, Copyright (c) 2026 palchrb, and its notice above cover these too.
+Sonos sidecar: the uid -> ip cache, discovery and the zone topology with the background rescan, the DIDL and the NRK
+Radio service recipe, the session's poll machine with its stall, migration and disarm rules, and the transport
+sequences: the hushed play, the settled seek, adopt and the verbs), `pi/vibb/renderer.py` (the two axes, output and
+renderer, and the persisted renderer state) and the Sonos controller in `pi/daemon.py` (the `_sonos_*` fields and
+methods: `_sonos_body` and the speaker-playable filter, `_sonos_play_entry` and `sonos_start_target`,
+`_sonos_position`, `_sonos_bookmark_now` with its holds and regression guard, the coalesced step and seek workers,
+`_sonos_command`, `pause`/`unpause`, `play`'s same-tile rule, the switches `_renderer_to_sonos`/`_renderer_to_box`,
+`_sonos_stream_moved`, the volume base, `_sonos_poller`'s adopt-on-start and its tick, `_sonos_on_term`, and
+`status`'s renderer fields); its unit tests port vibb's `tests/sonos_*.py` and the non-Storytel parts of
+`tests/storytel_sonos.py`. Each ported file says so in its header. Written here, not ported: the Android glue
+(`SsdpScanner`, `SonosRenderer`, its actor and poller, the Wi-Fi binding, the wake locks, the standalone suspension
+stop, the room scope) and the renderer axis in `music/app/src/main/java/me/vibb/music/playback/`, which follows
+`renderer.py`'s split; there is no third-party UPnP library. `scripts/fake-sonos.py`, the fake speakers for the
+emulator, is modelled on vibb's test fakes (`tests/sonos_renderer.py`'s fake sidecar and `tests/sonos_contract.py`'s
+rule that both fakes answer from one source of truth). vibb's MIT License, Copyright (c) 2026 palchrb, and its notice
+above cover these too.

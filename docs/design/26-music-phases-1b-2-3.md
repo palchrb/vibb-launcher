@@ -10,6 +10,12 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   (21b), PWA, the music app with NRK, RSS and own files, speaker + Bluetooth, the launcher bridge, Home card, the lock's
   media view, time rules, the volume cap. **Not done yet:** `music-v0.1.0` isn't tagged, and phase 1's device checks
   on the Jelly Star (design 21's step status lists) haven't run.
+- **Phase 1b (Sonos) is built on `music-1b-sonos`** (status 2026-10-12; spec and every step's status in
+  `26a-sonos.md`): steps 1-4 (the `sonos/` core, the renderer axis, the renderer, lifecycle and phone rules, room
+  scoping, the docs), each with QA's code review and its fix round; main merged in. **Not done yet:** the emulator
+  checks (`docs/testing/emulator.md` §6g) and the device checks on the Jelly Star with real speakers (26a "Device
+  checks" and each step's owed list); the merge to `main` is the user's; `music-v0.2.0-rc.1` is tagged on the merge
+  commit after it (26a "Release").
 - **Read first:** root `CLAUDE.md`, `music/CLAUDE.md`, `docs/design/20-vibb-music.md` (its decision sections win over
   its §1-§5), `21-vibb-music-phase1.md`, `21b-music-server-sweep.md`, `vibb-spotify-options.md`, the mockup
   `docs/design/mockups/vibb-music/` (v15, published at https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY).
