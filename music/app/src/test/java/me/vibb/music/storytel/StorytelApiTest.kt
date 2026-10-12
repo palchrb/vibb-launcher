@@ -25,7 +25,8 @@ import kotlin.concurrent.thread
 /**
  * The phone's Storytel client (design 26b §4.1), vibb `tests/storytel_api.py` 1, 4, 5, 10b, 11 and the
  * spec's new rows (the login URL, the JWT per generation, M7's classes, L6's deadline, L9's
- * toStrings). The HTTP seam is faked: nothing here touches the network.
+ * toStrings). The HTTP seam is faked: nothing here touches the network. vibb's tests are MIT, Copyright
+ * (c) 2026 palchrb.
  */
 class StorytelApiTest {
     private fun fixture(name: String): JsonObject = Json.parseToJsonElement(Fixtures.resource("storytel/$name")).jsonObject
@@ -129,6 +130,10 @@ class StorytelApiTest {
         assertEquals(Mint.Failed(401), always401.mint())
         assertEquals("never two re-logins", 2, always401.logins.size)
         assertEquals(2, always401.assets.size)
+        // L4: the JWT a fresh login got and Storytel still refused is dropped: the next mint starts with a login.
+        val before = always401.requests.size
+        always401.mint()
+        assertTrue(always401.requests[before].url.encodedPath.endsWith("login.action"))
     }
 
     @Test
@@ -202,6 +207,14 @@ class StorytelApiTest {
             assertEquals(body, Mint.LoginFailed("no jwt"), Rig(login = { StorytelResponse(200, null, body.toByteArray()) }).mint())
         }
 
+        val unwritable = Rig(login = { StorytelResponse(403, null, ByteArray(0)) })
+        val store = object : CooldownStore {
+            override fun refusedAt(generation: Long): Long? = null
+            override fun setRefused(generation: Long, wallMs: Long) = throw IOException("disk full")
+        }
+        val api = StorytelApi({ unwritable.login() }, { StorytelLogin.Login(1, email, password) }, store, { 0 }, { 5 })
+        assertEquals("L1: a failed cooldown write never throws out of a mint", Mint.Refused(5 + StorytelApi.LOGIN_COOLDOWN_MS), api.assetUrl("1", 1_000, 10_000))
+
         val down = Rig(login = { throw IOException("unreachable") })
         assertEquals(Mint.LoginFailed("unreachable"), down.mint())
         assertNull(down.store.stamp)
@@ -232,7 +245,13 @@ class StorytelApiTest {
         assertEquals("a relative Location is no usable one", Mint.NoAudio(302), classOf(302, "/mp3/160661"))
         assertEquals(Mint.NoAudio(302), classOf(302, "ftp://cdn.example.invalid/x"))
         assertEquals(Mint.NoAudio(302), classOf(302, "https://user:pw@cdn.example.invalid/x"))
+        assertEquals(Mint.NoAudio(302), classOf(302, "https://user@cdn.example.invalid/x"))
         assertEquals(Mint.NoAudio(302), classOf(302, ""))
+        assertEquals("too long", Mint.NoAudio(302), classOf(302, "https://cdn.example.invalid/x?token=" + "A".repeat(StorytelApi.MINTED_URL_MAX)))
+        // L3: what OkHttp and ExoPlayer take, java.net.URI may not; the URL comes back canonically encoded.
+        assertEquals("https://cdn.example.invalid/a?consumableId=1&token=FAKE|SIG", (classOf(302, "https://cdn.example.invalid/a?consumableId=1&token=FAKE|SIG") as Mint.Url).url)
+        assertEquals("https://cdn.example.invalid/a%20b.mp3?consumableId=1", (classOf(302, "https://cdn.example.invalid/a b.mp3?consumableId=1") as Mint.Url).url)
+        assertTrue("a signed URL longer than a listing's 2000", classOf(302, "https://cdn.example.invalid/x?token=" + "A".repeat(3000)) is Mint.Url)
         for (s in listOf(403, 404, 410, 451)) assertEquals(Mint.NoAudio(s), classOf(s))
         for (s in listOf(408, 429, 500, 502, 503, 504, 400, 418)) assertEquals(Mint.Failed(s), classOf(s))
         assertEquals("200 without a redirect", Mint.Failed(200), classOf(200))

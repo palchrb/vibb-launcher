@@ -71,10 +71,19 @@ fun retryDelayMs(code: String?, attempts: Int): Long =
 
 /**
  * May an item be fetched from [url] at [nowMs]? Always when it never failed or its url changed
- * since (21b §6: "at once when the url changes"); else after [retryDelayMs] from its last failure.
+ * since (21b §6: "at once when the url changes"); else after [delayMs] from its last failure - phase
+ * 1's [retryDelayMs], or for a Storytel book `storytelRetryDelayMs` (design 26b §3.3: an `http_403` from
+ * an expired token heals on the next mint; pass `retryDelayFor(entry, ...)`).
  */
-fun mayRetry(failedUrl: String?, failedCode: String?, failedAt: Long?, attempts: Int, url: String, nowMs: Long): Boolean =
-    failedUrl == null || failedUrl != url || failedAt == null || nowMs >= failedAt + retryDelayMs(failedCode, attempts)
+fun mayRetry(
+    failedUrl: String?,
+    failedCode: String?,
+    failedAt: Long?,
+    attempts: Int,
+    url: String,
+    nowMs: Long,
+    delayMs: (String?, Int) -> Long = ::retryDelayMs,
+): Boolean = failedUrl == null || failedUrl != url || failedAt == null || nowMs >= failedAt + delayMs(failedCode, attempts)
 
 /**
  * Which entries' copies to drop entirely (`prune_cache`): every entry on the phone that the parsed

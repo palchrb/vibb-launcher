@@ -19,7 +19,7 @@ import org.junit.Test
 /**
  * Storytel's rules on the phone (design 26b §3, §4.3, §4.5, §5.3, §5.4, §5.7), vibb
  * `tests/storytel_api.py` 2, `storytel_expand.py` 1, 6, 7, `storytel_sync.py` 4, 5, 7 and
- * `storytel_sonos.py` 1, 7, 14, plus the spec's new rows.
+ * `storytel_sonos.py` 1, 7, 14 (MIT, Copyright (c) 2026 palchrb), plus the spec's new rows.
  */
 class StorytelRulesTest {
     private val books = listOf("160661", "160662", "160663", "160664", "160665")
@@ -155,6 +155,19 @@ class StorytelRulesTest {
     }
 
     @Test
+    fun `L7 - mayRetry takes the Storytel delay - a CDN 403 retries after 2 min for a book, a day for an RSS item`() {
+        val storytel = { c: String?, a: Int -> retryDelayFor(series(), c, a) }
+        val rss = { c: String?, a: Int -> retryDelayFor(entry(1), c, a) }
+        val at = 1_000L
+        val twoMin = at + RETRY_FIRST_MS
+        assertTrue(mayRetry("storytel:book:1", "http_403", at, 1, "storytel:book:1", twoMin, storytel))
+        assertFalse(mayRetry("https://cdn.example.org/1.mp3", "http_403", at, 1, "https://cdn.example.org/1.mp3", twoMin, rss))
+        assertFalse("the default is phase 1's rule", mayRetry("https://cdn.example.org/1.mp3", "http_403", at, 1, "https://cdn.example.org/1.mp3", twoMin))
+        assertTrue(mayRetry("https://cdn.example.org/1.mp3", "http_403", at, 1, "https://cdn.example.org/1.mp3", at + RETRY_PERMANENT_MS, rss))
+        assertFalse("no_audio waits a day", mayRetry("storytel:book:1", NO_AUDIO, at, 1, "storytel:book:1", twoMin, storytel))
+    }
+
+    @Test
     fun `retry classes - no_audio a day, every http code transient (M7)`() {
         assertTrue(storytelPermanentFailure(NO_AUDIO))
         assertFalse(storytelPermanentFailure("http_403"))
@@ -180,6 +193,8 @@ class StorytelRulesTest {
         }
         assertTrue(mintStopsRun(Mint.NotConfigured))
         assertTrue(mintStopsRun(Mint.Refused(1)))
+        assertTrue("L4: a 401 a fresh JWT got too: one login per run, not per book", mintStopsRun(Mint.Failed(401)))
+        assertEquals("that book still gets its error", "http_401", mintItemError(Mint.Failed(401)))
         assertTrue("no JWT or no login server: one login per run, not per book", mintStopsRun(Mint.LoginFailed("no jwt")))
         for (m in listOf(Mint.NoAudio(404), Mint.Failed(500), Mint.Unreachable("unreachable"), Mint.Url("https://cdn.example.invalid/x"))) {
             assertFalse("$m", mintStopsRun(m))
@@ -265,6 +280,9 @@ class StorytelRulesTest {
         assertEquals("by the parameter, not the token's digits", 30_000_000L, durationByConsumableId(series(), uri, queue))
         assertNull(durationByConsumableId(series(), "https://cdn.example.invalid/y?consumableId=999", queue))
         assertNull(durationByConsumableId(series(), null, queue))
+        val zero = listOf(PlayItem(7, "331855", "HP2", null, false, 0))
+        assertNull("a listed 0 is no length (L6): the carry fills the bar", durationByConsumableId(series(), uri, zero))
+        assertNull(durationByConsumableId(series(), uri, listOf(PlayItem(7, "331855", "HP2", null, false, null))))
         assertNull("scoped to Storytel entries", durationByConsumableId(entry(1), uri, queue))
     }
 }

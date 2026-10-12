@@ -135,6 +135,22 @@ class LibraryViewTest {
     }
 
     @Test
+    fun `del N av M is the book's place in the series, also when it plays newest first (L5)`() {
+        val e = storytel().copy(order = "newest_first")
+        val snap = snapshot(
+            library(listOf(e)),
+            items(e.id, books, gone = books.toSet()),
+            downloads = books.map { done(e.id, it, url = "storytel:book:$it") },
+            bookmarks = mapOf(e.key to ("b5" to 0L)),
+        )
+        assertEquals("b5", snap.order(e).first().key)
+        assertEquals(Hint.Started(Kind.AUDIOBOOK, 5, 5), entryUi(snap, e).hint)
+        val queue = snap.order(e)
+        assertEquals(5 to 5, playerNumber(snap, NowView(e, null, queue, 0, live = false, playing = false, storedPosMs = 0, durationMs = null, shuffled = false)))
+        assertEquals(1 to 5, playerNumber(snap, NowView(e, null, queue, 4, live = false, playing = false, storedPosMs = 0, durationMs = null, shuffled = false)))
+    }
+
+    @Test
     fun `the player's Del N av M counts the series too (M5)`() {
         val e = storytel()
         val snap = partial(null)

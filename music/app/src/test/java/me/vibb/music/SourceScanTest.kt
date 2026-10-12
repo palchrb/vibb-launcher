@@ -134,11 +134,12 @@ class SourceScanTest {
         assertEquals("Ny bok", nb["new_book"])
     }
 
-    /** The body of `class|object <name>` in [text] (from its declaration to the matching brace). */
+    /**
+     * The body of the class [declaration] matches, the match ending at that class's own opening brace
+     * (qa-26b-step1-code L2: never the next class's); a class without a body fails.
+     */
     private fun body(text: String, declaration: Regex): String {
-        val start = declaration.find(text)?.range?.last ?: throw AssertionError("no ${declaration.pattern}")
-        val open = text.indexOf('{', start)
-        if (open < 0) return ""
+        val open = declaration.find(text)?.range?.last ?: throw AssertionError("no body for ${declaration.pattern}")
         var depth = 0
         for (i in open until text.length) {
             when (text[i]) {
@@ -159,7 +160,7 @@ class SourceScanTest {
         for ((path, classes) in holders) {
             val text = code(moduleFile(path))
             for (c in classes) {
-                val b = body(text, Regex(Regex.escape(c) + "[^{]*\\)\\s*(:[^{]*)?"))
+                val b = body(text, Regex(Regex.escape(c) + "[^)]*\\)\\s*(:[^{\\n]*)?\\{"))
                 assertTrue("$path: $c needs an explicit toString()", b.contains("override fun toString()"))
             }
         }

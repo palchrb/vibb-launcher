@@ -10,7 +10,6 @@ import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
 import me.vibb.music.logic.kindOf
 import me.vibb.music.logic.overallProgress
-import me.vibb.music.logic.playOrder
 import me.vibb.music.logic.started
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
@@ -30,7 +29,7 @@ data class EntryUi(
 
 fun entryUi(snap: Snapshot, entry: Entry): EntryUi {
     val visible = snap.order(entry).map { it.key }
-    val order = countedOrder(entry, visible, playOrder(entry, snap.listed[entry.id].orEmpty()).map { it.key })
+    val order = countedOrder(entry, visible, snap.listed[entry.id].orEmpty().map { it.key })
     val bookmark = snap.bookmarks[entry.key]
     val showProgress = entry.resume && started(order, bookmark)
     val duration = bookmark?.let { b -> snap.item(entry.id, b.itemKey)?.durationMs }
@@ -95,7 +94,7 @@ fun playerNumber(snap: Snapshot, now: NowView): Pair<Int, Int> {
     val order = countedOrder(
         now.entry,
         listOrder(snap, now).map { it.key },
-        playOrder(now.entry, snap.listed[now.entry.id].orEmpty()).map { it.key },
+        snap.listed[now.entry.id].orEmpty().map { it.key },
     )
     return order.indexOf(now.item.key) + 1 to order.size
 }

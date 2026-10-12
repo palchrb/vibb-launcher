@@ -3,8 +3,8 @@ package me.vibb.music.storytel
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import me.vibb.music.bridge.StorytelLogin
-import me.vibb.music.model.safeUrl
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import javax.crypto.Cipher
@@ -115,6 +115,9 @@ class StorytelApi(
                 is Bearer.None -> return b.mint
             }
             response = asset(cid, token, timeoutMs, deadlineMs) ?: return unreachable(deadlineMs)
+            // A fresh JWT refused too (qa-26b-step1-code L4): drop it, so the next run starts with one login,
+            // not a 401 round trip and a forced one. The run stops on it (mintStopsRun).
+            if (response.status == 401 && jwt === token) jwt = null
         }
         return classify(response)
     }
@@ -142,7 +145,7 @@ class StorytelApi(
 
     /** The asset call's answer (QA M7). */
     private fun classify(r: StorytelResponse): Mint {
-        val location = r.location?.let(::safeUrl)
+        val location = mintedUrl(r.location)
         return when {
             r.status in 300..399 && location != null -> Mint.Url(location)
             r.status in 300..399 -> Mint.NoAudio(r.status)
@@ -202,7 +205,8 @@ class StorytelApi(
         if (response.status != 200) {
             // A refusal, not an outage (vibb): back off for an hour, unless a new login comes.
             val at = wallMs()
-            cooldown.setRefused(stored.generation, at)
+            // A failed write never throws out of a mint (vibb `_cooldown_set` swallows OSError).
+            runCatching { cooldown.setRefused(stored.generation, at) }
             jwt = null
             return Bearer.None(Mint.Refused(at + LOGIN_COOLDOWN_MS))
         }
@@ -251,6 +255,22 @@ class StorytelApi(
         private val JSON = Json { ignoreUnknownKeys = true }
 
         private const val HEX = "0123456789ABCDEF"
+
+        /** The longest minted URL taken: a signed CDN URL is never stored, and some run long. */
+        const val MINTED_URL_MAX = 8 * 1024
+
+        /**
+         * A minted `Location` as the player and the speaker can use it (qa-26b-step1-code L3): what OkHttp
+         * parses (not `java.net.URI`, which refuses an unencoded `|` or space that OkHttp and ExoPlayer
+         * take), http(s), a host, no username or password, at most [MINTED_URL_MAX] characters; the
+         * canonically encoded form, else null. §5.1's check on the Sonos path uses it too.
+         */
+        fun mintedUrl(location: String?): String? {
+            if (location == null || location.length > MINTED_URL_MAX) return null
+            val url = location.toHttpUrlOrNull() ?: return null
+            if (url.username.isNotEmpty() || url.password.isNotEmpty() || url.host.isEmpty()) return null
+            return url.toString().takeIf { it.length <= MINTED_URL_MAX }
+        }
 
         /** `_encrypt_password`: AES-128-CBC, PKCS#7 (JCA's PKCS5Padding is PKCS#7 for AES), UTF-8 in, UPPERCASE hex out. */
         fun encryptPassword(password: String): String {

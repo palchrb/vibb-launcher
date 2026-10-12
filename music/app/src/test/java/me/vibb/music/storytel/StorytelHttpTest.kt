@@ -15,7 +15,7 @@ import java.net.Proxy
 /**
  * [OkHttpStorytelHttp] against loopback servers (design 26b §4.1, §7): vibb `storytel_api.py` 4 over
  * real sockets - the asset 302 isn't followed and the CDN server sees nothing - the User-Agent on every
- * request (QA L8), the body cap and the call timeout.
+ * request (QA L8), the body cap and the call timeout. vibb's tests are MIT, Copyright (c) 2026 palchrb.
  */
 class StorytelHttpTest {
     private val client = OkHttpClient.Builder().proxy(Proxy.NO_PROXY).build()

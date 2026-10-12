@@ -27,12 +27,13 @@ fun kindOf(entry: Entry): Kind = when (entry.source) {
 
 /**
  * The keys "del N av M", `started` and the progress line count (design 26b §3.5, QA M5): for Storytel
- * the series' reading order in play order ([listedInPlayOrder], every book, downloaded or not), so
+ * the series' reading order ([readingOrder], the listing's order: every book, downloaded or not,
+ * whatever the play order - a book's number is its place in the series, qa-26b-step1-code L5), so
  * book 3 of 5 with books 1 and 3 on the phone reads "del 3 av 5" and a bookmark on a book heard on a
- * room still counts; for every other entry the visible items ([visibleInPlayOrder]).
+ * room still counts; for every other entry the visible items in play order ([visibleInPlayOrder]).
  */
-fun countedOrder(entry: Entry, visibleInPlayOrder: List<String>, listedInPlayOrder: List<String>): List<String> =
-    if (entry.source == Source.STORYTEL) listedInPlayOrder else visibleInPlayOrder
+fun countedOrder(entry: Entry, visibleInPlayOrder: List<String>, readingOrder: List<String>): List<String> =
+    if (entry.source == Source.STORYTEL) readingOrder else visibleInPlayOrder
 
 /** The hint under a cover. */
 sealed interface Hint {

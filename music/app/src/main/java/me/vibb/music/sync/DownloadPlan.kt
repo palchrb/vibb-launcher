@@ -7,7 +7,7 @@ import me.vibb.music.logic.KeepItem
 import me.vibb.music.logic.keepSet
 import me.vibb.music.logic.mayRetry
 import me.vibb.music.logic.removedEntries
-import me.vibb.music.logic.retryDelayMs
+import me.vibb.music.logic.retryDelayFor
 import me.vibb.music.logic.wantedDownloads
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -51,10 +51,11 @@ fun downloadPlan(snap: Snapshot, rows: List<DownloadRow>, nowMs: Long): Download
         for (key in wantedDownloads(keep, listed.map { KeepItem(it.key, it.url != null) }, have, bookmark)) {
             val item = byKey.getValue(key)
             val row = rowOf[key]
-            if (row == null || mayRetry(row.failedUrl, row.failedCode, row.failedAt, row.attempts, item.url!!, nowMs)) {
+            val delay = { code: String?, attempts: Int -> retryDelayFor(entry, code, attempts) }
+            if (row == null || mayRetry(row.failedUrl, row.failedCode, row.failedAt, row.attempts, item.url!!, nowMs, delay)) {
                 wanted += WantedDownload(entry, item)
             } else {
-                val at = row.failedAt!! + retryDelayMs(row.failedCode, row.attempts)
+                val at = row.failedAt!! + delay(row.failedCode, row.attempts)
                 nextRetryAt = minOf(nextRetryAt ?: at, at)
             }
         }

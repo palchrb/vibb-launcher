@@ -105,8 +105,13 @@ fun mintItemError(mint: Mint): String? = when (mint) {
     is Mint.Url, Mint.NotConfigured, is Mint.Refused, is Mint.LoginFailed -> null
 }
 
-/** Does [mint] stop every Storytel book of the run (vibb `sync` stops on a login failure)? No item error then. */
-fun mintStopsRun(mint: Mint): Boolean = mint is Mint.NotConfigured || mint is Mint.Refused || mint is Mint.LoginFailed
+/**
+ * Does [mint] stop every Storytel book of the run (vibb `sync` stops on a login failure)? The login
+ * failures (no item error then), and a 401 that a fresh JWT got too (qa-26b-step1-code L4: that book
+ * gets `http_401`, the rest wait for the next run - not one login per book).
+ */
+fun mintStopsRun(mint: Mint): Boolean =
+    mint is Mint.NotConfigured || mint is Mint.Refused || mint is Mint.LoginFailed || (mint is Mint.Failed && mint.status == 401)
 
 /** `DISK_FLOOR`: no Storytel book starts below this much free space (vibb's own floor, Storytel's only). */
 const val STORYTEL_FREE_FLOOR = 1_500_000_000L
@@ -178,10 +183,11 @@ fun redactUri(uri: String?): String {
 /**
  * vibb `_sonos_known_duration`: the length (ms) of the book [uri] plays, from [queue] by the uri's
  * `consumableId` ("authoritative first", design 26b §5.4) - exact, so one book's length never lands
- * on another. Null for anything but a Storytel entry, an unknown book or no uri.
+ * on another. Null for anything but a Storytel entry, an unknown book, no uri or a listed length of 0.
  */
 fun durationByConsumableId(entry: Entry, uri: String?, queue: List<PlayItem>): Long? {
     if (entry.source != Source.STORYTEL) return null
     val want = consumableIdOf(uri) ?: return null
-    return queue.firstOrNull { it.key == want }?.durationMs
+    // Only a real length: a listed 0 lets the carry fill the bar (vibb `if known:`, daemon.py 4663).
+    return queue.firstOrNull { it.key == want }?.durationMs?.takeIf { it > 0 }
 }
