@@ -346,7 +346,23 @@ pub(crate) async fn build_policy(
     ))
     .fetch_optional(&state.db)
     .await?;
-    if let Some((id, _, _)) = &popped {
+    if let Some((id, _, requested_at)) = &popped {
+        // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
+        // one the phone didn't confirm is never offered again - a lost "pause" must not run after
+        // a later "lock again". Its row stays, as history.
+        sqlx::query(
+            "UPDATE device_commands SET deliveries = MAX(deliveries, ?) WHERE device_id = ? \
+             AND id != ? AND delivered_at IS NOT NULL AND received_at IS NULL \
+             AND acknowledged_at IS NULL AND (requested_at < ? OR (requested_at = ? AND id < ?))",
+        )
+        .bind(crate::models::MAX_COMMAND_DELIVERIES)
+        .bind(device_id)
+        .bind(id)
+        .bind(requested_at)
+        .bind(requested_at)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
         if receipts {
             spawn_redelivery_nudge(state, device_id, *id);
         }

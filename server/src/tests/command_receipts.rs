@@ -424,6 +424,35 @@ async fn re_delivery_ends_with_the_window() {
     assert_eq!(row(&app, id).await.1, 2);
 }
 
+/// QA Low 1: commands run in the order they were asked for. A lost "pause" isn't offered again
+/// once a later "lock again" went out.
+#[tokio::test]
+async fn a_lost_pause_never_runs_after_a_later_lock_again() {
+    let app = TestApp::new().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    report_receipts(&app, &token).await;
+    let pause = queue(&app, device, "start_pause").await;
+    assert_eq!(policy(&app, &token).await["pending_command"]["id"], pause);
+    // The answer was lost; a minute later the parent ends the windows.
+    sqlx::query(
+        "INSERT INTO device_commands (device_id, command, requested_at) \
+         VALUES (?, 'end_windows', datetime('now', '+1 seconds'))",
+    )
+    .bind(device)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        policy(&app, &token).await["pending_command"]["command"],
+        "end_windows"
+    );
+    age_delivery(&app, pause, 3).await;
+    assert!(
+        policy(&app, &token).await["pending_command"].is_null(),
+        "the pause stays history"
+    );
+}
+
 /// QA High 1: after a delivery to a phone that confirms, the server nudges it once the gap has
 /// passed - only while the command is still unconfirmed.
 #[tokio::test]
