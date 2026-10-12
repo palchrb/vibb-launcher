@@ -475,3 +475,279 @@ Rebase on `main` before the last test run. The Storytel phase can reuse `PlayIte
    "at least half of the first 10, at least two different pictures" rule. Episodes without art show the series
    cover in the carousel. An entry where no episode has its own picture looks exactly as today: one cover, no
    carousel (user, earlier the same day).
+
+## Design QA (2026-10-12)
+
+Reviewer: design QA, against `main` `6b4ecf65`, palchrb/vibb branch `pipewire` (`pi/vibb/content.py`, `pi/ui.py`), and
+the in-flight `music-cover-instant` work (worktree `wt-mfix`, uncommitted, read only). The user decisions above are fixed
+and were not re-opened. Nothing was built.
+
+**Verified, no change needed:**
+- The vibb claims in §0: `_pick_image(want=300)`, `_parse_feed` (item `itunes:image`, else channel image; no
+  `media:thumbnail`), `_download_image` (300 px, q85), `_sync_episode_images` (kept episodes only),
+  `render_now` (keeps the same target's previous picture, then the collection cover), and no Now Playing carousel.
+- Compatibility: an older app's `safeUrl` turns a 64-hex hash into null, and the new `[0-9a-f]{64}` filter turns a
+  URL into null. A oneway AIDL call that an older launcher doesn't know returns false in `onTransact`, and the caller
+  sees no error.
+- Sleep timer: `goTo` only seeks, so a swipe doesn't cancel the timer. A tap on the centre is a
+  `USER_REQUEST` pause, so it calls `setSleep(0)` as the button does.
+- Headset buttons, auto-advance and list picks all change `exo.currentMediaItemIndex`, so "the pager follows the
+  player" covers them. `restoreThen` plus a key-based skip keeps a restored queue paused.
+- The cover route's scoping as written (a ticked entry, a listed item) is sound. See L1 for the exact SQL.
+- The numbers in the §3.3 table are right for the sizes listed (see L2 for the cases they miss).
+
+### High
+
+**H1. After the app update the stored listings are never re-applied, so phones that already exist get no episode art.**
+- **Scenario:**
+  - The server ships first, and its listings carry hashes. The old app applies them and drops `art`.
+  - The new app's Room migration adds `ItemRow.artHash` as NULL. `listings.version` still equals the launcher's, so
+    `listingsWanted` (`BridgeConfig.kt:88`) fetches nothing.
+  - Every entry whose listing doesn't change again keeps `artHash = null` for good. That covers a finished NRK serie,
+    a podcast on a break, and an entry whose backfill ended before the update. Those entries never get a carousel.
+- **Fix:**
+  - Use an `AutoMigrationSpec` whose `onPostMigrate` runs `UPDATE listings SET version = ''`. The next sync then pulls
+    and re-applies every listing from the launcher's copy, with no server traffic.
+  - Don't delete the rows. Prune runs only on parsed listings, and an empty version is never served.
+- **Test:** a migration test (Room `MigrationTestHelper` from `schemas/1.json`), and `listingsWanted` with
+  `applied = ""`.
+
+**H2. The live Home card, the lock's tile and the notification show the session's artwork, which is fixed when the
+queue is built. §2.4's claim that they update "within 15 s" is wrong for a live session.**
+- **Scenario:**
+  - `MusicSessions.reading.art` comes from the platform metadata bitmap, and `MusicHomeCard`/`MusicLockPanel` use
+    it while live. The `setNowPlaying` ART bytes reach only the snapshot card (`snapshotArt`), so the 15 s report
+    changes nothing on a live card.
+  - The `now` neighbours' pictures land about 20 s after a queue start. When the kid swipes or auto-advances to them,
+    their `MediaItem` still carries the series cover. So the lock tile and the notification show the series cover for
+    nearly every episode that isn't kept.
+  - Also, `mediaItem()` runs on the main thread (`start`, `toggleShuffle`). The "lazy `artFor(hash)` at build time"
+    would decode 512 px JPEGs there, one per queue item.
+- **Fix:**
+  - On `onMediaItemTransition`, and when a wanted hash for the current item lands, make its ≤ 300 px copy on `writer`.
+  - Then call `exo.replaceMediaItem(index, item.buildUpon().setMediaMetadata(meta with the new artworkUri))`.
+    Media3 1.7.1 swaps metadata without interrupting playback when `localConfiguration` is unchanged (progressive and
+    HLS sources support `canUpdateMediaItem`).
+  - At build time, use only the ≤ 300 px copies that already exist, else the entry cover's copy. Never decode on main.
+- **Test:** a pure `artOrCover` test, plus a device check: swipe to an unkept episode, wait for its picture, and check
+  that the lock tile and the notification change without a queue restart.
+
+**H3. The in-flight `music-cover-instant` change overlaps the player part, and §4 doesn't mention it.**
+- **Scenario:**
+  - That branch adds `logic/Switch.kt` (`PlayRequest`, `requestStands`, 3 s hold, `skipSwitch`), `NowView.cover` /
+    `itemTitle` / `itemKnown`, `PrefetchCovers` and `loadCover` in `Widgets.kt`, and it changes `PlayerScreen`'s cover
+    box.
+  - §3.2's own "pending skip, at most 1.5 s" would be a second mechanism for the same thing: show the target before
+    the service publishes it. Both edit the same lines in `PlayerScreen`, `UiModel` and `Widgets`.
+- **Fix:**
+  - Implement design 27 after that branch merges, and rebase onto it.
+  - A swipe is a `PlayRequest` for the item key, handled like `skipSwitch` with the explicit target. "Pending" becomes
+    `requestStands`, which also ends as soon as the player moves elsewhere. That fixes the unplayable-target case,
+    where the index never equals the swiped target and the 1.5 s rule would snap back late.
+  - `NowView.cover` becomes `artOrCover` with the fallback.
+  - Per user decision 1, the seek bar follows the picture: show the landing item's saved place (`storedPosMs` and the
+    item's duration) while the request stands.
+  - `PrefetchCovers` is redundant with the pager's pre-composed pages; keep it only for the single-cover look.
+- **Spec:** add both branches to §4's overlap list.
+
+**H4. Under the literal "at least one episode has its own picture" rule, an album shows a carousel of identical
+pictures.**
+- **Scenario:**
+  - An own-files album where every track embeds the same front cover. The upload pipeline gives identical bytes, so
+    every track has the same `art` hash.
+  - An own entry's `cover` is the parent's cover or null (`music.rs:805`), so `artHash != entry.cover` holds for
+    every track.
+  - The carousel shows, and every page is the same picture. The superseded rule ("at least 2 different pictures")
+    prevented exactly this, and §3.1's own example ("an album whose tracks all embed the same picture doesn't") now
+    contradicts the decision.
+  - The same happens for an RSS feed whose items all point at one non-channel picture. See M2.
+- **Fix (consistent with the decision):**
+  - The carousel shows when the queue has more than one item and its pages show at least two different pictures,
+    counting the fallback cover as one.
+  - For a podcast, one own episode picture plus the series cover is two pictures, so the carousel shows: exactly the
+    user's rule.
+  - For an album with one shared picture there is one, so the player looks as today, and the single cover is the
+    track's art, as vibb's "every song wears its own cover".
+  - Evaluate over `NowView.queue` (visible items), not the raw listing.
+- **User question Q1 below.**
+
+### Medium
+
+**M1. The body of the spec and the mockup still carry the superseded rule and the open questions.**
+- **Where:**
+  - §3.1 ("at least half of the first 10 ... 2 different pictures");
+  - §0 ("open question 1"), §3.2 ("recommended; open question 1"), §3.1 ("Open question 2");
+  - the §5 tests ("half; a stray picture");
+  - the mockup's `hasEpisodeArt` and its comment (`Main.dc.html` ~391);
+  - the header's "v16", where the mockup is v18 (README).
+- **Scenario:** an implementer follows §3.1 and the §5 tests and ships the rule the user rejected.
+- **Fix:**
+  - Rewrite §3.1 to the decision (with H4's counting), and drop the §3.2 preview fallback paragraph.
+  - Update the §5 tests: one own picture among 300 shows the carousel; none doesn't; an identical-picture album
+    doesn't.
+  - Update the mockup's `hasEpisodeArt`. Its `stepWrap` also resets the position to 0, while the decision says
+    "at its saved place".
+
+**M2. The single `cover_print` reference turns every misjudged picture into an entry-wide carousel.**
+- **Background:** under "at least one", a single `own` that is really the series picture gives the whole entry a
+  carousel.
+- **Cases the spec misses:**
+  - (a) **No `cover_print`.** An RSS feed without a channel image, or a cover fetch that failed: every item with art
+    is `own`, including N copies of one picture under fresh URLs.
+  - (b) **NRK's two series pictures.** A stub without `squareImage` falls back to the 16:9 `image`. Centre-cropped,
+    that is the series banner, and its dHash differs from the square cover, so it is judged `own`.
+  - (c) **A rebrand.**
+    - A new series cover makes step 6 re-judge. The back catalogue's episode pictures, which are the old series art,
+      now differ and flip to `own`. The carousel appears with the old logo on every old episode.
+    - Worse, step 6 says "no requests", but a `same` item stored no file, so becoming `own` needs a GET.
+- **Fix:**
+  - Keep a small set of reference prints per entry instead of one:
+    - the current cover's;
+    - the series' other picture (its 16:9 `image`, centre-cropped, fetched once with the cover, one GET);
+    - up to 3 previous covers' prints.
+  - Within distance 5 of any reference print means `same`.
+  - Step 6:
+    - an `own` item that now matches → `same` (drop `art_hash`; the prune removes the file);
+    - a `same` item that no longer matches → untried (`art_from = NULL`), so the budget fetches it.
+  - Case (a) with no reference print: H4's "at least two different pictures" already stops N copies of one picture.
+    Additionally, deduplicate by print within an entry: an `own` result within distance 5 of an `own` print already
+    stored for the entry reuses that `art_hash`. The phone then sees one hash.
+- **Tests:**
+  - the 16:9 fallback judged `same`;
+  - a rebrand keeps old-art items `same`;
+  - the print deduplication;
+  - a feed without a channel image with 10 identical item pictures: one hash, no carousel.
+
+**M3. The NRK back catalogue stays on the 300 px pick for good.**
+- **Scenario:**
+  - The routine `podcast_list` walk stops at the first known key (`walk`, `music_sweep.rs` ~1265), so a known stub is
+    never re-read. "Until NRK sends the stub again" never happens for existing episodes.
+  - Their `art_url` is the 300 px variant. The variants differ in the middle of the gfx path (fixture
+    `psapi_podcast_episodes_desc.json`), so no URL rewrite is possible.
+  - `process` never enlarges, so every existing episode picture is stored at 300 px. That is soft at 224 dp on a
+    2.6× screen, and step 1's URL match never fires for those items.
+- **Fix:**
+  - Add a one-time art refresh, flagged by the migration (`music_listings.art_refresh = 1` for NRK entries).
+  - The next check walks the episode pages in full (≤ 2-3 psapi pages for 100 items, inside the 250 budget) and only
+    updates `art_url` of known keys. It doesn't add or drop items.
+  - Then clear the flag. The cost is at most 3 requests per NRK entry, once.
+- **Test:** the refresh updates `art_url` and resets `art_from`. The routine walk is unchanged.
+
+**M4. The launcher also pins the listing snapshot.**
+- **Scenario:** `MusicPlanTest.kt:90` asserts `listingVersionOf(server/testdata/music_listing.json) ==
+  "33e4fb66e77b8d7f"`. Regenerating the snapshot in step 1 changes that version, so `launcher-build` fails. That job
+  runs on that file (`launcher.yml` path filter).
+- **Fix:** step 1's single commit also updates `MusicPlanTest`'s expected version. Say so in §1.5, §5 step 1 and §4's
+  file list.
+
+**M5. A picture that lands while its slot is on screen never shows.**
+- **Scenario:**
+  - `coverBitmap`'s `produceState` is keyed only on the hash.
+  - When the file is missing, it settles on null and never runs again.
+  - `Store.snapshots()` doesn't change when a cover file arrives (`Inbox.putCover` writes a file, not a row).
+  - So the centre picture, the bar and the notification stay on the series cover until the slot leaves the
+    composition, even long after the copy landed. §6's "arrives within a sync" would fail on the device.
+- **Fix:**
+  - Add a `Store.coversVersion: StateFlow<Long>`, bumped by `putCover` and by the prune.
+  - `coverBitmap` keys its producer on `(hash, coversVersion)` while its state for that hash is null.
+  - The same signal lets `PlaybackService` refresh the current item's artwork (H2).
+- **Test:** pure, in `CoversTest`: a missing file, then present, decodes once.
+
+**M6. The launcher can re-request failing art on every sync and every item change.**
+- **Scenario:**
+  - `wantArt` is sent at the end of every music sync and on item changes, and each call runs the courier. Every
+    wanted hash that 404s is fetched again, up to 600 GETs a run. A hash 404s when:
+    - its item was capped out or unticked;
+    - the server forgot it after a restore (`recover_missing`), before the listing change reaches the phone;
+    - it fails the hash check.
+  - On mobile data without the switch, every call also starts a courier run that can't fetch the `later` list.
+- **Fix:**
+  - `MusicStore` keeps a per-hash failure time, skipped for 24 h after 2 failures (as `OWN_FILE_HASH_BACKOFF_MS`).
+  - At most 50 art GETs per run, `now` first.
+  - `MusicBridgeService.wantArt` calls `MusicCourier.request` only when a hash is fetchable now: not backed off, and
+    `later` only on an allowed network.
+  - Pure `artToFetch(now, later, have, failures, unmetered, mobileData, max)` in `MusicPlan`, with tests.
+
+**M7. Gaps in the pager and service contract.**
+- **Gaps:**
+  - (a) "The pager follows the player" must never animate while the pager is dragged or flinging (`isScrollInProgress`
+    or a drag interaction). Otherwise the result of the first of two quick swipes yanks the page from under the
+    finger.
+  - (b) A "new queue re-keys the pager" must mean that the queue's key list changed. That includes a listing apply
+    that drops a visible item mid-play: `NowView.queue` is `mapNotNull`, so `n` changes and the virtual page math
+    breaks.
+  - (c) `SKIP_TO` must carry `ARG_ENTRY` and `ARG_KEY` and be ignored unless the entry is the active (or restored)
+    one. A stale pager can swipe after a Nytt tap or the Home card switched entries.
+  - (d) Add `SKIP_TO` to `Commands.ALL` (`onConnect` accepts only those), and decide whether it is in `PLAYS`. It
+    isn't: like next, it doesn't start playback.
+  - (e) Sonos (1b-3) must route it like next.
+- **Tests:** add these to the pure pager rules in §5 step 3.
+
+### Low
+
+**L1. Server sweep details.**
+- (a) **The day count.** `ART_PER_DAY` "counted from `art_at`" also counts steps 1, 2 and 6, which stamp an attempt
+  without a request. Count only GETs: a separate `art_fetched_at`, or count rows where a fetch happened.
+- (b) **Budget skips.** A GET skipped for the check's budget or its 600 s (`Got::Skipped`) leaves the item untried:
+  don't set `art_from`.
+- (c) **Step 2 from a `same` item.** That item stored no file, so when the other entry judges it `own` it needs the
+  GET. Only copy `art_hash` when it is set.
+- (d) **An index.** Add one on `music_items(art_from)` (or `art_url`) for step 2's lookup across entries.
+- (e) **`art_backlog = 0`** stops older episodes' own art for good. With "at least one" that can hide a carousel the
+  entry would have. Accept and say so, or retry the backlog once a month.
+- (f) **`art_in_library` SQL.** Join `device_music_entries`, require `e.source IN ('nrk','rss')`,
+  `i.state != 'pending'` and `music_listings.version IS NOT NULL`, then serve from `music_art_dir`. Check
+  `cover_in_library` first, as written.
+
+**L2. Layout.**
+- (a) **The neighbours' pull.** It must be `A·(1−0.733)/2` (20.6 dp at A = 154, 29.9 at 224), not the library's
+  fixed 24 dp.
+- (b) **"Peek ≤ 0.733·A" doesn't always hold.** It fails when `A < (W−16)/2.466`: 110 dp at 288 and 147 dp at 379.
+  That happens with a large font or display size, where the cover box shrinks: the neighbour then shows whole with an
+  empty strip beside it.
+  - FitTest should include a short box (e.g. 120 dp).
+  - Below `A < 96 dp` fall back to the single cover.
+  - Draw pages with |offset| > 1 at alpha 0.
+- (c) The control row and the bottom bar don't change, so the 288 dp rule and `requiredSize` hold.
+
+**L3. Memory and caches.**
+- `bitmaps` is an `LruCache` of 24 entries counted as items. Each 512 px ARGB bitmap is 1 MiB, so up to 24 MiB, with
+  5 pager pages composed. That is fine on the Jelly Star, but:
+  - decode at the size shown (`inSampleSize` to ≥ A × density; 154 dp × 1.5 = 231 px decodes at 256 px) or as
+    `RGB_565`;
+  - size the cache in bytes.
+- `cacheDir/art/` (the ≤ 300 px copies) is never pruned and now grows with every episode picture. Prune it with the
+  same rule as `covers/`.
+
+**L4. The want set, end to end.**
+- The player's `LiveBridge.wantArt` must send both lists from `wantedArt` on the current snapshot. A `now`-only call
+  would let the launcher delete `later` pictures still in flight.
+- The music app's prune runs after `applyListing`, and only on a parsed library.
+- `MusicStore.clearAll` and the `head == null` branch also clear `want_art.json`.
+- Keep the last ~20 pictures shown, in a small recent set in the want universe, so that swiping back and forth
+  doesn't fetch the same neighbours again after every sync.
+- `now` on any network also covers roaming. That's fine at ~60 KB a picture, but say it.
+
+**L5. Strings and TalkBack.**
+- "Pause: %s" and "Spill: %s" are new strings, in nb and en; `play_entry` is "Spill %s" without the colon.
+- Test that TalkBack's scroll forward and backward land on one page and skip once.
+- Include an animations-off device check with TalkBack on.
+
+### Questions for the user
+
+- **Q1 (H4):** some music albums have the same cover embedded in every song. Should they show the carousel, with the
+  same picture on every page?
+  - **Recommendation: no.** The carousel shows when at least two different pictures appear in it, and the series
+    cover counts as one.
+  - A podcast where just one episode has its own picture still gets the carousel, as decided.
+  - An album with one shared cover looks as today.
+
+No other real user questions: M2, M3 and M6 are design fixes with obvious defaults.
+
+## Decisions after the design QA (orchestrator, 2026-10-12)
+
+- **All 16 findings are accepted** as the QA proposes. H3 is resolved: `music-cover-instant` is merged (5d37cbf1), so a
+  swipe is a `PlayRequest` through its `requestStands` rule, with no separate pending-skip.
+- **Q1, decided from the user's own rule** ("no per-episode art looks as today"): the carousel shows when its pages show
+  **at least two different pictures**, with the series cover counting as one. An album whose songs all carry the same
+  cover looks as today. A podcast where a single episode has its own picture still gets the carousel, as decided.
