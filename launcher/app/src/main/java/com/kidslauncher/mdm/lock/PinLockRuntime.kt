@@ -31,6 +31,7 @@ import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.timerules.ScreenTimeTracker
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.ui.LockActivity
+import com.kidslauncher.mdm.server.emergencySosPackage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -162,6 +163,9 @@ object PinLockRuntime {
     private var exemptYields = 0
     @Volatile
     private var emergencyFlowUntilElapsed = 0L
+    /** The last screen-on (elapsed ms) and a probable Emergency SOS's end ([sosGestureLikely]). Main thread. */
+    private var lastScreenOnElapsed: Long? = null
+    private var sosFlowUntilElapsed = 0L
     private var emergencyCallSeen = false
     private var rememberedAlarmMs: Long? = null
     private var callsSeen = false
@@ -651,6 +655,7 @@ object PinLockRuntime {
                 // First, synchronously: end the Play update window before anything else (QA
                 // step 7 #8); the full re-apply follows in the background.
                 if (intent.action == Intent.ACTION_SCREEN_ON) {
+                    lastScreenOnElapsed = SystemClock.elapsedRealtime()
                     PlayRuntime.suspendStoreAtScreenOn(app)
                     // No self-update commit while someone uses the phone (step 11).
                     com.kidslauncher.mdm.server.SelfUpdate.onScreenOn(app)
@@ -965,6 +970,7 @@ object PinLockRuntime {
         // Back in front after the alarm: its exemption ends now (qa-10-code #4).
         rememberedAlarmMs = alarmAfterResume(rememberedAlarmMs, yielding)
         yielding = null
+        sosFlowUntilElapsed = 0L
         handler.removeCallbacks(refrontCheck)
         // During our call, the call screen goes back on top (qa-10-code #1).
         dispatch(context.applicationContext, LockEvent.LockResumed(ourCall(), VoipCalls.phase))
@@ -984,6 +990,7 @@ object PinLockRuntime {
     fun onLockPaused(finishing: Boolean = false) {
         lockResumed = false
         if (!pauseStartsRefront(chromeLocked, finishing)) return
+        noteProbableSos()
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
@@ -994,11 +1001,25 @@ object PinLockRuntime {
     fun onLockStopped(changingConfigurations: Boolean, finishing: Boolean) {
         lockResumed = false
         if (!stopStartsRefront(chromeLocked, changingConfigurations, finishing)) return
+        noteProbableSos()
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         // As quick as the pause's check (bug 25b-A): whatever came over the lock - Recents, a
         // SystemUI restart, an app - is covered again within PAUSE_REFRONT_MS.
         handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
+    }
+
+    /** The lock left the front: probably the Emergency SOS gesture ([sosGestureLikely], bug 25b-H)? */
+    private fun noteProbableSos() {
+        val app = appContext ?: return
+        // A stop at the screen-off is no SOS (the gesture's presses keep the screen on).
+        if (sosFlowUntilElapsed > 0L || !interactive(app)) return
+        val now = SystemClock.elapsedRealtime()
+        // The package lookup only runs inside the window after a screen-on.
+        if (!sosGestureLikely(lastScreenOnElapsed, now, sosAppPresent = true)) return
+        if (!sosGestureLikely(lastScreenOnElapsed, now, sosAppPresent = emergencySosPackage(app) != null)) return
+        sosFlowUntilElapsed = now + SOS_FLOW_MS
+        Log.i(LOG_TAG, "The lock left the front just after a screen-on: probably Emergency SOS")
     }
 
     private fun runRefrontCheck() {
@@ -1013,6 +1034,7 @@ object PinLockRuntime {
             emergencyFlow = emergencyFlowNow(telecom),
             alarmRinging = alarmNow(context),
             voipCall = VoipCalls.phase != VoipPhase.NONE,
+            sosFlow = SystemClock.elapsedRealtime() < sosFlowUntilElapsed,
         )
         when (val action = refrontAction(inputs, refrontAttempt)) {
             RefrontAction.Stop -> yielding = null

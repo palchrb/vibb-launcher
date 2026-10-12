@@ -25,6 +25,8 @@ data class RefrontInputs(
     /** An allowed app's VoIP call rings or is on ([VoipPhase] not NONE, design 17): its ring or
      * call screen may be in front. */
     val voipCall: Boolean = false,
+    /** Probably Emergency SOS (five power presses) is in front ([sosGestureLikely], bug 25b-H). */
+    val sosFlow: Boolean = false,
 )
 
 /** How long after "Emergency call" the lock stays out of the way even without a call. */
@@ -62,6 +64,7 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
     inputs.emergencyFlow -> RefrontAction.Yield("emergency")
+    inputs.sosFlow -> RefrontAction.Yield("sos")
     inputs.alarmRinging -> RefrontAction.Yield("alarm")
     // Last: a phone call, the emergency flow and the alarm always win over a VoIP call
     // (qa-16-17-code #1 - and the alarm's exemption ends only on a yield named "alarm").
@@ -155,3 +158,25 @@ fun guardRearm(guard: CrashGuard, nowMs: Long): CrashGuard {
     val tripped = guard.trippedAtMs ?: return guard
     return if (nowMs - tripped >= GUARD_REARM_MS || nowMs < tripped) CrashGuard() else guard
 }
+
+/**
+ * Bug 25b-H: Emergency SOS. Five quick power presses make SystemUI start the SOS activity (Personal
+ * Safety's countdown, AOSP's Emergency information) as a task of its own - pinned now - and the
+ * re-front would cover it within [PAUSE_REFRONT_MS]. No app can see which activity is in front
+ * (usage events need a permission a device owner can't grant itself), so the timing tells: AOSP
+ * 16's GestureLauncherService counts presses at most 500 ms apart and, once two came quickly,
+ * swallows the rest while the screen is on - the screen turns on at the first or second press and
+ * stays on, and the fifth comes at most about 2 s later. The lock leaving the front within
+ * [SOS_GESTURE_WINDOW_MS] of a screen-on, with an SOS app on the phone, yields as "sos" for
+ * [SOS_FLOW_MS] or until the lock is back in front (SOS cancelled or done); an emergency call
+ * it places yields as a system call. While LOCKED nothing else can come up in that window but a
+ * pinned package: Home and Recents are out of lock task, the camera is off by policy.
+ */
+const val SOS_GESTURE_WINDOW_MS = 3_000L
+
+/** How long a probable SOS is left alone without the lock coming back to the front. */
+const val SOS_FLOW_MS = 60_000L
+
+/** The lock left the front [leftFrontAtMs] (elapsed) probably because of the SOS gesture. */
+fun sosGestureLikely(lastScreenOnAtMs: Long?, leftFrontAtMs: Long, sosAppPresent: Boolean): Boolean =
+    sosAppPresent && lastScreenOnAtMs != null && leftFrontAtMs - lastScreenOnAtMs in 0..SOS_GESTURE_WINDOW_MS

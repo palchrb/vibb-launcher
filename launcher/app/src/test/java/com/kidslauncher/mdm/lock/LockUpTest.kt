@@ -74,6 +74,36 @@ class LockUpTest {
         assertTrue(admin.contains("<disable-camera />"))
     }
 
+    /** Bug 25b-H: the SOS activity (pinned now) in front isn't covered again by the re-front. */
+    @Test
+    fun `a lock that leaves the front just after a screen-on yields to Emergency SOS`() {
+        assertTrue(sosGestureLikely(lastScreenOnAtMs = 10_000L, leftFrontAtMs = 11_800L, sosAppPresent = true))
+        assertTrue(sosGestureLikely(10_000L, 10_000L + SOS_GESTURE_WINDOW_MS, true))
+        assertFalse("too late for five presses", sosGestureLikely(10_000L, 10_001L + SOS_GESTURE_WINDOW_MS, true))
+        assertFalse("no SOS app", sosGestureLikely(10_000L, 11_000L, false))
+        assertFalse("no screen-on yet", sosGestureLikely(null, 11_000L, true))
+        assertFalse("before the screen-on", sosGestureLikely(10_000L, 9_000L, true))
+        assertEquals(60_000L, SOS_FLOW_MS)
+        val inputs = RefrontInputs(locked = true, lockResumed = false, interactive = true, ourCall = false,
+            telecomInCall = false, emergencyFlow = false, alarmRinging = false, sosFlow = true)
+        assertEquals(RefrontAction.Yield("sos"), refrontAction(inputs, 0))
+        assertEquals("its emergency call", RefrontAction.Yield("system_call"), refrontAction(inputs.copy(telecomInCall = true), 0))
+        assertEquals(RefrontAction.Stop, refrontAction(inputs.copy(lockResumed = true), 0))
+        assertTrue(refrontAction(inputs.copy(sosFlow = false), 0) is RefrontAction.Refront)
+        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        for (name in listOf("onLockPaused", "onLockStopped")) {
+            val b = body(runtime, name)
+            assertTrue(name, b.indexOf("noteProbableSos()") in 0 until b.indexOf("handler.postDelayed(refrontCheck"))
+        }
+        assertTrue("the lock back in front ends it", body(runtime, "onLockResumed").contains("sosFlowUntilElapsed = 0L"))
+        val note = body(runtime, "noteProbableSos")
+        assertTrue(note.contains("!interactive(app)) return"))
+        assertTrue(note.contains("sosAppPresent = emergencySosPackage(app) != null"))
+        assertTrue(note.contains("sosFlowUntilElapsed = now + SOS_FLOW_MS"))
+        assertTrue(runtime.contains("lastScreenOnElapsed = SystemClock.elapsedRealtime()"))
+        assertTrue(body(runtime, "runRefrontCheck").contains("sosFlow = SystemClock.elapsedRealtime() < sosFlowUntilElapsed,"))
+    }
+
     @Test
     fun `the lock comes up without an open animation`() {
         val show = body(code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"), "show")

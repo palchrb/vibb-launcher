@@ -158,8 +158,10 @@ fun computeEnforcementPlan(
     blockActivityStart: Boolean = false,
     lockTaskHelpers: Set<String> = emptySet(),
     recentsPackage: String? = null,
+    /** The Emergency SOS activity's package (bug 25b-H): never hidden or suspended. */
+    emergencySos: String? = null,
 ): EnforcementPlan {
-    val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage) + inputMethods + PLAY_NEVER_RESTRICT
+    val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
     val appsManaged = allowlist != null && !overrideActive
     val locked = scheduleLocked && !overrideActive
@@ -213,7 +215,10 @@ fun computeEnforcementPlan(
         // DISALLOW_OUTGOING_CALLS ([restrictOutgoingCalls], unchanged). Never Settings or Play.
         // The recents provider is one of the helpers (design 16d): the gestures' RecentsActivity.
         val helpers = if (blockActivityStart) lockTaskHelpers + setOfNotNull(systemDialer) - PLAY_CORE else emptySet()
-        (withoutDialer - PLAY_CORE) + helpers + setOfNotNull(PLAY_STORE.takeIf { installModePin })
+        // Bug 25b-H: the Emergency SOS activity is pinned with or without the block bit - without
+        // it a non-pinned package's new task is a lock-task violation, and the five presses would
+        // do nothing in kiosk (with it: "App is not available" over the lock).
+        (withoutDialer - PLAY_CORE) + helpers + (setOfNotNull(emergencySos) - PLAY_CORE) + setOfNotNull(PLAY_STORE.takeIf { installModePin })
     } else {
         null
     }

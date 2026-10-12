@@ -33,6 +33,6 @@ class AppFilterTest {
     fun `Home and the drawer go through it with the resolved provider`() {
         val source = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/apps/AppFilter.kt") }.first { it.exists() }.readText()
         assertTrue(source.contains("val recentsProvider = recentsPackage()"))
-        assertTrue(source.contains("&& kidListable(packageName, blockedDialer, recentsProvider, installMode)"))
+        assertTrue(source.contains("&& kidListable(packageName, blockedDialer, recentsProvider, installMode, emergencySos)"))
     }
 }
