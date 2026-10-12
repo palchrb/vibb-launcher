@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# fake-storytel.py - a fake Storytel for the music app on the emulator (design 26b §4.6, step 3).
+# fake-storytel.py - a fake Storytel for the music app on the emulator (design 26b §4.6, step 3;
+# docs/testing/emulator.md §6i).
 #
 # Part of handy (palchrb/vibb-launcher), licensed under the GNU General Public License v3.0 or later
 # (LICENSE). Modelled on palchrb/vibb's test fakes and its rule that both fakes answer from ONE source

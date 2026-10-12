@@ -637,7 +637,7 @@ t+15 volume 60
 - Real speakers stay a device check (design 26a, "Device checks"): SSDP, discovery and control with the launcher's VPN
   filter on (no `EPERM`), the NRK service, Doze.
 
-## 6h. Vibb music with Storytel (design 26b): the fake Storytel
+## 6i. Vibb music with Storytel (design 26b): the fake Storytel
 
 No real account is used on the emulator: `scripts/fake-storytel.py` on the VM is the login, the asset call (the
 302 the app captures) and a CDN serving silent WAV books with Range. Its answers come from the fixtures the JVM tests

@@ -16,7 +16,7 @@ import java.io.File
 
 /*
  * Debug build only (src/debug; never in a release APK: `checkReleaseHasNoDebugFeed` and
- * SourceScanTest). The fake Storytel for the emulator (design 26b §4.6, docs/testing/emulator.md §6h):
+ * SourceScanTest). The fake Storytel for the emulator (design 26b §4.6, docs/testing/emulator.md §6i):
  * the one debug switch `StorytelEndpoints.debugBase` is assigned here and nowhere else, from the
  * debug feed's config.json - by the receiver, and at every process start by [DebugStartup] (the
  * download worker often runs in a fresh process, which must not reach the real Storytel with the

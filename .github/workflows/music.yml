@@ -103,7 +103,7 @@ jobs:
       run: python3 -I ../scripts/fake-sonos.py --selftest
     - name: Fake Storytel selftest
       # The emulator's fake Storytel answers from the same fixtures StorytelApiTest reads (design 26b
-      # §4.6, docs/testing/emulator.md §6h): the login, the 302, the CDN with Range, the token TTL and the
+      # §4.6, docs/testing/emulator.md §6i): the login, the 302, the CDN with Range, the token TTL and the
       # dropped transfer, against itself. Stdlib only.
       run: python3 -I ../scripts/fake-storytel.py --selftest
     - name: Upload APK
