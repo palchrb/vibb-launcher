@@ -75,4 +75,15 @@ class SwitchTest {
         assertEquals(0, skipTarget(false, 1, 3, 60_000, PREV_RESTART_MAX_MS + 1)) // long-form steps back
         assertNull(skipTarget(true, 0, 1, 0, null))
     }
+
+    @Test
+    fun `quick swipes - the player passing through the first target doesn't end the second`() {
+        val first = PlayRequest(2, "b1", a1, 1_000)
+        val second = PlayRequest(2, "b2", a1, 1_200, swipeVia(first))
+        assertTrue(requestStands(second, a1, 1_300))
+        assertTrue("on its way through b1", requestStands(second, b1, 1_400))
+        assertFalse("there", requestStands(second, b2, 1_500))
+        assertFalse("elsewhere: the player is right", requestStands(second, ItemRef(2, "b3"), 1_500))
+        assertEquals(emptySet<ItemRef>(), swipeVia(null))
+    }
 }

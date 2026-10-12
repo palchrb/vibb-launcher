@@ -94,4 +94,46 @@ class FitTest {
         }
         assertEquals("the mockup's 46 dp on the Jelly Star", 46f, carouselPeek(288f), 0.001f)
     }
+
+    // The player's art (design 27 §3.3).
+
+    @Test
+    fun `the episode carousel - the row fills the width, the picture fits its room, neighbours peek`() {
+        // (width inside the sides, the box's height) -> the picture: the spec's table.
+        val cases = listOf(Triple(288f, 154f, 154f), Triple(288f, 240f, 200f), Triple(328f, 300f, 224f), Triple(379f, 300f, 224f), Triple(288f, 120f, 120f))
+        for ((width, room, expected) in cases) {
+            val a = playerArt(width, room, carousel = true)
+            assertEquals("$width x $room", expected, a, 0.001f)
+            assertTrue("$width x $room: within its room", a <= room)
+            val peek = playerPeek(width, a)
+            assertEquals("$width x $room: two peeks, two gaps and the picture are the row", width, 2 * peek + 2 * PLAYER_PAGE_GAP_DP + a, 0.001f)
+            assertTrue("$width x $room: a neighbour peeks at least 36 dp", peek >= PLAYER_PEEK_MIN_DP - 0.001f)
+            assertTrue(playerCarousel(width, room, true))
+        }
+        assertEquals("the Jelly Star: 59 dp each side", 59f, playerPeek(288f, 154f), 0.001f)
+        assertEquals("the mockup at 320 x 568: exactly 36", 36f, playerPeek(288f, 200f), 0.001f)
+        assertEquals("the pull keeps a neighbour's near edge", 20.6f, playerPull(154f), 0.1f)
+        assertEquals(29.9f, playerPull(224f), 0.1f)
+        assertEquals("without the carousel: today's cover", 224f, playerArt(288f, 300f, carousel = false), 0.001f)
+        assertEquals(154f, playerArt(288f, 154f, carousel = false), 0.001f)
+        // A large font or display size: below 96 dp the single cover comes back (QA L2 b).
+        assertTrue(playerCarousel(288f, 96f, true))
+        assertTrue(!playerCarousel(288f, 95f, true))
+        assertTrue(!playerCarousel(288f, 300f, false))
+    }
+
+    @Test
+    fun `the player's art replaces only the cover box`() {
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue(player.contains("PlayerArt(now, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay)"))
+        assertEquals("one picture, drawn by PlayerArt", 1, Regex("PlayerArt\\(").findAll(player).count())
+        assertTrue("no cover of its own", !player.contains("Cover("))
+    }
+
+    @Test
+    fun `covers decode at the player's size, never above the file (code QA L12)`() {
+        assertEquals("the Jelly Star (density 1.5)", 336, coverDecodePx(512, 1.5f))
+        assertEquals("a 2.625 phone: the whole file", 512, coverDecodePx(512, 2.625f))
+        assertEquals(300, coverDecodePx(300, 3f))
+    }
 }

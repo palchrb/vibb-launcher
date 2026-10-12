@@ -64,6 +64,16 @@ root `CLAUDE.md` "Build and test"; `BuildChainTest`).
   from Recents or a restored instance (`resumeRequested`). Listening never counts as screen time, so the app never
   keeps the screen on (`SourceScanTest`). While the launcher has suspended the app (a time rule) nothing starts
   playing (`playAllowed` in `KidPlayer`, the play commands and playback resumption; `GuardsTest`).
+- Episode pictures (design 27): an item's own art is `items.artHash` (Room 2; its auto migration empties every
+  listing version so the next sync re-applies them) and `PlayItem.artHash`; every `Cover` gets the entry's cover as
+  `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`: the now window ±2, the keep sets' art, Nytt; sent as
+  `wantArt` at each sync's end and from the player 2 s after an item change), the prune (covers dir and the small
+  copies: neither a library cover nor in the want set's universe, only on a parsed library), `artOrCover` (the session,
+  `setNowPlaying`) and the carousel's rules: `showsCarousel` (more than one item and at least two different pictures
+  on its pages, the entry's cover counting as one), `swipeSkip`, `pagerFollow`, `swipeTarget`. A swipe is a
+  `PlayRequest` (`swipeSwitch`) and the `SKIP_TO` command (not in `PLAYS`; via `RESTORE` + `THEN_SKIP_TO` before play).
+  `Store.coversVersion` moves when a cover lands or goes: slots retry, the player swaps the current item's artwork
+  in place (`replaceMediaItem`).
 - Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
   control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
   widths, the category tiles, the carousel. `RoundButton` is `requiredSize`: give it the room, it never shrinks.

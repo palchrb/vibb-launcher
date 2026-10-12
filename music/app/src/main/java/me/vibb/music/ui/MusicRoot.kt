@@ -99,14 +99,21 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     if (held == null) vm.switching = skipSwitch(s, n, forward, position, SystemClock.elapsedRealtime())
                     if (forward) actions.next() else actions.previous()
                 }
+                // A swipe of the episode carousel (design 27 §3.2): the picked episode shows at once and plays from its place.
+                val skipTo = { target: Int, forward: Boolean ->
+                    val item = n.queue[target]
+                    swipeSwitch(s, n, target, current?.ref, held?.request, SystemClock.elapsedRealtime())?.let { vm.switching = it }
+                    actions.skipTo(n.entry.id, item.key, forward)
+                }
                 PlayerScreen(
-                    n, order.indexOfFirst { it.key == n.item.key } + 1, order.size, position, hub.sleepMinutes, hub.output,
+                    n, { item -> order.indexOfFirst { it.key == item.key } + 1 }, order.size, position, hub.sleepMinutes, hub.output,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,
                     onPrevious = { skip(false) },
                     onTogglePlay = actions::togglePlay,
                     onNext = { skip(true) },
+                    onSkipTo = skipTo,
                     onList = { vm.screen = Screen.LIST },
                     onSleep = { vm.sheet = SheetKind.SLEEP },
                     onOutput = { vm.sheet = SheetKind.OUTPUT },

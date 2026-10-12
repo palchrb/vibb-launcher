@@ -77,4 +77,43 @@ class SwitchViewTest {
         assertEquals("", sw.view.itemTitle)
         assertTrue(sw.view.shuffled)
     }
+
+    // The episode carousel's swipe (design 27 §3.2).
+
+    @Test
+    fun `a swipe shows the picked episode at once, with its saved place`() {
+        val e = entry(5).copy(cover = coverA)
+        val s = snapshot(
+            library(listOf(e)),
+            items(5, listOf("e1", "e2", "e3"), art = mapOf("e1" to coverB)),
+            positions = mapOf(e.key to mapOf("e1" to me.vibb.music.logic.ItemPosition(90_000, false))),
+        )
+        val now = nowView(s, PlayerHub.State(live = true, entryId = 5, keys = listOf("e3", "e2", "e1"), index = 0, playing = false), null)!!
+        assertTrue(now.carousel)
+        val sw = swipeSwitch(s, now, 2, now.ref, null, 1_000)!!
+        assertEquals("e1", sw.view.item.key)
+        assertEquals(coverB, sw.view.cover)
+        assertEquals(coverA, sw.view.fallback)
+        assertEquals("the seek bar shows its saved place", 90_000L, sw.view.storedPosMs)
+        assertFalse("paused stays paused", sw.view.playing)
+        assertTrue(requestStands(sw.request, now.ref, 1_100))
+        assertNull("the item shown", swipeSwitch(s, now, 0, now.ref, null, 1_000))
+        assertNull(swipeSwitch(s, now, 7, now.ref, null, 1_000))
+        // A quick second swipe while the first stands: the player passing through e1 doesn't end it.
+        val second = swipeSwitch(s, sw.view, 1, now.ref, sw.request, 1_200)!!
+        assertTrue(requestStands(second.request, ItemRef(5, "e1"), 1_300))
+    }
+
+    @Test
+    fun `the pager starts over on a new key list - another queue, or an item dropped mid-play (QA M7 b)`() {
+        val e = entry(5)
+        val s = snapshot(library(listOf(e)), items(5, listOf("e1", "e2", "e3")))
+        val hub = PlayerHub.State(live = true, entryId = 5, keys = listOf("e3", "e2", "e1"), index = 0, playing = true)
+        val now = nowView(s, hub, null)!!
+        assertEquals("pausing changes nothing", now.pagerKey, nowView(s, hub.copy(playing = false, index = 1), null)!!.pagerKey)
+        val dropped = snapshot(library(listOf(e)), items(5, listOf("e1", "e3")))
+        assertTrue(now.pagerKey != nowView(dropped, hub, null)!!.pagerKey)
+        assertTrue(now.pagerKey != nowView(s, hub.copy(keys = listOf("e1", "e2", "e3")), null)!!.pagerKey)
+        assertFalse("no own art: no carousel", now.carousel)
+    }
 }

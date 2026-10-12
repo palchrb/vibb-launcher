@@ -75,6 +75,13 @@ class SourceScanTest {
         }
     }
 
+    /** The episode carousel (design 27) is part of the player: no new screen, nothing it opens. */
+    @Test
+    fun `the screens are still the five of the mockup`() {
+        assertEquals(listOf("LIBRARY", "PLAYER", "LIST", "NEWS", "SEARCH"), me.vibb.music.ui.Screen.entries.map { it.name })
+        assertTrue(moduleFile("src/main/java/me/vibb/music/ui/EpisodeCarousel.kt").isFile)
+    }
+
     /** The launcher counts no screen time while the player is in front (design 21 §3, QA #5): that is
      * safe only because the auto-lock still ends a player left on - the app never keeps the screen on. */
     @Test

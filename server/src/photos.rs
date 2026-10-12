@@ -50,6 +50,8 @@ static FILES: Mutex<()> = Mutex::const_new(());
 static WALLPAPER_FILES: Mutex<()> = Mutex::const_new(());
 /// The same for music covers (design 21: entry covers and own files' embedded art).
 static MUSIC_COVER_FILES: Mutex<()> = Mutex::const_new(());
+/// The same for episode art (design 27).
+static MUSIC_ART_FILES: Mutex<()> = Mutex::const_new(());
 
 /// One content-addressed image store: its lock, which hashes the database references, what a
 /// lost file does to the database, its backup zip prefix and its size limit.
@@ -101,6 +103,23 @@ pub static MUSIC_COVERS: Store = Store {
         "UPDATE music_listings SET cover_hash = NULL WHERE cover_hash = ?",
     ],
     zip_prefix: "music_covers",
+    max_stored_bytes: MAX_STORED_BYTES,
+};
+
+/// Episode art (`AppState.music_art_dir`, design 27 §1.2): an NRK/RSS item's own picture that the
+/// sweep fetched (`music_items.art_hash`), a square JPEG of at most [MAX_SIDE]. **Not backed up**:
+/// it can be fetched again, and thousands of pictures would swell every zip. After a restore no
+/// zip has it, so [Store::recover_missing] forgets the rows and the sweep's budget fills them in.
+pub static MUSIC_ART: Store = Store {
+    what: "episode picture",
+    lock: &MUSIC_ART_FILES,
+    referenced_sql: "SELECT DISTINCT art_hash FROM music_items WHERE art_hash IS NOT NULL",
+    forget_sql: &[
+        "UPDATE music_items SET art_hash = NULL, art_state = NULL, art_from = NULL, \
+         art_print = NULL, art_tone = NULL WHERE art_hash = ?",
+    ],
+    // Never written (`backups.rs` doesn't add this store): a restore finds nothing under it.
+    zip_prefix: "music_art",
     max_stored_bytes: MAX_STORED_BYTES,
 };
 
@@ -379,6 +398,113 @@ pub async fn recover_missing(state: &crate::AppState, backup_dir: &Path) {
     MUSIC_COVERS
         .recover_missing(&state.db, &state.music_cover_dir, backup_dir)
         .await;
+    let forgotten = MUSIC_ART
+        .recover_missing(&state.db, &state.music_art_dir, backup_dir)
+        .await;
+    // Forgotten pictures change the listings the phones are served: store their versions again,
+    // so the library names what the route serves (design 27 code QA L6).
+    if !forgotten.is_empty()
+        && let Err(err) = crate::music_sweep::restamp_versions(&state.db).await
+    {
+        tracing::warn!(%err, "couldn't store the music listings' versions again");
+    }
+}
+
+/// Two pictures within this many bits of [print] are the same picture (design 27 §1.3): the
+/// series cover under another URL, size or re-encode.
+pub const SAME_PICTURE_BITS: u32 = 5;
+
+/// A 64-bit difference hash (dHash) of an image: shrunk to 9×8 grey pixels, one bit per pair of
+/// horizontal neighbours (left brighter than right). Robust to resizing and re-encoding, unlike a
+/// byte compare. `None` when the bytes don't decode.
+pub fn print(bytes: &[u8]) -> Option<i64> {
+    let image = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    Some(print_image(&image))
+}
+
+/// [print] of a decoded image.
+pub fn print_image(image: &DynamicImage) -> i64 {
+    let grey = imageops::resize(&image.to_luma8(), 9, 8, imageops::FilterType::Triangle);
+    let mut bits: u64 = 0;
+    for y in 0..8 {
+        for x in 0..8 {
+            bits <<= 1;
+            if grey.get_pixel(x, y).0[0] > grey.get_pixel(x + 1, y).0[0] {
+                bits |= 1;
+            }
+        }
+    }
+    bits as i64
+}
+
+/// [print] on a blocking thread.
+pub async fn print_limited(bytes: Vec<u8>) -> Option<i64> {
+    tokio::task::spawn_blocking(move || print(&bytes))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Two pictures whose coarse colours ([tone_image]) differ by more than this many steps (of 32) in any
+/// quarter and channel are different pictures (design 27 code QA L4: dHash is grey only).
+pub const SAME_TONE_STEPS: i64 = 3;
+/// A print with at most this many bits set, or at least 64 minus it, has too little structure
+/// to tell pictures apart by (a flat field, small text on one background, a smooth gradient).
+pub const LOW_DETAIL_BITS: u32 = 8;
+
+/// A picture's coarse colour: the mean RGB of its four quarters, 5 bits each (60 bits).
+pub fn tone_image(image: &DynamicImage) -> i64 {
+    let small = imageops::resize(&image.to_rgb8(), 2, 2, imageops::FilterType::Triangle);
+    let mut bits: u64 = 0;
+    for pixel in small.pixels() {
+        for channel in pixel.0 {
+            bits = (bits << 5) | u64::from(channel >> 3);
+        }
+    }
+    bits as i64
+}
+
+/// Whether two [tone_image]s are the same colours, quarter by quarter.
+pub fn same_tone(a: i64, b: i64) -> bool {
+    (0..12).all(|n| {
+        let channel = |tone: i64| (tone >> (n * 5)) & 31;
+        (channel(a) - channel(b)).abs() <= SAME_TONE_STEPS
+    })
+}
+
+/// Whether a print has too little structure to tell pictures apart by.
+pub fn low_detail(print: i64) -> bool {
+    let ones = print.count_ones();
+    ones <= LOW_DETAIL_BITS || ones >= 64 - LOW_DETAIL_BITS
+}
+
+/// [print] and [tone_image] of the same bytes, on a blocking thread.
+pub async fn fingerprint_limited(bytes: Vec<u8>) -> Option<(i64, i64)> {
+    tokio::task::spawn_blocking(move || {
+        let image = ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .ok()?
+            .decode()
+            .ok()?;
+        Some((print_image(&image), tone_image(&image)))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// How many bits two prints differ in.
+pub fn print_distance(a: i64, b: i64) -> u32 {
+    (a ^ b).count_ones()
+}
+
+/// Whether two prints are the same picture ([SAME_PICTURE_BITS]).
+pub fn same_picture(a: i64, b: i64) -> bool {
+    print_distance(a, b) <= SAME_PICTURE_BITS
 }
 
 impl Store {
@@ -443,20 +569,21 @@ impl Store {
     /// Every referenced hash whose file is missing is looked up in the backup zips in
     /// `backup_dir` (newest first) and extracted if its bytes really hash to that name; whatever
     /// can't be found is forgotten (contact photo → NULL, wallpaper → deleted), so the phones
-    /// and the admin pages don't ask for a file that will never exist. Run at startup.
+    /// and the admin pages don't ask for a file that will never exist. Run at startup. Returns
+    /// the hashes it forgot.
     pub async fn recover_missing(
         &'static self,
         db: &sqlx::SqlitePool,
         dir: &Path,
         backup_dir: &Path,
-    ) {
+    ) -> Vec<String> {
         let _files = self.lock().await;
         let referenced: Vec<String> =
             match sqlx::query_scalar(self.referenced_sql).fetch_all(db).await {
                 Ok(hashes) => hashes,
                 Err(err) => {
                     tracing::warn!(%err, what = self.what, "couldn't list stored files to check");
-                    return;
+                    return Vec::new();
                 }
             };
         let dir = dir.to_path_buf();
@@ -465,7 +592,7 @@ impl Store {
             .filter(|h| path_for(&dir, h).is_some_and(|p| !p.exists()))
             .collect();
         if missing.is_empty() {
-            return;
+            return Vec::new();
         }
         let backup_dir = backup_dir.to_path_buf();
         let still_missing = tokio::task::spawn_blocking(move || {
@@ -473,18 +600,19 @@ impl Store {
         })
         .await
         .unwrap_or_default();
-        for hash in still_missing {
+        for hash in &still_missing {
             tracing::warn!(
                 hash,
                 what = self.what,
                 "stored file missing and in no backup - removing the reference"
             );
             for sql in self.forget_sql {
-                if let Err(err) = sqlx::query(sql).bind(&hash).execute(db).await {
+                if let Err(err) = sqlx::query(sql).bind(hash).execute(db).await {
                     tracing::warn!(%err, what = self.what, "couldn't forget a missing file");
                 }
             }
         }
+        still_missing
     }
 
     /// Returns the hashes it couldn't restore.
@@ -623,6 +751,92 @@ mod tests {
         let photo = process(&encode(&wide, ImageFormat::Png), Shape::Portrait).unwrap();
         let stored = image::load_from_memory(&photo.jpeg).unwrap();
         assert_eq!((stored.width(), stored.height()), (900, 2000));
+    }
+
+    /// A picture with structure (a diagonal gradient and a block), so its print isn't all zeros.
+    fn picture(seed: u32, w: u32, h: u32) -> DynamicImage {
+        DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
+            let fx = x * 255 / w;
+            let fy = y * 255 / h;
+            let block = if (x * 4 / w + y * 4 / h + seed).is_multiple_of(3) {
+                120
+            } else {
+                0
+            };
+            image::Rgb([
+                ((fx + seed * 40) % 256) as u8,
+                ((fy * (seed + 1)) % 256) as u8,
+                ((fx + fy) / 2 + block).min(255) as u8,
+            ])
+        }))
+    }
+
+    #[test]
+    fn prints_survive_resizing_and_re_encoding_but_tell_pictures_apart() {
+        let big = picture(1, 1200, 1200);
+        let stored = process(&encode(&big, ImageFormat::Png), Shape::Square).unwrap();
+        let original = print(&stored.jpeg).unwrap();
+        // The same picture at 300 px, through the same pipeline (NRK's other variant).
+        let small = DynamicImage::ImageRgba8(imageops::thumbnail(&big, 300, 300));
+        let variant = process(&encode(&small, ImageFormat::Png), Shape::Square).unwrap();
+        assert_ne!(variant.hash, stored.hash, "a byte compare would miss it");
+        assert!(same_picture(original, print(&variant.jpeg).unwrap()));
+        // Re-encoded as a low-quality JPEG.
+        let mut lossy = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut lossy, 40)
+            .encode_image(&big.to_rgb8())
+            .unwrap();
+        assert!(same_picture(original, print(&lossy).unwrap()));
+        // Another picture.
+        let other = process(
+            &encode(&picture(2, 600, 600), ImageFormat::Png),
+            Shape::Square,
+        )
+        .unwrap();
+        assert!(!same_picture(original, print(&other.jpeg).unwrap()));
+        assert_eq!(print(b"not an image"), None);
+    }
+
+    /// A flat field with a small dark "title" at `x`: little structure for a dHash.
+    fn titled(x: u32, colour: [u8; 3]) -> DynamicImage {
+        DynamicImage::ImageRgb8(image::RgbImage::from_fn(512, 512, |px, py| {
+            if (x..x + 90).contains(&px) && (400..416).contains(&py) {
+                image::Rgb([10, 10, 10])
+            } else {
+                image::Rgb(colour)
+            }
+        }))
+    }
+
+    #[test]
+    fn tones_tell_colours_apart_and_flat_pictures_are_low_detail() {
+        let a = picture(3, 600, 600);
+        let stored = process(&encode(&a, ImageFormat::Png), Shape::Square).unwrap();
+        let decoded = image::load_from_memory(&stored.jpeg).unwrap();
+        assert!(
+            same_tone(tone_image(&a), tone_image(&decoded)),
+            "re-encoded"
+        );
+        // The same structure in other colours: the same print, another tone.
+        let recoloured = DynamicImage::ImageRgb8(image::RgbImage::from_fn(600, 600, |x, y| {
+            let [r, g, b] = a.to_rgb8().get_pixel(x, y).0;
+            image::Rgb([b, r, g])
+        }));
+        assert!(!same_tone(tone_image(&a), tone_image(&recoloured)));
+        assert!(!low_detail(print_image(&a)));
+        // Two titles on one background print alike, and are low-detail.
+        let one = print_image(&titled(60, [40, 90, 160]));
+        let two = print_image(&titled(300, [40, 90, 160]));
+        assert!(low_detail(one) && low_detail(two), "{one:b} {two:b}");
+        assert!(low_detail(print_image(&DynamicImage::new_rgb8(64, 64))));
+    }
+
+    #[test]
+    fn the_same_picture_line_is_5_bits() {
+        let a = 0x0f0f_0f0f_0f0f_0f0f_i64;
+        assert!(same_picture(a, a ^ 0b1_1111));
+        assert!(!same_picture(a, a ^ 0b11_1111));
+        assert_eq!(print_distance(a, a ^ i64::MIN), 1, "the sign bit counts");
     }
 
     #[test]
