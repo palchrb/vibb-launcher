@@ -142,7 +142,14 @@ object TsnetClient {
      * [MAX_CONSECUTIVE_CRASHES] such detections in a row this skips the attempt entirely for that
      * launch, letting the rest of the app boot normally without tailnet connectivity that cycle,
      * rather than retrying straight into the same crash.
+     *
+     * Synchronized (QA of the launcher wave, Low 5): Home's resume, the sync and the QR setup call
+     * it from different threads, and two first joins at once would build two tsnet servers on one
+     * state directory, registering with the one key - the loser's state could win, and the key is
+     * deleted after the first success. A second caller waits (up to the 30 s connect) and then sees
+     * [connected]. Every caller is off the main thread.
      */
+    @Synchronized
     fun connectFromPreferences(context: Context): String? {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val now = System.currentTimeMillis()

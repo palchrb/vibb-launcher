@@ -36,6 +36,10 @@ class TailnetKeyTest {
     fun `TsnetClient deletes the key after a successful connect`() {
         val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
         val client = File(src, "main/java/com/kidslauncher/mdm/server/TsnetClient.kt").readText()
+        assertTrue(
+            "QA Low 5: one connect at a time",
+            "@Synchronized\n    fun connectFromPreferences(context: Context): String?" in client,
+        )
         val body = client.substringAfter("fun connectFromPreferences(").substringBefore("fun joined(")
         assertTrue("if (ip != null) forgetKeyOnceJoined(context, storedKey)" in body)
         assertTrue("tailnetConnect(storedKey, prefs.getBoolean(TAILNET_JOINED_KEY, false), connected)" in body)
