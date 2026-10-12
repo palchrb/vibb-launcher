@@ -203,12 +203,13 @@ class SonosTransport(
      * transport commands), then ONE classify of [uid] within [budgetMs], published. [keep] decides on
      * it and names the uri the session goes on with (the stored built uri, or the speaker's own when
      * none was stored yet - then the published snapshot is ours): kept, the poller is woken; null, the
-     * session is disarmed again. Null when the speaker didn't answer in time (disarmed too).
+     * session is disarmed again. Null when the speaker didn't answer in time (disarmed too). Without
+     * [aux] the look reads no group and no volume (the bedtime look, §6.1).
      */
-    suspend fun adoptLive(uid: String, kind: Kind, uri: String, budgetMs: Long, keep: (Fields) -> String?): Fields? = mutex.withLock {
+    suspend fun adoptLive(uid: String, kind: Kind, uri: String, budgetMs: Long, aux: Boolean = true, keep: (Fields) -> String?): Fields? = mutex.withLock {
         session.adopt(uid, kind, uri)
         val fields = try {
-            session.classify(speakers.speaker(uid, verify = false, budgetMs = budgetMs))
+            session.classify(speakers.speaker(uid, verify = false, budgetMs = budgetMs), aux)
         } catch (e: SonosException) {
             log("adopt: no answer from the room (${e.javaClass.simpleName})")
             session.disarm()

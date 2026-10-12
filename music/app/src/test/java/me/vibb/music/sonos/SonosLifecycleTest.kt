@@ -160,6 +160,76 @@ class SonosLifecycleTest {
         assertEquals("renderer.json says the phone", RoomVerdict.NOT_OURS, runBlocking { suspensionStop(ControllerRig(uid).transport, RendererChoice.local(choice), 1_500) { } })
     }
 
+    /**
+     * The bedtime looks against a speaker whose first [slow] looks get no answer: each spends its
+     * whole budget ([spend]; a refused connection spends none). [budgets] = what each resolve was given.
+     */
+    private inner class Looks(val slow: Int, val spend: Boolean = true) {
+        val clock = FakeClock()
+        val spk = FakeSpeaker(uid).apply {
+            position = PositionInfo("1", ep, "0:07:11", "0:24:13", "<DIDL-Lite/>")
+            transport = "PLAYING"
+        }
+        val budgets = mutableListOf<Long?>()
+        val transport = SonosTransport(
+            SonosSession({ clock.now }),
+            { _, _, budget ->
+                budgets.add(budget)
+                if (budgets.size <= slow) {
+                    if (spend) clock.advance(budget ?: 0)
+                    throw SpeakerUnreachable("time budget spent")
+                }
+                spk
+            },
+            NrkService({ _, _ -> SonosFakes.fixture("accounts.xml") }),
+            clock.clock,
+        )
+
+        fun stop(bookmark: suspend (Fields) -> Unit = {}): RoomVerdict =
+            runBlocking { suspensionStop(transport, choice, 1_500, lookMs = 6_000, clock = clock.clock, bookmark = bookmark) }
+    }
+
+    @Test
+    fun `bedtime - a slow speaker's first look is retried within the budget, and it still gets its Stop`() {
+        val l = Looks(slow = 1)
+        var bookmarked: Fields? = null
+        assertEquals(RoomVerdict.OURS_LIVE, l.stop { bookmarked = it })
+        assertEquals("the first look 1.5 s, the next everything left", listOf<Long?>(1_500, 6_000 - 1_500 - 250), l.budgets.take(2))
+        assertEquals(431.0, bookmarked!!.relS!!, 0.0)
+        assertEquals(listOf("stop", "seturi"), l.spk.commands)
+        assertEquals(queueUri(uid), l.spk.lastUri)
+        assertTrue("within the looks' budget", l.clock.now - 1_000_000L <= 6_000)
+    }
+
+    @Test
+    fun `bedtime - the looks read no group and no volume, their budget is the Stop's`() {
+        val l = Looks(slow = 0)
+        assertEquals(RoomVerdict.OURS_LIVE, l.stop())
+        assertEquals(listOf("getposition", "gettransport", "stop", "seturi"), l.spk.log)
+    }
+
+    @Test
+    fun `bedtime - no answer in the whole budget leaves the room recorded and the speaker untouched`() {
+        val slow = Looks(slow = 99)
+        assertEquals(RoomVerdict.NO_ANSWER, slow.stop())
+        assertEquals("1.5 s, then the rest: no third look without time for it", 2, slow.budgets.size)
+        assertTrue(slow.clock.now - 1_000_000L <= 6_000 + 250)
+        assertEquals(emptyList<String>(), slow.spk.log)
+        val refused = Looks(slow = 99, spend = false)
+        assertEquals(RoomVerdict.NO_ANSWER, refused.stop())
+        assertEquals("at most three looks", 3, refused.budgets.size)
+        assertEquals(listOf(250L, 250L), refused.clock.sleeps)
+    }
+
+    @Test
+    fun `bedtime - a definite first answer is not looked at again`() {
+        val l = Looks(slow = 0)
+        l.spk.position = PositionInfo("1", "x-sonosapi-stream:s1234", "0:01:00", "0:00:00", "")
+        assertEquals(RoomVerdict.NOT_OURS, l.stop())
+        assertEquals(listOf<Long?>(1_500), l.budgets)
+        assertEquals(emptyList<String>(), l.spk.commands)
+    }
+
     @Test
     fun `suspension without the player - our uri on a stopped speaker is parked, with no bookmark (L2)`() {
         // a destroyed service's tail sent its plain Stop: the speaker's Play button would replay ours from 0:00

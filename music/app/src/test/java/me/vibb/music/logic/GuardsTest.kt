@@ -118,11 +118,12 @@ class GuardsTest {
         assertTrue(stop.indexOf("rendererReady.await()") < stop.indexOf("switching.withLock {"))
         assertTrue(stop.contains("withTimeoutOrNull(HANDOFF_MS) { sonos.park() } ?: run {"))
         assertTrue(stop.indexOf("sonos.park()") < stop.indexOf("comeHome(sonos, play = false)"))
-        // the standalone path: one classify, the bookmark from it, Stop and the park, renderer.json -> the phone
+        // the standalone path: the classify (retried in its budget, no aux), the bookmark from it, Stop and the park,
+        // renderer.json -> the phone
         val lifecycle = code("src/main/java/me/vibb/music/sonos/SonosLifecycle.kt")
         val seq = lifecycle.substringAfter("suspend fun suspensionStop(").substringBefore("\n}\n")
-        assertTrue(seq.contains("transport.adoptLive(uid, kindOfUri(uri), uri, budgetMs) { null }"))
-        assertTrue(seq.contains("val verdict = roomVerdict(choice, live, ofEntry)"))
+        assertTrue(seq.contains("live = transport.adoptLive(uid, kindOfUri(uri), uri, budget, aux = false) { null }"))
+        assertTrue(seq.contains("verdict = roomVerdict(choice, live, ofEntry)"))
         assertTrue(seq.indexOf("bookmark(live!!.copy(ours = true))") < seq.indexOf("transport.park(uid)"))
         val standalone = code("src/main/java/me/vibb/music/sonos/SonosSuspension.kt")
         assertTrue("a tail first (L2)", standalone.indexOf("SonosTail.join(TAIL_WAIT_MS)") < standalone.indexOf("val home = SonosHome(app)"))

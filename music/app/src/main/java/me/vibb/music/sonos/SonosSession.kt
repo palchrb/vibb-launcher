@@ -306,9 +306,11 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
 
     /**
      * `_classify`: one GetPositionInfo + one GetTransportInfo -> the snapshot's fields. Volume and
-     * the group ride the [AUX_EVERY] sub-cadence (and the session start), kept on failure.
+     * the group ride the [AUX_EVERY] sub-cadence (and the session start), kept on failure. Without
+     * [aux] (the bedtime look, design 26a §6.1: its budget is the Stop's) neither is read and the
+     * sub-cadence is left as it was.
      */
-    fun classify(io: SpeakerIo): Fields {
+    fun classify(io: SpeakerIo, aux: Boolean = true): Fields {
         val pos = io.positionInfo()
         var transport = TransportState.parse(io.transportInfo())
         val transitioning = transport == TransportState.TRANSITIONING
@@ -335,7 +337,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
             auxGroupedAway = false
             auxCoordinator = null
         }
-        if (auxN <= 0) {
+        if (aux && auxN <= 0) {
             auxN = AUX_EVERY
             try {
                 val coordinator = io.groupCoordinator()
@@ -351,7 +353,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
                 // keep the last known volume
             }
         }
-        auxN--
+        if (aux) auxN--
         val lost = transport == TransportState.STOPPED && trackUri.isEmpty()
         if (ours && !didlChecked) {
             didlChecked = true

@@ -477,7 +477,10 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    (`L/music/MusicSessions.kt:179-190`, design 21 step 4). On Sonos a pause from the session stays a `Pause` (vibb).
    `MY_PACKAGE_SUSPENDED` (`SuspendedReceiver`, `M/MusicApp.kt:64-68`) today posts `PlayerHub.pause`, which is null
    without the service. It becomes: `goAsync()`; if `renderer.json` says sonos, one live classify of the stored uid
-   (1.5 s budget, standalone when the service is gone, through the actor when it is up); ours (normUri against the
+   (1.5 s budget, standalone when the service is gone, through the actor when it is up; the standalone look is
+   **retried** while it got no answer - at most three looks, the later ones with everything left until 6.5 s into the
+   receiver's 9 s, so a slow speaker still gets its Stop - and reads **no group and no volume**, whose time is the
+   Stop's; correction 2026-10-12); ours (normUri against the
    stored uri) and PLAYING/PAUSED -> bookmark, `stop`, then `SetAVTransportURI("x-rincon-queue:<uid>#0", "")` so the
    speaker's own Play button plays the (empty) queue, not the episode from 0:00 (after a Stop the speaker keeps its
    AVTransportURI, `sonosd.py:894-896`); disarm; `renderer.json` -> local. `playAllowed(suspended)` gates every Sonos

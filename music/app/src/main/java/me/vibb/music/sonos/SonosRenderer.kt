@@ -220,7 +220,7 @@ internal class SonosRenderer(
     suspend fun probe(uri: String, keep: (Fields) -> String?): Fields? {
         if (!home.awaitWifi(WIFI_WAIT_MS)) return null
         val target = uid
-        return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, keep) }) { }.getOrNull()
+        return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, keep = keep) }) { }.getOrNull()
     }
 
     /**
