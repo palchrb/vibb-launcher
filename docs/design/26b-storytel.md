@@ -763,3 +763,35 @@ No launcher code changes in phase 2.
 - **Music**: `music-v0.3.0-rc.1` on the merge commit on `main`, after 1b's `music-v0.2.0` line (26a "Release"); the
   stable `music-v0.3.0` after the emulator checks (§6h, §6g with Storytel) and the device checks above. An older music
   app on a phase-2 server hides Storytel entries and prunes nothing (§3.1).
+
+## 12. QA review (2026-10-12, design QA)
+
+Verdict: buildable after a short fix round (spec edits; M8 is a step split, M9 a device check). Evidence and fixes for
+each line: `docs/design/qa-26b-design.md`. The AES vectors, the behaviour map and the test table hold against vibb but
+for the gaps below.
+
+- **H1** §2.8: the comment to change lives only in applied migration 0051; sqlx's checksum then stops every upgraded server.
+- **H2** §3.2/§5.6: adopt (`lookAtRoom`, `adoptedQueue`) and phone -> room (`toRoom`) read the local snapshot: a restart stops an undownloaded book; the room skips undownloaded books.
+- **M1** §5.3: `lookAtRoom`'s renderer.json write (`PlaybackService.kt:1224`) would store the signed URL once adopt takes the live uri.
+- **M2** §4.6: the fake at 10.0.2.2 is refused by the API client, the downloads and §5.1's private-literal check; specify one debug-only switch.
+- **M3** §2.4/step 2b: Storytel is still filtered out by `schedule`'s SQL, `SweepView::card`, `check_now`, `/music/cards`, `save_offline`, `LIBRARY_ENTRIES`' `IN`.
+- **M4** §2.5/§4.5: `waiting: login` and the 1.5 GB floor never reach the report (`writeReport` has one `waiting` for all entries).
+- **M5** §3.5: "del N av M" and the progress line count the downloaded books, not the series.
+- **M6** §5.1: nothing gates a play between the mint and the SOAP (superseded plays, the actor's drain after a suspension).
+- **M7** §4.1/§4.3: no JWT means a login per book; every asset status becomes `no_audio` for a day.
+- **M8** §8: step 4 is too big; split the `items.art` migration out (4a/4b).
+- **M9** §4.3: no device check of download progress for gigabytes under Doze and job quotas.
+- **L1** §2.1: `normalize_shelf` details (series id stringified, falsy rules, the format's geo flag, duplicate ids).
+- **L2** §2.4: the listing's anchor comes from `keep_end == "first"`, not a separate flag.
+- **L3** §2.3: Add's repeated `target` needs a `Vec` form, not `FormMap`.
+- **L4** §2.3: bound the probe's time; give it its own credentials; `login_error` a code; a code for `KeyUnusable`.
+- **L5** §2.4: Check now reads a fresh shelf; name the shelf cache's clock.
+- **L6** §5.1: one minter signature; the login mutex wait inside the deadline.
+- **L7** §4.3: re-mint before the `http_416` retry.
+- **L8** §1.1: the Storytel client sets the phone's UA itself.
+- **L9** §0: redacted `toString` / no `Debug` on types that hold secrets.
+- **L10** §0: reqwest's debug-level redirect logs; Media3's `exo_redir` cache metadata.
+- **L11** §9: three missing deviation rows (prune beyond first N, `auto` vs `oldest_first`, the missing-id skip).
+- **L12** §8: name the step 2b test churn (string replacements over the library snapshot).
+- **L13** §4.6: the debug feed's plaintext login file: fake values, deleted once read.
+- **L14** §4.3: GB-sized books over mobile data when the parent's switch is on: confirm with the user.
