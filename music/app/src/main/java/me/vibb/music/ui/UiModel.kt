@@ -3,12 +3,19 @@ package me.vibb.music.ui
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.logic.Hint
+import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.Kind
+import me.vibb.music.logic.PlayRequest
 import me.vibb.music.logic.canShuffle
+import me.vibb.music.logic.coverTapStart
 import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
 import me.vibb.music.logic.kindOf
 import me.vibb.music.logic.overallProgress
+import me.vibb.music.logic.pickPlan
+import me.vibb.music.logic.resumeFrom
+import me.vibb.music.logic.seekGate
+import me.vibb.music.logic.skipTarget
 import me.vibb.music.logic.started
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
@@ -54,9 +61,51 @@ data class NowView(
     val storedPosMs: Long,
     val durationMs: Long?,
     val shuffled: Boolean,
+    /** False while a tap's item isn't known yet (shuffle picks it): the entry's cover, no item title. */
+    val itemKnown: Boolean = true,
 ) {
     val item: PlayItem get() = queue[index]
     val canShuffle: Boolean get() = canShuffle(entry)
+    val ref: ItemRef get() = ItemRef(entry.id, item.key)
+
+    /** The cover hash shown: the item's own art, else the entry's. */
+    val cover: String? get() = if (itemKnown) item.artHash ?: entry.cover else entry.cover
+    val itemTitle: String get() = if (itemKnown) item.title else ""
+}
+
+/** A tap the player hasn't shown yet ([requestStands]) and what the screens show meanwhile. */
+data class Switch(val request: PlayRequest, val view: NowView)
+
+/** A tap on [entryId] (a cover, or [itemKey] from Nytt, search or the list) while [current] shows: what it starts. */
+fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView?, atMs: Long): Switch? {
+    val entry = snap.entries.firstOrNull { it.id == entryId } ?: return null
+    val order = snap.order(entry)
+    val keys = order.map { it.key }
+    val shuffle = canShuffle(entry) && entry.key in snap.shuffle
+    val (key, pos) = if (itemKey != null) {
+        val plan = pickPlan(keys, itemKey, entry.resume, snap.positions[entry.key]?.get(itemKey), null) ?: return null
+        itemKey to plan.startPosMs
+    } else {
+        coverTapStart(keys, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return null
+    }
+    if (key != null && key !in keys) return null
+    // Shuffled, the picked item starts a new queue; else the play order, at the item.
+    val queue = if (shuffle && key != null) order.filter { it.key == key } + order.filter { it.key != key } else order
+    val index = if (key == null) 0 else queue.indexOfFirst { it.key == key }
+    val view = NowView(
+        entry, category(snap, entry), queue, index, live = false, playing = true, storedPosMs = pos,
+        durationMs = if (key == null) null else queue[index].durationMs, shuffled = shuffle, itemKnown = key != null,
+    )
+    return Switch(PlayRequest(entryId, itemKey, current?.ref, atMs), view)
+}
+
+/** Next ([forward]) or previous on [now], [posMs] into its item: the item it goes to, when the screens can know it. */
+fun skipSwitch(snap: Snapshot, now: NowView, forward: Boolean, posMs: Long, atMs: Long): Switch? {
+    val target = skipTarget(forward, now.index, now.queue.size, posMs, now.durationMs) ?: return null
+    val item = now.queue[target]
+    val pos = if (now.entry.resume) seekGate(resumeFrom(snap.positions[now.entry.key]?.get(item.key))) else 0
+    val view = now.copy(index = target, live = false, storedPosMs = pos, durationMs = item.durationMs, itemKnown = true)
+    return Switch(PlayRequest(now.entry.id, item.key, now.ref, atMs), view)
 }
 
 /** The now-playing view from the player's state, else from the stored row; null when there is none. */

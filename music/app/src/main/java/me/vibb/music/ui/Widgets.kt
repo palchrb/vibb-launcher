@@ -1,5 +1,6 @@
 package me.vibb.music.ui
 
+import android.content.Context
 import android.graphics.BitmapFactory
 import android.os.SystemClock
 import android.util.LruCache
@@ -28,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -117,14 +119,23 @@ fun coverBitmap(hash: String?): ImageBitmap? {
     val cached = hash?.let { bitmaps.get(it) }
     val state = produceState<DecodedCover<ImageBitmap>?>(null, hash) {
         if (hash == null || !needsDecode(hash, value)) return@produceState
-        val image = bitmaps.get(hash) ?: withContext(Dispatchers.IO) {
-            val file = Store.get(context).coverFile(hash)
-            if (!file.exists()) return@withContext null
-            BitmapFactory.decodeFile(file.path)?.asImageBitmap()?.also { bitmaps.put(hash, it) }
-        }
-        value = image?.let { DecodedCover(hash, it) }
+        value = loadCover(context, hash)?.let { DecodedCover(hash, it) }
     }
     return coverShown(hash, cached, state.value)
+}
+
+/** A cover from memory, else decoded (off the main thread) into it; null when there is no file. */
+private suspend fun loadCover(context: Context, hash: String): ImageBitmap? = bitmaps.get(hash) ?: withContext(Dispatchers.IO) {
+    val file = Store.get(context).coverFile(hash)
+    if (!file.exists()) return@withContext null
+    BitmapFactory.decodeFile(file.path)?.asImageBitmap()?.also { bitmaps.put(hash, it) }
+}
+
+/** Decodes [hashes] ahead (the covers next and previous go to), so they show on their first frame. */
+@Composable
+fun PrefetchCovers(hashes: List<String>) {
+    val context = LocalContext.current
+    LaunchedEffect(hashes) { for (h in hashes) loadCover(context, h) }
 }
 
 /** A category's tile colour (the parent's pick; peach when unknown). */
