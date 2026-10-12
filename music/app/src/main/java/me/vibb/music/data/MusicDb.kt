@@ -110,6 +110,10 @@ interface MusicDao {
     @Query("SELECT * FROM items ORDER BY entryId, seq")
     suspend fun allItems(): List<ItemRow>
 
+    /** One listed item's own picture as applied now (design 27, QA L7). */
+    @Query("SELECT artHash FROM items WHERE entryId = :entryId AND `key` = :key")
+    suspend fun itemArt(entryId: Long, key: String): String?
+
     @Transaction
     suspend fun replaceListing(listing: ListingRow, items: List<ItemRow>) {
         deleteItems(listing.entryId)

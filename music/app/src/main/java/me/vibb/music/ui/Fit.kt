@@ -119,3 +119,6 @@ fun playerPeek(widthDp: Float, artDp: Float): Float = (widthDp - artDp) / 2 - PL
 
 /** A neighbour scaled to [NEIGHBOUR_SCALE] is pulled in by what that took off its near edge, so its near edge stays put (QA L2 a). */
 fun playerPull(artDp: Float): Float = artDp * (1 - NEIGHBOUR_SCALE) / 2
+
+/** The side (px) a cover file of [sidePx] decodes at on a screen of [density]: what the player's 224 dp needs, never more than the file. */
+fun coverDecodePx(sidePx: Int, density: Float): Int = minOf(sidePx, kotlin.math.ceil(PLAYER_ART_MAX_DP * density).toInt()).coerceAtLeast(1)

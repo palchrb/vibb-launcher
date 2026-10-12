@@ -128,4 +128,34 @@ class EpisodeCarouselTest {
         assertNull(firstPlayable(5, 2, forward = true, wrap = true) { false })
         assertNull("without wrap it stops at the end", firstPlayable(5, 3, forward = true, wrap = false) { it == 0 })
     }
+
+    // The session's picture after the queue was built (code QA L7, L8).
+
+    @Test
+    fun `a pruned small copy is made again, and meanwhile the series cover shows`() {
+        val e = entry(1).copy(cover = cover)
+        val own = episodes(1) { art("own") }.single()
+        val copies = mutableSetOf(cover)
+        assertEquals("the copy went: remade", listOf(art("own")), smallArtMissing(listOf(own.artHash, cover)) { it in copies })
+        assertEquals("meanwhile the series cover, never nothing", cover, artOrCover(own, e) { it in copies })
+        copies += art("own")
+        assertEquals(emptyList<String>(), smallArtMissing(listOf(own.artHash, cover, null)) { it in copies })
+    }
+
+    @Test
+    fun `a listing applied during the queue gives the queued item its picture`() {
+        val queue = episodes(3)
+        val updated = withItemArt(queue, "k2", art("late"))
+        assertEquals(art("late"), updated[1].artHash)
+        assertEquals(queue[0], updated[0])
+        assertEquals(queue, withItemArt(queue, "k2", null))
+        val service = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt").readText()
+        assertTrue(service.contains("store.db.itemArt(a.entry.id, queued.key)"))
+    }
+
+    @Test
+    fun `two restores in a row load the queue once (code QA L10)`() {
+        val service = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt").readText()
+        assertTrue(service.contains("restoring.withLock { restoreThenLocked(then, positionMs, args) }"))
+    }
 }

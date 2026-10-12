@@ -129,4 +129,11 @@ class FitTest {
         assertEquals("one picture, drawn by PlayerArt", 1, Regex("PlayerArt\\(").findAll(player).count())
         assertTrue("no cover of its own", !player.contains("Cover("))
     }
+
+    @Test
+    fun `covers decode at the player's size, never above the file (code QA L12)`() {
+        assertEquals("the Jelly Star (density 1.5)", 336, coverDecodePx(512, 1.5f))
+        assertEquals("a 2.625 phone: the whole file", 512, coverDecodePx(512, 2.625f))
+        assertEquals(300, coverDecodePx(300, 3f))
+    }
 }

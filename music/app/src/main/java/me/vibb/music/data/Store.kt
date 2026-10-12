@@ -100,8 +100,10 @@ class Store private constructor(context: Context) {
         val smallGone = smallArtDir.list().orEmpty().filter { it.endsWith(".jpg") }.map { it.removeSuffix(".jpg") }
             .filter { it !in libraryCovers && it !in keep }
         smallGone.forEach { File(smallArtDir, "$it.jpg").delete() }
-        if (gone.isNotEmpty()) coversChanged()
-        return gone.isNotEmpty() || smallGone.isNotEmpty()
+        // The player looks again at what it shows (a deleted small copy falls back to the series cover, QA L8).
+        val changed = gone.isNotEmpty() || smallGone.isNotEmpty()
+        if (changed) coversChanged()
+        return changed
     }
 
     /** The pictures shown last, newest first. */

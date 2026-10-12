@@ -277,3 +277,24 @@ fun artToDelete(present: Set<String>, libraryCovers: Set<String>, want: WantArt)
     val wanted = want.all
     return present.filterTo(sortedSetOf()) { it !in libraryCovers && it !in wanted }
 }
+
+/**
+ * The `now` pictures the launcher already holds, when they call for a nudge to the music app: some
+ * are held and they aren't the set it was nudged for last ([last]). Null: no nudge (once per set,
+ * never a loop).
+ */
+fun heldNudge(want: WantArt, last: Set<String>, has: (String) -> Boolean): Set<String>? {
+    val held = want.now.filter(has).toSet()
+    return held.takeIf { it.isNotEmpty() && it != last }
+}
+
+/**
+ * What a picture's answer means: true = take the bytes (then checked), false = it can't be served
+ * (a 4xx: counts toward the day's wait), null = try again later (a 5xx, like a network error: the
+ * Pi restarting or a proxy's 502 never puts pictures into a day's wait, code QA L11).
+ */
+fun artAnswer(status: Int): Boolean? = when (status) {
+    in 200..299 -> true
+    in 500..599 -> null
+    else -> false
+}

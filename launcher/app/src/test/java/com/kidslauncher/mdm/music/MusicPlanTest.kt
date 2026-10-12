@@ -187,6 +187,35 @@ class MusicPlanTest {
     }
 
     @Test
+    fun `the held nudge - once per set of held now pictures, never a loop`() {
+        val want = WantArt(listOf(pic(1), pic(2)), listOf(pic(3)))
+        assertEquals(setOf(pic(1)), heldNudge(want, emptySet()) { it == pic(1) })
+        assertNull("the same set again: no nudge", heldNudge(want, setOf(pic(1))) { it == pic(1) })
+        assertNull("nothing held", heldNudge(want, emptySet()) { false })
+        assertNull("a held later picture doesn't count", heldNudge(want, emptySet()) { it == pic(3) })
+        assertEquals(setOf(pic(1), pic(2)), heldNudge(want, setOf(pic(1))) { true })
+    }
+
+    @Test
+    fun `a 5xx is no failure of the picture, a 4xx is (code QA L11)`() {
+        assertEquals(true, artAnswer(200))
+        assertEquals(false, artAnswer(404))
+        assertEquals(false, artAnswer(410))
+        assertNull(artAnswer(502))
+        assertNull(artAnswer(503))
+        val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
+        assertTrue(sync.contains("val answer = artAnswer(response.code())"))
+    }
+
+    @Test
+    fun `the want set is stored in the binder call, so the newest arrives last (code QA L9)`() {
+        val bridge = module("src/main/java/com/kidslauncher/mdm/music/MusicBridgeService.kt").readText()
+        val call = bridge.substringAfter("override fun wantArt(").substringBefore("\n        }\n")
+        assertTrue(call, call.indexOf("MusicStore.setWantArt(app, want)") in 0 until call.indexOf("scope.launch"))
+        assertFalse(bridge.substringAfter("private fun wantArtChanged(").substringBefore("\n    }\n").contains("setWantArt"))
+    }
+
+    @Test
     fun `the want set's caps are the shared contract's`() {
         val caps = (contract["want_art"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content.toInt() }
         assertEquals(mapOf("max" to WANT_ART_MAX, "now_max" to WANT_ART_NOW_MAX), caps)

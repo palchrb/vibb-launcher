@@ -86,6 +86,17 @@ fun coversToDelete(present: Set<String>, libraryCovers: Set<String>, keep: Set<S
 fun artOrCover(item: PlayItem, entry: Entry, has: (String) -> Boolean): String? =
     item.artHash?.takeIf(has) ?: entry.cover
 
+/**
+ * The session's pictures whose small copy must be made (again): not made yet, or made and since
+ * deleted by the prune - a swipe back to an episode played days ago (QA L8). [hasCopy]: the copy is there.
+ */
+fun smallArtMissing(hashes: List<String?>, hasCopy: (String) -> Boolean): List<String> =
+    hashes.filterNotNull().distinct().filterNot(hasCopy)
+
+/** The queue with item [key]'s own picture now [art] (a listing applied while it played, QA L7). */
+fun withItemArt(items: List<PlayItem>, key: String, art: String?): List<PlayItem> =
+    items.map { if (it.key == key && it.artHash != art) it.copy(artHash = art) else it }
+
 // The Now Playing carousel (design 27 §3; new here - vibb's Now Playing is a single cover).
 
 /**

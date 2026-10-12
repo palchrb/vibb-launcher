@@ -41,6 +41,8 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.vibb.music.R
 import me.vibb.music.bridge.LiveBridge
@@ -81,10 +83,12 @@ import me.vibb.music.logic.resumeOverlapMs
 import me.vibb.music.logic.save
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.showsPlaying
+import me.vibb.music.logic.smallArtMissing
 import me.vibb.music.logic.sleepVolume
 import me.vibb.music.logic.streamAllowed
 import me.vibb.music.logic.swipeTarget
 import me.vibb.music.logic.toggledQueue
+import me.vibb.music.logic.withItemArt
 import me.vibb.music.media.ItemMediaSourceFactory
 import me.vibb.music.media.ItemTag
 import me.vibb.music.media.MediaCache
@@ -360,7 +364,14 @@ class PlaybackService : MediaSessionService() {
     }
 
     /** The player's controls before play after a restart: the stored queue loaded paused, then the action. */
+    /** One restore at a time (QA L10): two quick swipes on a restored queue load it once, then skip in order. */
+    private val restoring = Mutex()
+
     private suspend fun restoreThen(then: String?, positionMs: Long, args: Bundle) {
+        restoring.withLock { restoreThenLocked(then, positionMs, args) }
+    }
+
+    private suspend fun restoreThenLocked(then: String?, positionMs: Long, args: Bundle) {
         if (active == null || exo.mediaItemCount == 0) {
             val (a, index, pos) = restore() ?: return
             start(a, QueuePlan(a.items.map { it.key }, index, pos), play = false)
@@ -470,8 +481,13 @@ class PlaybackService : MediaSessionService() {
         return b.setMediaMetadata(meta.build()).build()
     }
 
-    /** The item's own picture when its small copy exists, else the entry's cover ([artOrCover]); main thread. */
-    private fun artUri(a: Active, item: PlayItem): Uri? = artOrCover(item, a.entry) { it in a.art }?.let { a.art[it] }
+    /**
+     * The item's own picture when its small copy exists, else the entry's cover ([artOrCover]); main
+     * thread. A copy the prune deleted counts as missing (QA L8): the series cover shows, never nothing.
+     */
+    private fun artUri(a: Active, item: PlayItem): Uri? = artOrCover(item, a.entry) { hasCopy(a, it) }?.let { a.art[it] }
+
+    private fun hasCopy(a: Active, hash: String): Boolean = a.art[hash]?.path?.let { File(it).isFile } == true
 
     private fun smallArt(hash: String) = File(store.smallArtDir, "$hash.jpg")
 
@@ -483,18 +499,25 @@ class PlaybackService : MediaSessionService() {
      */
     private fun refreshArt() {
         val a = active ?: return
-        val item = a.items.getOrNull(exo.currentMediaItemIndex) ?: return
-        val missing = listOfNotNull(item.artHash, a.entry.cover).filter { it !in a.art }
-        if (missing.isEmpty()) return
+        val queued = a.items.getOrNull(exo.currentMediaItemIndex) ?: return
         scope.launch {
+            // The item's art as the store has it now: a listing applied during the queue may have given
+            // it a picture its queued copy doesn't know (QA L7). Own files' art comes with the library.
+            val fresh = if (queued.fileId != null) queued.artHash else withContext(writer) { store.db.itemArt(a.entry.id, queued.key) }
+            if (active !== a) return@launch
+            val item = if (fresh == queued.artHash) queued else queued.copy(artHash = fresh)
+            if (item !== queued) a.items = withItemArt(a.items, item.key, fresh)
+            val missing = smallArtMissing(listOf(item.artHash, a.entry.cover)) { hasCopy(a, it) }
             val made = withContext(writer) { missing.filter { store.coverFile(it).isFile }.mapNotNull { h -> artwork(h)?.let { h to it } } }
-            if (made.isEmpty() || active !== a) return@launch
+            if (active !== a) return@launch
             a.art.putAll(made)
-            val uri = artUri(a, item) ?: return@launch
+            missing.filter { h -> made.none { it.first == h } }.forEach { a.art.remove(it) }
+            val uri = artUri(a, item)
             val mediaId = "${a.entry.id}/${item.key}"
             val index = (0 until exo.mediaItemCount).firstOrNull { exo.getMediaItemAt(it).mediaId == mediaId } ?: return@launch
             val old = exo.getMediaItemAt(index)
             if (old.mediaMetadata.artworkUri != uri) {
+                // The series cover when the item's copy went and nothing replaces it (QA L8).
                 exo.replaceMediaItem(index, old.buildUpon().setMediaMetadata(old.mediaMetadata.buildUpon().setArtworkUri(uri).build()).build())
             }
             reportNowPlaying(refresh = true)
@@ -504,7 +527,7 @@ class PlaybackService : MediaSessionService() {
     /** A ≤ 300 px copy of a cover, for the media notification and the launcher's media views (off the main thread). */
     private fun artwork(hash: String): Uri? {
         val small = smallArt(hash)
-        if (!small.exists()) {
+        if (!small.isFile) {
             val src = store.coverFile(hash).takeIf { it.exists() } ?: return null
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(src.path, bounds)

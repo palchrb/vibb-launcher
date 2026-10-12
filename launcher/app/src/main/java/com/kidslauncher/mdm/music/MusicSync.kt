@@ -329,12 +329,13 @@ object MusicCourier {
         return changed
     }
 
-    /** One cover or picture: true = stored, false = refused (HTTP error, too big, wrong hash), null = a network error. */
+    /** One cover or picture: true = stored, false = refused (a 4xx, too big, wrong hash), null = try later (a 5xx or a network error). */
     private suspend fun fetchCover(app: Context, server: MusicServer, hash: String, max: Int): Boolean? = try {
         val response = server.cover(hash)
-        if (!response.isSuccessful) {
+        val answer = artAnswer(response.code())
+        if (answer != true) {
             response.body()?.close()
-            false
+            answer
         } else {
             val bytes = response.body()?.let { read(it, max) }
             if (bytes != null && MusicSync.sha256(bytes) == hash) {
