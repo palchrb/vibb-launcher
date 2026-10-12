@@ -78,9 +78,13 @@ class FakeSpeaker(
     /** Seek faults, one per attempt (then success). */
     val seekFaults = ArrayDeque<Exception>()
 
+    /** Several speakers' calls in the order they came, as "<uid> <entry>" (a group's start cap). */
+    var shared: MutableList<String>? = null
+
     private fun record(entry: String, name: String = entry) {
         failOn[name]?.let { throw it() }
         log.add(entry)
+        shared?.add("$uid $entry")
     }
 
     /** The commands only (what vibb's fakes logged): mute sets, set-uri, play, pause, stop, seek, volume. */

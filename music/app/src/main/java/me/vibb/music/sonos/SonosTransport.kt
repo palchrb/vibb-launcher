@@ -45,9 +45,17 @@ class SonosClock(val elapsedMs: () -> Long, val sleep: suspend (Long) -> Unit = 
 
 /**
  * `/play`'s answer: [uri] is the BUILT one (what renderer.json stores and adopt compares); [volume]
- * the cap the speaker was brought down to before Play ([SonosTransport.capVolume]), else null.
+ * the last volume we set on the speaker in this job - the cap it was brought down to before Play
+ * ([SonosTransport.capVolume]), or a sleep ramp's leftover put back after it ([restored]) - else null.
  */
-data class PlayResult(val uid: String, val uri: String, val sought: Boolean, val didl: String, val volume: Int? = null)
+data class PlayResult(
+    val uid: String,
+    val uri: String,
+    val sought: Boolean,
+    val didl: String,
+    val volume: Int? = null,
+    val restored: Boolean = false,
+)
 
 class SonosTransport(
     val session: SonosSession,
@@ -66,16 +74,28 @@ class SonosTransport(
      * DIDL and plays; `nrk_program` builds the service uri and DIDL. Then armed, and a start of 5 s
      * or more seeks once the transport plays ([seekSettled]; false = playing from the top). With a
      * [cap] (a session's start, design 26a §5.3) the speaker's volume is brought down to it first,
-     * inside the hush ([capVolume]). Throws [UnknownUid], [UpnpFault] or [SpeakerUnreachable] - the
-     * failed-play path is the caller's.
+     * inside the hush ([capVolume]), and so is every other room of its group ([members], the row's
+     * uids; each its own RenderingControl, best effort within [MEMBER_CAP_BUDGET_MS]: a member that
+     * doesn't answer never holds the play up). Throws [UnknownUid], [UpnpFault] or
+     * [SpeakerUnreachable] - the failed-play path is the caller's.
      */
-    suspend fun play(body: PlayBody, cap: Int? = null): PlayResult = mutex.withLock {
+    suspend fun play(body: PlayBody, cap: Int? = null, members: List<String> = emptyList()): PlayResult = mutex.withLock {
         session.beginPlay(body.uid, body.kind)
         val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
         val start = body.startS
         val unhush = hush(spk, start)
         val result = try {
             val capped = capVolume(spk, cap)
+            if (cap != null) {
+                for (m in members.distinct()) {
+                    if (m == body.uid) continue
+                    try {
+                        capVolume(speakers.speaker(m, verify = false, budgetMs = MEMBER_CAP_BUDGET_MS), cap)
+                    } catch (e: Exception) {
+                        log("volume cap: a grouped room isn't known (${e.javaClass.simpleName}) - playing anyway")
+                    }
+                }
+            }
             val (uri, built) = when (body.kind) {
                 Kind.URL -> {
                     try {
@@ -251,9 +271,10 @@ class SonosTransport(
      * The suspension's Stop (design 26a §6.1, QA M5): Stop, then the speaker's own queue as its
      * source ([queueUri], no metadata), so the speaker's Play button plays that (empty) queue and
      * never our episode from 0:00 - after a Stop a Sonos keeps its AVTransportURI (sonosd.py
-     * 894-896). Disarmed. A refused queue uri is logged; the Stop already happened.
+     * 894-896). Disarmed. A refused queue uri is logged; the Stop already happened. [budgetMs]: both
+     * SOAPs within it (the bedtime path's time left, §6.1), null for the client's timeouts.
      */
-    suspend fun park(ifUid: String? = null): Boolean = verb(ifUid) {
+    suspend fun park(ifUid: String? = null, budgetMs: Long? = null): Boolean = verb(ifUid, budgetMs) {
         it.stop()
         session.disarm()
         val uid = session.uid.orEmpty()
@@ -281,11 +302,11 @@ class SonosTransport(
      * `verb`: vibb's `if_uid` 409 is an in-process check - a verb for a uid that is no longer the
      * session's is dropped (false). Each stamps the fast-cadence window. Speaker errors propagate.
      */
-    private suspend fun verb(ifUid: String?, block: (SpeakerControl) -> Unit): Boolean = mutex.withLock {
+    private suspend fun verb(ifUid: String?, budgetMs: Long? = null, block: (SpeakerControl) -> Unit): Boolean = mutex.withLock {
         val uid = session.uid
         if (uid == null || (ifUid != null && ifUid != uid)) return@withLock false
         session.stampVerb()
-        block(speakers.speaker(uid, verify = false, budgetMs = null))
+        block(speakers.speaker(uid, verify = false, budgetMs = budgetMs))
         true
     }
 
@@ -331,6 +352,9 @@ class SonosTransport(
     companion object {
         /** "Transition not available", "seek mode not supported", "illegal seek target" - retried. */
         val RETRY_FAULTS = setOf(701, 710, 711)
+
+        /** A grouped room's cap at a start: its GetVolume and SetVolume together (§5.3). */
+        const val MEMBER_CAP_BUDGET_MS = 1_500L
     }
 }
 

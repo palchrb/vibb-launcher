@@ -115,5 +115,12 @@ object PlayerHub {
      */
     @Volatile internal var suspendStop: (() -> Job)? = null
 
+    /**
+     * The managed config changed (the restrictions broadcast): a room session's own volume above a
+     * lowered cap follows it (design 26a §5.3, qa-26a-corrections M1). Main thread; null without a
+     * player service.
+     */
+    @Volatile internal var capChanged: (() -> Unit)? = null
+
     fun positionMs(): Long? = position?.invoke()
 }

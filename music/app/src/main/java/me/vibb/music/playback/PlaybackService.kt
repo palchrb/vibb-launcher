@@ -223,6 +223,7 @@ class PlaybackService : MediaSessionService() {
         PlayerHub.position = { renderer.positionMs() }
         LiveBridge.acquire(this)
         PlayerHub.suspendStop = { scope.launch { suspendStop() } }
+        PlayerHub.capChanged = { (renderer as? SonosRenderer)?.controller?.capChanged() }
         audio.addOnModeChangedListener(mainExecutor, modeListener)
         // Design 26a §4.7: the phone settles at once; a room only after one classify of it (adopt).
         val choice = home.choice()
@@ -294,6 +295,7 @@ class PlaybackService : MediaSessionService() {
         audio.removeOnModeChangedListener(modeListener)
         PlayerHub.position = null
         PlayerHub.suspendStop = null
+        PlayerHub.capChanged = null
         PlayerHub.mutableState.value = PlayerHub.State()
         // Not null (that is a queue's end): Home keeps showing it paused (qa-21-step3-code L3).
         reportNowPlaying(forcePaused = true)

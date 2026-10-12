@@ -729,6 +729,114 @@ class SonosControllerTest {
     }
 
     @Test
+    fun `M1 - a cap lowered during the session pulls our own louder set down once`() {
+        r.start()
+        r.speaker("0:07:11")
+        r.poll()
+        r.c.setVolume(70) // no cap in force (the override): our own set
+        r.work.drain()
+        r.capPct = 40 // the override ended: the restrictions broadcast
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("volume 40", r.spk.commands.last())
+        assertEquals(40, r.c.volOpt)
+        val sent = r.spk.commands.size
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("once", sent, r.spk.commands.size)
+        r.capPct = null
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("a lifted cap sends nothing", sent, r.spk.commands.size)
+    }
+
+    @Test
+    fun `M1 - a louder volume from the Sonos app, ours at or below the cap, or no session - the cap edge sends nothing`() {
+        r.start()
+        r.spk.vol = 80 // from the Sonos app
+        r.speaker("0:07:11")
+        r.poll()
+        r.capPct = 40
+        r.c.capChanged()
+        r.work.drain()
+        assertFalse("vibb never fights an external change", r.spk.commands.any { it.startsWith("volume") })
+        r.c.setVolume(30)
+        r.work.drain()
+        r.capPct = 35
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals(1, r.spk.commands.count { it.startsWith("volume") })
+        r.c.setVolume(35)
+        r.c.stop()
+        r.work.drain()
+        r.capPct = 20
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("no session: nothing", "stop", r.spk.commands.last())
+    }
+
+    @Test
+    fun `M2 - a start caps every room of the group, inside the hush, an unknown or silent member never blocks it`() {
+        val shared = mutableListOf<String>()
+        val coord = FakeSpeaker("RINCON_KJOKKEN01400").apply { vol = 70; this.shared = shared }
+        val stua = FakeSpeaker("RINCON_STUA01400").apply { vol = 80; this.shared = shared }
+        val bad = FakeSpeaker("RINCON_BAD01400").apply { vol = 30; this.shared = shared }
+        val sleepy = FakeSpeaker("RINCON_SLEEPY01400").apply { failOn = mapOf("getvolume" to { SpeakerUnreachable("slow") }); this.shared = shared }
+        val byUid = listOf(coord, stua, bad, sleepy).associateBy { it.uid }
+        val clock = FakeClock()
+        val session = SonosSession({ clock.now })
+        val transport = SonosTransport(session, { u, _, _ -> byUid[u] ?: throw UnknownUid(u) }, NrkService({ _, _ -> SonosFakes.fixture("accounts.xml") }), clock.clock)
+        val work = FakeWork()
+        val members = listOf(coord.uid, stua.uid, "RINCON_GONE01400", bad.uid, sleepy.uid)
+        val c = SonosController(transport, work, FakeStore(coord), { clock.now }, coord.uid, "Kjøkken + Stua", FakeHost(), sleep = clock.clock.sleep, cap = { 40 }, members = { members })
+        c.load(r.entry, r.items, 0, 720_000)
+        c.playTile()
+        work.drain()
+        assertEquals(
+            listOf(
+                "${coord.uid} getmute", "${coord.uid} mute true", "${coord.uid} getvolume", "${coord.uid} volume 40",
+                "${stua.uid} getvolume", "${stua.uid} volume 40", "${bad.uid} getvolume", "${coord.uid} clearqueue", "${coord.uid} seturi",
+                "${coord.uid} play", "${coord.uid} gettransport", "${coord.uid} mute false",
+            ),
+            shared,
+        )
+        assertEquals("the coordinator's is the base of the next press", 40, c.volOpt)
+        // a step inside the session caps no one
+        shared.clear()
+        c.stepTo(1, 0)
+        work.drain()
+        assertTrue(shared.none { it.endsWith("getvolume") || it.contains(" volume ") })
+    }
+
+    @Test
+    fun `L1 - a ramp's leftover put back below the cap is the base of the next press`() {
+        val f = ControllerRig()
+        f.spk.vol = 80
+        val c = SonosController(f.transport, f.work, f.store, { f.clock.now }, f.uid, "Barnerom", f.host, sleep = f.clock.clock.sleep, restoreVolume = 30, cap = { 50 })
+        c.load(f.entry, f.items, 0, 0)
+        c.playTile()
+        f.work.drain()
+        assertEquals(listOf("volume 50", "seturi", "play", "volume 30"), f.spk.commands)
+        assertEquals("what the speaker holds", 30, c.volOpt)
+        assertEquals(30, c.deviceVolume())
+        c.adjustVolume(-3)
+        f.work.drain()
+        assertEquals("volume 27", f.spk.commands.last())
+    }
+
+    @Test
+    fun `L1 - a key press while the start is in flight stands over the start's cap`() {
+        r.capPct = 40
+        r.spk.vol = 70
+        r.c.load(r.entry, r.items, 0, 0)
+        r.c.playTile()
+        r.c.setVolume(20) // the slider, before the play's result came back
+        r.work.drain()
+        assertEquals(listOf("volume 40", "seturi", "play", "volume 20"), r.spk.commands)
+        assertEquals(20, r.c.volOpt)
+    }
+
+    @Test
     fun `a ramp's leftover volume is put back no louder than the cap`() {
         val f = ControllerRig()
         val c = SonosController(f.transport, f.work, f.store, { f.clock.now }, f.uid, "Barnerom", f.host, sleep = f.clock.clock.sleep, restoreVolume = 70, cap = { 50 })

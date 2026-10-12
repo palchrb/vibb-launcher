@@ -43,10 +43,16 @@ class MusicApp : Application() {
         )
     }
 
-    /** The one place the managed config's language is applied (S2); the player rebinds a bridge it lacked (L4). */
+    /**
+     * The one place the managed config's language is applied (S2); the player rebinds a bridge it
+     * lacked (L4), and a room's own volume above a lowered cap follows it (design 26a §5.3).
+     */
     private fun applyConfig(context: Context) {
         Bridge.applyLanguage(context, Bridge.config(context))
-        android.os.Handler(android.os.Looper.getMainLooper()).post { LiveBridge.refresh(context) }
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            LiveBridge.refresh(context)
+            PlayerHub.capChanged?.invoke()
+        }
     }
 }
 
