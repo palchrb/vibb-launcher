@@ -534,7 +534,14 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
         }
         val known = state[key]
         if (update.releaseTag == known?.lastInstalledTag) {
-            continue
+            // Only while Android still has it (the user's emulator, 2026-10-12: an app uninstalled
+            // by hand was never installed again). Gone, or older than what we installed: forget
+            // the record and queue it like a new release - pins, refusals and backoffs apply.
+            val phone = update.packageName.takeIf { it.isNotBlank() }
+                ?.let { phonePackage(context.packageManager, it) } ?: PhonePackage.Unknown
+            if (catalogReleaseStillInstalled(phone, known?.lastInstalledVersionCode)) continue
+            Log.i(LOG_TAG, "${update.name} ${update.releaseTag} is no longer on the phone ($phone) - installing it again")
+            TrackedAppUpdateState.forgetInstalled(context, key)
         }
         if (!catalogPinned(update.packageName, update.signerSha256)) {
             Log.w(LOG_TAG, "Skipping ${update.name}: the server has no package and signing key to check it against")
@@ -808,6 +815,25 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
 }
 
 /** Who installed [packageName] (`com.android.vending` = Play), or `null` if unknown. */
+/** [PhonePackage] for [packageName]: `MATCH_UNINSTALLED_PACKAGES` so a hidden app counts, then
+ * `FLAG_INSTALLED` for this user; only `NameNotFoundException` says "missing". */
+private fun phonePackage(pm: PackageManager, packageName: String): PhonePackage = try {
+    val info = pm.getPackageInfo(
+        packageName,
+        PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()),
+    )
+    val installed = info.applicationInfo?.let { it.flags and ApplicationInfo.FLAG_INSTALLED != 0 }
+    when (installed) {
+        false -> PhonePackage.Missing
+        true -> PhonePackage.Installed(info.longVersionCode)
+        null -> PhonePackage.Unknown
+    }
+} catch (e: PackageManager.NameNotFoundException) {
+    PhonePackage.Missing
+} catch (e: Exception) {
+    PhonePackage.Unknown
+}
+
 private fun installerOf(pm: PackageManager, packageName: String): String? = try {
     pm.getInstallSourceInfo(packageName).installingPackageName
 } catch (e: Exception) {

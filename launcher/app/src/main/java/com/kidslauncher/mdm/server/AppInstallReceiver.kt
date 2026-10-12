@@ -55,7 +55,10 @@ class AppInstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_SUCCESS -> {
                 Log.i(LOG_TAG, "Installed $installKey successfully ($releaseTag)")
                 if (installKey != null && releaseTag != null) {
-                    TrackedAppUpdateState.recordInstalled(context, installKey, releaseTag)
+                    TrackedAppUpdateState.recordInstalled(
+                        context, installKey, releaseTag,
+                        intent.getLongExtra(APP_INSTALL_VERSION_CODE_EXTRA, -1L).takeIf { it >= 0 },
+                    )
                 }
                 appId?.let { notifyAppInstallResult(context, it, installName, success = true) }
                 // Not deleted for the launcher's own self-update: the running process is about to

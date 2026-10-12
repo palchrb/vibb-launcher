@@ -100,3 +100,28 @@ fun reconcileRefusals(
 /** [current] with [refusal] (it replaces the app's earlier one). */
 fun withRefusal(current: List<CatalogRefusal>, refusal: CatalogRefusal): List<CatalogRefusal> =
     (current.filterNot { it.appId == refusal.appId } + refusal).sortedBy { it.appId }
+
+/** What this phone has of a catalog app's package (`getApplicationInfo` with
+ * `MATCH_UNINSTALLED_PACKAGES`, so a hidden app still counts as installed). */
+sealed interface PhonePackage {
+    /** Not installed for this user (`NameNotFoundException`, or without `FLAG_INSTALLED`). */
+    data object Missing : PhonePackage
+
+    data class Installed(val versionCode: Long) : PhonePackage
+
+    /** PackageManager couldn't tell: treated as installed, so a failure never loops installs. */
+    data object Unknown : PhonePackage
+}
+
+/**
+ * Whether the release the launcher recorded as installed is still on the phone (the user's
+ * emulator, 2026-10-12: an app uninstalled by hand was never installed again, because the record
+ * alone said "installed"). Missing, or older than the version the launcher installed for it
+ * ([installedVersionCode], `null` = not recorded by an older build), means install it again - the
+ * download then goes through every check a first install does (M10's pins, refusals).
+ */
+fun catalogReleaseStillInstalled(phone: PhonePackage, installedVersionCode: Long?): Boolean = when (phone) {
+    PhonePackage.Missing -> false
+    PhonePackage.Unknown -> true
+    is PhonePackage.Installed -> installedVersionCode == null || phone.versionCode >= installedVersionCode
+}

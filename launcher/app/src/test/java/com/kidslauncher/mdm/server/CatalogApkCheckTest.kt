@@ -129,4 +129,36 @@ class CatalogApkCheckTest {
         assertTrue("if (!catalogPinned(update.packageName, update.signerSha256))" in sync)
         assertTrue("expectedPackage = context.packageName" in sync)
     }
+
+    /** The user's emulator (2026-10-12): an app uninstalled by hand was never installed again -
+     * the record alone said "installed". Now only a copy on the phone counts. */
+    @Test
+    fun `a release removed from the phone is installed again`() {
+        assertFalse("uninstalled by hand", catalogReleaseStillInstalled(PhonePackage.Missing, 5))
+        assertFalse("an older build's record", catalogReleaseStillInstalled(PhonePackage.Missing, null))
+        assertTrue(catalogReleaseStillInstalled(PhonePackage.Installed(5), 5))
+        assertTrue("updated past it", catalogReleaseStillInstalled(PhonePackage.Installed(6), 5))
+        assertFalse("an older copy put back", catalogReleaseStillInstalled(PhonePackage.Installed(4), 5))
+        assertTrue("no recorded version: installed is enough", catalogReleaseStillInstalled(PhonePackage.Installed(1), null))
+        assertTrue("PackageManager couldn't tell: never a reinstall loop", catalogReleaseStillInstalled(PhonePackage.Unknown, 5))
+    }
+
+    /** The wiring: the sync forgets the record of a release that's gone and lets the usual checks
+     * (pins, refusal, backoff) decide; the installed versionCode is recorded at install. */
+    @Test
+    fun `the sync reinstalls a release that is gone`() {
+        val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        fun source(name: String) = File(src, "main/java/com/kidslauncher/mdm/server/$name").readText()
+        val sync = source("MdmSyncWorker.kt")
+        val loop = sync.substringAfter("for (update in otherUpdates) {").substringBefore("wanted += update.wanted()")
+        val installedCheck = loop.indexOf("if (catalogReleaseStillInstalled(phone, known?.lastInstalledVersionCode)) continue")
+        val forget = loop.indexOf("TrackedAppUpdateState.forgetInstalled(context, key)")
+        val pins = loop.indexOf("if (!catalogPinned(update.packageName, update.signerSha256))")
+        assertTrue(installedCheck in 0 until forget && forget < pins)
+        assertTrue("PackageManager.MATCH_UNINSTALLED_PACKAGES" in sync.substringAfter("private fun phonePackage("))
+        assertTrue(
+            "intent.getLongExtra(APP_INSTALL_VERSION_CODE_EXTRA, -1L)" in source("AppInstallReceiver.kt"),
+        )
+        assertTrue("versionCode = versionCode," in source("AppDownloads.kt"))
+    }
 }
