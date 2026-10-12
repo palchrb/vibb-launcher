@@ -638,7 +638,11 @@ fetches it (the book's `art_url`, the shelf's cover) into `photos::MUSIC_ART` an
 64-hex hash; the phone's want set (`sync/ArtPlan.kt`'s `artWant`, a Storytel series' kept books in download order
 since the merge) sends it as `wantArt`, the launcher's `syncArt` fetches it into the shared covers dir, and every
 surface shows `artHash ?: entry.cover` (the carousel, the player's art, the session's artwork, `setNowPlaying`, Nytt,
-search). **The phone needs no change and Room no column** (design 27 owns Room version 2, `items.artHash`). **The
+search). **A book is judged against nothing** (qa-26b-step4a-code M1): design 27's `same` ("the series picture",
+show the entry cover) is wrong for books - a Storytel series' cover is only the shelf's first-seen book's, so a
+`same` book would show another book's face once that moves, under a parent's cover, or with templated covers. Every
+fetched book cover is `own` with its own hash (no reference prints, no step 1, no twin merge; one request more per
+series). **The phone needs no change and Room no column** (design 27 owns Room version 2, `items.artHash`). **The
 speaker gets no art** for any source (26a §9: a hash has no LAN-reachable http URL; the cheapest later path, a frozen
 `art_src` beside the hash, fits Storytel's public cover URL unchanged). The abandoned first 4a (its own `items.art`
 URL column and its own Room version 2, branch `abandoned/26b-step4a`) is not applied.
@@ -863,8 +867,8 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    of `..Item::new(..)` (else every check drops the hash and fetches the picture again); `S/music.rs` -
    `art_in_library` serves `source IN ('nrk', 'rss', 'storytel')`. (The other way, the Storytel check storing the
    hash itself through `photos::MUSIC_ART`'s store and lock, duplicates the pass's fetch, judging and budgets; take it
-   only if the pass can't be widened cleanly.) The judging stays design 27's: a book whose cover is the series' is
-   `same` (no hash, the entry cover shows - the same picture), the others `own`; budgets `ART_PER_CHECK`/`ART_PER_DAY`
+   only if the pass can't be widened cleanly.) The judging is not design 27's for books (qa-26b-step4a-code M1, §5.5):
+   every fetched book cover is `own` - no reference prints, no `same`, no twin merge -; budgets `ART_PER_CHECK`/`ART_PER_DAY`
    unchanged (a 40-book series fills over two checks). **The shared-contract commit**: `server/testdata/music_listing.json`
    regenerated (`MUSIC_LISTING_SNAPSHOT_WRITE=1`) only if its fixture gains a Storytel item, and then copied
    byte-identically to `music/app/src/test/resources/` (the launcher's `MusicPlanTest` version pin with it), one commit.
@@ -1004,8 +1008,10 @@ commit), 3 (the phone's download path), 4a (the server's art pass for books), 4b
   falls to rare or restricted, or no job runs for hours), the user decides between downloads only while charging and
   design 19b's battery exemption for the music app.
 - **Per-book covers** (step 4a; qa-26b-merge27-code L3): with the real server and the real shelf, a series whose books
-  have their own covers shows each book's cover in the player's carousel, in Nytt and on the lock's tile; the book whose
-  cover is the series' shows the series cover; the server log's check line for it says `, art N (o own, s same)`.
+  have their own covers shows each book's cover in the player's carousel, in Nytt and on the lock's tile - the first
+  book's (the series cover) included -, and so does **a series with templated covers** (one layout, another number or
+  title per book: each book its own picture, none shows another's); the server log's check line says
+  `, art N (N own, 0 same)`.
 - Sonos: a book not downloaded plays in a room (title and progress bar in the Sonos app; no cover, §9), next/previous, pause for
   two hours then play (if the speaker fails, one more tap starts from the bookmark), the app killed while a book plays
   (reopen: adopted, the right book and place), the signed Location carries `consumableId` (logcat's redacted line and
@@ -2086,3 +2092,25 @@ real server and shelf: each book's cover in the carousel, Nytt and the lock's ti
 cover). Chosen over a `fake-storytel.py --art` option because the fake's listing never passes through the server's
 art pass, so it would test the phone's design-27 path (already covered by design 27's carousel check) rather than this
 step.
+
+### Fix round after QA's code review (qa-26b-step4a-code, 2026-10-12)
+
+- **Medium 1 - a book is judged against nothing.** `art_pass` for a `Link::Storytel` entry: an empty reference set,
+  step 1 (the cover's own URL -> `same`) skipped, and `art_own`'s twin merge off (a new `merge` argument, `!storytel`);
+  any `same` row of a Storytel entry (an earlier 4a build's) is made untried at the start of the pass, so it is fetched
+  again as its own. Every fetched book cover is now `own` with its own hash - the first-seen book's too (one more
+  request per series, the cover's URL fetched once for the listing cover and once as that book's art; reusing the
+  cover's JPEG wasn't worth the coupling). The status above is superseded where it says the first-seen book is `same`
+  and that the twin merge and backlog apply to books: with no references nothing is `same`, so the backlog never turns
+  off, and no two books merge. Tests: `the_sweep_lists_a_series_like_a_feed` (3 requests, `(own, same) = (2, 0)`,
+  `items[1]` its own hash, served byte for byte), `a_check_keeps_...`, `the_art_pass_reads_...` (one picture a check:
+  book 1, then 2, then 3), `a_lost_books_cover_...` follow; new `every_book_keeps_its_own_cover_whatever_the_series_cover`
+  (the shelf's first book changes - the listing's cover moves to book 1's - and every book keeps its hash with no
+  request; a row an earlier build judged `same` is fetched again and is `own`; book 3's cover is book 1's picture at
+  another size - the same print and tone, a feed's twins - and keeps its own hash). Mutation (reverted): `storytel`
+  forced false in `art_pass` turns 5 `music_storytel` tests red. Docs: §5.5, §8 step 4a, `server/CLAUDE.md`'s Storytel
+  bullet, the "Per-book covers" device check (every book its own, a series with templated covers added).
+- **Low 1 - the card line.** Chose the doc: `server/CLAUDE.md` now says the count line is not on a Storytel card
+  ("N books" only); the card is unchanged.
+- **Runs:** `cargo test` **661 passed, 0 failed** (660 + the new case; `parent_pin` passed this run), `cargo fmt
+  --check` clean, `cargo clippy --all-targets` the same 12 warnings.

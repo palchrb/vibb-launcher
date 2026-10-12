@@ -699,7 +699,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Storytel books** (design 26b step 4a): a book's `art_url` is the shelf's cover; `art_candidate(item, link)` takes
   an `ok` book with no `url` (an NRK/RSS item needs its `url`), `auto` reads a Storytel entry from book 1, and
   `storytel_check` keeps a known book's whole row (every `art_*` field), so a check never drops a hash or a failure's
-  try count. The book whose cover is the series' (the first-seen book's) is `same`. No 16:9 reference (NRK only).
+  try count. A book is judged against nothing (qa-26b-step4a-code M1: the "series cover" is only the first-seen book's,
+  so `same` would show another book's face): no reference prints, no step 1, no twin merge, a `same` row is made
+  untried - every fetched book cover is `own`. No 16:9 reference (NRK only).
 - **The pass** (`music_sweep::art_pass`, after the listing, manifests and cover; not on recheck-only checks): the
   first `ART_WINDOW` (200) `ok` items in play order (`effective_order`'s rule), this check's new items first (with
   the backlog off, also items first seen since it went off, code QA L2); due = untried (`art_from` NULL or another
@@ -732,7 +734,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   the walk finished within the budget.
 - **Stored** with the items in `finish` (the `MUSIC_ART` lock from writing the files to the commit; a hash copied
   from another item that is no longer on disk is left untried), pruned after a `finish` that changed an art reference
-  and after an entry is deleted. The card's count line adds "· N with episode art".
+  and after an entry is deleted. The card's count line adds "· N with episode art" (not on a Storytel card: "N books" only).
 - Tests: `src/tests/music_art.rs`, the Storytel cases at the end of `src/tests/music_storytel.rs`, `photos::tests` (the print, the tone), `music_sources::tests` (the 512 pick,
   `wide_image`, `null`/`[]`). `CannedFetch::hold`/`release` (a gate every request waits at) and
   `Sweep::pause_before_commit` (cfg(test)) let a test act inside a check without a clock (code QA L3).

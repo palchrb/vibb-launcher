@@ -2672,7 +2672,8 @@ pub fn twins(a: (i64, Option<i64>), b: (i64, Option<i64>)) -> bool {
 }
 
 /// The item's own picture. A picture the entry already has under another hash ([twins]) reuses
-/// that hash, so the phone sees one picture as one (QA M2).
+/// that hash when `merge` is on, so the phone sees one picture as one (QA M2); off for Storytel
+/// books (templated covers would merge, qa-26b-step4a-code M1).
 #[allow(clippy::too_many_arguments)]
 fn art_own(
     plan: &mut Plan,
@@ -2682,12 +2683,14 @@ fn art_own(
     print: i64,
     tone: Option<i64>,
     file: Option<crate::photos::ProcessedPhoto>,
+    merge: bool,
     now: DateTime<Utc>,
 ) {
     let twin = plan
         .items
         .iter()
         .enumerate()
+        .filter(|_| merge)
         .filter(|(at, other)| *at != index && other.art_state.as_deref() == Some("own"))
         .find_map(|(_, other)| {
             let print_b = other.art_print?;
@@ -2792,7 +2795,23 @@ async fn art_pass(
     mut gets: u32,
 ) -> Result<(), sqlx::Error> {
     let now = job.now;
-    let refs = plan.art.refs();
+    // A Storytel book is judged against nothing (qa-26b-step4a-code M1): its "series cover" is
+    // only the shelf's first-seen book's cover, so `same` (show the entry cover) could show
+    // another book's face - after the first book changes, with a parent's cover, or with
+    // templated covers. Every fetched cover is the book's own, and two books are never twins.
+    let storytel = matches!(link, Link::Storytel { .. });
+    let refs = if storytel {
+        Vec::new()
+    } else {
+        plan.art.refs()
+    };
+    if storytel {
+        for item in plan.items.iter_mut() {
+            if item.art_state.as_deref() == Some("same") {
+                art_untried(item);
+            }
+        }
+    }
     // A picture the source no longer names.
     for item in plan.items.iter_mut() {
         if item.art_url.is_none() && (item.art_from.is_some() || item.art_state.is_some()) {
@@ -2885,8 +2904,10 @@ async fn art_pass(
         if plan.items[index].art_from.as_deref() != Some(url.as_str()) {
             plan.items[index].art_fails = 0;
         }
-        // 1. The series picture's own URL: no request.
-        let series_print = if plan.art.cover_url.as_deref() == Some(url.as_str()) {
+        // 1. The series picture's own URL: no request (never for a book, see above).
+        let series_print = if storytel {
+            None
+        } else if plan.art.cover_url.as_deref() == Some(url.as_str()) {
             Some(plan.art.cover_print)
         } else if plan.art.alt_url.as_deref() == Some(url.as_str()) {
             Some(plan.art.alt_print)
@@ -2907,7 +2928,7 @@ async fn art_pass(
                 continue;
             }
             if let Some(hash) = hash {
-                art_own(plan, index, url, hash, print, tone, None, now);
+                art_own(plan, index, url, hash, print, tone, None, !storytel, now);
                 continue;
             }
         }
@@ -2978,7 +2999,17 @@ async fn art_pass(
             plan.art.same_run += 1;
         } else {
             let hash = photo.hash.clone();
-            art_own(plan, index, url, hash, print, Some(tone), Some(photo), now);
+            art_own(
+                plan,
+                index,
+                url,
+                hash,
+                print,
+                Some(tone),
+                Some(photo),
+                !storytel,
+                now,
+            );
         }
     }
     // An entry whose pictures are all the series picture: only new items from now on (§1.4).
