@@ -221,11 +221,12 @@ class LockGlanceGuardTest {
     @Test
     fun `the glance panel opens nothing - a row only leads to the keypad`() {
         for (forbidden in listOf(
-            "startActivity", ".send(", "Intent(", "sessionActivity", "LaunchIntent", "cancelNotification",
+            "startActivity", ".send(", "sessionActivity", "LaunchIntent", "cancelNotification",
             "snoozeNotification", "setNotificationsShown", "Settings.", "getSharedPreferences", "edit()",
         )) {
             assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
         }
+        assertFalse("GlancePanel builds an Intent", Regex("""\bIntent\(""").containsMatchIn(panel))
         // Rows can't be swiped, long-pressed or dismissed from the lock.
         for (forbidden in listOf("setOnLongClickListener", "setOnTouchListener", "ItemTouchHelper", "Swipe")) {
             assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
@@ -264,6 +265,74 @@ class LockGlanceGuardTest {
         val onCreate = body(code("PinLockActivity.kt"), "onCreate")
         assertTrue(Regex("""glance = try \{\s*GlancePanel\(""").containsMatchIn(onCreate))
         assertTrue(onCreate.contains("} catch (e: Throwable) {"))
+    }
+
+    // ---- part 2: the open after the code (step 3b) ------------------------------------------------
+
+    private val opener by lazy { code("GlanceOpener.kt") }
+
+    @Test
+    fun `the opener has one send and two starts, from the visible sender`() {
+        assertEquals(1, Regex("""\.send\(""").findAll(opener).count())
+        assertTrue(opener.contains("intent.send(activity, 0, null, null, null, null, VisibleSender.options())"))
+        assertEquals(2, Regex("""\bstartActivity\(""").findAll(opener).count())
+        assertTrue(opener.contains("activity.startActivity(PhoneBookActivity.missedCallsIntent(activity, number))"))
+        assertTrue(opener.contains("activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))"))
+        // Only the app's own content intent - never an action, a reply or a delete intent.
+        for (forbidden in listOf("actions", "actionIntent", "RemoteInput", "deleteIntent", "fullScreenIntent", "cancelNotification", "snoozeNotification", "setNotificationsShown")) {
+            assertFalse("GlanceOpener uses $forbidden", opener.contains(forbidden))
+        }
+        assertTrue(opener.contains("intentFromApp = pkg != null && intent?.creatorPackage == pkg"))
+        // One place for the visible sender's options; VoipCalls and MusicSessions use it too.
+        for (name in listOf("VoipCalls.kt", "MusicSessions.kt")) {
+            val c = code(name)
+            assertTrue(name, c.contains("VisibleSender.options()"))
+            assertFalse(name, c.contains("setPendingIntentBackgroundActivityStartMode"))
+        }
+    }
+
+    @Test
+    fun `the open runs only from the unlock path - or from the time-rule screen the unlock hands it to`() {
+        val sources = sources.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        val opens = sources.filter { "GlanceOpener.open(" in strip(it.readText()) }.map { it.name }
+        assertEquals(listOf("PinLockActivity.kt"), opens)
+        val handOvers = sources.filter { "GlanceOpener.openHandedOver(" in strip(it.readText()) }.map { it.name }
+        assertEquals(listOf("LockActivity.kt"), handOvers)
+        assertTrue(body(code("LockActivity.kt"), "onResume").contains("GlanceOpener.openHandedOver(this)"))
+        val activity = code("PinLockActivity.kt")
+        // Opened in go(), after Home, before the finish, only when UNLOCKED.
+        val go = body(activity, "go")
+        val open = go.indexOf("pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it) }")
+        assertTrue(go, open >= 0)
+        assertTrue(go.indexOf("HomeFront.bring(") in 0 until open)
+        assertTrue(open < go.indexOf("finishAndRemoveTask()"))
+        assertEquals(1, Regex("""GlanceOpener\.open\(""").findAll(activity).count())
+        // pendingOpen gets a target only in unlock (the right code), before the lock task stops.
+        val sets = Regex("""pendingOpen = (?!null)""").findAll(activity).count()
+        assertEquals(1, sets)
+        val unlock = body(activity, "unlock")
+        val take = unlock.indexOf("pendingOpen = glance?.takeTarget(lockWasRoot = LockTaskChrome.kioskOn && startedLockTask)")
+        assertTrue(unlock, take >= 0)
+        assertTrue(take < unlock.indexOf("stopOwnLockTask()"))
+        assertTrue(go.contains("pendingOpen = null"))
+        // The panel only captures a content intent; it never sends or starts anything.
+        assertFalse(panel.contains("GlanceOpener.open"))
+        assertTrue(panel.contains("GlanceStore.contentIntent(it.notificationKey)"))
+    }
+
+    @Test
+    fun `the opener never throws (QA Medium 2)`() {
+        for (name in listOf("open", "openHandedOver")) {
+            assertTrue("$name is guarded", Regex("""fun $name\([^)]*\) = guarded \{""").containsMatchIn(opener))
+        }
+        assertTrue(body(opener, "guarded").contains("catch (e: Throwable)"))
+        assertTrue(body(opener, "send").contains("catch (e: Exception)"))
+        assertTrue(body(code("GlancePanel.kt"), "takeTarget").contains("catch (e: Throwable)"))
+        // Its log lines name the package (or "the missed calls") and the reason only.
+        for (line in Regex("""\bLog\.\w\(.*""").findAll(opener).map { it.value }) {
+            val interpolations = Regex("""\$\{[^}]*\}|\$[A-Za-z_]+""").findAll(line).map { it.value }.toSet()
+            assertTrue(line, setOf("\$what", "\${step.reason}", "\${conversation.packageName}", "\$how", "\${e.javaClass.simpleName}").containsAll(interpolations))
+        }
     }
 
     // ---- wiring and fault containment ---------------------------------------------------------

@@ -120,6 +120,77 @@ class LockGlanceTest {
         assertEquals(listOf(1, 0, 0), listOf(alone.candidate, alone.rows, alone.more))
     }
 
+    // ---- 3b: the hint and the open ---------------------------------------------------------------
+
+    @Test
+    fun `the keypad's prompt - the usual texts first, then the target's hint`() {
+        assertEquals(GlancePrompt.UNUSABLE, glancePrompt(usable = false, waiting = true, checking = true, wrong = true, target = conversation))
+        assertEquals(GlancePrompt.WAIT, glancePrompt(true, waiting = true, checking = true, wrong = true, target = conversation))
+        assertEquals(GlancePrompt.CHECKING, glancePrompt(true, false, checking = true, wrong = true, target = conversation))
+        assertEquals(GlancePrompt.WRONG, glancePrompt(true, false, false, wrong = true, target = conversation))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, conversation))
+        assertEquals(GlancePrompt.SEE_MISSED, glancePrompt(true, false, false, false, GlanceTarget.MissedCalls(null)))
+        assertEquals(GlancePrompt.PLAIN, glancePrompt(true, false, false, false, null))
+    }
+
+    @Test
+    fun `the hint's label is cut to 20 characters (QA Low 5)`() {
+        assertEquals("Element X", glancePromptLabel(" Element X "))
+        assertEquals("x".repeat(20), glancePromptLabel("x".repeat(20)))
+        assertEquals("Meldinger fra famil…", glancePromptLabel("Meldinger fra familien"))
+        assertEquals(20, glancePromptLabel("y".repeat(100)).length)
+        // Code points, not chars: an emoji is never cut in half.
+        val emoji = "\uD83D\uDE00".repeat(25)
+        assertEquals(20, glancePromptLabel(emoji).let { it.codePointCount(0, it.length) })
+    }
+
+    @Test
+    fun `a row takes its target - under a time rule only when the rule leaves it usable (QA Q1)`() {
+        assertTrue(glanceTargetTaken(timeRule = false, usableUnderRule = false))
+        assertTrue(glanceTargetTaken(timeRule = true, usableUnderRule = true))
+        assertFalse(glanceTargetTaken(timeRule = true, usableUnderRule = false))
+    }
+
+    private val app = GlanceOpenFacts(
+        from = GlanceOpenFrom.LOCK, missedCalls = false, timeRule = false, usableUnderRule = false, lockWasRoot = false,
+        installed = true, suspended = false, hidden = false, hasIntent = true, intentIsActivity = true, intentFromApp = true,
+        sendFailed = false, hasLaunchIntent = true,
+    )
+
+    @Test
+    fun `the open after the code - §1_4's table`() {
+        assertEquals(GlanceOpen.SEND, glanceOpenStep(app).open)
+        // A time rule: the time-rule screen comes first and opens it over itself (QA Q1).
+        assertEquals(GlanceOpen.HAND_TO_TIME_RULE_SCREEN, glanceOpenStep(app.copy(timeRule = true)).open)
+        assertEquals(GlanceOpen.HAND_TO_TIME_RULE_SCREEN, glanceOpenStep(app.copy(timeRule = true, missedCalls = true)).open)
+        // From the time-rule screen: only what the rule leaves usable, then as from the lock.
+        val screen = app.copy(from = GlanceOpenFrom.TIME_RULE_SCREEN, timeRule = true)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(screen).open)
+        assertEquals(GlanceOpen.SEND, glanceOpenStep(screen.copy(usableUnderRule = true)).open)
+        assertEquals(GlanceOpen.MISSED_CALLS, glanceOpenStep(screen.copy(usableUnderRule = true, missedCalls = true)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(screen.copy(usableUnderRule = false, missedCalls = true)).open)
+        // The time-rule screen is never the kiosk's root lock: wasRoot only counts from the lock.
+        assertEquals(GlanceOpen.SEND, glanceOpenStep(screen.copy(usableUnderRule = true, lockWasRoot = true)).open)
+        // Kiosk on and the lock was the lock-task root: nothing (the app would cover Home).
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(lockWasRoot = true)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(lockWasRoot = true, missedCalls = true)).open)
+        // Missed calls: the contact's sheet or the phone book (no app checks).
+        assertEquals(GlanceOpen.MISSED_CALLS, glanceOpenStep(app.copy(missedCalls = true, installed = false, hasLaunchIntent = false)).open)
+        // Not installed, suspended, hidden: nothing.
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(installed = false)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(suspended = true)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(hidden = true)).open)
+        // No intent, not an activity, another app's intent (QA Low 10), or the send threw: the app.
+        assertEquals(GlanceOpen.LAUNCH, glanceOpenStep(app.copy(hasIntent = false)).open)
+        assertEquals(GlanceOpen.LAUNCH, glanceOpenStep(app.copy(intentIsActivity = false)).open)
+        assertEquals(GlanceOpen.LAUNCH, glanceOpenStep(app.copy(intentFromApp = false)).open)
+        assertEquals(GlanceOpen.LAUNCH, glanceOpenStep(app.copy(sendFailed = true)).open)
+        // No launch intent either (a broadcast intent, no launcher activity): nothing (QA Medium 2).
+        assertEquals(GlanceOpenStep(GlanceOpen.NOTHING, "no launch intent"), glanceOpenStep(app.copy(intentIsActivity = false, hasLaunchIntent = false)))
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(sendFailed = true, hasLaunchIntent = false)).open)
+        assertEquals(GlanceOpen.SEND, glanceOpenStep(app.copy(hasLaunchIntent = false)).open)
+    }
+
     @Test
     fun `the targets' toString is redacted`() {
         for (printed in listOf(conversation.toString(), GlanceTarget.MissedCalls("+4790000002").toString())) {

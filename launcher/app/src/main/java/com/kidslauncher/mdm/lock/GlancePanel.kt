@@ -1,5 +1,7 @@
 package com.kidslauncher.mdm.lock
 
+import android.app.PendingIntent
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.os.PowerManager
@@ -10,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -30,6 +33,8 @@ import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
 import com.kidslauncher.mdm.databinding.ViewLockGlanceRowBinding
 import com.kidslauncher.mdm.databinding.ViewLockMediaRowBinding
 import com.kidslauncher.mdm.music.MusicLockPanel
+import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import kotlinx.coroutines.Dispatchers
@@ -52,8 +57,11 @@ private const val LOG_TAG = "GlancePanel"
  *
  * It weakens nothing (LockGlanceGuardTest): "Lås opp" and a row lead to the keypad, the music tile's
  * controls are [MusicLockPanel]'s, "Nødsamtale" is the lock's own button ([onEmergency]) - nothing
- * here opens an app, a notification or a setting. Every entry point catches everything and logs the
- * exception class only: a glance fault must never trip the lock's crash guard (QA Medium 2).
+ * here opens an app, a notification or a setting. A row's tap only takes its target (§1.4: under a
+ * time rule only when the rule leaves it usable, QA Q1) and the content intent it would open (kept,
+ * never sent here); the unlock takes it ([takeTarget]) and [GlanceOpener] opens it after the code.
+ * Every entry point catches everything and logs the exception class only: a glance fault must never
+ * trip the lock's crash guard (QA Medium 2).
  */
 class GlancePanel(
     private val activity: AppCompatActivity,
@@ -71,6 +79,13 @@ class GlancePanel(
 
     /** The stage (memory only). */
     var state = GlanceStageState.GLANCE
+        private set
+
+    /** The target's content intent captured at the tap, and its label for the keypad's hint. */
+    private var captured: PendingIntent? = null
+
+    /** The keypad's hint: "Skriv koden for å åpne <this>" (cut to 20 characters, QA Low 5). */
+    var promptLabel: String? = null
         private set
 
     /** `PinLockRuntime.screenOffs` when the stage was last decided (null = not yet). */
@@ -129,6 +144,7 @@ class GlancePanel(
             decidedAt = offs
             tileUp = false
             state = glanceStageStep(state, GlanceStageEvent.LockUp)
+            dropTargetIfGone()
             onStage()
         }
         renderNow()
@@ -151,8 +167,47 @@ class GlancePanel(
 
     private fun step(event: GlanceStageEvent) = guarded("stage") {
         state = glanceStageStep(state, event)
+        dropTargetIfGone()
         renderNow()
         onStage()
+    }
+
+    private fun dropTargetIfGone() {
+        if (state.target != null) return
+        captured = null
+        promptLabel = null
+    }
+
+    /**
+     * A row's tap (§1.4): the keypad with the row's target - or, while a time rule locks the phone
+     * and leaves the row's app (or calls) unusable, the plain keypad without one (QA Q1).
+     */
+    private fun tap(row: GlanceRow) = guarded("tap") {
+        val target = when (row) {
+            is GlanceMessageRow -> GlanceTarget.Conversation(row.conversation, row.notificationKey, row.postTimeMs)
+            is GlanceMissedRow -> GlanceTarget.MissedCalls(row.number)
+        }
+        val timeRule = LauncherPreferences.mdm().lockReason() != LockReason.NONE
+        val taken = glanceTargetTaken(timeRule, timeRule && GlanceOpener.usableUnderTimeRule(activity, target))
+        val message = row as? GlanceMessageRow
+        captured = message?.takeIf { taken }?.let { GlanceStore.contentIntent(it.notificationKey) }
+        promptLabel = message?.takeIf { taken }?.let { glancePromptLabel(label(it.packageName)) }
+        step(GlanceStageEvent.Row(target.takeIf { taken }))
+    }
+
+    /**
+     * The unlock (the right code, `PinLockActivity.unlock`): the target, if any, with what was
+     * captured - and dropped here, so it is opened once. [lockWasRoot]: read before the lock task stops.
+     */
+    fun takeTarget(lockWasRoot: Boolean): PendingOpen? = try {
+        state.target?.let { PendingOpen(it, captured, lockWasRoot) }.also {
+            state = state.copy(target = null)
+            captured = null
+            promptLabel = null
+        }
+    } catch (e: Throwable) {
+        Log.w(LOG_TAG, "Glance target failed: ${e.javaClass.simpleName}")
+        null
     }
 
     /** Re-render (rows, the session, a store change): never throws. */
@@ -193,7 +248,7 @@ class GlancePanel(
                     is GlanceMessageRow -> bindMessage(view, row)
                     is GlanceMissedRow -> bindMissed(view, row)
                 }
-                view.root.setOnClickListener { step(GlanceStageEvent.Row(null)) }
+                view.root.setOnClickListener { tap(row) }
             }
         }
         if (missingIcons.isNotEmpty()) renderIcons()
@@ -233,13 +288,13 @@ class GlancePanel(
         view.glanceRowInitial.visibility = View.GONE
         view.glanceRowBadge.visibility = View.GONE
         val icon = appIcon(row.packageName)
+        plainIcon(view)
         if (icon != null) {
-            view.glanceRowIcon.backgroundTintList = null
             view.glanceRowIcon.setImageBitmap(icon)
         } else {
             // A placeholder circle until the background job has drawn Home's icon (QA Low 6).
             view.glanceRowIcon.setImageDrawable(null)
-            view.glanceRowIcon.backgroundTintList = android.content.res.ColorStateList.valueOf(activity.getColor(R.color.kid_music_control))
+            view.glanceRowIcon.backgroundTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_music_control))
         }
         val count = if (row.level == GlanceLevel.APP_ONLY) subtitle else messages
         describe(
@@ -278,6 +333,7 @@ class GlancePanel(
         val contact = (CallPolicyStore.effectiveState() as? CallPolicyState.Managed)?.rules?.contacts?.firstOrNull { it.number == number }
         if (contact != null) {
             // The contact's Home avatar: its photo, else the initial on its colour.
+            plainIcon(view)
             KidAvatars.bindContact(view.glanceRowIcon, view.glanceRowInitial, contact, isEmergency = false, initialSp = 16f)
         } else {
             view.glanceRowInitial.visibility = View.GONE
@@ -291,20 +347,24 @@ class GlancePanel(
         describe(view, "$spoken, $time", activity.getString(R.string.glance_missed_action))
     }
 
+    /** A row view is reused: every icon path sets the scale and the tints it needs. */
+    private fun plainIcon(view: ViewLockGlanceRowBinding) {
+        view.glanceRowIcon.scaleType = ImageView.ScaleType.CENTER_CROP
+        view.glanceRowIcon.imageTintList = null
+        view.glanceRowIcon.backgroundTintList = null
+    }
+
+    /** A phone on a red circle: the plain missed-call row, or a number no contact has any more. */
     private fun phoneGlyph(view: ViewLockGlanceRowBinding) {
-        view.glanceRowIcon.backgroundTintList = android.content.res.ColorStateList.valueOf(activity.getColor(R.color.kid_emergency))
+        view.glanceRowIcon.scaleType = ImageView.ScaleType.CENTER
+        view.glanceRowIcon.backgroundTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_emergency))
+        view.glanceRowIcon.imageTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_ink))
         view.glanceRowIcon.setImageResource(R.drawable.ic_kid_phone)
-        view.glanceRowIcon.scaleType = android.widget.ImageView.ScaleType.CENTER
     }
 
     /** One TalkBack node per row (§1.2): its description, and the click action named for what the
      * code opens. */
     private fun describe(view: ViewLockGlanceRowBinding, description: String, action: String) {
-        view.glanceRowIcon.scaleType = if (view.glanceRowIcon.drawable is android.graphics.drawable.BitmapDrawable) {
-            android.widget.ImageView.ScaleType.CENTER_CROP
-        } else {
-            view.glanceRowIcon.scaleType
-        }
         view.root.contentDescription = description
         view.root.accessibilityDelegate = object : View.AccessibilityDelegate() {
             override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {

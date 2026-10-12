@@ -415,6 +415,9 @@ class PolicyResponseCompatTest {
         val array = (decodeFresh(withGlance("""["io.element.android.x"]""")) as FreshDecode.Ok).policy
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(array.lockGlance, fresh = true))
         // An older server: no key. Fresh = its default (Element X, sender only); cached = unknown.
+        // The status report's capability the server's notes look for.
+        assertEquals("lock_glance_v1", com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY)
+        assertTrue(com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY in STATUS_CAPABILITIES)
         val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
         assertNull(older.lockGlance)
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = true))

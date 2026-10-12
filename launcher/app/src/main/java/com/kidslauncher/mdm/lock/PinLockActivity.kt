@@ -70,6 +70,10 @@ class PinLockActivity : AppCompatActivity() {
      * keypad then, as before step 4. */
     private var glance: GlancePanel? = null
 
+    /** A glance row's target to open after the right code (design 25 §1.4): set only in [unlock],
+     * used and cleared only in [go]. */
+    private var pendingOpen: PendingOpen? = null
+
     private val modeListener: () -> Unit = {
         if (PinLockRuntime.mode != LockMode.LOCKED && !isFinishing) leave()
     }
@@ -489,12 +493,15 @@ class PinLockActivity : AppCompatActivity() {
     private fun render() {
         if (!::binding.isInitialized) return
         val length = PinLockRuntime.pinLength
-        binding.pinPrompt.text = when {
-            !PinLockRuntime.pinUsable -> getString(R.string.pin_lock_unusable)
-            waitMs > 0L -> getString(R.string.pin_lock_wait, backoffText(waitMs))
-            checking -> getString(R.string.pin_lock_checking)
-            wrongShown -> getString(R.string.pin_lock_wrong)
-            else -> getString(R.string.pin_lock_prompt)
+        // The usual texts first; else a glance row's hint (design 25 §1.1); else the plain prompt.
+        binding.pinPrompt.text = when (glancePrompt(PinLockRuntime.pinUsable, waitMs > 0L, checking, wrongShown, glance?.state?.target)) {
+            GlancePrompt.UNUSABLE -> getString(R.string.pin_lock_unusable)
+            GlancePrompt.WAIT -> getString(R.string.pin_lock_wait, backoffText(waitMs))
+            GlancePrompt.CHECKING -> getString(R.string.pin_lock_checking)
+            GlancePrompt.WRONG -> getString(R.string.pin_lock_wrong)
+            GlancePrompt.OPEN_APP -> getString(R.string.pin_lock_prompt_open, glance?.promptLabel.orEmpty())
+            GlancePrompt.SEE_MISSED -> getString(R.string.pin_lock_prompt_missed)
+            GlancePrompt.PLAIN -> getString(R.string.pin_lock_prompt)
         }
         val dots = binding.pinDots
         if (dots.childCount != length) {
@@ -576,6 +583,9 @@ class PinLockActivity : AppCompatActivity() {
      * runtime's state machine. */
     private fun unlock(checkedAt: Int) {
         finishingAfterUnlock = true
+        // Design 25 §1.4: the glance row's target (null after "Lås opp"), with whether the lock is
+        // the kiosk's lock-task root - read before the lock task stops.
+        pendingOpen = glance?.takeTarget(lockWasRoot = LockTaskChrome.kioskOn && startedLockTask)
         // The lock task first: with the kiosk off the chrome change that follows unpins our
         // package, which would otherwise tear this task down under us.
         stopOwnLockTask()
@@ -603,9 +613,18 @@ class PinLockActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * The glance row's target opens here (design 25 §1.4): after Home is in front (kiosk on - the
+     * lock leaves through Home, design 16) and before the lock finishes, while its window is still
+     * visible - a PendingIntent's sender may start an activity only then. Only when the runtime
+     * really unlocked (a refused unlock, the switch-off, the crash guard and onResume's leave have
+     * no target, or the mode isn't UNLOCKED). [GlanceOpener] never throws.
+     */
     private fun go(plan: LockLeave) {
         if (plan.stopLockTaskFirst) stopLockTaskQuietly()
         if (plan.homeFirst) HomeFront.bring(this, "the lock left")
+        pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it) }
+        pendingOpen = null
         if (!isFinishing) finishAndRemoveTask()
     }
 

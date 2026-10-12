@@ -12,8 +12,12 @@ import com.kidslauncher.mdm.music.MusicSession
  * after the right code.
  *
  * It weakens nothing: the page's only actions are the music's play/pause, previous and next, the
- * stage switches and the lock's own emergency call (LockGlanceGuardTest).
+ * stage switches and the lock's own emergency call. A row's target is opened only after the kid's
+ * PIN or the parent code, from the unlock path (LockGlanceGuardTest).
  */
+
+/** The status report's capability: this launcher has the glance page (the server's notes read it). */
+const val LOCK_GLANCE_CAPABILITY = "lock_glance_v1"
 
 /** The lock's two stages: the glance page, or the keypad. */
 enum class LockStage { GLANCE, KEYPAD }
@@ -175,4 +179,119 @@ fun glanceFit(available: Float, heights: GlanceHeights, tile: Boolean, rowCount:
         add(fit(7, big = false, date = false, size = compact, rows = 0))
     }
     return candidates.firstOrNull { it.height <= available } ?: candidates.last()
+}
+
+// ---- the keypad's prompt -------------------------------------------------------------------------
+
+/** A label in the keypad's hint is cut to this many characters (QA Low 5: the parent's label can be
+ * 100 characters; the prompt keeps to two lines). */
+const val GLANCE_PROMPT_LABEL_MAX = 20
+
+/** [label] as the hint shows it: at most [GLANCE_PROMPT_LABEL_MAX] characters, a cut one ends in "…". */
+fun glancePromptLabel(label: String): String {
+    val trimmed = label.trim()
+    if (trimmed.codePointCount(0, trimmed.length) <= GLANCE_PROMPT_LABEL_MAX) return trimmed
+    val end = trimmed.offsetByCodePoints(0, GLANCE_PROMPT_LABEL_MAX - 1)
+    return trimmed.substring(0, end).trimEnd() + "…"
+}
+
+/** Which prompt the keypad shows (§1.1): the usual wait/wrong/checking/unusable texts first; else the
+ * target's hint; else the plain prompt. */
+enum class GlancePrompt { UNUSABLE, WAIT, CHECKING, WRONG, OPEN_APP, SEE_MISSED, PLAIN }
+
+fun glancePrompt(usable: Boolean, waiting: Boolean, checking: Boolean, wrong: Boolean, target: GlanceTarget?): GlancePrompt = when {
+    !usable -> GlancePrompt.UNUSABLE
+    waiting -> GlancePrompt.WAIT
+    checking -> GlancePrompt.CHECKING
+    wrong -> GlancePrompt.WRONG
+    target is GlanceTarget.Conversation -> GlancePrompt.OPEN_APP
+    target is GlanceTarget.MissedCalls -> GlancePrompt.SEE_MISSED
+    else -> GlancePrompt.PLAIN
+}
+
+// ---- taking a target and opening it ------------------------------------------------------------
+
+/**
+ * Whether a row's tap takes its target (§1.4 with the decision on QA Q1): always without a time
+ * rule; under one ([timeRule]) only when the rule leaves it usable - the row's app among the time
+ * lock's usable apps ([usableUnderRule]), a missed-call row when the rule allows calls and calls are
+ * managed (the time-rule screen's phone book). Otherwise the row just opens the keypad.
+ */
+fun glanceTargetTaken(timeRule: Boolean, usableUnderRule: Boolean): Boolean = !timeRule || usableUnderRule
+
+/** Where the open after the code runs from. */
+enum class GlanceOpenFrom {
+    /** The lock's unlock path ([PinLockActivity]'s leave step). */
+    LOCK,
+
+    /** The time-rule screen, after the lock handed the target over (QA Q1). */
+    TIME_RULE_SCREEN,
+}
+
+/** What happens to a target after the code ([glanceOpenStep]). */
+enum class GlanceOpen {
+    /** A time rule locks the phone: the time-rule screen comes up first and opens it over itself. */
+    HAND_TO_TIME_RULE_SCREEN,
+
+    /** The missed calls: one contact's sheet, else the phone book. */
+    MISSED_CALLS,
+
+    /** The notification's own content intent, sent from our visible window. */
+    SEND,
+
+    /** The app's launch intent. */
+    LAUNCH,
+
+    NOTHING,
+}
+
+/** The facts [glanceOpenStep] decides on; the Android glue (GlanceOpener) reads them. */
+data class GlanceOpenFacts(
+    val from: GlanceOpenFrom,
+    val missedCalls: Boolean,
+    /** A time rule locks the phone now (`lockReason != NONE`). */
+    val timeRule: Boolean,
+    /** From the time-rule screen: the rule leaves the target usable (the app is among its usable
+     * apps; for missed calls, calls are managed and the rule allows them). */
+    val usableUnderRule: Boolean,
+    /** Kiosk on and the lock was the lock-task root (the 1 s fallback) - read before its stop. */
+    val lockWasRoot: Boolean,
+    val installed: Boolean,
+    val suspended: Boolean,
+    val hidden: Boolean,
+    /** The conversation's newest content intent (else the one captured at the tap) exists. */
+    val hasIntent: Boolean,
+    val intentIsActivity: Boolean,
+    /** The intent's creator is the notification's own app (QA Low 10). */
+    val intentFromApp: Boolean,
+    /** The send already threw ([GlanceOpen.SEND] failed): the launch intent instead. */
+    val sendFailed: Boolean,
+    val hasLaunchIntent: Boolean,
+)
+
+/** The decision with its reason (the log names the package and the reason only). */
+data class GlanceOpenStep(val open: GlanceOpen, val reason: String)
+
+/**
+ * §1.4's table, with QA Q1 (a time rule hands the target to the time-rule screen), QA Medium 2 (no
+ * launch intent: nothing) and QA Low 10 (only the app's own intent is sent):
+ * | a time rule locks the phone (from the lock)    | the time-rule screen opens it over itself    |
+ * | from the time-rule screen, not usable under it | nothing                                      |
+ * | kiosk on and the lock was the lock-task root   | nothing (the app would cover Home)            |
+ * | missed calls                                   | one contact's sheet, else the phone book      |
+ * | not installed, suspended or hidden             | nothing                                      |
+ * | an activity intent created by the app itself   | sent from our visible window                 |
+ * | otherwise, or the send threw                   | the app's launch intent; none: nothing       |
+ */
+fun glanceOpenStep(f: GlanceOpenFacts): GlanceOpenStep = when {
+    f.from == GlanceOpenFrom.LOCK && f.timeRule -> GlanceOpenStep(GlanceOpen.HAND_TO_TIME_RULE_SCREEN, "time rule")
+    f.from == GlanceOpenFrom.TIME_RULE_SCREEN && !f.usableUnderRule -> GlanceOpenStep(GlanceOpen.NOTHING, "not usable under the time rule")
+    f.from == GlanceOpenFrom.LOCK && f.lockWasRoot -> GlanceOpenStep(GlanceOpen.NOTHING, "the lock was the lock-task root")
+    f.missedCalls -> GlanceOpenStep(GlanceOpen.MISSED_CALLS, "missed calls")
+    !f.installed -> GlanceOpenStep(GlanceOpen.NOTHING, "not installed")
+    f.suspended -> GlanceOpenStep(GlanceOpen.NOTHING, "suspended")
+    f.hidden -> GlanceOpenStep(GlanceOpen.NOTHING, "hidden")
+    f.hasIntent && f.intentIsActivity && f.intentFromApp && !f.sendFailed -> GlanceOpenStep(GlanceOpen.SEND, "intent")
+    f.hasLaunchIntent -> GlanceOpenStep(GlanceOpen.LAUNCH, "app")
+    else -> GlanceOpenStep(GlanceOpen.NOTHING, "no launch intent")
 }
