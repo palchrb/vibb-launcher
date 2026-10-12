@@ -12,6 +12,7 @@
     python3 -I scripts/fake-storytel.py --drop-at 40 --token-ttl 30
     python3 -I scripts/fake-storytel.py --locked 222
     python3 -I scripts/fake-storytel.py --refuse
+    python3 -I scripts/fake-storytel.py --slow-mint 5 --no-download 222,333   # design 26b step 4b, with fake-sonos.py
     python3 -I scripts/fake-storytel.py --print-listing 5 > debug-feed/items/5.json
     python3 -I scripts/fake-storytel.py --selftest
 
@@ -30,7 +31,10 @@ k@example.invalid): nothing here may look like a real account.
                                                        (--slow-mint S: after S seconds); a --locked cid: 403, no Location
     GET /cdn/<cid>.wav                                 a silent WAV of --books cid:MB; Range (206, 416 past the end);
                                                        the token valid --token-ttl seconds after its mint, then 403;
-                                                       --drop-at P closes each book's first transfer at P %
+                                                       --drop-at P closes each book's first transfer at P %;
+                                                       a --no-download cid: 503 (it mints, but never reaches the
+                                                       phone: a book not downloaded that a Sonos room still plays -
+                                                       the fake speaker never fetches; step 4b's checks)
 
 The log shows every request with its Range and token (fake values), so a resumed book reads as
 "Range bytes=N- token=FAKE-SIG-2" after "dropped at 40 %".
@@ -94,6 +98,7 @@ class Storytel:
                 raise SystemExit(f"--books: {cid!r} is not a consumable id")
             self.books[cid] = HEADER + int(float(mb or "1") * 1_000_000) // 2 * 2
         self.locked = set(filter(None, (args.locked or "").split(",")))
+        self.no_download = set(filter(None, (getattr(args, "no_download", "") or "").split(",")))
         self.refuse, self.no_jwt = args.refuse, args.no_jwt
         self.token_ttl, self.drop_at, self.slow_mint = args.token_ttl, args.drop_at, args.slow_mint
         self.advertise, self.port = args.advertise, args.port
@@ -191,6 +196,9 @@ def handler_for(st):
             if st.token_ttl and time.monotonic() - minted[1] > st.token_ttl:
                 log(f"cdn {cid}: 403 (token={token} expired)")
                 return self.send(403)
+            if cid in st.no_download:
+                log(f"cdn {cid}: 503 (--no-download: this book stays off the phone)")
+                return self.send(503)
             size = st.books[cid]
             start, end, status = 0, size - 1, 200
             if rng:
@@ -266,7 +274,7 @@ def selftest():
 
     def start(**over):
         ns = argparse.Namespace(books="111:0.2,222:0.05,333:0.05", locked="", refuse=False, no_jwt=False, token_ttl=0.0,
-                                drop_at=0, slow_mint=0.0, advertise="127.0.0.1", port=0)
+                                drop_at=0, slow_mint=0.0, advertise="127.0.0.1", port=0, no_download="")
         for k, v in over.items():
             setattr(ns, k, v)
         st = Storytel(ns)
@@ -359,6 +367,18 @@ def selftest():
     finally:
         srv.shutdown()
     print("5b. --refuse 403, --no-jwt 200 without a jwt, --locked 222 403 while 111 mints OK")
+    st, srv = start(no_download="222")
+    try:
+        status, headers, _ = get(st, "/assets/v2/consumables/222/abook", bearer)
+        assert status == asset["status"], "a book kept off the phone still mints (a room plays it)"
+        loc = urllib.parse.urlsplit(headers["Location"])
+        assert urllib.parse.parse_qs(loc.query)["consumableId"] == ["222"]
+        assert get(st, f"{loc.path}?{loc.query}")[0] == 503, "but never downloads"
+        loc = urllib.parse.urlsplit(get(st, "/assets/v2/consumables/111/abook", bearer)[1]["Location"])
+        assert get(st, f"{loc.path}?{loc.query}")[0] == 200
+    finally:
+        srv.shutdown()
+    print("5c. --no-download 222: it mints (for a Sonos room) but the CDN answers 503, while 111 downloads OK")
     print("\nFAKE STORYTEL SELFTEST OK - answers built from the same fixtures the JVM tests read.")
 
 
@@ -376,6 +396,8 @@ def main():
     p.add_argument("--token-ttl", type=float, default=0.0, help="seconds a minted token is valid (default: forever)")
     p.add_argument("--drop-at", type=int, default=0, help="close each book's first transfer at this percent")
     p.add_argument("--slow-mint", type=float, default=0.0, help="seconds before every 302 (step 4b's mint in flight)")
+    p.add_argument("--no-download", default="",
+                   help="cids the CDN answers 503: minted for a Sonos room, never on the phone (step 4b): 222,333")
     p.add_argument("--print-listing", type=int, metavar="ENTRY",
                    help="print the listing of these books for library entry ENTRY (debug-feed/items/ENTRY.json) and exit")
     p.add_argument("--version", default="00ff00ff00ff00ff",
