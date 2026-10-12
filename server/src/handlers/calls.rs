@@ -92,6 +92,8 @@ struct DeviceCallsTemplate {
     contacts: Vec<ContactView>,
     default_country_code: String,
     warnings: Vec<String>,
+    /// Good to know, nothing wrong (plain lines).
+    hints: Vec<String>,
     /// Reload every 5 s: waiting for the phone to confirm a role change.
     auto_refresh: bool,
     error: Option<String>,
@@ -175,6 +177,7 @@ async fn load_page(
         contacts,
         default_country_code,
         warnings: report.warnings,
+        hints: report.hints,
         // Never on an error render: a reload would lose the message and the typed contact
         // (qa-09-code #9).
         auto_refresh: report.auto_refresh && error.is_none(),
@@ -188,6 +191,8 @@ async fn load_page(
 /// What the calls page and the device page show about a phone's calls.
 pub(crate) struct CallReport {
     pub warnings: Vec<String>,
+    /// Good to know, nothing wrong (shown as a plain line, not an error).
+    pub hints: Vec<String>,
     /// Waiting for the phone to confirm a role change (reload the page).
     pub auto_refresh: bool,
 }
@@ -227,12 +232,13 @@ fn parse_sqlite_time(value: &str) -> Option<chrono::NaiveDateTime> {
     chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").ok()
 }
 
-/// `call_report`'s warnings only (the device page).
+/// `call_report`'s warnings and hints (the device page).
 pub(crate) async fn call_warnings(
     state: &AppState,
     policy: &DevicePolicy,
-) -> Result<Vec<String>, sqlx::Error> {
-    Ok(call_report(state, policy).await?.warnings)
+) -> Result<(Vec<String>, Vec<String>), sqlx::Error> {
+    let report = call_report(state, policy).await?;
+    Ok((report.warnings, report.hints))
 }
 
 /// What the parent should know about this phone's calls, from its latest status report: the
@@ -251,6 +257,7 @@ pub(crate) async fn call_report(
 ) -> Result<CallReport, sqlx::Error> {
     let mut report = CallReport {
         warnings: Vec::new(),
+        hints: Vec::new(),
         auto_refresh: false,
     };
     let latest: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
@@ -422,12 +429,14 @@ pub(crate) async fn call_report(
                 .to_string()
         });
     } else if screening == Some(false) {
-        warnings.push(
-            "Call-screening role not active: if another app holds it, that app screens incoming \
-             calls instead of the launcher (the launcher still hangs up calls that aren't \
-             allowed, after they may ring briefly), and if the launcher ever loses the phone-app \
-             role nothing filters them. Run `adb shell cmd role add-role-holder \
-             android.app.role.CALL_SCREENING <launcher package>` or accept the prompt on the phone."
+        // A hint, not a problem (the user's emulator, 2026-10-12): the phone app's own screening and
+        // in-call service filter incoming calls; the role only backs them up.
+        report.hints.push(
+            "Incoming calls are filtered: the launcher is the phone app. The call-screening role \
+             is an extra safeguard - it keeps filtering if the launcher ever lost the phone-app \
+             role. To add it: accept the prompt on the phone's home screen (at most once a day), \
+             or run `adb shell cmd role add-role-holder android.app.role.CALL_SCREENING <launcher \
+             package>`."
                 .to_string(),
         );
     }

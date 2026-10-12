@@ -293,6 +293,9 @@
         {% for warning in call_warnings %}
         <div class="error">{{ warning }}</div>
         {% endfor %}
+        {% for hint in call_hints %}
+        <p class="subtitle">{{ hint }}</p>
+        {% endfor %}
         <a href="/devices/{{ device.id }}/calls" class="button-small">Calls, contacts and SMS</a>
     </div>
 
