@@ -1,0 +1,50 @@
+{"items": {
+  "160662": {"model": {
+    "id": "160662",
+    "title": "Kokosbananas og tomattorsken", "kidsBook": true,
+    "cover": {"url": "http://c.example.invalid/2-model.jpg"},
+    "seriesInfo": {"id": "26175", "name": "Kokosbananas", "orderInSeries": 2},
+    "formats": [{"type": "abook", "id": "fmt-2",
+                 "durationInMilliseconds": 700000,
+                 "isLockedContent": false, "isGeoRestricted": false}]}},
+  "999": {"model": {
+    "id": "999",
+    "title": "Voksenkrim", "kidsBook": false,
+    "seriesInfo": {},
+    "formats": [{"type": "abook", "id": "fmt-9",
+                 "durationInMilliseconds": 1,
+                 "isLockedContent": true, "isGeoRestricted": false}]}},
+  "888": {"model": {
+    "id": "888",
+    "title": "Bare tekst", "formats": [{"type": "ebook", "id": "888"}]}},
+  "160661": {"model": {
+    "id": "160661",
+    "title": "Kokosbananas og godteristøvsugeren", "kidsBook": true,
+    "seriesInfo": {"id": "26175", "name": "Kokosbananas", "orderInSeries": 1},
+    "formats": [{"type": "ebook", "id": "fmt-1e"},
+                {"type": "abook", "id": "fmt-1",
+                 "durationInMilliseconds": 721893,
+                 "cover": {"url": "http://c.example.invalid/1.jpg"},
+                 "isLockedContent": false, "isGeoRestricted": false}]}},
+  "555": {"model": {
+    "id": 555,
+    "title": "Tall og bokstaver", "kidsBook": true,
+    "seriesInfo": {"id": 4242, "name": "Tallserien", "orderInSeries": 1},
+    "formats": [{"type": "abook", "id": 9555,
+                 "durationInMilliseconds": 3600000,
+                 "isLockedContent": false, "isGeoRestricted": true}]}},
+  "160663": {"model": {
+    "id": "160663",
+    "title": "Kokosbananas og den låste boka", "kidsBook": true,
+    "seriesInfo": {"id": "26175", "name": "Kokosbananas", "orderInSeries": 3},
+    "formats": [{"type": "abook", "id": "fmt-3",
+                 "durationInMilliseconds": 650000,
+                 "isLockedContent": true, "isGeoRestricted": false}]}},
+  "777": {"model": {
+    "id": "777",
+    "title": "Godnatthistorier", "kidsBook": true,
+    "seriesInfo": null,
+    "formats": [{"type": "abook", "id": "fmt-7",
+                 "durationInMilliseconds": 1800000,
+                 "cover": {"url": "http://c.example.invalid/7.jpg"}}]}}
+}}

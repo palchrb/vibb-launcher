@@ -167,6 +167,7 @@ impl TestApp {
             )),
             music_sweep: Default::default(),
             music_libraries: Default::default(),
+            storytel: Default::default(),
             net: std::sync::Arc::new(net),
             audit: Default::default(),
             limits: Default::default(),

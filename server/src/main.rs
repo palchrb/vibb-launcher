@@ -32,6 +32,7 @@ mod retention;
 mod security;
 mod sound_mode;
 mod startup;
+mod storytel;
 mod streams;
 #[cfg(test)]
 mod tests;
@@ -102,6 +103,9 @@ pub struct AppState {
     pub music_sweep: std::sync::Arc<music_sweep::Sweep>,
     /// Each phone's built music library, under the library revision (`music::LibraryCache`).
     pub music_libraries: std::sync::Arc<music::LibraryCache>,
+    /// The server's one Storytel session (design 26b §2.1): the JWT and the last shelf in memory,
+    /// one login at a time (`storytel::Account`).
+    pub storytel: std::sync::Arc<storytel::Account>,
     /// Where this server listens and whom it believes (design 22 §2): `net::NetConfig`.
     pub net: std::sync::Arc<net::NetConfig>,
     /// Security events that come in floods, written at most once a minute per client
@@ -120,6 +124,16 @@ pub struct AppState {
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
+/// The log filter: `rust_log` (RUST_LOG) or `info`, with reqwest never below `info` (design 26b
+/// QA L10): reqwest logs each redirect's URLs at `debug`, and the Storytel login's URL carries the
+/// e-mail and the encrypted password (`pwd=`), so `RUST_LOG=debug` must not print it.
+pub fn log_filter(rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
+    rust_log
+        .and_then(|value| tracing_subscriber::EnvFilter::try_new(value).ok())
+        .unwrap_or_else(|| tracing_subscriber::EnvFilter::new("info"))
+        .add_directive("reqwest=info".parse().expect("a valid directive"))
+}
+
 #[tokio::main]
 async fn main() {
     // Everything this process writes (the database, backups, the live mirror, keys) is for the
@@ -128,12 +142,10 @@ async fn main() {
     dotenvy::dotenv().ok();
     // `info` unless RUST_LOG says otherwise: the startup lines (where the server listens, the
     // generated first password's file, the Storytel key) must reach the journal and `docker
-    // logs`. tracing-subscriber's own default is errors only.
+    // logs`. tracing-subscriber's own default is errors only. reqwest is floored at `info`
+    // whatever RUST_LOG says (`log_filter`).
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(log_filter(std::env::var("RUST_LOG").ok().as_deref()))
         .init();
 
     // Subcommands (design 22 §3.2.3, §6): run against the same .env and database, then exit.
@@ -334,6 +346,7 @@ async fn main() {
         )),
         music_sweep: Default::default(),
         music_libraries: Default::default(),
+        storytel: Default::default(),
         net: std::sync::Arc::new(net_config),
         audit: Default::default(),
         limits: Default::default(),
