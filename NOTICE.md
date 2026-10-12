@@ -74,3 +74,30 @@ stop, the room scope) and the renderer axis in `music/app/src/main/java/me/vibb/
 emulator, is modelled on vibb's test fakes (`tests/sonos_renderer.py`'s fake sidecar and `tests/sonos_contract.py`'s
 rule that both fakes answer from one source of truth). vibb's MIT License, Copyright (c) 2026 palchrb, and its notice
 above cover these too.
+
+Storytel (design 26b) reimplements, under the GPL-3.0 (or later), the behaviour of
+[palchrb/vibb](https://github.com/palchrb/vibb)'s Storytel code:
+- `pi/vibb/storytel.py` - the login with the AES-encrypted password, the JWT and its one re-login on a 401, the
+  refused-login cooldown, the bookshelf and `normalize_shelf`'s grouping into series and standalone books, `sync`
+  minus the downloads and `write_shelf` - in Rust in `server/src/storytel.rs` and `server/src/music_sweep.rs` (the
+  server lists each Storytel entry); and the login, the cooldown, the asset call's 302 captured (never followed),
+  `sync`'s downloads (one book at a time, a fresh URL every attempt, the disk floor) and `entries_for(remote)` in
+  Kotlin in `music/app/src/main/java/me/vibb/music/storytel/`, `logic/Storytel.kt`, `sync/DownloadRun.kt` and
+  `data/Snapshot.kt`;
+- the Storytel parts of `pi/vibb/library.py` (a Storytel entry's cache 0 read as every book, `_natural_order`'s oldest
+  first, the sweep's Storytel branch, `_mark_new_seen`) and `pi/vibb/content.py` (`newest_episode_id`,
+  `cache_key_for`, `collection_image`, `expand_entries` with `PREFER_REMOTE`) - in the server's save, library and
+  import (`storytel::cache_value`, `server/src/music_import.rs`) and in the music app's `logic/` and `data/Snapshot.kt`;
+- the Storytel parts of `pi/daemon.py` - `_sonos_body`'s Storytel branch (the URL minted late, right before the
+  speaker is told to play), `sonos_start_target`'s exemption from the http-only filter, `_sonos_known_duration` and
+  the poller's duration lookup by `consumableId`, and adopt matching a signed URL by its `consumableId` - in
+  `music/app/src/main/java/me/vibb/music/sonos/` (`PlayBody.kt`, `SonosController.kt`, `SonosLifecycle.kt`).
+
+Their unit tests port vibb's `tests/storytel_*.py` (all but the bookmark mirror, which is not ported);
+`scripts/fake-storytel.py` is modelled on vibb's test fakes. Each ported file says so in its header. vibb's MIT
+License, Copyright (c) 2026 palchrb, and its notice above cover these too. vibb's `storytel.py` follows storytel-player
+1.3.0 ([debba/storytel-player](https://github.com/debba/storytel-player), `server/storytelApi.ts` and
+`server/passwordCrypt.ts`: the endpoints, the request quirks and the password encryption), licensed under the MIT
+License, Copyright (c) 2025 Andrea Debernardi (debba); its permission notice is in
+[`music/app/src/main/assets/licenses/MIT-storytel-player.txt`](music/app/src/main/assets/licenses/MIT-storytel-player.txt),
+shipped in the app, and covers the server's port too.
