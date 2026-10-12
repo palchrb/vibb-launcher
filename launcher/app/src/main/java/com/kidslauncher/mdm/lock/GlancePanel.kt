@@ -24,6 +24,8 @@ import com.kidslauncher.mdm.badges.GlanceMessageRow
 import com.kidslauncher.mdm.badges.GlanceMissedRow
 import com.kidslauncher.mdm.badges.GlanceRow
 import com.kidslauncher.mdm.badges.GlanceStore
+import com.kidslauncher.mdm.badges.GlanceSubtitle
+import com.kidslauncher.mdm.badges.glanceSubtitle
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.MissedCallNotifier
@@ -289,12 +291,15 @@ class GlancePanel(
         val messages = res.getQuantityString(R.plurals.glance_messages, row.count, row.count)
         val title = row.title ?: label
         val missed = activity.getString(R.string.glance_missed)
-        val subtitle = when {
-            // A missed call in the app (Element Call, bug 25b-E): never "N meldinger".
-            row.missedCall -> "$missed · $label"
-            row.level == GlanceLevel.APP_ONLY -> res.getQuantityString(R.plurals.glance_notices, row.count, row.count)
-            row.level == GlanceLevel.TEXT && row.text != null -> row.text
-            else -> "$label · $messages"
+        // A missed call in the app (Element Call, bug 25b-E) - never at APP_ONLY (qa-25b-25f L4).
+        val kind = glanceSubtitle(row.level, row.missedCall, row.count, row.text != null)
+        val missedShown = kind == GlanceSubtitle.MISSED_CALL || kind == GlanceSubtitle.MISSED_CALL_AND_COUNT
+        val subtitle = when (kind) {
+            GlanceSubtitle.MISSED_CALL -> "$missed · $label"
+            GlanceSubtitle.MISSED_CALL_AND_COUNT -> "$missed · $messages"
+            GlanceSubtitle.NOTICES -> res.getQuantityString(R.plurals.glance_notices, row.count, row.count)
+            GlanceSubtitle.TEXT -> row.text ?: "$label · $messages"
+            GlanceSubtitle.COUNT -> "$label · $messages"
         }
         val time = timeText(row.timeMs)
         view.root.visibility = View.VISIBLE
@@ -304,7 +309,7 @@ class GlancePanel(
         view.glanceRowTime.text = time
         view.glanceRowInitial.visibility = View.GONE
         // The red phone badge on the app's icon for a missed call, as on a phone call's row.
-        view.glanceRowBadge.visibility = if (row.missedCall) View.VISIBLE else View.GONE
+        view.glanceRowBadge.visibility = if (missedShown) View.VISIBLE else View.GONE
         val icon = appIcon(row.packageName)
         plainIcon(view)
         if (icon != null) {
@@ -316,11 +321,11 @@ class GlancePanel(
         }
         val count = if (row.level == GlanceLevel.APP_ONLY) subtitle else messages
         val spoken = when {
-            row.missedCall && row.title != null -> listOf(label, activity.getString(R.string.glance_missed_from, row.title), time)
-            row.missedCall -> listOf(label, missed, time)
+            missedShown && row.title != null -> listOf(label, activity.getString(R.string.glance_missed_from, row.title), messages.takeIf { row.count > 1 }, time)
+            missedShown -> listOf(label, missed, messages.takeIf { row.count > 1 }, time)
             else -> listOfNotNull(label, row.title, row.text.takeIf { row.level == GlanceLevel.TEXT }, count, time)
         }
-        describe(view, spoken.distinct().joinToString(", "), activity.getString(R.string.glance_open_action))
+        describe(view, spoken.filterNotNull().distinct().joinToString(", "), activity.getString(R.string.glance_open_action))
     }
 
     private fun bindMissed(view: ViewLockGlanceRowBinding, row: GlanceMissedRow) {

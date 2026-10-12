@@ -115,6 +115,23 @@ fun glanceSuspended(ranked: Boolean, isSuspended: Boolean): Boolean = !ranked ||
  * notification when it holds an RTC notification event); its row is a missed-call row. */
 fun glanceMissedCall(category: String?): Boolean = category == "missed_call"
 
+/** What a message row's subtitle says (qa-25b-25f L4). */
+enum class GlanceSubtitle { MISSED_CALL, MISSED_CALL_AND_COUNT, NOTICES, TEXT, COUNT }
+
+/**
+ * A message row's subtitle: a missed call in the app says so - with the count when the
+ * conversation has more than the call - but only from SENDER up: at APP_ONLY (the app hides its
+ * notifications' content, e.g. lock-screen visibility SECRET) the row stays "N varsler" and shows
+ * no call badge either, so the lock never tells more than the app chose to.
+ */
+fun glanceSubtitle(level: GlanceLevel, missedCall: Boolean, count: Int, hasText: Boolean): GlanceSubtitle = when {
+    level == GlanceLevel.APP_ONLY -> GlanceSubtitle.NOTICES
+    missedCall && count > 1 -> GlanceSubtitle.MISSED_CALL_AND_COUNT
+    missedCall -> GlanceSubtitle.MISSED_CALL
+    level == GlanceLevel.TEXT && hasText -> GlanceSubtitle.TEXT
+    else -> GlanceSubtitle.COUNT
+}
+
 /** How much of a notification is read (ordered: each level reads everything the one before does). */
 enum class GlanceLevel {
     /** Not ticked: never read past its package name. */
