@@ -989,6 +989,65 @@ async fn the_backlog_stops_after_five_series_pictures_and_comes_back() {
     assert!(listing(&app, id).await.art_backlog);
 }
 
+/// Code QA L2: with the backlog off, a new item that wasn't fetched in its own first check (the
+/// day's budget was spent) is still new at the next check; older items still wait.
+#[tokio::test]
+async fn with_the_backlog_off_a_new_item_that_missed_its_check_stays_new() {
+    let app = TestApp::new().await;
+    let feed = "https://example.org/late.rss";
+    let id = rss_entry(&app, feed).await;
+    let old_items = [
+        ("o1", Some("https://example.org/o1.jpg")),
+        ("o2", Some("https://example.org/o2.jpg")),
+    ];
+    app.fetch.answer(feed, 200, art_feed(None, &old_items));
+    app.state.music_sweep.set_art_per_check(0);
+    check(&app, id, t0()).await;
+    app.state
+        .music_sweep
+        .set_art_per_check(sweep::ART_PER_CHECK);
+    sqlx::query("UPDATE music_listings SET art_backlog = 0, art_backlog_at = ? WHERE entry_id = ?")
+        .bind(stamp(t0() + TimeDelta::minutes(30)))
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for url in ["o1", "o2", "n1"] {
+        app.fetch.answer(
+            &format!("https://example.org/{url}.jpg"),
+            200,
+            png(0b0110_1001, 300, 300),
+        );
+    }
+    let mut with_new = old_items.to_vec();
+    with_new.push(("n1", Some("https://example.org/n1.jpg")));
+    app.fetch.answer(feed, 200, art_feed(None, &with_new));
+    // The day's budget is spent when n1 first shows up.
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400) \
+         INSERT INTO music_art_requests (at) SELECT ? FROM n",
+    )
+    .bind(stamp(t0() + TimeDelta::minutes(40)))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    check(&app, id, t0() + TimeDelta::hours(1)).await;
+    assert_eq!(calls_to(&app, "https://example.org/n1.jpg"), 0);
+    sqlx::query("DELETE FROM music_art_requests")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    check(&app, id, t0() + TimeDelta::hours(2)).await;
+    assert_eq!(calls_to(&app, "https://example.org/n1.jpg"), 1, "still new");
+    assert_eq!(
+        calls_starting(&app, "https://example.org/o"),
+        0,
+        "the backlog waits"
+    );
+    // n1 is the entry's own picture: the backlog is on again from here (§1.4).
+    assert!(listing(&app, id).await.art_backlog);
+}
+
 // ------------------------------------------------------------------------------------------------
 // A new cover (§1.3 step 6, QA M2)
 // ------------------------------------------------------------------------------------------------

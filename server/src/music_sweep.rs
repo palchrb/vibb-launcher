@@ -2640,12 +2640,24 @@ async fn art_pass(
         order.reverse();
     }
     let this_check = stamp(now);
+    let backlog = plan.art.backlog;
+    // With the backlog off, an item first seen after it went off is still new: one that missed
+    // its first check (the day's budget, a host outage) isn't left for a month (code QA L2).
+    let off_since = if backlog {
+        None
+    } else {
+        plan.art.backlog_at.as_deref().and_then(parse_stamp)
+    };
+    let is_new = |item: &Item| {
+        item.first_seen_at == this_check
+            || off_since
+                .is_some_and(|off| parse_stamp(&item.first_seen_at).is_some_and(|f| f > off))
+    };
     let (new, older): (Vec<usize>, Vec<usize>) = order
         .into_iter()
         .filter(|at| art_candidate(&plan.items[*at]))
         .take(ART_WINDOW)
-        .partition(|at| plan.items[*at].first_seen_at == this_check);
-    let backlog = plan.art.backlog;
+        .partition(|at| is_new(&plan.items[*at]));
     let candidates: Vec<usize> = new
         .into_iter()
         .chain(older.into_iter().filter(|_| backlog))
