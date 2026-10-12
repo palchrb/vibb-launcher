@@ -814,6 +814,10 @@ pub fn build_admin_router(
         )
         .route("/devices/{id}/command/lock", post(handlers::locate::lock))
         .route("/devices/{id}/command/wipe", post(handlers::locate::wipe))
+        .route(
+            "/devices/{id}/commands/{command_id}/cancel",
+            post(handlers::locate::cancel_command),
+        )
         .route("/apps", get(handlers::tracked_apps::list_apps))
         .route(
             "/apps/tracked/new",

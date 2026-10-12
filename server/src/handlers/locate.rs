@@ -7,6 +7,7 @@
 
 use askama::Template;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Json, Redirect};
 use axum::{Extension, Form};
 use std::collections::HashMap;
@@ -25,7 +26,9 @@ struct LocateTemplate {
     /// the dropdown's `<option>` loop can compare without nested `if let`.
     selected_id: i64,
     /// The recent commands with their status lines ([DeviceCommand::status_line]).
-    commands: Vec<(DeviceCommand, String)>,
+    commands: Vec<CommandRow>,
+    /// The one-shot line after "Cancel" (`?cancel=done|too_late`).
+    cancel_notice: Option<&'static str>,
     wipe_error: Option<String>,
     /// The selected device's `location_mode` / `location_interval_minutes`.
     location_mode: String,
@@ -109,11 +112,32 @@ fn describe_fix(
     }
 }
 
+/// A row of the Recent commands table.
+struct CommandRow {
+    command: String,
+    requested_at: String,
+    status: String,
+    /// The row's id while it can still be cancelled ([DeviceCommand::cancellable]).
+    cancel_id: Option<i64>,
+}
+
+/// The line after a "Cancel" (`?cancel=`).
+fn cancel_notice(code: Option<&str>) -> Option<&'static str> {
+    match code? {
+        "done" => Some("Cancelled - the phone will never get it."),
+        "too_late" => Some(
+            "Too late to cancel: the phone had just fetched it (or it had expired). Its status is below.",
+        ),
+        _ => None,
+    }
+}
+
 async fn render_locate_page(
     state: &AppState,
     selected_id: Option<i64>,
     wipe_error: Option<String>,
     waiting_for_fix: bool,
+    cancel: Option<&str>,
 ) -> Html<String> {
     let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name")
         .fetch_all(&state.db)
@@ -143,9 +167,11 @@ async fn render_locate_page(
     };
     let commands = commands
         .into_iter()
-        .map(|command| {
-            let status = command.status_line(now, receipts);
-            (command, status)
+        .map(|command| CommandRow {
+            status: command.status_line(now, receipts),
+            cancel_id: command.cancellable(now).then_some(command.id),
+            command: command.command,
+            requested_at: command.requested_at,
         })
         .collect();
 
@@ -202,6 +228,7 @@ async fn render_locate_page(
             selected,
             selected_id,
             commands,
+            cancel_notice: cancel_notice(cancel),
             wipe_error,
             location_mode,
             location_interval,
@@ -225,7 +252,64 @@ pub async fn show_locate(
 ) -> impl IntoResponse {
     let selected_id = params.get("device").and_then(|s| s.parse::<i64>().ok());
     let waiting = params.contains_key("requested");
-    render_locate_page(&state, selected_id, None, waiting).await
+    let cancel = params.get("cancel").map(String::as_str);
+    render_locate_page(&state, selected_id, None, waiting, cancel).await
+}
+
+/// `POST /devices/{id}/commands/{command_id}/cancel` (full auth): the Locate page's "Cancel" for a
+/// command the phone hasn't fetched yet (the user's decision, 2026-10-12). One statement, so it
+/// races the policy's pop cleanly: whichever comes first wins - a cancelled command is never handed
+/// out (the pop skips `cancelled_at`), and one the phone just fetched can't be cancelled (`too_late`,
+/// as is an expired one). Logged in the security log. Back to the same page and place
+/// (scroll-restore.js: same path, no #fragment).
+pub async fn cancel_command(
+    State(state): State<AppState>,
+    Path((id, command_id)): Path<(i64, i64)>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+) -> impl IntoResponse {
+    let cancelled: Result<Option<(String, String)>, sqlx::Error> = sqlx::query_as(
+        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'parent' \
+         WHERE id = ? AND device_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL \
+           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
+         RETURNING command, requested_at",
+    )
+    .bind(command_id)
+    .bind(id)
+    .bind(crate::models::EXPIRING_COMMANDS[0])
+    .bind(crate::models::EXPIRING_COMMANDS[1])
+    .bind(crate::models::EXPIRING_COMMANDS[2])
+    .bind(crate::models::EXPIRING_COMMANDS[3])
+    .bind(format!(
+        "-{} minutes",
+        crate::models::COMMAND_EXPIRY_MINUTES
+    ))
+    .fetch_optional(&state.db)
+    .await;
+    let outcome = match cancelled {
+        Ok(Some((command, requested_at))) => {
+            security::record_security_event(
+                &state.db,
+                "device_command_cancelled",
+                Some(&admin.username),
+                None,
+                Some(&format!(
+                    "{command} (asked {requested_at} UTC), device {id}"
+                )),
+            )
+            .await;
+            "done"
+        }
+        Ok(None) => "too_late",
+        Err(err) => {
+            tracing::error!(device_id = id, command_id, %err, "can't cancel the command");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't cancel it - check the server log. The command may still reach the phone.",
+            )
+                .into_response();
+        }
+    };
+    Redirect::to(&format!("/devices/locate?device={id}&cancel={outcome}")).into_response()
 }
 
 pub async fn locations_json(
@@ -511,6 +595,7 @@ pub async fn wipe(
             Some(id),
             Some("That didn't match the device name - nothing was wiped.".to_string()),
             false,
+            None,
         )
         .await
         .into_response();

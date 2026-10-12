@@ -512,16 +512,20 @@ async fn a_new_enrollment_never_gets_the_earlier_phones_commands() {
         policy(&app, &new_token).await["pending_command"].is_null(),
         "neither the wipe nor the lock"
     );
-    let commands: Vec<String> =
-        sqlx::query_scalar("SELECT command FROM device_commands WHERE device_id = ? ORDER BY id")
-            .bind(device)
-            .fetch_all(&app.db)
-            .await
-            .unwrap();
+    let commands: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT command, cancel_reason FROM device_commands WHERE device_id = ? ORDER BY id",
+    )
+    .bind(device)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
     assert_eq!(
         commands,
-        ["lock"],
-        "the undelivered wipe is gone, the lock stays history"
+        [
+            ("lock".to_string(), None),
+            ("wipe".to_string(), Some("enrolled".to_string()))
+        ],
+        "the undelivered wipe is cancelled, the lock stays history"
     );
     let detail: String = sqlx::query_scalar(
         "SELECT detail FROM security_events WHERE event_type = 'device_enrolled' ORDER BY id DESC LIMIT 1",

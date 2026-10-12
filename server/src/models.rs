@@ -516,6 +516,25 @@ pub struct DeviceCommand {
     pub first_delivered_at: Option<String>,
     /// `None` for results from before migration 0065 (and launchers that sent none).
     pub succeeded: Option<bool>,
+    /// Cancelled before it reached the phone (migration 0068): by the parent on the Locate page,
+    /// or by an enrollment into the row ([cancel_reason] "enrolled").
+    pub cancelled_at: Option<String>,
+    pub cancel_reason: Option<String>,
+}
+
+/// Commands that expire when the phone doesn't fetch them within [COMMAND_EXPIRY_MINUTES] of the
+/// request (the user's decision, 2026-10-12): a pause, a ring, its stop or a location update that
+/// comes later than that is no longer what the parent asked for. They are never handed out after
+/// that - not first, not again (L12's re-delivery). A wipe and a lock wait for the phone however
+/// long it takes - a lost phone that comes back weeks later must still be wiped or locked -, and so
+/// do design 24b's "Lock again" and "Allow these apps" (not part of the decision).
+pub const EXPIRING_COMMANDS: [&str; 4] = ["start_pause", "ring", "stop_ring", "locate"];
+
+/// See [EXPIRING_COMMANDS].
+pub const COMMAND_EXPIRY_MINUTES: i64 = 60;
+
+pub fn command_expires(command: &str) -> bool {
+    EXPIRING_COMMANDS.contains(&command)
 }
 
 /// How long a delivered command may go unconfirmed before the page says it may be lost.
@@ -547,11 +566,25 @@ fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
 }
 
 impl DeviceCommand {
+    /// Past its hour ([EXPIRING_COMMANDS]): never handed out from then on.
+    fn past_expiry(&self, now: chrono::NaiveDateTime) -> bool {
+        command_expires(&self.command)
+            && minutes_since(&self.requested_at, now).is_some_and(|m| m >= COMMAND_EXPIRY_MINUTES)
+    }
+
+    /// The Locate page's "Cancel": still waiting for the phone.
+    pub fn cancellable(&self, now: chrono::NaiveDateTime) -> bool {
+        self.delivered_at.is_none() && self.cancelled_at.is_none() && !self.past_expiry(now)
+    }
+
     /// Whether a phone that confirms commands may still be offered this one again: delivered, not
-    /// confirmed, under [MAX_COMMAND_DELIVERIES] and within [REDELIVER_WINDOW_MINUTES] of its first
-    /// delivery (the pop in `device_api::build_policy` applies the same rule, plus the 2-minute gap).
+    /// confirmed, under [MAX_COMMAND_DELIVERIES], within [REDELIVER_WINDOW_MINUTES] of its first
+    /// delivery and, for an [EXPIRING_COMMANDS] one, within its hour (the pop in
+    /// `device_api::build_policy` applies the same rule, plus the 2-minute gap).
     pub fn redeliverable(&self, now: chrono::NaiveDateTime) -> bool {
-        self.received_at.is_none()
+        !self.past_expiry(now)
+            && self.cancelled_at.is_none()
+            && self.received_at.is_none()
             && self.acknowledged_at.is_none()
             && self.deliveries < MAX_COMMAND_DELIVERIES
             && self
@@ -579,6 +612,14 @@ impl DeviceCommand {
                 format!("Done{at} ({result})")
             };
         }
+        if let Some(cancelled) = &self.cancelled_at {
+            return match self.cancel_reason.as_deref() {
+                Some("enrolled") => format!(
+                    "Cancelled {cancelled} - a new phone was enrolled on this page, so it was never sent"
+                ),
+                _ => format!("Cancelled {cancelled} - never sent"),
+            };
+        }
         if let Some(received) = &self.received_at {
             if self.command == "wipe" {
                 return format!(
@@ -592,6 +633,22 @@ impl DeviceCommand {
             };
         }
         let Some(delivered) = &self.delivered_at else {
+            if self.past_expiry(now) {
+                return format!(
+                    "Expired - the phone didn't check in within {} minutes, so it was never sent",
+                    COMMAND_EXPIRY_MINUTES
+                );
+            }
+            if command_expires(&self.command)
+                && let Ok(asked) =
+                    chrono::NaiveDateTime::parse_from_str(&self.requested_at, "%Y-%m-%d %H:%M:%S")
+            {
+                let until = asked + chrono::Duration::minutes(COMMAND_EXPIRY_MINUTES);
+                return format!(
+                    "Waiting for the phone to check in - expires {} if it doesn't",
+                    until.format("%Y-%m-%d %H:%M:%S")
+                );
+            }
             return "Waiting for the phone to check in".to_string();
         };
         let waited = minutes_since(delivered, now);

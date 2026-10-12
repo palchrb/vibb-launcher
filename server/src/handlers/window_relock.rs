@@ -102,12 +102,16 @@ pub async fn card(
     }
 }
 
+/// A row of [last_answers]: command, requested_at, acknowledged_at, result, delivered, cancelled.
+type AnswerRow = (String, String, Option<String>, Option<String>, bool, bool);
+
 /// The newest of each of this design's commands for [device_id], with the phone's answer. Empty on
 /// a database error.
 async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_relock::CommandAnswer> {
     let [end_windows, allow_blocked, start_pause] = window_relock::OWN_INSERT_COMMANDS;
-    let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT command, requested_at, acknowledged_at, result FROM device_commands \
+    let rows: Vec<AnswerRow> = sqlx::query_as(
+        "SELECT command, requested_at, acknowledged_at, result, delivered_at IS NOT NULL, \
+         cancelled_at IS NOT NULL FROM device_commands \
          WHERE id IN (SELECT MAX(id) FROM device_commands WHERE device_id = ? \
                       AND command IN (?, ?, ?) GROUP BY command) \
          ORDER BY id",
@@ -129,14 +133,18 @@ async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_reloc
             .map(|t| t.and_utc().timestamp_millis())
     };
     rows.into_iter()
-        .filter_map(|(command, requested, acknowledged, result)| {
-            Some(window_relock::CommandAnswer {
-                command,
-                requested_ms: ms(&requested)?,
-                acknowledged_ms: acknowledged.as_deref().and_then(ms),
-                result,
-            })
-        })
+        .filter_map(
+            |(command, requested, acknowledged, result, delivered, cancelled)| {
+                Some(window_relock::CommandAnswer {
+                    command,
+                    requested_ms: ms(&requested)?,
+                    acknowledged_ms: acknowledged.as_deref().and_then(ms),
+                    result,
+                    delivered,
+                    cancelled,
+                })
+            },
+        )
         .collect()
 }
 

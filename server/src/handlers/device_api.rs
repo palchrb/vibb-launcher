@@ -336,14 +336,17 @@ pub(crate) async fn build_policy(
     // REDELIVER_AFTER_MINUTES, at most MAX_COMMAND_DELIVERIES times in all and only within
     // REDELIVER_WINDOW_MINUTES of its first delivery, so nothing stale ever replays (QA of the
     // launcher wave, High 1; the phone runs a command once). For an older launcher delivery stays
-    // at-most-once, which is why every command must be safe to simply queue again. See
-    // migrations/0010_find_my_device.sql, 0065_command_receipts.sql and handlers::locate.
+    // at-most-once, which is why every command must be safe to simply queue again. A command
+    // the parent cancelled is never handed out, nor - first or again - a pause, ring, stop or
+    // location update past its hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
+    // migrations/0010_find_my_device.sql, 0065_command_receipts.sql, 0068 and handlers::locate.
     let receipts = sends_command_receipts(&state.db, device_id).await?;
     let popped = sqlx::query_as::<_, (i64, String, String)>(
         "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
            first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
          WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
-           AND received_at IS NULL AND acknowledged_at IS NULL \
+           AND received_at IS NULL AND acknowledged_at IS NULL AND cancelled_at IS NULL \
+           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
            AND (delivered_at IS NULL OR (? AND deliveries < ? \
                 AND delivered_at <= datetime('now', ?) \
                 AND first_delivered_at > datetime('now', ?))) \
@@ -351,6 +354,14 @@ pub(crate) async fn build_policy(
          RETURNING id, command, requested_at",
     )
     .bind(device_id)
+    .bind(crate::models::EXPIRING_COMMANDS[0])
+    .bind(crate::models::EXPIRING_COMMANDS[1])
+    .bind(crate::models::EXPIRING_COMMANDS[2])
+    .bind(crate::models::EXPIRING_COMMANDS[3])
+    .bind(format!(
+        "-{} minutes",
+        crate::models::COMMAND_EXPIRY_MINUTES
+    ))
     .bind(receipts)
     .bind(crate::models::MAX_COMMAND_DELIVERIES)
     .bind(format!(
@@ -1336,15 +1347,28 @@ async fn log_play_events(
     }
 }
 
-/// At an enrollment: the device's commands not yet delivered are deleted, and the delivered ones
+/// At an enrollment: the device's commands not yet delivered are cancelled, and the delivered ones
 /// its phone never confirmed are used up (`deliveries` at the maximum), so none of them reaches the
 /// newly enrolled phone (QA of the launcher wave, Low 2). Returns how many; a DB error is logged.
 async fn end_pending_commands(db: &sqlx::SqlitePool, device_id: i64) -> u64 {
-    let deleted =
-        sqlx::query("DELETE FROM device_commands WHERE device_id = ? AND delivered_at IS NULL")
-            .bind(device_id)
-            .execute(db)
-            .await;
+    // Cancelled, not deleted: the Locate page keeps them as history ("a new phone was enrolled").
+    // An expired one stays "Expired": it was never going to be sent anyway.
+    let cancelled = sqlx::query(
+        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'enrolled' \
+         WHERE device_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL \
+           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?))",
+    )
+    .bind(device_id)
+    .bind(crate::models::EXPIRING_COMMANDS[0])
+    .bind(crate::models::EXPIRING_COMMANDS[1])
+    .bind(crate::models::EXPIRING_COMMANDS[2])
+    .bind(crate::models::EXPIRING_COMMANDS[3])
+    .bind(format!(
+        "-{} minutes",
+        crate::models::COMMAND_EXPIRY_MINUTES
+    ))
+    .execute(db)
+    .await;
     let used_up = sqlx::query(
         "UPDATE device_commands SET deliveries = ? WHERE device_id = ? AND delivered_at IS NOT NULL \
          AND received_at IS NULL AND acknowledged_at IS NULL AND deliveries < ?",
@@ -1355,7 +1379,7 @@ async fn end_pending_commands(db: &sqlx::SqlitePool, device_id: i64) -> u64 {
     .execute(db)
     .await;
     let mut count = 0;
-    for outcome in [deleted, used_up] {
+    for outcome in [cancelled, used_up] {
         match outcome {
             Ok(done) => count += done.rows_affected(),
             Err(err) => tracing::error!(device_id, %err, "can't end the device's pending commands"),
@@ -1390,12 +1414,16 @@ pub(crate) async fn redelivery_nudge(
 ) -> bool {
     let pending: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "SELECT id FROM device_commands WHERE id = ? AND device_id = ? AND received_at IS NULL \
-         AND acknowledged_at IS NULL AND deliveries < ? AND first_delivered_at > datetime('now', ?)",
+         AND acknowledged_at IS NULL AND cancelled_at IS NULL AND deliveries < ? \
+         AND first_delivered_at > datetime('now', ?)",
     )
     .bind(command_id)
     .bind(device_id)
     .bind(crate::models::MAX_COMMAND_DELIVERIES)
-    .bind(format!("-{} minutes", crate::models::REDELIVER_WINDOW_MINUTES))
+    .bind(format!(
+        "-{} minutes",
+        crate::models::REDELIVER_WINDOW_MINUTES
+    ))
     .fetch_optional(db)
     .await;
     match pending {

@@ -696,6 +696,10 @@ pub struct CommandAnswer {
     pub requested_ms: i64,
     pub acknowledged_ms: Option<i64>,
     pub result: Option<String>,
+    /// The phone fetched it.
+    pub delivered: bool,
+    /// Cancelled before it reached the phone (by the parent, or by an enrollment).
+    pub cancelled: bool,
 }
 
 fn command_label(command: &str) -> Option<&'static str> {
@@ -722,6 +726,17 @@ pub fn answer_line(answer: &CommandAnswer, now_ms: i64) -> Option<String> {
             format!("the phone answered \"{result}\"")
         }
         (Some(_), None) => "the phone answered".to_string(),
+        (None, _) if answer.cancelled => "cancelled before it reached the phone".to_string(),
+        // Expiry (the user's decision, 2026-10-12): a pause the phone didn't fetch within the hour
+        // is never sent.
+        (None, _)
+            if !answer.delivered
+                && crate::models::command_expires(&answer.command)
+                && now_ms - answer.requested_ms
+                    >= crate::models::COMMAND_EXPIRY_MINUTES * 60 * 1000 =>
+        {
+            "expired - the phone didn't check in within an hour, so it was never sent".to_string()
+        }
         (None, _) => "no answer from the phone yet".to_string(),
     };
     Some(format!("\"{label}\" pressed {when}: {said}."))
@@ -936,6 +951,8 @@ mod tests {
             requested_ms: NOW - 2 * 60 * 60 * 1000,
             acknowledged_ms: ack,
             result: result.map(str::to_string),
+            delivered: ack.is_some(),
+            cancelled: false,
         };
         assert_eq!(
             answer_line(&answer(Some(NOW), Some("ended: pause")), NOW).unwrap(),
@@ -970,6 +987,36 @@ mod tests {
         };
         assert!(!allowed_since_relock(Some(&unanswered), 0));
         assert!(!allowed_since_relock(None, 0));
+        // Expiry and cancel (2026-10-12): a pause never fetched within the hour expired; "Lock
+        // again" waits however long it takes; a cancelled one says so.
+        let pause = |minutes: i64| CommandAnswer {
+            command: START_PAUSE.to_string(),
+            requested_ms: NOW - minutes * 60 * 1000,
+            ..answer(None, None)
+        };
+        assert!(answer_line(&pause(61), NOW).unwrap().ends_with(
+            "expired - the phone didn't check in within an hour, so it was never sent."
+        ));
+        assert!(
+            answer_line(&pause(59), NOW)
+                .unwrap()
+                .ends_with("no answer from the phone yet.")
+        );
+        assert!(
+            answer_line(&answer(None, None), NOW)
+                .unwrap()
+                .ends_with("no answer from the phone yet."),
+            "2 h old, but it doesn't expire"
+        );
+        let cancelled = CommandAnswer {
+            cancelled: true,
+            ..pause(5)
+        };
+        assert!(
+            answer_line(&cancelled, NOW)
+                .unwrap()
+                .ends_with("cancelled before it reached the phone.")
+        );
     }
 
     /// The launcher's `relock_blocks` literal (PolicyResponseCompatTest).
