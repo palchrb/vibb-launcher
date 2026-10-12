@@ -7,7 +7,8 @@ import me.vibb.music.model.Source
  * The play order, ported from palchrb/vibb `pi/vibb/library.py` (`_natural_order`,
  * `_expand_target_uncached`; MIT License, Copyright (c) 2026 palchrb), reimplemented in Kotlin under
  * the GPL-3.0 (or later) - see NOTICE.md. Design 21 §4.4: NRK podkast and RSS play newest first,
- * an NRK serie and own files oldest first; an explicit order other than the natural one reverses.
+ * an NRK serie, own files and a Storytel series (design 26b §3.2) oldest first; an explicit order
+ * other than the natural one reverses.
  */
 
 /** Does [entry] naturally play newest first? */
@@ -15,6 +16,7 @@ fun naturallyNewestFirst(entry: Entry): Boolean = when (entry.source) {
     Source.OWN -> false
     Source.NRK -> !entry.nrkSerie
     Source.RSS -> true
+    Source.STORYTEL -> false // book 1 first (vibb `_natural_order`: storytel = oldest_first)
 }
 
 /** Does [entry] play newest first, with its order setting applied? */

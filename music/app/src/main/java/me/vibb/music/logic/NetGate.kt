@@ -19,8 +19,8 @@ data class NetCaps(
     val physical: Boolean,
 )
 
-/** Why downloads wait - the status report's `waiting` (21b §4.3). */
-enum class Waiting(val wire: String) { WIFI("wifi"), STORAGE("storage"), ROAMING("roaming") }
+/** Why downloads wait - the status report's `waiting` (21b §4.3); [LOGIN] for a Storytel entry (design 26b §4.5). */
+enum class Waiting(val wire: String) { WIFI("wifi"), STORAGE("storage"), ROAMING("roaming"), LOGIN("login") }
 
 /** May an item that isn't on the phone be streamed now? */
 fun streamAllowed(caps: NetCaps?, mobileData: Boolean): Boolean =

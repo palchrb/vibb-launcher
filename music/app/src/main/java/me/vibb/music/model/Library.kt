@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import me.vibb.music.logic.storytelTarget
 
 /*
  * The phone's library (design 21 §1.3, 21b §4.1): `GET /api/devices/music/library`, pinned by
@@ -20,7 +21,9 @@ import kotlinx.serialization.json.jsonPrimitive
  * in [Library.entryIds]/[Library.fileIds], so nothing of it is deleted (qa-21-step2-code H1: a newer
  * server must never make an older app prune a kid's place or copies). A document that isn't
  * `v: 1` with its three arrays is refused (the old library stays). `sonos_rooms` (design 26a §5.5)
- * absent or null is every room; a list is those rooms; anything else is no room (fail closed).
+ * absent or null is every room; a list is those rooms; anything else is no room (fail closed). A
+ * Storytel entry (design 26b §3.1) needs a target of vibb's grammar; an older app drops it with its id
+ * kept, so nothing of it is pruned.
  */
 
 val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -30,7 +33,7 @@ private val HASH = Regex("[0-9a-f]{64}")
 private val VERSION = Regex("[0-9a-f]{16}")
 val ORDERS = setOf("auto", "newest_first", "oldest_first")
 
-enum class Source { NRK, RSS, OWN }
+enum class Source { NRK, RSS, OWN, STORYTEL }
 
 data class Category(val id: Long, val name: String, val icon: String, val color: String, val sort: Int)
 
@@ -43,7 +46,7 @@ data class Entry(
     val source: Source,
     val target: String?,
     val order: String,
-    /** -1 all, 0 none, 1-100 the newest N (vibb). */
+    /** -1 all, 0 none, 1-100 the newest N (vibb); for Storytel the first N books, never 0 (design 26b §3.1). */
     val cache: Int,
     val resume: Boolean,
     val cover: String?,
@@ -177,15 +180,19 @@ object LibraryParser {
             "nrk" -> Source.NRK
             "rss" -> Source.RSS
             "own" -> Source.OWN
-            else -> return null // storytel and spotify come with their phases
+            "storytel" -> Source.STORYTEL
+            else -> return null // spotify comes with its phase
         }
         if (d.id <= 0 || !KEY.matches(d.key) || d.name.isBlank()) return null
-        if (!(d.cache == -1 || d.cache in 0..100)) return null // what to keep is unknown: hide it, keep its copies
+        // Download-only: "in the library" means downloaded, so a Storytel cache 0 is all (vibb library.py 87-89).
+        val cache = if (source == Source.STORYTEL && d.cache == 0) -1 else d.cache
+        if (!(cache == -1 || cache in 0..100)) return null // what to keep is unknown: hide it, keep its copies
         if (source != Source.OWN && d.target.isNullOrBlank()) return null
+        if (source == Source.STORYTEL && storytelTarget(d.target) == null) return null
         return Entry(
             d.id, d.key, d.name.trim(), d.category, source, d.target,
             d.order.takeIf { it in ORDERS } ?: "auto",
-            d.cache, d.resume,
+            cache, d.resume,
             d.cover?.takeIf { HASH.matches(it) },
             if (source == Source.OWN) null else d.items?.takeIf { VERSION.matches(it) },
             d.sort, source == Source.RSS && d.lan,
