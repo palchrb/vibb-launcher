@@ -25,7 +25,11 @@ class WipePlanTest {
 
     @Test
     fun `a refusal is a failure the parent sees, a dying system is not`() {
-        assertEquals(WipeOutcome.STARTED, wipeOutcome(null))
+        assertEquals("a reset that starts never returns", WipeOutcome.RETURNED, wipeOutcome(null))
+        assertFalse("QA Low 3: a call that returned is no success", wipeSucceeded(WipeOutcome.RETURNED))
+        assertFalse(wipeSucceeded(WipeOutcome.FAILED))
+        assertTrue(wipeSucceeded(WipeOutcome.GOING_DOWN))
+        assertTrue(wipeResultMessage(WipeOutcome.RETURNED).startsWith("wipe failed, the phone keeps its data"))
         assertEquals(WipeOutcome.FAILED, wipeOutcome("SecurityException"))
         assertEquals(WipeOutcome.FAILED, wipeOutcome("IllegalStateException"))
         assertEquals(WipeOutcome.FAILED, wipeOutcome("UnsupportedOperationException"))
@@ -38,7 +42,7 @@ class WipePlanTest {
         val failed = wipeResultMessage(WipeOutcome.FAILED, "SecurityException: User 0 is a system user and cannot be removed")
         assertTrue(failed.startsWith("wipe failed, the phone keeps its data: SecurityException"))
         assertTrue(wipeResultMessage(WipeOutcome.FAILED, "x".repeat(500)).length <= 200)
-        assertFalse(wipeResultMessage(WipeOutcome.STARTED).contains("failed"))
+        assertFalse(wipeResultMessage(WipeOutcome.GOING_DOWN).contains("failed"))
     }
 
     /** The dispatch reports what the wipe call did; LocateCommands no longer calls `wipeData(0)`. */
@@ -50,7 +54,7 @@ class WipePlanTest {
         assertFalse("wipeData(0)" in locate)
         val sync = File(src, "main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
         val wipe = sync.substringAfter("\"wipe\" -> {").substringBefore("\n        }\n")
-        assertTrue("reportCommandResult(context, api, pending, success = outcome != WipeOutcome.FAILED" in wipe)
+        assertTrue("reportCommandResult(context, api, pending, success = wipeSucceeded(outcome)" in wipe)
         val admin = File(src, "main/res/xml/device_admin.xml").readText()
         assertTrue("the admin declares the wipe policy", "<wipe-data />" in admin)
     }

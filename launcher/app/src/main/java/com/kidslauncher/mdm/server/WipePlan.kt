@@ -27,8 +27,11 @@ const val WIPE_FLAGS = 0
 
 /** What the wipe call did, for the command result. */
 enum class WipeOutcome {
-    /** The call returned: the reset is under way (normally it never returns - the phone reboots). */
-    STARTED,
+    /** The call returned: Android did NOT start the reset (QA of the launcher wave, Low 3). A reset
+     * that starts never returns - `RecoverySystem.bootCommand` reboots into recovery and waits -,
+     * while `DevicePolicyManagerService.forceWipeDeviceNoLock` catches a failure to write the
+     * recovery command, logs it and returns normally. Reported as a failure. */
+    RETURNED,
 
     /** The system went away under the call (it is shutting down for the reset): probably wiping. */
     GOING_DOWN,
@@ -45,14 +48,17 @@ private val SYSTEM_GOING_DOWN = setOf("DeadSystemRuntimeException", "DeadSystemE
 /** [errorClass] the simple class name of what the call threw (`null` = it returned), [causeClass]
  * its cause's. */
 fun wipeOutcome(errorClass: String?, causeClass: String? = null): WipeOutcome = when {
-    errorClass == null -> WipeOutcome.STARTED
+    errorClass == null -> WipeOutcome.RETURNED
     errorClass in SYSTEM_GOING_DOWN || causeClass in SYSTEM_GOING_DOWN -> WipeOutcome.GOING_DOWN
     else -> WipeOutcome.FAILED
 }
 
+/** Whether the result says the wipe is going through: only a system going down under the call. */
+fun wipeSucceeded(outcome: WipeOutcome): Boolean = outcome == WipeOutcome.GOING_DOWN
+
 /** The command result's text (the server shows it on the Locate page), at most 200 characters. */
 fun wipeResultMessage(outcome: WipeOutcome, error: String? = null): String = when (outcome) {
-    WipeOutcome.STARTED -> "wiping"
+    WipeOutcome.RETURNED -> "wipe failed, the phone keeps its data: the wipe call returned - Android didn't start the reset"
     WipeOutcome.GOING_DOWN -> "wiping (the system shut down during the call)"
     WipeOutcome.FAILED -> "wipe failed, the phone keeps its data: ${error ?: "unknown error"}"
 }.take(200)

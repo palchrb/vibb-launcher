@@ -368,11 +368,11 @@ private suspend fun dispatchPendingCommand(
             reportCommandResult(context, api, pending, ok, message)
         }
 
-        // Only reached when the wipe didn't take the phone down at once: a refusal (or a call
-        // that returned) is reported, so the parent sees it (security review M8).
+        // Only reached when the wipe didn't take the phone down at once: a refusal or a call that
+        // returned is a failure the parent sees (security review M8, QA Low 3).
         "wipe" -> {
             val (outcome, message) = LocateCommands.wipe(dpm)
-            reportCommandResult(context, api, pending, success = outcome != WipeOutcome.FAILED, message = message)
+            reportCommandResult(context, api, pending, success = wipeSucceeded(outcome), message = message)
         }
 
         // Design 24b: "Lock the phone again now" - the pause or override and Play install mode
