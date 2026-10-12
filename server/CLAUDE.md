@@ -619,6 +619,40 @@ needed to manage the phone, delete on a schedule, never store notification or me
   clock, against 21b's request counts, and one with a flagged failing feed and a failing NRK page),
   `music_sweep`/`music_sources`/`music_net::tests` (loopback server for the address rules).
 
+## Vibb music: Storytel on the server (design 26b step 2a, `docs/design/26b-storytel.md`, migration `0066_music_storytel.sql`)
+
+- **What**: `src/storytel.rs` (vibb `storytel.py` ported) logs in with the family's sealed login and reads the
+  **bookshelf only** (never bookmarks or audio; the phones log in and mint audio URLs themselves). `normalize_shelf`
+  groups it into series and standalone books in first-seen *document* order (a `MapAccess` visitor: `serde_json::Map`
+  sorts keys here, and `preserve_order` must stay off), `model.id` as the book's key, Python's falsy rules.
+  `AppState.storytel` (`storytel::Account`, a tokio `Mutex`): the JWT (1 h, one re-login on a 401) and the last shelf
+  (5 min for a routine read; a failed fetch falls back to the last good one of the same login generation) in memory
+  only. Every request goes through `AppState.music_fetch` (`Kind::Login` 64 KB/20 s, `Kind::Shelf` 8 MB/30 s,
+  `Reach::Public`); the bookshelf is a POST with `{"items":[]}` under a *form* content type.
+- **Refused-login cooldown**: a login answered with anything but 200 stamps `music_storytel.login_refused_at` +
+  `login_refused_generation`; for an hour no login is tried for that generation (no request). A new save (generation
+  + 1) clears it. `login_ok_at`/`login_error` (a code: `login_refused`, `network`, `http_503`, `storytel_key`, ...)
+  feed the card's status line.
+- **PWA**: saving the login (`POST /music/storytel`) probes it first (one login + one bookshelf, 45 s in all, the
+  gate's wait included): refused = a 400 and nothing stored (the old login kept, `storytel_login_refused`); accepted
+  or unreachable = sealed, the probe's JWT and shelf kept, a one-time notice (session flash). `GET /music/storytel`
+  is the shelf picker (a fresh bookshelf, kids' books unless `?all=1`, in-library groups disabled, text only), `POST
+  /music/storytel/add` reads a repeated `target` (`Form<Vec<(String, String)>>`) and adds only groups on the shelf
+  (`storytel` entries: order `auto`, cache -1, resume on, Lydbøker by default). A Storytel entry's offline choices are
+  all / the first 5, 10, 20; a 0 is saved as -1. Step 2a leaves Storytel out of the library, the sweep and the cards
+  (step 2b).
+- **Secrets**: the password, `pwd=` (AES with a public key: as good as the password), the e-mail and the JWT never
+  reach a log, an error text, an event or a page. `music_net::network_error` drops the URL from every transport error
+  (`without_url`: reqwest prints the URL, and the login's carries the e-mail and `pwd=`); `StoredLogin`, `Jwt`,
+  `SourceRequest` and their holders have no `Debug` (`storytel::tests::secret_types_have_no_debug`). **The log filter
+  floors `reqwest=info` whatever `RUST_LOG` says** (`main::log_filter`): reqwest logs each redirect's URLs at
+  `debug`, so `RUST_LOG=debug` would otherwise print the login URL. Test fakes never look real (`FAKE-JWT-1`,
+  `*.example.invalid`).
+- Tests: `storytel::tests` (AES vectors, targets, normalising, the request's shape, 401, cooldown, cache, probe
+  bound, no secret in errors), `src/tests/music_storytel.rs` (save/probe, card, picker, add, clear, entry page),
+  fixtures in `testdata/storytel/`. `tests::music::CannedFetch` records each request (`requests`) and has
+  `answer_once`.
+
 ## Parent PIN (design 24, `docs/design/24-parent-pin-hardening.md`, migrations `0056_parent_pin_easy.sql`, `0057_device_pin_events.sql`)
 
 - **Its own card and save**: `#parent-pin` on the device page, right after "Screen lock"; `POST /devices/{id}/parent-pin` (`handlers::parent_pin::update_parent_pin`, full auth) takes `new_pin` or `clear_pin`. `update_policy` (the Quick Controls/VPN form) no longer touches the PIN columns. Refused with a notice and nothing written: not 6-10 ASCII digits (`parent_pin_invalid` - silently ignored before), the kid's PIN (`override_is_kid_pin`), removing it while a kid PIN is set (`override_needed_by_lock`, the SQL `CASE` keeps it even against a parallel kid-PIN save). Security events `override_pin_changed`/`_cleared`; nudges the phone, which then takes the new PIN - and a fresh lockout state with it. Every outcome redirects to `?notice=<code>#parent-pin`.

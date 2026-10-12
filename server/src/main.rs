@@ -934,7 +934,11 @@ pub fn build_admin_router(
             "/music/categories/{id}/delete",
             post(handlers::music::delete_category),
         )
-        .route("/music/storytel", post(handlers::music::save_storytel))
+        .route(
+            "/music/storytel",
+            get(handlers::music::storytel_shelf).post(handlers::music::save_storytel),
+        )
+        .route("/music/storytel/add", post(handlers::music::add_storytel))
         .route(
             "/music/storytel/clear",
             post(handlers::music::clear_storytel),

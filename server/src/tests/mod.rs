@@ -20,6 +20,7 @@ mod launcher_ui;
 mod listeners;
 mod locations;
 mod music;
+mod music_storytel;
 mod music_sweep;
 mod parent_pin;
 mod play;

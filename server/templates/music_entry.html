@@ -26,7 +26,7 @@ input, select { max-width: 100%; }
         <h1>{{ entry.name }}</h1>
         <a href="/music#entry-{{ entry.id }}" class="button-small button-secondary">Back to the library</a>
     </div>
-    <p class="subtitle" style="overflow-wrap:anywhere;">{{ kind }}{% if let Some(target) = entry.target %} · <a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}</p>
+    <p class="subtitle" style="overflow-wrap:anywhere;">{{ kind }}{% if let Some(target) = entry.target %} · {% if storytel %}{{ target }} (<a href="/music/storytel">the Storytel shelf</a>){% else %}<a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}{% endif %}</p>
 
     {% if let Some(sweep) = sweep %}
     <div class="card" id="status">
@@ -82,7 +82,7 @@ input, select { max-width: 100%; }
             <option value="{{ value }}"{% if form.order == **value %} selected{% endif %}>{{ label }}</option>
             {% endfor %}
         </select>
-        <label for="entry_cache">Kept on the phone for offline listening (newest episodes)</label>
+        <label for="entry_cache">{% if storytel %}Books downloaded to the phone (in reading order; Storytel books play only once downloaded){% else %}Kept on the phone for offline listening (newest episodes){% endif %}</label>
         <select id="entry_cache" name="cache"{% if form.error_field == "cache" %} autofocus{% endif %}>
             {% for (value, label) in caches %}
             <option value="{{ value }}"{% if form.cache == *value %} selected{% endif %}>{{ label }}</option>
