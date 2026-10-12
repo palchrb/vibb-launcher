@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import me.vibb.music.data.NowPlayingRow
@@ -28,7 +29,8 @@ enum class SheetKind { SLEEP, OUTPUT }
 class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val store = Store.get(app)
 
-    val snapshot: StateFlow<Snapshot?> = store.snapshots().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    /** The screens' snapshot: the phone's view (design 26b §3.2); step 4b passes the shown renderer. */
+    val snapshot: StateFlow<Snapshot?> = store.snapshots().map { it.forRenderer(false) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val nowRow: StateFlow<NowPlayingRow?> = store.db.nowPlayingFlow().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     var screen by mutableStateOf(Screen.LIBRARY)

@@ -206,6 +206,50 @@ class OfflineTest {
         assertEquals(OfflineSummary.Some(1, 2), offlineSummary(listOf("a", "b"), setOf("a")))
     }
 
+    // Storytel (design 26b §3.3; vibb tests/storytel_expand.py 3/4, storytel_routes.py 5).
+
+    private val books = listOf("111", "222", "333")
+    private fun series(id: Long = 7, cache: Int = -1) = entry(id, Source.STORYTEL, target = "storytel:series:26175", cache = cache)
+    private fun book(entry: Long, key: String) = done(entry, key, url = "storytel:book:$key")
+
+    @Test
+    fun `fetchable is not visibility - a Storytel book is wanted though listed without a url, a withdrawn episode never`() {
+        val items = listOf(KeepItem("a", hasUrl = false, fetchable = true), KeepItem("b", hasUrl = false), KeepItem("c", hasUrl = true))
+        assertEquals(listOf("c", "a"), wantedDownloads(setOf("a", "b", "c"), items, emptySet(), null))
+        assertEquals("visibility keeps url or copy", listOf("c"), visibleKeys(items, emptySet()))
+        assertTrue(KeepItem("d", hasUrl = true).fetchable)
+        assertFalse(KeepItem("d", hasUrl = false).fetchable)
+    }
+
+    @Test
+    fun `3 Storytel copies are kept while the book is listed, pruned when the list drops it`() {
+        val e = series()
+        val rows = books.map { book(7, it) }
+        val listed = snapshot(library(listOf(e)), items(7, books, gone = books.toSet()), downloads = rows)
+        assertTrue(plan(listed, rows).prune.isEmpty())
+        assertTrue(plan(listed, rows).wanted.isEmpty())
+        val left = snapshot(library(listOf(e)), items(7, listOf("111", "333"), gone = books.toSet()), downloads = rows)
+        assertEquals("a book that left the shelf leaves the phone", listOf("222"), plan(left, rows).prune.map { it.itemKey })
+    }
+
+    @Test
+    fun `4 and routes 5 the library drops the entry (switch off, login cleared) - every book is pruned`() {
+        val rows = books.map { book(7, it) } + done(1, "k20")
+        val snap = snapshot(library(listOf(entry(1))), items(1, keys))
+        assertEquals(books.map { 7L to it }.toSet(), plan(snap, rows).prune.map { it.entryId to it.itemKey }.toSet())
+    }
+
+    @Test
+    fun `the first N books keep their copies, the bookmark and the next too, and a finished book beyond them goes`() {
+        val e = series(cache = 1)
+        val rows = books.map { book(7, it) }
+        val snap = snapshot(library(listOf(e)), items(7, books, gone = books.toSet()), downloads = rows, bookmarks = mapOf("e7" to ("222" to 60_000L)))
+        // kept: 111 (the first), 222 (the bookmark), 333 (the next); with the bookmark on 111 only 111 and 222
+        assertTrue(plan(snap, rows).prune.isEmpty())
+        val early = snapshot(library(listOf(e)), items(7, books, gone = books.toSet()), downloads = rows, bookmarks = mapOf("e7" to ("111" to 60_000L)))
+        assertEquals(listOf("333"), plan(early, rows).prune.map { it.itemKey })
+    }
+
     // tests/offline_browse.py: what is on the phone plays at once, without the network.
 
     @Test

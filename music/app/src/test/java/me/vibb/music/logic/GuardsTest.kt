@@ -351,4 +351,51 @@ class GuardsTest {
         assertTrue(service.contains("Commands.CALL_RELEASE -> launcherCall(false)"))
         assertFalse(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").substringAfter("val PLAYS").substringBefore("\n").contains("CALL"))
     }
+
+    // Storytel (design 26b §4.2-§4.4, qa-26b-step1-code's notes for step 3)
+
+    private fun mainSources() = moduleFile("src/main/java").walk().filter { it.isFile && it.extension == "kt" }.toList()
+
+    @Test
+    fun `a Storytel book plays from its copy only - no upstream, never a request`() {
+        val media = service.substringAfter("private fun mediaItem(a: Active, item: PlayItem): MediaItem {").substringBefore("val meta =")
+        val storytel = media.substringAfter("} else if (a.entry.source == Source.STORYTEL) {").substringBefore("} else {")
+        assertTrue(storytel.contains("b.setUri(sourceId(a.entry, item)).setCustomCacheKey(cacheKey)"))
+        assertTrue(storytel.contains("b.setTag(ItemTag(cacheKey, hls = false, publicOnly = true, copyOnly = true))"))
+        assertTrue("before the NRK/RSS branch, whose uri would be the row's", media.indexOf("Source.STORYTEL") < media.indexOf("download?.url"))
+        val factory = code("src/main/java/me/vibb/music/media/ItemMediaSourceFactory.kt")
+        assertTrue(factory.contains("MediaCache.playbackFactory(app, tag.publicOnly, keys, copyOnly = tag.copyOnly)"))
+        val cache = code("src/main/java/me/vibb/music/media/MediaCache.kt")
+        assertTrue(cache.contains(".setUpstreamDataSourceFactory(if (copyOnly) null else http(publicOnly))"))
+        // a copy plays without holding Wi-Fi (phase 1's rule, also for a book)
+        assertTrue(service.contains("renderer.setWakeMode(if (hasCopy(a, item)) C.WAKE_MODE_LOCAL else C.WAKE_MODE_NETWORK)"))
+    }
+
+    @Test
+    fun `the mint runs in the download worker only, on IO, through the process's one StorytelApi`() {
+        val sources = mainSources()
+        val texts = sources.associate { f ->
+            f.name to f.readText().replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("//[^\\n]*"), "")
+        }
+        fun callers(token: String) = texts.filterValues { it.contains(token) }.keys
+        assertEquals("assetUrl is called by the account only", setOf("StorytelApi.kt", "StorytelAccount.kt"), callers("assetUrl("))
+        assertEquals("a mint is the download run's (step 4b adds the Sonos play job)", setOf("StorytelAccount.kt", "DownloadRun.kt", "Downloads.kt"), callers(".mint(") + callers("fun mint("))
+        assertEquals("one StorytelApi for the process", setOf("StorytelApi.kt", "StorytelAccount.kt"), callers("StorytelApi("))
+        assertEquals(setOf("Downloads.kt", "Sync.kt"), callers("StorytelAccount.get("))
+        val account = code("src/main/java/me/vibb/music/storytel/StorytelAccount.kt")
+        assertTrue(account.contains("suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =\n        withContext(Dispatchers.IO) { api.assetUrl(cid, timeoutMs, deadlineMs) }"))
+        assertEquals("built in one place, kept while the switch says the same", 1, Regex("StorytelApi\\(").findAll(account).count())
+        assertTrue(account.contains("instance?.takeIf { builtFor == key } ?: build("))
+        val downloads = code("src/main/java/me/vibb/music/sync/Downloads.kt")
+        assertTrue("a download's mint: 15 s, the whole within 60 s", downloads.contains("StorytelAccount.get(context).mint(cid, MINT_TIMEOUT_MS, SystemClock.elapsedRealtime() + MINT_BUDGET_MS)"))
+        assertTrue(downloads.contains("const val MINT_TIMEOUT_MS = 15_000L") && downloads.contains("const val MINT_BUDGET_MS = 60_000L"))
+        assertTrue("the worker runs on IO", downloads.contains("override suspend fun doWork(): Result = withContext(Dispatchers.IO) {"))
+    }
+
+    @Test
+    fun `the service, the screens and the Nytt notification read the phone's view until step 4b`() {
+        assertTrue(service.contains("store.snapshot().forRenderer(false) to store.db.downloads()"))
+        assertTrue(code("src/main/java/me/vibb/music/ui/MusicViewModel.kt").contains("store.snapshots().map { it.forRenderer(false) }"))
+        assertTrue(code("src/main/java/me/vibb/music/sync/NewNotifier.kt").contains("val n = count(snap.forRenderer(false))"))
+    }
 }

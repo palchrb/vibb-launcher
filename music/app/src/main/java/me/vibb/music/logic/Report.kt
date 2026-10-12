@@ -55,6 +55,22 @@ data class EntryError(val entry: Long, val error: String)
 /** One entry's downloads: the listing version applied, have / want, and what they wait for. */
 data class DownloadState(val entry: Long, val version: String, val have: Int, val want: Int, val waiting: Waiting?)
 
+/**
+ * Each entry's `waiting` while it still wants downloads (21b §4.3; design 26b §4.5, QA M4): [shared]
+ * (the network and the 500 MB storage rule every entry gets), but for a Storytel entry ([storytel]
+ * ids) `storytelWaiting` - `login` while [account] isn't `ok`, `storage` below the 1.5 GB floor
+ * ([freeBytes] of noBackupFilesDir), else [shared]. An entry with everything on the phone waits for
+ * nothing.
+ */
+fun reportWaiting(states: List<DownloadState>, storytel: Set<Long>, shared: Waiting?, account: String, freeBytes: Long): List<DownloadState> =
+    states.map { s ->
+        when {
+            s.have >= s.want -> s
+            s.entry in storytel -> s.copy(waiting = storytelWaiting(account, freeBytes, shared))
+            else -> s.copy(waiting = shared)
+        }
+    }
+
 /** `http_<code>` for an HTTP status from the source, `bad_media` for media that isn't audio, else `network`. */
 fun itemErrorCode(httpStatus: Int?, badMedia: Boolean): String = when {
     httpStatus != null && httpStatus in 100..599 -> "http_$httpStatus"
@@ -74,7 +90,7 @@ fun stateReport(
     entryErrors: List<EntryError>,
     itemErrors: List<ItemError>,
     downloads: List<DownloadState>,
-    /** The Storytel login on the phone: "ok" or "none". */
+    /** The Storytel login on the phone: `none`, `refused` or `ok` (design 26b §4.5); never the email, a JWT or a URL. */
     storytel: String? = null,
     /** The rooms the speaker cache knows ([reportedRooms]). */
     sonosRooms: List<ReportedRoom> = emptyList(),

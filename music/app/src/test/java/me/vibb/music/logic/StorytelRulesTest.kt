@@ -96,13 +96,36 @@ class StorytelRulesTest {
     }
 
     @Test
-    fun `step 1 - the download plan isn't wired yet - a listed Storytel entry fetches and prunes nothing`() {
+    fun `1 forRenderer - the phone shows downloaded books only, a room every book, and nothing else changes`() {
+        val e = series()
+        val rss = entry(1)
+        val snap = snapshot(
+            library(listOf(e, rss)),
+            items(e.id, books, gone = books.toSet()) + items(1, listOf("x", "y"), gone = setOf("x")),
+            downloads = listOf(done(e.id, "160662", url = "storytel:book:160662")),
+        )
+        val phone = snap.forRenderer(false)
+        assertEquals(listOf("160662"), phone.visible(e).map { it.key })
+        val room = snap.forRenderer(true)
+        assertEquals("the speaker fetches from the CDN itself", books, room.visible(e).map { it.key })
+        assertEquals(books, room.order(e).map { it.key })
+        assertEquals("other sources are the same on both", phone.visible(rss), room.visible(rss))
+        assertEquals(listOf("y"), room.visible(rss).map { it.key })
+        assertTrue("the default is the phone", snap === phone)
+        assertEquals(phone, room.forRenderer(false))
+        val none = snapshot(library(listOf(e)), items(e.id, books, gone = books.toSet()))
+        assertTrue(none.forRenderer(false).entries.isEmpty())
+        assertEquals("on a room an undownloaded series is in the carousel", listOf(e), none.forRenderer(true).entries)
+    }
+
+    @Test
+    fun `step 3 acceptance - the plan is wired - a listed Storytel entry wants every book and keeps what it has`() {
         val e = series()
         val snap = snapshot(library(listOf(e)), items(e.id, books, gone = books.toSet()))
         val plan = downloadPlan(snap, emptyList(), 0)
-        assertTrue(plan.wanted.isEmpty())
+        assertEquals(books, plan.wanted.map { it.item.key })
         assertTrue(plan.prune.isEmpty())
-        assertEquals(listOf(DownloadState(e.id, "0123456789abcdef", 0, 0, null)), plan.states)
+        assertEquals(listOf(DownloadState(e.id, "0123456789abcdef", 0, 5, null)), plan.states)
     }
 
     @Test

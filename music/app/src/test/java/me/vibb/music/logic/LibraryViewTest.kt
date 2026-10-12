@@ -164,4 +164,24 @@ class LibraryViewTest {
         assertEquals(listOf("z", "y"), pq.map { it.key })
         assertEquals(2 to 2, playerNumber(p, NowView(podcast, null, pq, 1, live = false, playing = false, storedPosMs = 0, durationMs = null, shuffled = false)))
     }
+
+    @Test
+    fun `a new book lights NY and the bell once it is on the phone, and the tile still reads the series`() {
+        val e = storytel()
+        val news = listOf(NewsRow(e.id, "b5", 1))
+        val waiting = snapshot(library(listOf(e)), items(e.id, books, gone = books.toSet()), downloads = listOf(done(e.id, "b1", url = "storytel:book:b1")), news = news)
+        assertFalse("not downloaded yet: no NY", entryUi(waiting.forRenderer(false), e).isNew)
+        assertEquals(0, NewNotifier.count(waiting.forRenderer(false)))
+        val downloaded = snapshot(
+            library(listOf(e)),
+            items(e.id, books, gone = books.toSet()),
+            downloads = listOf(done(e.id, "b1", url = "storytel:book:b1"), done(e.id, "b5", url = "storytel:book:b5")),
+            news = news,
+            bookmarks = mapOf(e.key to ("b5" to 1L)),
+        ).forRenderer(false)
+        val ui = entryUi(downloaded, e)
+        assertTrue(ui.isNew)
+        assertEquals(1, NewNotifier.count(downloaded))
+        assertEquals("del 5 av 5 with two books on the phone", Hint.Started(Kind.AUDIOBOOK, 5, 5), ui.hint)
+    }
 }

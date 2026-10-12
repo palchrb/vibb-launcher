@@ -19,7 +19,6 @@ import kotlinx.serialization.Serializable
 import android.util.Log
 import me.vibb.music.BuildConfig
 import me.vibb.music.bridge.BridgeSync
-import me.vibb.music.bridge.StorytelLogin
 import me.vibb.music.data.ItemErrorRow
 import me.vibb.music.data.ItemRow
 import me.vibb.music.data.ListingRow
@@ -33,7 +32,9 @@ import me.vibb.music.logic.addItemError
 import me.vibb.music.logic.addToTray
 import me.vibb.music.logic.downloadWaiting
 import me.vibb.music.logic.markNewSeen
+import me.vibb.music.logic.newsEligible
 import me.vibb.music.logic.pruneTray
+import me.vibb.music.logic.reportWaiting
 import me.vibb.music.logic.reportedRooms
 import me.vibb.music.logic.stateReport
 import me.vibb.music.media.MediaCache
@@ -44,6 +45,7 @@ import me.vibb.music.model.ListingParser
 import me.vibb.music.model.Source
 import me.vibb.music.sonos.SonosFiles
 import me.vibb.music.sonos.SpeakerCache
+import me.vibb.music.storytel.StorytelAccount
 import java.util.concurrent.TimeUnit
 
 /*
@@ -166,8 +168,9 @@ object Sync {
             ListingRow(entry.id, listing.version),
             listing.items.mapIndexed { i, it -> ItemRow(entry.id, it.key, i, it.title, it.url, it.hls, it.durationMs) },
         )
-        // Only items that can play are news (a withdrawn one without a copy is hidden).
-        markSeen(store, entry.id, listing.items.map { it.key }, listing.items.filter { it.url != null }.map { it.key }.toSet())
+        // Only items that can play are news (a withdrawn one without a copy is hidden); a Storytel book
+        // too, though listed without a url (design 26b §3.4).
+        markSeen(store, entry.id, listing.items.map { it.key }, newsEligible(entry, listing.items))
         dao.deleteStaleItemErrors(entry.id, listing.version)
     }
 
@@ -203,7 +206,10 @@ object Sync {
         val plan = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis())
         val storageLow = store.ownDir.parentFile!!.usableSpace < LOW_STORAGE_BYTES
         val waiting = downloadWaiting(netCaps(context), store.mobileData, storageLow)
-        val states = plan.states.map { if (it.have < it.want) it.copy(waiting = waiting) else it }
+        // The phone's Storytel login: none, refused (the cooldown runs) or ok (design 26b §4.5).
+        val storytel = StorytelAccount.get(context).state()
+        val storytelEntries = snap.library?.entries.orEmpty().filter { it.source == Source.STORYTEL }.map { it.id }.toSet()
+        val states = reportWaiting(plan.states, storytelEntries, waiting, storytel, Downloads.freeBytes(context))
         val errors = store.db.itemErrors().map { ItemError(it.entryId, it.version, it.itemKey, it.error) }
         val ownBytes = store.ownDir.listFiles().orEmpty().sumOf { it.length() }
         val report = stateReport(
@@ -213,7 +219,7 @@ object Sync {
             readEntryErrors(store),
             errors,
             states,
-            if (StorytelLogin.has(context)) "ok" else "none",
+            storytel,
             // the rooms the speaker cache knows, for the parent's room scope (design 26a §5.5)
             reportedRooms(SpeakerCache(SonosFiles.cache(context)).load().players.mapValues { it.value.name }),
         )

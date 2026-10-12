@@ -1,9 +1,11 @@
 package me.vibb.music.sync
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -23,7 +25,6 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
@@ -35,6 +36,10 @@ import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.pickVariant
 import me.vibb.music.logic.publicOnly
 import me.vibb.music.media.MediaCache
+import me.vibb.music.model.Source
+import me.vibb.music.storytel.Mint
+import me.vibb.music.storytel.StorytelAccount
+import me.vibb.music.storytel.StorytelEndpoints
 import java.util.concurrent.TimeUnit
 
 /*
@@ -81,12 +86,27 @@ object Downloads {
         wm.enqueueUniqueWork(WORK, if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE, request)
     }
 
-    /** Fetch one item into the cache: (bytes cached, the HLS variant fetched). Blocking, interruptible. */
+    /**
+     * The free space where the cache lives (noBackupFilesDir), for Storytel's 1.5 GB floor (design 26b
+     * §3.3): vibb's `_free_bytes` (`disk_usage(...).free`), not what the system could clear for us - the
+     * floor keeps the card from filling, it doesn't make room.
+     */
+    @SuppressLint("UsableSpace")
+    fun freeBytes(context: Context): Long = context.noBackupFilesDir.usableSpace
+
+    /**
+     * Fetch one item from [url] into the cache: (bytes cached, the HLS variant fetched). Blocking,
+     * interruptible. A Storytel book ([url] minted for this attempt, design 26b §4.3) goes under the
+     * item's cache key like any progressive item, so a partial resumes with Range whatever the token;
+     * its CDN request never follows a redirect and never carries a bearer (MediaCache's clients add no
+     * `Authorization`), and only the debug switch's fake lets it reach a private address.
+     */
     @OptIn(UnstableApi::class)
-    fun fetch(context: Context, w: WantedDownload): Pair<Long, Int?> {
-        val url = requireNotNull(w.item.url)
+    fun fetch(context: Context, w: WantedDownload, url: String): Pair<Long, Int?> {
         val cacheKey = itemCacheKey(w.entry.key, w.item.key)
-        val factory = MediaCache.downloadFactory(context, publicOnly(w.entry), MediaCache.keyFactory(cacheKey, url, w.item.hls))
+        val storytel = w.entry.source == Source.STORYTEL
+        val publicOnly = if (storytel) StorytelEndpoints.publicDownloads() else publicOnly(w.entry)
+        val factory = MediaCache.downloadFactory(context, publicOnly, MediaCache.keyFactory(cacheKey, url, w.item.hls), followRedirects = !storytel)
         if (!w.item.hls) {
             ProgressiveDownloader(MediaItem.Builder().setUri(url).setCustomCacheKey(cacheKey).build(), factory).download(null)
             return MediaCache.cachedBytes(context, cacheKey, false) to null
@@ -104,15 +124,18 @@ object Downloads {
 }
 
 /**
- * The downloads: plan, fetch item by item, plan again until nothing new is wanted (a sync during
- * the run adds items). A failure waits per item (logic/Offline.kt `mayRetry`) and never holds the
- * others back; no network means the job ends and a new one waits on its constraints, not on a
- * backoff (qa-21-step2-code M1, M4).
+ * The downloads: plan, fetch item by item ([DownloadRun] decides), plan again until nothing new is
+ * wanted (a sync during the run adds items). A failure waits per item (logic/Offline.kt `mayRetry`)
+ * and never holds the others back; no network means the job ends and a new one waits on its
+ * constraints, not on a backoff (qa-21-step2-code M1, M4). Storytel books (design 26b §4.3) go one
+ * at a time like everything else; a login failure or the 1.5 GB floor stops them for the run, and a
+ * refused login brings a job back when its hour is over (the cooldown sends nothing before).
  */
 class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val store = Store.get(applicationContext)
         val dao = store.db
+        val run = DownloadRun(WorkerIo(applicationContext, store))
         val tried = mutableSetOf<Pair<Long, String>>()
         var nextRetryAt: Long? = null
         while (true) {
@@ -128,50 +151,46 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                     Sync.writeReport(applicationContext)
                     return@withContext Result.success()
                 }
-                fetchOne(store, w)
+                run.fetchOne(w)
             }
         }
-        nextRetryAt?.let { Downloads.enqueue(applicationContext, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
+        // A refused Storytel login: back when its cooldown is over (one login an hour at most).
+        val back = listOfNotNull(nextRetryAt, run.storytelRefusedUntil).minOrNull()
+        back?.let { Downloads.enqueue(applicationContext, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
         Sync.writeReport(applicationContext)
         Result.success()
     }
 
-    private suspend fun fetchOne(store: Store, w: WantedDownload) {
-        val dao = store.db
-        val url = w.item.url ?: return
-        val cacheKey = itemCacheKey(w.entry.key, w.item.key)
-        val old = dao.downloads().firstOrNull { it.entryId == w.entry.id && it.itemKey == w.item.key }
-        // A partial copy from another url may be another file: start over (qa-21-step2-code L7).
-        if (old != null && !old.done && old.url != url) MediaCache.remove(applicationContext, old.cacheKey, old.hls)
-        val row = DownloadRow(w.entry.id, w.item.key, cacheKey, url, w.item.hls, false, 0, null, old?.failedUrl, old?.failedCode, old?.failedAt, old?.attempts ?: 0)
-        dao.upsertDownload(row)
-        var code = attempt(w)
-        if (code == "http_416") {
-            // The file changed under a partial copy: drop it and fetch from the start, once.
-            MediaCache.remove(applicationContext, cacheKey, w.item.hls)
-            code = attempt(w)
-        }
-        if (code == null) {
-            dao.deleteItemError(w.entry.id, w.item.key)
-            return
-        }
-        ItemErrors.record(applicationContext, w.entry.id, w.item.key, code)
-        val attempts = if (row.failedUrl == url && row.failedCode == code) row.attempts + 1 else 1
-        dao.upsertDownload(row.copy(failedUrl = url, failedCode = code, failedAt = System.currentTimeMillis(), attempts = attempts))
+    /** [DownloadIo] over Room, the cache, Media3's downloaders and the Storytel account. */
+    private class WorkerIo(private val context: Context, private val store: Store) : DownloadIo {
+        private val dao = store.db
+
+        override suspend fun row(entryId: Long, itemKey: String): DownloadRow? =
+            dao.downloads().firstOrNull { it.entryId == entryId && it.itemKey == itemKey }
+
+        override suspend fun saveRow(row: DownloadRow) = dao.upsertDownload(row)
+
+        override fun removeCopy(cacheKey: String, hls: Boolean) = MediaCache.remove(context, cacheKey, hls)
+
+        override suspend fun fetch(w: WantedDownload, url: String): Pair<Long, Int?> = runInterruptible { Downloads.fetch(context, w, url) }
+
+        override fun errorCode(e: Exception): String = MediaCache.errorCode(e)
+
+        override suspend fun recordError(entryId: Long, itemKey: String, code: String) = ItemErrors.record(context, entryId, itemKey, code)
+
+        override suspend fun clearError(entryId: Long, itemKey: String) = dao.deleteItemError(entryId, itemKey)
+
+        override fun nowMs(): Long = System.currentTimeMillis()
+
+        override fun freeBytes(): Long = Downloads.freeBytes(context)
+
+        /** A download's mint: the asset call 15 s, the whole mint (the login and its lock included) within 60 s. */
+        override suspend fun mint(cid: String): Mint =
+            StorytelAccount.get(context).mint(cid, MINT_TIMEOUT_MS, SystemClock.elapsedRealtime() + MINT_BUDGET_MS)
     }
 
-    /** One attempt: null when the item is on the phone now, else the failure's code. */
-    private suspend fun attempt(w: WantedDownload): String? {
-        val dao = Store.get(applicationContext).db
-        return try {
-            val (bytes, variant) = runInterruptible { Downloads.fetch(applicationContext, w) }
-            val url = w.item.url!!
-            dao.upsertDownload(DownloadRow(w.entry.id, w.item.key, itemCacheKey(w.entry.key, w.item.key), url, w.item.hls, true, bytes, variant, null))
-            null
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            MediaCache.errorCode(e)
-        }
+    private companion object {
+        const val MINT_TIMEOUT_MS = 15_000L
+        const val MINT_BUDGET_MS = 60_000L
     }
 }

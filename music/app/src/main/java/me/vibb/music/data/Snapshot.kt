@@ -66,10 +66,26 @@ data class Snapshot(
     val news: List<NewsItem>,
     /** Entry keys with shuffle on. */
     val shuffle: Set<String>,
+    /**
+     * Who the items are shown and queued for (design 26b §3.2, vibb `entries_for(remote)`): false =
+     * the phone, true = a Sonos room. Set only through [forRenderer], by each caller explicitly (26a §9).
+     */
+    val remote: Boolean = false,
 ) {
-    /** [entry]'s items that show and play, oldest first (21b §6: a withdrawn item without a copy is hidden). */
+    /**
+     * This snapshot for a renderer: [remote] true for a Sonos room (the speaker fetches a Storytel book
+     * from the CDN itself, so every book shows), false for the phone (a Storytel book only with its
+     * copy: download-only). Every other source shows the same on both.
+     */
+    fun forRenderer(remote: Boolean): Snapshot = if (remote == this.remote) this else copy(remote = remote)
+
+    /**
+     * [entry]'s items that show and play, oldest first (21b §6: a withdrawn item without a copy is
+     * hidden; design 26b §3.2: a Storytel book, listed without a url, only with its copy - or on a room).
+     */
     fun visible(entry: Entry): List<PlayItem> {
         val all = listed[entry.id].orEmpty()
+        if (remote && entry.source == Source.STORYTEL) return all
         val copies = onPhone[entry.id].orEmpty()
         // An own file has no url: it plays only from its copy (the phone never reaches the server).
         val keys = visibleKeys(all.map { KeepItem(it.key, it.url != null) }, copies).toSet()

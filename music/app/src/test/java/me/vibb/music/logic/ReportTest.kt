@@ -101,6 +101,26 @@ class ReportTest {
         assertTrue(report.keys.none { it.contains("position") || it.contains("playing") })
     }
 
+    /** Design 26b §4.5 (QA M4): a Storytel entry's waiting, and the account's word. */
+    @Test
+    fun `a Storytel entry waits for the login, then the 1_5 GB floor, else the shared rule`() {
+        val gb = 1_000_000_000L
+        val states = listOf(DownloadState(7, "v", 0, 3, null), DownloadState(2, "v", 1, 3, null), DownloadState(9, "v", 3, 3, null))
+        val storytel = setOf(7L, 9L)
+        fun waits(shared: Waiting?, account: String, free: Long) = reportWaiting(states, storytel, shared, account, free).map { it.waiting }
+        assertEquals(listOf(Waiting.LOGIN, null, null), waits(null, "none", 10 * gb))
+        assertEquals(listOf(Waiting.LOGIN, Waiting.WIFI, null), waits(Waiting.WIFI, "refused", 10 * gb))
+        assertEquals("storage between 0.5 and 1.5 GB", listOf(Waiting.STORAGE, null, null), waits(null, "ok", gb))
+        assertEquals(listOf(Waiting.STORAGE, Waiting.STORAGE, null), waits(Waiting.STORAGE, "ok", gb / 4))
+        assertEquals("else the shared rule", listOf(Waiting.ROAMING, Waiting.ROAMING, null), waits(Waiting.ROAMING, "ok", 10 * gb))
+        assertEquals(listOf(null, null, null), waits(null, "ok", 10 * gb))
+        for (word in listOf("none", "ok", "refused")) {
+            val report = stateReport(1, null, 0, emptyList(), emptyList(), reportWaiting(states, storytel, null, word, 10 * gb), word)
+            assertEquals(word, report["storytel"]!!.jsonPrimitive.content)
+            if (word != "ok") assertEquals("login", (report["downloads"] as JsonArray)[0].jsonObject["waiting"]!!.jsonPrimitive.content)
+        }
+    }
+
     /** Design 26a §5.5: the rooms the speaker cache knows, as the server keeps them. */
     @Test
     fun `the reported rooms - Sonos uids only, names cut to 40, by name, at most 32`() {

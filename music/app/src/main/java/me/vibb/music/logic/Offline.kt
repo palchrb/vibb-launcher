@@ -17,8 +17,12 @@ import me.vibb.music.model.Entry
  * listing isn't there keeps what it has.
  */
 
-/** One listed item as keep/prune sees it. */
-data class KeepItem(val key: String, val hasUrl: Boolean)
+/**
+ * One listed item as keep/prune sees it: whether it has a url (visibility, [visibleKeys]) and whether
+ * it can be downloaded ([fetchable]: a url, or a Storytel book whose url is minted per attempt; design
+ * 26b §3.3 - visibility is not fetchability).
+ */
+data class KeepItem(val key: String, val hasUrl: Boolean, val fetchable: Boolean = hasUrl)
 
 /**
  * The keys [entry] keeps: the newest [Entry.cache] of [oldestFirst], plus [bookmarkKey] and the
@@ -39,11 +43,12 @@ fun keepSet(entry: Entry, oldestFirst: List<String>, bookmarkKey: String?): Set<
     return keep
 }
 
-/** Items to fetch: kept, with a url, not on the phone yet. The bookmarked item first, then the
- * newest first, as vibb's `sync` downloads (`reversed(wanted)`). [items] is oldest first. */
+/** Items to fetch: kept, fetchable, not on the phone yet. The bookmarked item first, then the
+ * newest first, as vibb's `sync` downloads (`reversed(wanted)`). [items] is oldest first. (A
+ * Storytel entry downloads in reading order instead: `storytelWanted`.) */
 fun wantedDownloads(keep: Set<String>, items: List<KeepItem>, have: Set<String>, bookmarkKey: String?): List<String> {
-    val urls = items.filter { it.hasUrl }.map { it.key }.toSet()
-    val wanted = items.asReversed().map { it.key }.filter { it in keep && it in urls && it !in have }
+    val fetchable = items.filter { it.fetchable }.map { it.key }.toSet()
+    val wanted = items.asReversed().map { it.key }.filter { it in keep && it in fetchable && it !in have }
     // The item in progress first: it is the one the kid plays next.
     return if (bookmarkKey != null && bookmarkKey in wanted) listOf(bookmarkKey) + (wanted - bookmarkKey) else wanted
 }

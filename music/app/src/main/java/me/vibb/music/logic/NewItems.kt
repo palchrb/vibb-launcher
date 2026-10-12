@@ -1,5 +1,9 @@
 package me.vibb.music.logic
 
+import me.vibb.music.model.Entry
+import me.vibb.music.model.ListingItem
+import me.vibb.music.model.Source
+
 /*
  * NY and Nytt (design 21 §4.5), ported from palchrb/vibb `pi/vibb/library.py` (`_mark_new_seen`,
  * `is_new`, `acknowledge_new`, `_new_prune`; MIT License, Copyright (c) 2026 palchrb),
@@ -7,6 +11,15 @@ package me.vibb.music.logic
  * per show; the phone keeps the item keys it has seen, so every new item can join the Nytt tray.
  * Pure; NewItemsTest ports vibb's tests/new_badge.py.
  */
+
+/**
+ * The keys of a listing that may join the Nytt tray when new: those that can play once fetched
+ * ([fetchable]: a url, or a Storytel book, whose url is minted per download - design 26b §3.4, vibb
+ * `_mark_new_seen(newest_book_id)`). A withdrawn episode without a url never does. The tray and the
+ * notification show only visible items, so a new book appears there once it is on the phone.
+ */
+fun newsEligible(entry: Entry, items: List<ListingItem>): Set<String> =
+    items.filter { it.url != null || entry.source == Source.STORYTEL }.map { it.key }.toSet()
 
 /** The Nytt tray holds at most this many items (newest first). */
 const val NEWS_MAX = 30

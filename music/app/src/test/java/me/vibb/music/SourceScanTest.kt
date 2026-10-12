@@ -195,12 +195,53 @@ class SourceScanTest {
     }
 
     @Test
-    fun `the debug base is declared in main and read by nothing yet (step 3 gives it its four readers)`() {
+    fun `the debug base is assigned only in src-debug and read only by its four readers (M2)`() {
         for (f in sources("src/main")) {
             if (code(f).contains("debugBase")) assertEquals(f.path, "StorytelEndpoints.kt", f.name)
         }
         val endpoints = code(moduleFile("src/main/java/me/vibb/music/storytel/StorytelEndpoints.kt"))
-        assertEquals("one declaration, null by default", 1, Regex("debugBase").findAll(endpoints).count())
         assertTrue(endpoints.contains("var debugBase: String? = null"))
+        assertEquals("one declaration and four reads", 5, Regex("\\bdebugBase\\b").findAll(endpoints).count())
+        assertFalse("main never assigns it", Regex("debugBase\\s*=[^=]").containsMatchIn(endpoints.replace("var debugBase: String? = null", "")))
+        // (a) the endpoints and (b) the LAN client for the API: the account; (c) a Storytel download's
+        // public-only switch: the download; (d) the minted-URL check on the Sonos path (step 4b).
+        val readers = mapOf(
+            "endpoints" to setOf("StorytelAccount.kt"),
+            "apiOverLan" to setOf("StorytelAccount.kt"),
+            "publicDownloads" to setOf("Downloads.kt"),
+            "privateMintAllowed" to setOf("SonosController.kt"),
+        )
+        for ((reader, allowed) in readers) {
+            assertTrue("no reader $reader", endpoints.contains("fun $reader()"))
+            val body = endpoints.substringAfter("fun $reader()").split(Regex("\\n    (private )?fun ")).first()
+            assertTrue("$reader reads the switch", body.contains("debugBase"))
+            for (f in sources("src/main/java")) {
+                if (code(f).contains("StorytelEndpoints.$reader(")) assertTrue("${f.name} reads $reader", f.name in allowed)
+            }
+        }
+        val assigning = sources("src/debug").filter { Regex("debugBase\\s*=[^=]").containsMatchIn(code(it)) }.map { it.name }
+        assertEquals("only the debug feed assigns it", listOf("DebugStorytel.kt"), assigning)
+    }
+
+    @Test
+    fun `a Storytel download never follows a redirect, so no token reaches the cache index`() {
+        val downloads = code(moduleFile("src/main/java/me/vibb/music/sync/Downloads.kt"))
+        assertTrue(downloads.contains("followRedirects = !storytel"))
+        val cache = code(moduleFile("src/main/java/me/vibb/music/media/MediaCache.kt"))
+        assertTrue(cache.contains(".followRedirects(false).followSslRedirects(false)"))
+        assertTrue(cache.contains("OkHttpDataSource.Factory(if (followRedirects) httpClient(publicOnly) else noRedirectClients.getValue(publicOnly))"))
+    }
+
+    @Test
+    fun `the debug feed's Storytel login is deleted once read, and its email never logged (L13)`() {
+        val debug = code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugStorytel.kt"))
+        val seed = debug.substringAfter("fun seedLogin(").substringBefore("\n    }\n")
+        assertTrue(seed.contains("} finally {\n            f.delete()"))
+        for (line in debug.lines().filter { it.contains("Log.") }) {
+            assertFalse(line, Regex("\\$\\{?(email|password|o\\b)").containsMatchIn(line))
+        }
+        val manifest = code(moduleFile("src/debug/AndroidManifest.xml"))
+        assertTrue(manifest.contains("android:name=\"me.vibb.music.debugfeed.DebugStartup\""))
+        assertTrue("the start-up provider is not exported", manifest.substringAfter("DebugStartup").substringBefore("/>").contains("android:exported=\"false\""))
     }
 }

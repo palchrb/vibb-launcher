@@ -2,6 +2,7 @@ package me.vibb.music.storytel
 
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /*
  * Storytel's hosts, ported from palchrb/vibb `pi/vibb/storytel.py` (the CONSTANTS block:
@@ -32,12 +33,31 @@ data class Endpoints(
 /**
  * The one debug-only switch (design 26b §4.6, QA M2): null unless the debug feed's `config.json` sets
  * `storytel_base` (the emulator's fake Storytel on 10.0.2.2, a private address the guarded client
- * refuses). Declared in step 1 and read by nothing yet; step 3 gives it exactly four readers (the
- * endpoints, the LAN client for the API, `publicOnly = false` for Storytel downloads, the minted-URL
- * check of §5.1), and only `src/debug` assigns it (SourceScanTest). A release build has no feed, so it
- * stays null there.
+ * refuses). Only `src/debug` assigns it (SourceScanTest); a release build has no feed, so it stays null
+ * there. It has exactly four readers, all below and nowhere else: (a) [endpoints], (b) [apiOverLan],
+ * (c) [publicDownloads] and (d) [privateMintAllowed]. Nothing caches what they answer except
+ * `StorytelAccount`, which keeps its one `StorytelApi` for as long as (a) and (b) answer the same.
  */
 object StorytelEndpoints {
     @Volatile
     var debugBase: String? = null
+
+    /** (a) Where the login and the API live: the real hosts, or the fake's `/api/login.action` and its root. */
+    fun endpoints(): Endpoints {
+        val base = parse(debugBase) ?: return Endpoints.STORYTEL
+        return Endpoints(base.newBuilder().encodedPath("/api/login.action").build(), base.newBuilder().encodedPath("/").build())
+    }
+
+    /** (b) Whether `StorytelAccount` talks to the API over MediaCache's LAN client instead of the guarded public one. */
+    fun apiOverLan(): Boolean = parse(debugBase) != null
+
+    /** (c) Whether a Storytel download goes through the guarded public-only client (always, but for the fake). */
+    fun publicDownloads(): Boolean = parse(debugBase) == null
+
+    /** (d) Whether design 26b §5.1's minted-URL check on the Sonos path lets a private literal through (step 4b). */
+    fun privateMintAllowed(): Boolean = parse(debugBase) != null
+
+    /** An http(s) base with a host, else none (a typo in the feed falls back to Storytel's hosts everywhere at once). */
+    private fun parse(base: String?): HttpUrl? =
+        base?.toHttpUrlOrNull()?.takeIf { it.host.isNotEmpty() && it.username.isEmpty() && it.password.isEmpty() }
 }

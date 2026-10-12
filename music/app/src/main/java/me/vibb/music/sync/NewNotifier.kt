@@ -31,14 +31,15 @@ object NewNotifier {
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    /** The tray's items that can play now (the bell's count too). */
+    /** The tray's items that can play now on [snap]'s renderer (the bell's count too). */
     fun count(snap: Snapshot): Int {
         val visible = snap.entries.associate { e -> e.id to snap.visible(e).map { it.key }.toSet() }
         return snap.news.count { it.key in visible[it.entryId].orEmpty() }
     }
 
+    /** The notification counts what plays on the phone (design 26b §3.2: a Storytel book once downloaded). */
     fun update(context: Context, snap: Snapshot) {
-        val n = count(snap)
+        val n = count(snap.forRenderer(false))
         val prefs = context.getSharedPreferences("music", Context.MODE_PRIVATE)
         val nm = context.getSystemService(NotificationManager::class.java)
         if (n == 0) {

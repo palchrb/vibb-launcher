@@ -83,25 +83,48 @@ object MediaCache {
     /** A public entry's item would connect to a private address (21b §2.7). */
     class PrivateAddressException(host: String) : UnknownHostException("$host: private address refused for a public entry")
 
+    /**
+     * A Storytel book's CDN client (design 26b §4.3): redirects never followed. The minted URL is the
+     * CDN's own (the asset call's 302 was captured by the Storytel client), and a followed redirect
+     * would put its target - a token in its query - into the cache index (Media3's `exo_redir`). A
+     * CDN that redirects anyway fails the attempt with its 3xx status (`http_302`, transient: the
+     * next attempt mints again).
+     */
+    private val noRedirectClients: Map<Boolean, OkHttpClient> by lazy {
+        mapOf(true to publicClient, false to lanClient).mapValues { (_, c) -> c.newBuilder().followRedirects(false).followSslRedirects(false).build() }
+    }
+
+    /**
+     * The client for [publicOnly] (the guarded public one, else the LAN one): the Storytel client's
+     * transport (design 26b §4.1, QA M2), which sets its own User-Agent and redirect rule per request.
+     */
+    fun httpClient(publicOnly: Boolean): OkHttpClient = if (publicOnly) publicClient else lanClient
+
     /** Only http(s) upstream for NRK and RSS (a playlist can't open a file: or content: URI); an
      * HTML answer is never audio (21b §2.5 `bad_media`). */
-    private fun http(publicOnly: Boolean): OkHttpDataSource.Factory =
-        OkHttpDataSource.Factory(if (publicOnly) publicClient else lanClient)
+    private fun http(publicOnly: Boolean, followRedirects: Boolean = true): OkHttpDataSource.Factory =
+        OkHttpDataSource.Factory(if (followRedirects) httpClient(publicOnly) else noRedirectClients.getValue(publicOnly))
             .setUserAgent("VibbMusic/${BuildConfig.VERSION_NAME}")
             .setContentTypePredicate { type -> !type.lowercase().startsWith("text/html") }
 
-    /** For the player: the item's copy first (read only), then the network. */
-    fun playbackFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory): CacheDataSource.Factory = CacheDataSource.Factory()
+    /**
+     * For the player: the item's copy first (read only), then the network - or, for [copyOnly] (a
+     * Storytel book, design 26b §4.4: download-only), the copy and nothing else: no upstream at all
+     * (Media3 then reads through a placeholder that fails to open), so a missing part is an error,
+     * never a request.
+     */
+    fun playbackFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, copyOnly: Boolean = false): CacheDataSource.Factory = CacheDataSource.Factory()
         .setCache(get(context))
-        .setUpstreamDataSourceFactory(http(publicOnly))
+        .setUpstreamDataSourceFactory(if (copyOnly) null else http(publicOnly))
         .setCacheWriteDataSinkFactory(null)
         .setCacheKeyFactory(keys)
 
-    /** For downloads: written into the cache. */
-    fun downloadFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory): CacheDataSource.Factory = CacheDataSource.Factory()
-        .setCache(get(context))
-        .setUpstreamDataSourceFactory(http(publicOnly))
-        .setCacheKeyFactory(keys)
+    /** For downloads: written into the cache. [followRedirects] false for a Storytel book (above). */
+    fun downloadFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, followRedirects: Boolean = true): CacheDataSource.Factory =
+        CacheDataSource.Factory()
+            .setCache(get(context))
+            .setUpstreamDataSourceFactory(http(publicOnly, followRedirects))
+            .setCacheKeyFactory(keys)
 
     /** Delete an item's audio. */
     fun remove(context: Context, cacheKey: String, hls: Boolean) {

@@ -86,12 +86,14 @@ import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.resumeOverlapMs
 import me.vibb.music.logic.storedPlan
 import me.vibb.music.logic.seekGate
+import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.streamAllowed
 import me.vibb.music.logic.toggledQueue
 import me.vibb.music.media.ItemTag
 import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
+import me.vibb.music.model.Source
 import me.vibb.music.sonos.PlayBodies
 import me.vibb.music.sonos.RendererChoice
 import me.vibb.music.sonos.SonosHome
@@ -486,7 +488,8 @@ class PlaybackService : MediaSessionService() {
 
     // --- starting a queue ---
 
-    private suspend fun load(): Pair<Snapshot, List<DownloadRow>> = withContext(Dispatchers.IO) { store.snapshot() to store.db.downloads() }
+    /** The phone's view (design 26b §3.2: a Storytel book shows with its copy only); step 4b passes the renderer. */
+    private suspend fun load(): Pair<Snapshot, List<DownloadRow>> = withContext(Dispatchers.IO) { store.snapshot().forRenderer(false) to store.db.downloads() }
 
     /**
      * The queue of [keys] as renderer [kind] plays it. A Sonos room gets only what a speaker can play
@@ -660,6 +663,12 @@ class PlaybackService : MediaSessionService() {
         if (item.fileId != null) {
             b.setUri(Uri.fromFile(store.ownFile(item.fileId)))
             b.setTag(ItemTag(null, false, false))
+        } else if (a.entry.source == Source.STORYTEL) {
+            // Download-only (design 26b §4.4): the book plays from its copy and nothing else. Its uri is
+            // the source id (no network scheme, never a minted URL); the data source has no upstream.
+            val cacheKey = itemCacheKey(a.entry.key, item.key)
+            b.setUri(sourceId(a.entry, item)).setCustomCacheKey(cacheKey)
+            b.setTag(ItemTag(cacheKey, hls = false, publicOnly = true, copyOnly = true))
         } else {
             // A copy plays from what was fetched (also when the source withdrew the episode).
             val url = download?.url ?: item.url.orEmpty()

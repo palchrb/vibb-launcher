@@ -9,5 +9,10 @@
             android:name="me.vibb.music.debugfeed.DebugFeedReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
+        <!-- The fake Storytel's base (design 26b §4.6) from the feed's config.json at every process start. -->
+        <provider
+            android:name="me.vibb.music.debugfeed.DebugStartup"
+            android:authorities="${applicationId}.debugstartup"
+            android:exported="false" />
     </application>
 </manifest>

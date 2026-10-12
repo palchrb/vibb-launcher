@@ -1,5 +1,8 @@
 package me.vibb.music.logic
 
+import me.vibb.music.Fixtures.entry
+import me.vibb.music.model.ListingItem
+import me.vibb.music.model.Source
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -59,6 +62,22 @@ class NewItemsTest {
         assertEquals("b20", tray.first().key)
         assertTrue("the oldest went", tray.none { it.key == "a1" })
         assertEquals("an item already there isn't added twice", tray, addToTray(tray, 2, listOf("b20")))
+    }
+
+    /** Design 26b §3.4, vibb `tests/storytel_expand.py` 8: the newest book is the NY trigger. */
+    @Test
+    fun `8 a new Storytel book joins the tray though listed without a url, a withdrawn episode never`() {
+        val series = entry(7, Source.STORYTEL, target = "storytel:series:26175")
+        val books = listOf("111", "222", "333").map { ListingItem(it, "Bok $it", null, false, 700_000, null) }
+        assertEquals(setOf("111", "222", "333"), newsEligible(series, books))
+        val (first, seen) = markNewSeen(null, books.take(2).map { it.key })
+        assertTrue("the first listing acknowledges every book", first.isEmpty())
+        val (fresh, _) = markNewSeen(seen, books.map { it.key })
+        val news = fresh.filter { it in newsEligible(series, books) }
+        assertEquals(listOf("333"), news)
+        assertTrue(isNew(addToTray(emptyList(), 7, news), 7))
+        val feed = listOf(ListingItem("ep-1", "Ep", null, false, null, null), ListingItem("ep-2", "Ep", "https://cdn.example.org/2.mp3", false, null, null))
+        assertEquals(setOf("ep-2"), newsEligible(entry(1), feed))
     }
 
     @Test
