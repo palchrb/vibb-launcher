@@ -2114,3 +2114,146 @@ step.
   ("N books" only); the card is unchanged.
 - **Runs:** `cargo test` **661 passed, 0 failed** (660 + the new case; `parent_pin` passed this run), `cargo fmt
   --check` clean, `cargo clippy --all-targets` the same 12 warnings.
+
+## Step 4b implementation status (2026-10-12)
+
+Built on `music-2-storytel` from `48a9c90`, two commits: the music app (`d88bc5e`: the code and its tests) and the
+fake's option (`a802f28`), then this section. `music/` and `scripts/fake-storytel.py` only: no `server/`, launcher,
+contract file, AIDL or Room change. Compiled and tested here with the real Android build (AGP 8.13,
+`-PwarningsAsErrors=true`): `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug` and CI's `./gradlew
+build` green - **568 JVM tests** (542 before, +26), 0 failures; lint 0 errors and the same 40 warnings (none new in
+the touched files). `python3 -I -B scripts/fake-storytel.py --selftest` and `python3 -I -B scripts/fake-sonos.py
+--selftest` OK.
+
+**What was built** (§5, §8 step 4b, the merge sections' "what 4b must know" lists):
+- **The late mint** (`M/sonos/PlayBody.kt`, `SonosController.kt`, `SonosRenderer.kt`; §5.1, M6). `PlayBodies.build`
+  gives a Storytel book `PlayBody(kind = URL, uri = "", mint = <cid>, no art, durationS = the listing's)`;
+  `speakerDropReason` lets a Storytel book through before the `withdrawn` check (vibb 1693-1699). `playIndex`'s actor
+  job, for a body with `mint`: the token (`stillWanted(g)`: `!closed && generation.get() == g && mayPlay()`; `gen` is
+  an `AtomicLong` behind the old main-thread property, `closed` and `uid` `@Volatile`) -> `minter.mint(cid,
+  MINT_TIMEOUT_MS = 6 s, elapsed + MINT_BUDGET_MS = 10 s)` -> the token again -> `PlayBodies.mintedDropReason(url,
+  privateMintAllowed())` (the address half of `speakerDropReason`, one private helper `hostDropReason` for both; a
+  private literal only with the debug switch, reader (d), called in `SonosController.kt` as `SourceScanTest` pins) ->
+  `transport.play(body.copy(uri = url, mint = null), cap, members)` - the start cap and the hush inside, so a failed
+  mint sends nothing and touches no volume. A job its token drops returns null: superseded (no SOAP, no failed-play
+  path), or, of the current generation, `dropped` (playing stopped being allowed during the mint: the book waits at
+  its place for the next play). A failed mint is `StorytelUnavailable(code)` (`sonosMintCode`: `no_audio`,
+  `http_<n>`, `network`, `storytel_off`, `login_refused`, `login_failed`; `address` for a URL a speaker mustn't
+  fetch) - 1b's failed play: a first start is Lost ("Kan ikke spilles på Sonos", the phone, paused), a step or an
+  advance is dropped; `no_audio` also becomes the book's item error (`SonosHost.storytelUnavailable` ->
+  `ItemErrors.record`, the parent's "Storytel gave no audio for this book"); a refused login is already the
+  account's cooldown, which the report's `storytel` says. The minter is `StorytelAccount.get(context).mint` (the
+  process's one account, `runInterruptible` on IO), handed to the controller by `SonosRenderer`.
+- **Re-minting exactly as vibb** (§5.2): only `playIndex` builds a body, so a start, a restart from the bookmark (a
+  STOPPED or not-ours speaker, vibb 16), a step, a natural advance, phone -> room and room -> room mint; a resume
+  (`Play`), the stall retry, the hush and settled seek, a seek, the ramp, adopt and a migration follow don't.
+- **renderer.json** (§5.3, M1): `RendererChoice.played` / `followed` / `adopted` are the only writers of a uri, each
+  through `storedUri` (a Storytel book's marker `storytel:book:<cid>`): `host.played`, the migration follow (now
+  writing the hint's uri, the merge list's "migrate 1" item) and `lookAtRoom`'s rewrite on both branches.
+- **Adopt by consumableId** (§5.3): `roomVerdict` (and so `ourLiveSession`, the standalone bedtime looks and the
+  look before a play), `SonosSession.classify`'s `ours` (a marker in the session - the bedtime look - reads ours) and
+  the migration probe compare with `sameStream`; `adoptIndex` finds a Storytel book by the live URL's
+  `consumableId`. The look's `keep` returns the live TrackURI, so an adopted session goes on with the signed URL
+  and its polls are ours by `normUri`; a fresh mint of ours is ours because the session holds what it sent
+  (`pending`/`played` cover the settle).
+- **Durations** (§5.4): `accept` takes `durationByConsumableId` first when the speaker's is falsy (flagged
+  `durFromListing`, never deciding done), then 1b's listing length of the playing item and the same-uri carry; adopt
+  goes through `accept`, so it restores the length too (vibb 13).
+- **Visibility** (§5.6, H2): `PlaybackService.load(remote)`; `loadForRenderer()` (the renderer's kind) for
+  `playEntry`, `playItem`, `restore` (and so `resumeLast`, `restoreThen`); `load(remote = true)` in `lookAtRoom`
+  (and so `adoptedQueue`: an undownloaded book playing on a room is adopted, never `stopUnadopted`) and `toRoom`,
+  which re-plans a Storytel series over the room's order at the current book and place (`homePlan`) instead of
+  `a0.items`; `load(remote = false)` in `comeHome`, where a Storytel book not on the phone starts nothing - the
+  phone paused, `NOT_DOWNLOADED` (`quiet` when `lost`/the scope's leave already said why), never another book from
+  0. `SonosSuspension.entryMatcher`/`bookmark` read `forRenderer(true)`. `MusicViewModel.snapshot` follows the shown
+  output (`PlayerHub.State.output.kind == SONOS`), so a room's carousel, list and stored queue keep the books not on
+  the phone; `playSwitch`'s filter lets Storytel through on a room (`SwitchViewTest`'s whole-series case).
+- **The hand-off** (§5.1, M6): `PlaybackService.HANDOFF_MS` 15 -> 25 s (its KDoc explains the receiver's 9 s
+  `goAsync` budget against it), `SonosTail.MAX_MS` 16 -> 26 s, `SWITCH_WAIT_MAX_MS` 25 -> 35 s; `SwitchTest` reads
+  `PlaybackService.HANDOFF_MS`/`ADOPT_MS` (the companion is `internal` now) instead of its 15 s literal.
+- **Logs and toStrings** (§5.7, §0): the "not-ours?" line prints `redactUri` of both; `PlayBody`, `PlayResult`
+  (the DIDL as its length), `Fields` and `Moved` have explicit redacting `toString`s (`SourceScanTest`'s holders).
+- **The fake**: `scripts/fake-storytel.py --no-download 222,333` - those books mint but the CDN answers 503, so they
+  stay off the phone while a room (the fake speaker never fetches) plays them; selftest 5c.
+
+**Tests** (+26): `PlayBodyTest` +4 (vibb `storytel_sonos.py` 2, 6, 9: the filter's exemption, the mint body with the
+known length and no art, `mintedDropReason` with the shared verdicts and the debug switch, no token in any
+`toString`); `SonosControllerTest` +11 (3: one mint, 6 s / 10 s, the minted URL and the DIDL's length; 4: each `Mint`
+class sends nothing, not even `GetVolume` under a cap, reports its code, the start lost, the next play goes out, a
+throwing minter; the address check; 5: one mint per start, step, advance and restart from STOPPED, none for pause,
+resume, seek or the stall retry, one `SetAVTransportURI` per mint; M6: a step pressed during a mint sends one
+`SetAVTransportURI`, a job superseded in the queue never mints, a release or a suspension during the mint sends
+nothing, a hand-off queued behind a mint follows it; 10/14: the length by `consumableId`, a real one wins, a zero
+never erases, a speaker-started book's length is its own; 13/7: adopt by `consumableId` with the token holding
+another book's digits, the queue row's length, no command; the follow's hint to the writer); `SonosLifecycleTest` +4
+(vibb 7's ambiguous token in `roomVerdict`/`adoptIndex`/`adoptPlan`, no `consumableId` = not ours; a Storytel adopt
+takes the live URL and renderer.json keeps the marker through the file on both branches; the three writers;
+the standalone suspension by the marker); `SonosSessionTest` +2 (the redacted not-ours line; a marker in the
+session); `SonosActorTest` +1 (a poll waits behind a slow mint, a dropped or failed play keeps the consumer);
+`StorytelRulesTest` +3 (`sonosMintCode`; H2's two rows over the service's pure helpers: an undownloaded book's adopt
+plan exists in the room's view and not in the phone's, phone -> room with books 1 and 3 of five puts all five on the
+room at the current book and place); `GuardsTest` +1 net (the mint's callers now include the play job - between the two
+token checks, before `transport.play`; every §5.6 call site; every renderer.json uri write through `storedUri`);
+`SwitchViewTest` (the 4b-pending case replaced by the whole series: every book queued, a cover tap at the
+bookmark's undownloaded book 2 at 120 s, "Del 2 av 5", an entry with nothing on the phone switching on a room);
+`SwitchTest` (the constants). Mutations, each reverted: the token check after the mint removed turns 2
+`SonosControllerTest` rows red; the length lookup removed, 1; `normUri` instead of `sameStream` in `roomVerdict`,
+3 `SonosLifecycleTest` rows; the filter's Storytel branch removed, 17 tests.
+
+**Choices and deviations** (each against the spec text, with its reason):
+1. **The token guards Storytel plays only** (a body with `mint`). 1b's url and NRK plays go out within milliseconds of
+   their `mayPlay()` and keep their superseded-play bookkeeping (a superseded play that landed is still stopped by
+   `lost`/the hand-off); M6 is about the mint's seconds.
+2. **A current play dropped after its mint** (only `mayPlay()` can do that) is neither lost nor refused: no message,
+   the book waits at its place (`startPending`), as a skip that may not play.
+3. **`no_audio` from a room's mint is recorded as the book's item error** (the brief for this step; §5.1 says only
+   "1b's failed play"). The other codes are logged only: a login failure is the account's state, the rest transient.
+4. **The serial actor behind a mint is accepted**, not worked around: every job behind a mint (polls, pause, the volume
+   keys, a hand-off) waits up to 10 s; nothing in the actor is cancelled (the trap in the merge list); `HANDOFF_MS`
+   25 s and `DRAIN_MS` 30 s cover a mint plus a hushed play; the screens hold through `pending` and
+   `PlayerHub.State.waiting`. A skipped poll was not needed: the poll's `actor.call` simply waits.
+5. **`SonosTail.MAX_MS` and `SWITCH_WAIT_MAX_MS` moved with `HANDOFF_MS`**: the switch's bound is set by the fresh-start
+   chain (the tail = the hand-off + 1 s, the adopt's 4 s look, the load), so 35 s, not 25 s plus a margin.
+6. **The adopted session's uri is the live TrackURI for every source** (§5.3: "for NRK/RSS nothing changes", the two
+   are `normUri`-equal); renderer.json keeps 1b's stored built uri for NRK/RSS (`RendererChoice.adopted`).
+7. **A migration follow now writes the hint's uri** (through `storedUri`; 1b's follow wrote no uri). In practice the
+   hint is the session's own uri; for Storytel the marker doesn't change.
+8. **`toRoom` re-plans a Storytel series for room -> room too** (the old room's queue is the whole series already):
+   rotated at the current book like `homePlan`, where 1b kept `a0.items`' order.
+9. **Coming home to a book not on the phone is Storytel-only** (1b's `homePlan` for an RSS item withdrawn meanwhile is
+   unchanged) and says "Ikke lastet ned" unless the caller already said why (`quiet`: `lost`, the scope's leave).
+10. **No change in `StorytelAccount.kt`** (§8 lists it for "the minter the controller gets"): the minter is a
+    `fun interface StorytelMinter` in `SonosController.kt` and `SonosRenderer` hands it `StorytelAccount.get(context)
+    .mint` - the account already has the one signature.
+11. **`RendererChoice` gained the three writers** (`played`, `followed`, `adopted`), so M1's pin is "only these three
+    write a uri, each through `storedUri`" - a pure, file-tested form of §5.3's `SonosLifecycleTest` check.
+
+**Found in the spec**:
+- §5.1/§13 M6 raise `SWITCH_WAIT_MAX_MS` "with `HANDOFF_MS`" but don't name `SonosTail.MAX_MS` (16 s, documented as
+  "the service's hand-off budget (15 s)"): it moves too, and the bound follows from it (choice 5).
+- §5.3 asks the migration follow's write to go through `storedUri`; 1b's follow wrote no uri at all (choice 7).
+- §5.6's `leaveDisallowedRoom`/`lost` row: both come home through `comeHome`, the phone's view - no separate site.
+- §7 13/14 "the poll prefers it": in this controller 1b's listing length of the playing item already gives the same
+  value for our own and adopted plays; the lookup shows only for a book the speaker started itself (pinned on the
+  snapshot, never shown).
+- §8 4b names `SonosTransport.kt` among the files: nothing there needed a Storytel branch (`play` takes the minted
+  body; `adoptLive`'s `keep` already re-adopts with a uri it names) - only `PlayResult`'s redacted `toString`.
+- The merge list's "SonosSuspension reads the phone's view" was right and is fixed; its "the minted URL's checks in
+  the actor job through a helper shared with `speakerDropReason`" is `hostDropReason`.
+
+**Owed - emulator** (§6h + §6i together; no emulator here). The fakes: `python3 -I scripts/fake-storytel.py --books
+111:5,222:5,333:5,444:5,555:5 --no-download 222,444,555 --slow-mint 5` (books 1 and 3 on the phone, the rest kept off
+it) and `python3 -I scripts/fake-sonos.py` (Stua, Kjøkken), the debug feed as §6h (the speaker seed) and §6i
+(`storytel_base`, `storytel.json`, the listing from `--print-listing 5`). Then: book 2 (not downloaded) plays on Stua
+- one `asset 222` in the fake's log, `SetAVTransportURI` with its `res duration`, no `albumArtURI`; next and previous
+mint again, pause/resume doesn't; next mashed three times during the 5 s mint gives one `SetAVTransportURI`; Stua
+stopped (`fake-sonos` script `STOPPED`) then play: a new mint from the bookmark; phone -> Stua from book 3 queues all
+five (the player's "Del 3 av 5", the list's five rows); kill the app while Stua plays book 2, restart: adopted (no
+SOAP but reads in `fake-sonos`'s log, the right book and place, no Stop); Stua -> phone on book 2: the phone paused,
+"Ikke lastet ned"; `adb shell run-as me.vibb.music.debug cat no_backup/renderer.json` holds `storytel:book:222` after
+the play and after the adopt; logcat's `not-ours?` lines and the whole data folder (§6i's `grep -raE`) hold no
+`FAKE-SIG`/`token=`. Owed - [device check]: the Sonos items of "Device checks" (a book not downloaded in a room,
+next/previous, two hours paused then play, the kill and adopt, `consumableId` in the real Location, room -> phone
+with the book downloaded and not). Owed - step 5's docs: `music/CLAUDE.md` (the mint and the job's token,
+renderer.json's marker, `HANDOFF_MS` 25 s and `SWITCH_WAIT_MAX_MS` 35 s, the room's view at the call sites) and
+`docs/testing/emulator.md` §6i's 4b lines with `--no-download`.
