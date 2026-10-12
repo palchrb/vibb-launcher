@@ -1,0 +1,136 @@
+name: Spotify spike
+
+# The throwaway Spotify engine spike in spike/spotify/ (docs/testing/spotify-spike.md). Manual only:
+# never on push or PR, never a release, and not one of the required checks. It builds the debug
+# APK (lint and Kotlin warnings fail it) and uploads it as an artifact.
+#
+# Signing: Spotify's dashboard pins the APK's SHA-1, so the key must stay the same from run to run.
+# - Secrets SPOTIFY_SPIKE_KEYSTORE_B64 (base64 of a PKCS12 keystore, alias "spike") and
+#   SPOTIFY_SPIKE_KEYSTORE_PASSWORD set: the APK is signed with that key.
+# - Only SPOTIFY_SPIKE_KEYSTORE_PASSWORD set: the job makes a new keystore protected by that password,
+#   signs with it and uploads it as a second artifact (kept 1 day), to be stored as
+#   SPOTIFY_SPIKE_KEYSTORE_B64 for later runs. The artifact is useless without the password secret,
+#   so it is safe even where other people can download the run's artifacts.
+# - Neither: a throwaway key with a random password that is never uploaded - the SHA-1 changes with
+#   every run (the job summary says so).
+# The job summary prints the key's SHA-1 for the dashboard. Never the launcher's release key.
+#
+# Third-party actions are pinned by commit SHA (the same as music.yml).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spike-build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: spike/spotify
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+    - name: Validate the Gradle wrappers
+      # Security review L9: launcher/, music/ and spike/spotify/.
+      uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      with:
+        min-wrapper-count: 3
+    - name: set up JDK 17
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - name: Signing key
+      id: key
+      env:
+        KS_B64: ${{ secrets.SPOTIFY_SPIKE_KEYSTORE_B64 }}
+        KS_PASSWORD: ${{ secrets.SPOTIFY_SPIKE_KEYSTORE_PASSWORD }}
+      run: |
+        set -euo pipefail
+        umask 077
+        ks="$RUNNER_TEMP/spike.p12"
+        new_key() {
+          keytool -genkeypair -storetype PKCS12 -keystore "$ks" -alias spike -keyalg RSA -keysize 3072 \
+            -validity 3650 -dname "CN=Vibb engine spike" -storepass "$1" >/dev/null
+        }
+        if [ -n "$KS_B64" ] && [ -n "$KS_PASSWORD" ]; then
+          echo "$KS_B64" | base64 -d > "$ks"
+          pass="$KS_PASSWORD"
+          mode=secret
+        elif [ -n "$KS_PASSWORD" ]; then
+          pass="$KS_PASSWORD"
+          new_key "$pass"
+          mode=new-kept
+        else
+          pass="$(openssl rand -hex 24)"
+          echo "::add-mask::$pass"
+          new_key "$pass"
+          mode=throwaway
+        fi
+        echo "SPOTIFY_SPIKE_KEYSTORE_FILE=$ks" >> "$GITHUB_ENV"
+        echo "SPOTIFY_SPIKE_KEYSTORE_PASSWORD=$pass" >> "$GITHUB_ENV"
+        sha1="$(keytool -list -v -storetype PKCS12 -keystore "$ks" -alias spike -storepass "$pass" \
+          | grep -oE 'SHA1: *([0-9A-F]{2}:){19}[0-9A-F]{2}' | grep -oE '([0-9A-F]{2}:){19}[0-9A-F]{2}')"
+        [ -n "$sha1" ] || { echo "No SHA-1 in keytool's output" >&2; exit 1; }
+        echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        echo "sha1=$sha1" >> "$GITHUB_OUTPUT"
+        echo "key: $mode, SHA-1 $sha1"
+    - name: Build the debug APK
+      # Downloads Spotify's App Remote AAR (pinned commit + SHA-256) into app/libs/; never committed.
+      run: |
+        chmod +x gradlew
+        ./gradlew assembleDebug lintDebug -PwarningsAsErrors=true
+    - name: Check the signer
+      env:
+        SHA1: ${{ steps.key.outputs.sha1 }}
+      run: |
+        set -euo pipefail
+        BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+        apk=app/build/outputs/apk/debug/app-debug.apk
+        actual="$("$BT/apksigner" verify --print-certs "$apk" | grep -oE 'SHA-1 digest: *[0-9a-f]{40}' | grep -oE '[0-9a-f]{40}')"
+        expected="$(echo "$SHA1" | tr -d ':' | tr 'A-F' 'a-f')"
+        [ "$actual" = "$expected" ] || { echo "APK signed by $actual, expected $expected" >&2; exit 1; }
+        "$BT/aapt2" dump badging "$apk" | grep "^package:"
+    - name: Keep the new keystore
+      if: ${{ steps.key.outputs.mode == 'new-kept' }}
+      run: cp "$SPOTIFY_SPIKE_KEYSTORE_FILE" "$RUNNER_TEMP/spike-keystore.p12"
+    - name: Upload the new keystore (protected by the password secret)
+      if: ${{ steps.key.outputs.mode == 'new-kept' }}
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      with:
+        name: spotify-spike-keystore
+        path: ${{ runner.temp }}/spike-keystore.p12
+        if-no-files-found: error
+        retention-days: 1
+    - name: Remove the keystore
+      if: always()
+      run: rm -f "$RUNNER_TEMP/spike.p12" "$RUNNER_TEMP/spike-keystore.p12"
+    - name: Upload APK
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      with:
+        name: vibb-engine-spike-${{ github.sha }}
+        path: spike/spotify/app/build/outputs/apk/debug/app-debug.apk
+        if-no-files-found: error
+        retention-days: 14
+    - name: Job summary
+      env:
+        MODE: ${{ steps.key.outputs.mode }}
+        SHA1: ${{ steps.key.outputs.sha1 }}
+      run: |
+        {
+          echo "## Spotify spike APK"
+          echo
+          echo "Package \`me.vibb.spotifyspike\`, signing certificate **SHA-1 \`$SHA1\`** (enter it in Spotify's dashboard)."
+          echo
+          case "$MODE" in
+            secret) echo "Signed with the key in SPOTIFY_SPIKE_KEYSTORE_B64: the SHA-1 is the same as in earlier runs." ;;
+            new-kept)
+              echo "A **new** key, protected by SPOTIFY_SPIKE_KEYSTORE_PASSWORD, is the artifact \`spotify-spike-keystore\` (kept 1 day)."
+              echo "Download it, run \`base64 -w0 spike-keystore.p12\` and store the output as the secret SPOTIFY_SPIKE_KEYSTORE_B64;"
+              echo "later runs then keep this SHA-1. Delete the downloaded file afterwards." ;;
+            *)
+              echo "**Throwaway key**: no keystore secrets are set, so this SHA-1 changes with every run and the key is gone."
+              echo "Set the secret SPOTIFY_SPIKE_KEYSTORE_PASSWORD and run again to get a key you can keep." ;;
+          esac
+        } >> "$GITHUB_STEP_SUMMARY"
