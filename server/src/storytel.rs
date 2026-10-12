@@ -816,6 +816,9 @@ struct KeptShelf {
 struct Session {
     jwt: Option<KeptJwt>,
     shelf: Option<KeptShelf>,
+    /// Requests sent through this session (logins and shelves): the sweep's check counts what one
+    /// read cost ([Account::shelf_counted]).
+    sent: u32,
 }
 
 /// `AppState.storytel`: the server's one Storytel session.
@@ -850,6 +853,7 @@ impl Account {
             return Err(StorytelError::Cooldown { until });
         }
         let generation = credentials.generation;
+        session.sent += 1;
         match login_with(state, &credentials.login.email, &credentials.login.password).await {
             Ok(jwt) => {
                 tracing::info!(generation, "storytel: logged in");
@@ -902,9 +906,11 @@ impl Account {
             let jwt = self
                 .bearer(state, session, credentials, attempt == 1)
                 .await?;
+            let request = shelf_request(jwt);
+            session.sent += 1;
             let answer = state
                 .music_fetch
-                .get(shelf_request(jwt))
+                .get(request)
                 .await
                 .map_err(StorytelError::Fetch);
             let answer = match answer {
@@ -977,7 +983,28 @@ impl Account {
         state: &AppState,
         max_age: Duration,
     ) -> Result<Arc<Vec<Group>>, StorytelError> {
+        self.shelf_counted(state, max_age).await.0
+    }
+
+    /// [Account::shelf], with how many requests it sent (the sweep counts them against its check's
+    /// budget, design 26b §2.4).
+    pub async fn shelf_counted(
+        &self,
+        state: &AppState,
+        max_age: Duration,
+    ) -> (Result<Arc<Vec<Group>>, StorytelError>, u32) {
         let mut session = self.session.lock().await;
+        let before = session.sent;
+        let result = self.read_shelf(state, &mut session, max_age).await;
+        (result, session.sent.wrapping_sub(before))
+    }
+
+    async fn read_shelf(
+        &self,
+        state: &AppState,
+        session: &mut Session,
+        max_age: Duration,
+    ) -> Result<Arc<Vec<Group>>, StorytelError> {
         let credentials = credentials(state).await?;
         let kept = session
             .shelf
@@ -990,7 +1017,7 @@ impl Account {
         {
             return Ok(groups.clone());
         }
-        match self.fetch_shelf(state, &mut session, &credentials).await {
+        match self.fetch_shelf(state, session, &credentials).await {
             Ok(groups) => {
                 let groups = Arc::new(groups);
                 session.shelf = Some(KeptShelf {

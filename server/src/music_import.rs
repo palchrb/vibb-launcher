@@ -5,8 +5,10 @@
 //! library already holds; the pages are `handlers::music_import`.
 //!
 //! No network: a target goes through `music::parse_link` only (the same normalised target, source
-//! and key as "Add"), never `check_link`. The commit wakes the sweep, which fills the new entries
-//! in the background (design 21b); a dead feed shows up as its card's first-check error.
+//! and key as "Add"), never `check_link`; a `storytel:` target through the Storytel grammar
+//! (design 26b §2.6: a Storytel entry, cache 0 read as all). The commit wakes the sweep, which
+//! fills the new entries in the background (design 21b); a dead feed shows up as its card's
+//! first-check error, a book no longer on the shelf as `not_on_shelf`, no login as `storytel_off`.
 //! Positions and downloads aren't imported (design 20: no position mirroring).
 
 use std::collections::HashSet;
@@ -41,7 +43,6 @@ pub struct Candidate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Skip {
     Spotify,
-    Storytel,
     Folder,
     /// `parse_link` refused it (its reason).
     BadLink(&'static str),
@@ -57,7 +58,6 @@ impl Skip {
     pub fn reason(&self) -> String {
         match self {
             Skip::Spotify => "Spotify comes in a later version of the music app".to_string(),
-            Skip::Storytel => "Storytel books come in a later version of the music app".to_string(),
             Skip::Folder => {
                 "a folder on the Vibb box - upload the files as an own-files entry".to_string()
             }
@@ -120,7 +120,12 @@ fn classify(target: &str, spotify_user: bool) -> Result<music::Link, Skip> {
         return Err(Skip::Spotify);
     }
     if lower.starts_with("storytel:") {
-        return Err(Skip::Storytel);
+        // vibb's grammar, as the shelf picker writes it (no fetch: the sweep lists it).
+        return crate::storytel::parse_target(trimmed)
+            .map(|(kind, id)| music::Link::Storytel { kind, id })
+            .ok_or(Skip::BadLink(
+                "That Storytel target isn't storytel:series:<id> or storytel:book:<id>.",
+            ));
     }
     if trimmed.starts_with('/') {
         return Err(Skip::Folder);
@@ -148,13 +153,19 @@ fn row_of(entry: &serde_json::Map<String, Value>, spotify_user: bool) -> Row {
     let outcome = classify(&raw_target, spotify_user).and_then(|link| {
         let name = name.clone().ok_or(Skip::NoName)?;
         let target = link.target();
+        let source = link.source();
         Ok(Candidate {
             key: music::state_key(&target),
-            source: link.source(),
+            source,
             name,
             target,
             order: order.clone(),
-            cache,
+            // Storytel is download-only: 0 is all (vibb library.py 87-89).
+            cache: if source == "storytel" {
+                crate::storytel::cache_value(cache)
+            } else {
+                cache
+            },
             resume,
         })
     });
@@ -366,7 +377,7 @@ mod tests {
                 Err(Skip::Spotify),
                 Err(Skip::Spotify),
                 Err(Skip::Spotify),
-                Err(Skip::Storytel),
+                Ok("storytel:series:9"),
                 Err(Skip::Folder),
                 Err(Skip::BadLink(
                     "That NRK link is neither a podcast (radio.nrk.no/podkast/...) nor a series \
@@ -522,5 +533,45 @@ mod tests {
             "Godnatt og eventyr f"
         );
         assert_eq!(new_category_name("   "), "Vibb");
+    }
+    /// Design 26b §2.6: a `storytel:` target the grammar accepts imports as a Storytel entry (its
+    /// name, order and resume; cache 0 read as all, another valid value kept); one it refuses is
+    /// skipped with the reason. Nothing is fetched: the sweep lists it.
+    #[test]
+    fn storytel_targets_import_as_storytel_entries() {
+        let file = json!({"sections": [{"name": "Lydbøker", "entries": [
+            {"name": "Kokosbananas", "target": "storytel:series:26175", "order": "oldest_first", "cache": 0, "resume": true},
+            {"name": "Godnatt", "target": " storytel:book:777 ", "order": "auto", "cache": 5, "resume": false},
+            {"name": "Rar", "target": "storytel:author:1"},
+            {"name": "Rar 2", "target": "storytel:series:a b"},
+            {"name": "Rar 3", "target": "Storytel:series:9"},
+        ]}]});
+        let sections = parse(file.to_string().as_bytes()).unwrap();
+        let rows = &sections[0].rows;
+        let series = rows[0].outcome.as_ref().unwrap();
+        assert_eq!(
+            (series.source, series.target.as_str(), series.order.as_str()),
+            ("storytel", "storytel:series:26175", "oldest_first")
+        );
+        assert_eq!(series.key, music::state_key("storytel:series:26175"));
+        assert_eq!((series.cache, series.resume), (-1, true));
+        let book = rows[1].outcome.as_ref().unwrap();
+        assert_eq!(
+            (book.target.as_str(), book.cache, book.resume),
+            ("storytel:book:777", 5, false)
+        );
+        assert_eq!(
+            music::kind_label(book.source, Some(&book.target)),
+            "Storytel book"
+        );
+        for row in &rows[2..] {
+            assert!(
+                matches!(&row.outcome, Err(Skip::BadLink(reason)) if reason.contains("storytel:series:<id>")),
+                "{}",
+                row.target
+            );
+        }
+        // The preview document reads back the same.
+        assert_eq!(parse(document(&sections).as_bytes()).unwrap(), sections);
     }
 }

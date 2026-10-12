@@ -3242,7 +3242,7 @@ fn vibb_library() -> Value {
             {"id": "a1", "name": "Abels tårn", "target": "https://radio.nrk.no/podkast/abels_taarn", "order": "auto", "cache": 5, "resume": true},
             {"id": "a2", "name": "Ukas nyheter", "target": "https://example.org/feed.xml", "order": "newest_first", "cache": 3, "resume": false},
             {"id": "a3", "name": "Spilleliste", "target": "spotify:playlist:37i9dQ", "order": "auto", "cache": 0, "resume": true},
-            {"id": "a4", "name": "Lydbok", "target": "storytel:series:123", "order": "auto", "cache": -1, "resume": true},
+            {"id": "a4", "name": "Lydbok", "target": "storytel:series:123", "order": "auto", "cache": 0, "resume": true},
             {"id": "a5", "name": "Egne sanger", "target": "/srv/vibb/music/egne", "order": "auto", "cache": 0, "resume": true},
             {"id": "a6", "name": "P1 direkte", "target": "https://radio.nrk.no/direkte/p1", "order": "auto", "cache": 0, "resume": true}
         ]},
@@ -3284,7 +3284,10 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
             "a Pi value kept",
         ),
         ("Spotify comes in a later version", "spotify"),
-        ("Storytel books come in a later version", "storytel"),
+        (
+            "Storytel series · natural order · every book downloaded · continues where it stopped",
+            "storytel (design 26b §2.6: cache 0 is all)",
+        ),
         ("upload the files as an own-files entry", "folder"),
         ("neither a podcast", "parse_link"),
         ("it is in the file twice", "repeat within the file"),
@@ -3297,7 +3300,7 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
     // " podkast " matches the existing Podkast (trimmed, case-insensitive).
     assert!(page.contains("<option value=\"4\" selected>Podkast</option>"));
     assert!(page.contains("<option value=\"new\" selected>New: Eventyr og sånt</option>"));
-    assert_eq!(preview_rows(&page), vec!["0.0", "0.1", "1.0"]);
+    assert_eq!(preview_rows(&page), vec!["0.0", "0.1", "0.3", "1.0"]);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM music_entries")
             .fetch_one(&app.db)
@@ -3320,6 +3323,7 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
             ("category_1", "new"),
             ("row", "0.0"),
             ("row", "0.1"),
+            ("row", "0.3"),
             ("row", "1.0"),
             ("phone", &anna_id),
             ("phone", &emil_id),
@@ -3376,6 +3380,16 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
                 "Podkast".into()
             ),
             (
+                "Lydbok".into(),
+                "storytel".into(),
+                Some("storytel:series:123".into()),
+                crate::music::state_key("storytel:series:123"),
+                "auto".into(),
+                -1,
+                true,
+                "Podkast".into()
+            ),
+            (
                 "Radioteatret".into(),
                 "nrk".into(),
                 Some("https://radio.nrk.no/serie/radioteatret".into()),
@@ -3400,7 +3414,7 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(ticks, 6, "three entries on two phones");
+    assert_eq!(ticks, 8, "four entries on two phones");
     assert_eq!(
         music_policy(&app, &anna_token).await["library_version"]
             .as_str()
@@ -3409,20 +3423,20 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
     );
     assert_eq!(
         events(&app, "music_library_imported").await,
-        vec!["3 entries, 1 categories, 7 skipped".to_string()]
+        vec!["4 entries, 1 categories, 6 skipped".to_string()]
     );
 
     // The result, once, at #import.
     let page = app.get_page("/music", &cookie).await.text();
     assert!(page.contains("id=\"import\" open"));
     assert!(
-        page.contains("Imported 3 entries and 1 new category, ticked on Anna, Emil. 7 skipped:"),
+        page.contains("Imported 4 entries and 1 new category, ticked on Anna, Emil. 6 skipped:"),
         "{page}"
     );
     assert!(page.contains("podkast / Spilleliste: Spotify comes in a later version"));
     assert!(page.contains("Eventyr og sånt / Abels tårn (igjen): it is in the file twice"));
     let again = app.get_page("/music", &cookie).await.text();
-    assert!(!again.contains("Imported 3 entries"), "shown once");
+    assert!(!again.contains("Imported 4 entries"), "shown once");
     assert!(!again.contains("id=\"import\" open"));
 
     // A Pi value outside the page's choices stays, and survives a save of the entry.

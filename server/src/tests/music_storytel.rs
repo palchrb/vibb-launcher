@@ -672,10 +672,10 @@ async fn add_takes_only_shelf_targets() {
 #[tokio::test]
 async fn clear_drops_storytel_from_libraries() {
     // Step 2a's half: clearing forgets the server's session and moves the library revision
-    // (migration 0066's triggers); the library's Storytel gate itself is step 2b's.
+    // (migration 0066's triggers); step 2b's: the phone's library loses its Storytel entries.
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (device, _) = app.enrolled_device("phone").await;
+    let (device, token) = app.enrolled_device("phone").await;
     let before = revision(&app).await;
     storytel_takes(&app, EMAIL, PASSWORD);
     save(&app, &cookie, EMAIL, PASSWORD).await;
@@ -698,12 +698,36 @@ async fn clear_drops_storytel_from_libraries() {
         .await
         .unwrap();
     assert_eq!(revision(&app).await, on, "no change, no move");
+    // A ticked series, listed: in the phone's library.
+    add(&app, &cookie, &[SERIES]).await;
+    let series: i64 = sqlx::query_scalar("SELECT id FROM music_entries WHERE target = ?")
+        .bind(SERIES)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    tick(&app, &cookie, device, series, true).await;
+    check(&app, series, chrono::Utc::now()).await;
+    let library = device_get(&app, "/api/devices/music/library", &token, &[]).await;
+    assert!(lib_entry(&library.json(), series).is_some());
+    let on = revision(&app).await;
 
     let res = app
         .request_form(Method::POST, "/music/storytel/clear", Some(&cookie), &[])
         .await;
     assert_eq!(res.location(), Some("/music#storytel"));
     assert!(revision(&app).await > on);
+    // The entry is gone from the library (phase 1's prune deletes the books), still ticked.
+    let library = device_get(&app, "/api/devices/music/library", &token, &[]).await;
+    assert_eq!(
+        library.status,
+        StatusCode::NOT_FOUND,
+        "nothing else was ticked"
+    );
+    let ticked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_music_entries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(ticked, 1, "the tick stays for the next login");
     let (ciphertext, generation, refused_at, refused_generation, ok_at, error) = row(&app).await;
     assert_eq!(
         (ciphertext, refused_at, refused_generation, ok_at, error),
@@ -896,4 +920,608 @@ fn the_log_floors_reqwest_at_info() {
         );
     }
     assert!(!emitted(None).contains(&"DEBUG kid_phone_server::storytel".to_string()));
+}
+
+// ------------------------------------------------------------------------------------------------
+// Step 2b (design 26b §2.4-§2.7): the sweep lists Storytel entries, the library's gate, the cards
+// ------------------------------------------------------------------------------------------------
+
+use super::music::{device_get, tick};
+use crate::music_sweep::{self as sweep, CheckReport, stamp};
+
+const SERIES: &str = "storytel:series:26175";
+const GEO_SERIES: &str = "storytel:series:4242";
+const BOOK: &str = "storytel:book:777";
+const COVER_2: &str = "http://c.example.invalid/2-model.jpg";
+
+fn jpeg(shade: u8) -> Vec<u8> {
+    let image = image::RgbImage::from_pixel(64, 64, image::Rgb([shade, 100, 50]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(&mut out, image::ImageFormat::Jpeg)
+        .unwrap();
+    out.into_inner()
+}
+
+/// The fixture shelf without the items named in `drop`.
+fn shelf_without(drop: &[&str]) -> Vec<u8> {
+    let mut shelf: serde_json::Value = serde_json::from_slice(&fixture("bookshelf.json")).unwrap();
+    let items = shelf["items"].as_object_mut().unwrap();
+    for key in drop {
+        items.remove(*key);
+    }
+    serde_json::to_vec(&shelf).unwrap()
+}
+
+/// A saved login (the probe's shelf kept), the phone's Storytel switch on, and the shelf's
+/// `targets` added from the picker. Returns each target's entry id.
+async fn storytel_library(app: &TestApp, cookie: &str, device: i64, targets: &[&str]) -> Vec<i64> {
+    storytel_takes(app, EMAIL, PASSWORD);
+    save(app, cookie, EMAIL, PASSWORD).await;
+    sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = add(app, cookie, targets).await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let mut ids = Vec::new();
+    for target in targets {
+        ids.push(
+            sqlx::query_scalar("SELECT id FROM music_entries WHERE target = ?")
+                .bind(target)
+                .fetch_one(&app.db)
+                .await
+                .unwrap(),
+        );
+    }
+    ids
+}
+
+async fn check(app: &TestApp, entry: i64, now: chrono::DateTime<chrono::Utc>) -> CheckReport {
+    sweep::check_entry(&app.state, entry, now)
+        .await
+        .unwrap()
+        .expect("the entry is checked")
+}
+
+/// Check now, as the card's button asks for it (the limits are the handler's).
+async fn check_now(app: &TestApp, entry: i64, now: chrono::DateTime<chrono::Utc>) -> CheckReport {
+    sweep::request_check(&app.db, entry, now).await.unwrap();
+    check(app, entry, now).await
+}
+
+async fn items(app: &TestApp, entry: i64) -> Vec<sweep::Item> {
+    let mut conn = app.db.acquire().await.unwrap();
+    sweep::load_items(&mut conn, entry).await.unwrap()
+}
+
+fn keys(items: &[sweep::Item]) -> Vec<&str> {
+    items.iter().map(|i| i.key.as_str()).collect()
+}
+
+fn storytel_calls(app: &TestApp) -> Vec<String> {
+    app.fetch
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|url| url.starts_with(LOGIN_URL) || url.as_str() == BOOKSHELF)
+        .map(|url| {
+            if url.starts_with(LOGIN_URL) {
+                "login".to_string()
+            } else {
+                "shelf".to_string()
+            }
+        })
+        .collect()
+}
+
+fn lib_entry(library: &serde_json::Value, id: i64) -> Option<serde_json::Value> {
+    library["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == id)
+        .cloned()
+}
+
+/// vibb `storytel_sync.py` 1/1b and `storytel_expand.py` 2 on the server's side (§2.4): a series is
+/// listed like a feed - one `ok` item per book in reading order, keyed by `model.id`, no URL, the
+/// shelf's duration and each book's own cover - the locked and the geo-flagged books included; the
+/// listing is anchored at the first book, its title and cover the series'. The phone gets it through
+/// the listing route and the library names its version.
+#[tokio::test]
+async fn the_sweep_lists_a_series_like_a_feed() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let ids = storytel_library(&app, &cookie, device, &[SERIES, GEO_SERIES, BOOK]).await;
+    let (series, geo, book) = (ids[0], ids[1], ids[2]);
+    tick(&app, &cookie, device, series, true).await;
+    app.fetch.answer(COVER_2, 200, jpeg(40));
+    app.fetch.clear_calls();
+
+    // The probe's shelf is fresh: the check asks Storytel nothing, only the cover is fetched.
+    let report = check(&app, series, chrono::Utc::now()).await;
+    assert_eq!(report.error, None);
+    assert_eq!(report.new_items, 3);
+    assert_eq!(report.requests, 1, "the cover only");
+    assert!(storytel_calls(&app).is_empty());
+    assert_eq!(*app.fetch.calls.lock().unwrap(), vec![COVER_2.to_string()]);
+    assert_eq!(
+        report.phones,
+        vec![device],
+        "a new list nudges the phone with it"
+    );
+
+    let listed = items(&app, series).await;
+    assert_eq!(keys(&listed), ["160661", "160662", "160663"]);
+    assert!(
+        listed
+            .iter()
+            .all(|i| i.state == "ok" && i.url.is_none() && !i.hls)
+    );
+    assert_eq!(
+        listed.iter().map(|i| i.duration_ms).collect::<Vec<_>>(),
+        [Some(721_893), Some(700_000), Some(650_000)]
+    );
+    assert_eq!(
+        listed
+            .iter()
+            .map(|i| i.art_url.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("http://c.example.invalid/1.jpg"), Some(COVER_2), None],
+        "each book's own cover"
+    );
+    assert_eq!(
+        listed[2].title.as_deref(),
+        Some("Kokosbananas og den låste boka"),
+        "a book Storytel marks locked is listed: the phone tries it"
+    );
+    let listing = sweep::load_listing(&app.db, series).await.unwrap().unwrap();
+    assert_eq!(listing.title.as_deref(), Some("Kokosbananas"));
+    assert_eq!(listing.keep_end.as_deref(), Some("first"));
+    assert_eq!(
+        listing.cover_url.as_deref(),
+        Some(COVER_2),
+        "the series' cover"
+    );
+    assert!(listing.cover_hash.is_some());
+    assert_eq!(
+        (listing.item_count, listing.capped, listing.lan),
+        (3, false, Some(false))
+    );
+    let version = listing.version.clone().unwrap();
+
+    // The listing route: url null, the art, the version; the library names it.
+    let res = device_get(
+        &app,
+        &format!("/api/devices/music/entries/{series}/items"),
+        &token,
+        &[],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let served = res.json();
+    assert_eq!(served["version"], serde_json::json!(version));
+    assert_eq!(served["items"][0]["key"], serde_json::json!("160661"));
+    assert_eq!(served["items"][0]["url"], serde_json::Value::Null);
+    assert_eq!(served["items"][1]["art"], serde_json::json!(COVER_2));
+    assert_eq!(
+        served["items"][2]["duration_ms"],
+        serde_json::json!(650_000)
+    );
+    let library = device_get(&app, "/api/devices/music/library", &token, &[])
+        .await
+        .json();
+    let entry = lib_entry(&library, series).unwrap();
+    assert_eq!(entry["items"], serde_json::json!(version));
+    assert_eq!(entry["cover"], serde_json::json!(listing.cover_hash));
+    assert_eq!(entry["cache"], serde_json::json!(-1));
+    assert_eq!(
+        entry["order"],
+        serde_json::json!("auto"),
+        "auto: book 1 first on the phone"
+    );
+    let cover = listing.cover_hash.unwrap();
+    let res = device_get(
+        &app,
+        &format!("/api/devices/music/covers/{cover}"),
+        &token,
+        &[],
+    )
+    .await;
+    assert_eq!(
+        res.status,
+        StatusCode::OK,
+        "the series' cover is the phone's"
+    );
+
+    // A series whose one book is flagged "not in this country" and a standalone book: listed too.
+    assert_eq!(check(&app, geo, chrono::Utc::now()).await.error, None);
+    assert_eq!(keys(&items(&app, geo).await), ["555"]);
+    assert_eq!(check(&app, book, chrono::Utc::now()).await.error, None);
+    assert_eq!(keys(&items(&app, book).await), ["777"]);
+    assert!(
+        storytel_calls(&app).is_empty(),
+        "one shelf served all three"
+    );
+
+    // The cards: "N books", no newest line, Check now and Storytel's offline choices.
+    let page = app
+        .get_page("/music", &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(page.contains("3 books"), "{page}");
+    assert!(page.contains("1 book<"));
+    assert!(!page.contains("newest: Kokosbananas"));
+    assert!(page.contains(&format!("action=\"/music/entries/{series}/check\"")));
+    assert!(page.contains("Storytel series"));
+    assert!(page.contains("Storytel book"));
+    assert!(page.contains("<option value=\"-1\" selected>All books</option>"));
+}
+
+/// Check now reads a fresh shelf (QA L5); a book that leaves the shelf leaves the list (§2.4: no
+/// `gone`), one that comes back is new again; a group no longer on the shelf fails the check
+/// `not_on_shelf` and the phones keep the last good list (vibb leaves the old shelf.json).
+#[tokio::test]
+async fn check_now_follows_the_shelf() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, _) = app.enrolled_device("phone").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    let t0 = chrono::Utc::now();
+    check(&app, series, t0).await;
+    let first = sweep::load_listing(&app.db, series).await.unwrap().unwrap();
+
+    // Book 3 left the shelf in Storytel's app: a routine check still reads the kept shelf...
+    app.fetch.answer(BOOKSHELF, 200, shelf_without(&["160663"]));
+    app.fetch.clear_calls();
+    let routine = check(&app, series, t0 + TimeDelta::minutes(1)).await;
+    assert_eq!(routine.error, None);
+    assert!(storytel_calls(&app).is_empty());
+    assert_eq!(keys(&items(&app, series).await).len(), 3);
+    // ...Check now reads it fresh (the kept JWT, one request) and the book leaves the list.
+    let report = check_now(&app, series, t0 + TimeDelta::minutes(2)).await;
+    assert_eq!(report.error, None);
+    assert_eq!(storytel_calls(&app), ["shelf"]);
+    assert_eq!(report.requests, 1);
+    assert!(report.changed);
+    assert_eq!(keys(&items(&app, series).await), ["160661", "160662"]);
+    let second = sweep::load_listing(&app.db, series).await.unwrap().unwrap();
+    assert_ne!(second.version, first.version);
+    assert_eq!(second.item_count, 2);
+    // Back on the shelf: listed again, new.
+    app.fetch.answer(BOOKSHELF, 200, fixture("bookshelf.json"));
+    let report = check_now(&app, series, t0 + TimeDelta::minutes(3)).await;
+    assert_eq!(report.new_items, 1);
+    assert_eq!(
+        keys(&items(&app, series).await),
+        ["160661", "160662", "160663"]
+    );
+    assert_eq!(
+        sweep::load_listing(&app.db, series)
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        first.version,
+        "the same list, the same version"
+    );
+
+    // The series is gone from the shelf: the check fails, the last good list stays.
+    app.fetch.answer(
+        BOOKSHELF,
+        200,
+        shelf_without(&["160661", "160662", "160663"]),
+    );
+    let report = check_now(&app, series, t0 + TimeDelta::minutes(4)).await;
+    assert_eq!(report.error.as_deref(), Some("not_on_shelf"));
+    assert_eq!(keys(&items(&app, series).await).len(), 3);
+    let failed = sweep::load_listing(&app.db, series).await.unwrap().unwrap();
+    assert_eq!(failed.version, first.version);
+    assert_eq!(failed.error.as_deref(), Some("not_on_shelf"));
+    assert_eq!(failed.failures, 1);
+    let page = app
+        .get_page("/music", &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(
+        page.contains("no longer on the Storytel shelf. The phones keep the list"),
+        "{page}"
+    );
+
+    // The card's Check now takes a Storytel entry (QA M3) and wakes the sweep.
+    sqlx::query("DELETE FROM music_check_requests")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE music_listings SET requested_at = NULL WHERE entry_id = ?")
+        .bind(series)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/music/entries/{series}/check"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.location(), Some(&*format!("/music#entry-{series}")));
+    assert!(app.state.music_sweep.woken().await);
+    let requested: Option<String> =
+        sqlx::query_scalar("SELECT requested_at FROM music_listings WHERE entry_id = ?")
+            .bind(series)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(requested.is_some());
+    // `/music/cards` answers for it too.
+    let cards = app
+        .get_page(&format!("/music/cards?ids={series}"), &cookie)
+        .await
+        .json();
+    assert_eq!(cards["cards"][0]["id"], serde_json::json!(series));
+}
+
+/// The code QA of 2a: `Account::shelf` falls back to the kept shelf on a refusal, so the check reads
+/// the row's cooldown first - inside it the check fails `login_refused` and Storytel is asked
+/// nothing (vibb 10b); the last good list stays. Without a login: `storytel_off`, nothing asked.
+#[tokio::test]
+async fn a_refused_login_fails_the_check_without_a_request() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, _) = app.enrolled_device("phone").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    let t0 = chrono::Utc::now();
+    check(&app, series, t0).await;
+    // Storytel refused the saved login (the picker, the other day's check) a minute ago.
+    sqlx::query(
+        "UPDATE music_storytel SET login_refused_at = ?, login_refused_generation = generation, \
+         login_error = 'login_refused', login_error_at = ?",
+    )
+    .bind(stamp(t0))
+    .bind(stamp(t0))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    app.fetch.clear_calls();
+    let report = check_now(&app, series, t0 + TimeDelta::minutes(1)).await;
+    assert_eq!(report.error.as_deref(), Some("login_refused"));
+    assert_eq!(report.requests, 0);
+    assert_eq!(app.fetch.count(), 0, "inside the cooldown nothing is sent");
+    assert_eq!(
+        keys(&items(&app, series).await).len(),
+        3,
+        "the last good list"
+    );
+    let page = app
+        .get_page("/music", &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(page.contains("Storytel refused the login. The phones keep the list"));
+    // An hour later the login is tried again (one login, then the shelf).
+    app.state
+        .music_sweep
+        .set_clock(Some(t0 + TimeDelta::minutes(62)));
+    app.state
+        .storytel
+        .advance(std::time::Duration::from_secs(3601));
+    let report = check_now(&app, series, t0 + TimeDelta::minutes(62)).await;
+    assert_eq!(report.error, None);
+    assert_eq!(storytel_calls(&app), ["login", "shelf"]);
+
+    // The login cleared: `storytel_off` without a request; a never-listed entry says why.
+    app.request_form(Method::POST, "/music/storytel/clear", Some(&cookie), &[])
+        .await;
+    let fresh: i64 = sqlx::query_scalar(
+        "INSERT INTO music_entries (name, category_id, source, target, key, play_order, cache, \
+         resume, sort) VALUES ('Godnatt', 3, 'storytel', ?, ?, 'auto', -1, 1, 99) RETURNING id",
+    )
+    .bind(BOOK)
+    .bind(crate::music::state_key(BOOK))
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    app.fetch.clear_calls();
+    let report = check(&app, fresh, t0 + TimeDelta::minutes(63)).await;
+    assert_eq!(report.error.as_deref(), Some("storytel_off"));
+    assert_eq!(app.fetch.count(), 0);
+    let page = app
+        .get_page("/music", &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(page.contains("Couldn't list it: No Storytel login is saved on this server."));
+}
+
+/// vibb `storytel_sync.py` 6b: one pass with several Storytel entries reads the shelf once.
+#[tokio::test]
+async fn one_shelf_serves_a_pass() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, _) = app.enrolled_device("phone").await;
+    let ids = storytel_library(&app, &cookie, device, &[SERIES, GEO_SERIES, BOOK]).await;
+    // A restart: no JWT, no shelf in memory.
+    app.state.storytel.forget().await;
+    app.state
+        .music_sweep
+        .set_limits(sweep::MAX_CHECK_REQUESTS, std::time::Duration::ZERO);
+    app.fetch.clear_calls();
+    assert!(sweep::run_pass(&app.state).await);
+    assert_eq!(storytel_calls(&app), ["login", "shelf"]);
+    for id in ids {
+        let listing = sweep::load_listing(&app.db, id).await.unwrap().unwrap();
+        assert!(listing.version.is_some(), "entry {id} listed");
+    }
+}
+
+/// §2.7: a phone's library holds Storytel entries only while its switch is on and a login is
+/// stored; the listing and the cover routes follow (404); each change moves the revision, so the
+/// cached library is rebuilt and the phone prunes. Rows 4 and 5 of vibb `storytel_routes.py` on the
+/// library's side: per-phone downloads on the card.
+#[tokio::test]
+async fn library_gates_storytel() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let (other, other_token) = app.enrolled_device("other").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    tick(&app, &cookie, other, series, true).await;
+    app.fetch.answer(COVER_2, 200, jpeg(60));
+    check(&app, series, chrono::Utc::now()).await;
+    let cover = sweep::load_listing(&app.db, series)
+        .await
+        .unwrap()
+        .unwrap()
+        .cover_hash
+        .unwrap();
+    let has = |token: String| {
+        let app = &app;
+        let cover = cover.clone();
+        async move {
+            let library = device_get(app, "/api/devices/music/library", &token, &[]).await;
+            let listing = device_get(
+                app,
+                &format!("/api/devices/music/entries/{series}/items"),
+                &token,
+                &[],
+            )
+            .await;
+            let cover = device_get(
+                app,
+                &format!("/api/devices/music/covers/{cover}"),
+                &token,
+                &[],
+            )
+            .await;
+            let in_library =
+                library.status == StatusCode::OK && lib_entry(&library.json(), series).is_some();
+            (in_library, listing.status, cover.status)
+        }
+    };
+    // `device` has the switch on; `other` hasn't.
+    assert_eq!(
+        has(token.clone()).await,
+        (true, StatusCode::OK, StatusCode::OK)
+    );
+    assert_eq!(
+        has(other_token.clone()).await,
+        (false, StatusCode::NOT_FOUND, StatusCode::NOT_FOUND)
+    );
+    // Its device card says why.
+    let page = app
+        .get_page(&format!("/devices/{other}"), &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(page.contains("Storytel is off on this phone: its 1 Storytel entry aren't sent."));
+    assert!(page.contains("This includes Storytel books, often several hundred MB each."));
+    // The switch on: in.
+    let before = revision(&app).await;
+    sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")
+        .bind(other)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(revision(&app).await > before);
+    assert_eq!(
+        has(other_token.clone()).await,
+        (true, StatusCode::OK, StatusCode::OK)
+    );
+    // The login cleared: out on both phones, the card says why.
+    let before = revision(&app).await;
+    app.request_form(Method::POST, "/music/storytel/clear", Some(&cookie), &[])
+        .await;
+    assert!(revision(&app).await > before);
+    for t in [token.clone(), other_token.clone()] {
+        assert_eq!(
+            has(t).await,
+            (false, StatusCode::NOT_FOUND, StatusCode::NOT_FOUND)
+        );
+    }
+    let page = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(
+        page.contains("No Storytel login is saved: this phone's 1 Storytel entry aren't sent.")
+    );
+}
+
+/// The phone's report on the cards (§2.3, §2.5): books on the phone with the `login` wait, a
+/// `no_audio` book, the phone's own login as words.
+#[tokio::test]
+async fn the_cards_show_the_phones_storytel() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("Ella").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    check(&app, series, chrono::Utc::now()).await;
+    let version = sweep::load_listing(&app.db, series)
+        .await
+        .unwrap()
+        .unwrap()
+        .version
+        .unwrap();
+    let state = serde_json::json!({
+        "storytel": "refused",
+        "downloads": [{"entry": series, "version": version, "have": 1, "want": 3, "waiting": "login"}],
+        "item_errors": [
+            {"entry": series, "version": version, "item": "160663", "error": "no_audio"},
+            {"entry": series, "version": version, "item": "160662", "error": "http_403"}
+        ],
+    });
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "NONE",
+                "kiosk_engaged": true,
+                "capabilities": ["music_v1"],
+                "music_state": state
+            })),
+        )
+        .await;
+    assert!(res.status.is_success(), "{} {}", res.status, res.text());
+    let page = app
+        .get_page("/music", &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(
+        page.contains(
+            "Ella: 1 of 3 books on the phone · waiting for the Storytel login on the phone · 2 \
+             failing (Storytel gave no audio for this book)"
+        ),
+        "{page}"
+    );
+    let card = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(card.contains(
+        "Storytel refused the phone's login - it waits an hour; saving the password again \
+         retries at once."
+    ));
+    // A Storytel item's error never flags a re-resolve, not even a 403 (§2.4: the phone mints its
+    // own URL; `flag_reports` skips Storytel).
+    let flagged: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_items WHERE recheck = 1")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(flagged, 0);
 }

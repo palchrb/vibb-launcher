@@ -7,13 +7,16 @@
 //!   lists every NRK/RSS entry itself (design `21b-music-server-sweep.md`: `music_sweep`,
 //!   `music_sources`, all fetches through `music_net`'s one client and gate) and serves each list
 //!   at `GET /api/devices/music/entries/{id}/items`; the phones download the audio straight from
-//!   the source - the server never proxies or stores NRK/RSS audio.
+//!   the source - the server never proxies or stores NRK/RSS audio. A Storytel series or book
+//!   (design `26b-storytel.md` §2.4) is listed the same way from the family's shelf, one item per
+//!   book without a URL: the phone mints its audio URL itself.
 //! - **The library** of a phone is its ticked entries with their categories, files and covers
 //!   ([library_for]), served by `GET /api/devices/music/library` and named in the policy by its
 //!   version: 16 hex of the SHA-256 of the library JSON *without* its own `version` field (QA #4).
 //!   Each NRK/RSS entry names its listing's version (`items`, 21b §4.1) and falls back to the
 //!   source's cover. Own files that aren't on disk (never backed up) stay listed as `missing`
-//!   (QA #3).
+//!   (QA #3). Storytel entries only while the phone's Storytel switch is on and a login is stored
+//!   ([storytel_gate], 26b §2.7).
 //! - **Policy** `music` ([policy_music]): the version, mobile data, the volume cap and the Storytel
 //!   generation - or `null` when it can't be read, never an empty library.
 
@@ -141,6 +144,12 @@ pub enum Link {
     },
     /// Any other http(s) URL - must turn out to be an RSS feed.
     Rss { url: String },
+    /// A Storytel series or standalone book (`storytel:(series|book):<id>`, design 26b §2.4): only
+    /// from the shelf picker or an import ([entry_link]), never from a pasted link.
+    Storytel {
+        kind: crate::storytel::TargetKind,
+        id: String,
+    },
 }
 
 fn nrk_slug(segment: &str) -> Option<String> {
@@ -175,14 +184,35 @@ impl Link {
                 program: Some(program),
             } => format!("https://radio.nrk.no/serie/{slug}/{program}"),
             Link::Rss { url } => url.clone(),
+            Link::Storytel {
+                kind: crate::storytel::TargetKind::Series,
+                id,
+            } => crate::storytel::series_target(id),
+            Link::Storytel {
+                kind: crate::storytel::TargetKind::Book,
+                id,
+            } => crate::storytel::book_target(id),
         }
     }
 
     pub fn source(&self) -> &'static str {
         match self {
             Link::Rss { .. } => "rss",
+            Link::Storytel { .. } => "storytel",
             _ => "nrk",
         }
+    }
+}
+
+/// A stored entry's link (design 26b §2.4): a Storytel target through the grammar, an NRK or RSS
+/// target through [parse_link]; `None` for own files, Spotify and anything that doesn't parse.
+pub fn entry_link(source: &str, target: &str) -> Option<Link> {
+    match source {
+        "storytel" => {
+            crate::storytel::parse_target(target).map(|(kind, id)| Link::Storytel { kind, id })
+        }
+        "nrk" | "rss" => parse_link(target).ok(),
+        _ => None,
     }
 }
 
@@ -275,7 +305,8 @@ pub fn kind_label(source: &str, target: Option<&str>) -> &'static str {
         "rss" => "Podcast (RSS)",
         "nrk" if target.is_some_and(|t| t.contains("/serie/")) => "NRK series",
         "nrk" => "NRK podcast",
-        "storytel" => "Storytel",
+        "storytel" if target.is_some_and(|t| t.starts_with("storytel:book:")) => "Storytel book",
+        "storytel" => "Storytel series",
         "spotify" => "Spotify",
         _ => "Other",
     }
@@ -319,11 +350,16 @@ pub enum CheckError {
     TooBig,
     Network(String),
     Timeout,
+    /// A Storytel entry's check (design 26b §2.4): the code (`not_on_shelf`, `login_refused`,
+    /// `storytel_off`, `storytel_key`, `no_jwt`, `bad_shelf`, `too_big`, `http_<code>`, `network`,
+    /// `timeout`), as [crate::storytel::StorytelError::code] gives it.
+    Storytel(String),
 }
 
 impl CheckError {
     pub fn message(&self) -> String {
         match self {
+            CheckError::Storytel(code) => storytel_check_message(code),
             CheckError::NotFound => {
                 "NRK doesn't know that podcast or series - check the link.".to_string()
             }
@@ -357,6 +393,7 @@ impl CheckError {
             CheckError::TooBig => "too_big".to_string(),
             CheckError::Network(_) => "network".to_string(),
             CheckError::Timeout => "timeout".to_string(),
+            CheckError::Storytel(code) => code.clone(),
         }
     }
 
@@ -376,6 +413,33 @@ impl CheckError {
                 None => CheckError::Network("no connection".to_string()),
             },
         }
+    }
+}
+
+/// The card's sentence for a Storytel entry never listed ("Couldn't list it: ...").
+pub fn storytel_check_message(code: &str) -> String {
+    match code {
+        "not_on_shelf" => {
+            "The series or book isn't on the Storytel shelf - pick it again from the \
+                           shelf."
+                .to_string()
+        }
+        "storytel_off" => "No Storytel login is saved on this server.".to_string(),
+        "storytel_key" => {
+            "The saved Storytel login was locked with another key - enter it again.".to_string()
+        }
+        "login_refused" => {
+            "Storytel refused the saved login - save the password again.".to_string()
+        }
+        "no_jwt" => "Storytel took the login but sent no session.".to_string(),
+        "bad_shelf" => "Storytel sent a shelf this server can't read.".to_string(),
+        "too_big" => "The Storytel shelf is too big to read.".to_string(),
+        "timeout" => "Storytel didn't answer in time.".to_string(),
+        "network" => "Storytel couldn't be reached.".to_string(),
+        other => match other.strip_prefix("http_") {
+            Some(status) => format!("Storytel answered {status}."),
+            None => format!("{}.", other.replace('_', " ")),
+        },
     }
 }
 
@@ -401,6 +465,8 @@ pub async fn check_link(
     let (url, slug) = match link {
         Link::NrkPodcast { slug } => (format!("{PSAPI}/radio/catalog/podcast/{slug}"), slug),
         Link::NrkSeries { slug, .. } => (format!("{PSAPI}/radio/catalog/series/{slug}"), slug),
+        // Never pasted: a Storytel entry comes from the shelf picker (design 26b §2.3).
+        Link::Storytel { .. } => return Err(CheckError::NotFound),
         Link::Rss { url } => {
             // The channel and its first episodes come first in a feed: a feed longer than the
             // cap is judged by what was read (qa-21-step1-code #10).
@@ -687,15 +753,33 @@ impl Library {
     }
 }
 
+/// The Storytel gate of a phone's library (design 26b §2.7), for an entry `e` and the phone bound
+/// at its `?`: a Storytel entry only while this phone's `music_storytel` switch is on and a login is
+/// stored. The library, the listing route and the cover route all use it, so the switch off or the
+/// login cleared drops the entries from the phone (and phase 1's prune deletes the books); the
+/// revision triggers of migration 0066 rebuild the cached libraries.
+#[macro_export]
+macro_rules! storytel_gate {
+    () => {
+        "(e.source != 'storytel' OR EXISTS (SELECT 1 FROM device_policy p, music_storytel s \
+         WHERE p.device_id = ? AND p.music_storytel = 1 AND s.id = 1 \
+         AND s.ciphertext IS NOT NULL))"
+    };
+}
+
 /// The entries in a phone's library: its ticks (plus `extra`, an entry about to be ticked - the
-/// size check), phase-1 sources only, with their listing (design 21b).
-const LIBRARY_ENTRIES: &str = "SELECT e.id, e.name, e.category_id, e.source, e.target, e.key, \
+/// size check), the sources the music app plays (NRK, RSS, own files and Storytel behind its gate),
+/// with their listing (design 21b). Binds: the phone, `extra`, the phone (the gate).
+const LIBRARY_ENTRIES: &str = concat!(
+    "SELECT e.id, e.name, e.category_id, e.source, e.target, e.key, \
      e.play_order, e.cache, e.resume, e.cover_hash, e.sort, l.version AS listing_version, \
      l.cover_hash AS listing_cover, l.keep_end AS listing_keep_end, l.lan AS listing_lan \
      FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
-     WHERE e.source IN ('nrk', 'rss', 'own') AND (e.id IN \
-       (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR e.id = ?) \
-     ORDER BY e.sort, e.id";
+     WHERE e.source IN ('nrk', 'rss', 'own', 'storytel') AND (e.id IN \
+       (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR e.id = ?) AND ",
+    storytel_gate!(),
+    " ORDER BY e.sort, e.id"
+);
 
 /// A library entry row: the entry and its listing's version, cover, kept end and address class.
 #[derive(sqlx::FromRow)]
@@ -733,6 +817,7 @@ pub async fn library_for(
     let rows: Vec<LibraryRow> = sqlx::query_as(LIBRARY_ENTRIES)
         .bind(device_id)
         .bind(extra)
+        .bind(device_id)
         .fetch_all(&mut *db)
         .await?;
     if rows.is_empty() {
@@ -807,7 +892,13 @@ pub async fn library_for(
                     row.listing_keep_end.as_deref(),
                 ),
                 target: e.target,
-                cache: if own { -1 } else { e.cache },
+                // Own files are all on the phone; a Storytel entry's 0 is all (vibb library.py
+                // 87-89: download-only).
+                cache: match e.source.as_str() {
+                    "own" => -1,
+                    "storytel" => crate::storytel::cache_value(e.cache),
+                    _ => e.cache,
+                },
                 resume: e.resume,
                 cover: e.cover_hash.or(if own { None } else { row.listing_cover }),
                 items: if own { None } else { row.listing_version },
@@ -1001,26 +1092,32 @@ pub async fn cover_in_library(
     device_id: i64,
     hash: &str,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
+    sqlx::query_scalar(concat!(
         "SELECT EXISTS(SELECT 1 FROM music_entries e \
            JOIN device_music_entries d ON d.entry_id = e.id \
-           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'own') AND e.cover_hash = ? \
-         UNION ALL SELECT 1 FROM music_files f \
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'own', 'storytel') \
+             AND e.cover_hash = ? AND ",
+        storytel_gate!(),
+        " UNION ALL SELECT 1 FROM music_files f \
            JOIN music_entries e ON e.id = f.entry_id \
            JOIN device_music_entries d ON d.entry_id = f.entry_id \
            WHERE d.device_id = ? AND e.source = 'own' AND f.art_hash = ? \
          UNION ALL SELECT 1 FROM music_listings l \
            JOIN music_entries e ON e.id = l.entry_id \
            JOIN device_music_entries d ON d.entry_id = l.entry_id \
-           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss') AND e.cover_hash IS NULL \
-             AND l.cover_hash = ?)",
-    )
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'storytel') \
+             AND e.cover_hash IS NULL AND l.cover_hash = ? AND ",
+        storytel_gate!(),
+        ")"
+    ))
+    .bind(device_id)
+    .bind(hash)
+    .bind(device_id)
     .bind(device_id)
     .bind(hash)
     .bind(device_id)
     .bind(hash)
     .bind(device_id)
-    .bind(hash)
     .fetch_one(db)
     .await
 }
@@ -1285,7 +1382,8 @@ pub struct ItemError {
 }
 
 /// One entry's downloads on the phone (21b §4.3): the listing version applied, the items it holds
-/// against what its keep rule wants, and what they wait for (`wifi`, `storage`, `roaming`).
+/// against what its keep rule wants, and what they wait for (`wifi`, `storage`, `roaming`; `login`:
+/// a Storytel entry waiting for the phone's own Storytel login, design 26b §2.5).
 #[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]
 pub struct Download {
@@ -1418,7 +1516,7 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
                 want: d.want.clamp(0, 100_000),
                 waiting: d
                     .waiting
-                    .filter(|w| matches!(w.as_str(), "wifi" | "storage" | "roaming")),
+                    .filter(|w| matches!(w.as_str(), "wifi" | "storage" | "roaming" | "login")),
                 version: d.version,
             })
             .take(MAX_DOWNLOAD_ROWS)
@@ -1438,11 +1536,12 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
     serde_json::to_string(&clean).ok()
 }
 
-/// `http_<3 digits>`, `bad_media` or `network`.
+/// `http_<3 digits>`, `bad_media`, `network` or `no_audio` (a Storytel book the phone's mint got
+/// no audio URL for: locked, not in this country, gone; design 26b §2.5).
 fn item_error_code(code: &str) -> bool {
     match code.strip_prefix("http_") {
         Some(status) => status.len() == 3 && status.bytes().all(|b| b.is_ascii_digit()),
-        None => matches!(code, "bad_media" | "network"),
+        None => matches!(code, "bad_media" | "network" | "no_audio"),
     }
 }
 
@@ -1460,10 +1559,32 @@ pub fn entry_error_text(code: &str) -> String {
         "timeout" => "the site didn't answer in time".to_string(),
         "too_big" => "the feed is too big".to_string(),
         "bad_media" => "what came back isn't audio".to_string(),
+        // Storytel (design 26b §2.4, §2.5).
+        "no_audio" => "Storytel gave no audio for this book".to_string(),
+        "not_on_shelf" => "no longer on the Storytel shelf".to_string(),
+        "login_refused" => "Storytel refused the login".to_string(),
+        "storytel_off" => "no Storytel login on this server".to_string(),
+        "storytel_key" => "the Storytel login must be entered again".to_string(),
+        "no_jwt" => "Storytel took the login but sent no session".to_string(),
+        "bad_shelf" => "Storytel sent a shelf this server can't read".to_string(),
         other => match other.strip_prefix("http_") {
             Some(status) => format!("the source answered {status}"),
             None => other.replace('_', " "),
         },
+    }
+}
+
+/// [entry_error_text] for the sweep's error on an entry of `source`: a Storytel entry's `too_big`
+/// is the shelf, not a feed.
+pub fn sweep_error_text(source: &str, code: &str) -> String {
+    match (source, code) {
+        ("storytel", "too_big") => "the Storytel shelf is too big".to_string(),
+        ("storytel", "network") => "Storytel couldn't be reached".to_string(),
+        ("storytel", "timeout") => "Storytel didn't answer in time".to_string(),
+        ("storytel", other) if other.starts_with("http_") => {
+            format!("Storytel answered {}", &other[5..])
+        }
+        _ => entry_error_text(code),
     }
 }
 
@@ -1853,11 +1974,13 @@ mod tests {
                 {"entry": 3, "version": "short", "item": "a", "error": "http_404"},
                 {"entry": 3, "version": "0123456789abcdef", "item": "a", "error": "http_4044"},
                 {"entry": 3, "version": "0123456789abcdef", "item": "a", "error": "bad_media"},
-                {"entry": -3, "version": "0123456789abcdef", "item": "b", "error": "network"}
+                {"entry": -3, "version": "0123456789abcdef", "item": "b", "error": "network"},
+                {"entry": 5, "version": "0123456789abcdef", "item": "160663", "error": "no_audio"},
+                {"entry": 5, "version": "0123456789abcdef", "item": "160663", "error": "no_audio_x"}
             ],
             "downloads": (0..250).map(|i| serde_json::json!({
                 "entry": i, "version": "0123456789abcdef", "have": -1, "want": 9_000_000,
-                "waiting": if i == 0 { "wifi" } else { "anything" }
+                "waiting": match i { 0 => "wifi", 2 => "login", _ => "anything" }
             })).collect::<Vec<_>>()
         });
         let state = parse_music_state(sanitize_music_state(&raw).as_deref()).unwrap();
@@ -1870,10 +1993,13 @@ mod tests {
             [
                 (3, "l_abc-1", "http_404"),
                 (3, "a", "bad_media"),
-                (0, "b", "network")
+                (0, "b", "network"),
+                (5, "160663", "no_audio")
             ]
         );
         assert_eq!(state.downloads.len(), MAX_DOWNLOAD_ROWS);
+        // Storytel's wait for the phone's own login (design 26b §2.5).
+        assert_eq!(state.downloads[2].waiting.as_deref(), Some("login"));
         // A row of the wrong shape drops that row only (QA 1c #15).
         let mixed = serde_json::json!({
             "storytel": "ok",
@@ -1910,5 +2036,185 @@ mod tests {
         assert!(file_path(dir, "3/../../etc/passwd").is_none());
         assert!(file_path(dir, "/etc/passwd").is_none());
         assert!(file_path(dir, "").is_none());
+    }
+    #[test]
+    fn storytel_entries_have_their_own_link_and_label() {
+        use crate::storytel::TargetKind;
+        assert_eq!(
+            entry_link("storytel", "storytel:series:26175"),
+            Some(Link::Storytel {
+                kind: TargetKind::Series,
+                id: "26175".to_string()
+            })
+        );
+        let book = entry_link("storytel", "storytel:book:777").unwrap();
+        assert_eq!(book.target(), "storytel:book:777");
+        assert_eq!(book.source(), "storytel");
+        assert_eq!(entry_link("storytel", "storytel:series:a b"), None);
+        assert_eq!(entry_link("storytel", "https://example.org/feed.xml"), None);
+        assert_eq!(entry_link("own", "x"), None);
+        assert_eq!(
+            entry_link("rss", "https://example.org/feed.xml"),
+            parse_link("https://example.org/feed.xml").ok()
+        );
+        // A pasted link never becomes a Storytel entry.
+        assert!(matches!(
+            parse_link("storytel:series:26175"),
+            Err(_) | Ok(Link::Rss { .. })
+        ));
+        assert_eq!(
+            kind_label("storytel", Some("storytel:series:26175")),
+            "Storytel series"
+        );
+        assert_eq!(
+            kind_label("storytel", Some("storytel:book:777")),
+            "Storytel book"
+        );
+        assert_eq!(
+            entry_error_text("no_audio"),
+            "Storytel gave no audio for this book"
+        );
+        assert_eq!(
+            entry_error_text("not_on_shelf"),
+            "no longer on the Storytel shelf"
+        );
+        assert_eq!(sweep_error_text("rss", "too_big"), "the feed is too big");
+        assert_eq!(
+            sweep_error_text("storytel", "too_big"),
+            "the Storytel shelf is too big"
+        );
+        assert_eq!(
+            CheckError::Storytel("not_on_shelf".into()).code(),
+            "not_on_shelf"
+        );
+    }
+
+    /// vibb `storytel_sync.py` 7 / `library.py` 87-89: a Storytel entry's cache 0 is "all"
+    /// (download-only) on save, in the card's offline select, in the import and in the library; a
+    /// podcast keeps its 0.
+    #[tokio::test]
+    async fn storytel_cache_zero_is_all() {
+        use axum::http::{Method, StatusCode};
+        let app = crate::tests::TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let (device, _) = app.enrolled_device("phone").await;
+        let insert = |source: &'static str, target: &'static str, cache: i64, sort: i64| {
+            let app = &app;
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO music_entries (name, category_id, source, target, key, \
+                     play_order, cache, resume, sort) VALUES ('E', 3, ?, ?, ?, 'auto', ?, 1, ?) \
+                     RETURNING id",
+                )
+                .bind(source)
+                .bind(target)
+                .bind(state_key(target))
+                .bind(cache)
+                .bind(sort)
+                .fetch_one(&app.db)
+                .await
+                .unwrap()
+            }
+        };
+        let storytel = insert("storytel", "storytel:series:26175", 0, 10).await;
+        let podcast = insert("rss", "https://example.org/feed.xml", 0, 20).await;
+        let cache_of = |id: i64| {
+            let app = &app;
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT cache FROM music_entries WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&app.db)
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // The library: a stored 0 goes out as -1 for Storytel only.
+        for id in [storytel, podcast] {
+            sqlx::query("INSERT INTO device_music_entries (device_id, entry_id) VALUES (?, ?)")
+                .bind(device)
+                .bind(id)
+                .execute(&app.db)
+                .await
+                .unwrap();
+        }
+        sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")
+            .bind(device)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE music_storytel SET ciphertext = x'00' WHERE id = 1")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let library = device_library(&app.db, device).await.unwrap().unwrap();
+        let served: serde_json::Value = serde_json::from_slice(&library.json).unwrap();
+        let cache = |id: i64| {
+            served["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["id"] == id)
+                .map(|e| e["cache"].clone())
+        };
+        assert_eq!(cache(storytel), Some(serde_json::json!(-1)));
+        assert_eq!(cache(podcast), Some(serde_json::json!(0)));
+
+        // The card's offline select (QA M3): Storytel's choices, 0 saved as -1.
+        let offline = |id: i64, value: &'static str| {
+            let app = &app;
+            let cookie = cookie.clone();
+            async move {
+                app.request_form(
+                    Method::POST,
+                    &format!("/music/entries/{id}/offline"),
+                    Some(&cookie),
+                    &[("cache", value)],
+                )
+                .await
+            }
+        };
+        assert!(offline(storytel, "10").await.status.is_redirection());
+        assert_eq!(cache_of(storytel).await, 10);
+        assert!(offline(storytel, "0").await.status.is_redirection());
+        assert_eq!(cache_of(storytel).await, -1);
+        assert_eq!(offline(storytel, "3").await.status, StatusCode::BAD_REQUEST);
+        assert_eq!(cache_of(storytel).await, -1);
+        assert!(offline(podcast, "0").await.status.is_redirection());
+        assert_eq!(cache_of(podcast).await, 0);
+        // The card offers Storytel's choices.
+        let page = app.get_page("/music", &cookie).await.text();
+        assert!(page.contains("<option value=\"20\">The first 20</option>"));
+
+        // The save (the entry page, step 2a's half).
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/music/entries/{storytel}"),
+                Some(&cookie),
+                &[
+                    ("name", "Kokosbananas"),
+                    ("category", "3"),
+                    ("order", "auto"),
+                    ("cache", "0"),
+                    ("resume", "on"),
+                ],
+            )
+            .await;
+        assert!(res.status.is_redirection());
+        assert_eq!(cache_of(storytel).await, -1);
+
+        // The import (design 21a): a Vibb box's 0 is all for Storytel, kept for a podcast.
+        let file = serde_json::json!({"sections": [{"name": "Bøker", "entries": [
+            {"name": "Bok", "target": "storytel:book:777", "order": "oldest_first", "cache": 0, "resume": true},
+            {"name": "Pod", "target": "https://example.org/other.xml", "cache": 0}
+        ]}]});
+        let sections = crate::music_import::parse(file.to_string().as_bytes()).unwrap();
+        let caches: Vec<i64> = sections[0]
+            .rows
+            .iter()
+            .map(|r| r.outcome.as_ref().unwrap().cache)
+            .collect();
+        assert_eq!(caches, [-1, 0]);
     }
 }

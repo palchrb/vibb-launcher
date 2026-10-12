@@ -1,7 +1,7 @@
 //! The music sweep (design `docs/design/21b-music-server-sweep.md` §1-§2, with its QA review,
-//! decisions and the user's answer to open question 1): the server lists every NRK and RSS entry,
-//! sequentially and incrementally, so the phones never list a source. One sweep serves every phone;
-//! a change nudges only the phones with the entry.
+//! decisions and the user's answer to open question 1): the server lists every NRK, RSS and
+//! Storytel entry, sequentially and incrementally, so the phones never list a source. One sweep
+//! serves every phone; a change nudges only the phones with the entry.
 //!
 //! - **Cadence** ([schedule], [due]): the family-wide setting `I` (1/3/6/12/24 h, default 6 = the
 //!   Pi); RSS every `I`, NRK every `max(I, min(2I, 12 h))`, an entry no phone has once a day after
@@ -22,6 +22,12 @@
 //!   `photos::MUSIC_COVERS`, at most once a day.
 //! - **The listing** ([build_listing]): `{v, entry, version, items}`, the `ok` and `gone` items
 //!   oldest first, at most [MAX_LISTING_BYTES]; served by `GET /api/devices/music/entries/{id}/items`.
+//! - **Storytel** (design `26b-storytel.md` §2.4): a series or standalone book is listed from the
+//!   family's shelf (`storytel::Account::shelf`, read once per 5 minutes, fresh for Check now):
+//!   one `ok` item per book in reading order, key = the consumable id, no URL (the phone mints it),
+//!   the shelf's duration and the book's cover; a book that leaves the shelf leaves the list; not
+//!   on the shelf fails the check (`not_on_shelf`) and keeps the last good list. Inside the
+//!   refused-login cooldown the check fails `login_refused` without a request.
 //!
 //! Ported in behaviour from palchrb/vibb `pi/vibb/content.py` (`_catalog`, `_new_episodes`,
 //! `_psapi_episodes`, `_manifest_url`, `_series`, `sync_feed`) and `pi/vibb/library.py`
@@ -284,7 +290,7 @@ pub enum Why {
     Interval,
 }
 
-/// One NRK/RSS entry's place in the schedule.
+/// One NRK/RSS/Storytel entry's place in the schedule.
 #[derive(Debug, Clone)]
 pub struct Scheduled {
     pub entry_id: i64,
@@ -359,7 +365,7 @@ fn schedule_one(
     recheck_room: bool,
     now: DateTime<Utc>,
 ) -> Option<Scheduled> {
-    let link = crate::music::parse_link(row.target.as_deref()?).ok()?;
+    let link = crate::music::entry_link(&row.source, row.target.as_deref()?)?;
     let checked = row.checked_at.as_deref().and_then(parse_stamp);
     let requested = row.requested_at.as_deref().and_then(parse_stamp);
     let created = parse_stamp(&row.created_at).unwrap_or(now);
@@ -452,8 +458,8 @@ async fn rechecks_today(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<i64
         .await
 }
 
-/// Every NRK/RSS entry with its due time and reason - a pure function of the stamps, the setting,
-/// the ticks and `now` (§2.2). Sorted: what is due first (by reason), then by due time.
+/// Every NRK/RSS/Storytel entry with its due time and reason - a pure function of the stamps, the
+/// setting, the ticks and `now` (§2.2). Sorted: what is due first (by reason), then by due time.
 pub async fn schedule(
     db: &sqlx::SqlitePool,
     now: DateTime<Utc>,
@@ -470,7 +476,7 @@ pub async fn schedule(
            EXISTS(SELECT 1 FROM music_items i WHERE i.entry_id = e.id AND i.state = 'pending' \
              AND i.attempts = 0) AS untried \
          FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
-         WHERE e.source IN ('nrk', 'rss') AND e.target IS NOT NULL",
+         WHERE e.source IN ('nrk', 'rss', 'storytel') AND e.target IS NOT NULL",
     )
     .fetch_all(db)
     .await?;
@@ -504,7 +510,10 @@ pub async fn due(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<Vec<Schedu
 // Rows
 // ------------------------------------------------------------------------------------------------
 
-/// One `music_items` row.
+/// One `music_items` row: `pending` (not resolved yet), `ok` (listed and playable) or `gone`
+/// (listed with `url: null`, withdrawn at the source). A Storytel book (design 26b §2.4, migration
+/// 0066's note) is `ok` with `url` NULL: listed and playable, the phone mints its audio URL itself
+/// (a signed URL expires, so it is never listed).
 #[derive(sqlx::FromRow, Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     pub key: String,
@@ -762,21 +771,24 @@ pub fn build_listing(
 }
 
 /// The listing a phone gets for `entry_id` (`GET /api/devices/music/entries/{id}/items`): only for
-/// an entry it has ticked, and only once listed. Built from the rows in one read transaction, the
-/// same way the sweep built the version it stored.
+/// an entry it has ticked (a Storytel one only through the library's gate, design 26b §2.7), and
+/// only once listed. Built from the rows in one read transaction, the same way the sweep built the
+/// version it stored.
 pub async fn device_listing(
     db: &sqlx::SqlitePool,
     device_id: i64,
     entry_id: i64,
 ) -> Result<Option<BuiltListing>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let found: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+    let found: Option<(Option<String>, Option<String>)> = sqlx::query_as(concat!(
         "SELECT l.version, l.keep_end FROM music_listings l \
          JOIN music_entries e ON e.id = l.entry_id \
          JOIN device_music_entries d ON d.entry_id = l.entry_id \
-         WHERE l.entry_id = ? AND d.device_id = ? AND e.source IN ('nrk', 'rss')",
-    )
+         WHERE l.entry_id = ? AND d.device_id = ? AND e.source IN ('nrk', 'rss', 'storytel') AND ",
+        crate::storytel_gate!()
+    ))
     .bind(entry_id)
+    .bind(device_id)
     .bind(device_id)
     .fetch_optional(&mut *tx)
     .await?;
@@ -798,7 +810,9 @@ pub async fn device_listing(
 
 /// Flags the items a phone reports failing, when the report counts (§2.5): an entry it has ticked,
 /// a key of that entry, the current listing version, a 401/403/404/410, and no re-resolve of the
-/// item in the last 24 h. Returns how many were flagged; the caller wakes the sweeper.
+/// item in the last 24 h. Never a Storytel entry's (design 26b §2.4: nothing to re-resolve - the
+/// phone mints its own URL, a mint failure is the phone's). Returns how many were flagged; the
+/// caller wakes the sweeper.
 pub async fn flag_reports(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -818,6 +832,7 @@ pub async fn flag_reports(
              WHERE entry_id = ? AND key = ? AND recheck = 0 \
                AND (rechecked_at IS NULL OR rechecked_at <= ?) \
                AND entry_id IN (SELECT entry_id FROM device_music_entries WHERE device_id = ?) \
+               AND entry_id NOT IN (SELECT id FROM music_entries WHERE source = 'storytel') \
                AND EXISTS (SELECT 1 FROM music_listings l \
                            WHERE l.entry_id = music_items.entry_id AND l.version = ?)",
         )
@@ -997,8 +1012,9 @@ struct Mode {
     requested: bool,
 }
 
-/// Checks one entry now (§2.3): the start stamp, the listing (NRK or RSS), the rechecks, the cover
-/// and one closing transaction. `Ok(None)` = the entry is gone (or isn't NRK/RSS).
+/// Checks one entry now (§2.3): the start stamp, the listing (NRK, RSS or Storytel), the rechecks,
+/// the cover and one closing transaction. `Ok(None)` = the entry is gone (or isn't
+/// NRK/RSS/Storytel).
 pub async fn check_entry(
     state: &AppState,
     entry_id: i64,
@@ -1012,10 +1028,7 @@ pub async fn check_entry(
     let Some((name, source_kind, Some(target), play_order)) = entry else {
         return Ok(None);
     };
-    if !matches!(source_kind.as_str(), "nrk" | "rss") {
-        return Ok(None);
-    }
-    let Ok(link) = crate::music::parse_link(&target) else {
+    let Some(link) = crate::music::entry_link(&source_kind, &target) else {
         return Ok(None);
     };
     let mode = schedule(&state.db, now)
@@ -1143,6 +1156,9 @@ async fn run_check(
                 &mut job, &mut plan, link, slug, "series", play_order, mode, whole,
             )
             .await
+        }
+        Link::Storytel { .. } => {
+            storytel_check(state, &mut job, &mut plan, &link.target(), mode).await
         }
     };
     if whole {
@@ -1955,6 +1971,77 @@ async fn merge_feed(
     plan.new_items += new_count;
     let dropped = plan.cap_newest(cap);
     plan.capped = more || dropped;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Storytel (design 26b §2.4)
+// ------------------------------------------------------------------------------------------------
+
+/// A Storytel entry's check (vibb `storytel.py` `sync` minus the downloads): the refused-login
+/// cooldown read from the row first (no request inside it - `Account::shelf` would fall back to the
+/// last good shelf on a refusal), then the shelf (5 minutes old at most; fresh for Check now) and
+/// the group whose target is the entry's. The list is the group as it is now: one `ok` item per
+/// book in reading order, key = the consumable id, `url` NULL, the shelf's duration, the book's
+/// cover as art; every book is listed, locked and geo-flagged ones too (the phone tries each).
+async fn storytel_check(
+    state: &AppState,
+    job: &mut Job<'_>,
+    plan: &mut Plan,
+    target: &str,
+    mode: Mode,
+) -> Result<(), CheckError> {
+    let storytel_error = |err: crate::storytel::StorytelError| CheckError::Storytel(err.code());
+    let credentials = crate::storytel::credentials(state)
+        .await
+        .map_err(storytel_error)?;
+    if credentials.cooldown_until(job.now).is_some() {
+        return Err(CheckError::Storytel("login_refused".to_string()));
+    }
+    if job.spent() {
+        return Err(CheckError::Timeout);
+    }
+    let max_age = if mode.requested {
+        Duration::ZERO
+    } else {
+        crate::storytel::SHELF_TTL
+    };
+    let (shelf, sent) = state.storytel.shelf_counted(state, max_age).await;
+    job.requests += sent;
+    let shelf = shelf.map_err(storytel_error)?;
+    let Some(group) = shelf.iter().find(|g| g.target == target) else {
+        return Err(CheckError::Storytel("not_on_shelf".to_string()));
+    };
+    let now = job.now;
+    let items: Vec<Item> = group
+        .books
+        .iter()
+        .map(|book| {
+            let old = plan.position(&book.consumable_id).map(|at| &plan.items[at]);
+            let first_seen_at = old.map_or_else(|| stamp(now), |i| i.first_seen_at.clone());
+            Item {
+                state: "ok".to_string(),
+                title: crate::music::cut_title(&book.title, sources::MAX_TITLE_CHARS),
+                url: None,
+                hls: false,
+                duration_ms: (book.duration_ms > 0).then_some(book.duration_ms),
+                art_url: book.cover.clone().filter(|a| music_net::media_url_ok(a)),
+                first_seen_at,
+                ..Item::new(book.consumable_id.clone(), now)
+            }
+        })
+        .collect();
+    let known = plan.keys();
+    plan.new_items += items.iter().filter(|i| !known.contains(&i.key)).count();
+    plan.items = items;
+    plan.title =
+        crate::music::cut_title(&group.name, sources::MAX_TITLE_CHARS).or(plan.title.take());
+    plan.cover_candidate = group.cover.clone();
+    plan.lan = Some(false);
+    plan.fallback = false;
+    plan.capped = false;
+    // The anchor is the start: a cut drops the end (QA L2); the play order is untouched.
+    plan.keep_end = Some("first".to_string());
+    Ok(())
 }
 
 // ------------------------------------------------------------------------------------------------

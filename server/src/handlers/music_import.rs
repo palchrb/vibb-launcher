@@ -79,8 +79,11 @@ fn order_text(order: &str) -> &'static str {
     }
 }
 
-fn cache_text(cache: i64) -> String {
+fn cache_text(source: &str, cache: i64) -> String {
     match cache {
+        // Storytel is download-only (design 26b §2.6): the first N books in reading order.
+        -1 if source == "storytel" => "every book downloaded".to_string(),
+        n if source == "storytel" => format!("the first {n} books downloaded"),
         -1 => "all kept offline".to_string(),
         0 => "nothing kept offline".to_string(),
         n => format!("newest {n} kept offline"),
@@ -166,7 +169,7 @@ async fn preview_card(
                                     "{} · {} · {} · {}",
                                     music::kind_label(candidate.source, Some(&candidate.target)),
                                     order_text(&candidate.order),
-                                    cache_text(candidate.cache),
+                                    cache_text(candidate.source, candidate.cache),
                                     if candidate.resume {
                                         "continues where it stopped"
                                     } else {

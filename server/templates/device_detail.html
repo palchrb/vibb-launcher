@@ -403,7 +403,7 @@
         <form method="post" action="/devices/{{ device.id }}/music" id="music-settings">
             <label class="checkbox-row">
                 <input type="checkbox" name="mobile_data" value="on" {% if music.mobile_data %}checked{% endif %} onchange="this.form.submit()">
-                Music may use mobile data: downloads and streaming also off Wi-Fi (never while roaming). Off: only on Wi-Fi; what's downloaded still plays anywhere.
+                Music may use mobile data: downloads and streaming also off Wi-Fi (never while roaming). Off: only on Wi-Fi; what's downloaded still plays anywhere. This includes Storytel books, often several hundred MB each.
             </label>
             <label for="music_volume_cap">Volume cap (speaker and headphones, every app)</label>
             <select id="music_volume_cap" name="volume_cap" onchange="this.form.submit()">
@@ -416,6 +416,9 @@
                 <input type="checkbox" name="storytel" value="on" {% if music.storytel %}checked{% endif %} onchange="this.form.submit()">
                 <span>Storytel on this phone: the music app gets the family's Storytel login{% if !music.storytel_stored %} (none saved yet - add it on the <a href="/music#storytel">Music</a> page){% endif %}. Off removes it from the phone.</span>
             </label>
+            {% if let Some(note) = music.storytel_note %}
+            <p class="subtitle">{{ note }}</p>
+            {% endif %}
             <noscript><button type="submit">Save</button></noscript>
         </form>
 

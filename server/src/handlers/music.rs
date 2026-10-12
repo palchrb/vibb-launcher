@@ -2813,14 +2813,18 @@ impl SweepView {
                         .and_then(parse_stamp)
                         .map(|t| utc_time(t, now))
                         .unwrap_or_default(),
-                    music::entry_error_text(&code),
+                    music::sweep_error_text(&entry.source, &code),
                     listed_at
                         .map(|t| format!(" from {}", day_text(t)))
                         .unwrap_or_default(),
                 ),
                 (None, _) => format!(
                     "Couldn't list it: {}{next}",
-                    music::CheckError::from_code(&code).message()
+                    if entry.source == "storytel" {
+                        music::CheckError::Storytel(code).message()
+                    } else {
+                        music::CheckError::from_code(&code).message()
+                    }
                 ),
             };
             return block(text, "error", false);
@@ -2838,14 +2842,23 @@ impl SweepView {
             .and_then(|l| l.cover_hash.clone())
     }
 
-    /// The sweep part of an NRK/RSS card; `None` for own files.
+    /// The sweep part of an NRK/RSS/Storytel card; `None` for own files.
     fn card(&self, entry: &MusicEntry) -> Option<SweepCard> {
-        if !matches!(entry.source.as_str(), "nrk" | "rss") {
+        if !matches!(entry.source.as_str(), "nrk" | "rss" | "storytel") {
             return None;
         }
         use crate::music_sweep::parse_stamp;
+        let storytel = entry.source == "storytel";
         let listing = self.listings.get(&entry.id);
         let episodes = listing.filter(|l| l.version.is_some()).map(|l| {
+            if storytel {
+                // A series in reading order: its newest book is no news line (design 26b §2.3).
+                return format!(
+                    "{} book{}",
+                    l.item_count,
+                    if l.item_count == 1 { "" } else { "s" }
+                );
+            }
             let mut text = format!(
                 "{} episode{}",
                 l.item_count,
@@ -2898,13 +2911,22 @@ impl SweepView {
         let check_after = requested_gap
             .max(self.check_block)
             .map(|at| utc_time(at, self.now));
-        let mut caches: Vec<(i64, String)> = CACHE_CHOICES
-            .iter()
-            .map(|(value, label)| (*value, label.to_string()))
-            .collect();
-        if !music::valid_cache(entry.cache) {
-            caches.push((entry.cache, format!("{} (from Vibb)", entry.cache)));
-        }
+        // A Storytel entry offers vibb's choices (all, the first 5, 10, 20; a stored 0 is all).
+        let (cache, caches) = if storytel {
+            (
+                crate::storytel::cache_value(entry.cache),
+                storytel_caches(entry.cache),
+            )
+        } else {
+            let mut caches: Vec<(i64, String)> = CACHE_CHOICES
+                .iter()
+                .map(|(value, label)| (*value, label.to_string()))
+                .collect();
+            if !music::valid_cache(entry.cache) {
+                caches.push((entry.cache, format!("{} (from Vibb)", entry.cache)));
+            }
+            (entry.cache, caches)
+        };
         Some(SweepCard {
             source_title: listing
                 .and_then(|l| l.title.clone())
@@ -2914,7 +2936,7 @@ impl SweepView {
             notes,
             status: self.status(entry),
             check_after,
-            cache: entry.cache,
+            cache,
             caches,
         })
     }
@@ -2946,11 +2968,18 @@ impl SweepView {
                         parts.push("has an older list".to_string())
                     }
                     Some(row) => {
-                        let mut text = format!("{} of {} offline", row.have, row.want);
+                        let mut text = if entry.source == "storytel" {
+                            format!("{} of {} books on the phone", row.have, row.want)
+                        } else {
+                            format!("{} of {} offline", row.have, row.want)
+                        };
                         match row.waiting.as_deref() {
                             Some("wifi") => text.push_str(" · waiting for Wi-Fi"),
                             Some("storage") => text.push_str(" · waiting for storage space"),
                             Some("roaming") => text.push_str(" · paused while roaming"),
+                            Some("login") => {
+                                text.push_str(" · waiting for the Storytel login on the phone")
+                            }
                             _ => {}
                         }
                         parts.push(text);
@@ -3030,10 +3059,10 @@ pub async fn check_now(
         Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
         Err(err) => return server_error(err, "music entry lookup failed"),
     };
-    if !matches!(entry.source.as_str(), "nrk" | "rss") {
+    if !matches!(entry.source.as_str(), "nrk" | "rss" | "storytel") {
         return (
             StatusCode::BAD_REQUEST,
-            "Only NRK and RSS entries are checked",
+            "Only NRK, RSS and Storytel entries are checked",
         )
             .into_response();
     }
@@ -3057,7 +3086,8 @@ pub async fn check_now(
     Redirect::to(&back).into_response()
 }
 
-/// `POST /music/entries/{id}/offline` (`cache`): the card's offline select; back to the card.
+/// `POST /music/entries/{id}/offline` (`cache`): the card's offline select; back to the card. A
+/// Storytel entry takes vibb's choices only, 0 saved as all (design 26b §2.3, QA M3).
 pub async fn save_offline(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -3076,11 +3106,21 @@ pub async fn save_offline(
         )
             .into_response();
     }
-    let cache = field(&form, "cache")
+    let posted = field(&form, "cache")
         .trim()
         .parse::<i64>()
         .unwrap_or(i64::MIN);
-    if !music::valid_cache(cache) && cache != entry.cache {
+    let (cache, allowed) = if entry.source == "storytel" {
+        let cache = crate::storytel::cache_value(posted);
+        let allowed = crate::storytel::CACHE_CHOICES
+            .iter()
+            .any(|(value, _)| *value == cache)
+            || cache == crate::storytel::cache_value(entry.cache);
+        (cache, allowed)
+    } else {
+        (posted, music::valid_cache(posted) || posted == entry.cache)
+    };
+    if !allowed {
         return (StatusCode::BAD_REQUEST, "Pick one of the offline choices.").into_response();
     }
     if let Err(err) = sqlx::query("UPDATE music_entries SET cache = ? WHERE id = ?")
@@ -3122,7 +3162,7 @@ pub struct CardsQuery {
 /// Most cards the in-place update asks for at once.
 pub const MAX_CARD_IDS: usize = 200;
 
-/// `GET /music/cards?ids=1,2,3` (admin): each NRK/RSS card's status block, for
+/// `GET /music/cards?ids=1,2,3` (admin): each NRK/RSS/Storytel card's status block, for
 /// `static/music-cards.js` while a card says Checking or Waiting.
 pub async fn cards(
     State(state): State<AppState>,
@@ -3144,7 +3184,7 @@ pub async fn cards(
         let view = SweepView::load(&state, state.music_sweep.now()).await?;
         let entries: Vec<MusicEntry> = sqlx::query_as(
             "SELECT id, name, category_id, source, target, key, play_order, cache, resume, \
-             cover_hash, sort FROM music_entries WHERE source IN ('nrk', 'rss')",
+             cover_hash, sort FROM music_entries WHERE source IN ('nrk', 'rss', 'storytel')",
         )
         .fetch_all(&state.db)
         .await?;
@@ -3261,6 +3301,8 @@ pub struct MusicCard {
     pub volume_caps: Vec<(i64, bool)>,
     pub storytel: bool,
     pub storytel_stored: bool,
+    /// Why this phone's ticked Storytel entries aren't sent (design 26b §2.3, §2.7), by the switch.
+    pub storytel_note: Option<String>,
     /// The library this phone gets: "3 entries · 12.3 kB", or none.
     pub library: Option<String>,
     pub lines: Vec<String>,
@@ -3315,6 +3357,10 @@ pub(crate) async fn device_card(
         .iter()
         .map(|(id, name, ..)| (*id, name.clone()))
         .collect();
+    let storytel_ticked = entries
+        .iter()
+        .filter(|(_, _, source, _, _, checked)| *checked && source == "storytel")
+        .count();
     let ticks = entries
         .into_iter()
         .map(|(id, name, source, target, category, checked)| MusicTick {
@@ -3431,11 +3477,19 @@ pub(crate) async fn device_card(
             if let Some(bytes) = report.cache_bytes {
                 lines.push(format!("Stored on the phone: {}", music::megabytes(bytes)));
             }
-            if let Some(storytel) = &report.storytel {
-                lines.push(format!(
+            // The phone's own Storytel login (design 26b §2.3, §4.5): `ok`, `none` or `refused`.
+            match report.storytel.as_deref() {
+                Some("none") => lines.push("Storytel: no login on the phone".to_string()),
+                Some("refused") => warnings.push(
+                    "Storytel refused the phone's login - it waits an hour; saving the password \
+                     again retries at once."
+                        .to_string(),
+                ),
+                Some(other) => lines.push(format!(
                     "Storytel on the phone: {}",
-                    storytel.replace('_', " ")
-                ));
+                    other.replace('_', " ")
+                )),
+                None => {}
             }
             for error in &report.entry_errors {
                 let entry = names
@@ -3483,6 +3537,18 @@ pub(crate) async fn device_card(
             .collect(),
         storytel: policy.music_storytel,
         storytel_stored,
+        storytel_note: match (storytel_ticked, policy.music_storytel, storytel_stored) {
+            (0, _, _) => None,
+            (n, false, _) => Some(format!(
+                "Storytel is off on this phone: its {n} Storytel entr{} aren't sent.",
+                if n == 1 { "y" } else { "ies" }
+            )),
+            (n, true, false) => Some(format!(
+                "No Storytel login is saved: this phone's {n} Storytel entr{} aren't sent.",
+                if n == 1 { "y" } else { "ies" }
+            )),
+            _ => None,
+        },
         library: library.map(|l| {
             format!(
                 "{entry_count} entr{} · {:.1} kB",
