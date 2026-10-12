@@ -394,5 +394,9 @@ Deviations and notes:
   show as "Expired"; `wipe` and `lock` wait however long it takes; every command still waiting has "Cancel" next to its
   request time on the Locate page (it races the pop cleanly, logged as `device_command_cancelled`); an enrollment
   cancels what waited for the earlier phone. On the same branch, from the user's emulator: a catalog app uninstalled
-  by hand is installed again, the missing call-screening role is a calm hint while the launcher is the phone app, and
-  Home's role prompt lifts the default-apps lock that made Android 14+ refuse it.
+  by hand is installed again, and the missing call-screening role is a calm hint while the launcher is the phone app.
+  QA (`qa-cmd-expiry-and-blocks.md`, 0 High, 3 Medium, 6 Low) is fixed: a new Ring, Locate or Lock replaces only a
+  waiting command of its own kind, and a wipe or lock is never replaced (kept as history); Home's prompt no longer
+  lifts `DISALLOW_CONFIG_DEFAULT_APPS` (the restriction stays on; the roles are granted with adb); the screening
+  hint no longer claims calls are filtered; "Allow these apps" lets out only the listed blocks with the keys shown;
+  an enrollment, and a server start, end waiting expiring commands whatever the clock says.

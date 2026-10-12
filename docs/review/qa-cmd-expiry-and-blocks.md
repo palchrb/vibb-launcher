@@ -289,3 +289,23 @@ of `cmd-expiry` (`705efde5`).
     `setDefaultAppsLocked(true)`.
   - A rotation doesn't recreate Home (`configChanges`).
 - **Tests and builds:** all green as listed under Build.
+
+## Fixes
+
+Branch `cmd-expiry`, one commit per finding (Medium 2 and 3 share one: both are the calls hint and prompt).
+
+| Finding | Fix | Commit (title) |
+|---|---|---|
+| Medium 1: Ring, Stop ringing, Lock or "Update location now" deletes a waiting wipe or lock | `queue_command` replaces only a waiting command of the same kind (ring/stop_ring, locate), cancels it as `replaced` ("Replaced ... by a newer command of its kind - never sent") instead of deleting it, and logs `device_command_replaced`; a wipe or lock is never replaced. Tests: the QA probe (wipe, then Locate, then 61 minutes: the wipe is still delivered), a waiting lock, the 24b commands. | "Commands, QA Medium 1" |
+| Medium 2: the kid controls how long `DISALLOW_CONFIG_DEFAULT_APPS` stays lifted | The lift is gone (the commit "Calls: Home's role prompt lifts the default-apps lock ..." reverted): the restriction is always on. Home prompts only where Android can show it (the dialer role while the launcher isn't the phone app); the screening role is granted with adb, as the PWA says. `docs/testing/emulator.md` checks that no prompt shows. | "Calls, QA Medium 2 and 3" |
+| Medium 3: "Incoming calls are filtered" while another app may screen first | The phone can't read the role holders, so the hint says what is known: the launcher is the phone app and hangs up calls that aren't allowed; another app could screen first unless the launcher holds the call-screening role, with the adb command. | "Calls, QA Medium 2 and 3" |
+| Low 1: "Allow these apps" lets out blocks the parent never saw | The card posts the listed apps with the keys shown; they travel as `pending_command.allow` (`device_commands.payload`, 0068), and the phone lets out only a listed block whose key is still the one shown. Not expired instead: scoping removes the stale-allow risk, and an older server's command still lets out everything, as before. | "Allow these apps, QA Low 1" |
+| Low 2: the list stops at 16 with no "and N more" | The launcher sends `relock_blocks_total`; the card says "And N more - the phone lists at most 16 ..." and that Allow lets out only the listed ones (Low 1). | "Blocks, QA Low 2" |
+| Low 3: the two-step allow isn't visible per app | Each item says "Ticked under Apps: it shows again after ..." or "Not ticked under Apps: ... until you tick it too", linking to the app's row. | "Blocks, QA Low 3" |
+| Low 4: enrollment leaves expired rows; expiry trusts a clock that may be behind | An enrollment cancels every undelivered row (the page still says "Expired" for one that was); at start the server cancels every waiting expiring command (`restart`), since the Pi may boot with its clock behind. Left: a clock that jumps backwards while the server runs. | "Commands, QA Low 4" |
+| Low 5: Locate times are UTC but unlabelled | Every time in the status line and the Requested column ends in "UTC". | "Locate page, QA Low 5" |
+| Low 6: `RelockReport` lost its KDoc | `RelockBlockReport` moved below `RelockReport`. | "Launcher, QA Low 6" |
+
+The missing tests listed above are added with their fixes, except the default-apps lock across `onStop`/recreate
+(Medium 2): there is no lift any more to test.
+
