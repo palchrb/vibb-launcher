@@ -115,7 +115,8 @@ class SonosControllerTest {
         r.poll()
         assertEquals(RendererState.TAKEN_OVER, r.c.rendererState(r.now))
         assertFalse(r.c.showsPlaying(r.now))
-        assertEquals("the last OURS position", 431_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals("someone else's position is never shown", 0L, r.c.spec(r.now).positionAt(r.now))
+        assertNull("nor its duration", r.c.spec(r.now).durationMs)
         assertEquals(before, r.store.writes.size)
         val commands = r.spk.commands.size
         r.c.pause()
@@ -124,13 +125,26 @@ class SonosControllerTest {
     }
 
     @Test
-    fun `grouped away is not shadowed by taken over`() {
+    fun `grouped 2 - grouped away is not shadowed by taken over, and the parent's position is never painted`() {
         playing()
         r.advance(5_000)
-        r.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400")
+        r.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400", dur = "1:06:40")
         r.poll()
         assertEquals(RendererState.GROUPED_AWAY, r.c.rendererState(r.now))
+        assertFalse(r.c.showsPlaying(r.now))
+        val spec = r.c.spec(r.now)
+        assertEquals("the member's RelTime is the PARENT's (vibb: position None)", 0L, spec.positionAt(r.now))
+        assertFalse(spec.moving)
+        assertNull("nor the parent's duration", spec.durationMs)
+        assertEquals(PlayPhase.READY, spec.phase)
+        assertFalse(spec.playWhenReady)
+        r.advance(60_000) // no poll since: stale - the last ours values, never zeroed (§3.3)
+        assertEquals(RendererState.UNREACHABLE, r.c.rendererState(r.now))
         assertEquals(431_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals(1_453_000L, r.c.spec(r.now).durationMs)
+        r.speaker("0:07:30") // ours again (the household ungrouped it)
+        r.poll()
+        assertEquals(450_000L, r.c.spec(r.now).positionAt(r.now))
     }
 
     @Test
@@ -206,27 +220,95 @@ class SonosControllerTest {
         assertTrue("the flip is held", r.c.showsPlaying(r.now))
     }
 
-    @Test
-    fun `same tile - a press in flight, a stale snapshot or grouped away is a full start to OUR uid`() {
+    /**
+     * vibb's `steady()`: our stream measured just now, nothing settling, the press would be trusted -
+     * then each check below breaks exactly one thing, so its guard is the only reason for the full start.
+     */
+    private fun steady(transport: String = "PLAYING") {
         r.start()
-        r.speaker("0:00:01")
-        r.c.playTile() // the play is still settling (pending/optTr): yesterday's truth, a full start
+        r.advance(9_000) // past our own play's 8 s hold
+        r.speaker("0:07:20", transport)
+        r.poll()
+        assertEquals(listOf("seturi", "play"), r.spk.commands)
+        assertTrue("steady: fresh and ours", r.c.snap!!.fresh(r.now) && r.c.snap!!.ours)
+    }
+
+    private fun seturis() = r.spk.commands.count { it == "seturi" }
+
+    @Test
+    fun `same tile 3b - the shown item isn't the speaker's (a skip while paused) - the full start is the heal`() {
+        steady("PAUSED_PLAYBACK")
+        r.c.stepTo(1, 0)
         r.work.drain()
-        assertEquals(2, r.spk.commands.count { it == "seturi" })
-        r.advance(60_000)
+        assertEquals("the skip only moved where the next play starts", 1, seturis())
         r.c.playTile()
         r.work.drain()
-        assertEquals("stale", 3, r.spk.commands.count { it == "seturi" })
+        assertEquals("a full start of the shown item, not a resume of the old one", 2, seturis())
+        assertEquals(r.url(1), r.spk.lastUri)
+    }
+
+    @Test
+    fun `same tile 4 - a press while our own play or verb settles falls through to the full start`() {
+        steady("PAUSED_PLAYBACK")
+        r.c.playPause() // our resume: optTr PLAYING, held against the next polls
+        r.work.drain()
+        r.advance(2_000)
+        r.poll() // the speaker still says PAUSED: our own guess, not its truth
+        r.c.playTile()
+        r.work.drain()
+        assertEquals("the optimistic hold is no steady state", 2, seturis())
+        val q = ControllerRig()
+        q.start()
+        q.advance(9_000)
+        q.speaker("0:07:20")
+        q.poll()
+        q.c.stepTo(1, 0) // a step's play in flight (pending)
+        q.c.playTile()
+        q.work.drain()
+        assertEquals("mid-jump the snapshot may describe the OLD track", 3, q.spk.commands.count { it == "seturi" })
+    }
+
+    @Test
+    fun `same tile 5 - a stale snapshot falls through to the full start`() {
+        steady()
+        r.c.playTile()
+        r.work.drain()
+        assertEquals("steady PLAYING: nothing", 1, seturis())
+        r.advance(60_000) // no poll since: stale
+        r.c.playTile()
+        r.work.drain()
+        assertEquals("stale 'playing' may be long over", 2, seturis())
+    }
+
+    @Test
+    fun `same tile 6 - an explicit pick or a start from the top always starts`() {
+        steady()
+        r.c.load(r.entry, r.items, 2, 0) // a tap on an episode in the list
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(2, seturis())
+        assertEquals(r.url(2), r.spk.lastUri)
         r.advance(9_000)
-        r.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400")
+        r.speaker("0:03:00", uri = r.url(2))
         r.poll()
-        r.advance(9_000)
+        r.c.load(r.entry, r.items, 2, 0) // "from the start" on the episode that plays
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(3, seturis())
+    }
+
+    @Test
+    fun `same tile 7 - grouped away, the press reclaims OUR uid, never the coordinator`() {
+        steady()
+        r.advance(5_000)
+        r.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400")
         r.poll()
         r.resolvedUids.clear()
         r.c.playTile()
         r.work.drain()
-        assertEquals("the reclaim", 4, r.spk.commands.count { it == "seturi" })
+        assertEquals("the reclaim", 2, seturis())
         assertEquals(r.uid, r.resolvedUids.first())
+        assertTrue(r.resolvedUids.none { it == "RINCON_PARENT01400" })
     }
 
     // -- playpause (§4.5) --
@@ -493,22 +575,33 @@ class SonosControllerTest {
 
     // -- migration follow (sonos_migrate.py, §4.8) --
 
-    private fun hinted(uid: String = "RINCON_KITCHEN01400", snapUid: String = r.uid, measuredAt: Long = r.now): Fields =
+    private fun hinted(uid: String = "RINCON_KITCHEN01400", snapUid: String = r.uid, measuredAt: Long = r.now, uri: String = r.url(0)): Fields =
         r.session.snapshot.copy(
             uid = snapUid, transport = TransportState.STOPPED, uri = "", ours = false, measuredAt = measuredAt,
-            streamMoved = Moved(uid, "Kjøkken", r.url(0)),
+            streamMoved = Moved(uid, "Kjøkken", uri),
         )
 
     @Test
-    fun `migration follow - adopt first, then renderer json, later verbs to the new uid`() {
+    fun `migration follow - adopt first with the hint's uri, then renderer json, the volume base reset, later verbs to the new uid`() {
         playing()
-        r.host.onFollowed = { assertEquals("adopted before the identity write", "RINCON_KITCHEN01400", r.session.uid) }
-        r.c.onPoll(Tick.Next(5_000), hinted())
+        r.c.setVolume(40)
+        r.work.drain()
+        assertEquals(40, r.c.volOpt)
+        // vibb's HINT: the uri the other coordinator plays, not necessarily the one we set (a signed CDN url)
+        val hintUri = "https://cdn.example/signed/ep1.mp3?tok=abc"
+        assertTrue(hintUri != r.session.uri)
+        r.host.onFollowed = {
+            assertEquals("adopted before the identity write", "RINCON_KITCHEN01400", r.session.uid)
+            assertEquals("adopted with the hint's uri", hintUri, r.session.uri)
+        }
+        r.c.onPoll(Tick.Next(5_000), hinted(uri = hintUri))
         r.work.drain()
         assertEquals(listOf("RINCON_KITCHEN01400" to "Kjøkken"), r.host.followed)
         assertEquals("RINCON_KITCHEN01400", r.c.uid)
-        assertEquals("zero transport commands", listOf("seturi", "play"), r.spk.commands)
-        r.c.onPoll(Tick.Next(5_000), r.session.snapshot.copy(uid = "RINCON_KITCHEN01400", ours = true, transport = TransportState.PLAYING, uri = r.url(0), measuredAt = r.now, relS = 50.0))
+        assertNull("new speaker, new volume world", r.c.volOpt)
+        assertEquals("zero transport commands", listOf("seturi", "play", "volume 40"), r.spk.commands)
+        r.c.onPoll(Tick.Next(5_000), r.session.snapshot.copy(uid = "RINCON_KITCHEN01400", ours = true, transport = TransportState.PLAYING, uri = hintUri, measuredAt = r.now, relS = 450.0))
+        assertEquals("the bookmark follows the hint's uri", 450_000L, r.store.writes.last().posMs)
         r.resolvedUids.clear()
         r.c.pause()
         r.work.drain()

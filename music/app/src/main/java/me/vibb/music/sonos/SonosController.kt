@@ -274,8 +274,10 @@ class SonosController(
     /**
      * `_sonos_position` (§4.3): a held seek target wins while <= 12 s old and on the same uri, then the
      * pause freeze; otherwise the measured position of OUR stream - plus the one age term while it
-     * plays - clamped to the duration. Not ours: the last ours position (a grouped-away member reports
-     * the parent's RelTime, never shown). Before a start: where it will start.
+     * plays - clamped to the duration. A fresh snapshot of a stream that isn't ours (grouped away,
+     * taken over, lost) shows no position and no duration ([hidesPosition], vibb `status`'s
+     * ours-gated position, `sonos_grouped.py` check 2: a member's RelTime is the coordinator's); a
+     * stale one keeps the last ours values. Before a start: where it will start.
      */
     fun spec(now: Long): SonosSpec {
         val idx = index
@@ -287,8 +289,9 @@ class SonosController(
         }
         val s = snap
         val tr = effectiveTransport(now)
-        val dur = if (startPending) listed else currentDurS()?.let { (it * 1000).toLong() } ?: listed
-        val (pos, anchor, moving) = position(now)
+        val hidden = hidesPosition(now)
+        val dur = if (hidden) null else if (startPending) listed else currentDurS()?.let { (it * 1000).toLong() } ?: listed
+        val (pos, anchor, moving) = if (hidden) Triple(0L, now, false) else position(now)
         fun spec(phase: PlayPhase, pwr: Boolean) = SonosSpec(phase, pwr, idx, pos, anchor, moving && pwr, dur)
         val p = pending
         return when {
@@ -303,6 +306,15 @@ class SonosController(
             tr == TransportState.PLAYING -> spec(PlayPhase.READY, true)
             else -> spec(PlayPhase.READY, false)
         }
+    }
+
+    /**
+     * The speaker answers, just now, with a stream that isn't ours (and no play of ours is settling):
+     * its position belongs to someone else's stream - never painted under our title (vibb `status`).
+     */
+    fun hidesPosition(now: Long): Boolean {
+        val s = snap ?: return false
+        return session && !startPending && pending == null && !seeded && s.reachable && s.fresh(now) && !s.ours
     }
 
     /** Called by the renderer after each refresh: the playWhenReady it showed (held through transients). */

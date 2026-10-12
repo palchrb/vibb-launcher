@@ -255,7 +255,7 @@ all existing tests green.
   | armed, ours, PLAYING (or `optTr` PLAYING) | READY | true |
   | armed, ours, PAUSED (or `optTr` PAUSED) | READY | false |
   | TRANSITIONING, a pending verb's settle window, the first 3 failed polls | BUFFERING | last value held |
-  | grouped away / taken over / lost session | READY, at the last **ours** position | false |
+  | grouped away / taken over / lost session (fresh) | READY, **no position, no duration** (someone else's stream) | false |
   | UNREACHABLE past 3 polls | READY, last position held | false |
   | disarmed, or the queue ended | IDLE / ENDED | false |
 
@@ -286,8 +286,12 @@ all existing tests green.
   `scanning: Boolean` (from `RoomDirectory.state`, which also publishes the rows when a background round ends); commands
   `ROOMS_REFRESH` (the sheet opening) and `ROOMS_RESCAN` (the row).
 - `publish()` reads through `renderer`: `playing` on Sonos = fresh and PLAYING and reachable and ours (2605-2611);
-  **position and duration are shown only while ours** (2615-2621, `sonos_grouped.py` check 2); a stale snapshot shows
-  "not playing" but **keeps** the last ours position and duration (never zeroed, 2612-2621).
+  **position and duration are shown only while ours** (2615-2621, `sonos_grouped.py` check 2): a fresh snapshot of a
+  stream that isn't ours (grouped away, taken over, lost) shows position 0 with no duration (`hidesPosition`; vibb's
+  `position: None` - a member's RelTime is the coordinator's; vibb still showed the snapshot's `dur_s`, the parent's,
+  which the phone hides too); a stale snapshot shows "not playing" but **keeps** the last ours position and duration
+  (never zeroed, 2612-2621). (Corrected 2026-10-12: §3.2's table said "at the last ours position" for the not-ours
+  rows and steps 3a-4 shipped that; vibb and this paragraph hide it.)
 - `setNowPlaying.playing` over the bridge (`reportNowPlaying`, 845-868) = the same `playing` predicate: grouped away,
   taken over or stale report `false`, which is what screen time (listening = playing and in front) and the deferred
   install should see. `PlayerHub.position` and `PlayerHub.pause` lambdas point at the current renderer. `saveTick`
@@ -577,7 +581,7 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
   `sonos_migrate.py:62-115`, `storytel_sonos.py` non-Storytel parts 178-203, 230-243, 255-299, 372-381, 409-432,
   446-470): a start posts one body, never touches Exo; fresh PLAYING -> playing, position ≈ rel + age, duration; stale
   -> not playing, position kept, UNREACHABLE; foreign -> TAKEN_OVER, position hidden; grouped away -> GROUPED_AWAY not
-  shadowed; switch back bookmarks before exactly one stop; a paused speaker comes home paused; same tile PLAYING
+  shadowed, position and duration hidden; switch back bookmarks before exactly one stop; a paused speaker comes home paused; same tile PLAYING
   no-op, PAUSED one resume, untrusted/stale/explicit -> start to our uid; pause freezes the extrapolated position; the
   bm hold keeps 3120 over 39 and releases after 120 s; the regression guard's table (3120->5 kept, 3120->2400 written,
   10800->9000 written, seeked 5 written, 200->5 written, a deliberate restart written); duration carry only for the
