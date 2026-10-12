@@ -571,7 +571,8 @@ No real account is used on the emulator: `scripts/fake-storytel.py` on the VM is
 read (`music/app/src/test/resources/storytel/`; fake values only: `k@example.invalid` / `hemmelig`, `FAKE-JWT-1`,
 `FAKE-SIG-<n>`), and it logs every request with its Range and token. The app reaches it through the one debug switch
 (`storytel_base` in the debug feed's `config.json`, `src/debug` only; read again at every process start, so a
-download job in a fresh process still goes to the fake). Python 3, stdlib only.
+download job in a fresh process still goes to the fake; only `10.0.2.2` or loopback is taken, anything else means the
+real hosts). Python 3, stdlib only.
 
 ```
 python3 -I scripts/fake-storytel.py --selftest                 # fixtures, the fake against itself (no emulator)
@@ -614,17 +615,26 @@ listings here and stay hidden. What to check (design 26b §8 step 3):
   within the hour (a sync or a download job in that hour sends the fake nothing); after the hour one login again.
 - **Offline**: airplane mode: the downloaded books play, the others are hidden (with books 1 and 3 only: the list
   shows those two), the tile and the player still say "del N av 3".
-- **Copy only**: a book plays with the fake stopped (Ctrl+C): no request in its log during playback.
-- **No secrets** (none of these may match):
+- **The 10-minute job limit**: `--books 111:300,222:5,333:5`; while book 111's CDN line streams, stop the job as
+  WorkManager's limit would: `adb shell cmd jobscheduler timeout me.vibb.music.debug`. The next job mints a new token
+  (`asset 111: 302 ... token=FAKE-SIG-<n+1>`) and the CDN shows `206 Range bytes=<N>-` - the partial kept, never a
+  200 from 0 - and the book completes.
+- **Copy only**: with the fake running, play a downloaded book, seek back and forth and skip to the other downloaded
+  book: no new `asset` or `cdn` line appears in the fake's log while it plays. Then stop the fake (Ctrl+C): the books
+  still play and seek.
+- **No secrets** (none of these may match; the second is one recursive grep over the app's private data - Room's
+  `music.db` and its `-wal`, Media3's `databases/exoplayer_internal.db` and its WAL, `shared_prefs`, `files/music/`
+  with the report, `no_backup/` with the cache and `renderer.json`; it must name no file - `storytel.bin` is sealed and
+  the WAV spans are zeros):
 
 ```
 adb logcat -d | grep -E 'FAKE-JWT|FAKE-SIG|pwd=|token=|k@example|hemmelig'
-adb shell run-as me.vibb.music.debug sh -c 'cat no_backup/media/*.exi databases/exoplayer_internal.db databases/music.db' | strings | grep -E 'token=|FAKE-|pwd=|k@example'
-adb shell run-as me.vibb.music.debug cat files/music/report.json | grep -E 'token=|FAKE-|k@example'
+adb shell run-as me.vibb.music.debug sh -c 'grep -raE -l "token=|FAKE-|pwd=|k@example|hemmelig" .'
 ```
 
-  Media3 keeps the cache's metadata (the `exo_redir` key a followed redirect would write) in
-  `databases/exoplayer_internal.db`; Storytel's CDN requests never follow a redirect, so no token can land there.
+  Media3 keeps the cache's metadata (`exo_len`, and the `exo_redir` a request whose uri differs from the answer's
+  would write) in `databases/exoplayer_internal.db`; Storytel's CDN requests never follow a redirect and the minted
+  URL is OkHttp's canonical form, so no token can land there.
 - Real Storytel stays a device check (design 26b, "Device checks"): the real login, a 300 MB book over Wi-Fi that
   drops for more than an hour, downloads under Doze.
 

@@ -64,9 +64,13 @@ Option A splits vibb's one process in two (design 26 review item 4):
 - **Logs we don't write ourselves** (QA L10): reqwest logs each redirect's URLs at `debug`, so `RUST_LOG=debug` would
   print `login.action?...pwd=`: the server's default filter floors `reqwest=info` whatever `RUST_LOG` says for the rest
   (`main.rs`'s tracing setup), and `server/CLAUDE.md` says why (`DEPLOY.md` is the main session's). Media3 keeps a
-  redirected upstream URI in the cache index (`exo_redir`) when the CDN redirects; the minted URL itself is never
-  written there (the cache key is the item), but a CDN redirect target could be - accepted (app-private
-  `noBackupFilesDir`, a short-lived token), and the emulator's §6h check greps the cache index for `token=`.
+  request's upstream URI in the cache's metadata (`exo_redir`, in `databases/exoplayer_internal.db`) whenever it
+  differs from the one it asked for; so a Storytel book's CDN request **never follows a redirect** (vibb's `urlopen`
+  does; §9) and the minted URL is OkHttp's canonical form (`StorytelApi.mintedUrl`, what `OkHttpDataSource.getUri()`
+  returns): nothing with a token is written there. A CDN that redirects anyway fails the attempt as a transient
+  `http_30x` (the next attempt mints again) - [device check]: the real CDN answers the minted URL without a redirect.
+  The emulator's §6h check greps the app's whole data folder (the databases and their WAL files included) for
+  `token=`. (Step 3; qa-26b-step3-code choice 6 and L5.)
 
 ## 1. Behaviour map (vibb -> Rust / Kotlin)
 
@@ -463,8 +467,8 @@ holds no lock); its wait counts against the caller's deadline (a download's logi
 then fails at its 10 s, QA L6). **Two conditions for step 3** (qa-26b-step1-code): `StorytelAccount` holds **exactly
 one `StorytelApi` for the process** (the lock and the JWT live in the instance; one per worker run, or per read of
 `debugBase`, would lose both and log in every run), and `mint` is `withContext(Dispatchers.IO) { api.assetUrl(...) }`
-(the lock blocks a thread for up to the deadline). The one signature: `suspend fun mint(cid: String, timeoutMs: Long,
-deadlineMs: Long): Mint` (IO) - downloads `(15 s, now + 60 s)`, the Sonos path `(6 s, now + 10 s)`. `fun state():
+(the lock blocks a thread for up to the deadline). The one signature, reached through `StorytelAccount.get(context)` (the process's
+instance): `suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint` (IO) - downloads `(15 s, now + 60 s)`, the Sonos path `(6 s, now + 10 s)`. `fun state():
 String` delegates to `StorytelApi.state()` (off main: it opens the sealed login) = `none` (no login stored) /
 `refused` (the cooldown runs for the stored generation) / `ok`. A new generation from the bridge needs no call: the JWT and the
 cooldown are per generation (vibb `save_credentials` clears both). Generation 0 deletes the login (phase 1); the same
@@ -479,7 +483,9 @@ sync's library has no Storytel entries any more (§2.7).
   2. `StorytelAccount.mint(cid, 15 s, now + 60 s)` - **a fresh URL every attempt** (vibb `sync`: the token is
      single-use and short-lived; the path is stable). `NotConfigured`, `Refused` or `LoginFailed`: no Storytel book is
      tried again this run (vibb's `sync` stops on a login failure: it catches only `OSError`, `storytel.py:802-807`),
-     no item error, the entries report `waiting: login` (§4.5) and the report's `storytel` says why; `NoAudio`: item
+     no item error; after `NotConfigured` or `Refused` the entries report `waiting: login` (§4.5) and the report's
+     `storytel` says why (`none`, `refused`), while a `LoginFailed` run (unreachable, no JWT) reads as the shared rule
+     says (M4); `NoAudio`: item
      error `no_audio` (the status goes to the log only), the next book goes on (vibb: a genuine failure skips that
      book); `Failed(status)`: item error `http_<status>` (transient); `Unreachable`: item error `network`.
   3. `Downloads.fetch` with the minted URL: `ProgressiveDownloader`, `customCacheKey = itemCacheKey(entry.key, cid)`,
@@ -533,10 +539,18 @@ compares `pwd` with the fixture's hex):
   endpoints point at it; (b) `StorytelAccount` builds `OkHttpStorytelHttp` over `MediaCache`'s LAN client instead of the
   guarded one; (c) Storytel downloads use `publicOnly = false`; (d) §5.1's minted-URL check accepts a private literal.
   `SourceScanTest` pins that only `src/debug` assigns it and that nothing else reads it; a release build has no feed
-  (`checkReleaseHasNoDebugFeed`), so it stays `null` there.
-- `storytel.json` `{"email", "password"}` seeds a login (generation 1) for a run without a launcher - **fake values
+  (`checkReleaseHasNoDebugFeed`), so it stays `null` there. The four readers are functions in `StorytelEndpoints.kt`
+  (`endpoints()`, `apiOverLan()`, `publicDownloads()`, `privateMintAllowed()`), and they take the base **only for
+  `10.0.2.2` or loopback** (the fake's homes; a `config.json` left behind on a real phone running a debug build must
+  never send the real login over http to another host): anything else means Storytel's hosts. The receiver applies
+  it, and so does `DebugStartup` (a debug-only, non-exported provider with `android:initOrder="1000"`, created before
+  WorkManager's) at every process start - a download job often runs in a fresh process, where a receiver-only switch
+  would be null and the fake's login would go to the real Storytel.
+- `storytel.json` `{"email", "password"}` seeds a login (the next generation: 1 on a fresh install, and a re-push ends
+  a refused login's hour like a new save) for a run without a launcher - **fake values
   only** (`login_request.json`'s `k@example.invalid` / `hemmelig`), and the receiver deletes the file once read (it sits
-  on shared external storage; QA L13). The library and the listing come from `server/testdata/` (the snapshot's Storytel
+  on shared external storage; QA L13); a malformed file logs one fixed line, never the parser's message (which quotes
+  the input). The library and the listing come from `server/testdata/` (the snapshot's Storytel
   entry, §8 step 2b) or by hand, as §6f.
 - `music.yml` watches `scripts/fake-storytel.py` and runs its `--selftest` after the build.
 
@@ -811,12 +825,16 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    `storytel.json` read then deleted), `scripts/fake-storytel.py`, `.github/workflows/music.yml`,
    `docs/testing/emulator.md` §6h. Tests: `StorytelDownloadTest`, `OfflineTest`, `NewItemsTest`, `ReportTest`,
    `LibraryViewTest`, `GuardsTest`, `SourceScanTest`. Acceptance: the music suite green, `python3 -I
-   scripts/fake-storytel.py --selftest` OK. Emulator (§6h): a 3-book series downloads in reading order with the
-   bookmark's book first; `--drop-at 40 --token-ttl 30`: the book resumes with Range against a fresh token (the fake's
+   scripts/fake-storytel.py --selftest` OK. Emulator (§6h): a 3-book series downloads in reading order; the
+   bookmark's book first (before step 4b a bookmark sits on a book that isn't on the phone only after its copy went:
+   play book 3, drop the entry from the library and add it again - bookmarks survive, copies don't); `--drop-at 40 --token-ttl 30`: the book resumes with Range against a fresh token (the fake's
    log), the bytes complete; `--locked 222`: `no_audio` for it, the others download; `--refuse`: `storytel: refused`,
    `waiting: login`, one login in an hour; airplane mode: the downloaded books play, the others are hidden, the tile
    still says "del N av 3"; the switch off in the library (a hand-edited library without the entry): the books deleted;
-   logcat and the cache index (`no_backup/media/*.exo` metadata) hold no `FAKE-JWT`, `pwd=`, `token=` or the email.
+   logcat and the app's data folder - the cache's metadata in `databases/exoplayer_internal.db`, Room's `music.db`,
+   both with their `-wal` files, the report, `no_backup/` - hold no `FAKE-JWT`, `pwd=`, `token=` or the email (one
+   recursive `grep -raE`); a job stopped at its 10-minute limit (`cmd jobscheduler timeout`) resumes its book with a
+   fresh mint.
    Owed [device check]: §"Device checks" download items, "Downloads under Doze".
 4. **a. Music: item art in Room** (QA M8; independent of Storytel). Files: `M/data/MusicDb.kt` (`items.art`, version 2,
    `@AutoMigration(from = 1, to = 2)`), `app/schemas/me.vibb.music.data.MusicDb/2.json`, `M/model/PlayItem.kt`,
@@ -865,6 +883,7 @@ commit), 3 (the phone's download path), 4a (one column), 4b (the Sonos wiring) -
 | `bookshelf_cached` on disk across subprocesses | in memory, 300 s, the last good shelf on failure | one process; the sweep also keeps its last good list (21b) |
 | the bookmark mirror: outbox, `push_bookmark`, `deviceId`, `storytel_sync`, `shelf_durations` | not ported | user decision 2026-10-09: no position mirroring; nothing leaves the phone |
 | `_download`'s `.part` + Range | Media3's `ProgressiveDownloader` into the shared cache, keyed by the item; the row names the book, not the URL | phase 1's download machinery; a URL-keyed row would discard every partial at the next mint |
+| `_download` follows a CDN redirect (`urlopen`) | a Storytel book's CDN request never follows one: a 3xx fails the attempt as a transient `http_30x`, the next attempt mints again; [device check] that the real CDN answers without a redirect | Media3 writes a followed redirect's target (a token) into the cache's metadata (`exo_redir`, §0); if the real CDN does redirect, the fix is a thin `DataSource` whose `getUri()` returns the requested URI, never following blindly (qa-26b-step3-code choice 6) |
 | `shelf.json` per target dir, the mp3 named by cid | the listing in `music_items` and Room; the copy keyed `<entry key>:<cid>` | 21b: the server lists, the phone downloads |
 | a book that left the shelf stays on disk, unlisted | it leaves the list and its copy is pruned | the same for the kid (unplayable either way); no orphaned gigabytes |
 | per-book `<cid>.jpg` on the box's screen | per-book covers go to the speaker only; the phone's screens keep the entry cover | phase 1's screens show the entry cover and have no image loader; the mockup is locked |
@@ -1595,3 +1614,46 @@ book's `no_audio`), "Downloads under Doze", the login lines (the phone's `storyt
 once and an hour's wait), the switch off and on, no secrets in logcat; plus, from choice 6, that the real CDN answers
 the minted URL without a redirect (a redirect would show as `http_302` on the card for every book). For step 5:
 `music/CLAUDE.md` and root `CLAUDE.md` (the fake, `music.yml`'s new path, the debug switch and `DebugStartup`).
+
+### Fix round after QA's code review (qa-26b-step3-code, 2026-10-12)
+
+All seven findings fixed (the "not worth fixing" list left as QA judged it); QA accepted the 13 choices above (the
+handback said 10: the status lists **13**). Suite after the round: `./gradlew assembleDebug assembleRelease
+testDebugUnitTest lintDebug -PwarningsAsErrors=true` green, **446 JVM tests** (443 before), 0 failures; lint unchanged
+in the touched files; `python3 -I scripts/fake-storytel.py --selftest` OK.
+- **M1** (a new book never posted the Nytt notification until the next sync): `DownloadWorker.doWork` calls
+  `NewNotifier.update(applicationContext, store.snapshot())` beside both `Sync.writeReport` calls, so the "N nye i
+  Musikk" notification and the launcher's badge count a book as soon as its copy is on the phone (`update` returns
+  early when the count is unchanged). `GuardsTest` pins one update per report in the job.
+- **L1** (a malformed `storytel.json` logged its content): `DebugStorytel.seedLogin` parses inside `runCatching`;
+  a bad file is one fixed line ("not a JSON object with an email and a password - ignored"), still deleted, and the
+  rest of the broadcast (Sonos seed, library, listings, sync) applies. `SourceScanTest` pins the `runCatching`.
+- **L2** (`DebugStartup`'s order; a leftover base on a real phone): the provider has `android:initOrder="1000"`
+  (created before WorkManager's provider can start a job); `StorytelEndpoints`' readers take the base only for
+  `10.0.2.2`, `127.0.0.1`, `localhost` or `::1` (no userinfo), anything else is Storytel's hosts. `StorytelApiTest`:
+  the four readers for each accepted host and for a LAN address, another host, a look-alike name, userinfo, no
+  scheme, junk, empty and null; `SourceScanTest` pins the `initOrder`.
+- **L3** (§6h): one recursive `grep -raE -l` over the app's private data (Room's and Media3's WAL files,
+  `shared_prefs`, the report, `no_backup/`) replaces the `cat` with the `*.exi` glob; "Copy only" is checked with the
+  fake running (no `asset`/`cdn` line while a downloaded book plays and seeks) and then stopped (it still plays); a new
+  line for the 10-minute job limit (`adb shell cmd jobscheduler timeout me.vibb.music.debug` mid-book: the next job
+  mints a new token and resumes with `206 Range bytes=<N>-`). §6h's intro names the host rule.
+- **L4** (three wiring lines unpinned): one `GuardsTest` row - `newsEligible` in `Sync.applyListing`'s `markSeen`,
+  `storytelEntries`/`reportWaiting`/`StorytelAccount.get(context).state()` in `writeReport`,
+  `listOfNotNull(nextRetryAt, run.storytelRefusedUntil)` in the worker (with M1's lines).
+- **L5** (the clean cache index rests on the canonical URL too): `StorytelApiTest` pins `mintedUrl(x)` as OkHttp's
+  canonical form (re-parsing gives the same string) over a `|`, a space, an upper-case host with the default port, the
+  fake's URL, dot segments and the fixture's Location; the `MediaCache` comment says no-redirect and the canonical
+  form together keep tokens out of `exo_redir`.
+- **L6**: `Snapshot.kt` carries the vibb MIT credit (`content.py` `expand_entries`/`PREFER_REMOTE`, `storytel.py`
+  `entries_for(remote)`).
+- **Spec text** (the six problems the status found, confirmed by QA): §0 (Storytel CDN requests never follow a
+  redirect, the canonical URL, a 3xx is a transient `http_30x`, the device check; the §6h grep over the data folder),
+  a new §9 row (vibb's `urlopen` follows; the `DataSource` wrapper as the fix if the real CDN redirects), §4.2 (`mint`
+  through `StorytelAccount.get(context)`), §4.3 (`waiting: login` after `NotConfigured` or `Refused`; `LoginFailed`
+  reads as the shared rule, M4), §4.6 (the four reader functions, the 10.0.2.2/loopback rule, `DebugStartup` with its
+  `initOrder`, the next generation, the malformed file), §8 step 3 (the bookmark-first check by dropping and re-adding
+  the entry; the secret grep over `databases/exoplayer_internal.db`, `music.db` and their WAL files; the job-limit
+  check).
+
+Owed: unchanged from the status above (the §6h emulator checks, now with the job-limit line, and the device checks).
