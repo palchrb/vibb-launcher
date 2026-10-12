@@ -1,11 +1,8 @@
 package com.kidslauncher.mdm.lock
 
-import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Context
 import android.media.AudioManager
-import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -357,7 +354,7 @@ object VoipCalls {
             Log.i(LOG_TAG, "Another call or the emergency flow is on: nothing sent")
             false
         } else {
-            intent.send(context, 0, null, null, null, null, visibleSenderOptions())
+            intent.send(context, 0, null, null, null, null, VisibleSender.options())
             true
         }
     } catch (e: PendingIntent.CanceledException) {
@@ -366,21 +363,5 @@ object VoipCalls {
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Couldn't send the call app's intent: ${e.javaClass.simpleName}")
         false
-    }
-
-    private fun visibleSenderOptions(): Bundle {
-        val options = ActivityOptions.makeBasic()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-            options.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE)
-        } else {
-            allowLegacy(options)
-        }
-        return options.toBundle()
-    }
-
-    /** API 34/35 have no ALLOW_IF_VISIBLE; ALLOWED is the same opt-in there (deprecated in 36). */
-    @Suppress("DEPRECATION")
-    private fun allowLegacy(options: ActivityOptions) {
-        options.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
     }
 }

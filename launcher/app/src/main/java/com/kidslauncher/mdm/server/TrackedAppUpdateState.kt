@@ -11,6 +11,9 @@ private const val LOG_TAG = "TrackedAppUpdateState"
 @Serializable
 data class TrackedAppState(
     val lastInstalledTag: String? = null,
+    /** The versionCode of [lastInstalledTag]'s APK, as the launcher installed it (`null` from an
+     * older build or our own update): a copy older than this on the phone is installed again. */
+    val lastInstalledVersionCode: Long? = null,
     val lastFailedTag: String? = null,
     /** When [lastFailedTag] was recorded - lets [MdmSyncWorker.checkForTrackedAppUpdates] retry
      * automatically after a backoff window instead of skipping the same release forever. Null for
@@ -79,9 +82,21 @@ object TrackedAppUpdateState {
     }
 
     @Synchronized
-    fun recordInstalled(context: Context, appKey: String, releaseTag: String) {
+    fun recordInstalled(context: Context, appKey: String, releaseTag: String, versionCode: Long? = null) {
         val state = load().toMutableMap()
-        state[appKey] = TrackedAppState(lastInstalledTag = releaseTag)
+        state[appKey] = TrackedAppState(lastInstalledTag = releaseTag, lastInstalledVersionCode = versionCode)
+        save(context, state)
+    }
+
+    /** The release recorded as installed isn't on the phone any more (uninstalled outside the
+     * launcher): forget it, so the sync queues it like a new one - with every check a first install
+     * has. A refusal or a failure's backoff stays. */
+    @Synchronized
+    fun forgetInstalled(context: Context, appKey: String) {
+        val state = load().toMutableMap()
+        val current = state[appKey] ?: return
+        if (current.lastInstalledTag == null) return
+        state[appKey] = current.copy(lastInstalledTag = null, lastInstalledVersionCode = null)
         save(context, state)
     }
 
@@ -93,6 +108,7 @@ object TrackedAppUpdateState {
         val current = state[appKey]
         state[appKey] = TrackedAppState(
             current?.lastInstalledTag,
+            lastInstalledVersionCode = current?.lastInstalledVersionCode,
             lastFailedTag = releaseTag,
             lastFailedAtMs = System.currentTimeMillis(),
             pending = current?.pending?.takeIf { keepPending && it.releaseTag == releaseTag },
@@ -103,14 +119,16 @@ object TrackedAppUpdateState {
         save(context, state)
     }
 
-    /** The launcher's [releaseTag] is refused for good (until the server advertises another): the
-     * pending APK is dropped (the caller deletes the file). */
+    /** [releaseTag] is refused for good (until the server advertises another): our own update's
+     * pending APK is dropped, a catalog APK that failed its check is never downloaded again (the
+     * caller deletes the file). */
     @Synchronized
     fun recordRefused(context: Context, appKey: String, releaseTag: String) {
         val state = load().toMutableMap()
         val current = state[appKey]
         state[appKey] = TrackedAppState(
             current?.lastInstalledTag,
+            lastInstalledVersionCode = current?.lastInstalledVersionCode,
             lastFailedTag = releaseTag,
             lastFailedAtMs = System.currentTimeMillis(),
             refusedTag = releaseTag,

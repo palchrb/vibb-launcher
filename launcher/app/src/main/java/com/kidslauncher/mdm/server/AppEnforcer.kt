@@ -27,7 +27,6 @@ import com.kidslauncher.mdm.calls.EmergencyDialer
 import com.kidslauncher.mdm.calls.MissedCallNotifier
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.RoleAction
-import com.kidslauncher.mdm.calls.RoleSnapshot
 import com.kidslauncher.mdm.calls.dialerRoleAction
 import com.kidslauncher.mdm.calls.roleReportNeeded
 import com.kidslauncher.mdm.push.SyncRunner
@@ -141,6 +140,37 @@ internal fun recentsComponent(): ComponentName? = try {
  * [AppEnforcer.systemRecentsPackage].
  */
 internal fun recentsPackage(): String? = recentsComponent()?.packageName
+
+/**
+ * The Emergency SOS activity's package (bug 25b-H, [HelperKind.EMERGENCY_SOS]): the system handler
+ * of [ACTION_LAUNCH_EMERGENCY] SystemUI picks ([emergencySosHandler]). Never
+ * hidden or suspended by enforcement (an SOS app with a launcher icon - Personal Safety - would
+ * otherwise be hidden and the five presses would do nothing) and never on the kid's app list.
+ */
+internal fun emergencySosPackage(context: Context): String? = try {
+    val pm = context.packageManager
+    fun handlers(intent: Intent): List<String> = pm.queryIntentActivities(
+        intent,
+        PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_SYSTEM_ONLY.toLong()),
+    ).mapNotNull { it.activityInfo?.packageName }
+    // Never Settings or the camera (an OEM that handles SOS there): like every pinned helper.
+    val forbidden = handlers(Intent(Settings.ACTION_SETTINGS)).take(1) +
+        handlers(Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)).take(1) +
+        handlers(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)).take(1)
+    emergencySosHandler(handlers(Intent(ACTION_LAUNCH_EMERGENCY)), forbidden.toSet(), preferredEmergencySosPackage(pm))
+} catch (e: Exception) {
+    null
+}
+
+/** SystemUI's `config_preferredEmergencySosPackage` (empty on AOSP, set by an OEM overlay), if readable. */
+private fun preferredEmergencySosPackage(pm: PackageManager): String? = try {
+    val res = pm.getResourcesForApplication("com.android.systemui")
+    @Suppress("DiscouragedApi") // Another package's resource: only by name.
+    val id = res.getIdentifier("config_preferredEmergencySosPackage", "string", "com.android.systemui")
+    if (id == 0) null else res.getString(id).takeIf { it.isNotBlank() }
+} catch (e: Exception) {
+    null
+}
 
 /**
  * The default alarm/clock app: the one holding the next alarm, else the resolver of
@@ -326,6 +356,7 @@ object AppEnforcer {
             blockActivityStart = policy?.blockActivityStart == true,
             lockTaskHelpers = if (policy?.blockActivityStart == true) resolveLockTaskHelpers(context) else emptySet(),
             recentsPackage = systemRecentsPackage(context),
+            emergencySos = emergencySosPackage(context),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -737,7 +768,7 @@ object AppEnforcer {
      * with the next sync. Coalesced by [SyncRunner]; once per change ([roleReportNeeded]).
      */
     private fun signalRoleChange(context: Context) {
-        val now = RoleSnapshot(CallSystem.dialerRoleHeld(context), CallSystem.redirectionRoleHeld(context))
+        val now = CallSystem.roles(context)
         if (!roleReportNeeded(CallPrefs.rolesSignalled(context), now)) return
         CallPrefs.rolesSignalled(context, now)
         try {
@@ -786,6 +817,8 @@ object AppEnforcer {
             val wanted = keyguardDisabledFeatures(current, managed)
             if (wanted != current) dpm.setKeyguardDisabledFeatures(admin, wanted)
         } catch (e: Exception) {
+            // Without the disable-keyguard-features policy granted (an update that added it, before
+            // the phone restarted - AdminPolicies): retried at every apply, and reported.
             Log.w(LOG_TAG, "Failed to set the keyguard camera feature", e)
         }
     }
@@ -860,6 +893,7 @@ object AppEnforcer {
             alarmApp = helperInfo(context, alarmAppPackage(context)),
             forbidden = forbidden,
             ourDialerHeld = CallSystem.dialerRoleHeld(context),
+            emergencySos = resolved[HelperKind.EMERGENCY_SOS],
         )
         Log.i(LOG_TAG, "PIN lock helpers (kiosk off): $helpers")
         return helpers
@@ -940,6 +974,7 @@ object AppEnforcer {
             // Design 16d: the framework's Recents provider, never a fixed name, only when trusted
             // (systemRecentsPackage); `lockTaskHelpers` also drops it when forbidden or Play.
             HelperKind.RECENTS to systemRecentsPackage(context)?.let { ResolvedHelper(it, system = true) },
+            HelperKind.EMERGENCY_SOS to info(emergencySosPackage(context)),
         )
         return resolved to forbidden
     }
@@ -1129,6 +1164,7 @@ object AppEnforcer {
             lockUsableApps = lock.usableApps,
             recentsPackage = systemRecentsPackage(context),
             relockBlocked = relockBlocked,
+            emergencySos = emergencySosPackage(context),
         )
         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
         // A newly installed app can't sneak in its own calls while calls are managed.
@@ -1151,6 +1187,7 @@ object AppEnforcer {
         val hide = shouldSuspendNewPackage(
             packageName, decision, overrideActive, context.packageName, systemDialerPackage(context),
             recentsPackage = systemRecentsPackage(context), relockBlocked = relockBlocked,
+            emergencySos = emergencySosPackage(context),
         )
 
         try {

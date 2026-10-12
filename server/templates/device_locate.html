@@ -10,7 +10,7 @@
     <div class="page-header">
         <h1>Find My Device</h1>
     </div>
-    <p class="subtitle">Locate, ring, lock, or wipe a device. A phone that's online gets a command within seconds; one that's off or without a connection gets it the next time it checks in.</p>
+    <p class="subtitle">Locate, ring, lock, or wipe a device. A phone that's online gets a command within seconds; one that's off or without a connection gets it the next time it checks in - a lock or a wipe whenever that is, a ring, "stop ringing", a pause or a location update only within an hour (after that it expires). A command waiting for the phone can be cancelled under Recent commands.</p>
 
     {% if devices.is_empty() %}
     <p class="empty-state">No devices yet.</p>
@@ -95,17 +95,23 @@
         <details>
             <summary class="button-small button-danger" style="display:inline-block; cursor:pointer;">Wipe&hellip;</summary>
             <form method="post" action="/devices/{{ device.id }}/command/wipe" style="margin-top:8px; min-width:280px;">
-                <div class="error" style="margin-bottom:8px;">This erases the device completely and can't be undone. There's no way to confirm afterward that it actually happened, since a wiped device can't check back in.</div>
+                <div class="error" style="margin-bottom:8px;">This erases the device completely and can't be undone. An up-to-date launcher confirms that it got the command right before it wipes (or says why it couldn't); after that a wiped device can't check back in.</div>
                 <label for="confirm_wipe">Type the device name ({{ device.name }}) to confirm</label>
                 <input type="text" id="confirm_wipe" name="confirm_name" placeholder="{{ device.name }}">
                 <button type="submit" class="button-small button-danger">Wipe this device</button>
             </form>
         </details>
+        {% if wipe_not_ready %}
+        <div class="error" style="flex-basis:100%; margin:0;">Remote wipe works after the phone restarts once: its last report says Android hasn't given the launcher the wipe permission yet (Android 14, after a launcher update). Until then a wipe is refused, and the commands below say so.</div>
+        {% endif %}
         <p class="subtitle" style="flex-basis:100%; margin:0;">Lock: with a kid's PIN set (Screen lock card on the device page), locks with the kid's PIN and turns the screen off; calls from allowed contacts and 112 still work. Without one, it only turns the screen off ("locked (Android)" in the result).</p>
     </div>
 
     <div class="card">
         <h2>Recent commands</h2>
+        {% if let Some(notice) = cancel_notice %}
+        <p class="subtitle"><strong>{{ notice }}</strong></p>
+        {% endif %}
         {% if commands.is_empty() %}
         <p class="subtitle">None yet.</p>
         {% else %}
@@ -113,11 +119,17 @@
         <table>
             <thead><tr><th>Command</th><th>Requested</th><th>Status</th></tr></thead>
             <tbody>
-            {% for (c, status) in commands %}
+            {% for c in commands %}
             <tr>
                 <td>{{ c.command }}</td>
-                <td>{{ c.requested_at }}</td>
-                <td>{{ status }}</td>
+                <td>{{ c.requested_at }} UTC
+                    {% if let Some(cancel_id) = c.cancel_id %}
+                    <form method="post" action="/devices/{{ device.id }}/commands/{{ cancel_id }}/cancel" style="margin-top:6px;">
+                        <button type="submit" class="button-small button-secondary" aria-label="Cancel the {{ c.command }} asked for at {{ c.requested_at }} UTC">Cancel</button>
+                    </form>
+                    {% endif %}
+                </td>
+                <td>{{ c.status }}</td>
             </tr>
             {% endfor %}
             </tbody>

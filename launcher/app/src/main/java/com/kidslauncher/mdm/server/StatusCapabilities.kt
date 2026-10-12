@@ -18,4 +18,6 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     com.kidslauncher.mdm.music.MUSIC_CAPABILITY,
     PARENT_PIN_EVENTS_CAPABILITY,
     WINDOW_RELOCK_CAPABILITY,
+    COMMAND_RECEIPT_CAPABILITY,
+    com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY,
 )

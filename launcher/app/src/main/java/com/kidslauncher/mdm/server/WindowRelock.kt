@@ -338,16 +338,18 @@ object WindowRelock {
         }
     }
 
-    /** The PWA's `allow_blocked`: the `relock_blocked` entries go - but an app signed with another
-     * key than the catalog's pin stays ([allowBlocked], fix round QA Medium 2); the sync's apply()
-     * right after the command shows them again. Returns how many were let out. */
-    fun allowBlocked(context: Context): Int {
+    /** The PWA's `allow_blocked`: the `relock_blocked` entries it [listed] go (all with `null`,
+     * from an older server) - each only while its key is the one the PWA showed, and never an app
+     * signed with another key than the catalog's pin ([allowBlocked], fix round QA Medium 2, QA of
+     * cmd-expiry Low 1); the sync's apply() right after the command shows them again. Returns how
+     * many were let out. */
+    fun allowBlocked(context: Context, listed: Map<String, String?>?): Int {
         val app = context.applicationContext
         val store = store(app)
         synchronized(WindowRelockStore.LOCK) {
             val before = store.blocked()
             val packages = installedPackages(app, withInstaller = false)
-            val after = allowBlocked(before, packages.associate { it.name to it.signers }, lockedSigners(store))
+            val after = allowBlocked(before, packages.associate { it.name to it.signers }, lockedSigners(store), listed)
             val letOut = packages.filter { it.name in before && it.name !in after }.associate { it.name to it.updatedAt }
             store.saveAllowed(after, letOut)
             return before.size - after.size
@@ -383,17 +385,57 @@ object WindowRelock {
             val pkg = installedPackages(app, withInstaller = true, only = packageName).firstOrNull() ?: return false
             val store = store(app)
             synchronized(WindowRelockStore.LOCK) {
-                val after = blockAfterInstall(
-                    pkg, store.blocked(), lockedSigners(store), setOf(PLAY_STORE, app.packageName), System.currentTimeMillis(), store.allowed(),
-                ) ?: return false
-                store.saveBlocked(after)
+                val before = store.blocked()
+                val pins = lockedSigners(store)
+                val now = System.currentTimeMillis()
+                val after = blockAfterInstall(pkg, before, pins, setOf(PLAY_STORE, app.packageName), now, store.allowed()) ?: return false
+                val note = if (packageName in after && packageName !in before) {
+                    mapOf(packageName to BlockNote(blockReason(pkg, pins[packageName], null), BlockFound.INSTALL, now))
+                } else {
+                    emptyMap()
+                }
+                store.saveBlocked(after, note)
                 Log.i(LOG_TAG, "$packageName ${if (packageName in after) "blocked" else "no longer blocked"} after its install")
                 return true
             }
+        } catch (e: PackageManager.NameNotFoundException) {
+            // A static shared library's versioned name (Chrome's trichromelibrary_<version>), or
+            // a package gone again: nothing to check, nothing to warn about.
+            Log.d(LOG_TAG, "Install check skipped for $packageName: not an installed package")
+            return false
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Install check failed for $packageName", e)
             return false
         }
+    }
+
+    /**
+     * The status report's `relock_blocks` (fix of 2026-10-12): every current block with its app's
+     * signing key now and its [BlockNote] - an install-time block too, which no relock report
+     * carries - with how many there are in all (`relock_blocks_total`, the list stops at
+     * [RELOCK_BLOCKS_MAX]; QA of cmd-expiry, Low 2). `null` when not device owner (nothing is
+     * blocked then). Never throws.
+     */
+    fun reportBlocks(context: Context): Pair<List<com.kidslauncher.mdm.server.dto.RelockBlockReport>, Int>? = try {
+        val app = context.applicationContext
+        val dpm = dpm(app)
+        if (dpm == null || !dpm.isDeviceOwnerApp(app.packageName)) {
+            null
+        } else {
+            val store = store(app)
+            val blocked = store.blocked()
+            val signers = blocked.keys.mapNotNull { name ->
+                try {
+                    installedPackages(app, withInstaller = false, only = name).firstOrNull()?.let { name to it.signers }
+                } catch (e: PackageManager.NameNotFoundException) {
+                    null
+                }
+            }.toMap()
+            currentBlocks(blocked, store.blockNotes(), signers) to currentBlocksTotal(blocked, signers)
+        }
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't list the blocks for the report", e)
+        null
     }
 
     // ---- notifications ----------------------------------------------------------------------------

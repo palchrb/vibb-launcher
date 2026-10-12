@@ -107,4 +107,26 @@ class WallpaperInkTest {
         assertEquals(0x26FFFFFF, InkChoice(INK_DARK, 0.15, false).scrimArgb)
         assertEquals(0xBF1B1B1F.toInt(), InkChoice(INK_DARK, 0.0, false).inkDim)
     }
+
+    /** Design 25, "Lock background": the lock's white ink reaches 4.5:1 on every background. */
+    @Test
+    fun `the lock's scrim gives white 4_5 to 1 on any background, as light as it can`() {
+        fun whiteOn(lum: Double, alpha: Double) = contrastRatio(1.0, underScrim(lum, alpha, towardsWhite = false))
+        for (argb in listOf(0xFFFFFFFF.toInt(), 0xFFFFF3B0.toInt(), 0xFF1C7ED6.toInt(), 0xFF14213D.toInt(), 0xFF0C0C14.toInt(), 0xFF000000.toInt())) {
+            val alpha = lockScrimForColours(listOf(argb))
+            assertTrue("%08x: %.2f".format(argb, alpha), whiteOn(relativeLuminance(argb), alpha) >= LABEL_CONTRAST)
+            assertTrue(alpha <= LOCK_MAX_SCRIM)
+        }
+        // Dark grounds need none, white needs the most - and the cap still reaches it.
+        assertEquals(0.0, lockScrimForColours(listOf(0xFF0C0C14.toInt())), 1e-9)
+        assertTrue(whiteOn(1.0, LOCK_MAX_SCRIM) >= LABEL_CONTRAST)
+        assertTrue(lockScrimForColours(listOf(0xFFFFFFFF.toInt())) > lockScrimForColours(listOf(0xFF1C7ED6.toInt())))
+        // A gradient is judged on its lightest stop; a photo on its light side, at least the photo minimum.
+        assertEquals(lockScrimForColours(listOf(0xFFF76707.toInt())), lockScrimForColours(listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt())), 1e-9)
+        assertEquals(MIN_IMAGE_SCRIM, lockScrimForImage(LuminanceStats(0.01, 0.0)), 1e-9)
+        val busy = LuminanceStats(0.5, 0.3)
+        assertTrue(whiteOn(0.8, lockScrimForImage(busy)) >= LABEL_CONTRAST)
+        assertEquals(0, blackScrimArgb(0.0))
+        assertEquals(0x99000000.toInt(), blackScrimArgb(0.6))
+    }
 }

@@ -51,6 +51,14 @@ object CallSystem {
 
     fun redirectionRoleHeld(context: Context) = roleHeld(context, RoleManager.ROLE_CALL_REDIRECTION)
 
+    /** Security review L7: Telecom binds one screening service besides the carrier's - this
+     * role's holder's, else the default phone app's - so holding it keeps incoming calls screened
+     * by us whether or not we are the phone app, and no other app screens instead of us. */
+    fun screeningRoleHeld(context: Context) = roleHeld(context, RoleManager.ROLE_CALL_SCREENING)
+
+    /** The call roles now. */
+    fun roles(context: Context) = RoleSnapshot(dialerRoleHeld(context), redirectionRoleHeld(context), screeningRoleHeld(context))
+
     fun defaultDialer(context: Context): String? = try {
         context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage
     } catch (e: Exception) {
@@ -263,12 +271,13 @@ object CallPrefs {
 
     /** The role state last reported to the server or last asked to be reported ([roleReportNeeded]). */
     fun rolesSignalled(context: Context): RoleSnapshot? =
-        prefs(context).getString(ROLES_SIGNALLED, null)?.split(',')?.takeIf { it.size == 2 }?.let {
-            RoleSnapshot(it[0] == "1", it[1] == "1")
+        prefs(context).getString(ROLES_SIGNALLED, null)?.split(',')?.takeIf { it.size == 2 || it.size == 3 }?.let {
+            // An older build stored two flags: the screening role then counts as not reported.
+            RoleSnapshot(it[0] == "1", it[1] == "1", it.getOrNull(2) == "1")
         }
 
     fun rolesSignalled(context: Context, value: RoleSnapshot) {
-        val encoded = "${if (value.dialerHeld) 1 else 0},${if (value.redirectionHeld) 1 else 0}"
+        val encoded = listOf(value.dialerHeld, value.redirectionHeld, value.screeningHeld).joinToString(",") { if (it) "1" else "0" }
         if (prefs(context).getString(ROLES_SIGNALLED, null) != encoded) {
             prefs(context).edit().putString(ROLES_SIGNALLED, encoded).commit()
         }

@@ -127,7 +127,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         }
 
         val tailscaleAuthKey = findPreference<Preference>(mdm.keys().tailscaleAuthKey())
-        tailscaleAuthKey?.summary = maskedSecretSummary(mdm.tailscaleAuthKey(), getString(R.string.settings_mdm_not_set))
+        tailscaleAuthKey?.summary = tailscaleKeySummary()
         tailscaleAuthKey?.setOnPreferenceClickListener {
             showEditTextDialog(
                 requireContext(),
@@ -243,6 +243,16 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         }
     }
 
+    /** The key masked while it is stored; once the phone joined, it is gone (security review M12). */
+    private fun tailscaleKeySummary(): String {
+        val key = LauncherPreferences.mdm().tailscaleAuthKey()
+        return when {
+            !key.isNullOrBlank() -> maskedSecretSummary(key, getString(R.string.settings_mdm_not_set))
+            com.kidslauncher.mdm.server.TsnetClient.joined(requireContext()) -> getString(R.string.settings_mdm_tailscale_joined)
+            else -> getString(R.string.settings_mdm_not_set)
+        }
+    }
+
     private fun String?.orNotSet(): String = this?.takeIf { it.isNotBlank() }
         ?: getString(R.string.settings_mdm_not_set)
 
@@ -344,6 +354,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     mdm.enrolled(true)
                     // The queued parent-PIN events were about the old enrollment (design 24).
                     com.kidslauncher.mdm.server.ParentPin.clearEvents(context)
+                    com.kidslauncher.mdm.server.CommandAnswers.clear(context)
                     // First policy now, not at the next backstop (up to 30 min away).
                     com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "enrolled")
                     Toast.makeText(context, R.string.toast_mdm_enroll_success, Toast.LENGTH_LONG)
@@ -428,8 +439,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     // summary should reflect that instead of falsely showing "Not set".
                     val mdm = LauncherPreferences.mdm()
                     findPreference<Preference>(mdm.keys().serverUrl())?.summary = mdm.serverUrl()
-                    findPreference<Preference>(mdm.keys().tailscaleAuthKey())?.summary =
-                        maskedSecretSummary(mdm.tailscaleAuthKey(), getString(R.string.settings_mdm_not_set))
+                    findPreference<Preference>(mdm.keys().tailscaleAuthKey())?.summary = tailscaleKeySummary()
                 }.onFailure { e ->
                     Toast.makeText(
                         context,

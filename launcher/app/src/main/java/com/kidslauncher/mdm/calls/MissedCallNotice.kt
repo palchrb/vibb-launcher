@@ -11,18 +11,36 @@ package com.kidslauncher.mdm.calls
  */
 
 /**
- * What our notification says: [count] missed calls from the contacts [names] (newest first).
- * [contactNumber] only when they all came from one contact - the tap then opens that contact's
- * sheet. [lastAtMs] is the newest call's time, [newestId] its call-log `_id` (a newer one alerts).
- * No [names]: the plain count of [plainMissedCallNotice].
+ * One contact's missed calls (design 25 §2.4): its normalised [number], its phone-book [name]
+ * (`null` when blank - the number shows then), how many ([count]) and the newest's time.
+ */
+data class MissedContact(val number: String, val name: String?, val count: Int, val lastAtMs: Long) {
+    /** What a row or the notification calls it: the phone-book name, else the number. */
+    val shown: String get() = name ?: number
+
+    /** Redacted (design 25 QA Low 9): the lock's glance panel holds these - no name or number in a log. */
+    override fun toString() = "MissedContact(count=$count)"
+}
+
+/**
+ * What our notification says: [count] missed calls from the [contacts] (newest first; [names] are
+ * theirs). [contactNumber] only when they all came from one contact - the tap then opens that
+ * contact's sheet. [lastAtMs] is the newest call's time, [newestId] its call-log `_id` (a newer one
+ * alerts). No [contacts]: the plain count of [plainMissedCallNotice]. The lock's glance page shows
+ * exactly this (design 25 §2.4, [MissedCallNotifier.current]).
  */
 data class MissedCallNotice(
     val count: Int,
-    val names: List<String>,
+    val contacts: List<MissedContact>,
     val contactNumber: String?,
     val lastAtMs: Long,
     val newestId: Long,
-)
+) {
+    val names: List<String> get() = contacts.map { it.shown }
+
+    /** Redacted (design 25 QA Low 9): no name or number in a log or a crash report. */
+    override fun toString() = "MissedCallNotice(count=$count, contacts=${contacts.size})"
+}
 
 /**
  * The notification's content, `null` = nothing to show. Counted: missed calls from [viewContacts]
@@ -49,7 +67,9 @@ fun missedCallNotice(
     val all = perContact.values.flatten()
     return MissedCallNotice(
         count = all.size,
-        names = newestFirst.map { (number, _) -> names[number]?.takeIf { it.isNotBlank() } ?: number },
+        contacts = newestFirst.map { (number, missed) ->
+            MissedContact(number, names[number]?.takeIf { it.isNotBlank() }, missed.size, missed.maxOf { it.atMs })
+        },
         contactNumber = newestFirst.singleOrNull()?.key,
         lastAtMs = all.maxOf { it.atMs },
         newestId = all.maxOf { it.id },
@@ -135,6 +155,7 @@ sealed interface NoticeStep {
  * unread missed call in the log (0 = none). [alertedUpToId]: the newest `_id` a post alerted for;
  * [newestLoggedId]: the newest `_id` read at all (0 = none) - lower than [alertedUpToId] means the
  * call log was cleared and its ids started again. [lastPosted]: what ours shows now, if [shown].
+ * [mayClear] false: never cancel (the process start's pass, design 25).
  */
 fun noticeStep(
     notice: MissedCallNotice?,
@@ -145,13 +166,27 @@ fun noticeStep(
     unreadUpToId: Long,
     alertedUpToId: Long,
     newestLoggedId: Long,
+    mayClear: Boolean = true,
 ): NoticeStep {
-    if (notice == null) return NoticeStep.Clear(unreadUpToId.takeIf { mayMarkRead && it > 0 })
+    // A process start's pass (design 25, [mayClear] false) only re-learns what is on screen: during a
+    // no-calls time rule the view has only emergency contacts, and a restart (the night's update)
+    // must not drop a notification the kid hasn't seen.
+    if (notice == null) return if (mayClear) NoticeStep.Clear(unreadUpToId.takeIf { mayMarkRead && it > 0 }) else NoticeStep.Keep
     if (!shown && !mayPost) return NoticeStep.Keep
     if (shown && notice == lastPosted) return NoticeStep.Keep
     val alerted = if (newestLoggedId in 1 until alertedUpToId) 0L else alertedUpToId
     return NoticeStep.Post(notice, alert = notice.newestId > alerted)
 }
+
+/**
+ * The calls view a recompute counts against (design 25, code QA Low 3): [effective] (the rules with
+ * a time rule's call block) - except in a re-learning pass ([relearnOnly]: it never posts anew and
+ * never clears), which counts against the rules themselves ([rules]): a notification on screen during
+ * a no-calls rule can only have been posted before it, with that view - so it is known again after a
+ * restart in the night, and the glance page shows it.
+ */
+fun noticeState(rules: CallPolicyState, effective: CallPolicyState, relearnOnly: Boolean): CallPolicyState =
+    if (relearnOnly) rules else effective
 
 /**
  * Telecom's count 0 (qa-12-code #2): it answers each of our own `cancelMissedCallsNotification()`

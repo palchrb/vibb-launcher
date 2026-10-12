@@ -7,6 +7,7 @@ import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.play.playPackageLaunchable
+import com.kidslauncher.mdm.server.emergencySosPackage
 import com.kidslauncher.mdm.server.recentsPackage
 import com.kidslauncher.mdm.server.systemDialerPackage
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -28,6 +29,9 @@ class AppFilter(
         val blockedDialer = blockedSystemDialer()
         // Design 16d: enforcement never hides or suspends the recents provider - kept off here.
         val recentsProvider = recentsPackage()
+        // Bug 25b-H: the Emergency SOS app is never restricted (the five presses must work) - and
+        // never on the kid's list either.
+        val emergencySos = emergencySosPackage(context)
         // Play services/GSF/the Play Store are never on Home or in the drawer - the store only
         // during the parent's install mode (handy step 7).
         val installMode = try {
@@ -40,7 +44,7 @@ class AppFilter(
             hiddenVisibility.predicate(hidden, info)
                     && pinnedVisibility.predicate(pinned, info)
                     && !isMdmSuspended(info)
-                    && kidListable(packageName, blockedDialer, recentsProvider, installMode)
+                    && kidListable(packageName, blockedDialer, recentsProvider, installMode, emergencySos)
         }
 
         return apps
@@ -90,9 +94,9 @@ class AppFilter(
          * launcher has one, must not show); Play core only as [playPackageLaunchable] allows (the
          * Play Store in install mode).
          */
-        fun kidListable(packageName: String?, blockedDialer: String?, recentsProvider: String?, installMode: Boolean): Boolean =
+        fun kidListable(packageName: String?, blockedDialer: String?, recentsProvider: String?, installMode: Boolean, emergencySos: String? = null): Boolean =
             packageName != blockedDialer &&
-                (packageName == null || (packageName != recentsProvider && playPackageLaunchable(packageName, installMode)))
+                (packageName == null || (packageName != recentsProvider && packageName != emergencySos && playPackageLaunchable(packageName, installMode)))
 
         enum class AppSetVisibility(
             val predicate: (set: Set<AbstractAppInfo>, AbstractDetailedAppInfo) -> Boolean

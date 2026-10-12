@@ -1,8 +1,9 @@
 # 25 - The lock's glance page (buildable spec)
 
-Status: spec, architect 2026-10-11, on `main` at 17b89834 (music step 4 with its fix round and design 24b are in). Not
-built. Mockup: `docs/design/mockups/vibb-music/LockGlance.dc.html` (three 320x568 screens: A the glance page while
-music plays, B without music, C the keypad stage after a row tap - tap a row on A or B and C's prompt follows).
+Status: spec, architect 2026-10-11, on `main` at 17b89834 (music step 4 with its fix round and design 24b are in).
+Built 2026-10-12 (see "Implementation status" at the end); not device-tested. Mockup:
+`docs/design/mockups/vibb-music/LockGlance.dc.html` (three 320x568 screens: A the glance page while music plays, B
+without music, C the keypad stage after a row tap - tap a row on A or B and C's prompt follows).
 
 Sources: the request and decisions below, `lock/PinLockActivity.kt`, `PinLockRuntime.kt`, `PinLockState.kt`,
 `LockTaskRoot.kt`, `LockMedia.kt`, `music/MusicLockPanel.kt`, `badges/*`, `calls/MissedCall*.kt`, `lock/VoipCalls.kt`,
@@ -54,20 +55,23 @@ The first page shows:
 - `GLANCE` -> `KEYPAD`: "Lås opp" (no target) or a row (with that row's target, §1.4).
 - `KEYPAD` -> `GLANCE`: the back arrow (drops the target). A lock-up drops it too.
 - The VoIP ring card stays on top of both stages (design 17, unchanged).
-- **The music tile** (pure `glanceTile(session, shown)`): it appears when the music app's session (`shownSession`,
-  step 4) is playing, stays while it is paused, and goes when the session ends; at the next lock-up a paused session
-  shows no tile. `session == null` (no listener access, the app suspended or gone) = no tile. Its controls are step
-  4's: play/pause, previous, next (the compact tile: play/pause only, §1.2). Nothing opens the player.
+- **The music tile** (pure `glanceTile(session)`; **user decision 2026-10-12**, bug 25b-G - was "appears while
+  playing, stays paused, none for a paused session at a lock-up"): it shows whenever the music app has a session
+  (`shownSession`, step 4), **playing or paused**, also at a lock-up, and goes when the session ends.
+  `session == null` (no listener access, the app suspended or gone) = no tile. Its controls are step 4's:
+  play/pause, previous, next. The full tile (with previous/next) is preferred; the compact one (play/pause only,
+  §1.2) only when the rows don't fit beside the full one (`glanceFit`'s order, unchanged). Nothing opens the player.
 - **The keypad stage** always has the back arrow (to the glance page), never the clock or the date (the glance page
-  has them; mockup C). The compact music row stays while a session is live (step 4). The prompt: the usual
+  has them; mockup C). **No music** (user decision 2026-10-12, 25b-G: "skal være kjedelig" - everything
+  interesting is on the glance page): step 4's compact row (`view_lock_media_row.xml`) is gone. The prompt: the usual
   wait/wrong/checking/unusable texts first; else with a target "Skriv koden for å åpne Element X" (app label,
   `AppDisplay.shownLabel`) or "Skriv koden for å se tapte anrop"; else "Skriv inn koden din". The prompt row already
   takes two lines between the arrow's columns (qa-21-step4-code L5), so the hint costs no height.
   - `pin_clock`/`pin_date` leave `activity_pin_lock.xml`; `PinKeypadLayout`'s date/clock compact steps go
     (`finalKeySizePx(.., compactExhausted = true)` always: keys shrink to the 32 dp floor rather than clip).
   - The arrow is always visible, so the prompt's side margins are static (`setMediaKeypad` goes).
-  - Budget (`PinLockLayoutTest`, 320x569 dp, status bar 48 dp, nav 24/48 dp): with the compact row the stage is
-    step 4's music stage today (keys >= 52 dp); without it the keys get more room.
+  - Budget (`PinLockLayoutTest`, 320x569 dp, status bar 48 dp, nav 24/48 dp): keys >= 56 dp (the compact row's
+    64 dp went with 25b-G).
 
 ### 1.2 The glance page (`view_lock_glance.xml`, replaces `view_lock_media.xml`; mockup A and B)
 
@@ -136,8 +140,8 @@ default [AOSP 16 `UiAutomation`], so UI dumps still see them).
   `GlanceStore` and `MissedCallNotifier` between the lock's onStart and onStop. Its render is wrapped: an exception
   hides the rows and logs the exception class only - a glance fault must never trip the lock's crash guard (3
   crashes switch the lock off).
-- `music/MusicLockPanel.kt`: binds the full and the compact tile and the keypad's compact row while a session is live;
-  no stage logic any more. `LockMediaGuardTest` keeps it opening nothing.
+- `music/MusicLockPanel.kt`: binds the full and the compact tile while a session is live (the keypad's compact row
+  went with 25b-G); no stage logic any more. `LockMediaGuardTest` keeps it opening nothing.
 - `PinLockActivity`: `glance` replaces `music`; `setMediaKeypad`/`mediaKeypad`/`compactStep` go; `FLAG_SECURE`; the
   unlock path of §1.4.
 
@@ -805,3 +809,296 @@ details, tests and device checks.
   and Back returns there. Apps the rule suspends still open nothing. A missed-call row opens the phone book when the
   rule allows calls. This replaces §6's "no row opens anything while a time rule locks the phone".
 - The other §6 defaults stand.
+
+## Implementation status (2026-10-12)
+
+Built on branch `lock-glance-25`, rebased onto `main` at 79465d85 (the launcher security wave). Commits:
+- fc377696 - step 1: the contract, both sides (migration, `lock_glance` in the policy, the PWA's "On the lock screen";
+  `PolicyResponse.lockGlance` and `lockGlancePolicy`).
+- fe7b97a0 - step 2: the data - `GlanceReader`, `GlanceStore`, `GlanceRows`, `MissedCallNotice.contacts`,
+  `MissedCallNotifier.current`.
+- b8d9ffa9 - step 3a: the page - stages, layouts, the fit, `FLAG_SECURE`, the smoke test. Nothing opens yet.
+- f9db15f8 - step 3b: the open - `GlanceOpener`, `VisibleSender`, the unlock path, the time-rule hand-over, the
+  capability `lock_glance_v1`.
+- e7721410 - step 4, the docs (both `CLAUDE.md`s, `PLAN.md`).
+- The code QA's fix round: 420b0e50 (Lows 1, 2, 7), f5dac12c (Lows 3, 4, 5), d9e50fd9 (Low 6), and the commit with
+  the report and this update.
+
+**Migration:** `0066_lock_glance.sql`, the next number after `main`'s 0065 (`0065_command_receipts.sql`, the
+launcher security wave).
+
+**Tests (on 79465d85, after the code QA's fix round):** launcher `./gradlew testDebugUnitTest assembleDebug
+assembleRelease -PwarningsAsErrors=true` with the stub `tsnet.aar` (dependency verification on): 983 unit tests, 0
+failures, both builds green. Server: `cargo test` 574 passed, `cargo fmt --check` clean, `cargo clippy --all-targets`
+12 warnings, all from before this branch (unused model fields, `dns_engine.rs`, an old `sort_by` in `devices.rs`),
+none new. The PWA's subsection checked headless at 360 px, light and dark, after the merge (no horizontal scroll).
+Each step was green on its own before the first rebase: the step-1 compatibility test and the full server suite on
+the server half; the full launcher suite after steps 2, 3a and 3b.
+
+**All 12 QA findings are built in:**
+- Medium 1: the reader takes the ranking of every post (`onNotificationPosted(sbn, rankingMap)`), every sweep
+  (`currentRanking`) and every ranking update; no ranking counts as suspended.
+- Medium 2: every glance entry point catches `Throwable` - the reader per notification, the store's and the
+  notifier's listeners, the icon job, the panel (render, stage, tap, fit, start/stop) and the opener. A panel
+  that can't be built leaves the plain keypad. The open table has the "no launch intent -> nothing" row.
+- Medium 3 / Q1 (decided): see the first deviation.
+- Low 4: rows have 8 dp vertical padding (56 dp in the model); the "more" line has `minHeight` 24 dp and nothing
+  above it; the fit uses the page's height after `KidInsets` and runs again on every height change, never before
+  the first layout. §1.2's expected fits hold exactly (445, 464, 394, 458, 460 and 493 dp).
+- Low 5: the prompt has `maxLines="2"` and `ellipsize="end"`; the label in the hint is cut to 20 characters.
+- Low 6: icons come from Home's `renderAppIcon`, drawn by one background job, with a placeholder circle until then;
+  the shape is Home's circle, and the mockup is updated.
+- Low 7: without an allowlist the PWA lists every app the phone reports, and every ticked package outside the
+  list is always shown, so any tick can be removed.
+- Low 8 (as decided): in sender-only mode a notification that isn't MessagingStyle shows the app name and count,
+  never its title. The PWA says names show to anyone holding the phone, and that with the switch on an SMS app's
+  login codes show too.
+- Low 9: `current` clears on a cancel, a swipe and when our listener sees id 1006 leave the shade;
+  `MissedCallNotice` and `MissedContact` print no names or numbers. Tapping any missed-call row clears every
+  missed-call row, as design 12's phone book does.
+- Low 10: only a content intent whose `creatorPackage` is the notification's app is sent; otherwise the launch
+  intent.
+- Low 11: a key missing from the cached policy means unknown (missed calls only); missing from a fresh policy means
+  the older server's default, kept in memory.
+- Low 12: the tests it names were moved or added (`LockGlanceLayoutTest` took over `LockMediaLayoutTest`'s widths,
+  `KidHeaderLayoutTest` checks `view_lock_glance`, and the old clock test is gone); step 3 is split into 3a and 3b;
+  `GlanceStore.refreshPolicy` posts to the main thread; the device checks are below.
+
+**Deviations, with reasons:**
+1. **The open has two callers** (Q1). Under a time rule the lock doesn't open anything. It hands the target to the
+   time-rule screen: `GlanceOpener.openHandedOver` runs from `LockActivity.onResume`, within 10 s of the unlock, and
+   checks the rule again. So the conversation opens over the time-rule screen, and Back returns there.
+   `LockGlanceGuardTest` pins both callers (`open` only in `PinLockActivity.go`, `openHandedOver` only in
+   `LockActivity.onResume`). A missed-call row's target is taken under a rule only when calls are managed and
+   allowed. That is the time-rule screen's own condition for its phone book.
+2. If the rule ends between the unlock and the time-rule screen, that screen doesn't come up. The hand-over then
+   expires: the kid lands on Home and nothing opens. This edge is accepted.
+3. **Server package check:** `apps` uses `app_display::valid_package_name` (the launcher's grammar) instead of the
+   looser `is_package_name`, so the server never sends a name the launcher would drop. Without an allowlist an
+   unlisted tick is labelled "not on the phone - ticked", since every app is allowed then.
+4. `PendingIntent.isActivity()` and `creatorPackage` are read at the open, not at each post. It is the same
+   information with fewer binder calls.
+5. A ranking update refreshes only the suspended flag. A channel's lock-screen visibility that the user changes
+   applies at the next post or sweep.
+6. At TEXT, a notification without a text shows the subtitle "Element X · N meldinger".
+7. **Smoke test:**
+   - The missed-call check finds the row by its description ("Tapt anrop fra ..."), because the script doesn't know
+     the contact's name.
+   - `shot` still uses `screencap`, which is black over the lock; a comment points to the emulator console.
+8. The "more" line shares a wrapper (`lock_glance_list`) with the rows. Its 14/22 dp top margin then also applies
+   when no row fits (candidate 7).
+9. `MissedCallNotifier.refreshAtStart` (§2.4; since the code QA `relearn`) never clears, it only re-learns what is
+  on screen. During a no-calls time rule the phone book's view has only emergency contacts. A process restart then,
+  such as the night's self-update during bedtime, would otherwise cancel a missed-call notification the kid hasn't
+  seen.
+
+**Fix round after the code QA (`qa-25-code.md`, 0 High, 0 Medium, 7 Low; all fixed):**
+1. The lock-task checks hold for the time-rule hand-over: `lockWasRoot` travels with the hand-over and refuses before
+   it, and with the kiosk on an open with no lock task running opens nothing ("lock task not running"), from either
+   place.
+2. A refused send: `PendingIntent.send` throws only for a negative result, its `OnFinished` reports 0 for an
+   activity, and the result-returning send is hidden. So the opener watches our own windows for 1.5 s after a
+   send (`glanceSendCheck`): Home or the time-rule screen back in front means the start was refused, and the app's
+   launch intent goes from that window. Otherwise the row is marked opened, but only when Home or the time-rule
+   screen was below (kiosk on, or the hand-over). With the kiosk off, nothing is concluded, and the app clears its
+   own notification when the room opens.
+3. `MissedCallNotifier.relearn` (the process start, every time-lock change, and ours posted again while `current`
+   is unknown - a snooze that ended) counts against the call rules without the time rule's block
+   (`noticeState`). A notification on screen during a no-calls rule was posted before it, so the glance knows it
+   again.
+4. The tests the QA named: `glanceSuspended` (no ranking = suspended) in both reader paths,
+   `glanceUsableUnderLock` (the budget's apps, a rule's exempt apps, a no-calls rule, unmanaged calls),
+   `nextGlancePolicy` (a fresh policy beats the start's cache), and guard checks for `removedFromShade` and the
+   re-learn wiring.
+5. `cleanGlanceText` collapses Unicode whitespace (line and paragraph separators, no-break spaces) and drops the
+   invisible marks (U+061C, U+200E/200F, U+2060-2064, U+FEFF). Joiners stay, since emoji need them. The test file's
+   bidi characters are now escapes instead of literal characters.
+6. PWA: an unlisted tick says "not allowed" only when the allowlist lacks it, else "not on the phone". An empty
+   list says why: no report yet, no allowed app, or none reported.
+7. The tile's progress ticks only while the glance page shows (`glanceTicks(tileShown, pageShown, session)`), not
+   behind the keypad.
+
+**Not run here:** no emulator or phone in this sandbox. Everything below is a device check.
+
+**Device checklist** (emulator at 320x569 dp, nb and en, then the Jelly Star; §9 plus QA Low 12):
+- [ ] The page in both kiosk modes, with gesture and 3-button navigation, with and without music, with 0, 1, 2, 3
+      and 5 rows:
+      - the fit picks §1.2's candidates;
+      - nothing is clipped or squeezed, and round buttons stay round;
+      - the same at 360 and 411 dp and at font scale 1.3;
+      - the keypad stage has no clock or date, and its keys are >= 52 dp.
+- [ ] Element X, a DM and a group from another account:
+      - sender only ("Pappa", "Element X · 2 meldinger");
+      - the switch on shows the newest text ("Pappa: ..." in the group);
+      - the switch off removes the texts at the next sync, without a restart;
+      - unticking Element X removes its rows, and ticking it brings them back;
+      - a DM read on another device removes its row.
+- [ ] A row's tap: the keypad says "Skriv koden for å åpne Element X", and the right code opens the room (kiosk on
+      and off; Back from it). Also check:
+      - the parent code instead of the kid's PIN;
+      - a wrong code (the keypad stays);
+      - the arrow back (the plain prompt);
+      - a screen-off on the keypad (the glance page again, the target gone);
+      - the row's notification removed before the code (the room still opens);
+      - Element X suspended meanwhile (nothing opens);
+      - a missed-call row opens the contact's sheet, and every missed-call row is gone afterwards.
+- [ ] Under the screen-time budget (Element X usable): a row's tap shows the hint, and after the code the time-rule
+      screen comes, then the room over it, and Back returns to the time-rule screen. Under bedtime with Element X
+      not exempt: no hint, and after the code the time-rule screen only. A missed-call row under a rule that
+      allows calls opens the phone book over the time-rule screen.
+- [ ] A message while Element X is suspended (bedtime) shows no row; it appears when the rule ends.
+- [ ] Missed calls:
+      - one call, then two from Pappa and one from Mamma (one row per contact, newest first);
+      - calling back removes the row;
+      - after a launcher force-stop the row is still there (`refreshAtStart`);
+      - calls unmanaged with our dialer role show the plain row;
+      - a missed-call notification snoozed from the shade (while unlocked) removes the row.
+- [ ] States:
+      - an incoming call and a VoIP ring over the glance page;
+      - "Nødsamtale" from it;
+      - an alarm;
+      - a reboot (rows appear when the listener binds);
+      - no listener access (missed calls only, and the PWA's notes);
+      - `ForeignAccess` ("Foreldrekode" refused as in 24b, the glance page unchanged).
+- [ ] TalkBack:
+      - the reading order;
+      - one node per row with its action label;
+      - the keypad unreachable while covered;
+      - a UI dump lists the rows.
+- [ ] `FLAG_SECURE`:
+      - `screencap`, power + volume-down and a screen recording show the lock black;
+      - whether `adb emu screenrecord screenshot` captures it.
+- [ ] Nothing runs from the lock:
+      - long-press, swipe and double-tap on rows do nothing;
+      - Element X's quick reply never appears;
+      - the notification stays unread in Element X until the room opens.
+- [ ] The kiosk-on root case: force the 1 s fallback. Nothing opens, and the kid lands on Home - also under the
+      screen-time budget with an Element X row (the hand-over refuses too, code QA Low 1).
+- [ ] A refused send (code QA Low 2): a ticked app whose content intent the platform refuses (the API 34/35 opt-in,
+      or a target lock task doesn't permit with "Block other apps" off) - within 1.5 s the app's launch intent
+      opens instead (kiosk on: from Home; under a rule: from the time-rule screen), and the row isn't hidden when
+      nothing opened. A Back within 1.5 s of a room that did open re-opens the app's main screen once (accepted).
+- [ ] Missed calls and the glance after the night's update during bedtime: the row is there in the morning (code QA
+      Low 3); a missed-call notification snoozed from the shade comes back as a row when the snooze ends.
+- [ ] A ticked app whose content intent goes into an app that isn't allowlisted: BlockedAppActivity with the kiosk
+      on, nothing with it off.
+- [ ] The open on an API 34 or 35 emulator (`MODE_BACKGROUND_ACTIVITY_START_ALLOWED`); the Jelly Star (16) covers
+      only `ALLOW_IF_VISIBLE`.
+- [ ] Whether the Jelly Star's notification assistant marks anything as sensitive (the redacted case).
+- [ ] The PWA on a phone: tick, untick and the switch keep the place (no jump), and the notes appear.
+
+## Lock fix round 25b (2026-10-12)
+
+The user's Android 16 emulator run of 22a62658 and three logcats. Branch `lock-fixes-25b`, one commit per bug.
+Every root cause except G predates design 25.
+
+| Bug | Root cause | Fix |
+| --- | --- | --- |
+| A (High) Recents on the lock | Quickstep 16 refuses Overview only in screen pinning; in a DO's LOCKED lock task the button follows SystemUI's disable flags (desync). The lock re-fronted only on onStop, and Recents only *pauses* it | A pause while LOCKED re-fronts after 200 ms (`pauseStartsRefront`), a stop too (was 500 ms) |
+| A/C (High) camera double-press | GestureLauncherService -> SystemUI started the camera that CameraLock had suspended -> NPE in system_server -> **SystemUI crashed** (the "small restart"); whatever came up meanwhile (quickstep's RecentsActivity, its app list = the "Calendar", a plain background) showed over the lock | While LOCKED (and while a time rule suspends the gesture's camera) the DO disables the cameras by policy (`setCameraDisabled`, `<disable-camera />`, `cameraPolicyDisabled`); AOSP 16 `CameraGestureHelper.canCameraGestureBeLaunched` checks that first on both double-press paths, so the gesture starts nothing. The user's first choice; the camera never opens over the lock, so no gallery or picker either |
+| C (High) status line flicker | The lock-resumed status-bar heal (16d) flipped features 113 -> 112 -> 113 right after each power-on | The first lock resume after a screen-off heal skips its own heal |
+| B (High) Home before the glance | The lock is started at the screen-off as a new task; its open transition ran at the screen-on from Home's last frame; the glance page could draw before its fit | No transition (`FLAG_ACTIVITY_NO_ANIMATION`, `overrideActivityTransition`, no window animation); a fit that changes the page skips its frame |
+| B residual: a plain-colour flash | (1) the screen-off receiver kept the main thread (fence, self-update, policy re-check, heal) before the new lock could be created - meanwhile the system shows its starting window (`windowBackground`); (2) mashing = five presses = SOS -> BlockedAppActivity -> re-front (H) | (1) that work runs 400 ms later and only while the screen is still off (`SCREEN_OFF_WORK_DELAY_MS`, `screenOffWorkDue`); (2) H |
+| D (Medium) clock splash | No code path starts the clock app (it is only pinned as a helper). Gone after an emulator restart; the theory - a clock task started by a tap during boot staying behind the lock, its starting window shown at each lock-up - can't be checked from code | Device check |
+| E Element X calls | Element X posts a missed Element Call with `CATEGORY_MISSED_CALL` (its `NotificationCreator.kt`) | `glanceMissedCall`: "Tapt anrop · Element X" with the red phone badge |
+| G music tile on the wrong stage | Design 25 kept step 4's compact row on the keypad and showed no tile for a paused session at a lock-up | User decision 2026-10-12 (§1.1): tile for any session, playing or paused; the keypad stage has no music |
+| H SOS -> "Emergency information is not available" | SystemUI starts the `com.android.systemui.action.LAUNCH_EMERGENCY` activity (system handlers only, `config_preferredEmergencySosPackage` first) as a new task; its package wasn't pinned | `HelperKind.EMERGENCY_SOS` (`emergencySosHandler`): pinned with the kiosk on (with or without the block bit) and off, never hidden or suspended, never listed. The re-front yields as "sos" for 60 s (or until the lock is back) when the lock is *stopped* within 3 s of a screen-on (the gesture's presses come <= 500 ms apart and are swallowed while the screen is on) and none of our own screens is in front |
+
+**Deviations and limits**
+- **The SOS yield is a timing heuristic.** No app can see which activity is in front (usage events need a permission
+  a device owner can't grant itself). A stop of the lock within 3 s of a screen-on leaves whatever is in front for up to
+  60 s. While LOCKED only pinned packages can be there: Home and Recents are out of lock task, the camera is off by
+  policy, our own screens are excluded, Recents only pauses (re-fronted as always, within 700 ms in that window).
+- **A re-front still shows one plain frame.** Bringing the lock's task back is a task switch; the system's snapshot of
+  a `FLAG_SECURE` window is the theme background (`shouldUseAppThemeSnapshot`), shown until the lock draws.
+- The gesture keys (`camera_double_tap_power_gesture_disabled`; Android 16's `double_tap_power_button_gesture_enabled`,
+  read instead in 16's default multi-target mode) are in `docs/testing/emulator.md` §4 and `docs/setup/google-account.md`.
+  They aren't reported in the status report (both are readable; a later step could add them).
+- `disable-camera` is a new admin policy tag: an updated phone may need a restart before `setCameraDisabled` works,
+  shown in `admin_policies_pending` and on the device page.
+
+**Device checks**
+- [ ] Double press power on the lock, gesture keys on: no SystemUI crash, nothing opens, the lock stays.
+- [ ] The Overview button on the glance page: Recents doesn't stay (`adb shell dumpsys statusbar` disable flags).
+- [ ] Power on after unlock, and quick power mashing: no Home and no plain frame (screenrecord).
+- [ ] Five presses: the SOS countdown (Pixel: Personal Safety) or Emergency information shows and stays; its call
+      places; cancel brings the lock back. With the kiosk on and off.
+- [ ] Wake, then Overview within 3 s: Recents goes within a second.
+- [ ] The clock splash (D) after tapping during boot.
+- [ ] The per-frame "Out of order buffers" for PinLockActivity (likely the emulator's mirroring of a secure surface).
+- [ ] Element X: a missed Element Call shows as "Tapt anrop · Element X".
+- [ ] A paused session's tile at a lock-up; the keypad stage without music.
+
+## Lock background (25f, 2026-10-12)
+
+**The user's request:** the lock's background is the same as Home's wallpaper by default, with an option in the PWA to
+choose a separate lock picture.
+
+**Today:** both lock stages have a solid `kid_ground` (#0C0C14). Home shows the wallpaper the kid picked
+(`WallpaperStore.state.current`), out of the ones the parent ticked for this phone (`launcher_ui.wallpapers`,
+design 08).
+
+### Behaviour
+- **Default "Same as Home":** the lock (the glance page and the keypad stage, kiosk on and off) shows the wallpaper Home
+  shows, photos included, and follows the kid's pick.
+- **A separate lock picture:** the parent chooses one of the wallpapers ticked for this phone on the device page. The lock
+  shows it whatever the kid picks for Home.
+  - If it is unticked, deleted, not yet downloaded or unreadable, the lock falls back to Home's wallpaper.
+  - Only wallpapers the phone may use can be chosen, because the image route only serves a ticked wallpaper.
+- **Legibility:** the lock keeps its light ink (white clock, the dark cards, the keys) on every background.
+  - A black scrim is laid over the wallpaper: the lightest one that gives white text 4.5:1 against the wallpaper's
+    lightest part (`lockScrim`, pure).
+  - Photos always get at least `MIN_IMAGE_SCRIM`, as on Home. The cap is 0.6, which reaches 4.5:1 even on white, so
+    no label shadow is needed.
+  - The cards (rows, music tile, keys) keep their own opaque backgrounds.
+- **What draws it:** the lock draws the wallpaper itself (`WallpaperRender.GroundDrawable`, the one decoded photo of the
+  store or a second one for a separate lock photo). It never shows through to Android's wallpaper: the lock's window
+  stays opaque and `FLAG_SECURE`.
+- **The starting window and the re-front's snapshot** stay `kid_ground` (a theme can't carry the photo). A wallpaper
+  close to it makes that frame less visible, but that is the only frame that differs.
+
+### Privacy
+Design 08 (QA 08 #1) kept a photo off *Android's* lock screen unless the parent ticked "also on the lock screen",
+because anyone holding the locked phone sees it.
+- Handy's PIN lock replaces Android's lock screen since step 10, and the user now asks for Home's wallpaper on it **by
+  default**.
+- So a photo the kid picks for Home shows on handy's lock too.
+- The per-photo `lock_screen` tick keeps governing only Android's own lock wallpaper (`WallpaperApplier`, `FLAG_LOCK`),
+  which nothing shows while handy's lock is on.
+- The PWA text says so: "the lock shows Home's wallpaper - photos included - unless you choose another".
+- **Veto if wrong:** "Same as Home" could skip photos without the tick (navy instead).
+
+### Data, policy, PWA
+- **Migration `0069_lock_wallpaper.sql`** (the next after `cmd-expiry`'s 0068),
+  a new table:
+  - `device_lock_wallpaper (device_id INTEGER PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, wallpaper_id INTEGER NOT NULL, FOREIGN KEY (device_id, wallpaper_id) REFERENCES device_wallpapers(device_id, wallpaper_id) ON DELETE CASCADE)`.
+  - No row means "Same as Home".
+  - The composite key makes untick and delete fall back by themselves.
+  - So saving the ticks deletes only the unticked rows (it used to delete all and insert again, which would clear the
+    lock choice on every save).
+- **Policy:** `launcher_ui.lock_wallpaper` is the id or `null`, always present. It is pinned on both sides
+  (`policy_json_keys_snapshot`, `PolicyResponseCompatTest`); an older launcher ignores it.
+- **PWA:** on the device page's Wallpapers card, under the ticks, a "Lock screen background" select:
+  - "Same as Home", then every ticked wallpaper;
+  - `POST /devices/{id}/lock-wallpaper` with `wallpaper` = `""` or an id;
+  - an id that isn't ticked for this phone is a 400 and nothing changes;
+  - it nudges the phone, redirects to `/devices/{id}` without a fragment (`scroll-restore.js` keeps the place, as the
+    lock-screen ticks do), and is a security event `lock_wallpaper_changed`.
+- **Launcher:**
+  - Pure `lockWallpaper(allowed, lockId, home, cached)`: the chosen one if it is allowed and usable, else `home`.
+  - `WallpaperStore.State` gains `lock` (the wallpaper) and `lockBitmap` (Home's bitmap when it is the same photo,
+    else one more decode).
+  - `PinLockActivity` sets the ground on its root and on the glance root at create and on every store change (a
+    listener between onStart and onStop).
+
+### Tests
+- **Server:** the route (ticked, not ticked = 400, unknown device = 404, `""` = same as Home); the untick and delete
+  fallback; saving the ticks keeps the choice; the policy snapshot; the 360 px PWA in light and dark.
+- **Launcher:** `lockWallpaper`, `lockScrim` (white reaches 4.5:1 on white, black, navy and photos' statistics; at least
+  the photo minimum), `PolicyResponseCompatTest`, a source guard that the lock's window stays opaque (no
+  `windowShowWallpaper`).
+- **Device:**
+  - [ ] the lock with a photo, a gradient and navy, at 320 dp;
+  - [ ] the kid changes Home's wallpaper and the lock follows;
+  - [ ] a separate lock picture, then unticked;
+  - [ ] the keypad legible on a light photo.

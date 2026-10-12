@@ -63,8 +63,8 @@ class Application : android.app.Application() {
                     try {
                         // Design 24b (fix round QA Low 3): a block set or cleared by this install
                         // first - enforceOnNewPackage reads it.
-                        com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)
-                        val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName)
+                        val relockBlock = com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)
+                        val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName) || relockBlock
                         // A new app the parent hasn't allowed (e.g. from Play): report it now, so
                         // the device page lists it for allowlisting (handy step 7). The music app
                         // gets its managed config and library at once (design 21 §3).
@@ -86,6 +86,8 @@ class Application : android.app.Application() {
                     try {
                         if (com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)) {
                             AppEnforcer.apply(this@Application, com.kidslauncher.mdm.server.currentPolicyDecision().policy)
+                            // The block set or cleared reaches the device page now (relock_blocks).
+                            com.kidslauncher.mdm.push.SyncRunner.request(this@Application, "relock_block")
                         }
                     } catch (e: Exception) {
                         android.util.Log.w("Application", "Install check failed for $packageName", e)
@@ -356,6 +358,10 @@ class Application : android.app.Application() {
         com.kidslauncher.mdm.lock.PinLockRuntime.init(this)
         // Vibb music (design 21 step 4): the volume cap, and the player's "in front" ends at screen-off.
         com.kidslauncher.mdm.music.MusicMedia.init(this)
+        // The lock's glance page (design 25): the parent's choice from the cached policy (off the
+        // main thread), and our missed-call notification known again if it is still on screen.
+        com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()
+        com.kidslauncher.mdm.calls.MissedCallNotifier.refreshAtStart(this)
 
         // The anchor service: every background sync and the SSE stream (the only nudge since
         // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.

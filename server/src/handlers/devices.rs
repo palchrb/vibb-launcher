@@ -416,6 +416,8 @@ struct DeviceDetailTemplate {
     calls_summary: String,
     /// `calls::call_warnings` - emergency calls, a launcher that can't enforce calls, roles.
     call_warnings: Vec<String>,
+    /// `calls::call_warnings`' hints: good to know, nothing wrong (plain lines).
+    call_hints: Vec<String>,
     /// The stored allowlist isn't valid JSON: the phone gets a 500 for its policy (and keeps its
     /// cached one), and the app checkboxes below show nothing as allowed (QA step 1 #11).
     allowlist_corrupt: bool,
@@ -430,6 +432,8 @@ struct DeviceDetailTemplate {
     home_columns: i64,
     /// The wallpaper card: every wallpaper, ticked when this phone may use it.
     wallpapers: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
+    /// The lock shows Home's wallpaper (no lock wallpaper chosen, design 25 "Lock background").
+    lock_same_as_home: bool,
     /// The last status report says the launcher's notification listener has no access, so the
     /// home screen shows no unread badges on apps.
     badges_without_access: bool,
@@ -467,6 +471,8 @@ struct DeviceDetailTemplate {
     app_downloads_line: Option<String>,
     /// Apps card (design 14): "Name and icon" for every allowed app with a package name.
     display_forms: Vec<crate::app_display::AppDisplayForm>,
+    /// Apps card (design 25): "On the lock screen" - the text switch, notes and one tick per app.
+    lock_screen: crate::lock_glance::LockScreenCard,
     /// "Music" card (design 21, `#music`); `None` when it couldn't be read (the card says so).
     music: Option<crate::handlers::music::MusicCard>,
     /// When and how the phone last reached this server (design 22 §3.1, in memory).
@@ -560,6 +566,74 @@ async fn app_display_forms(
             form
         })
         .collect()
+}
+
+/// The "On the lock screen" subsection (design 25 §3.3): with an allowlist the allowed apps (the
+/// "Names and icons" set), without one every app the phone reports (QA Low 7: a calls-only phone
+/// with a kid PIN still has the lock), and always every ticked package outside that list, so any
+/// tick can be removed. Never Play core or the launcher itself.
+async fn lock_screen_card(
+    state: &AppState,
+    policy: &DevicePolicy,
+    latest_status: Option<&DeviceStatus>,
+    apps: &[UnifiedAppRow],
+    installed: &[InstalledApp],
+    allowed: &std::collections::HashSet<String>,
+) -> crate::lock_glance::LockScreenCard {
+    use crate::lock_glance::{self, LockScreenCard};
+    // The parsed allowlist, when the phone has one: a ticked package outside the list is "not
+    // allowed" only when it isn't in it (code QA Low 6).
+    let allowlist: Option<std::collections::BTreeSet<String>> = policy
+        .allowlist_json
+        .is_some()
+        .then(|| allowed.iter().cloned().collect());
+    let empty_text = lock_glance::empty_text(latest_status.is_some(), allowlist.is_some());
+    let launcher =
+        |package: &str| crate::handlers::device_api::installed_by_launcher(state, Some(package));
+    let capable = latest_status
+        .and_then(|s| s.capabilities_json.as_deref())
+        .is_some_and(|caps| caps.contains(&format!("\"{}\"", lock_glance::LOCK_GLANCE_CAPABILITY)));
+    let notes = lock_glance::notes(
+        crate::kid_lock::policy_kid_lock(policy).is_some(),
+        latest_status.is_some(),
+        capable,
+        latest_status.and_then(|s| s.notification_listener_enabled),
+    );
+    let ticked = match lock_glance::ticked(&state.db, policy.device_id).await {
+        Ok(ticked) => ticked.into_iter().collect(),
+        Err(err) => {
+            tracing::error!(device_id = policy.device_id, %err, "couldn't read the lock screen's apps");
+            return LockScreenCard {
+                show_text: policy.lock_glance_text,
+                notes,
+                apps: Vec::new(),
+                unreadable: true,
+                empty_text,
+            };
+        }
+    };
+    let apps = if policy.allowlist_json.is_some() {
+        let listed = apps
+            .iter()
+            .filter(|a| a.checked && !a.is_launcher && !launcher(&a.package_name))
+            .map(|a| (a.package_name.clone(), a.label.clone()));
+        lock_glance::card_apps(listed, &ticked, allowlist.as_ref())
+    } else {
+        let mut listed: Vec<(String, String)> = installed
+            .iter()
+            .filter(|a| !launcher(&a.package_name))
+            .map(|a| (a.package_name.clone(), a.label.clone()))
+            .collect();
+        listed.sort_by_key(|(_, label)| label.to_lowercase());
+        lock_glance::card_apps(listed, &ticked, None)
+    };
+    LockScreenCard {
+        show_text: policy.lock_glance_text,
+        notes,
+        apps,
+        unreadable: false,
+        empty_text,
+    }
 }
 
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
@@ -812,6 +886,11 @@ pub(crate) async fn play_card(
             .ok()
             .flatten()
             .unwrap_or(true);
+    if let Some(notice) = crate::models::admin_policy_notice(
+        latest.and_then(|s| s.admin_policies_pending_json.as_deref()),
+    ) {
+        warnings.push(notice);
+    }
     if latest.and_then(|s| s.play_store_suspendable) == Some(false) {
         warnings.push(if block_activity_start {
             "Play can't be suspended on this phone - Play is blocked only while kiosk is on."
@@ -1152,7 +1231,8 @@ async fn render_device(
         .collect();
 
     // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
-    // A fresh progress row above still wins for the live percentage.
+    // A fresh progress row above still wins for the live percentage - but not over a release the
+    // phone refused (security review M10): its reason beats "Install failed".
     let downloads = crate::app_downloads::parse(
         latest_status
             .as_ref()
@@ -1162,7 +1242,9 @@ async fn render_device(
         downloads
             .as_ref()
             .and_then(|d| d.entry(tracked_app_id))
-            .filter(|_| !install_progress.contains_key(&tracked_app_id))
+            .filter(|e| {
+                crate::app_downloads::refused(e) || !install_progress.contains_key(&tracked_app_id)
+            })
     };
 
     let mut apps: Vec<UnifiedAppRow> = Vec::new();
@@ -1190,7 +1272,8 @@ async fn render_device(
                 "Installed".to_string()
             },
             is_installing: false,
-            install_failed: false,
+            // An update the phone refused (security review M10) shows like a failed install.
+            install_failed: update.is_some_and(crate::app_downloads::refused),
             checked: allowed.contains(&app.package_name),
             tracked_app_id: tracked_match.map(|t| t.id),
             show_no_release_hint: false,
@@ -1213,13 +1296,14 @@ async fn render_device(
         }
         let has_release = t.latest_release_tag.is_some();
         let progress = install_progress.get(&t.id).copied();
-        let (status_label, is_installing, install_failed) = match progress {
-            Some((_, true)) => ("Install failed".to_string(), false, true),
-            Some((percent, false)) => (format!("Installing {percent}%"), true, false),
-            None => match download_of(t.id) {
-                Some(download) => (crate::app_downloads::new_app_label(download), false, false),
-                None => ("Not installed".to_string(), false, false),
-            },
+        let (status_label, is_installing, install_failed) = match (progress, download_of(t.id)) {
+            (_, Some(download)) if crate::app_downloads::refused(download) => {
+                (crate::app_downloads::new_app_label(download), false, true)
+            }
+            (Some((_, true)), _) => ("Install failed".to_string(), false, true),
+            (Some((percent, false)), _) => (format!("Installing {percent}%"), true, false),
+            (None, Some(download)) => (crate::app_downloads::new_app_label(download), false, false),
+            (None, None) => ("Not installed".to_string(), false, false),
         };
         apps.push(UnifiedAppRow {
             status_label,
@@ -1268,6 +1352,15 @@ async fn render_device(
         .unwrap_or(false);
     let any_app_installing = apps.iter().any(|a| a.is_installing);
     let display_forms = app_display_forms(&state, id, &apps, entered.as_ref()).await;
+    let lock_screen = lock_screen_card(
+        &state,
+        &policy,
+        latest_status.as_ref(),
+        &apps,
+        &installed,
+        &allowed,
+    )
+    .await;
     let app_downloads_line = downloads
         .as_ref()
         .and_then(crate::app_downloads::network_line);
@@ -1306,11 +1399,14 @@ async fn render_device(
         format!("Managed - {contacts}, {calls}, {sms}.")
     };
 
-    let call_warnings = crate::handlers::calls::call_warnings(&state, &policy)
+    let (call_warnings, call_hints) = crate::handlers::calls::call_warnings(&state, &policy)
         .await
         .unwrap_or_else(|err| {
             tracing::error!(device_id = id, %err, "failed to read call warnings");
-            vec!["Couldn't read this phone's call state - check the server log.".to_string()]
+            (
+                vec!["Couldn't read this phone's call state - check the server log.".to_string()],
+                Vec::new(),
+            )
         });
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
@@ -1404,6 +1500,8 @@ async fn render_device(
         latest_status.as_ref(),
         notice,
         chrono::Utc::now().timestamp_millis(),
+        // Whether each blocked app is ticked under Apps (QA of cmd-expiry, Low 3).
+        (policy.allowlist_json.is_some() && !allowlist_corrupt).then_some(&allowed),
     )
     .await;
     // When "Block safe mode" went on, for the unseen-boots advice (QA 24b Low 12).
@@ -1424,6 +1522,7 @@ async fn render_device(
             tracing::error!(device_id = id, %err, "couldn't load the wallpaper card");
             Vec::new()
         });
+    let lock_same_as_home = !wallpapers.iter().any(|w| w.lock);
 
     let crashes = crate::crashes::latest(&state.db, id).await;
     let music = crate::handlers::music::device_card(
@@ -1446,6 +1545,7 @@ async fn render_device(
             app_updates_wifi_only: policy.app_updates_wifi_only,
             app_downloads_line,
             display_forms,
+            lock_screen,
             time,
             play,
             lock,
@@ -1476,6 +1576,7 @@ async fn render_device(
             title: device.name.clone(),
             calls_summary,
             call_warnings,
+            call_hints,
             allowlist_corrupt,
             managed_without_pin: (policy.allowlist_json.is_some() || policy.calls_managed)
                 && policy.override_pin_hash.is_none(),
@@ -1483,6 +1584,7 @@ async fn render_device(
             launcher_language: policy.launcher_language.clone(),
             home_columns: policy.home_columns,
             wallpapers,
+            lock_same_as_home,
             badges_without_access: latest_status
                 .as_ref()
                 .is_some_and(|s| s.notification_listener_enabled == Some(false)),
@@ -1555,8 +1657,8 @@ fn policy_problem_text(state: &str) -> String {
 ///
 /// Checking: adds the `device_tracked_apps` row if there's a catalog entry to track (so a
 /// not-yet-installed app actually gets pushed, and an already-installed one starts picking up
-/// future updates), and allows the package if there's one on file - both no-ops if already in
-/// that state.
+/// future updates), allows the package if there's one on file - both no-ops if already in
+/// that state - and cancels an uninstall an earlier uncheck queued.
 ///
 /// Unchecking: removes the `device_tracked_apps` row and disallows the package the same way.
 /// Whether it *also* queues a silent uninstall depends on current on-device status - a preinstalled
@@ -1623,6 +1725,36 @@ pub async fn toggle_app(
             .execute(&state.db)
             .await
             .ok();
+        }
+        // Checked again before the phone synced: the uninstall the uncheck queued is off (the
+        // catalog app's own package too, when the row had none) - else the next sync would still
+        // remove the app ("deleted by your administrator").
+        let catalog_package: Option<String> = match tracked_app_id {
+            Some(tid) => sqlx::query_scalar(
+                "SELECT package_name FROM tracked_apps WHERE id = ? AND package_name != ''",
+            )
+            .bind(tid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten(),
+            None => None,
+        };
+        for package in [Some(package_name.as_str()), catalog_package.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|p| !p.is_empty())
+        {
+            if let Err(err) = sqlx::query(
+                "DELETE FROM device_pending_uninstalls WHERE device_id = ? AND package_name = ?",
+            )
+            .bind(id)
+            .bind(package)
+            .execute(&state.db)
+            .await
+            {
+                tracing::error!(device_id = id, package, %err, "can't cancel a queued uninstall");
+            }
         }
         if !package_name.is_empty()
             && let Err(err) = add_to_allowlist(&state, id, &package_name).await

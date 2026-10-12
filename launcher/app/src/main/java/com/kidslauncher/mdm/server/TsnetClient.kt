@@ -22,6 +22,10 @@ private const val CRASH_GUARD_PENDING_KEY = "tsnet_connect_attempt_pending"
 private const val CRASH_COUNT_KEY = "tsnet_connect_crash_count"
 private const val LAST_CRASH_AT_KEY = "tsnet_connect_last_crash_at"
 
+/** Set (with the auth key's deletion, one commit) once this phone's node has been on the tailnet:
+ * later starts come up from tsnet's stored node state without a key (security review M12). */
+private const val TAILNET_JOINED_KEY = "tsnet_node_joined"
+
 /** After this many consecutive crashes-during-connect, skip the next attempt entirely rather than
  * retry into the same crash - see [TsnetClient.connectFromPreferences]'s own doc comment. */
 private const val MAX_CONSECUTIVE_CRASHES = 2
@@ -118,8 +122,10 @@ object TsnetClient {
      * one shared entry point for every caller ([com.kidslauncher.mdm.ui.HomeActivity]'s first
      * post-unlock resume, every [MdmSyncWorker] cycle as a retry-until-connected backstop, and
      * [applyProvisioningExtras]'s QR setup flow), so hostname/state-dir computation lives in
-     * exactly one place. No-ops (returns null) if no auth key is configured yet, or if already
-     * connected - safe to call as often as needed.
+     * exactly one place. No-ops (returns null) if no auth key is configured and the phone never
+     * joined, or if already connected - safe to call as often as needed. The key is deleted once
+     * the node is up; later calls come up from the stored node state (security review M12,
+     * [tailnetConnect]).
      *
      * Wrapped in a crash-loop guard, not called unconditionally: [connect] runs tsnet's embedded
      * Go/cgo runtime, a real native-crash surface a plain Kotlin try/catch cannot protect against
@@ -136,7 +142,14 @@ object TsnetClient {
      * [MAX_CONSECUTIVE_CRASHES] such detections in a row this skips the attempt entirely for that
      * launch, letting the rest of the app boot normally without tailnet connectivity that cycle,
      * rather than retrying straight into the same crash.
+     *
+     * Synchronized (QA of the launcher wave, Low 5): Home's resume, the sync and the QR setup call
+     * it from different threads, and two first joins at once would build two tsnet servers on one
+     * state directory, registering with the one key - the loser's state could win, and the key is
+     * deleted after the first success. A second caller waits (up to the 30 s connect) and then sees
+     * [connected]. Every caller is off the main thread.
      */
+    @Synchronized
     fun connectFromPreferences(context: Context): String? {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val now = System.currentTimeMillis()
@@ -175,13 +188,21 @@ object TsnetClient {
             return null
         }
 
-        val authKey = LauncherPreferences.mdm().tailscaleAuthKey()
-        if (authKey.isNullOrBlank() || connected) return null
+        val storedKey = LauncherPreferences.mdm().tailscaleAuthKey()
+        val authKey = when (val step = tailnetConnect(storedKey, prefs.getBoolean(TAILNET_JOINED_KEY, false), connected)) {
+            TailnetConnect.Nothing -> return null
+            TailnetConnect.Connected -> {
+                // A key scanned or typed while connected: the node exists, tsnet won't use it.
+                forgetKeyOnceJoined(context, storedKey)
+                return null
+            }
+            is TailnetConnect.Up -> step.authKey
+        }
         val hostname = "kids-launcher-${Build.MODEL}".replace(Regex("[^A-Za-z0-9-]"), "-")
         val stateDir = context.filesDir.resolve("tailscale").absolutePath
 
         prefs.edit().putBoolean(CRASH_GUARD_PENDING_KEY, true).commit()
-        return try {
+        val ip = try {
             connect(hostname, authKey, stateDir)
         } finally {
             // Reached by any path that returns normally (success or a caught/logged failure
@@ -191,6 +212,31 @@ object TsnetClient {
                 .putBoolean(CRASH_GUARD_PENDING_KEY, false)
                 .putInt(CRASH_COUNT_KEY, 0)
                 .commit()
+        }
+        if (ip != null) forgetKeyOnceJoined(context, storedKey)
+        return ip
+    }
+
+    /** Whether this phone's node has been on the tailnet (Settings shows it once the key is gone). */
+    fun joined(context: Context): Boolean =
+        PreferenceManager.getDefaultSharedPreferences(context).getBoolean(TAILNET_JOINED_KEY, false)
+
+    /**
+     * Security review M12: once the node is up, the auth key is never needed again (tsnet reads it
+     * only to create the node), so it is deleted, with the "joined" mark, in one commit. Later
+     * starts connect from the stored node state ([tailnetConnect]).
+     */
+    private fun forgetKeyOnceJoined(context: Context, storedKey: String?) {
+        if (!connected) return
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val forget = forgetTailnetKey(storedKey, connected)
+        if (!forget && prefs.getBoolean(TAILNET_JOINED_KEY, false)) return
+        val edit = prefs.edit().putBoolean(TAILNET_JOINED_KEY, true)
+        if (forget) edit.remove(LauncherPreferences.mdm().keys().tailscaleAuthKey())
+        if (edit.commit()) {
+            if (forget) Log.i(LOG_TAG, "On the tailnet - the auth key is deleted (the node state stays)")
+        } else {
+            Log.w(LOG_TAG, "Couldn't delete the auth key - tried again at the next connect")
         }
     }
 

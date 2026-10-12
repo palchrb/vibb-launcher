@@ -31,6 +31,7 @@ import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.timerules.ScreenTimeTracker
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.ui.LockActivity
+import com.kidslauncher.mdm.server.emergencySosPackage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -162,6 +163,27 @@ object PinLockRuntime {
     private var exemptYields = 0
     @Volatile
     private var emergencyFlowUntilElapsed = 0L
+    /** The last screen-on (elapsed ms) and a probable Emergency SOS's end ([sosGestureLikely]). Main thread. */
+    private var lastScreenOnElapsed: Long? = null
+    private var sosFlowUntilElapsed = 0L
+
+    /** Our resumed activities other than the lock (bug 25b-H). Main thread. */
+    private var ownOthersResumed = 0
+    private val ownScreens = object : android.app.Application.ActivityLifecycleCallbacks {
+        override fun onActivityResumed(activity: android.app.Activity) {
+            if (activity !is PinLockActivity) ownOthersResumed++
+        }
+
+        override fun onActivityPaused(activity: android.app.Activity) {
+            if (activity !is PinLockActivity) ownOthersResumed = (ownOthersResumed - 1).coerceAtLeast(0)
+        }
+
+        override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {}
+        override fun onActivityStarted(activity: android.app.Activity) {}
+        override fun onActivityStopped(activity: android.app.Activity) {}
+        override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
+        override fun onActivityDestroyed(activity: android.app.Activity) {}
+    }
     private var emergencyCallSeen = false
     private var rememberedAlarmMs: Long? = null
     private var callsSeen = false
@@ -169,6 +191,9 @@ object PinLockRuntime {
     private var screenOnHealed = false
     /** The last [HealTrigger.LOCK_RESUMED] heal (elapsed ms). Main thread. */
     private var lockResumedHealAt: Long? = null
+
+    /** A screen-off heal ran since the lock last resumed (main thread, bug 25b-C). */
+    private var screenOffHealed = false
 
     fun addModeListener(listener: () -> Unit) { modeListeners += listener }
     fun removeModeListener(listener: () -> Unit) { modeListeners -= listener }
@@ -377,6 +402,8 @@ object PinLockRuntime {
         initialized = true
         val app = context.applicationContext
         appContext = app
+        // Bug 25b-H: one of our own screens in front (Home, the time-rule screen) is never the SOS.
+        (app as? android.app.Application)?.registerActivityLifecycleCallbacks(ownScreens)
         decide(app)
         // Design 16e: the first process start of a boot shows the mark for 3 s before the lock.
         bootMark = bootMarkAtStart(app)
@@ -629,23 +656,18 @@ object PinLockRuntime {
                 dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app), VoipCalls.phase))
                 syncVoipRinger(app)
                 ScreenTimeTracker.update(app)
-                // Step 11: a screen-off may end the update fence in the new build, and starts the
-                // wait for the self-update window.
-                com.kidslauncher.mdm.server.UpdateFence.onFront(app)
-                com.kidslauncher.mdm.server.SelfUpdate.onScreenOff(app)
-                // The nightly Play update window opens when the screen goes off inside it.
-                try {
-                    reevaluateLockReasonFromCache(app)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Re-check at screen off failed", e)
-                }
-                // Design 16d decision 1: lock task's status-bar flags sent to SystemUI again while
-                // the screen is off - a SystemUI or quickstep restart isn't visible to an app.
-                healStatusBar(app, HealTrigger.SCREEN_OFF)
+                // Bug 25b-B: the rest waits until the lock just started has had the main thread for
+                // its first frame - the activity's creation runs only after this receiver returns.
+                handler.removeCallbacks(screenOffWork)
+                handler.postDelayed(screenOffWork, SCREEN_OFF_WORK_DELAY_MS)
             } else {
                 // First, synchronously: end the Play update window before anything else (QA
                 // step 7 #8); the full re-apply follows in the background.
+                // Back on before the screen-off's deferred work ran: it is dropped (the screen-on's
+                // own re-checks follow; a status-bar heal now would be visible).
+                handler.removeCallbacks(screenOffWork)
                 if (intent.action == Intent.ACTION_SCREEN_ON) {
+                    lastScreenOnElapsed = SystemClock.elapsedRealtime()
                     PlayRuntime.suspendStoreAtScreenOn(app)
                     // No self-update commit while someone uses the phone (step 11).
                     com.kidslauncher.mdm.server.SelfUpdate.onScreenOn(app)
@@ -669,6 +691,30 @@ object PinLockRuntime {
                 }
             }
         }
+    }
+
+    /**
+     * The screen-off's work that the lock doesn't need first (bug 25b-B), [SCREEN_OFF_WORK_DELAY_MS]
+     * after it; dropped if the screen came back on meanwhile ([screenOffWorkDue]).
+     */
+    private val screenOffWork = Runnable {
+        val app = appContext ?: return@Runnable
+        if (!screenOffWorkDue(interactive(app))) return@Runnable
+        // Step 11: a screen-off may end the update fence in the new build, and starts the
+        // wait for the self-update window.
+        com.kidslauncher.mdm.server.UpdateFence.onFront(app)
+        com.kidslauncher.mdm.server.SelfUpdate.onScreenOff(app)
+        // The nightly Play update window opens when the screen goes off inside it.
+        try {
+            reevaluateLockReasonFromCache(app)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Re-check at screen off failed", e)
+        }
+        // Design 16d decision 1: lock task's status-bar flags sent to SystemUI again while
+        // the screen is off - a SystemUI or quickstep restart isn't visible to an app.
+        healStatusBar(app, HealTrigger.SCREEN_OFF)
+        // The lock-up after the next screen-on needs no visible heal of its own (bug 25b-C).
+        screenOffHealed = true
     }
 
     private val callsListener: () -> Unit = {
@@ -934,8 +980,11 @@ object PinLockRuntime {
         if (bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)) return false
         try {
             context.startActivity(
+                // No open animation (bug 25b-B): started while the display sleeps, the lock's
+                // transition otherwise played at the next screen-on - Home (its last, unlocked
+                // frame) first, the lock sliding in over it.
                 Intent(context, PinLockActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),
             )
             if (wake) {
                 voipWakeAskedAt = SystemClock.elapsedRealtime()
@@ -957,20 +1006,30 @@ object PinLockRuntime {
         // Back in front after the alarm: its exemption ends now (qa-10-code #4).
         rememberedAlarmMs = alarmAfterResume(rememberedAlarmMs, yielding)
         yielding = null
+        sosFlowUntilElapsed = 0L
         handler.removeCallbacks(refrontCheck)
         // During our call, the call screen goes back on top (qa-10-code #1).
         dispatch(context.applicationContext, LockEvent.LockResumed(ourCall(), VoipCalls.phase))
         // qa-16d-code #2: a desync that begins with the screen on (a quickstep restart, the lock back
         // after a call, an alarm or a yield) is healed when the lock resumes - at most once a minute.
         val now = SystemClock.elapsedRealtime()
-        if (lockResumedHealDue(lockResumedHealAt, now)) {
+        val afterScreenOffHeal = screenOffHealed
+        screenOffHealed = false
+        if (lockResumedHealDue(lockResumedHealAt, now, afterScreenOffHeal)) {
             lockResumedHealAt = now
             healStatusBar(context, HealTrigger.LOCK_RESUMED)
         }
     }
 
-    fun onLockPaused() {
+    /** PinLockActivity.onPause: while LOCKED the lock may have lost the front to Recents, which only
+     * pauses it - the re-front check runs after [PAUSE_REFRONT_MS] (bug 25b-A). */
+    fun onLockPaused(finishing: Boolean = false) {
         lockResumed = false
+        if (!pauseStartsRefront(chromeLocked, finishing)) return
+        refrontAttempt = 0
+        handler.removeCallbacks(refrontCheck)
+        // Just after a screen-on the stop that marks Emergency SOS may still come (bug 25b-H).
+        handler.postDelayed(refrontCheck, pauseRefrontDelayMs(lastScreenOnElapsed, SystemClock.elapsedRealtime()))
     }
 
     /** PinLockActivity.onStop: unless it's a configuration change or the finish after an unlock,
@@ -978,9 +1037,25 @@ object PinLockRuntime {
     fun onLockStopped(changingConfigurations: Boolean, finishing: Boolean) {
         lockResumed = false
         if (!stopStartsRefront(chromeLocked, changingConfigurations, finishing)) return
+        noteProbableSos()
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
-        handler.postDelayed(refrontCheck, refrontDelayMs(0))
+        // As quick as the pause's check (bug 25b-A): whatever came over the lock - Recents, a
+        // SystemUI restart, an app - is covered again within PAUSE_REFRONT_MS.
+        handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
+    }
+
+    /** The lock left the front: probably the Emergency SOS gesture ([sosGestureLikely], bug 25b-H)? */
+    private fun noteProbableSos() {
+        val app = appContext ?: return
+        // A stop at the screen-off is no SOS (the gesture's presses keep the screen on).
+        if (sosFlowUntilElapsed > 0L || !interactive(app)) return
+        val now = SystemClock.elapsedRealtime()
+        // The package lookup only runs inside the window after a screen-on.
+        if (!sosGestureLikely(lastScreenOnElapsed, now, sosAppPresent = true)) return
+        if (!sosGestureLikely(lastScreenOnElapsed, now, sosAppPresent = emergencySosPackage(app) != null)) return
+        sosFlowUntilElapsed = now + SOS_FLOW_MS
+        Log.i(LOG_TAG, "The lock left the front just after a screen-on: probably Emergency SOS")
     }
 
     private fun runRefrontCheck() {
@@ -995,6 +1070,7 @@ object PinLockRuntime {
             emergencyFlow = emergencyFlowNow(telecom),
             alarmRinging = alarmNow(context),
             voipCall = VoipCalls.phase != VoipPhase.NONE,
+            sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),
         )
         when (val action = refrontAction(inputs, refrontAttempt)) {
             RefrontAction.Stop -> yielding = null

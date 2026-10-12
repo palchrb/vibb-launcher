@@ -71,6 +71,21 @@ data class StatusReportRequest(
     /** Design 24b's fix round (QA High 1): a device admin or accessibility service of an app
      * outside the allowlist - the phone refuses the parent PIN meanwhile; `null` = none (left out). */
     val foreignAccess: ForeignAccessReport? = null,
+    /** QA of the launcher wave, Low 4: whether a remote wipe would work now ([remoteWipeReady]):
+     * on Android 14 the admin's new `<wipe-data />` policy counts only after the phone restarts
+     * once. `null` = not device owner or unreadable (left out). */
+    val remoteWipeReady: Boolean? = null,
+    /** The device admin's declared policies Android hasn't granted yet ([AdminPolicies]): on some
+     * versions a policy an update added counts only after the phone restarts once. Empty = all
+     * granted; `null` = not device owner or unreadable (left out). */
+    val adminPoliciesPending: List<String>? = null,
+    /** Design 24b (fix of 2026-10-12): every block in `relock_blocked` now, from a relock or the
+     * install check outside windows - see [RelockBlockReport]; an empty list = none; `null` = not
+     * device owner (left out). */
+    val relockBlocks: List<RelockBlockReport>? = null,
+    /** How many blocks there are in all: [relockBlocks] stops at `RELOCK_BLOCKS_MAX`, and the PWA
+     * says "and N more" (QA of cmd-expiry, Low 2). Sent with [relockBlocks]. */
+    val relockBlocksTotal: Int? = null,
 )
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the
@@ -235,6 +250,9 @@ data class CallState(
     val state: String,
     val dialerRoleHeld: Boolean,
     val redirectionRoleHeld: Boolean,
+    /** Security review L7: `ROLE_CALL_SCREENING` - the incoming-call filter when we aren't the
+     * phone app. The server warns when calls are managed and neither role filters them. */
+    val screeningRoleHeld: Boolean,
     val defaultDialer: String?,
     val systemDialer: String?,
     val smsRestricted: Boolean,

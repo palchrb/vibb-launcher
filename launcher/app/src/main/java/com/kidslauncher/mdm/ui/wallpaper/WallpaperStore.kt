@@ -54,6 +54,15 @@ object WallpaperStore {
         /** Android's wallpaper is ours and current, so the screens can be transparent over it -
          * worked out on the store's thread (a binder call), never during a render. */
         val systemShowsOurs: Boolean = false,
+        /** The PIN lock's background (design 25, "Lock background", [lockWallpaper]): [current]
+         * unless the parent chose another. Meaningful once [lockReady]. */
+        val lock: Wallpaper = current,
+        /** The decoded photo when [lock] is an image ([bitmap] itself when it's the same photo). */
+        val lockBitmap: Bitmap? = null,
+        /** The black scrim over the lock's background ([lockScrim]) as ARGB. */
+        val lockScrimArgb: Int = 0,
+        /** Worked out from the policy at least once: until then the lock keeps its plain ground. */
+        val lockReady: Boolean = false,
     )
 
     @Volatile
@@ -77,7 +86,7 @@ object WallpaperStore {
     private val syncLock = Mutex()
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
     private val main = Handler(Looper.getMainLooper())
-    private val imageInks = HashMap<String, InkChoice>()
+    private val imageStats = HashMap<String, LuminanceStats>()
 
     /** The allowed photos the phone has - anything of ours outside it is revoked. */
     @Volatile
@@ -165,12 +174,40 @@ object WallpaperStore {
         }
         val choices = allowed.filter { usable(it, cached) }
         allowedImages = wantedWallpaperHashes(allowed) intersect cached
+        // The lock's background (design 25, "Lock background"): Home's unless the parent chose
+        // another one this phone may use - decoded once more only when it is a different photo.
+        val lockId = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.launcherUi?.lockWallpaper
+        var lock = lockWallpaper(allowed, lockId, current, cached)
+        var lockBitmap: Bitmap? = null
+        val lockFill = lock.fill
+        if (lockFill is WallpaperFill.Image) {
+            lockBitmap = when {
+                (current.fill as? WallpaperFill.Image)?.hash == lockFill.hash -> bitmap
+                (old.lock.fill as? WallpaperFill.Image)?.hash == lockFill.hash && old.lockBitmap != null -> old.lockBitmap
+                else -> decode(context, lockFill.hash)
+            }
+            if (lockBitmap == null) {
+                lock = current
+                lockBitmap = if (current.fill is WallpaperFill.Image) bitmap else null
+            }
+        }
+        val lockScrimAlpha = when (val f = lock.fill) {
+            is WallpaperFill.Image -> lockBitmap?.let { lockScrimForImage(imageStatsOf(f.hash, it)) } ?: LOCK_MAX_SCRIM
+            is WallpaperFill.Solid -> lockScrimForColours(listOf(f.argb))
+            is WallpaperFill.Gradient -> lockScrimForColours(listOf(f.from, f.to))
+        }
         val showsOurs = try {
             WallpaperApplier.systemShows(context, current)
         } catch (e: Exception) {
             false
         }
-        val next = State(choices, current, ink, if (current.fill is WallpaperFill.Image) bitmap else null, showsOurs)
+        val next = State(
+            choices, current, ink, if (current.fill is WallpaperFill.Image) bitmap else null, showsOurs,
+            lock = lock,
+            lockBitmap = if (lock.fill is WallpaperFill.Image) lockBitmap else null,
+            lockScrimArgb = blackScrimArgb(lockScrimAlpha),
+            lockReady = true,
+        )
         loaded = true
         if (next != old) {
             state = next
@@ -211,14 +248,17 @@ object WallpaperStore {
         }
     }
 
-    /** The ink of a photo, once per hash: luminance of a 32×57 render. */
-    private fun imageInk(hash: String, bitmap: Bitmap): InkChoice = synchronized(imageInks) {
-        imageInks.getOrPut(hash) {
+    /** The ink of a photo: from its luminance ([imageStatsOf]). */
+    private fun imageInk(hash: String, bitmap: Bitmap): InkChoice = inkForImage(imageStatsOf(hash, bitmap))
+
+    /** A photo's luminance, once per hash: a 32×57 render. */
+    private fun imageStatsOf(hash: String, bitmap: Bitmap): LuminanceStats = synchronized(imageStats) {
+        imageStats.getOrPut(hash) {
             val small = bitmap.scale(32, 57)
             val pixels = IntArray(32 * 57)
             small.getPixels(pixels, 0, 32, 0, 0, 32, 57)
             if (small !== bitmap) small.recycle()
-            inkForImage(luminanceStats(pixels))
+            luminanceStats(pixels)
         }
     }
 

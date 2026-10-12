@@ -916,3 +916,138 @@ async fn app_downloads_are_stored_and_shown() {
     assert!(page.contains("Installed · 0.32.0 waits for Wi-Fi, any network from 9 Oct"));
     assert!(page.contains("Last report: the phone was on mobile data."));
 }
+
+/// Security review M10 (the phone side): a release the launcher refused to install - another
+/// package, another key, unreadable, or no pins on the server - comes back in `app_downloads` with
+/// the reason, and the device page says why, styled as failed, also over a fresh "Install failed".
+#[tokio::test]
+async fn a_refused_release_says_why_on_the_device_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let dir = tempfile::tempdir().unwrap();
+    let element = app_with_file(&app, dir.path(), "Element X", b"PK\x03\x04e", false).await;
+    let notes = app_with_file(&app, dir.path(), "Notes", b"PK\x03\x04n", false).await;
+    sqlx::query("UPDATE tracked_apps SET package_name = 'org.example.notes' WHERE id = ?")
+        .bind(notes)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    select_app(&app, id, element).await;
+    select_app(&app, id, notes).await;
+    let report = serde_json::json!({
+        "lock_reason": "NONE",
+        "kiosk_engaged": true,
+        "installed_apps": [{"package_name": "org.example.notes", "label": "Notes", "preinstalled": false,
+                            "installer": "me.vibb.launcher"}],
+        "app_downloads": {
+            "wifi_only": false,
+            "network": "unmetered",
+            "entries": [
+                {"tracked_app_id": element, "release_tag": "v1.0@14", "state": "refused_signer",
+                 "bytes": 0, "total": null, "since_ms": 1_791_244_800_000i64, "any_network_at_ms": null},
+                {"tracked_app_id": notes, "release_tag": "v1.0@14", "state": "refused_package",
+                 "bytes": 0, "total": null, "since_ms": 1_791_244_800_000i64, "any_network_at_ms": null},
+            ],
+        },
+    });
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(report),
+        )
+        .await;
+    assert!(res.status.is_success(), "{}", res.text());
+    // The phone also said "failed" for Element X a moment ago.
+    app.request(
+        Method::POST,
+        "/api/devices/apps/progress",
+        Some(&token),
+        Some(serde_json::json!({"tracked_app_id": element, "percent": 0, "failed": true})),
+    )
+    .await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let refused = "Refused - signed with another key than this app&#39;s";
+    let at = page.find(refused).unwrap_or_else(|| panic!("{page}"));
+    assert!(
+        page[..at].ends_with("data-failed=\"true\">"),
+        "styled as failed: {}",
+        &page[at.saturating_sub(80)..at]
+    );
+    assert!(!page.contains("Install failed"), "the reason wins: {page}");
+    let update = "Installed · update refused - another Android package than this app&#39;s";
+    let at = page.find(update).unwrap_or_else(|| panic!("{page}"));
+    assert!(page[..at].ends_with("data-failed=\"true\">"));
+}
+
+/// Unticking an installed app queues its silent uninstall; ticking it again before the phone syncs
+/// must cancel that (the user's emulator: "Music was deleted by your administrator").
+#[tokio::test]
+async fn ticking_an_app_again_cancels_its_uninstall() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "NONE", "kiosk_engaged": true,
+                "installed_apps": [{"package_name": "me.vibb.music", "label": "Music", "preinstalled": false,
+                                    "installer": "me.vibb.launcher"}],
+            })),
+        )
+        .await;
+    assert!(res.status.is_success());
+    let toggle = |selected: bool| {
+        let mut fields = vec![("package_name", "me.vibb.music")];
+        if selected {
+            fields.push(("selected", "on"));
+        }
+        fields
+    };
+    for selected in [false, true] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{device}/apps/toggle"),
+                Some(&cookie),
+                &toggle(selected),
+            )
+            .await;
+        assert!(res.status.is_redirection(), "{}", res.status);
+    }
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(policy["packages_to_uninstall"], serde_json::json!([]));
+    assert!(
+        policy["allowlist"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("me.vibb.music"))
+    );
+    // Unticked and left: it is uninstalled.
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{device}/apps/toggle"),
+        Some(&cookie),
+        &toggle(false),
+    )
+    .await;
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(
+        policy["packages_to_uninstall"],
+        serde_json::json!(["me.vibb.music"])
+    );
+}

@@ -56,16 +56,17 @@ private interface MusicApi {
     fun file(@Path("id") id: Long, @Header("Range") range: String?, @Header("If-Match") ifMatch: String?): Call<ResponseBody>
 }
 
-/** Like `createMdmApi`: the bearer, the tailnet proxy when tsnet runs. */
+/** Like `createMdmApi`: the bearer (to the server's own host only, review L8), the tailnet proxy when tsnet runs. */
 fun createMusicServer(baseUrl: String, token: String): MusicServer {
+    val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
     val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .apply { TsnetClient.proxy()?.let { proxy(it) } }
-        .addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer $token").build()) }
+        .addInterceptor(com.kidslauncher.mdm.server.bearerInterceptor(normalizedBaseUrl, token))
         .build()
     val api = Retrofit.Builder()
-        .baseUrl(if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/")
+        .baseUrl(normalizedBaseUrl)
         .client(client)
         .build()
         .create(MusicApi::class.java)

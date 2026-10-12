@@ -255,9 +255,12 @@ fun shouldSuspendNewPackage(
     lockUsableApps: Set<String> = emptySet(),
     recentsPackage: String? = null,
     relockBlocked: Set<String> = emptySet(),
+    /** Bug 25b-H: the Emergency SOS activity's package is never restricted (an update lands here). */
+    emergencySos: String? = null,
 ): Boolean {
     if (overrideActive) return false
     if (packageName == ownPackage || packageName == systemDialer || packageName == recentsPackage) return false
+    if (packageName == emergencySos) return false
     // Play services/GSF are never restricted (other apps' FCM - Element X); the Play Store is
     // suspended by the next apply() according to install mode and the update window - an update
     // of it lands here too.
