@@ -1308,3 +1308,108 @@ new). `cargo fmt --check` clean, clippy's 12 warnings are the branch's own.
   time and its column), §2.4 (the rule for 2b: the Storytel check reads the row's cooldown before `Account::shelf`,
   which falls back to the last good shelf on `Refused`/`Cooldown` too), §2.8 (the column), §7 rows 4 and 5 (their 2b
   parts marked).
+
+## Step 2b implementation status (2026-10-12)
+
+Built on branch `music-2-storytel` from `0854ed9`, three commits: the server (`fca26c4`: the sweep, the library's
+gate, the cards, the import), the shared-contract commit (`70a332f`: the snapshot on all three sides) and a wording
+fix (`6e36ea2`). No migration (0066 as 2a applied it), no launcher code, no change to `music_listing.json`,
+`music_state.json`, the AIDL or the policy shape.
+- **The listing** (`S/music_sweep.rs`, §2.4): `storytel_check` - the row's cooldown first
+  (`storytel::credentials(..).cooldown_until(now)`: inside it `login_refused`, no request, the last good list kept;
+  2a's code-QA rule), then `Account::shelf_counted(300 s)`, `shelf_counted(0)` for Check now (QA L5), the group whose
+  target is the entry's; not on the shelf fails `not_on_shelf` (last good list kept). The list is the group now: one
+  `ok` item per book in reading order, key = the consumable id, `url` NULL, `hls` 0, the shelf's `duration_ms` (0 =
+  unknown = NULL), the book's cover as `art_url` when `media_url_ok`, `first_seen_at` kept for a book already listed;
+  a book that left the shelf leaves the list. The listing's title and `cover_candidate` are the group's (fetched by
+  21b §2.6's `cover()`, `Reach::Public` + `public_media`), `keep_end = 'first'`, `capped`/`fallback` off, `lan` false.
+  `schedule`'s SQL and `schedule_one`, `check_entry` (through `music::entry_link`), `device_listing` (+ the gate) and
+  `flag_reports` (skips Storytel entries) take it; `Item`'s doc says Storytel items are `ok` with no URL.
+  `S/storytel.rs`: `Account::shelf_counted` (the session counts the logins and shelves it sends, so the check adds a
+  read's 0-4 requests to its budget; `shelf` is `shelf_counted(..).0`).
+- **Entries** (`S/music.rs`): `Link::Storytel { kind, id }` (`target()` the grammar's string, `source()`
+  "storytel"; `check_link` refuses it - never pasted), `entry_link(source, target)`, `kind_label` "Storytel series" /
+  "Storytel book", `CheckError::Storytel(code)` with its sentences (`storytel_check_message`), `entry_error_text`'s
+  Storytel codes (`no_audio`, `not_on_shelf`, `login_refused`, `storytel_off`, `storytel_key`, `no_jwt`,
+  `bad_shelf`) and `sweep_error_text(source, code)` for the codes a feed shares (below, 2); `item_error_code` takes
+  `no_audio`, `Download.waiting` takes `login`.
+- **The gate** (§2.7): `storytel_gate!()` (an exported macro, `concat!`ed into the SQL) in `LIBRARY_ENTRIES` (its
+  `IN` gains `'storytel'`), `device_listing` and `cover_in_library` (both of its entry branches); a Storytel entry's
+  `cache` 0 goes out as -1. The revision triggers are 2a's 0066.
+- **Cards** (`S/handlers/music.rs`, M3): `SweepView::card` ("N books", no "newest" line, Storytel's offline choices
+  with a stored 0 shown as all), the status texts (`sweep_error_text`, and "Couldn't list it: ..." from
+  `CheckError::Storytel` for a never-listed entry), the per-phone lines ("1 of 3 books on the phone · waiting for the
+  Storytel login on the phone", `no_audio` "Storytel gave no audio for this book"), `check_now`, `/music/cards`,
+  `save_offline` (vibb's choices, 0 saved as -1, a stored other value kept). The entry page shows the sweep block and
+  Check now for a Storytel entry (it reads `SweepView::card`). The device card (`#music`): "Storytel is off on this
+  phone: its N Storytel entries aren't sent." / "No Storytel login is saved: ..." under the switch while the phone has
+  ticked Storytel entries, the phone's `storytel` as words, the mobile-data help text's "This includes Storytel books,
+  often several hundred MB each." (L14).
+- **The import** (`S/music_import.rs`, §2.6): `Skip::Storytel` is gone; a `storytel:` target `parse_target` accepts is
+  a Storytel entry (name, order, resume; cache 0 -> -1, other valid values kept), one it refuses is `Skip::BadLink`
+  ("That Storytel target isn't storytel:series:<id> or storytel:book:<id>."). The preview words a Storytel row's depth
+  "every book downloaded" / "the first N books downloaded".
+- **The contract** (`70a332f`, L12): `server/testdata/music_library.json` gained entry 5 "Kokosbananas"
+  (`storytel:series:26175`, Lydbøker, order auto, cache -1, resume on, cover `d…`, items `00ff00ff00ff00ff`; the
+  phone's switch on and a fake ciphertext `x'00'` stored), copied byte-identically to
+  `music/app/src/test/resources/`; `music_library_snapshot` and `library_lan_only_for_a_lan_rss_feed` (server),
+  `ContractFilesTest` (music: version, three categories, four entries with `Source.STORYTEL`, `entryIds`
+  `{1, 2, 3, 5}`, the Storytel entry's fields, four covers, the lan/unknown-fields/sonos counts), `MusicPlanTest`
+  (launcher: the Storytel listing version in `libraryHead.listings` and in `listingsToFetch`, four covers) in the same
+  commit. `OfflineTest`'s `"cache": 3` and `BookmarksTest`'s `resume` replacements re-checked: they still hit only the
+  RSS and own entries.
+- **Tests**: server `cargo test` 571 of 571 (562 before, +9; `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list`
+  passed in this run), `cargo fmt --check` clean, `cargo clippy --all-targets` the 12 pre-existing warnings, none
+  added. New: `music::tests::storytel_entries_have_their_own_link_and_label`, `music::tests::storytel_cache_zero_is_all`
+  (the library, the card's offline select, the entry page's save, the import; a podcast keeps 0),
+  `music_import::tests::storytel_targets_import_as_storytel_entries`, and in `tests::music_storytel`
+  `the_sweep_lists_a_series_like_a_feed` (reading order, `model.id` keys, url null, per-book art, locked and geo books
+  listed, the series' cover fetched and served, `keep_end`, the listing route and the library's `items`, the cards'
+  "3 books"/"1 book", Check now, Storytel's choices), `check_now_follows_the_shelf` (a routine check reads the kept
+  shelf, Check now a fresh one with one request; a book leaving and coming back; `not_on_shelf` keeps the list and the
+  card says so; the card's Check now and `/music/cards` take Storytel), `a_refused_login_fails_the_check_without_a_request`
+  (inside the cooldown zero requests and the last good list; an hour later one login and one shelf; no login =
+  `storytel_off`, the never-listed text), `one_shelf_serves_a_pass` (vibb 6b: three entries, one login and one shelf in
+  a `run_pass`), `library_gates_storytel` (switch off / on / login cleared, the library, listing and cover routes 404,
+  the revision moves, the device card's notes and help text), `the_cards_show_the_phones_storytel` (have/want with
+  `login`, `no_audio`, the phone's `refused` as a warning, a Storytel `http_403` never flagged); 2b's half of
+  `clear_drops_storytel_from_libraries` (the phone's library loses the series, the tick stays) and the sanitizer
+  (`no_audio`, `login`) in the existing tests; `a_vibb_library_is_previewed_then_imported_without_a_fetch` now imports
+  its Storytel row (cache 0 -> -1). Checked by removal (reading): without the cooldown-first rule
+  `a_refused_login_fails_the_check_without_a_request` fails (the kept shelf answers), without `shelf(0)` for Check now
+  `check_now_follows_the_shelf` does, without the gate `library_gates_storytel` does. Music: `./gradlew assembleDebug
+  assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` green, 413 of 413 (assertions added to
+  `ContractFilesTest`, no new test functions). Launcher: `./gradlew assembleDebug testDebugUnitTest` green, 900 of 900.
+
+Choices made while building (each against the spec text, with its reason):
+1. **The check's budget**: the shelf read runs through `Account` (its lock, the JWT, the kept shelf), not the check's
+   `Job`, so a spent budget refuses the read before it starts (`timeout`) and the requests it sent are added after
+   (`Account::shelf_counted`, a per-session counter). A read is at most four requests.
+2. **`sweep_error_text(source, code)` beside `entry_error_text`**: §2.4 puts `too_big` among the Storytel texts, but
+   `entry_error_text("too_big")` already says "the feed is too big" (and `network`, `timeout`, `http_<code>` speak of
+   "the site"/"the source"); the card knows the entry's source, so a Storytel entry gets "the Storytel shelf is too
+   big", "Storytel couldn't be reached", "Storytel answered 503". The phone's entry errors keep `entry_error_text`.
+   `storytel_key` has a text too ("the Storytel login must be entered again"), which §2.4's list leaves out.
+3. **"N books" without the "newest:" part** of an NRK/RSS card: a series is in reading order, its last book is no news.
+4. **The device card's lines**: §2.3's "No Storytel login is saved" reads "No Storytel login is saved: its N Storytel
+   entries aren't sent." (the switch's own label already says "none saved yet"; the line adds what it costs), both
+   notes only while the phone has ticked Storytel entries, under the switch. The phone's `refused` is a warning (red,
+   the parent acts on it), `none` "Storytel: no login on the phone", `ok` stays "Storytel on the phone: ok".
+5. **A shelf duration of 0 is NULL** in the listing (vibb's `or 0` means "unknown"; the phone must not read a 0-long
+   book), titles are cut like a feed's (200 characters), the listing title is the group's name.
+6. **The import doesn't look at the shelf** (§2.6: nothing fetched), unlike Add (4c): a Vibb box's target is the
+   parent's own file; the sweep reports `not_on_shelf` if the family's shelf doesn't have it, `storytel_off` without a
+   login.
+7. **The snapshot's Storytel entry is in Lydbøker** (where Add puts it), so the snapshot's categories grew from two to
+   three; `ContractFilesTest`'s category assertions follow.
+
+Found in the spec: §2.4's `entry_error_text` list puts `too_big` in a function whose `too_big` already means the feed
+(2 above); L12's "cache -1 so the string replacements still hit only what they meant" holds for `OfflineTest` and
+`BookmarksTest`, but `ContractFilesTest`'s own `"cache": -1` -> `-2` replacement ("an entry the app can't use is
+hidden") now hides the Storytel series too - harmless (the test is about hiding; `entryIds` gains 5), noted so nobody
+reads it as a gap; §8's "entry count now four" is the phone's four (ids 1, 2, 3, 5; entry 4 is another phone's).
+
+Owed [device check] (§8 2b): the sweep lists a real series (Check now on its card: the books in reading order, the
+series' cover), a book added to the series in Storytel's app shows on the next Check now; plus the PWA at 360 px with
+Storytel cards (the "N books" line, the offline select, the per-phone lines) and the device card's Storytel notes - no
+browser in the sandbox.
