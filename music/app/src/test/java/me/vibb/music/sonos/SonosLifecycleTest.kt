@@ -525,4 +525,94 @@ class SonosLifecycleTest {
         assertEquals("0 or 100 is no cap", 80, volumeTarget(80, 0))
         assertEquals(80, volumeTarget(80, 100))
     }
+
+    // -- Storytel (design 26b §5.3; vibb tests/storytel_sonos.py 7, adopt 4527-4570) --
+
+    private val series = SonosFakes.entry(id = 9, source = Source.STORYTEL, target = "storytel:series:113290", name = "Harry")
+    private val books = listOf("331854", "331855", "331767").map { SonosFakes.item(key = it, url = null, durationMs = 33_666_000, entryId = 9) }
+
+    /** vibb's ambiguous token: book 331854's URL whose token also holds 331767's digits. */
+    private val signed = "https://fastly-ng.storytel.net/mp3encoder-128/uuid?consumableId=331854&isbn=9788&token=aBc331767xyz"
+    private val marker = "storytel:book:331854"
+    private val bookChoice = RendererChoice(RendererChoice.SONOS, uid, "Barnerom", entryId = 9, itemKey = "331854", uri = marker)
+
+    @Test
+    fun `storytel_sonos 7 - the stored marker is ours by the consumableId parameter, never by a substring of the token`() {
+        assertEquals(RoomVerdict.OURS_LIVE, roomVerdict(bookChoice, live(uri = signed)))
+        assertEquals(RoomVerdict.OURS_LIVE, roomVerdict(bookChoice, live(uri = signed, transport = TransportState.PAUSED_PLAYBACK)))
+        assertEquals("our book on a stopped speaker", RoomVerdict.OURS_STOPPED, roomVerdict(bookChoice, live(uri = signed, transport = TransportState.STOPPED)))
+        val other = bookChoice.copy(itemKey = "331767", uri = "storytel:book:331767")
+        assertEquals("331767 only in the token: not ours", RoomVerdict.NOT_OURS, roomVerdict(other, live(uri = signed)))
+        assertEquals("a live URI without consumableId is not ours (§5.3)", RoomVerdict.NOT_OURS, roomVerdict(bookChoice, live(uri = "https://cdn.example.invalid/331854.mp3?token=331854")))
+        assertEquals(0, adoptIndex(series, books, signed))
+        assertNull(adoptIndex(series, books, "https://cdn.example.invalid/331854.mp3?token=331854"))
+        assertNull("gone from the list", adoptIndex(series, books.drop(1), signed))
+        // with no uri stored yet, the entry's book by its consumableId (the built-uri match)
+        val unstored = bookChoice.copy(uri = null)
+        assertEquals(RoomVerdict.OURS_LIVE, roomVerdict(unstored, live(uri = signed)) { adoptIndex(series, books, it) != null })
+        assertEquals(AdoptPlan(books.map { it.key }, false, 0), adoptPlan(series, books, null, false, signed))
+    }
+
+    @Test
+    fun `a Storytel adopt takes the live signed URL for the session - zero commands - and renderer json keeps the marker (M1)`() {
+        val r = ControllerRig(uid)
+        r.speaker("1:10:00", uri = signed, dur = "0:00:00")
+        val f = runBlocking { r.transport.adoptLive(uid, kindOfUri(marker), marker, 1_500) { if (ourLiveSession(bookChoice, it)) it.uri else null } }!!
+        assertTrue(f.ours)
+        assertEquals("the polls after the adopt are ours by normUri", signed, r.session.uri)
+        assertTrue(r.session.armed)
+        assertEquals(emptyList<String>(), r.spk.commands)
+        r.c.adopt(series, books, 0, signed, f)
+        r.advance(15_000)
+        r.speaker("1:10:15", uri = signed, dur = "0:00:00")
+        r.poll()
+        assertTrue("still ours, playing", r.c.showsPlaying(r.now))
+        assertEquals(4_215_000L, r.store.writes.last().posMs)
+        // the look's rewrite (PlaybackService.lookAtRoom: RendererChoice.adopted), both branches, then the file
+        val dir = kotlin.io.path.createTempDirectory("renderer").toFile()
+        try {
+            val file = java.io.File(dir, "renderer.json")
+            for (stored in listOf(bookChoice, bookChoice.copy(uri = null))) {
+                val adopted = stored.adopted(series, "331854", signed)
+                assertEquals(marker, adopted.uri)
+                RendererChoice.write(file, adopted)
+                assertFalse("no token on disk", file.readText().contains("token"))
+                assertEquals(marker, RendererChoice.read(file).uri)
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `every renderer json writer stores a Storytel book's marker, and 1b's built uri for everything else`() {
+        val rss = SonosFakes.entry()
+        val c = RendererChoice(RendererChoice.SONOS, uid, "Barnerom")
+        assertEquals(marker, c.played(series, "331854", signed).uri)
+        assertEquals(9L, c.played(series, "331854", signed).entryId)
+        assertEquals(ep, c.played(rss, "ep2", ep).uri)
+        assertEquals("a follow's hint", marker, bookChoice.followed("RINCON_KITCHEN01400", "Kjøkken", series, "331854", signed).uri)
+        assertEquals("no item key: named by the URL's consumableId", marker, bookChoice.followed("RINCON_KITCHEN01400", "Kjøkken", series, null, signed).uri)
+        assertEquals("no entry known: kept", marker, bookChoice.followed("RINCON_KITCHEN01400", "Kjøkken", null, null, signed).uri)
+        assertEquals("RINCON_KITCHEN01400", bookChoice.followed("RINCON_KITCHEN01400", "Kjøkken", series, null, signed).uid)
+        assertEquals("1b: the stored built uri kept", ep, choice.adopted(rss, "ep2", "x-rincon-mp3radio://podkast.example/ep2.mp3").uri)
+        assertEquals("1b: none stored, the live one", ep, choice.copy(uri = null).adopted(rss, "ep2", ep).uri)
+    }
+
+    @Test
+    fun `the standalone suspension stops our book by its marker - bookmark first, Stop, the queue uri`() {
+        val r = ControllerRig(uid)
+        r.speaker("1:10:00", transport = "PAUSED_PLAYBACK", uri = signed)
+        var bookmarked: Fields? = null
+        val verdict = runBlocking { suspensionStop(r.transport, bookChoice, 1_500) { bookmarked = it } }
+        assertEquals(RoomVerdict.OURS_LIVE, verdict)
+        assertEquals(listOf("stop", "seturi"), r.spk.commands)
+        assertEquals(4_200.0, bookmarked!!.relS!!, 0.0)
+        assertEquals(queueUri(uid), r.spk.lastUri)
+        // another book of the series is someone else's stream: left alone
+        val r2 = ControllerRig(uid)
+        r2.speaker("1:10:00", uri = "https://cdn.example.invalid/x?consumableId=331855&token=FAKE-SIG-1")
+        assertEquals(RoomVerdict.NOT_OURS, runBlocking { suspensionStop(r2.transport, bookChoice, 1_500) { error("no bookmark") } })
+        assertEquals(emptyList<String>(), r2.spk.commands)
+    }
 }

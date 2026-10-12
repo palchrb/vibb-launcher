@@ -55,4 +55,21 @@ class SonosActorTest {
         assertTrue("the queued job ran after close", ran.await(5, TimeUnit.SECONDS))
         main.shutdown()
     }
+
+    @Test
+    fun `a job behind a slow mint waits for it - never cancelled - and a dropped or failed play leaves the consumer running`() = runBlocking {
+        // Design 26b §5.1 (the merge's 4b list): the room's actor is serial and never cancels a job, so a poll
+        // queued behind a Storytel play waits for its mint; a play its token dropped (null) or whose mint
+        // failed (StorytelUnavailable) is a result like any other - the loop goes on.
+        val t0 = System.nanoTime()
+        actor.submit({ delay(300); null as PlayResult? }) { }
+        actor.submit<PlayResult?>({ throw StorytelUnavailable("network") }) { r -> assertTrue(r.exceptionOrNull() is StorytelUnavailable) }
+        val poll = actor.call({ "poll" }) { }
+        assertEquals("poll", poll.getOrThrow())
+        assertTrue("the poll waited for the mint", (System.nanoTime() - t0) / 1_000_000 >= 300)
+        assertEquals("still alive", "next", actor.call({ "next" }) { }.getOrThrow())
+        actor.close()
+        scope.cancel()
+        main.shutdown()
+    }
 }

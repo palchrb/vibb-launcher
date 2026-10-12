@@ -3,6 +3,7 @@ package me.vibb.music.sonos
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import me.vibb.music.logic.redactUri
 
 /*
  * The SOAP sequences against the session's speaker, ported from palchrb/vibb `pi/sonosd.py`
@@ -55,7 +56,10 @@ data class PlayResult(
     val didl: String,
     val volume: Int? = null,
     val restored: Boolean = false,
-)
+) {
+    /** A Storytel play's uri (and the DIDL's `res`) is a signed URL: neither is printed (design 26b §0). */
+    override fun toString(): String = "PlayResult(uid=$uid, uri=${redactUri(uri)}, sought=$sought, didl=${didl.length} chars, volume=$volume, restored=$restored)"
+}
 
 class SonosTransport(
     val session: SonosSession,

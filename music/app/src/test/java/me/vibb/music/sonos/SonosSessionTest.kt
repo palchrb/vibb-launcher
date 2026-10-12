@@ -554,4 +554,31 @@ class SonosSessionTest {
         assertEquals("https://podkast.example/new.mp3", s.uri)
         assertTrue(s.armed)
     }
+
+    // --- Storytel (design 26b §5.3, §5.7) ------------------------------------------------------
+
+    @Test
+    fun `the not-ours line never prints a signed URL's token - scheme, host and path only`() {
+        val s = session()
+        warm(s)
+        val minted = "https://cdn.example.invalid/mp3/222/abook.mp3?consumableId=222&token=FAKE-SIG-4"
+        s.classify(speaker(minted))
+        val line = logs.single { it.startsWith("not-ours?") }
+        assertFalse(line, line.contains("FAKE-SIG") || line.contains("tok=") || line.contains("consumableId"))
+        assertEquals("not-ours? speaker=https://cdn.example.invalid/mp3/222/abook.mp3 vs set=https://cdn.example/signed/ep12.mp3", line)
+    }
+
+    @Test
+    fun `a stored marker is ours by consumableId - the bedtime look and the adopt's first classify - another book is not`() {
+        val book = "https://cdn.example.invalid/mp3/111/abook.mp3?consumableId=111&token=FAKE-SIG-1"
+        val s = session(u = "storytel:book:111")
+        assertTrue(s.classify(speaker(book), aux = false).ours)
+        val other = s.classify(speaker("https://cdn.example.invalid/mp3/222/abook.mp3?consumableId=222&token=FAKE-SIG-111"), aux = false)
+        assertFalse(other.ours)
+        assertFalse(logs.any { it.contains("FAKE-SIG") })
+        // a fresh mint of our book is a new URL: the session that sent it holds it, so it is ours by normUri
+        val sent = session(u = book)
+        assertTrue(sent.classify(speaker(book)).ours)
+        assertFalse("another token is another stream", sent.classify(speaker(book.replace("FAKE-SIG-1", "FAKE-SIG-2"))).ours)
+    }
 }

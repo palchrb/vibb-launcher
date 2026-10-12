@@ -23,6 +23,6 @@ object SonosTail {
         withTimeoutOrNull(maxMs) { tail.join() }
     }
 
-    /** The service's hand-off budget (15 s) and the actor's last post. */
-    const val MAX_MS = 16_000L
+    /** The service's hand-off budget (`PlaybackService.HANDOFF_MS`, 25 s since design 26b's mint) and the actor's last post. */
+    const val MAX_MS = 26_000L
 }

@@ -13,7 +13,8 @@ import org.junit.Test
  * palchrb/vibb `pi/daemon.py` `_sonos_body` and `sonos_start_target`'s filter (MIT, Copyright (c)
  * 2026 palchrb), as design 26a §2.5 and §4.2 port them: the art rule, the NRK series branch with the
  * item key as the program id, the speaker-playable filter (HLS only as an NRK series, the public
- * address rule moved to the speaker's fetch), the listing's duration.
+ * address rule moved to the speaker's fetch), the listing's duration; and the Storytel branch
+ * (design 26b §5.1, vibb `tests/storytel_sonos.py` 2, 6, 9): a book minted in the play's job.
  */
 class PlayBodyTest {
     private val nrkSerie = entry(id = 7, source = Source.NRK, target = "https://radio.nrk.no/serie/barnas-supersommer", name = "Barnas supersommer")
@@ -121,5 +122,70 @@ class PlayBodyTest {
         assertEquals("b dropped: c from 0", me.vibb.music.logic.QueuePlan(listOf("a", "c", "d"), 1, 0), PlayBodies.speakerPlan(plan) { it != "b" })
         assertEquals("wraps", me.vibb.music.logic.QueuePlan(listOf("a"), 0, 0), PlayBodies.speakerPlan(plan) { it == "a" })
         assertNull(PlayBodies.speakerPlan(plan) { false })
+    }
+
+    // -- Storytel (design 26b §5.1; vibb tests/storytel_sonos.py) --
+
+    private val series = entry(id = 9, source = Source.STORYTEL, target = "storytel:series:26175", name = "Kokosbananas")
+
+    /** A book as the listing has it: no url (a signed URL expires), the shelf's length. */
+    private fun book(cid: String, durationMs: Long? = 721_893) = item(key = cid, url = null, durationMs = durationMs, entryId = 9)
+
+    @Test
+    fun `storytel_sonos 6 - the http-only filter lets a Storytel book through, downloaded or not`() {
+        // vibb's exemption (daemon.py 1693-1699): without it every book is dropped before the speaker
+        assertNull(PlayBodies.speakerDropReason(series, book("111")))
+        assertTrue(PlayBodies.speakerPlayable(series, book("222")))
+        // ... and only Storytel: an RSS item without a url is still withdrawn
+        assertEquals("withdrawn", PlayBodies.speakerDropReason(entry(), item(url = null)))
+        val plan = me.vibb.music.logic.QueuePlan(listOf("111", "222", "333"), 1, 60_000)
+        assertEquals("the whole series on a room, at the planned book and place", plan, PlayBodies.speakerPlan(plan) { PlayBodies.speakerPlayable(series, book(it)) })
+    }
+
+    @Test
+    fun `storytel_sonos 2 and 9 - a book's body is minted in the play job - the known length rides, no art`() {
+        val b = PlayBodies.build(series, book("111"), "RINCON_X", 0.0, art = "https://covers.example.invalid/111.jpg")!!
+        assertEquals(Kind.URL, b.kind)
+        assertEquals("no URL yet: the job mints it right before SetAVTransportURI", "", b.uri)
+        assertEquals("111", b.mint)
+        assertEquals("the shelf's length (a speaker reads 0:00 for an extension-less signed URL)", 721.893, b.durationS!!, 1e-9)
+        assertNull("no art to the speaker (design 26a §9: a hash has no LAN URL)", b.art)
+        assertEquals("Kokosbananas", b.album)
+        assertNull("no length listed, none sent", PlayBodies.build(series, book("222", durationMs = null), "RINCON_X", 0.0)!!.durationS)
+        assertNull("every other source has nothing to mint", PlayBodies.build(entry(), item(), "RINCON_X", 0.0)!!.mint)
+        // renderer.json's uri for it: the marker, never the signed URL (§5.3)
+        assertEquals("storytel:book:111", me.vibb.music.logic.storedUri(series, "111", "https://cdn.example.invalid/a?consumableId=111&token=FAKE-SIG-1"))
+    }
+
+    @Test
+    fun `the minted URL gets the listed url's address checks - one helper - a private literal only with the debug switch`() {
+        val cdn = "https://cdn.example.invalid/mp3/111/abook.mp3?consumableId=111&token=FAKE-SIG-1"
+        assertNull(PlayBodies.mintedDropReason(cdn, privateAllowed = false))
+        assertNull("a public literal", PlayBodies.mintedDropReason("http://93.184.215.14/a?consumableId=111&token=FAKE-SIG-1", false))
+        val fake = "http://10.0.2.2:8730/cdn/111.wav?consumableId=111&token=FAKE-SIG-1"
+        assertEquals("private address", PlayBodies.mintedDropReason(fake, privateAllowed = false))
+        assertNull("the emulator's fake Storytel (design 26b §4.6 (d))", PlayBodies.mintedDropReason(fake, privateAllowed = true))
+        for (host in listOf("100.64.0.1", "[fd7a:115c:a1e0::1]")) {
+            assertEquals(host, "tailnet address", PlayBodies.mintedDropReason("http://$host/a?consumableId=1", privateAllowed = true))
+        }
+        assertEquals("not an http url", PlayBodies.mintedDropReason("ftp://cdn.example.invalid/a", false))
+        assertEquals("not an http url", PlayBodies.mintedDropReason("", false))
+        // the same verdicts as the listed url's filter for a public entry (one helper, the merge's 4b list)
+        for (url in listOf("http://192.168.1.5/ep.mp3", "http://100.100.1.1/ep.mp3", "https://podkast.example/ep.mp3")) {
+            assertEquals(url, PlayBodies.speakerDropReason(entry(), item(url = url)), PlayBodies.mintedDropReason(url, privateAllowed = false))
+        }
+    }
+
+    @Test
+    fun `a body, a result and a snapshot never print a signed URL's token`() {
+        val signed = "https://cdn.example.invalid/mp3/111/abook.mp3?consumableId=111&token=FAKE-SIG-7"
+        val body = PlayBodies.build(series, book("111"), "RINCON_X", 0.0)!!.copy(uri = signed, mint = null)
+        assertFalse(body.toString(), body.toString().contains("FAKE-SIG"))
+        assertTrue(body.toString().contains("cdn.example.invalid/mp3/111/abook.mp3"))
+        val result = PlayResult("RINCON_X", signed, true, didl(signed, "En", null, "Kokosbananas", null, 721.9))
+        assertFalse(result.toString(), result.toString().contains("FAKE-SIG"))
+        val fields = Fields(armed = true, uid = "RINCON_X", kind = Kind.URL, seq = 1, measuredAt = 1L, uri = signed, foreignUri = signed, streamMoved = Moved("RINCON_Y", "Stua", signed))
+        assertFalse(fields.toString(), fields.toString().contains("FAKE-SIG"))
+        assertTrue(fields.toString().contains("RINCON_Y"))
     }
 }

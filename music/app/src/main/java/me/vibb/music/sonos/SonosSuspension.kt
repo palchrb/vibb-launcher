@@ -66,10 +66,13 @@ object SonosSuspension {
         }
     }
 
-    /** With no built uri stored yet: whether a speaker's uri is one of the stored entry's items. */
+    /**
+     * With no built uri stored yet: whether a speaker's uri is one of the stored entry's items. The
+     * room's view (design 26b §5.6): a Storytel book that isn't on the phone plays there too.
+     */
     internal suspend fun entryMatcher(store: Store, choice: RendererChoice): (String) -> Boolean {
         if (!choice.uri.isNullOrEmpty()) return { false }
-        val snap = store.snapshot()
+        val snap = store.snapshot().forRenderer(true)
         val entry = snap.entries.firstOrNull { it.id == choice.entryId } ?: return { false }
         val order = snap.order(entry)
         return { uri -> adoptIndex(entry, order, uri) != null }
@@ -81,7 +84,8 @@ object SonosSuspension {
      * through [suspensionBookmark]'s rules, never more than was measured.
      */
     private suspend fun bookmark(context: Context, store: Store, choice: RendererChoice, live: Fields) {
-        val snap = store.snapshot()
+        // the room's view (design 26b §5.6): the book the speaker plays need not be on the phone
+        val snap = store.snapshot().forRenderer(true)
         val entry = snap.entries.firstOrNull { it.id == choice.entryId } ?: return
         // no built uri stored yet: the item the speaker plays, found by its uri in the entry
         val itemKey = if (choice.uri.isNullOrEmpty()) {

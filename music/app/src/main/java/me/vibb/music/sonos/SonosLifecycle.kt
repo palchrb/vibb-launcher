@@ -1,7 +1,10 @@
 package me.vibb.music.sonos
 
+import me.vibb.music.logic.consumableIdOf
+import me.vibb.music.logic.sameStream
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
+import me.vibb.music.model.Source
 
 /*
  * The Sonos session across the app's lifecycle (design 26a §4.7, §6.1): adopting a session found
@@ -31,9 +34,10 @@ enum class RoomVerdict {
  * failure and reverts only on a definite not-armed or not-PLAYING/PAUSED answer, qa-26a-step3b-code
  * M1): measured just now (the fresh-equivalent of a start, when no poll has run yet) by the room
  * renderer.json names, or else NO_ANSWER. Ours = the speaker's TrackURI equal to the stored built
- * uri through `normUri`; with no stored uri yet (a process gone between the switch's write and the
- * play's result, after SetAVTransportURI and Play went out) [ofEntry] says whether the speaker plays
- * an item of the stored entry.
+ * uri through `normUri` - for a Storytel book the stored marker `storytel:book:<cid>` against the live
+ * signed URL's `consumableId` ([sameStream], design 26b §5.3); with no stored uri yet (a process gone
+ * between the switch's write and the play's result, after SetAVTransportURI and Play went out)
+ * [ofEntry] says whether the speaker plays an item of the stored entry.
  */
 fun roomVerdict(choice: RendererChoice, live: Fields?, ofEntry: (String) -> Boolean = { false }): RoomVerdict {
     if (!choice.sonos) return RoomVerdict.NOT_OURS
@@ -41,7 +45,7 @@ fun roomVerdict(choice: RendererChoice, live: Fields?, ofEntry: (String) -> Bool
     val uri = live.uri.orEmpty()
     if (uri.isEmpty()) return RoomVerdict.NOT_OURS
     val stored = choice.uri
-    val ours = if (!stored.isNullOrEmpty()) normUri(uri) == normUri(stored) else ofEntry(uri)
+    val ours = if (!stored.isNullOrEmpty()) sameStream(stored, uri) else ofEntry(uri)
     return when {
         !ours -> RoomVerdict.NOT_OURS
         live.transport?.live == true -> RoomVerdict.OURS_LIVE
@@ -72,9 +76,16 @@ fun adoptPlan(entry: Entry, order: List<PlayItem>, storedKeys: List<String>?, st
 /**
  * Where the adopted stream is in the rebuilt queue - by uri equality, as vibb (`e["url"] == uri`):
  * an item's own url, or for an NRK series the service uri built for its program id with the serial
- * the stored uri carries. Null when no item matches (the item left the library): nothing is adopted.
+ * the stored uri carries; a Storytel book by the live signed URL's `consumableId` query parameter,
+ * parsed and exact (vibb adopt 4527-4570, `storytel_sonos.py` 7: the token can hold another book's
+ * digits, so never a substring). Null when no item matches (the item left the library): nothing is
+ * adopted.
  */
 fun adoptIndex(entry: Entry, items: List<PlayItem>, uri: String): Int? {
+    if (entry.source == Source.STORYTEL) {
+        val cid = consumableIdOf(uri) ?: return null
+        return items.indexOfFirst { it.key == cid }.takeIf { it >= 0 }
+    }
     val want = normUri(uri)
     val slug = if (entry.nrkSerie) nrkSeriesSlug(entry.target) else null
     val serial = uri.substringAfter("sn=", "").substringBefore('&')

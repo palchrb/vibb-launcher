@@ -10,6 +10,8 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -19,6 +21,8 @@ import me.vibb.music.data.Store
 import me.vibb.music.logic.effectiveCategory
 import me.vibb.music.logic.shownEntries
 import me.vibb.music.logic.tapCategory
+import me.vibb.music.playback.OutputKind
+import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sync.NewNotifier
 
 enum class Screen { LIBRARY, PLAYER, LIST, NEWS, SEARCH }
@@ -29,8 +33,14 @@ enum class SheetKind { SLEEP, OUTPUT }
 class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val store = Store.get(app)
 
-    /** The screens' snapshot: the phone's view (design 26b §3.2); step 4b passes the shown renderer. */
-    val snapshot: StateFlow<Snapshot?> = store.snapshots().map { it.forRenderer(false) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    /**
+     * The screens' snapshot for the renderer that plays (design 26b §3.2, §5.6): the shown output a Sonos
+     * room - every Storytel book, so the carousel, the list and a stored room queue (`nowView` over the
+     * stored row) keep the books that aren't on the phone - else the phone's view.
+     */
+    val snapshot: StateFlow<Snapshot?> = combine(store.snapshots(), PlayerHub.state.map { it.output.kind == OutputKind.SONOS }.distinctUntilChanged()) { snap, onRoom ->
+        snap.forRenderer(onRoom)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val nowRow: StateFlow<NowPlayingRow?> = store.db.nowPlayingFlow().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     var screen by mutableStateOf(Screen.LIBRARY)

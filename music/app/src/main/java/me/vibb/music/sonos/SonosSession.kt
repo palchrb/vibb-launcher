@@ -8,7 +8,14 @@ package me.vibb.music.sonos
  * NOTICE.md. Design 26a §2.4. Pure: time is an injected elapsed clock (never the wall clock, vibb's
  * `monotonic`), the speaker comes through [SpeakerIo] and the household through [MigrationProbe], so
  * SonosSessionTest feeds canned polls. Not thread-safe: SonosTransport owns it behind its mutex.
+ *
+ * Storytel (design 26b §5.3, §5.7): "ours" is [sameStream] - a stored marker `storytel:book:<cid>`
+ * matches the live signed URL by its `consumableId`, anything else is [normUri] equality as before; and
+ * a uri goes into a log line only through [redactUri] (a signed URL's query is a bearer).
  */
+
+import me.vibb.music.logic.redactUri
+import me.vibb.music.logic.sameStream
 
 /** Content kinds (`KINDS`; `spotify_sharelink` is phase 3). */
 enum class Kind(val wire: String) {
@@ -71,7 +78,10 @@ interface MigrationProbe {
 }
 
 /** The `stream_moved` hint: our stream now plays on [uid]; [uri] is the SESSION's (never empty). */
-data class Moved(val uid: String, val name: String?, val uri: String)
+data class Moved(val uid: String, val name: String?, val uri: String) {
+    /** A Storytel session's uri is a signed URL: never its token (design 26b §0). */
+    override fun toString(): String = "Moved(uid=$uid, name=$name, uri=${redactUri(uri)})"
+}
 
 /**
  * One published snapshot (`/state`, contract §3). [measuredAt] is the elapsed time of the last
@@ -107,6 +117,14 @@ data class Fields(
     /** The speaker's raw state was TRANSITIONING ([transport] then reports the last real one). */
     val transitioning: Boolean = false,
 ) {
+    /** The uris as [redactUri] prints them: a Storytel book's TrackURI is a signed URL (design 26b §0). */
+    override fun toString(): String =
+        "Fields(armed=$armed, uid=$uid, kind=$kind, seq=$seq, measuredAt=$measuredAt, reachable=$reachable, transport=$transport, " +
+            "relS=$relS, durS=$durS, uri=${uri?.let(::redactUri)}, ours=$ours, foreignUri=${foreignUri?.let(::redactUri)}, " +
+            "groupedAway=$groupedAway, coordinator=$coordinator, lostSession=$lostSession, volume=$volume, retriedAt=$retriedAt, " +
+            "streamMoved=$streamMoved, error=$error, failedPolls=$failedPolls, nextPollMs=$nextPollMs, " +
+            "measuredCadenceMs=$measuredCadenceMs, transitioning=$transitioning)"
+
     /**
      * Fresh, defined once (QA H2): measured within the cadence chosen after that successful poll,
      * plus [FRESH_SLACK_MS]. A failed poll never extends it (qa-26a-step1-code M2: the backoff
@@ -323,10 +341,12 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         val trackUri = pos.trackUri.orEmpty()
         val rel = hmsToS(pos.relTime)
         val dur = hmsToS(pos.trackDuration)
-        val ours = !uri.isNullOrEmpty() && normUri(trackUri) == normUri(uri)
+        // design 26b §5.3: a Storytel marker (a look before the live uri is known) matches by consumableId
+        val ours = sameStream(uri, trackUri)
         if (!ours && !uri.isNullOrEmpty() && trackUri.isNotEmpty() && oursLogged != trackUri) {
             oursLogged = trackUri
-            log("not-ours? speaker=$trackUri vs set=$uri")
+            // design 26b §5.7: scheme, host and path only - a signed URL's query is a bearer
+            log("not-ours? speaker=${redactUri(trackUri)} vs set=${redactUri(uri)}")
         }
         // Grouped away, on the same poll (stage B1): a member's own transport names its coordinator.
         // x-rincon-mp3radio:// and x-rincon-queue: can't match (char 9 is '-'); an EMPTY uri decides nothing.
@@ -471,7 +491,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
 
     /**
      * `_probe_migration`: the LIVE topology, then each other coordinator's own transport (never the
-     * aux coordinator, which ghosts). Match: PLAYING/PAUSED and [normUri] equality with the session's
+     * aux coordinator, which ghosts). Match: PLAYING/PAUSED and [sameStream] (1b's [normUri] equality) with the session's
      * uri. A hit records [Moved] with the session's uri.
      */
     private fun probeMigration(probe: MigrationProbe) {
@@ -482,7 +502,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
             val rec = doc.players[g.coordinator] ?: continue
             val (tr, trackUri) = probe.live(rec) ?: continue
             if (!tr.live) continue
-            if (normUri(trackUri) != normUri(own)) continue
+            if (!sameStream(own, trackUri)) continue
             moved = Moved(g.coordinator, rec.name, own)
             migrateTries = 0
             log("stream moved to ${rec.name} (${g.coordinator}) - hinting the controller")

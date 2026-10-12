@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.data.Store
+import me.vibb.music.logic.NO_AUDIO
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.playback.Active
@@ -35,6 +36,8 @@ import me.vibb.music.playback.RendererEvent
 import me.vibb.music.playback.RendererKind
 import me.vibb.music.playback.RendererState
 import me.vibb.music.playback.persistPlace
+import me.vibb.music.storytel.StorytelAccount
+import me.vibb.music.sync.ItemErrors
 import kotlin.coroutines.resume
 
 /*
@@ -90,13 +93,25 @@ internal class SonosRenderer(
         override fun changed() = this@SonosRenderer.changed()
 
         override fun played(itemKey: String, uri: String) {
-            val entryId = queue()?.entry?.id
-            writeChoice { it.copy(entryId = entryId, itemKey = itemKey, uri = uri) }
+            val entry = queue()?.entry ?: return
+            // design 26b §5.3 (QA M1): a Storytel play stores its marker, never the signed URL
+            writeChoice { it.played(entry, itemKey, uri) }
         }
 
-        override fun followed(uid: String, name: String?) {
-            writeChoice { it.copy(uid = uid, name = name) }
+        override fun followed(uid: String, name: String?, itemKey: String?, uri: String) {
+            val entry = queue()?.entry
+            // the uri the adopt went out with (the hint's), through storedUri as every write (design 26b §5.3)
+            writeChoice { it.followed(uid, name, entry, itemKey, uri) }
             onFollowed()
+        }
+
+        override fun storytelUnavailable(itemKey: String, code: String) {
+            SonosHome.log("sonos: a Storytel book got no URL ($code)")
+            // design 26b §5.1: locked, not in this country, gone - the book's item error on the parent's card;
+            // a login's failure is the account's state (the report's `storytel`), the rest transient
+            if (code != NO_AUDIO) return
+            val entryId = queue()?.entry?.id ?: return
+            scope.launch(writer) { ItemErrors.record(context, entryId, itemKey, NO_AUDIO) }
         }
 
         override fun ramp(volume: Int?) = writeChoice { it.copy(volume = volume, volumeUid = volume?.let { _ -> controller.uid }) }
@@ -117,6 +132,8 @@ internal class SonosRenderer(
         cap = { Bridge.config(context).volumeCapPct },
         // a start caps every room of the group it plays in (§5.3, qa-26a-corrections M2)
         members = { roomMembers(home.rooms.state.value.rooms, it) },
+        // a Storytel book's URL, minted inside the play's actor job (design 26b §5.1): the process's one account
+        minter = { cid, timeoutMs, deadlineMs -> StorytelAccount.get(context).mint(cid, timeoutMs, deadlineMs) },
     )
 
     private fun suspendedNow(): Boolean = try {

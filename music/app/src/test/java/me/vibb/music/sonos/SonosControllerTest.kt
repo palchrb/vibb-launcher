@@ -1,6 +1,8 @@
 package me.vibb.music.sonos
 
+import me.vibb.music.model.Source
 import me.vibb.music.playback.RendererState
+import me.vibb.music.storytel.Mint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -14,7 +16,8 @@ import org.junit.Test
  * `sonos_migrate.py` 1-4 and the non-Storytel checks of `storytel_sonos.py` (the bookmark hold, the
  * regression guard, the duration carry, the seek hold, playpause from STOPPED; MIT, Copyright (c) 2026
  * palchrb), plus the phone's own rules: the §3.2 state table, the hand-off, the step coalescer, the
- * natural advance and the sleep ramp.
+ * natural advance and the sleep ramp; and Storytel on a room (design 26b §5.1-§5.4, step 4b): vibb
+ * `tests/storytel_sonos.py` 3, 4, 5, 10, 13 and 14 with a fake minter, and the job's token (QA M6).
  */
 class SonosControllerTest {
     private val r = ControllerRig()
@@ -1081,5 +1084,270 @@ class SonosControllerTest {
         assertEquals(30, back.volume)
         assertEquals("RINCON_A", back.volumeUid)
         assertEquals(RendererChoice.LOCAL_CHOICE, RendererChoice.local(RendererChoice(volume = 30)))
+    }
+
+    // -- Storytel on a room (design 26b §5.1-§5.4; vibb tests/storytel_sonos.py; QA M6) --
+
+    private val series = SonosFakes.entry(id = 9, source = Source.STORYTEL, target = "storytel:series:26175", name = "Kokosbananas")
+
+    /** Three books, none on the phone (a room plays them all), each with its own shelf length. */
+    private val books = listOf("111" to 721_893L, "222" to 700_000L, "333" to 650_000L)
+        .map { (cid, ms) -> SonosFakes.item(key = cid, url = null, durationMs = ms, entryId = 9) }
+
+    private fun startBook(index: Int = 0, startMs: Long = 0, drain: Boolean = true) {
+        r.c.load(series, books, index, startMs)
+        r.c.playTile()
+        if (drain) r.work.drain()
+    }
+
+    /** The speaker plays what it was last handed (the minted URL), at [rel]; it reports no length for a signed URL. */
+    private fun bookPolled(rel: String, transport: String = "PLAYING", dur: String = "0:00:00") {
+        r.speaker(rel, transport, uri = r.spk.lastUri, dur = dur)
+        r.poll()
+    }
+
+    private fun setUris() = r.spk.commands.count { it == "seturi" }
+
+    @Test
+    fun `storytel_sonos 3 - one mint per play, 6 s for the asset call, 10 s in all, its URL to the speaker with the listing's length`() {
+        startBook()
+        assertEquals(listOf(FakeMinter.Call("111", 6_000, 10_000)), r.minter.calls)
+        assertEquals(listOf("seturi", "play"), r.spk.commands)
+        val minted = FakeMinter.signed("111", 1)
+        assertEquals("the signed URL, minted in the job right before SetAVTransportURI", minted, r.spk.lastUri)
+        val meta = r.spk.lastMeta!!
+        assertTrue("the shelf's length in the DIDL (vibb 9)", meta.contains("duration=\"${hms(721.893)}\""))
+        assertFalse("no art to the speaker (design 26a §9)", meta.contains("albumArtURI"))
+        assertEquals("the host gets the minted URL (renderer.json stores the marker, RendererChoice.played)", listOf("111" to minted), r.host.played)
+        assertTrue(r.host.unavailable.isEmpty())
+        // the seed and the polls: ours by the minted URL; the length by consumableId (§5.4), never deciding done
+        assertEquals(721_893L, r.c.spec(r.now).durationMs)
+        r.advance(5_000)
+        bookPolled("0:01:00")
+        assertTrue(r.c.showsPlaying(r.now))
+        assertEquals(721_893L, r.c.spec(r.now).durationMs)
+        val w = r.store.writes.last()
+        assertEquals("111", w.itemKey)
+        assertEquals(60_000L, w.posMs)
+        assertNull("a listing length never marks a book heard (vibb 19)", w.durationMs)
+    }
+
+    @Test
+    fun `storytel_sonos 4 - a failed mint never raises, hands no uri over, sends nothing and touches no volume - the failed play`() {
+        val cases = listOf(
+            Mint.Unreachable("timeout") to "network",
+            Mint.Failed(503) to "http_503",
+            Mint.NoAudio(403) to "no_audio",
+            Mint.Refused(0) to "login_refused",
+            Mint.LoginFailed("no jwt") to "login_failed",
+            Mint.NotConfigured to "storytel_off",
+        )
+        for ((mint, code) in cases) {
+            val rig = ControllerRig()
+            rig.capPct = 40
+            rig.spk.vol = 80
+            rig.minter.answer = { mint }
+            rig.c.load(series, books, 0, 60_000)
+            rig.c.playTile()
+            rig.work.drain()
+            assertEquals("$mint: nothing reaches the speaker, not even GetVolume or the mute", emptyList<String>(), rig.spk.log)
+            assertEquals(code, listOf("111" to code), rig.host.unavailable)
+            assertTrue(rig.host.played.isEmpty())
+            assertNotNull("a first start is lost: \"Kan ikke spilles på Sonos\", the phone, paused", rig.c.takeLost())
+            // the controller (and the actor) live on: the next play mints again and goes out
+            rig.minter.answer = { cid -> Mint.Url(FakeMinter.signed(cid, rig.minter.calls.size)) }
+            rig.c.load(series, books, 0, 0)
+            rig.c.playTile()
+            rig.work.drain()
+            assertEquals(listOf("volume 40", "seturi", "play"), rig.spk.commands)
+        }
+        // a minter that throws anyway is an unreachable mint, never an exception out of the job
+        val rig = ControllerRig()
+        rig.minter.answer = { throw IllegalStateException("boom") }
+        rig.c.load(series, books, 0, 0)
+        rig.c.playTile()
+        rig.work.drain()
+        assertEquals(listOf("111" to "network"), rig.host.unavailable)
+        assertNotNull(rig.c.takeLost())
+    }
+
+    @Test
+    fun `a minted URL a speaker mustn't fetch - a private literal unless the debug switch - is a failed play`() {
+        val fake = "http://10.0.2.2:8730/cdn/111.wav?consumableId=111&token=FAKE-SIG-1"
+        r.minter.answer = { Mint.Url(fake) }
+        startBook()
+        assertTrue(r.spk.commands.isEmpty())
+        assertEquals(listOf("111" to "address"), r.host.unavailable)
+        assertNotNull(r.c.takeLost())
+        r.privateMint = true // design 26b §4.6 (d): the emulator's fake Storytel
+        startBook()
+        assertEquals(fake, r.spk.lastUri)
+    }
+
+    @Test
+    fun `storytel_sonos 5 - a URL for every play the controller sends, never for a resume, a seek or the stall retry`() {
+        startBook(startMs = 60_000) // the hush and the settled seek belong to the play: still one mint
+        assertEquals(1, r.minter.calls.size)
+        assertTrue(r.spk.commands.containsAll(listOf("mute true", "seturi", "play", "seek 0:01:00")))
+        bookPolled("0:01:00")
+        r.c.pause()
+        r.work.drain()
+        bookPolled("0:01:02", transport = "PAUSED_PLAYBACK")
+        r.c.playPause()
+        r.work.drain()
+        assertEquals("pause and resume mint nothing", 1, r.minter.calls.size)
+        assertEquals("play", r.spk.commands.last())
+        r.c.seek(120_000)
+        r.work.drain()
+        assertEquals("a seek mints nothing", 1, r.minter.calls.size)
+        // the stall retry: Stop, Play on the speaker's own uri (vibb `_stall_bookkeeping`)
+        repeat(5) { bookPolled("0:02:00") }
+        assertTrue(r.spk.commands.contains("stop"))
+        assertEquals("the stall retry mints nothing", 1, r.minter.calls.size)
+        // a step mints; a natural advance mints
+        r.c.stepTo(1, 0)
+        r.work.drain()
+        assertEquals(listOf("111", "222"), r.minter.calls.map { it.cid })
+        assertEquals(FakeMinter.signed("222", 2), r.spk.lastUri)
+        bookPolled("0:11:30", dur = "0:11:40")
+        r.advance(5_000)
+        bookPolled("0:11:39", transport = "STOPPED", dur = "0:11:40")
+        assertEquals(listOf("111", "222", "333"), r.minter.calls.map { it.cid })
+        // a stopped room plays from the bookmark with a new URL (vibb 16)
+        bookPolled("0:00:30")
+        r.advance(5_000)
+        bookPolled("0:00:31", transport = "STOPPED")
+        r.c.playPause()
+        r.work.drain()
+        assertEquals(listOf("111", "222", "333", "333"), r.minter.calls.map { it.cid })
+        assertEquals("one SetAVTransportURI per mint", r.minter.calls.size, setUris())
+    }
+
+    @Test
+    fun `M6 - a step pressed again during a mint sends one SetAVTransportURI, for the latest want`() {
+        startBook()
+        bookPolled("0:01:00")
+        r.c.stepTo(1, 0)
+        r.minter.during = { r.c.stepTo(2, 0) } // pressed while the mint takes its seconds
+        r.work.drain()
+        assertEquals("222's mint ran, its play dropped by the token", listOf("111", "222", "333"), r.minter.calls.map { it.cid })
+        assertEquals("the start and one step", 2, setUris())
+        assertEquals(FakeMinter.signed("333", 3), r.spk.lastUri)
+        assertEquals(2, r.c.index)
+        assertEquals(listOf("111", "333"), r.host.played.map { it.first })
+    }
+
+    @Test
+    fun `M6 - a job superseded while it queued never mints`() {
+        r.c.load(series, books, 0, 0)
+        r.c.playTile() // queued behind whatever the actor holds
+        r.c.stepTo(1, 0) // a newer play before it ran
+        r.work.drain()
+        assertEquals(listOf("222"), r.minter.calls.map { it.cid })
+        assertEquals(listOf("seturi", "play"), r.spk.commands)
+        assertEquals(FakeMinter.signed("222", 1), r.spk.lastUri)
+    }
+
+    @Test
+    fun `M6 - a release or a suspension during a mint sends no Play`() {
+        r.c.load(series, books, 0, 0)
+        r.c.playTile()
+        r.minter.during = { r.c.close() } // the renderer released (a hand-off, onDestroy)
+        r.work.drain()
+        assertEquals(1, r.minter.calls.size)
+        assertEquals(emptyList<String>(), r.spk.log)
+        val rig = ControllerRig()
+        rig.c.load(series, books, 1, 90_000)
+        rig.c.playTile()
+        rig.minter.during = { rig.allowed = false } // the launcher suspended the app (a time rule)
+        rig.work.drain()
+        assertEquals(emptyList<String>(), rig.spk.log)
+        assertNull("dropped, not a failed play", rig.c.takeLost())
+        assertTrue(rig.host.unavailable.isEmpty())
+        assertEquals("the book waits at its place for the next play", 90_000L, rig.c.spec(rig.now).positionAt(rig.now))
+        assertEquals(1, rig.c.spec(rig.now).index)
+        rig.allowed = true
+        rig.c.playTile()
+        rig.work.drain()
+        assertEquals("a new play mints again", listOf("222", "222"), rig.minter.calls.map { it.cid })
+        assertTrue(rig.spk.commands.containsAll(listOf("seturi", "play", "seek 0:01:30")))
+    }
+
+    @Test
+    fun `a hand-off queued behind a mint waits for it - the play goes out, then the bookmark and Stop`() {
+        // The room's actor is serial and never cancels a job (qa-26b-merge-code Low 1, Low 6): every job behind a
+        // mint - a poll, a pause, a volume key, a hand-off - waits up to MINT_BUDGET_MS; HANDOFF_MS covers it.
+        var wasPlaying: Boolean? = null
+        r.c.load(series, books, 0, 0)
+        r.c.playTile()
+        r.minter.during = { r.c.handOff { wasPlaying = it } }
+        r.speaker("0:00:01", uri = FakeMinter.signed("111", 1)) // what the hand-off's live look will read
+        r.work.drain()
+        assertEquals(listOf("seturi", "play", "stop"), r.spk.commands)
+        assertEquals(true, wasPlaying)
+        assertTrue(r.c.closed)
+        assertTrue(SonosController.MINT_BUDGET_MS + 10_000 < me.vibb.music.playback.PlaybackService.HANDOFF_MS)
+        assertTrue("the drain outlasts a mint and a hushed play", SonosController.MINT_BUDGET_MS + 10_000 <= SonosActor.DRAIN_MS)
+    }
+
+    @Test
+    fun `storytel_sonos 14 and 10 - the length by consumableId first, never another book's, a zero never erasing it`() {
+        startBook()
+        bookPolled("0:01:00")
+        assertEquals(721_893L, r.c.spec(r.now).durationMs)
+        // a real length from the speaker wins (vibb: the lookup only fills a falsy one)
+        bookPolled("0:01:05", dur = "0:12:30")
+        assertEquals(750_000L, r.c.spec(r.now).durationMs)
+        assertEquals("the speaker measured it", 750_000L, r.store.writes.last().durationMs)
+        // the next zero: the lookup again (flagged), never erasing
+        bookPolled("0:01:10")
+        assertEquals(721_893L, r.c.spec(r.now).durationMs)
+        assertNull(r.store.writes.last().durationMs)
+        // a book started from the speaker itself (vibb's other case): not ours, but its length is known by its
+        // consumableId - 222's, though the token holds 111's digits - and never shown under our title
+        r.speaker("0:00:20", uri = "https://cdn.example.invalid/mp3/222/abook.mp3?consumableId=222&token=FAKE-SIG-111", dur = "0:00:00")
+        r.poll()
+        assertEquals(700.0, r.c.snap!!.durS!!, 0.0)
+        assertNull("someone else's stream shows no length", r.c.spec(r.now).durationMs)
+    }
+
+    @Test
+    fun `storytel_sonos 13 and 7 - adopt by consumableId restores the book's length from the queue, never another book's`() {
+        // the speaker holds a URL minted by the previous process: book 222, whose token holds 111's digits
+        val live = "https://cdn.example.invalid/mp3/222/abook.mp3?consumableId=222&token=abc111xyz"
+        val marker = "storytel:book:222"
+        val choice = RendererChoice(RendererChoice.SONOS, r.uid, "Barnerom", entryId = 9, itemKey = "222", uri = marker)
+        r.speaker("1:10:00", uri = live, dur = "0:00:00")
+        val f = kotlinx.coroutines.runBlocking {
+            r.transport.adoptLive(r.uid, kindOfUri(marker), marker, 1_500) { if (ourLiveSession(choice, it)) it.uri else null }
+        }!!
+        assertTrue("ours by consumableId", f.ours)
+        assertEquals("the session goes on with the live signed URL (§5.3)", live, r.session.uri)
+        val idx = adoptIndex(series, books, live)!!
+        assertEquals(1, idx)
+        r.c.adopt(series, books, idx, live, f)
+        assertEquals("the queue row's length, not 111's", 700_000L, r.c.spec(r.now).durationMs)
+        assertEquals("nothing sent", emptyList<String>(), r.spk.commands)
+        assertTrue(r.minter.calls.isEmpty())
+        r.advance(15_000)
+        r.speaker("1:10:15", uri = live, dur = "0:00:00")
+        r.poll()
+        val w = r.store.writes.last()
+        assertEquals("222", w.itemKey)
+        assertEquals(4_215_000L, w.posMs)
+        assertNull(w.durationMs)
+    }
+
+    @Test
+    fun `migration follow of a book - the hint's signed URL goes to renderer json's writer, which stores the marker`() {
+        startBook()
+        bookPolled("0:01:00")
+        val hint = "https://cdn.example.invalid/mp3/111/abook.mp3?consumableId=111&token=FAKE-SIG-9"
+        r.c.onPoll(Tick.Next(5_000), hinted(uri = hint))
+        r.work.drain()
+        assertEquals(listOf("111" to hint), r.host.followedUris)
+        assertTrue("an adopt and its follow mint nothing", r.minter.calls.size == 1)
+        val written = RendererChoice(RendererChoice.SONOS, r.uid, "Barnerom", 9, "111", "storytel:book:111").followed("RINCON_KITCHEN01400", "Kjøkken", series, "111", hint)
+        assertEquals("storytel:book:111", written.uri)
     }
 }

@@ -2,6 +2,7 @@ package me.vibb.music.sonos
 
 import kotlinx.coroutines.runBlocking
 import me.vibb.music.model.PlayItem
+import me.vibb.music.storytel.Mint
 
 /** The actor without threads: jobs wait in [jobs] until [drain] runs them in order, results handed back at once. */
 class FakeWork : SonosWork {
@@ -76,9 +77,20 @@ class FakeHost : SonosHost {
         played.add(itemKey to uri)
     }
 
-    override fun followed(uid: String, name: String?) {
+    /** The uri each follow went out with (renderer.json writes it through storedUri, design 26b §5.3). */
+    val followedUris = mutableListOf<Pair<String?, String>>()
+
+    /** Storytel plays that got no URL: (item key, code). */
+    val unavailable = mutableListOf<Pair<String, String>>()
+
+    override fun followed(uid: String, name: String?, itemKey: String?, uri: String) {
         onFollowed()
         followed.add(uid to name)
+        followedUris.add(itemKey to uri)
+    }
+
+    override fun storytelUnavailable(itemKey: String, code: String) {
+        unavailable.add(itemKey to code)
     }
 
     override fun ramp(volume: Int?) {
@@ -91,6 +103,36 @@ class FakeHost : SonosHost {
 
     override fun log(message: String) {
         logs.add(message)
+    }
+}
+
+/**
+ * Storytel's account as the play job sees it (design 26b §5.1): every call recorded (the cid, the asset
+ * call's timeout, the deadline as time left), the answer [answer]'s, a signed URL by default (fake values:
+ * `cdn.example.invalid`, `FAKE-SIG-<n>`). [during] runs inside the mint - what the main thread does
+ * while a real mint takes its seconds (a step, a release, a suspension); [takesMs] moves the clock.
+ */
+class FakeMinter(private val clock: FakeClock) : StorytelMinter {
+    data class Call(val cid: String, val timeoutMs: Long, val budgetMs: Long)
+
+    val calls = mutableListOf<Call>()
+    var answer: (String) -> Mint = { cid -> Mint.Url(signed(cid, calls.size)) }
+    var during: (() -> Unit)? = null
+    var takesMs = 0L
+
+    override suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint {
+        calls.add(Call(cid, timeoutMs, deadlineMs - clock.now))
+        clock.advance(takesMs)
+        during?.let {
+            during = null
+            it()
+        }
+        return answer(cid)
+    }
+
+    companion object {
+        /** A signed CDN URL as Storytel's Location carries it: the book in `consumableId`, a fake token. */
+        fun signed(cid: String, n: Int) = "https://cdn.example.invalid/mp3/$cid/abook.mp3?consumableId=$cid&token=FAKE-SIG-$n"
     }
 }
 
@@ -112,7 +154,14 @@ class ControllerRig(val uid: String = "RINCON_KID01400") {
 
     /** The launcher's `volume_cap_pct` (null = none). */
     var capPct: Int? = null
-    val c = SonosController(transport, work, store, { clock.now }, uid, "Barnerom", host, sleep = clock.clock.sleep, mayPlay = { allowed }, cap = { capPct })
+
+    /** Storytel's account (design 26b §5.1) and the debug switch's private-literal allowance (§4.6 (d)). */
+    val minter = FakeMinter(clock)
+    var privateMint = false
+    val c = SonosController(
+        transport, work, store, { clock.now }, uid, "Barnerom", host, sleep = clock.clock.sleep, mayPlay = { allowed }, cap = { capPct },
+        minter = minter, privateMintAllowed = { privateMint },
+    )
 
     val entry = SonosFakes.entry()
     val items: List<PlayItem> = (1..3).map { SonosFakes.item(key = "ep$it", url = "https://podkast.example/ep$it.mp3") }

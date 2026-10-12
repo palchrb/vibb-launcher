@@ -506,8 +506,15 @@ class PlaybackService : MediaSessionService() {
 
     // --- starting a queue ---
 
-    /** The phone's view (design 26b §3.2: a Storytel book shows with its copy only); step 4b passes the renderer. */
-    private suspend fun load(): Pair<Snapshot, List<DownloadRow>> = withContext(Dispatchers.IO) { store.snapshot().forRenderer(false) to store.db.downloads() }
+    /**
+     * The snapshot for a renderer (design 26b §3.2, §5.6; vibb `PREFER_REMOTE`, passed explicitly - 26a
+     * §9): [remote] true for a Sonos room (every Storytel book: the speaker fetches it from the CDN),
+     * false for the phone (a Storytel book with its copy only). Each call site names its renderer.
+     */
+    private suspend fun load(remote: Boolean): Pair<Snapshot, List<DownloadRow>> = withContext(Dispatchers.IO) { store.snapshot().forRenderer(remote) to store.db.downloads() }
+
+    /** The queue for whoever plays now (design 26b §5.6's first row). */
+    private suspend fun loadForRenderer(): Pair<Snapshot, List<DownloadRow>> = load(remote = renderer.kind == RendererKind.SONOS)
 
     /**
      * The queue of [keys] as renderer [kind] plays it. A Sonos room gets only what a speaker can play
@@ -565,7 +572,7 @@ class PlaybackService : MediaSessionService() {
             renderer.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
             return
         }
-        val (snap, rows) = load()
+        val (snap, rows) = loadForRenderer()
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val plan = coverTapPlan(snap.order(entry).map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return
@@ -575,7 +582,7 @@ class PlaybackService : MediaSessionService() {
 
     private suspend fun playItem(entryId: Long, key: String) {
         renderer.saveNow()
-        val (snap, rows) = load()
+        val (snap, rows) = loadForRenderer()
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val current = active?.takeIf { it.entry.id == entryId && it.shuffled }?.items?.map { it.key }
@@ -617,7 +624,7 @@ class PlaybackService : MediaSessionService() {
     /** The stored queue (21 §4.4: back after a restart, paused until a tap). */
     private suspend fun restore(): Triple<Active, Int, Long>? {
         val row = withContext(Dispatchers.IO) { store.db.nowPlaying() } ?: return null
-        val (snap, rows) = load()
+        val (snap, rows) = loadForRenderer()
         val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return null
         val stored = row.keys.split('\n').filter { it.isNotEmpty() }
         val plan = storedPlan(stored, row.index, row.posMs, snap.order(entry).map { it.key }.toSet()) { startPos(entry, snap.positions[entry.key]?.get(it)) } ?: return null
@@ -1328,16 +1335,20 @@ class PlaybackService : MediaSessionService() {
         lastRoomLook = SystemClock.elapsedRealtime()
         val uid = choice.uid ?: return
         if (renderer !== local) return
-        val (snap, rows) = load()
+        // the room's view (design 26b §5.6, QA H2): a Storytel book that isn't on the phone plays there too -
+        // the phone's view would lose it, and the look would stop the kid's book (stopUnadopted)
+        val (snap, rows) = load(remote = true)
         val entry = snap.entries.firstOrNull { it.id == choice.entryId }
         val order = entry?.let { snap.order(it) }.orEmpty()
         val ofEntry: (String) -> Boolean = { u -> entry != null && adoptIndex(entry, order, u) != null }
         val sonos = sonosRenderer(uid, choice.name)
+        // ours: the session goes on with the live TrackURI (vibb posts `snap.uri` to /adopt; design 26b §5.3) -
+        // for a Storytel book the signed URL the speaker holds, which the stored marker only names
         val live = withTimeoutOrNull(ADOPT_MS) {
-            sonos.probe(choice.uri.orEmpty()) { f -> if (ourLiveSession(choice, f, ofEntry)) choice.uri?.takeIf { it.isNotEmpty() } ?: f.uri else null }
+            sonos.probe(choice.uri.orEmpty()) { f -> if (ourLiveSession(choice, f, ofEntry)) f.uri?.takeIf { it.isNotEmpty() } else null }
         }
         val verdict = roomVerdict(choice, live, ofEntry)
-        val uri = choice.uri?.takeIf { it.isNotEmpty() } ?: live?.uri.orEmpty()
+        val uri = live?.uri?.takeIf { verdict == RoomVerdict.OURS_LIVE }.orEmpty()
         val queue = if (verdict == RoomVerdict.OURS_LIVE && entry != null) adoptedQueue(snap, rows, entry, uri) else null
         if (queue == null || live == null || renderer !== local) {
             if (verdict == RoomVerdict.OURS_LIVE) sonos.stopUnadopted()
@@ -1351,7 +1362,10 @@ class PlaybackService : MediaSessionService() {
             return
         }
         val (a, index) = queue
-        if (uri != choice.uri) withContext(writer) { home.write(choice.copy(uri = uri, itemKey = a.items[index].key)) }
+        // renderer.json through storedUri on both branches (design 26b §5.3, QA M1): the stored built uri kept,
+        // or with none stored yet the live one; a Storytel book's marker either way, never the signed URL
+        val adopted = choice.adopted(a.entry, a.items[index].key, uri)
+        if (adopted != choice) withContext(writer) { home.write(adopted) }
         attach(sonos)
         active = a
         lastIndex = index
@@ -1380,7 +1394,7 @@ class PlaybackService : MediaSessionService() {
         SonosHome.log("sonos: ${sonos.uid} isn't allowed on this phone (now) - bookmark, stop, the phone (paused)")
         PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)
         handOff(sonos)
-        comeHome(sonos, play = false)
+        comeHome(sonos, play = false, quiet = true)
     }
 
     /** The stored entry's queue on a room ([adoptPlan]) and the index of [uri] in it; null when it can't be rebuilt. */
@@ -1460,13 +1474,20 @@ class PlaybackService : MediaSessionService() {
         val name = withContext(Dispatchers.IO) { home.label(uid) }
         val current = active?.takeIf { old.itemCount() > 0 }?.let { a0 -> a0.items.getOrNull(old.currentIndex())?.let { a0 to it } }
         if (old is SonosRenderer) handOff(old) else old.saveNow(force = true)
-        val (snap, rows) = load()
+        // the room's view (design 26b §5.6, QA H2): every Storytel book, downloaded or not
+        val (snap, rows) = load(remote = true)
         if (renderer !== old) return // changed under us (the switch lock makes this a belt)
         val place = if (current != null) {
             val (a0, item) = current
-            // by key: refreshArt may have replaced the items with copies meanwhile (a late picture,
-            // `withItemArt`), and an object lookup would start item 0 (qa-26a-merge27-code L1)
-            a0.entry to QueuePlan(a0.items.map { it.key }, a0.items.indexOfFirst { it.key == item.key }, resumeFrom(a0.positions[item.key]))
+            if (a0.entry.source == Source.STORYTEL) {
+                // the phone's queue holds only the downloaded books: the room re-plans over the series' remote
+                // order at the current book and place (design 26b §5.6), or it would skip the others and end early
+                a0.entry to homePlan(snap.order(a0.entry).map { it.key }, item.key, resumeFrom(a0.positions[item.key]))
+            } else {
+                // by key: refreshArt may have replaced the items with copies meanwhile (a late picture,
+                // `withItemArt`), and an object lookup would start item 0 (qa-26a-merge27-code L1)
+                a0.entry to QueuePlan(a0.items.map { it.key }, a0.items.indexOfFirst { it.key == item.key }, resumeFrom(a0.positions[item.key]))
+            }
         } else {
             withContext(Dispatchers.IO) { store.db.nowPlaying() }?.let { row ->
                 val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return@let null
@@ -1517,7 +1538,13 @@ class PlaybackService : MediaSessionService() {
         comeHome(sonos, (resume ?: wasPlaying) && playAllowed(suspendedNow()))
     }
 
-    private suspend fun comeHome(sonos: SonosRenderer, play: Boolean) {
+    /**
+     * The phone takes over from [sonos] (the switch home, a lost start, the suspension, the room scope):
+     * the queue on the phone from the hand-off's bookmark, playing on only with [play]. A Storytel book
+     * that isn't on the phone (heard on the room) starts nothing: the phone stays paused with "Ikke lastet
+     * ned" - never another book from 0 (design 26b §5.6, §9; [quiet] when the caller already said why).
+     */
+    private suspend fun comeHome(sonos: SonosRenderer, play: Boolean, quiet: Boolean = false) {
         if (renderer !== sonos) {
             // another switch already moved on: this room is only to be let go (M2)
             sonos.release()
@@ -1535,9 +1562,16 @@ class PlaybackService : MediaSessionService() {
             publish()
             return
         }
-        val (snap, rows) = load()
+        // the phone's view (design 26b §5.6): it is the phone
+        val (snap, rows) = load(remote = false)
         if (renderer !== local) return
-        val plan = homePlan(snap.order(a0.entry).map { it.key }, item.key, resumeFrom(a0.positions[item.key]))
+        val order = snap.order(a0.entry).map { it.key }
+        if (a0.entry.source == Source.STORYTEL && item.key !in order) {
+            if (!quiet) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+            publish()
+            return
+        }
+        val plan = homePlan(order, item.key, resumeFrom(a0.positions[item.key]))
         val a = activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, RendererKind.LOCAL)
         if (a == null) {
             publish()
@@ -1563,17 +1597,24 @@ class PlaybackService : MediaSessionService() {
         PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
         // anything of ours still on the speaker (a superseded play that landed) is stopped, ours-gated
         handOff(sonos)
-        comeHome(sonos, play = false)
+        comeHome(sonos, play = false, quiet = true)
         withContext(Dispatchers.IO) { home.rooms.refresh() }
     }
 
-    private companion object {
+    internal companion object {
         /**
          * The hand-off is a 1.5 s classify, a bookmark and a Stop (2 s connect + 5 s read at worst), but it
          * queues behind what the actor holds: a hushed play's settled seek (up to 8 s), the 3 s ramp, a
-         * poll. Past this the switch goes on and the Stop stays queued (`abandon`).
+         * poll - and since design 26b a Storytel play's mint (up to 10 s, `SonosController.MINT_BUDGET_MS`)
+         * before its hushed play: 15 s -> 25 s (§5.1). Past this the switch goes on and the Stop stays
+         * queued (`abandon`). The suspension receiver's `goAsync` budget (`MusicApp.SUSPEND_BUDGET_MS`, 9 s)
+         * is shorter (design 26b §13 M6): with the service up the receiver finishes at 9 s and the
+         * service's own `suspendStop` runs on in its scope (26a's path) - and a play queued before the
+         * suspension never sounds after it, because its job's token (`playAllowed`, the generation, the
+         * renderer's `closed`) is checked again after the mint, before `SetAVTransportURI`.
+         * `SonosTail.MAX_MS` and `logic/Switch.kt`'s `SWITCH_WAIT_MAX_MS` move with it.
          */
-        const val HANDOFF_MS = 15_000L
+        const val HANDOFF_MS = 25_000L
 
         /** Adopt's look at start: the Wi-Fi wait, the 1.5 s classify and the actor's start, with room. */
         const val ADOPT_MS = 4_000L

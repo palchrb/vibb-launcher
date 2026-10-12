@@ -267,7 +267,7 @@ class GuardsTest {
         // coming home plays on only when the speaker was PLAYING and nothing forbids it; a failed start never plays
         assertTrue(service.contains("comeHome(sonos, (resume ?: wasPlaying) && playAllowed(suspendedNow()))"))
         assertEquals(5, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
-        assertEquals("lost, nothing playable, the suspension, the room scope", 4, Regex("""comeHome\((old|sonos), play = false\)""").findAll(service).count())
+        assertEquals("lost, nothing playable, the suspension, the room scope", 4, Regex("""comeHome\((old|sonos), play = false(, quiet = true)?\)""").findAll(service).count())
         // the renderer changes only in attach: the phone at start, an adopted room, a picked room, the phone again
         assertEquals("attach: defined once, four callers", 5, Regex("""\battach\(""").findAll(service).count())
         assertTrue(service.contains("attach(sonosRenderer(uid, name))"))
@@ -315,7 +315,7 @@ class GuardsTest {
         assertTrue(step.contains("if (!session || effectiveTransport(now) != TransportState.PLAYING || !mayPlay()) {"))
         assertTrue(step.indexOf("startPending = true") < step.indexOf("pending = Pending("))
         val play = sonos.substringAfter("private fun playIndex(").substringBefore("\n    }\n")
-        assertTrue("before anything is sent", play.indexOf("if (!mayPlay()) {") < play.indexOf("work.submit("))
+        assertTrue("before anything is sent", play.indexOf("if (!mayPlay()) {") in 0 until play.indexOf("work.submit<PlayResult?>("))
         assertTrue(sonos.substringAfter("private fun resume(").substringBefore("\n    }\n").contains("if (!mayPlay()) return"))
         val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
         assertTrue(renderer.contains("mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid) },"))
@@ -352,7 +352,7 @@ class GuardsTest {
         assertTrue(leave.contains("if (!mustLeaveRoom(sonos.uid, roomsNow(), allowedRoomsNow())) return"))
         assertTrue(leave.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)"))
         assertFalse("its own line (qa-26a-step3c-code L1)", leave.contains("CANT_PLAY_ON_SONOS"))
-        assertTrue(leave.indexOf("handOff(sonos)") in 0 until leave.indexOf("comeHome(sonos, play = false)"))
+        assertTrue(leave.indexOf("handOff(sonos)") in 0 until leave.indexOf("comeHome(sonos, play = false, quiet = true)"))
         val gate = service.substringAfter("private suspend fun leaveIfNotAllowed() {").substringBefore("\n    }\n")
         assertTrue(gate.contains("rendererReady.await()\n        switching.withLock { leaveDisallowedRoom() }"))
         // ... at the next sync, when the groups change (M1), and after a follow (M1)
@@ -362,7 +362,7 @@ class GuardsTest {
         assertTrue(onCreate.contains("home.rooms.state.collect {\n                publish()\n                if (renderer is SonosRenderer) leaveIfNotAllowed()"))
         assertTrue(service.contains("onFollowed = { scope.launch { leaveIfNotAllowed() } },"))
         val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
-        assertTrue(renderer.contains("writeChoice { it.copy(uid = uid, name = name) }\n            onFollowed()"))
+        assertTrue(renderer.contains("writeChoice { it.followed(uid, name, entry, itemKey, uri) }\n            onFollowed()"))
         // the groups are watched only under a limited scope while a room plays, and never with a discovery round
         val watch = onCreate.substringAfter("delay(SCOPE_WATCH_MS)").substringBefore("\n        publish()")
         assertTrue(watch.contains("if (roomScope != null && sonos.showsPlaying) withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }"))
@@ -445,16 +445,20 @@ class GuardsTest {
     }
 
     @Test
-    fun `the mint runs in the download worker only, on IO, through the process's one StorytelApi`() {
+    fun `the mint runs in the download worker and a room's play job only, on IO, through the process's one StorytelApi`() {
         val sources = mainSources()
         val texts = sources.associate { f ->
             f.name to f.readText().replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("//[^\\n]*"), "")
         }
         fun callers(token: String) = texts.filterValues { it.contains(token) }.keys
         assertEquals("assetUrl is called by the account only", setOf("StorytelApi.kt", "StorytelAccount.kt"), callers("assetUrl("))
-        assertEquals("a mint is the download run's (step 4b adds the Sonos play job)", setOf("StorytelAccount.kt", "DownloadRun.kt", "Downloads.kt"), callers(".mint(") + callers("fun mint("))
+        assertEquals(
+            "a mint is the download run's and a room's play job's (design 26b §5.1)",
+            setOf("StorytelAccount.kt", "DownloadRun.kt", "Downloads.kt", "SonosController.kt", "SonosRenderer.kt"),
+            callers(".mint(") + callers("fun mint("),
+        )
         assertEquals("one StorytelApi for the process", setOf("StorytelApi.kt", "StorytelAccount.kt"), callers("StorytelApi("))
-        assertEquals(setOf("Downloads.kt", "Sync.kt"), callers("StorytelAccount.get("))
+        assertEquals(setOf("Downloads.kt", "Sync.kt", "SonosRenderer.kt"), callers("StorytelAccount.get("))
         val account = code("src/main/java/me/vibb/music/storytel/StorytelAccount.kt")
         // On IO and interruptible (the main session's review of step 3, Low 2; StorytelApiTest's cancelled mints).
         assertTrue(account.contains("suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =\n        runInterruptible(Dispatchers.IO) { api.assetUrl(cid, timeoutMs, deadlineMs) }"))
@@ -464,20 +468,84 @@ class GuardsTest {
         assertTrue("a download's mint: 15 s, the whole within 60 s", downloads.contains("StorytelAccount.get(context).mint(cid, MINT_TIMEOUT_MS, SystemClock.elapsedRealtime() + MINT_BUDGET_MS)"))
         assertTrue(downloads.contains("const val MINT_TIMEOUT_MS = 15_000L") && downloads.contains("const val MINT_BUDGET_MS = 60_000L"))
         assertTrue("the worker runs on IO", downloads.contains("override suspend fun doWork(): Result = withContext(Dispatchers.IO) {"))
+        // A room (design 26b §5.1): the renderer hands the controller the account's one signature ...
+        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        assertTrue(renderer.contains("minter = { cid, timeoutMs, deadlineMs -> StorytelAccount.get(context).mint(cid, timeoutMs, deadlineMs) },"))
+        // ... which mints only inside the play's actor job (IO), between the two token checks (M6), 6 s / 10 s
+        val play = sonos.substringAfter("private fun playIndex(").substringBefore("\n    }\n")
+        val job = play.substringAfter("work.submit<PlayResult?>({").substringBefore("}) { r ->")
+        assertTrue(job.contains("if (!stillWanted(g)) return@submit null\n                b = body.copy(uri = mintFor(cid), mint = null)\n                if (!stillWanted(g)) return@submit null"))
+        assertTrue("the mint before the transport's play (the cap and the hush inside it)", job.indexOf("mintFor(cid)") < job.indexOf("transport.play(b, startCap, room)"))
+        assertEquals("the job is the only caller", 2, Regex("""\bmintFor\(""").findAll(sonos).count())
+        assertEquals(1, Regex("""minter\.mint\(""").findAll(sonos).count())
+        assertTrue(sonos.substringAfter("private suspend fun mintFor(").contains("minter.mint(cid, MINT_TIMEOUT_MS, elapsedMs() + MINT_BUDGET_MS)"))
+        assertTrue(sonos.contains("const val MINT_TIMEOUT_MS = 6_000L") && sonos.contains("const val MINT_BUDGET_MS = 10_000L"))
+        assertTrue("the token reads thread-safe state", sonos.contains("private fun stillWanted(g: Long): Boolean = !closed && generation.get() == g && mayPlay()"))
+        assertTrue(sonos.contains("@Volatile\n    var closed: Boolean = false"))
+        // the hand-off can queue behind a mint: 25 s (design 26b §5.1), the tail and the switch's hold with it
+        assertTrue(service.contains("const val HANDOFF_MS = 25_000L"))
     }
 
     @Test
-    fun `the service, the screens and the Nytt notification read the phone's view until step 4b`() {
-        assertTrue(service.contains("store.snapshot().forRenderer(false) to store.db.downloads()"))
-        assertTrue(code("src/main/java/me/vibb/music/ui/MusicViewModel.kt").contains("store.snapshots().map { it.forRenderer(false) }"))
-        assertTrue(code("src/main/java/me/vibb/music/sync/NewNotifier.kt").contains("val n = count(snap.forRenderer(false))"))
-        // A tap's switch reads the renderer's view itself (26b §5.6; the merge of music-1b-sonos): on a room the
-        // whole series, as the room's queue after 4b, whatever snapshot the screens hold.
+    fun `every call site reads the snapshot of the renderer section 5_6 names (QA H2)`() {
+        // design 26b §5.6: the queue for whoever plays now; a room's look, adopt and switch the room's view;
+        // coming home the phone's; the standalone suspension the room's; the screens the shown renderer's
+        assertTrue(service.contains("private suspend fun loadForRenderer(): Pair<Snapshot, List<DownloadRow>> = load(remote = renderer.kind == RendererKind.SONOS)"))
+        assertTrue(service.contains("store.snapshot().forRenderer(remote) to store.db.downloads()"))
+        fun body(start: String) = service.substringAfter(start).substringBefore("\n    }\n")
+        for (f in listOf("private suspend fun playEntry(", "private suspend fun playItem(", "private suspend fun restore(")) {
+            assertTrue(f, body(f).contains("= loadForRenderer()"))
+        }
+        assertTrue(body("private suspend fun lookAtRoom(").contains("val (snap, rows) = load(remote = true)"))
+        assertTrue(body("private suspend fun toRoom(").contains("val (snap, rows) = load(remote = true)"))
+        assertTrue(body("private suspend fun comeHome(").contains("val (snap, rows) = load(remote = false)"))
+        assertEquals("the six call sites and loadForRenderer's own, no other read", 7, Regex("""(?<![.\w])load(ForRenderer)?\(""").findAll(service).count() - 2)
+        val suspension = code("src/main/java/me/vibb/music/sonos/SonosSuspension.kt")
+        assertEquals("entryMatcher and the bookmark: the stored room's view", 2, Regex("""store\.snapshot\(\)\.forRenderer\(true\)""").findAll(suspension).count())
+        assertEquals(2, Regex("""store\.snapshot\(\)""").findAll(suspension).count())
+        val vm = code("src/main/java/me/vibb/music/ui/MusicViewModel.kt")
+        assertTrue(vm.contains("combine(store.snapshots(), PlayerHub.state.map { it.output.kind == OutputKind.SONOS }.distinctUntilChanged()) { snap, onRoom ->\n        snap.forRenderer(onRoom)"))
+        assertTrue("the Nytt notification is the phone's", code("src/main/java/me/vibb/music/sync/NewNotifier.kt").contains("val n = count(snap.forRenderer(false))"))
+        // A tap's switch reads the renderer's view itself (26b §5.6; the merge of music-1b-sonos).
         val switch = code("src/main/java/me/vibb/music/ui/UiModel.kt").substringAfter("fun playSwitch(").substringBefore("\n}\n")
         assertTrue(switch.contains("val shown = snap.forRenderer(onRoom)"))
         assertTrue(switch.contains("val entry = shown.entries.firstOrNull { it.id == entryId } ?: return null"))
         assertTrue(switch.contains("val all = shown.order(entry)"))
         assertFalse("no other view of the entry in the switch", Regex("""snap\.(entries|order|visible)""").containsMatchIn(switch))
+        // phone -> room re-plans a Storytel series over the room's order at the current book; other entries keep a0.items
+        val toRoom = body("private suspend fun toRoom(")
+        assertTrue(toRoom.contains("if (a0.entry.source == Source.STORYTEL) {\n"))
+        assertTrue(toRoom.contains("a0.entry to homePlan(snap.order(a0.entry).map { it.key }, item.key, resumeFrom(a0.positions[item.key]))"))
+        // room -> phone with a book not on the phone: nothing starts, "Ikke lastet ned"
+        val home = body("private suspend fun comeHome(")
+        val absent = home.substringAfter("if (a0.entry.source == Source.STORYTEL && item.key !in order) {").substringBefore("}")
+        assertTrue(absent.contains("if (!quiet) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)"))
+        assertTrue(absent.contains("return"))
+        assertFalse(absent.contains("start("))
+        assertTrue(home.indexOf("item.key !in order") < home.indexOf("start(a, plan, play = play)"))
+    }
+
+    @Test
+    fun `every write of renderer json's uri goes through storedUri - a Storytel book's marker, never its signed URL (M1)`() {
+        // design 26b §5.3: RendererChoice's three writers go through storedUri; nothing else constructs or copies one with a uri
+        val choice = code("src/main/java/me/vibb/music/sonos/RendererChoice.kt")
+        for (w in listOf("fun played(", "fun followed(", "fun adopted(")) {
+            assertTrue(w, choice.substringAfter(w).substringBefore("\n\n").contains("storedUri("))
+        }
+        for (f in mainSources()) {
+            val text = code(f.path.substringAfter("music/app/"))
+            for (line in text.lines()) {
+                val writes = Regex("""(RendererChoice\(|\.copy\()[^\n]*\buri = """).containsMatchIn(line)
+                if (writes && f.name != "SonosController.kt") assertTrue("${f.name}: $line", line.contains("storedUri("))
+            }
+        }
+        // the controller's only uri copy is the PlayBody the job hands the speaker (in memory)
+        assertTrue(sonos.contains("b = body.copy(uri = mintFor(cid), mint = null)"))
+        assertEquals(1, Regex("""\.copy\([^)\n]*\buri = """).findAll(sonos).count())
+        // the callers: a landed play, a follow, the adopt's rewrite (lookAtRoom, both branches)
+        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        assertTrue(renderer.contains("writeChoice { it.played(entry, itemKey, uri) }"))
+        assertTrue(service.contains("val adopted = choice.adopted(a.entry, a.items[index].key, uri)\n        if (adopted != choice) withContext(writer) { home.write(adopted) }"))
     }
 
     /** qa-26b-step3-code M1, L4: the lines that wire step 3's pure rules into the workers. */

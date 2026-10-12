@@ -308,4 +308,53 @@ class StorytelRulesTest {
         assertNull(durationByConsumableId(series(), uri, listOf(PlayItem(7, "331855", "HP2", null, false, null))))
         assertNull("scoped to Storytel entries", durationByConsumableId(entry(1), uri, queue))
     }
+
+    @Test
+    fun `the code a failed Sonos mint reports - the book's no_audio, the transient ones, the login's words`() {
+        assertNull(sonosMintCode(Mint.Url("https://cdn.example.invalid/a?consumableId=1&token=FAKE-SIG-1")))
+        assertEquals(NO_AUDIO, sonosMintCode(Mint.NoAudio(451)))
+        assertEquals("http_503", sonosMintCode(Mint.Failed(503)))
+        assertEquals("http_401", sonosMintCode(Mint.Failed(401)))
+        assertEquals("network", sonosMintCode(Mint.Unreachable("timeout")))
+        assertEquals("storytel_off", sonosMintCode(Mint.NotConfigured))
+        assertEquals("login_refused", sonosMintCode(Mint.Refused(0)))
+        assertEquals("login_failed", sonosMintCode(Mint.LoginFailed("no jwt")))
+    }
+
+    /** Books 1 and 3 of five on the phone; the bookmark on book 2, heard on a room (design 26b §5.6, QA H2). */
+    private val roomSnap = snapshot(
+        library(listOf(series())),
+        items(7, books, gone = books.toSet()),
+        downloads = listOf(done(7, "160661", url = "storytel:book:160661"), done(7, "160663", url = "storytel:book:160663")),
+        bookmarks = mapOf("e7" to ("160662" to 120_000L)),
+    )
+
+    @Test
+    fun `H2 - adopt of a book not on the phone keeps it playing - the room's view finds it, the phone's would stop it`() {
+        val entry = roomSnap.library!!.entries.single()
+        val live = "https://cdn.example.invalid/mp3/160662/abook.mp3?consumableId=160662&token=FAKE-SIG-3"
+        // lookAtRoom and adoptedQueue read forRenderer(true): adopted at book 2, zero commands
+        val plan = me.vibb.music.sonos.adoptPlan(entry, roomSnap.forRenderer(true).order(entry), books, false, live)!!
+        assertEquals(books, plan.keys)
+        assertEquals(1, plan.index)
+        // the phone's view has no book 2: no plan - which is lookAtRoom's stopUnadopted() (the kid's book stopped)
+        assertNull(me.vibb.music.sonos.adoptPlan(entry, roomSnap.forRenderer(false).order(entry), books, false, live))
+    }
+
+    @Test
+    fun `H2 - phone to room with books 1 and 3 of five on the phone puts all five on the room, at the current book and place`() {
+        val entry = roomSnap.library!!.entries.single()
+        val phoneQueue = roomSnap.forRenderer(false).order(entry).map { it.key }
+        assertEquals(listOf("160661", "160663"), phoneQueue)
+        // toRoom's Storytel re-plan: the room's order, the current book first, at its place (homePlan)
+        val plan = homePlan(roomSnap.forRenderer(true).order(entry).map { it.key }, "160663", 300_000)
+        val room = me.vibb.music.sonos.PlayBodies.speakerPlan(plan) { k -> roomSnap.item(7, k)?.let { me.vibb.music.sonos.PlayBodies.speakerPlayable(entry, it) } == true }!!
+        assertEquals(listOf("160663", "160664", "160665", "160661", "160662"), room.keys)
+        assertEquals(0, room.startIndex)
+        assertEquals(300_000L, room.startPosMs)
+        // 1b's plan over the phone's queue would have held two books (and the room's natural end cleared the rest's places)
+        assertEquals(2, phoneQueue.size)
+        // room -> phone with book 2 playing: the phone's view has no book 2 - comeHome starts nothing ("Ikke lastet ned")
+        assertFalse("160662" in phoneQueue)
+    }
 }

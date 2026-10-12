@@ -1,10 +1,16 @@
 package me.vibb.music.sonos
 
+import kotlinx.coroutines.CancellationException
+import me.vibb.music.logic.durationByConsumableId
+import me.vibb.music.logic.sonosMintCode
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.PauseCause
 import me.vibb.music.playback.RendererState
+import me.vibb.music.storytel.Mint
+import me.vibb.music.storytel.StorytelEndpoints
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -13,8 +19,9 @@ import kotlin.math.roundToInt
  * fields and methods: `_sonos_position`, `_sonos_bookmark_now`, `_sonos_play_entry`, `sonos_step` and
  * its worker, `seek` and `_sonos_seek_worker`, `_sonos_command`, `pause`, `unpause`, `play`'s same-tile
  * shortcut, `_sonos_stream_moved`, `_sonos_poller`'s tick, `_renderer_to_box`'s first half, and
- * `status`'s renderer fields; MIT License, Copyright (c) 2026 palchrb), reimplemented in Kotlin under
- * the GPL-3.0 (or later) - see NOTICE.md. Design 26a §3.2, §4.2-§4.6, §4.8, §5.2.
+ * `status`'s renderer fields; `_sonos_body`'s Storytel branch and `_sonos_known_duration`; MIT
+ * License, Copyright (c) 2026 palchrb), reimplemented in Kotlin under the GPL-3.0 (or later) - see
+ * NOTICE.md. Design 26a §3.2, §4.2-§4.6, §4.8, §5.2; design 26b §5.1-§5.4 (Storytel on a room).
  *
  * Main-thread state (design 26a §0, QA M2): every method runs on the main thread and returns at once;
  * the SOAP goes through [SonosWork] (the actor) and its result comes back to the main thread in the
@@ -49,16 +56,41 @@ interface SonosStore {
     fun save(index: Int, itemKey: String, posMs: Long, durationMs: Long?, shownDurationMs: Long?, force: Boolean)
 }
 
+/**
+ * A Storytel book's signed CDN URL, minted at the last moment (design 26b §4.2's one signature:
+ * `StorytelAccount.mint`, interruptible on IO). Called only inside a play's actor job; never throws but
+ * for its caller's cancellation, which a room's actor never does (qa-26b-merge-code Low 1).
+ */
+fun interface StorytelMinter {
+    suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint
+}
+
+/**
+ * A Storytel play that got no URL (design 26b §5.1): [code] is [sonosMintCode]'s (`no_audio`,
+ * `http_<n>`, `network`, `storytel_off`, `login_refused`, `login_failed`) or `address` (a minted URL
+ * a speaker mustn't fetch). 1b's failed play: nothing was sent, no volume touched. No URL in the message.
+ */
+class StorytelUnavailable(val code: String) : SonosException("storytel url unavailable: $code")
+
 /** What the controller tells its renderer. */
 interface SonosHost {
     /** The state moved: refresh the player and report (on the main thread; maybe inside a player handler). */
     fun changed()
 
-    /** A play landed: renderer.json learns the built uri (what a later adopt compares against). */
+    /**
+     * A play landed: renderer.json learns the built uri (what a later adopt compares against) - for a
+     * Storytel book its marker, never the signed URL ([me.vibb.music.logic.storedUri], design 26b §5.3).
+     */
     fun played(itemKey: String, uri: String) {}
 
-    /** Migration follow: renderer.json gets the new room (after the adopt, never before). */
-    fun followed(uid: String, name: String?) {}
+    /**
+     * Migration follow: renderer.json gets the new room (after the adopt, never before), and the uri
+     * the adopt went out with for the item [itemKey] (through `storedUri`, as [played]).
+     */
+    fun followed(uid: String, name: String?, itemKey: String?, uri: String) {}
+
+    /** A Storytel play got no URL (design 26b §5.1): `no_audio` is the book's item error. */
+    fun storytelUnavailable(itemKey: String, code: String) {}
 
     /** The sleep ramp runs from [volume] (null: it ended, the volume is back). */
     fun ramp(volume: Int?) {}
@@ -130,8 +162,16 @@ class SonosController(
      * room on its own): a start caps them all (design 26a §5.3, qa-26a-corrections M2).
      */
     private val members: (String) -> List<String> = { listOf(it) },
+    /** A Storytel book's URL, minted inside its play's actor job (design 26b §5.1). */
+    private val minter: StorytelMinter = StorytelMinter { _, _, _ -> Mint.NotConfigured },
+    /** Design 26b §4.6 (d): the debug switch's fake on 10.0.2.2 may hand the speaker a private literal. */
+    private val privateMintAllowed: () -> Boolean = { StorytelEndpoints.privateMintAllowed() },
 ) {
-    /** The room: the uid we command (a group by its coordinator), and its label. Migration follow moves them. */
+    /**
+     * The room: the uid we command (a group by its coordinator), and its label. Migration follow moves
+     * them. Volatile: a play job behind a mint reads it off the main thread through [mayPlay] (the scope's belt).
+     */
+    @Volatile
     var uid: String = uid
         private set
     var name: String? = name
@@ -152,7 +192,11 @@ class SonosController(
     var session: Boolean = false
         private set
 
-    /** After a hand-off or a release: nothing is sent or written any more. */
+    /**
+     * After a hand-off or a release: nothing is sent or written any more. Volatile: a play job checks
+     * it off the main thread after its mint (design 26b §5.1, M6).
+     */
+    @Volatile
     var closed: Boolean = false
         private set
 
@@ -166,8 +210,13 @@ class SonosController(
     /**
      * Bumped by everything that supersedes a play in flight (a load, a clear, a step, a new play): a
      * result of an older generation only says what the speaker now holds (qa-26a-step3a-code H2).
+     * Written on the main thread only; an [AtomicLong] so a play job behind a mint reads it on IO (the
+     * job's token, design 26b §5.1, M6).
      */
-    private var gen = 0
+    private val generation = AtomicLong()
+    private var gen: Long
+        get() = generation.get()
+        set(value) = generation.set(value)
 
     /** A play of ours went out to this uid and succeeded, and no Stop, hand-off or disarm since. */
     var ownsSpeaker: Boolean = false
@@ -744,8 +793,18 @@ class SonosController(
         val target = uid
         val room = if (startCap != null) members(target) else emptyList()
         val volSet = volSets
-        work.submit({
-            var result = transport.play(body, startCap, room)
+        val cid = body.mint
+        work.submit<PlayResult?>({
+            var b = body
+            if (cid != null) {
+                // design 26b §5.1 (M6): the token before the mint - a job superseded while it queued never
+                // mints - and again after it, right before SetAVTransportURI: a step, a release or a
+                // suspension during the mint's seconds leaves nothing sent. A dropped job is null.
+                if (!stillWanted(g)) return@submit null
+                b = body.copy(uri = mintFor(cid), mint = null)
+                if (!stillWanted(g)) return@submit null
+            }
+            var result = transport.play(b, startCap, room)
             if (restore != null) {
                 try {
                     transport.volume(restore, target)
@@ -758,11 +817,13 @@ class SonosController(
             result
         }) { r ->
             try {
+                (r.exceptionOrNull() as? StorytelUnavailable)?.let { host.storytelUnavailable(item.key, it.code) }
                 if (closed) {
                     Unit
                 } else if (g != gen) {
                     // superseded (a newer load, step or play): only what the speaker holds now
                     r.onSuccess { res ->
+                        if (res == null) return@onSuccess // dropped by its token: nothing went out
                         playing = Playing(entryId, if (entry?.id == entryId) items.indexOfFirst { it.key == item.key } else -1, item.key, res.uri)
                         ownsSpeaker = true
                         tookVolume(res, volSet)
@@ -770,7 +831,7 @@ class SonosController(
                     }
                     r.onFailure { host.log("sonos: a superseded play failed (${it.javaClass.simpleName})") }
                 } else {
-                    r.fold({ played(idx, item, it, startS, volume, volSet) }, { failed(why, it) })
+                    r.fold({ res -> if (res == null) dropped(idx, startS, deliberate) else played(idx, item, res, startS, volume, volSet) }, { failed(why, it) })
                 }
             } catch (t: Exception) {
                 host.log("sonos: play result failed (${t.javaClass.simpleName})")
@@ -779,6 +840,54 @@ class SonosController(
                 host.changed()
             }
         }
+    }
+
+    /**
+     * The job's token, read on IO by a play job behind a mint (design 26b §5.1, M6): no release or
+     * hand-off since ([closed]), nothing newer pressed (the [generation] it was queued at), and playing
+     * still allowed ([mayPlay]: `playAllowed(suspendedNow())` and the room scope's belt, both safe off main).
+     */
+    private fun stillWanted(g: Long): Boolean = !closed && generation.get() == g && mayPlay()
+
+    /**
+     * The late mint (design 26b §5.1, vibb `_sonos_body`'s Storytel branch): one URL per play, the asset
+     * call within [MINT_TIMEOUT_MS] (vibb's `timeout=6`), the whole mint - the login and the wait for its
+     * lock included - within [MINT_BUDGET_MS]; a [Mint.Url] (already `StorytelApi.mintedUrl`'s canonical
+     * form) only through [PlayBodies.mintedDropReason]. Anything else is [StorytelUnavailable]: 1b's failed
+     * play - nothing is sent and no volume touched (the cap and the hush are inside `transport.play`).
+     * Never another exception (vibb `storytel_sonos.py` 4); the actor never cancels a job, so a
+     * cancellation here is the actor's own end and goes on up.
+     */
+    private suspend fun mintFor(cid: String): String {
+        val mint = try {
+            minter.mint(cid, MINT_TIMEOUT_MS, elapsedMs() + MINT_BUDGET_MS)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Mint.Unreachable("minter")
+        }
+        val url = (mint as? Mint.Url)?.url ?: throw StorytelUnavailable(sonosMintCode(mint) ?: "network")
+        PlayBodies.mintedDropReason(url, privateMintAllowed())?.let { why ->
+            host.log("sonos: the minted URL for $cid can't go to a speaker ($why)")
+            throw StorytelUnavailable("address")
+        }
+        return url
+    }
+
+    /**
+     * A play of the current generation its token dropped after the mint (design 26b §5.1): playing
+     * stopped being allowed meanwhile (a time rule's suspension). Nothing went out - no failed-play path,
+     * no refusal: the item waits for the next play at its place, as a skip that may not play does.
+     */
+    private fun dropped(idx: Int, startS: Double, deliberate: Boolean) {
+        host.log("sonos: a play dropped after its mint - playing isn't allowed now")
+        pending = null
+        optTr = null
+        index = idx
+        startPosMs = (startS * 1000).toLong()
+        deliberateStart = deliberate
+        startPending = true
+        if (!ownsSpeaker) session = false
     }
 
     private fun restoredBy(volume: Int?) {
@@ -927,7 +1036,11 @@ class SonosController(
         var s = polled
         var fromListing = false
         if (s.durS == null || s.durS == 0.0) {
-            val listed = playing?.takeIf { s.ours }?.let { pl -> items.getOrNull(pl.index)?.takeIf { it.key == pl.itemKey }?.durationMs }
+            // design 26b §5.4, vibb's "authoritative first" (`_sonos_known_duration`): a Storytel book's length
+            // by the snapshot's consumableId - exact, also for a stream we didn't start (an adopt, the speaker's
+            // own Play); flagged like every listing length (never decides "heard to the end")
+            val known = entry?.let { durationByConsumableId(it, s.uri, items) }
+            val listed = known ?: playing?.takeIf { s.ours }?.let { pl -> items.getOrNull(pl.index)?.takeIf { it.key == pl.itemKey }?.durationMs }
             val prev = snap
             if (listed != null) {
                 s = s.copy(durS = listed / 1000.0)
@@ -964,7 +1077,7 @@ class SonosController(
                 name = mv.name
                 volOpt = null // new speaker, new volume world
                 playing = playing?.let { Playing(it.entryId, it.index, it.itemKey, mv.uri) }
-                host.followed(mv.uid, mv.name)
+                host.followed(mv.uid, mv.name, playing?.itemKey, mv.uri)
                 host.log("sonos: stream moved to ${mv.name} (${mv.uid}) - following")
             }
             r.onFailure { host.log("sonos: adopt failed (${it.javaClass.simpleName}) - retried next tick") }
@@ -1257,6 +1370,17 @@ class SonosController(
 
         /** The sleep ramp's step (§5.2). */
         const val RAMP_STEP_MS = 1_000L
+
+        /** A Storytel mint on a room (design 26b §5.1): the asset call (vibb `asset_url(id, timeout=6)`). */
+        const val MINT_TIMEOUT_MS = 6_000L
+
+        /**
+         * ... and the whole mint, the login and the wait for its lock included. Every job behind it in the
+         * room's actor - a poll, a pause, a volume key, a hand-off - waits up to this long (the actor is
+         * serial and never cancels a job): accepted, as the hand-off's budget (`HANDOFF_MS`) and the
+         * actor's drain (`SonosActor.DRAIN_MS`) cover it (design 26b §5.1, the merge's 4b list).
+         */
+        const val MINT_BUDGET_MS = 10_000L
 
         private const val FAR_PAST = -1_000_000_000_000L
     }

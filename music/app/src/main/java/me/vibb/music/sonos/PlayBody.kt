@@ -3,23 +3,29 @@ package me.vibb.music.sonos
 import me.vibb.music.logic.QueuePlan
 import me.vibb.music.logic.isPrivateAddress
 import me.vibb.music.logic.publicOnly
+import me.vibb.music.logic.redactUri
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
+import me.vibb.music.model.Source
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.InetAddress
 
 /*
  * What a play hands the speaker, and which items a speaker can play at all, ported from palchrb/vibb
- * `pi/daemon.py` (`_sonos_body`, `sonos_start_target`'s filter; MIT License, Copyright (c) 2026
- * palchrb), reimplemented in Kotlin under the GPL-3.0 (or later) - see NOTICE.md. Design 26a §2.5,
- * §4.2. Pure; PlayBodyTest.
+ * `pi/daemon.py` (`_sonos_body` with its Storytel branch, `sonos_start_target`'s filter and its
+ * Storytel exemption; MIT License, Copyright (c) 2026 palchrb), reimplemented in Kotlin under the
+ * GPL-3.0 (or later) - see NOTICE.md. Design 26a §2.5, §4.2; design 26b §5.1. Pure; PlayBodyTest.
  */
 
 /** One `/play` body (`tests/sonos_contract.py` PLAY_URL / PLAY_NRK). */
 data class PlayBody(
     val uid: String,
     val kind: Kind,
-    /** `url`: the audio; `nrk_program`: the radio.nrk.no series page (the speaker gets the built uri). */
+    /**
+     * `url`: the audio; `nrk_program`: the radio.nrk.no series page (the speaker gets the built uri). A
+     * Storytel book's is empty until the play's actor job mints it ([mint]); then the signed CDN URL -
+     * a bearer for that book, never logged or stored ([toString] cuts its query).
+     */
     val uri: String,
     val title: String?,
     val album: String?,
@@ -29,7 +35,18 @@ data class PlayBody(
     val artist: String? = null,
     val series: String? = null,
     val programId: String? = null,
-)
+    /**
+     * A Storytel book's consumable id: the URL is minted inside the room's actor job, right before
+     * `SetAVTransportURI` (design 26b §5.1, vibb "milliseconds before the SOAP /play"); null once
+     * minted, and for every other source.
+     */
+    val mint: String? = null,
+) {
+    /** Never the signed URL's token (design 26b §0, L9): the uri as [redactUri] prints it. */
+    override fun toString(): String =
+        "PlayBody(uid=$uid, kind=$kind, uri=${redactUri(uri)}, title=$title, album=$album, art=${art?.let(::redactUri)}, " +
+            "durationS=$durationS, startS=$startS, series=$series, programId=$programId, mint=$mint)"
+}
 
 private val NRK_SERIE = Regex("^https?://radio\\.nrk\\.no/serie/([a-z0-9_-]+)", RegexOption.IGNORE_CASE)
 
@@ -47,8 +64,14 @@ object PlayBodies {
      */
     fun build(entry: Entry, item: PlayItem, uid: String, startS: Double, art: String? = null, album: String? = entry.name): PlayBody? {
         if (speakerDropReason(entry, item) != null) return null
-        val speakerArt = art?.takeIf { it.startsWith("http") }
         val durationS = item.durationMs?.let { it / 1000.0 }
+        if (entry.source == Source.STORYTEL) {
+            // design 26b §5.1: the URL is minted in the play's actor job (`mint`), the shelf's length rides
+            // along (a speaker reads 0:00 for an extension-less signed URL, vibb 9), and no art: the
+            // listing's is a hash the server serves only to the phone's bearer (design 26a §9).
+            return PlayBody(uid, Kind.URL, "", item.title, album, null, durationS, startS, mint = item.key)
+        }
+        val speakerArt = art?.takeIf { it.startsWith("http") }
         val slug = if (entry.nrkSerie) nrkSeriesSlug(entry.target) else null
         if (slug != null) {
             // speakerDropReason guarantees a program id (the item key) here
@@ -72,14 +95,35 @@ object PlayBodies {
      */
     fun speakerDropReason(entry: Entry, item: PlayItem): String? {
         if (item.fileId != null) return "own file"
+        // design 26b §5.1, vibb's exemption of the http-only filter (daemon.py 1693-1699): a Storytel book
+        // is listed without a url and minted per play - downloaded or not, a speaker fetches it from the
+        // CDN. Its URL's address is checked once it exists, in the play job ([mintedDropReason]).
+        if (entry.source == Source.STORYTEL) return null
         val url = item.url ?: return "withdrawn"
         val http = url.toHttpUrlOrNull() ?: return "not an http url"
         val nrkSeries = entry.nrkSerie && nrkSeriesSlug(entry.target) != null
         if (nrkSeries && item.key.isEmpty()) return "no program id"
         if (item.hls && !nrkSeries) return "hls"
-        if (publicOnly(entry) && privateLiteral(http.host)) return "private address"
-        if (tailnetLiteral(http.host)) return "tailnet address"
-        return null
+        return hostDropReason(http.host, publicOnly(entry))
+    }
+
+    /**
+     * The minted URL of a Storytel book, checked in the play's actor job right after the mint (design
+     * 26b §5.1; the merge's 4b list): what [speakerDropReason] checks of any url - an http(s) URL as
+     * OkHttp reads it, never a private literal (Storytel's CDN is public) unless [privateAllowed] (the
+     * debug switch's fake on 10.0.2.2, design 26b §4.6 (d)), never a tailnet literal. Null: it may go
+     * to the speaker.
+     */
+    fun mintedDropReason(url: String, privateAllowed: Boolean): String? {
+        val http = url.toHttpUrlOrNull() ?: return "not an http url"
+        return hostDropReason(http.host, publicOnly = !privateAllowed)
+    }
+
+    /** The address half of the filter, one helper for a listed url and a minted one: a private literal when [publicOnly], a tailnet literal always. */
+    private fun hostDropReason(host: String, publicOnly: Boolean): String? = when {
+        publicOnly && privateLiteral(host) -> "private address"
+        tailnetLiteral(host) -> "tailnet address"
+        else -> null
     }
 
     fun speakerPlayable(entry: Entry, item: PlayItem): Boolean = speakerDropReason(entry, item) == null

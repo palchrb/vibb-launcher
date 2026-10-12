@@ -113,6 +113,21 @@ fun mintItemError(mint: Mint): String? = when (mint) {
 fun mintStopsRun(mint: Mint): Boolean =
     mint is Mint.NotConfigured || mint is Mint.Refused || mint is Mint.LoginFailed || (mint is Mint.Failed && mint.status == 401)
 
+/**
+ * Why a Sonos play of a Storytel book went out with no URL (design 26b §5.1): the code a failed mint
+ * reports - `no_audio` (locked, not in this country, gone: the item error), `http_<status>` and
+ * `network` (transient: the next play mints again), and the login's own words (`storytel_off`,
+ * `login_refused`, `login_failed`: the account's state, which the report's `storytel` says). A [Mint.Url]
+ * is no failure (null).
+ */
+fun sonosMintCode(mint: Mint): String? = when (mint) {
+    is Mint.Url -> null
+    Mint.NotConfigured -> "storytel_off"
+    is Mint.Refused -> "login_refused"
+    is Mint.LoginFailed -> "login_failed"
+    is Mint.NoAudio, is Mint.Failed, is Mint.Unreachable -> mintItemError(mint)
+}
+
 /** `DISK_FLOOR`: no Storytel book starts below this much free space (vibb's own floor, Storytel's only). */
 const val STORYTEL_FREE_FLOOR = 1_500_000_000L
 
