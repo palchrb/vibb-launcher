@@ -1661,6 +1661,112 @@ the launcher's tests read none of the changed files, not re-run; the server's ch
 (`cargo test` re-run: 594 passed, 0 failures; one earlier run had 1 failure that
 didn't reproduce in two re-runs - a time-dependent test, not this change).
 
+## Merge of main with design 27 (2026-10-12)
+
+`origin/main` at `620e578` (design 27 and its QA fix round, 32 commits after `444ca58`) merged into `music-1b-sonos`
+as one merge commit, `89b78b5` (no rebase), with the adaptation and its tests in it; this section in the next commit.
+
+**What came in:** design 27 (`docs/design/27-music-episode-art.md`, `qa-27-code.md`): migration
+`0070_music_episode_art.sql` and the server's art pass (`music_sweep.rs`, `photos::MUSIC_ART`, `print`,
+`music::art_in_library` behind the existing covers route, `music_sources.rs`' 512 px pick); the listing's item `art`
+as the 64-hex hash of the item's own 512 px JPEG (`server/testdata/music_listing.json` and the music copy); Room
+version 2 (`items.artHash`, `AutoMigration(1, 2)` with `ReapplyListings`, `schemas/.../2.json`); `wantArt` appended
+to `IMusicBridge.aidl` in both apps and `want_art` in both `bridge_contract.json` copies; the launcher's courier
+(`MusicPlan.artToFetch`/`artToDelete`, `MusicStore`'s want set, `MusicSync.syncArt`, `MusicBridgeService.wantArt`); the
+music app's `logic/EpisodeArt.kt`, `sync/ArtPlan.kt`, `ui/EpisodeCarousel.kt`, `ui/Fit.kt`'s player art, `Cover`'s
+fallback, `Store.coversVersion`, and in `PlaybackService` the `SKIP_TO`/`THEN_SKIP_TO` commands, the lazy art map and
+`refreshArt`'s in-place swap. Also main's lock and wallpaper fixes (`PinLockRuntime`, `RefrontPolicy`,
+`LockTaskChrome`, `GlancePanel`'s subtitles, `WallpaperInk`, `AdminPolicies`, `AppEnforcer`). `MusicLockPanel` and
+`MusicSessions` didn't change (the lock's media row went at `0d74c1b`, before the previous merge).
+
+**Conflicts and how they were resolved:**
+- `PlaybackService.kt` (ten hunks): this branch's renderer axis everywhere; main's new code moved onto it (below).
+  `Active` (internal since step 2) takes main's lazy `MutableMap<String, Uri>` art; the imports this branch had
+  dropped with ExoPlayer (`showsPlaying`, `sleepVolume`, `ItemMediaSourceFactory`) stay out.
+- `PlayerHub.kt`: `ROOMS_REFRESH`/`ROOMS_RESCAN` and `SKIP_TO`/`ARG_FORWARD`/`THEN_SKIP_TO` all kept; `ALL` lists them
+  all; `SKIP_TO` joins `MOVES`.
+- `logic/Switch.kt`: `requestStands` keeps this branch's bound (`nowMs < atMs || nowMs >= holdEndsAt(request,
+  waiting)`) and takes main's `via` (`current != request.from && current !in request.via`).
+- `ui/MusicRoot.kt`, `ui/PlayerScreen.kt`: main's `numberOf(item)` is `playerNumberOf(s, n, item)` (new in `UiModel`,
+  beside `playerNumber`, the same count); the room's `rendererState` line and main's `PlayerArt`/`Crossfade` block both
+  kept; the imports unioned.
+- `ui/UiModel.kt` (merged by itself, but broken): main's `toIndex` lost the `onRoom` this branch's `skipSwitch` had; it
+  takes `onRoom` now, and so does `swipeSwitch`.
+- `music/CLAUDE.md`, `FitTest`, `SwitchViewTest`: both sides kept.
+- Pins: `EpisodeCarouselTest`'s QA L10 pin (main's `restoring` lock) now reads the `switching` lock (below);
+  `GuardsTest`'s `MOVES` and its count of switch call sites (four, with `swipeSwitch`).
+- Byte-identical as before: the AIDL (main's: this branch appended nothing), `bridge_contract.json` (main's `want_art`
+  beside this branch's `volume_cap_pct` and call commands), the music snapshots and the server's.
+
+**The adaptation:**
+- **`SKIP_TO` through the renderer.** `skipTo` counts in `renderer.currentIndex()`/`itemCount()` over `Active.items`
+  (on a room the speaker-playable queue, the carousel's pages since `hub.keys` are those items) and goes through
+  `goTo` -> `renderer.seekTo(index, startPos)`; on a room that is `SonosController.stepTo` (from 0 while it plays, the
+  place while paused, open question 3a (a)) - never ExoPlayer. An unplayable target skips on in the swipe's
+  direction as on the phone. `THEN_SKIP_TO` runs from `restoreThen` like `THEN_NEXT`. `SKIP_TO` is a custom command
+  like the others: behind `rendererReady` and under `switching`, which serialises a RESTORE + THEN_SKIP_TO with a
+  second swipe too, so main's own `restoring` mutex (QA L10) is gone. It is in `Commands.MOVES` (not `PLAYS`: a swipe
+  starts nothing), so a swipe made behind a room switch's hand-off holds the screens up to `SWITCH_WAIT_MAX_MS` like a
+  tap - the carousel's pending skip is that `PlayRequest`, read with `hub.waiting`.
+- **The swipe's switch on a room.** `swipeSwitch(..., onRoom)`: the item from 0 when the room plays, at its place
+  paused; "N av M" on the landing page counts the play order (`playerNumberOf`, items a speaker can't play included),
+  the same as the player's once it is there.
+- **`Switch.kt`.** Main's change was `PlayRequest.via` (quick swipes pass through an earlier target); it combines with
+  the waiting hold unchanged: a request passes through `via` within the 3 s hold or, waiting, the 25 s bound.
+- **The late picture.** `refreshArt` reaches the player through two new `Renderer` methods, `itemAt(index)` and
+  `replaceItem(index, item)`: the phone's is `exo.replaceMediaItem`; a room's replaces the session player's
+  `MediaItem` in `SonosRenderer.mediaItems` and re-reads its state (`invalidateState`) - no SOAP, the speaker's DIDL
+  keeps what it got. The notification, Home's card and the lock's tile (the platform session's metadata, and
+  `setNowPlaying`'s `artOrCover` at each report) show the episode's picture on a room as on the phone; the carousel's
+  art comes from the phone's own files either way. `sendWantArt` and `onItemChanged`'s `wantArtSoon`/`refreshArt`
+  follow the renderer's index. (`refreshArt` may give `Active.items` an item with a new `artHash`;
+  `SonosController.items` keeps its copy, which reads no art.)
+- **`MusicLockPanel` with a room.** It reads `MusicSessions.reading`: the music app's one platform session, whatever
+  renders it (`KidPlayer(renderer.player)`); nothing filters on the playback type, the position extrapolates from the
+  speaker's poll (`measuredAt`), the art is the session metadata's. Unchanged; pinned.
+
+**Art to the speaker: no.** Design 27 made the listing's `art` a hash (§1.5: "the phones never needed the URL") and
+serves the picture only at `GET /api/devices/music/covers/{hash}`, bearer-authenticated and scoped to the device
+(`handlers/music_api.rs`), normally over the tailnet. A speaker sends no bearer and reaches no tailnet; the phone's
+copy is a file (`filesDir/music/covers/<hash>`), and the listing no longer carries the origin `art_url`. There is no
+LAN-reachable http URL for a hash, so `PlayBody` stays without art for every source (`PlayBodies.build`'s `art` is only
+ever null from the controller, and a hash isn't http). Nothing was invented. What would be needed, for a later
+design: either the listing carrying the source's own public `art_url` next to the hash (a contract change in both
+snapshot copies; the speaker fetches a public URL as it fetches the audio, so the `publicOnly`/tailnet filter of §4.2
+applies to it), or an unauthenticated, signed, short-lived picture URL the server serves on the LAN (no such route
+exists, and the server isn't on the speaker's LAN in the usual setup).
+
+**Tests after the merge** (local Rust 1.97, JDK 17): server `cargo test` **621 passed, 0 failures** (594 before; the
+`parent_pin` time-dependent test passed this run), `cargo fmt --check` clean, `cargo clippy --all-targets` the same 12
+warnings, none in either branch's code; music `assembleDebug assembleRelease testDebugUnitTest lintDebug
+-PwarningsAsErrors=true` **450 tests, 0 failures** (411 before; 446 with the merge alone, +4 for the adaptation:
+`GuardsTest` the swipe and late art through the renderer, `SwitchTest` quick swipes while waiting, `SwitchViewTest` a
+swipe on a room, `PlayBodyTest` a hash never reaches the DIDL), lint 0 errors and the same 40 warnings; `python3 -I -B
+scripts/fake-sonos.py --selftest` OK; launcher `assembleDebug testDebugUnitTest` (the tsnet stub) **1035 tests, 0
+failures** (1012 before; +1, `MusicSuspensionGuardTest`: the lock's tile and Home's card read a room's session as the
+phone's); its `assembleRelease` needs `app/libs/tsnet.aar` (CI). Room stays at main's version 2: this branch adds no
+column.
+
+**For the Storytel branch (merging this next):** its abandoned step 4a (item art) is rebuilt on what 27 gives:
+- **Phone:** `PlayItem.artHash` means "the item's own art" (`ItemRow.artHash`, Room 2), and every surface already
+  does `artHash ?: entry.cover` - the carousel (`showsCarousel`: two different pictures on its pages, the entry's
+  cover counting as one), the session's artwork, `setNowPlaying` (`artOrCover`), Nytt, search. A book's own cover only
+  has to arrive as an item's `art` hash in its listing.
+- **Transport:** the hash's file comes through the existing courier: the music app's want set (`logic/EpisodeArt.kt`
+  `wantedArt`, `sync/ArtPlan.kt`), `wantArt` over the AIDL, the launcher's `syncArt` fetching
+  `GET /api/devices/music/covers/{hash}` (≤ 1 MB, hash-checked) into the shared covers dir; prune by the want set.
+- **Server, to widen:** `music::art_in_library` serves only `source IN ('nrk', 'rss')`, and the art pass's
+  `art_candidate` takes only `ok` items with a `url` and an `art_url` (a Storytel part is `ok` with `url` NULL, commit
+  `8159da2c`). Per-book covers need both widened (or the Storytel sweep sets `music_items.art_hash` itself, through
+  `photos::MUSIC_ART`'s store and lock), and the listing snapshot regenerated in both copies.
+- **Seams:** a Room bump is version 3 with its own `AutoMigration(2, 3)` (don't edit 2.json); the AIDL appends after
+  `wantArt` in both copies (`MusicPlanTest` counts the methods); migrations after 0071; `Actions.skipTo`,
+  `PlayerScreen(numberOf, ...)` and `Cover(..., fallback, content)` are main's signatures. The numbering seam is now
+  two functions in `UiModel.kt`: `playerNumber(snap, now)` and `playerNumberOf(snap, now, item)` (the carousel's
+  landing page), both over `listOrder`; the Storytel branch's `countedOrder` replaces the order behind both.
+- **Sonos:** a book on a room gets no art in the DIDL either (above); `SKIP_TO` on a Storytel queue on a room goes
+  through the same `goTo` -> `renderer.seekTo`.
+
 ## Release
 
 `music-v0.2.0-rc.1` is the user's tag, **on the merge commit on `main`** (`music.yml` refuses a tag whose commit isn't
@@ -1673,13 +1779,15 @@ Deploy order:
 1. **Server.** 3c's server part (migration **0071**, renumbered at the merge of main; the card, the library's
    `sonos_rooms`, the report's rooms, the event) rides in **0.24.0**: `server/Cargo.toml` says 0.24.0 on `main` and
    here (checked at the merge of main, 2026-10-12: the highest server tag is still `server-v0.19.0`), together with
-   main's 0065-0069. If `server-v0.24.0` is tagged before this branch lands, bump `server/Cargo.toml` (and `Cargo.lock`)
-   to 0.25.0 on `main` for the next one. **The 0070 hazard** (qa-26a-merge-code M1): 0070 is reserved for design 27
-   and still empty. If it lands on a server that has already run 0071, sqlx applies it out of order and
-   `startup::pre_migration_backup` - which compares only `MAX(version)` with the highest compiled one - takes no
-   pre-migration backup (design 22 §6's "no migration without its backup" broken, silently). So design 27's server
-   ships before or together with this one, or the backup check compares the set of applied versions (a main-session
-   change; documented here and in `server/CLAUDE.md`, not made). Not required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an
+   main's 0065-0070. If `server-v0.24.0` is tagged before this branch lands, bump `server/Cargo.toml` (and `Cargo.lock`)
+   to 0.25.0 on `main` for the next one. **0070 and 0071** (qa-26a-merge-code M1): 0070 is design 27's
+   (`0070_music_episode_art.sql`, on `main` since 2026-10-12, merged here), so a server built after this merge applies
+   0070 before 0071, in order. The hazard is left only for a build of this branch from before the merge of design 27
+   (0071 without 0070): on such a server sqlx would apply 0070 out of order and `startup::pre_migration_backup` - which
+   compares only `MAX(version)` with the highest compiled one - would take no pre-migration backup (design 22 §6). Never
+   deploy one; or the backup check compares the set of applied versions (a main-session change; documented here and in
+   `server/CLAUDE.md`, not made). Checked again at the merge of design 27: `server/Cargo.toml` says 0.24.0 on `main` and
+   here, the highest tag is still `server-v0.19.0`; 0.24.0 carries 0065-0071. Not required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an
    older server every room is allowed and the parent just has no card. Required before the parent can limit rooms,
    and the music catalog row (0.21.0+) before any **stable** `music-v*` (design 21 QA #11).
 2. **Launcher** (a `launcher-v*` on `main` after the merge), before or with the music RC: the `volume_cap_pct`
