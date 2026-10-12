@@ -70,6 +70,14 @@ class BuildChainTest {
                 assertTrue("min-wrapper-count: 2" in body)
             }
         }
+        // QA Low 6: this test reads music's wrapper, metadata and workflow, so a change to them
+        // alone must run the launcher's build too.
+        val filter = repo(".github/workflows/launcher.yml").readText()
+            .lineSequence().first { "git diff --name-only" in it && "grep -qE" in it }
+        for (path in listOf("music/gradle/wrapper/gradle-wrapper.properties", "music/gradle/verification-metadata.xml", ".github/workflows/music.yml")) {
+            val pattern = Regex(filter.substringAfter("grep -qE '").substringBefore("'; then"))
+            assertTrue("launcher.yml's filter covers $path", pattern.containsMatchIn(path))
+        }
     }
 
     /** L9: dependency verification (gradle/verification-metadata.xml): every artifact's SHA-256 is

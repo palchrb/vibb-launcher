@@ -66,8 +66,8 @@ keeps the music app's, the music app sends exactly those.
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
-  (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read, `music.yml` also
-  on the shared `server/testdata/music_*.json` and the launcher's copy of the bridge AIDL; `server-ci.yml`'s
+  (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
+  shared snapshots, `music/gradle/` and `music.yml`; `music.yml` also on the shared `server/testdata/music_*.json` and the launcher's copy of the bridge AIDL; `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in
   `server-ci.yml` and `server-release.yml` (security review L9) - move them on deliberately, both files at once.
