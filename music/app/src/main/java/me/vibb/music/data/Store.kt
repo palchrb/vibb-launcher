@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.update
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.coversToDelete
@@ -85,7 +86,7 @@ class Store private constructor(context: Context) {
     val coversVersion: StateFlow<Long> = coversVersionState.asStateFlow()
 
     fun coversChanged() {
-        coversVersionState.value += 1
+        coversVersionState.update { it + 1 } // from the sync, the player and the screens' threads
     }
 
     /**

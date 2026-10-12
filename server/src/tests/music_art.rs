@@ -1179,3 +1179,49 @@ fn the_log_line_counts_own_and_same() {
     assert_eq!(report.art_line(), ", art 7 (3 own, 4 same)");
     assert_eq!(sweep::CheckReport::default().art_line(), "");
 }
+
+/// Not every music item came from NRK or RSS: a Storytel part is `ok` with no source URL (and no
+/// picture URL). The art pass skips such rows, and they take no place in the window.
+#[test]
+fn items_without_a_source_url_or_a_picture_url_are_skipped() {
+    let row = |url: Option<&str>, art: Option<&str>, state: &str| sweep::Item {
+        key: "part-1".to_string(),
+        state: state.to_string(),
+        title: Some("Del 1".to_string()),
+        url: url.map(str::to_string),
+        hls: false,
+        duration_ms: None,
+        art_url: art.map(str::to_string),
+        published_at: None,
+        available_until: None,
+        first_seen_at: "2026-10-12T00:00:00.000Z".to_string(),
+        attempts: 0,
+        reported_at: None,
+        rechecked_at: None,
+        recheck: false,
+        art_hash: None,
+        art_from: None,
+        art_state: None,
+        art_print: None,
+        art_at: None,
+        art_fetched_at: None,
+        art_fails: 0,
+    };
+    let audio = Some("https://media.example.org/1.mp3");
+    let art = Some("https://media.example.org/1.jpg");
+    assert!(sweep::art_candidate(&row(audio, art, "ok")));
+    assert!(
+        !sweep::art_candidate(&row(None, None, "ok")),
+        "a Storytel part"
+    );
+    assert!(
+        !sweep::art_candidate(&row(None, art, "ok")),
+        "no source URL"
+    );
+    assert!(
+        !sweep::art_candidate(&row(audio, None, "ok")),
+        "no picture of its own"
+    );
+    assert!(!sweep::art_candidate(&row(audio, art, "gone")));
+    assert!(!sweep::art_candidate(&row(audio, art, "pending")));
+}

@@ -2320,6 +2320,13 @@ fn series_picture(print: i64, refs: &[i64]) -> bool {
         .any(|reference| crate::photos::same_picture(print, *reference))
 }
 
+/// Whether an item takes part in the art pass at all: listed (`ok`), with a source URL and a
+/// picture URL. Not every item came from NRK or RSS - a Storytel part is `ok` with no `url` - and
+/// those are skipped without taking a place in [ART_WINDOW].
+pub fn art_candidate(item: &Item) -> bool {
+    item.state == "ok" && item.url.is_some() && item.art_url.is_some()
+}
+
 /// Whether an item's picture is to be tried now (§1.3): a URL not tried yet, or a failure a day
 /// old with tries left.
 fn art_due(item: &Item, now: DateTime<Utc>) -> bool {
@@ -2521,7 +2528,7 @@ async fn art_pass(
     let this_check = stamp(now);
     let (new, older): (Vec<usize>, Vec<usize>) = order
         .into_iter()
-        .filter(|at| plan.items[*at].state == "ok")
+        .filter(|at| art_candidate(&plan.items[*at]))
         .take(ART_WINDOW)
         .partition(|at| plan.items[*at].first_seen_at == this_check);
     let backlog = plan.art.backlog;
