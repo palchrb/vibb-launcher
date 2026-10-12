@@ -546,7 +546,7 @@ pub async fn due(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<Vec<Schedu
 
 /// One `music_items` row: `pending` (not resolved yet), `ok` (listed and playable) or `gone`
 /// (listed with `url: null`, withdrawn at the source). A Storytel book (design 26b §2.4, migration
-/// 0066's note) is `ok` with `url` NULL: listed and playable, the phone mints its audio URL itself
+/// 0072's note) is `ok` with `url` NULL: listed and playable, the phone mints its audio URL itself
 /// (a signed URL expires, so it is never listed).
 #[derive(sqlx::FromRow, Debug, Clone, PartialEq, Eq)]
 pub struct Item {

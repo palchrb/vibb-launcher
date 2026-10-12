@@ -757,7 +757,7 @@ impl Library {
 /// at its `?`: a Storytel entry only while this phone's `music_storytel` switch is on and a login is
 /// stored. The library, the listing route and the cover route all use it, so the switch off or the
 /// login cleared drops the entries from the phone (and phase 1's prune deletes the books); the
-/// revision triggers of migration 0066 rebuild the cached libraries.
+/// revision triggers of migration 0072 rebuild the cached libraries.
 #[macro_export]
 macro_rules! storytel_gate {
     () => {

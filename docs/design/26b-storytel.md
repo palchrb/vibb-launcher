@@ -316,13 +316,20 @@ sweep lists it (and reports `storytel_off` without a login).
 - Revision triggers (migration, §2.8) on the switch and on the login's presence, so the cached library is rebuilt.
 - The policy's `storytel_generation` is unchanged (phase 1).
 
-### 2.8 Migration `0066_music_storytel.sql` (renumbered after the final rebase; main ends at 0064, 1b holds 0065)
+### 2.8 Migration `0072_music_storytel.sql` (renumbered at the merge of music-1b-sonos and main: main holds 0065-0069, 0070 is reserved for design 27, 1b holds 0071)
 ```sql
 -- The server's own Storytel session (design 26b §2.1): the refused-login cooldown (vibb
 -- storytel-login-refused.json) for the login generation it refused, and the card's last outcome
 -- (a code, never text: `login_error`, with its time `login_error_at`).
--- Also from 0066 on: a Storytel entry's music_items rows are state 'ok' with url NULL (listed and
+-- Also from 0072 on: a Storytel entry's music_items rows are state 'ok' with url NULL (listed and
 -- playable; the phone mints the audio URL), which 0051's comment ("ok (it has a URL)") predates.
+--
+-- Written as 0066 on the branch `music-2-storytel`; renumbered 0072 at the merge of music-1b-sonos
+-- (with main) on 2026-10-12: main's 0065-0069 are the security wave's and design 25's, 0070 is
+-- reserved for design 27 by the main session, 0071 is 26a's Sonos rooms. If 0070 or 0071 reaches a
+-- server after this one ran, sqlx applies it out of order and `startup::pre_migration_backup`
+-- (MAX(version) only) takes no backup first: 26a's and design 27's servers ship before or together
+-- with this one (server/CLAUDE.md, "Data model").
 ALTER TABLE music_storytel ADD COLUMN login_refused_at TEXT;
 ALTER TABLE music_storytel ADD COLUMN login_refused_generation INTEGER;
 ALTER TABLE music_storytel ADD COLUMN login_ok_at TEXT;
@@ -337,7 +344,7 @@ WHEN (OLD.ciphertext IS NULL) IS NOT (NEW.ciphertext IS NULL)
 BEGIN UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1; END;
 ```
 `music_entries.source` already allows `storytel` (0049). `music_items.state 'ok'` with `url NULL` is new usage, not a
-schema change: the note goes into 0066's header (above) and `music_sweep::Item`'s doc. **Applied migrations are never
+schema change: the note goes into 0072's header (above) and `music_sweep::Item`'s doc. **Applied migrations are never
 edited** (QA H1): sqlx checks the checksum of every applied file, so one changed comment in 0051 stops every upgraded
 server at start, and no test catches it (they all run on fresh databases). Stamps are `Sweep::now()` text (the tests'
 fake clock). The JWT and the shelf are never stored.
@@ -794,7 +801,7 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    `S/main.rs` (`AppState.storytel`, the routes `GET /music/storytel`, `POST /music/storytel/add`, the tracing filter's
    `reqwest=info` floor, L10), `S/handlers/music.rs` (the probe with its 45 s bound, clear, the card, the picker, add
    with a `Vec` form, the entry page's choices, cache 0 -> -1), `templates/music.html`, `music_storytel.html`,
-   `music_entry.html`, `migrations/0066_music_storytel.sql`, `Cargo.toml` (`aes = "0.9"`), `server/testdata/storytel/`,
+   `music_entry.html`, `migrations/0072_music_storytel.sql` (0066 when built), `Cargo.toml` (`aes = "0.9"`), `server/testdata/storytel/`,
    `S/tests/music_storytel.rs` (+ `tests/mod.rs`, `CannedFetch`'s request record). The library, the sweep and the cards
    still leave Storytel out. Acceptance: the server suite green; the PWA pages at 360 px (no horizontal scroll, a 400 by
    its field, no jump). Owed [device check]: the real login saved (accepted, "N series"), a wrong password refused with
@@ -858,7 +865,7 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    check]: the Sonos items below.
 5. **Docs and release.** `music/CLAUDE.md` (the `storytel/` package, download-only, visibility per renderer, the mint
    rules and the job's token, the secrets rule, the debug switch, the fake, Storytel over mobile data with the parent's
-   switch), `server/CLAUDE.md` (the Storytel client, the picker, the listing, the gates, migration 0066, the `reqwest`
+   switch), `server/CLAUDE.md` (the Storytel client, the picker, the listing, the gates, migration 0072, the `reqwest`
    log floor), `launcher/CLAUDE.md` (one line: Storytel listings ride the courier unchanged), root `CLAUDE.md`
    (`scripts/fake-storytel.py`, `music.yml`'s paths), `NOTICE.md` (the ports of `storytel.py`, the Storytel parts of
    `library.py`, `content.py` and `daemon.py`, crediting vibb (MIT, palchrb) and its upstream storytel-player 1.3.0 by
@@ -971,11 +978,17 @@ commit), 3 (the phone's download path), 4a (one column), 4b (the Sonos wiring) -
 
 ## Release
 
-- **Server**: phase 2's server part (0066, the client, the picker, the listing) needs a version after whatever `main`
-  has tagged when this merges: today `server/Cargo.toml` is 0.24.0 untagged and 1b's 0065 rides in it; if 0.24.0 is
-  tagged first, bump `server/Cargo.toml` and `Cargo.lock` to the next minor. Renumber 0066 after the final rebase (main
-  ends at 0064, 1b holds 0065). Deploy the server first: an older server sends no Storytel entries, so an older or newer
-  music app simply has none.
+- **Server**: phase 2's server part (migration **0072**, the client, the picker, the listing) needs a version after
+  whatever `main` has tagged when this merges: today (checked 2026-10-12 at the merge of music-1b-sonos) `server/Cargo.toml`
+  is 0.24.0 untagged (the highest server tag is `server-v0.19.0`) and main's 0065-0069 and 1b's 0071 ride in it; if
+  0.24.0 is tagged first, bump `server/Cargo.toml` and `Cargo.lock` to the next minor. **The backup hazard** (as 26a's
+  Release section, qa-26a-merge-code M1): `startup::pre_migration_backup` compares only `MAX(version)` with the highest
+  compiled one, so a lower-numbered migration reaching a server that has already run 0072 - design 27's reserved 0070,
+  or 1b's 0071 if this branch's server were deployed without 1b's - is applied out of order by sqlx with no
+  pre-migration backup (design 22 §6's "no migration without its backup" broken, silently). So 1b's and design 27's
+  servers ship before or together with this one (this branch holds 0071 already), or the backup check compares the
+  set of applied versions (a main-session change; documented here and in `server/CLAUDE.md`, not made). Deploy the
+  server first: an older server sends no Storytel entries, so an older or newer music app simply has none.
 - **Launcher**: no code change; nothing to release for phase 2.
 - **Music**: `music-v0.3.0-rc.1` on the merge commit on `main`, after 1b's `music-v0.2.0` line (26a "Release"); the
   stable `music-v0.3.0` after the emulator checks (§6h, §6g with Storytel) and the device checks above. An older music
@@ -1021,7 +1034,7 @@ for the gaps below.
 Every finding is taken; where the fix differs from QA's proposal the line says how and why. The main session decided H1,
 M8, M9, L14 and §10's two questions.
 
-- **H1**: §2.8 no longer touches 0051; the note sits in 0066's header comment and `music_sweep::Item`'s doc, and §2.8
+- **H1**: §2.8 no longer touches 0051; the note sits in 0066's (now 0072's) header comment and `music_sweep::Item`'s doc, and §2.8
   says applied migrations are never edited (sqlx checksums).
 - **H2**: §5.6 is a table of every call site and the snapshot it passes - adopt (`lookAtRoom`, `adoptedQueue`) and the
   standalone suspension read `forRenderer(true)`, `toRoom` re-plans over the entry's remote order at the current item
@@ -1217,7 +1230,7 @@ others' new rows sit in existing tests); lint unchanged.
 ## Step 2a implementation status (2026-10-12)
 
 Built on branch `music-2-storytel-2a` (from `685a6ae`), three commits: `music_net` (`b92b1ef`), the client and
-migration 0066 (`623183b`), the PWA (`7baa750`). Server only; the library, the sweep, the cards, the import and the
+migration 0066 (`623183b`; 0072 since the merge of music-1b-sonos), the PWA (`7baa750`). Server only; the library, the sweep, the cards, the import and the
 contract snapshot still leave Storytel out (step 2b).
 - **In**: `S/storytel.rs` (new, vibb `storytel.py` credited in its header): `encrypt_password` (the `aes` block cipher,
   CBC and PKCS#7 by hand, UPPERCASE hex), `login_url` (`form_urlencoded`, `@` as `%40`), the target grammar,
@@ -1232,7 +1245,7 @@ contract snapshot still leave Storytel out (step 2b).
   nothing stored, `storytel_login_refused`; accepted/unreachable: sealed, generation + 1, the cooldown cleared, the
   probe's JWT/shelf kept, a session-flash notice), clear (also `Account::forget`), the card's status line, the picker
   and Add, the entry page's Storytel choices (0 saved as -1). Templates `music.html` (the card, the add form's hint),
-  new `music_storytel.html`, `music_entry.html`. `migrations/0066_music_storytel.sql` exactly as §2.8.
+  new `music_storytel.html`, `music_entry.html`. `migrations/0066_music_storytel.sql` (now `0072_music_storytel.sql`) exactly as §2.8.
   `testdata/storytel/{bookshelf,login_ok}.json`. `server/CLAUDE.md`: a section on the client, the picker and the
   reqwest log floor (L10). `Cargo.toml`: `aes = "0.9"` (already in the lock).
 - **Tests**: the server suite 560 (540 before), fmt clean, clippy's 12 warnings are the branch's own (none added).
@@ -1256,7 +1269,7 @@ contract snapshot still leave Storytel out (step 2b).
 
 Choices made while building (each against the spec text, with its reason):
 1. **The card's error lines carry no time** ("Storytel couldn't be reached at the last try."): §2.8's columns (kept
-   exactly) have no time for `login_error`. *Superseded in the fix round: 0066 gained `login_error_at` (the main
+   exactly) have no time for `login_error`. *Superseded in the fix round: 0066 (now 0072) gained `login_error_at` (the main
    session's decision) and the lines show it.* The refused line has its times (`login_refused_at`), the accepted line
    `login_ok_at`. Times read "10:02 UTC" today and "12 Oct 10:02 UTC" otherwise (the cards' `utc_time`).
 2. **`login_error` also holds the shelf's last outcome** (`http_503`, `too_big`, `bad_shelf`, `network`), cleared by a
@@ -1283,7 +1296,7 @@ Choices made while building (each against the spec text, with its reason):
 10. **The entry page**: a stored value outside vibb's choices shows as "The first N (from Vibb)"; the Storytel target
     is plain text with a link to the shelf (a `storytel:` href isn't a link). An empty group name shows the target in
     the picker; an entry gets "Storytel series"/"Storytel book" then.
-11. **Left for 2b** (its files): `music_sweep::Item`'s doc note (§2.8; 0066's header has it), `not_on_shelf`,
+11. **Left for 2b** (its files): `music_sweep::Item`'s doc note (§2.8; 0066's - now 0072's - header has it), `not_on_shelf`,
     `kind_label`'s "Storytel series/book", and `music::tests::storytel_cache_zero_is_all`'s import and library parts
     (2a pins the save; the helper is `storytel::cache_value`, with `storytel::CACHE_CHOICES`).
 
@@ -1328,7 +1341,7 @@ new). `cargo fmt --check` clean, clippy's 12 warnings are the branch's own.
 - **L6** (Add's unbounded `target`s, quadratic dedupe): more than `MAX_ENTRIES` target fields (repeats counted) is a
   400 ("More than 200 rows are ticked - nothing was added."), read with a `HashSet` beside the `Vec`
   (`add_takes_only_shelf_targets`: 201 refused, 200 repeats of one target add one entry).
-- **Choice 1** (the main session): 0066 (unreleased) gains `login_error_at TEXT`; every write of `login_error` sets
+- **Choice 1** (the main session): 0066 (unreleased; now 0072) gains `login_error_at TEXT`; every write of `login_error` sets
   or clears it (the account's outcomes, the save, clear), and the card's error lines read "Storytel couldn't be
   reached (10:02 UTC).", "Storytel answered 503 (10:02 UTC)." (`utc_time`; "at the last try" only for a row without
   the time). §2.8's block is byte-identical to the file again.
@@ -1341,7 +1354,7 @@ new). `cargo fmt --check` clean, clippy's 12 warnings are the branch's own.
 
 Built on branch `music-2-storytel` from `0854ed9`, three commits: the server (`fca26c4`: the sweep, the library's
 gate, the cards, the import), the shared-contract commit (`70a332f`: the snapshot on all three sides) and a wording
-fix (`6e36ea2`). No migration (0066 as 2a applied it), no launcher code, no change to `music_listing.json`,
+fix (`6e36ea2`). No migration (0066 - now 0072 - as 2a applied it), no launcher code, no change to `music_listing.json`,
 `music_state.json`, the AIDL or the policy shape.
 - **The listing** (`S/music_sweep.rs`, §2.4): `storytel_check` - the row's cooldown first
   (`storytel::credentials(..).cooldown_until(now)`: inside it `login_refused`, no request, the last good list kept;
@@ -1363,7 +1376,7 @@ fix (`6e36ea2`). No migration (0066 as 2a applied it), no launcher code, no chan
   `no_audio`, `Download.waiting` takes `login`.
 - **The gate** (§2.7): `storytel_gate!()` (an exported macro, `concat!`ed into the SQL) in `LIBRARY_ENTRIES` (its
   `IN` gains `'storytel'`), `device_listing` and `cover_in_library` (both of its entry branches); a Storytel entry's
-  `cache` 0 goes out as -1. The revision triggers are 2a's 0066.
+  `cache` 0 goes out as -1. The revision triggers are 2a's 0066 (now 0072).
 - **Cards** (`S/handlers/music.rs`, M3): `SweepView::card` ("N books", no "newest" line, Storytel's offline choices
   with a stored 0 shown as all), the status texts (`sweep_error_text`, and "Couldn't list it: ..." from
   `CheckError::Storytel` for a never-listed entry), the per-phone lines ("1 of 3 books on the phone · waiting for the

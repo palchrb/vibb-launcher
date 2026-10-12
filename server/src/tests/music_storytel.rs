@@ -672,7 +672,7 @@ async fn add_takes_only_shelf_targets() {
 #[tokio::test]
 async fn clear_drops_storytel_from_libraries() {
     // Step 2a's half: clearing forgets the server's session and moves the library revision
-    // (migration 0066's triggers); step 2b's: the phone's library loses its Storytel entries.
+    // (migration 0072's triggers); step 2b's: the phone's library loses its Storytel entries.
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (device, token) = app.enrolled_device("phone").await;

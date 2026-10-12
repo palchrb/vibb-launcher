@@ -335,6 +335,9 @@ already sits above it (qa-26a-merge-code M1): the same hazard - if 0070 lands on
 applies it out of order and `pre_migration_backup`, comparing only `MAX(version)`, takes no `pre-migrate-*.db`. So
 design 27's server ships before or together with 26a's, or the backup check compares the set of applied versions
 with the compiled ones (a change for the main session, not made yet).
+`0072_music_storytel.sql` (design 26b, written as 0066 on `music-2-storytel`, renumbered at the merge of
+`music-1b-sonos`) sits above both: 0070 (and 0071, were 26a's server not deployed first) reaching a server that has
+run 0072 is the same hazard, so the server that carries 0072 also carries 0071 and ships with or after design 27's.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -638,7 +641,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   clock, against 21b's request counts, and one with a flagged failing feed and a failing NRK page),
   `music_sweep`/`music_sources`/`music_net::tests` (loopback server for the address rules).
 
-## Vibb music: Storytel on the server (design 26b step 2a, `docs/design/26b-storytel.md`, migration `0066_music_storytel.sql`)
+## Vibb music: Storytel on the server (design 26b step 2a, `docs/design/26b-storytel.md`, migration `0072_music_storytel.sql`)
 
 - **What**: `src/storytel.rs` (vibb `storytel.py` ported) logs in with the family's sealed login and reads the
   **bookshelf only** (never bookmarks or audio; the phones log in and mint audio URLs themselves). `normalize_shelf`

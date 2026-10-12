@@ -106,7 +106,11 @@ scope) is built and QA'd on branch `music-1b-sonos`, main merged in (last 2026-1
 switch adapted to the rooms); owed: the emulator checks against
 `scripts/fake-sonos.py` and the device checks with real speakers. Release after the user's merge: server (migration
 0071, in 0.24.0 unless that is tagged first), a launcher release, then `music-v0.2.0-rc.1` on the merge commit
-(26a "Release"). Phases 2 (Storytel) and 3 (Spotify) follow design 26.
+(26a "Release"). **Phase 2, Storytel** (design 26b: the server reads the shelf and lists it, the phone logs in,
+mints and downloads, Storytel on Sonos) is being built on branch `music-2-storytel` (steps 1-3 done and QA'd;
+music-1b-sonos with main merged in 2026-10-12); its server migration is **0072** (`0072_music_storytel.sql`, above 1b's
+0071, design 27's reserved 0070 shipping first or with it - 26b "Release"); then `music-v0.3.0-rc.1`. Phase 3
+(Spotify) follows design 26.
 
 ## Repos
 

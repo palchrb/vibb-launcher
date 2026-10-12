@@ -16,6 +16,11 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   checks (`docs/testing/emulator.md` §6h) and the device checks on the Jelly Star with real speakers (26a "Device
   checks" and each step's owed list); the merge to `main` is the user's; `music-v0.2.0-rc.1` is tagged on the merge
   commit after it (26a "Release").
+- **Phase 2 (Storytel) is being built on `music-2-storytel`** (status 2026-10-12; spec and every step's status in
+  `26b-storytel.md`): steps 1, 2a, 2b and 3 done, each with QA's code review and its fix round; music-1b-sonos (with
+  main) merged in on 2026-10-12, its server migration renumbered **0072** (`0072_music_storytel.sql`). **Not done
+  yet:** steps 4a, 4b and 5, the emulator checks (`docs/testing/emulator.md` §6i) and the device checks with the
+  family's account (26b "Device checks"); `music-v0.3.0-rc.1` after the user's merge (26b "Release").
 - **Read first:** root `CLAUDE.md`, `music/CLAUDE.md`, `docs/design/20-vibb-music.md` (its decision sections win over
   its §1-§5), `21-vibb-music-phase1.md`, `21b-music-server-sweep.md`, `vibb-spotify-options.md`, the mockup
   `docs/design/mockups/vibb-music/` (v15, published at https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY).
