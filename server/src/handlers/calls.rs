@@ -411,7 +411,7 @@ pub(crate) async fn call_report(
         warnings.push(if screening == Some(true) {
             "Phone app role not active: the launcher isn't the phone's default phone app, so the \
              phone can only call emergency numbers. Incoming calls are still filtered (it holds \
-             the call-screening role), but calls from withheld numbers ring through. Open the \
+             the call-screening role), though calls from withheld numbers may ring through. Open the \
              launcher's home screen on the phone and accept the \"default phone app\" prompt."
                 .to_string()
         } else {

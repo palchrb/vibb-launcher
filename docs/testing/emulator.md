@@ -535,7 +535,9 @@ Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - 
    do it - `adb shell cmd role add-role-holder android.app.role.DIALER com.android.dialer` while `Block USB debugging`
    is off; the launcher takes the role back at its next apply, so call right away): `adb emu gsm call <unknown>` is
    rejected without ringing, an allowed contact rings in the system dialer, and a report sent meanwhile makes the page
-   say "Incoming calls are still filtered". Without either role the page says "not filtered".
+   say "Incoming calls are still filtered". Without either role the page says "not filtered". Also call from a withheld
+   number in that state (`adb emu gsm call` with a restricted presentation, or a real SIM): if it is rejected, the
+   page's "withheld numbers may ring through" can become a firm statement.
 
 ## 6b. Step 7: Play (optional)
 

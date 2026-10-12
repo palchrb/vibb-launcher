@@ -708,7 +708,7 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
         (
             false,
             Some(true),
-            vec![still_filtered, "withheld numbers ring through"],
+            vec![still_filtered, "withheld numbers may ring through"],
             vec![not_filtered, backup_missing],
         ),
         (
