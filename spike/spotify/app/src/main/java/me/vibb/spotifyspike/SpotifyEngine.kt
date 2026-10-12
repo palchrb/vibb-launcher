@@ -298,6 +298,8 @@ object SpotifyEngine {
     fun describe(state: PlayerState): String {
         val t = state.track
         val trackText = if (t == null) "no track" else "${t.uri} '${t.name}' - ${t.artist?.name} (${t.duration} ms)"
-        return "paused=${state.isPaused} pos=${state.playbackPosition} ms track=$trackText"
+        val options = state.playbackOptions
+        val mode = if (options == null) "" else " shuffle=${options.isShuffling} repeat=${options.repeatMode}"
+        return "paused=${state.isPaused} pos=${state.playbackPosition} ms$mode track=$trackText"
     }
 }
