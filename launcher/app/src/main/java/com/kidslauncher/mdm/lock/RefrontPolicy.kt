@@ -69,6 +69,19 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     else -> RefrontAction.Refront(refrontDelayMs(attempt + 1))
 }
 
+/**
+ * The lock was only *paused* while LOCKED (bug 25b-A): Recents (the Overview button, a keyboard's
+ * Recents key) runs as a transient launch that pauses the lock without stopping it - its live tile
+ * keeps it visible - so the stop-only re-front never ran and the other apps' thumbnails stayed up.
+ * A pause schedules the same check after this short delay: a transient pause of our own (a new
+ * intent, the time-rule screen handing back) is over by then and the check stops; the exempt
+ * screens (a call, the emergency flow, an alarm, a VoIP ring) yield as always.
+ */
+const val PAUSE_REFRONT_MS = 200L
+
+/** Whether a pause of the lock starts the re-front check: only while LOCKED and not finishing. */
+fun pauseStartsRefront(locked: Boolean, finishing: Boolean): Boolean = locked && !finishing
+
 /** An `onStop` that isn't the lock losing the front: a configuration change (we are portrait
  * and handle the rest, but still), or finishing after the right PIN. */
 fun stopStartsRefront(locked: Boolean, changingConfigurations: Boolean, finishing: Boolean): Boolean =

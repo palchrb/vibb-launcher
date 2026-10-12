@@ -305,7 +305,7 @@ class PinLockActivity : AppCompatActivity() {
         handler.removeCallbacks(voipAnswerCheck)
         voipFsiPending = false
         PinLockRuntime.voipLockLeft(sendPending)
-        PinLockRuntime.onLockPaused()
+        PinLockRuntime.onLockPaused(isFinishing || finishingAfterUnlock)
         super.onPause()
     }
 

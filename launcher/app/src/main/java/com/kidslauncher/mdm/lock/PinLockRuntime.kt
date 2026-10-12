@@ -969,8 +969,14 @@ object PinLockRuntime {
         }
     }
 
-    fun onLockPaused() {
+    /** PinLockActivity.onPause: while LOCKED the lock may have lost the front to Recents, which only
+     * pauses it - the re-front check runs after [PAUSE_REFRONT_MS] (bug 25b-A). */
+    fun onLockPaused(finishing: Boolean = false) {
         lockResumed = false
+        if (!pauseStartsRefront(chromeLocked, finishing)) return
+        refrontAttempt = 0
+        handler.removeCallbacks(refrontCheck)
+        handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
     }
 
     /** PinLockActivity.onStop: unless it's a configuration change or the finish after an unlock,
