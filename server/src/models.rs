@@ -326,9 +326,8 @@ pub struct DeviceStatus {
     /// A device admin or accessibility service of an app outside the allowlist (design 24b's fix
     /// round), see `window_relock::ForeignAccess`. `None` = nothing found.
     pub foreign_access_json: Option<String>,
-    /// The launcher can wipe the phone remotely now (QA of the launcher wave, Low 4; migration
-    /// 0065). `None` from older launchers or when the phone couldn't tell.
-    pub remote_wipe_ready: Option<bool>,
+    // remote_wipe_ready (migration 0065, QA of the launcher wave Low 4) is read directly by
+    // handlers::locate.
     /// The launcher's declared device-admin policies Android hasn't granted yet (JSON list, see
     /// [admin_policy_notice]; migration 0065). `None` from older launchers.
     pub admin_policies_pending_json: Option<String>,
