@@ -20,7 +20,7 @@ const CREATED: &str = "2026-10-09 11:00:00";
 /// A picture whose print is fixed by `seed`: eight horizontal bands, each a gradient rising or
 /// falling with the band's bit of `seed`. Two seeds that differ in one bit are 8 bits apart (more
 /// than the "same picture" line of 5), and any size or re-encode of one seed prints the same.
-fn picture(seed: u8, w: u32, h: u32) -> image::DynamicImage {
+pub(super) fn picture(seed: u8, w: u32, h: u32) -> image::DynamicImage {
     image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
         let band = y * 8 / h;
         let t = (x * 255 / (w - 1)) as u8;
@@ -29,7 +29,7 @@ fn picture(seed: u8, w: u32, h: u32) -> image::DynamicImage {
     }))
 }
 
-fn png(seed: u8, w: u32, h: u32) -> Vec<u8> {
+pub(super) fn png(seed: u8, w: u32, h: u32) -> Vec<u8> {
     let mut out = std::io::Cursor::new(Vec::new());
     picture(seed, w, h)
         .write_to(&mut out, image::ImageFormat::Png)
@@ -1526,8 +1526,10 @@ fn the_log_line_counts_own_and_same() {
     assert_eq!(sweep::CheckReport::default().art_line(), "");
 }
 
-/// Not every music item came from NRK or RSS: a Storytel part is `ok` with no source URL (and no
-/// picture URL). The art pass skips such rows, and they take no place in the window.
+/// Not every music item came from NRK or RSS: a Storytel book is `ok` with no source URL - the
+/// phone mints its audio - and its picture URL the shelf's cover (design 26b step 4a). The entry's
+/// link tells it from an NRK/RSS item without a URL, which the art pass skips without giving it a
+/// place in the window; an item without a picture URL is skipped for any source.
 #[test]
 fn items_without_a_source_url_or_a_picture_url_are_skipped() {
     let row = |url: Option<&str>, art: Option<&str>, state: &str| sweep::Item {
@@ -1554,21 +1556,43 @@ fn items_without_a_source_url_or_a_picture_url_are_skipped() {
         art_fetched_at: None,
         art_fails: 0,
     };
+    let feed = crate::music::Link::Rss {
+        url: "https://example.org/feed.rss".to_string(),
+    };
+    let podcast = crate::music::Link::NrkPodcast {
+        slug: "p".to_string(),
+    };
+    let storytel = crate::music::Link::Storytel {
+        kind: crate::storytel::TargetKind::Series,
+        id: "26175".to_string(),
+    };
     let audio = Some("https://media.example.org/1.mp3");
     let art = Some("https://media.example.org/1.jpg");
-    assert!(sweep::art_candidate(&row(audio, art, "ok")));
+    assert!(sweep::art_candidate(&row(audio, art, "ok"), &feed));
+    assert!(sweep::art_candidate(&row(audio, art, "ok"), &podcast));
     assert!(
-        !sweep::art_candidate(&row(None, None, "ok")),
-        "a Storytel part"
-    );
-    assert!(
-        !sweep::art_candidate(&row(None, art, "ok")),
+        !sweep::art_candidate(&row(None, art, "ok"), &feed),
         "no source URL"
     );
     assert!(
-        !sweep::art_candidate(&row(audio, None, "ok")),
+        !sweep::art_candidate(&row(None, art, "ok"), &podcast),
+        "no source URL"
+    );
+    assert!(
+        sweep::art_candidate(&row(None, art, "ok"), &storytel),
+        "a Storytel book with its cover"
+    );
+    assert!(
+        !sweep::art_candidate(&row(None, None, "ok"), &storytel),
+        "a Storytel book without a cover"
+    );
+    assert!(
+        !sweep::art_candidate(&row(audio, None, "ok"), &feed),
         "no picture of its own"
     );
-    assert!(!sweep::art_candidate(&row(audio, art, "gone")));
-    assert!(!sweep::art_candidate(&row(audio, art, "pending")));
+    for link in [&feed, &storytel] {
+        assert!(!sweep::art_candidate(&row(audio, art, "gone"), link));
+        assert!(!sweep::art_candidate(&row(audio, art, "pending"), link));
+        assert!(!sweep::art_candidate(&row(None, art, "pending"), link));
+    }
 }

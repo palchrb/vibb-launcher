@@ -638,7 +638,11 @@ fetches it (the book's `art_url`, the shelf's cover) into `photos::MUSIC_ART` an
 64-hex hash; the phone's want set (`sync/ArtPlan.kt`'s `artWant`, a Storytel series' kept books in download order
 since the merge) sends it as `wantArt`, the launcher's `syncArt` fetches it into the shared covers dir, and every
 surface shows `artHash ?: entry.cover` (the carousel, the player's art, the session's artwork, `setNowPlaying`, Nytt,
-search). **The phone needs no change and Room no column** (design 27 owns Room version 2, `items.artHash`). **The
+search). **A book is judged against nothing** (qa-26b-step4a-code M1): design 27's `same` ("the series picture",
+show the entry cover) is wrong for books - a Storytel series' cover is only the shelf's first-seen book's, so a
+`same` book would show another book's face once that moves, under a parent's cover, or with templated covers. Every
+fetched book cover is `own` with its own hash (no reference prints, no step 1, no twin merge; one request more per
+series). **The phone needs no change and Room no column** (design 27 owns Room version 2, `items.artHash`). **The
 speaker gets no art** for any source (26a §9: a hash has no LAN-reachable http URL; the cheapest later path, a frozen
 `art_src` beside the hash, fits Storytel's public cover URL unchanged). The abandoned first 4a (its own `items.art`
 URL column and its own Room version 2, branch `abandoned/26b-step4a`) is not applied.
@@ -863,19 +867,22 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    of `..Item::new(..)` (else every check drops the hash and fetches the picture again); `S/music.rs` -
    `art_in_library` serves `source IN ('nrk', 'rss', 'storytel')`. (The other way, the Storytel check storing the
    hash itself through `photos::MUSIC_ART`'s store and lock, duplicates the pass's fetch, judging and budgets; take it
-   only if the pass can't be widened cleanly.) The judging stays design 27's: a book whose cover is the series' is
-   `same` (no hash, the entry cover shows - the same picture), the others `own`; budgets `ART_PER_CHECK`/`ART_PER_DAY`
+   only if the pass can't be widened cleanly.) The judging is not design 27's for books (qa-26b-step4a-code M1, §5.5):
+   every fetched book cover is `own` - no reference prints, no `same`, no twin merge -; budgets `ART_PER_CHECK`/`ART_PER_DAY`
    unchanged (a 40-book series fills over two checks). **The shared-contract commit**: `server/testdata/music_listing.json`
    regenerated (`MUSIC_LISTING_SNAPSHOT_WRITE=1`) only if its fixture gains a Storytel item, and then copied
    byte-identically to `music/app/src/test/resources/` (the launcher's `MusicPlanTest` version pin with it), one commit.
    Tests: `src/tests/music_storytel.rs` (a series check fetches each book's cover once, the listing's `art` is the hash
-   for an own cover and null for the series' own, a second check fetches nothing and keeps the hashes, the cover route
-   serves a ticked phone the book's picture and 404s an unticked one), `src/tests/music_art.rs` (a Storytel book is a
-   candidate, in reading order), `the_sweep_lists_a_series_like_a_feed`'s null `art` becomes the hash. No music or
-   launcher code. Acceptance: the server suite green (the music and launcher suites only if a shared file changed).
-   Emulator (§6i): a series' books show their own covers in the carousel and in Nytt (the fake Storytel's shelf with
-   per-book covers); an upgrade from a step-3 build (Room 1 -> main's 2) keeps every position and bookmark (the
-   `ReapplyListings` migration re-applies the listings, with the hashes). Owed: none.
+   for an own cover and null for the series' own, a second check keeps the hashes - that pins the result -, a failed
+   cover's second check the same day sends no request and keeps `art_fails` 1 - that pins the carry-over,
+   qa-26b-merge27-code M1 -, the cover route serves a ticked phone the book's picture and 404s an unticked one),
+   `src/tests/music_art.rs` (a Storytel book is a candidate), `the_sweep_lists_a_series_like_a_feed`: `items[0]`'s
+   `art` becomes the hash, `items[1]` stays null (`same`, the series cover; L2). No music or launcher code.
+   Acceptance: the server suite green (the music and launcher suites only if a shared file changed). Emulator (§6i):
+   an upgrade from a step-3 build (Room 1 -> main's 2) keeps every position and bookmark (the `ReapplyListings`
+   migration re-applies the listings, with the hashes). The covers themselves are a device check (the server's
+   bookshelf URL is a constant and its art pass refuses a private host, so no fake shelf reaches it; L3). Owed
+   [device check]: "Per-book covers".
    **b. Music: Storytel on Sonos.** Files: `M/sonos/{PlayBody,SonosController,SonosRenderer,SonosLifecycle,
    SonosTransport,SonosSuspension,SonosSession}.kt` (the mint body, the job's token, `sameStream`, adopt's live uri,
    `storedUri` on every write, the duration lookup, the redacted log), `M/storytel/StorytelAccount.kt` (the minter the
@@ -1000,6 +1007,11 @@ commit), 3 (the phone's download path), 4a (the server's art pass for books), 4b
   maintenance windows, slower but steadily, with the parent's card showing have/want rising. If it stalls (the bucket
   falls to rare or restricted, or no job runs for hours), the user decides between downloads only while charging and
   design 19b's battery exemption for the music app.
+- **Per-book covers** (step 4a; qa-26b-merge27-code L3): with the real server and the real shelf, a series whose books
+  have their own covers shows each book's cover in the player's carousel, in Nytt and on the lock's tile - the first
+  book's (the series cover) included -, and so does **a series with templated covers** (one layout, another number or
+  title per book: each book its own picture, none shows another's); the server log's check line says
+  `, art N (N own, 0 same)`.
 - Sonos: a book not downloaded plays in a room (title and progress bar in the Sonos app; no cover, §9), next/previous, pause for
   two hours then play (if the speaker fails, one more tap starts from the bookmark), the app killed while a book plays
   (reopen: adopted, the right book and place), the signed Location carries `consumableId` (logcat's redacted line and
@@ -1987,6 +1999,11 @@ main's lock and wallpaper fixes that 1b took with design 27, and the launcher's 
   step-3 build keeps every position and bookmark (Room 1 -> 2 is main's `AutoMigration(1, 2)`; `ReapplyListings`
   re-applies the listings with their hashes at the next sync).
 
+**A dev database from before this merge won't open** (qa-26b-merge27-code Low 4): a `server/data/kidphone.db` that ran
+this branch at `7ad8b26` or earlier holds 1b's older 0071 header and 0072 without 0070, so the merged server stops at
+`VersionMismatch(71)`; delete `server/data/` first (or restore a backup taken on `main`), as the note above says for
+65/66. No deployed server ran this branch.
+
 **Tests after the merge** (local Rust, the sandbox's JDK 21): server `cargo test` **655 passed, 0 failures** (628 before; +27 from 1b's merge of design 27, the Storytel listing test adapted; the time-dependent `parent_pin` passed this run), `cargo fmt --check`
 clean, `cargo clippy --all-targets` the same 12 warnings (`models.rs`, `dns_engine.rs`, `handlers/devices.rs`); music
 `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **542 JVM tests, 0 failures** (500
@@ -1995,3 +2012,105 @@ series' want set), lint 0 errors and the same 40 warnings; `python3 -I -B script
 `python3 -I -B scripts/fake-storytel.py --selftest` OK; launcher `assembleDebug testDebugUnitTest` (the tsnet stub)
 **1035 tests, 0 failures** (1012 before; 1b's count) - its `assembleRelease` needs `app/libs/tsnet.aar`, which CI
 builds: not run.
+
+## Step 4a implementation status (2026-10-12)
+
+Built on `music-2-storytel-4a` from `c431b61`; the code in `acaf179`, this section in the next commit. Server only: no
+migration (0070-0072 untouched), no contract file, no music or launcher code.
+
+**What was built** (§5.5, §8 step 4a, with qa-26b-merge27-code's M1 and L1-L4 folded in):
+- `music_sweep::art_candidate(item, link)`: an `ok` item with an `art_url` that is playable from the list - an NRK/RSS
+  item with its `url`, or any item of a `Link::Storytel` entry (`url` NULL by design). The entry's link decides, not
+  `url` being NULL (an NRK/RSS item without a URL stays out and takes no place in `ART_WINDOW`).
+- `art_pass`'s order: `auto` is now per link - Storytel from book 1 (the phone's `naturallyNewestFirst(STORYTEL) =
+  false`), an NRK series as before (oldest first unless it keeps the newest), a podcast or feed newest first; an
+  explicit `newest_first`/`oldest_first` applies to every source, as on the phone (§3.2).
+- `storytel_check`: a book already listed starts from its old row (`plan.items[at].clone()`, as `merge_feed` keeps a
+  feed's known item) with the shelf's fields set over it (`state`, `title`, `url` NULL, `hls`, `duration_ms`,
+  `art_url`, `attempts` 0); a new book from `Item::new`. So every `art_*` field - `art_fetched_at`, `art_fails` and
+  `art_tone` included - and the first sighting survive a check. A changed cover URL is the pass's, by design 27's
+  rule: the same path under a new query is adopted with no request; another path is fetched again once its judged
+  result is a week old (`ART_MOVED_RETRY_DAYS`); a cover that leaves the shelf makes the book untried (no hash).
+- `music::art_in_library`: `source IN ('nrk', 'rss', 'storytel')` plus `storytel_gate!()` (the phone's switch and a
+  stored login), so the cover route serves a book's cover only to a phone that gets the entry.
+- `music_sweep::restamp_versions`: Storytel listings too (L1), so after a restore forgets a book's cover the library
+  names the listing the route serves.
+- Docs: `server/CLAUDE.md`'s episode-art section (the Storytel paragraph, the test file); §8 step 4a's test and
+  emulator text, the "Per-book covers" device check, the merge section's `VersionMismatch(71)` note (L4).
+
+**Design 27's machinery for a book cover** - all applies unchanged; nothing needed a Storytel branch beyond the above:
+- The judging: the series' cover is the first-seen book's (`normalize_shelf`), so that book's `art_url` equals the
+  listing's `cover_url` and is `same` at step 1 (no request, no hash, the phone shows the entry cover); a re-encoded
+  copy under another URL is `same` by print. Every other book with a cover is `own`.
+- The budgets (`ART_PER_CHECK` 20, `ART_PER_DAY` 400, shared with NRK/RSS) and `ART_WINDOW`: a 40-book series fills
+  over two checks, in reading order.
+- The 16:9 reference fetch: makes no sense for a book (it is NRK's root `image`); a Storytel check never sets
+  `alt_candidate`, so the pass reads no 16:9 picture and sends no request for one. Nothing to do.
+- The twin merge: right for books - series covers are often one template with another title, and `twins` (2 bits, the
+  same tone, not `low_detail`) is exactly design 27's guard against merging "titles on one background".
+- The backlog: rarely trips (books seldom share the series picture), comes back monthly as for feeds.
+- The restamp: a new hash changes `build_listing`'s version, so the check reports `changed` and nudges the phones; a
+  forgotten one restamps through `restamp_versions`.
+- Not done: the PWA card's "· N with episode art" stays off Storytel cards ("N books" only); a one-line follow-up if
+  wanted.
+
+**Tests**: server `cargo test` **660 passed, 0 failed** (655 before; +5: `music_storytel.rs`
+`a_check_keeps_a_books_cover_and_a_moved_cover_is_fetched_again`, `the_art_pass_reads_a_series_in_reading_order` (the
+restamp and the nudge when a cover arrives, the library naming the new version), `a_books_cover_is_served_only_behind_the_gate`
+(ticked + switch on 200; unticked, switch off, login cleared 404), `a_lost_books_cover_restamps_the_listing_and_is_fetched_again`,
+`a_failed_books_cover_waits_a_day_like_a_feeds` (M1's pin: a 404 cover, a routine check and Check now the same day
+send no image request, `art_fails` stays 1, the row unchanged; a day later the second try); `music_art.rs`'s
+`items_without_a_source_url_or_a_picture_url_are_skipped` rewritten for the link argument (a Storytel book is a
+candidate, an NRK/RSS item without a URL isn't); `the_sweep_lists_a_series_like_a_feed`: two requests (the series
+cover, book 1's), `items[0]`'s `art` the hash and served by the cover route byte for byte, `items[1]` null (`same`),
+`items[2]` null (no cover). The time-dependent `parent_pin` passed this run. `cargo fmt --check` clean, `cargo clippy
+--all-targets` the same 12 warnings (`models.rs`, `dns_engine.rs`, `handlers/devices.rs`). Mutations (reverted):
+rebuilding a kept book from `Item::new` turns 4 `music_storytel` tests red (the failed-cover and keep tests among them);
+`auto` newest first for Storytel turns the reading-order test red; `art_in_library` without the gate turns the gate test
+red.
+
+**Deviations, with reasons**:
+- The reading-order case lives in `music_storytel.rs`, not `music_art.rs` (it needs the Storytel login and shelf
+  helpers); `music_art.rs` holds the candidate rule. `music_art.rs`'s `picture`/`png` are `pub(super)` for it.
+- No listing snapshot change: `music_listing.json`'s fixture stays NRK/RSS (its own-art hash already pins `art`), the
+  Storytel cases have their own tests - so no music or launcher run was needed and none was done.
+- The test shelf with changed covers is edited as text (`shelf_covers`): re-serialising it through `serde_json::Value`
+  sorts the keys in this build, which makes book 1 the first-seen book and its cover the series' - the existing
+  `shelf_with`/`shelf_without` helpers have that property too, harmless for their tests.
+
+**Where the plan was wrong**: as qa-26b-merge27-code found - (1) "a second check fetches nothing" doesn't pin the
+carry-over (`known_art` restores an own/same hash from the old row with no request); the failed-cover test does; (2)
+`restamp_versions` was a second `IN ('nrk', 'rss')`; (3) in `the_sweep_lists_a_series_like_a_feed` it is `items[0]`
+that gains the hash, `items[1]` stays null; (4) the emulator can't show a book's own cover (the server's shelf URL is a
+constant and its art pass refuses a private host). Also: "the `auto` arm treats non-series links as newest first" made
+a Storytel entry `auto` newest first - fixed per link, not by treating Storytel "like an NRK series" (the same result
+today, since its `keep_end` is `first`, but not tied to that column).
+
+**Owed**: emulator §6i - an upgrade from a step-3 build (Room 1 -> main's 2) keeps every position and bookmark
+(`ReapplyListings` re-applies the listings, with the hashes at the next sync). Device check "Per-book covers" (the
+real server and shelf: each book's cover in the carousel, Nytt and the lock's tile; the series' book shows the series
+cover). Chosen over a `fake-storytel.py --art` option because the fake's listing never passes through the server's
+art pass, so it would test the phone's design-27 path (already covered by design 27's carousel check) rather than this
+step.
+
+### Fix round after QA's code review (qa-26b-step4a-code, 2026-10-12)
+
+- **Medium 1 - a book is judged against nothing.** `art_pass` for a `Link::Storytel` entry: an empty reference set,
+  step 1 (the cover's own URL -> `same`) skipped, and `art_own`'s twin merge off (a new `merge` argument, `!storytel`);
+  any `same` row of a Storytel entry (an earlier 4a build's) is made untried at the start of the pass, so it is fetched
+  again as its own. Every fetched book cover is now `own` with its own hash - the first-seen book's too (one more
+  request per series, the cover's URL fetched once for the listing cover and once as that book's art; reusing the
+  cover's JPEG wasn't worth the coupling). The status above is superseded where it says the first-seen book is `same`
+  and that the twin merge and backlog apply to books: with no references nothing is `same`, so the backlog never turns
+  off, and no two books merge. Tests: `the_sweep_lists_a_series_like_a_feed` (3 requests, `(own, same) = (2, 0)`,
+  `items[1]` its own hash, served byte for byte), `a_check_keeps_...`, `the_art_pass_reads_...` (one picture a check:
+  book 1, then 2, then 3), `a_lost_books_cover_...` follow; new `every_book_keeps_its_own_cover_whatever_the_series_cover`
+  (the shelf's first book changes - the listing's cover moves to book 1's - and every book keeps its hash with no
+  request; a row an earlier build judged `same` is fetched again and is `own`; book 3's cover is book 1's picture at
+  another size - the same print and tone, a feed's twins - and keeps its own hash). Mutation (reverted): `storytel`
+  forced false in `art_pass` turns 5 `music_storytel` tests red. Docs: §5.5, §8 step 4a, `server/CLAUDE.md`'s Storytel
+  bullet, the "Per-book covers" device check (every book its own, a series with templated covers added).
+- **Low 1 - the card line.** Chose the doc: `server/CLAUDE.md` now says the count line is not on a Storytel card
+  ("N books" only); the card is unchanged.
+- **Runs:** `cargo test` **661 passed, 0 failed** (660 + the new case; `parent_pin` passed this run), `cargo fmt
+  --check` clean, `cargo clippy --all-targets` the same 12 warnings.

@@ -927,12 +927,15 @@ fn the_log_floors_reqwest_at_info() {
 // ------------------------------------------------------------------------------------------------
 
 use super::music::{device_get, tick};
+use super::music_art::png;
 use crate::music_sweep::{self as sweep, CheckReport, stamp};
 
 const SERIES: &str = "storytel:series:26175";
 const GEO_SERIES: &str = "storytel:series:4242";
 const BOOK: &str = "storytel:book:777";
 const COVER_2: &str = "http://c.example.invalid/2-model.jpg";
+/// Book 1's own cover (the abook format's), not the series'.
+const COVER_1: &str = "http://c.example.invalid/1.jpg";
 
 fn jpeg(shade: u8) -> Vec<u8> {
     let image = image::RgbImage::from_pixel(64, 64, image::Rgb([shade, 100, 50]));
@@ -1040,7 +1043,9 @@ fn lib_entry(library: &serde_json::Value, id: i64) -> Option<serde_json::Value> 
 /// listed like a feed - one `ok` item per book in reading order, keyed by `model.id`, no URL, the
 /// shelf's duration and each book's own cover - the locked and the geo-flagged books included; the
 /// listing is anchored at the first book, its title and cover the series'. The phone gets it through
-/// the listing route and the library names its version.
+/// the listing route and the library names its version. Step 4a: a book's own cover is its item's
+/// `art` hash (design 27's art pass) - every book's, the one whose cover is the series' too: a
+/// book is judged against nothing (qa-26b-step4a-code M1).
 #[tokio::test]
 async fn the_sweep_lists_a_series_like_a_feed() {
     let app = TestApp::new().await;
@@ -1050,15 +1055,26 @@ async fn the_sweep_lists_a_series_like_a_feed() {
     let (series, geo, book) = (ids[0], ids[1], ids[2]);
     tick(&app, &cookie, device, series, true).await;
     app.fetch.answer(COVER_2, 200, jpeg(40));
+    app.fetch.answer(COVER_1, 200, png(0b1010_0101, 300, 300));
     app.fetch.clear_calls();
 
-    // The probe's shelf is fresh: the check asks Storytel nothing, only the cover is fetched.
+    // The probe's shelf is fresh: the check asks Storytel nothing; the series' cover is fetched,
+    // then each book's own in reading order - book 2's too, though it is the series' (book 3 has
+    // none).
     let report = check(&app, series, chrono::Utc::now()).await;
     assert_eq!(report.error, None);
     assert_eq!(report.new_items, 3);
-    assert_eq!(report.requests, 1, "the cover only");
+    assert_eq!(report.requests, 3, "the cover, book 1's and book 2's");
+    assert_eq!((report.art_own, report.art_same), (2, 0));
     assert!(storytel_calls(&app).is_empty());
-    assert_eq!(*app.fetch.calls.lock().unwrap(), vec![COVER_2.to_string()]);
+    assert_eq!(
+        *app.fetch.calls.lock().unwrap(),
+        vec![
+            COVER_2.to_string(),
+            COVER_1.to_string(),
+            COVER_2.to_string()
+        ]
+    );
     assert_eq!(
         report.phones,
         vec![device],
@@ -1081,9 +1097,32 @@ async fn the_sweep_lists_a_series_like_a_feed() {
             .iter()
             .map(|i| i.art_url.as_deref())
             .collect::<Vec<_>>(),
-        [Some("http://c.example.invalid/1.jpg"), Some(COVER_2), None],
+        [Some(COVER_1), Some(COVER_2), None],
         "each book's own cover"
     );
+    assert_eq!(
+        listed
+            .iter()
+            .map(|i| i.art_state.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("own"), Some("own"), None]
+    );
+    let book_1_art = listed[0]
+        .art_hash
+        .clone()
+        .expect("book 1's cover is stored");
+    assert!(
+        app.state
+            .music_art_dir
+            .join(format!("{book_1_art}.jpg"))
+            .exists()
+    );
+    let book_2_art = listed[1]
+        .art_hash
+        .clone()
+        .expect("book 2's cover is its own too");
+    assert_ne!(book_2_art, book_1_art);
+    assert_eq!(listed[2].art_hash, None);
     assert_eq!(
         listed[2].title.as_deref(),
         Some("Kokosbananas og den låste boka"),
@@ -1117,10 +1156,11 @@ async fn the_sweep_lists_a_series_like_a_feed() {
     assert_eq!(served["version"], serde_json::json!(version));
     assert_eq!(served["items"][0]["key"], serde_json::json!("160661"));
     assert_eq!(served["items"][0]["url"], serde_json::Value::Null);
-    // Since design 27 a listing's `art` is the hash of the item's own stored picture, and the art pass
-    // takes only items with a url: a Storytel book's cover (`art_url` above) reaches no phone until
-    // step 4a (design 26b §8) widens it.
-    assert_eq!(served["items"][1]["art"], serde_json::Value::Null);
+    // A listing's `art` is the hash of the item's own stored picture (design 27): books 1 and 2;
+    // book 3 has no cover (the phone shows the entry's).
+    assert_eq!(served["items"][0]["art"], serde_json::json!(book_1_art));
+    assert_eq!(served["items"][1]["art"], serde_json::json!(book_2_art));
+    assert_eq!(served["items"][2]["art"], serde_json::Value::Null);
     assert_eq!(
         served["items"][2]["duration_ms"],
         serde_json::json!(650_000)
@@ -1149,6 +1189,31 @@ async fn the_sweep_lists_a_series_like_a_feed() {
         res.status,
         StatusCode::OK,
         "the series' cover is the phone's"
+    );
+    let res = device_get(
+        &app,
+        &format!("/api/devices/music/covers/{book_1_art}"),
+        &token,
+        &[],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "and book 1's");
+    assert_eq!(
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&res.body)),
+        book_1_art,
+        "the stored picture"
+    );
+    let res = device_get(
+        &app,
+        &format!("/api/devices/music/covers/{book_2_art}"),
+        &token,
+        &[],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "and book 2's");
+    assert_eq!(
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&res.body)),
+        book_2_art
     );
 
     // A series whose one book is flagged "not in this country" and a standalone book: listed too.
@@ -1748,5 +1813,441 @@ async fn a_book_without_a_duration_is_listed_without_one() {
     assert_eq!(
         served["items"][0]["duration_ms"],
         serde_json::json!(721_893)
+    );
+}
+
+// ------------------------------------------------------------------------------------------------
+// Step 4a (design 26b §5.5, rebuilt on design 27): a book's own cover is its item's `art` hash
+// ------------------------------------------------------------------------------------------------
+
+/// The fixture shelf with these books' abook covers set to these URLs: book 1's replaced, another
+/// book's added. Edited as text, since a re-serialized shelf would come out with its keys sorted
+/// (this build's `serde_json::Map`) and the series' cover is the first-seen book's.
+fn shelf_covers(covers: &[(&str, &str)]) -> Vec<u8> {
+    let mut shelf = String::from_utf8(fixture("bookshelf.json")).unwrap();
+    for (key, url) in covers {
+        if *key == "160661" {
+            shelf = shelf.replace(COVER_1, url);
+            continue;
+        }
+        let at = shelf.find(&format!("\"{key}\": {{\"model\"")).unwrap();
+        let abook = "{\"type\": \"abook\", ";
+        let at = at + shelf[at..].find(abook).unwrap() + abook.len();
+        shelf.insert_str(at, &format!("\"cover\": {{\"url\": \"{url}\"}}, "));
+    }
+    shelf.into_bytes()
+}
+
+/// How many requests went to `url`.
+fn fetched(app: &TestApp, url: &str) -> usize {
+    app.fetch
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|u| u.as_str() == url)
+        .count()
+}
+
+fn art_of(items: &[sweep::Item]) -> Vec<(Option<&str>, Option<&str>)> {
+    items
+        .iter()
+        .map(|i| (i.art_state.as_deref(), i.art_hash.as_deref()))
+        .collect()
+}
+
+async fn served_art(
+    app: &TestApp,
+    token: &str,
+    entry: i64,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let res = device_get(
+        app,
+        &format!("/api/devices/music/entries/{entry}/items"),
+        token,
+        &[],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let doc = res.json();
+    let art = doc["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["art"].clone())
+        .collect();
+    (doc["version"].clone(), art)
+}
+
+/// A check keeps what the art pass found for a book (the row is carried over, not rebuilt): no
+/// image request, the same hash, the same version. The same cover under a new query is adopted
+/// without a request; a cover that moves to another path is fetched again like a feed episode's
+/// (design 27: not within a week of its result, then once), and the new hash restamps the listing.
+#[tokio::test]
+async fn a_check_keeps_a_books_cover_and_a_moved_cover_is_fetched_again() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    app.fetch.answer(COVER_2, 200, jpeg(40));
+    app.fetch.answer(COVER_1, 200, png(0b1010_0101, 300, 300));
+    let t0 = chrono::Utc::now();
+    check(&app, series, t0).await;
+    let first = items(&app, series).await;
+    let hash_1 = first[0].art_hash.clone().unwrap();
+    let hash_2 = first[1].art_hash.clone().unwrap();
+    let (version, art) = served_art(&app, &token, series).await;
+    assert_eq!(
+        art,
+        [
+            serde_json::json!(hash_1),
+            serde_json::json!(hash_2),
+            serde_json::Value::Null
+        ]
+    );
+
+    // A routine check (the kept shelf) and Check now (a fresh one): no picture asked for again.
+    app.fetch.clear_calls();
+    let routine = check(&app, series, t0 + TimeDelta::minutes(1)).await;
+    assert_eq!((routine.error, routine.requests), (None, 0));
+    assert!(!routine.changed);
+    let now = check_now(&app, series, t0 + TimeDelta::minutes(2)).await;
+    assert_eq!((now.error, now.requests), (None, 1), "the shelf only");
+    assert_eq!(storytel_calls(&app), ["shelf"]);
+    assert_eq!(app.fetch.count(), 1);
+    assert!(!now.changed);
+    let kept = items(&app, series).await;
+    assert_eq!(kept, first, "every art field carried over");
+    assert_eq!(served_art(&app, &token, series).await.0, version);
+
+    // The same picture under a new query: adopted, no request.
+    let query = "http://c.example.invalid/1.jpg?v=2";
+    app.fetch
+        .answer(BOOKSHELF, 200, shelf_covers(&[("160661", query)]));
+    app.fetch.clear_calls();
+    let report = check_now(&app, series, t0 + TimeDelta::minutes(3)).await;
+    assert_eq!(report.requests, 1, "the shelf only");
+    let item = &items(&app, series).await[0];
+    assert_eq!(
+        (item.art_from.as_deref(), item.art_hash.as_deref()),
+        (Some(query), Some(hash_1.as_str()))
+    );
+    assert_eq!(served_art(&app, &token, series).await.0, version);
+
+    // Another path: not within a week of the result, then once; the new picture restamps the
+    // listing and nudges the phone, and the old one is pruned.
+    let moved = "http://c.example.invalid/1b.jpg";
+    app.fetch
+        .answer(BOOKSHELF, 200, shelf_covers(&[("160661", moved)]));
+    app.fetch.answer(moved, 200, png(0b0101_1010, 300, 300));
+    app.fetch.clear_calls();
+    check_now(&app, series, t0 + TimeDelta::days(3)).await;
+    assert_eq!(fetched(&app, moved), 0, "within a week of its result");
+    assert_eq!(
+        items(&app, series).await[0].art_hash.as_deref(),
+        Some(hash_1.as_str())
+    );
+    let report = check_now(&app, series, t0 + TimeDelta::days(8)).await;
+    assert_eq!(fetched(&app, moved), 1);
+    assert_eq!((report.art_own, report.art_same), (1, 0));
+    let hash_2 = items(&app, series).await[0].art_hash.clone().unwrap();
+    assert_ne!(hash_2, hash_1);
+    assert!(report.changed);
+    assert_eq!(report.phones, [device]);
+    let (restamped, art) = served_art(&app, &token, series).await;
+    assert_ne!(restamped, version);
+    assert_eq!(art[0], serde_json::json!(hash_2));
+    assert_eq!(
+        sweep::load_listing(&app.db, series)
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        restamped.as_str().map(str::to_string),
+        "the stored version is the served one"
+    );
+    assert!(
+        !app.state
+            .music_art_dir
+            .join(format!("{hash_1}.jpg"))
+            .exists()
+    );
+    check_now(&app, series, t0 + TimeDelta::days(8) + TimeDelta::hours(1)).await;
+    assert_eq!(fetched(&app, moved), 1, "once");
+}
+
+/// The art pass reads a series from book 1 (reading order; `auto` makes a feed newest first): with
+/// one picture a check, book 1's cover comes first, book 2's next and book 3's last; each new hash
+/// restamps the listing's version and nudges the phone.
+#[tokio::test]
+async fn the_art_pass_reads_a_series_in_reading_order() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    let cover_3 = "http://c.example.invalid/3.jpg";
+    app.fetch
+        .answer(BOOKSHELF, 200, shelf_covers(&[("160663", cover_3)]));
+    app.fetch.answer(COVER_2, 200, jpeg(40));
+    app.fetch.answer(COVER_1, 200, png(0b1010_0101, 300, 300));
+    app.fetch.answer(cover_3, 200, png(0b0011_1100, 300, 300));
+    app.state.music_sweep.set_art_per_check(1);
+    let t0 = chrono::Utc::now();
+    app.fetch.clear_calls();
+    let report = check_now(&app, series, t0).await;
+    assert_eq!(report.error, None);
+    assert_eq!((fetched(&app, COVER_1), fetched(&app, cover_3)), (1, 0));
+    let listed = items(&app, series).await;
+    let hash_1 = listed[0].art_hash.clone().unwrap();
+    assert_eq!(
+        art_of(&listed),
+        [
+            (Some("own"), Some(hash_1.as_str())),
+            (None, None),
+            (None, None)
+        ],
+        "books 2 and 3 wait for the next checks"
+    );
+    let report = check(&app, series, t0 + TimeDelta::minutes(1)).await;
+    assert!(report.changed);
+    assert_eq!(fetched(&app, cover_3), 0, "book 2 before book 3");
+    let listed = items(&app, series).await;
+    assert_eq!(listed[1].art_state.as_deref(), Some("own"));
+    assert_eq!(listed[2].art_state, None);
+    let (version, art) = served_art(&app, &token, series).await;
+    assert_eq!(art[2], serde_json::Value::Null);
+
+    let report = check(&app, series, t0 + TimeDelta::minutes(2)).await;
+    assert_eq!((fetched(&app, COVER_1), fetched(&app, cover_3)), (1, 1));
+    let hash_3 = items(&app, series).await[2].art_hash.clone().unwrap();
+    assert_ne!(hash_3, hash_1);
+    assert!(report.changed, "a new picture changes the listing");
+    assert_eq!(report.phones, [device]);
+    let (restamped, art) = served_art(&app, &token, series).await;
+    assert_ne!(restamped, version);
+    assert_eq!(art[2], serde_json::json!(hash_3));
+    let library = device_get(&app, "/api/devices/music/library", &token, &[])
+        .await
+        .json();
+    assert_eq!(lib_entry(&library, series).unwrap()["items"], restamped);
+}
+
+/// The cover route serves a book's cover only to a phone that gets the entry (design 26b §2.7's
+/// gate): ticked with the Storytel switch on; not one without the tick, nor one with the switch
+/// off, nor any phone once the login is cleared.
+#[tokio::test]
+async fn a_books_cover_is_served_only_behind_the_gate() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let (unticked, unticked_token) = app.enrolled_device("unticked").await;
+    let (off, off_token) = app.enrolled_device("off").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    tick(&app, &cookie, off, series, true).await;
+    sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")
+        .bind(unticked)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.fetch.answer(COVER_2, 200, jpeg(40));
+    app.fetch.answer(COVER_1, 200, png(0b1010_0101, 300, 300));
+    check(&app, series, chrono::Utc::now()).await;
+    let hash = items(&app, series).await[0].art_hash.clone().unwrap();
+    let cover = |token: String| {
+        let app = &app;
+        let hash = hash.clone();
+        async move {
+            device_get(
+                app,
+                &format!("/api/devices/music/covers/{hash}"),
+                &token,
+                &[],
+            )
+            .await
+            .status
+        }
+    };
+    assert_eq!(cover(token.clone()).await, StatusCode::OK);
+    assert_eq!(
+        cover(unticked_token).await,
+        StatusCode::NOT_FOUND,
+        "not ticked"
+    );
+    assert_eq!(
+        cover(off_token).await,
+        StatusCode::NOT_FOUND,
+        "the switch off"
+    );
+    // The login cleared: no phone gets Storytel.
+    let res = app
+        .request_form(Method::POST, "/music/storytel/clear", Some(&cookie), &[])
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(cover(token).await, StatusCode::NOT_FOUND, "no login");
+}
+
+/// A book's cover lost from the store (a restore: the store isn't backed up) is forgotten, the
+/// Storytel listing's version is stored again from its rows (design 27 code QA L6 covers Storytel
+/// too), and the next check fetches the cover again.
+#[tokio::test]
+async fn a_lost_books_cover_restamps_the_listing_and_is_fetched_again() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    app.fetch.answer(COVER_2, 200, jpeg(40));
+    app.fetch.answer(COVER_1, 200, png(0b1010_0101, 300, 300));
+    let t0 = chrono::Utc::now();
+    check(&app, series, t0).await;
+    let hash = items(&app, series).await[0].art_hash.clone().unwrap();
+    let (version, _) = served_art(&app, &token, series).await;
+
+    std::fs::remove_file(app.state.music_art_dir.join(format!("{hash}.jpg"))).unwrap();
+    let backups = tempfile::tempdir().unwrap();
+    crate::photos::recover_missing(&app.state, backups.path()).await;
+    let (restamped, art) = served_art(&app, &token, series).await;
+    assert_ne!(restamped, version, "the version follows the rows");
+    assert_eq!(art[0], serde_json::Value::Null);
+    let stored = sweep::load_listing(&app.db, series).await.unwrap().unwrap();
+    assert_eq!(stored.version, restamped.as_str().map(str::to_string));
+
+    app.fetch.clear_calls();
+    check(&app, series, t0 + TimeDelta::minutes(1)).await;
+    assert_eq!(fetched(&app, COVER_1), 1);
+    assert!(app.state.music_art_dir.join(format!("{hash}.jpg")).exists());
+    assert_eq!(
+        served_art(&app, &token, series).await,
+        (
+            version,
+            vec![
+                serde_json::json!(hash),
+                serde_json::json!(items(&app, series).await[1].art_hash.clone().unwrap()),
+                serde_json::Value::Null
+            ]
+        )
+    );
+}
+
+/// The kept book is its old row (qa-26b-merge27-code M1): a cover that failed keeps its failure, so
+/// a check the same day sends no image request and the try count stays (design 27: a day later,
+/// at most three tries). Rebuilt from `Item::new` it would be untried again - and with no stored
+/// print `known_art` has nothing to restore - so every check would spend a request of the shared
+/// budget on it.
+#[tokio::test]
+async fn a_failed_books_cover_waits_a_day_like_a_feeds() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, _) = app.enrolled_device("phone").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    app.fetch.answer(COVER_2, 200, jpeg(40));
+    app.fetch.answer(COVER_1, 404, "");
+    let t0 = chrono::Utc::now();
+    app.fetch.clear_calls();
+    assert_eq!(
+        check(&app, series, t0).await.error,
+        None,
+        "never fails the check"
+    );
+    assert_eq!(fetched(&app, COVER_1), 1);
+    let item = &items(&app, series).await[0];
+    assert_eq!(
+        (
+            item.art_state.as_deref(),
+            item.art_fails,
+            item.art_hash.as_ref()
+        ),
+        (Some("failed"), 1, None)
+    );
+    let first = items(&app, series).await;
+
+    // The same day, a routine check and Check now: no image request, the try count stays.
+    let routine = check(&app, series, t0 + TimeDelta::minutes(1)).await;
+    assert_eq!(routine.requests, 0);
+    check_now(&app, series, t0 + TimeDelta::minutes(2)).await;
+    assert_eq!(fetched(&app, COVER_1), 1, "not within a day");
+    assert_eq!(items(&app, series).await, first, "the row carried over");
+    // A day later: tried again, the second try.
+    check(&app, series, t0 + TimeDelta::hours(25)).await;
+    assert_eq!(fetched(&app, COVER_1), 2);
+    assert_eq!(items(&app, series).await[0].art_fails, 2);
+}
+
+/// qa-26b-step4a-code M1: a book is never judged against the series cover. When the shelf's
+/// first-seen book changes (the series cover moves to book 1's), book 2 keeps its own hash rather
+/// than showing book 1's cover; a book judged `same` by an earlier 4a build is fetched again as its
+/// own; and two books with one picture at different sizes (templated covers) keep two hashes - a
+/// feed's episodes would be twins.
+#[tokio::test]
+async fn every_book_keeps_its_own_cover_whatever_the_series_cover() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let series = storytel_library(&app, &cookie, device, &[SERIES]).await[0];
+    tick(&app, &cookie, device, series, true).await;
+    let cover_3 = "http://c.example.invalid/3.jpg";
+    app.fetch
+        .answer(BOOKSHELF, 200, shelf_covers(&[("160663", cover_3)]));
+    app.fetch.answer(COVER_2, 200, png(0b1100_0011, 300, 300));
+    app.fetch.answer(COVER_1, 200, png(0b1010_0101, 300, 300));
+    // Book 3's cover is book 1's picture at another size: another file, the same print and tone.
+    app.fetch.answer(cover_3, 200, png(0b1010_0101, 400, 400));
+    let t0 = chrono::Utc::now();
+    check_now(&app, series, t0).await;
+    let listed = items(&app, series).await;
+    assert!(listed.iter().all(|i| i.art_state.as_deref() == Some("own")));
+    let hashes: Vec<String> = listed.iter().map(|i| i.art_hash.clone().unwrap()).collect();
+    assert_ne!(hashes[0], hashes[2], "templated covers aren't merged");
+    assert_eq!(listed[0].art_print, listed[2].art_print);
+    let listing = sweep::load_listing(&app.db, series).await.unwrap().unwrap();
+    assert_eq!(listing.cover_url.as_deref(), Some(COVER_2));
+
+    // The shelf now lists book 1 first (re-serialised, its keys sorted): the series cover is
+    // book 1's.
+    let sorted: serde_json::Value =
+        serde_json::from_slice(&shelf_covers(&[("160663", cover_3)])).unwrap();
+    app.fetch
+        .answer(BOOKSHELF, 200, serde_json::to_vec(&sorted).unwrap());
+    app.fetch.clear_calls();
+    check_now(&app, series, t0 + TimeDelta::hours(25)).await;
+    let listing = sweep::load_listing(&app.db, series).await.unwrap().unwrap();
+    assert_eq!(
+        listing.cover_url.as_deref(),
+        Some(COVER_1),
+        "the series cover moved"
+    );
+    let after = items(&app, series).await;
+    assert_eq!(
+        after
+            .iter()
+            .map(|i| i.art_hash.clone().unwrap())
+            .collect::<Vec<_>>(),
+        hashes,
+        "every book keeps its own"
+    );
+    assert_eq!(after[2].art_url.as_deref(), Some(cover_3));
+    assert_eq!((fetched(&app, COVER_2), fetched(&app, cover_3)), (0, 0));
+    let (_, art) = served_art(&app, &token, series).await;
+    assert_eq!(art[1], serde_json::json!(hashes[1]));
+
+    // A row an earlier build judged `same`: untried, fetched again, its own.
+    sqlx::query(
+        "UPDATE music_items SET art_state = 'same', art_hash = NULL WHERE entry_id = ? AND key = ?",
+    )
+    .bind(series)
+    .bind("160662")
+    .execute(&app.db)
+    .await
+    .unwrap();
+    check(&app, series, t0 + TimeDelta::hours(26)).await;
+    assert_eq!(fetched(&app, COVER_2), 1);
+    let book_2 = &items(&app, series).await[1];
+    assert_eq!(
+        (book_2.art_state.as_deref(), book_2.art_hash.as_deref()),
+        (Some("own"), Some(hashes[1].as_str()))
     );
 }
