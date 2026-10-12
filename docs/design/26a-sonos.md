@@ -445,10 +445,23 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
   numbered after the final rebase, `security_events` `music_sonos_rooms_changed`.
 - **The phone obeys**: the per-phone library JSON (`GET /api/devices/music/library`, already per phone, hashed into
   `library_version`) carries `sonos_rooms: null | ["RINCON_…", …]`; `Library.sonosRooms` lenient (absent = all). The
-  sheet lists only allowed rooms (a group row only if its coordinator is allowed); `start()` refuses a uid outside the
-  list (`Message.CANT_PLAY_ON_SONOS`); a running session on a room that becomes disallowed is stopped at the next
-  sync (bookmark first). `music_library.json` snapshot and the music app's copy change together (`ContractFilesTest`).
-- A room never seen by the phone can't be restricted: the PWA says so ("Telefonen har ikke sett noen høyttalere ennå").
+  sheet lists only allowed rooms (**a group row only if every member is allowed** - corrected after
+  qa-26a-step3c-code H1, the main session's decision: a group with a forbidden member sounds there); the pick refuses
+  a room whose group isn't wholly allowed (`Message.ROOM_NOT_ALLOWED`, "Rommet er ikke lenger tillatt"); a running
+  session on a room that becomes disallowed - the scope changed at a sync, a forbidden room grouped into ours, the
+  stream followed to a forbidden coordinator - is stopped (bookmark first) and comes home paused. While a room plays
+  under a limited scope the household's groups are read once a minute (one GetZoneGroupState, never a discovery
+  round), so a regroup is noticed. `music_library.json` snapshot and the music app's copy change together
+  (`ContractFilesTest`).
+- An allowed room that the household has grouped with a forbidden one leaves the sheet until it is ungrouped (from
+  the Sonos app): playing it alone would break the household's group, playing the group would sound in the forbidden
+  room.
+- The tap-vs-sync race (qa-26a-step3c-code L8): a pick checked against the old library just before the sync applies
+  a narrower one starts on the speaker, and the sync's leave stops it moments later - a second or two of sound, then
+  a bookmarked Stop and the phone, paused. Bounded by the switch lock (the leave waits for the pick, never the other
+  way round); not worth a lock around the library write.
+- A room never seen by the phone can't be restricted: the PWA says so ("Telefonen har ikke sett noen høyttalere ennå";
+  in the PWA's English: "The phone hasn't seen any speakers yet").
 
 ## 6. Phone-specific rules
 
@@ -692,8 +705,9 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
 - VPN filter on: discovery and control still work.
 - Room scope (step 3c, §5.5): the device card before the phone has seen a speaker ("The phone hasn't seen any speakers
   yet") and after (the real rooms under "All rooms"); "All rooms" off and one room unticked -> after the next sync the
-  sheet lacks it, a session playing there was bookmarked, stopped and came home paused; a group whose coordinator is
-  unticked has no row; picking a restricted room is refused ("Kan ikke spilles på Sonos", the speaker untouched).
+  sheet lacks it, a session playing there was bookmarked, stopped and came home paused ("Rommet er ikke lenger
+  tillatt"); a group with any unticked member has no row; picking a restricted room is refused (the speaker
+  untouched); grouping a forbidden room into the playing one from the Sonos app stops the session within a minute.
 
 ## Step 1 implementation status (2026-10-11)
 
@@ -1284,9 +1298,40 @@ Owed checks:
   (the bookmark and one Stop in the fake's log, home paused), `--group Kjøkken+Stua` with Kjøkken unticked (no group
   row).
 - Device (the list above): a restricted room refused, a group with a disallowed coordinator hidden, the card with and
-  without reported rooms.
+  without reported rooms. (Corrected by the fix round below: a group with **any** disallowed member hidden.)
 
 Open questions: (a) a group row whose coordinator is allowed is listed even when a member is not (§5.5 says "by its
 coordinator") - playing there sounds in the forbidden room too; should a group need every member allowed? (b) the
 leave reuses "Kan ikke spilles på Sonos" - or a line of its own ("Høyttaleren er ikke tillatt")? (c) 3a's (a)/(b)
 and 3b's (a) stand.
+
+### Fix round after QA's code review (qa-26a-step3c-code, 2026-10-12)
+
+QA (`docs/design/qa-26a-step3c-code.md`: 1 High, 1 Medium, 8 Low; server 508/0, launcher 837/0, music 362/0,
+contracts identical) asked for a fix round; every finding is fixed, none skipped, with the main session's decisions:
+(a) a group row needs every member allowed, (b) the leave gets its own line, M1 fixed rather than documented. Commits
+`789506e` (server: L2-L5 and L6's server test) and `378926b` (music: H1, M1, L1, L6, L7), then this docs commit (L8 and
+§5.5). Builds: server `cargo test` **508/0**, fmt clean, clippy the same 13 warnings; launcher **837/0** (no change);
+music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **362/0** (the scope's tests
+rewritten in place), lint 0 errors and 40 warnings; the fake's selftest OK; the contract copies identical.
+- **H1** `Room.members`; the sheet, the pick, the leave and the controller's belt all check the target's whole group
+  (`groupAllowed`; a uid without a row alone); the pick and the leave read the groups from the speaker cache, the belt
+  from the sheet's state. An allowed room absorbed into a group with a forbidden one leaves the sheet (§5.5).
+- **M1** the leave also runs from the rooms collector (the groups changed) and after a migration follow
+  (`SonosRenderer.onFollowed`); while a room plays under a limited scope the groups are read every 60 s
+  (`RoomDirectory.refreshQuietly`: one GetZoneGroupState, never a discovery round; nothing when every room is
+  allowed). Choice: the topology read on a timer is new (discovery stays "never on a timer"); without it a regroup
+  from the Sonos app is unseen until the kid opens the sheet.
+- **L1** `ROOM_NOT_ALLOWED`: "Rommet er ikke lenger tillatt" / "This room is no longer allowed", for the leave and
+  the refused pick. **L2** the switch's line says later speakers need a tick, and that a group needs every room
+  ticked. **L3** "A speaker the phone no longer knows" + the uid small. **L4** refused saves redirect to
+  `#music-sonos` with the reason by the rooms (`music_notice=sonos_unknown|sonos_too_many`). **L5** the event detail
+  clipped to 300 characters. **L6** the report's name cleaning mirrors `cut_title` in its order (White_Space split,
+  Cc out, 40 code points) - not "control characters first", which would differ from the server; one odd input
+  asserted on both sides. **L7** the scope is read before the first rows and the startup look. **L8** the tap-vs-sync
+  race documented in §5.5.
+
+Owed checks (replacing the 3c list's group line): a group with **any** forbidden member has no row (Kjøkken leading
+or Stua leading); a forbidden room grouped into the playing one from the Sonos app stops the session within a minute
+("Rommet er ikke lenger tillatt", one Stop, the phone paused); a migration follow onto a forbidden coordinator the
+same; the card's notices (`?music_notice=sonos_too_many`) and the "no longer knows" row.

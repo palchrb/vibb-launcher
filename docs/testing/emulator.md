@@ -556,8 +556,10 @@ t+15 volume 60
   dumpsys power | grep vibb:sonos` while playing, gone 30 s after a pause). With step 3c (the parent's room scope):
   the device page's Music card shows "The phone hasn't seen any speakers yet" before the first report with rooms, then
   Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken unticked -> after the next sync the sheet lists only
-  Stua, a session playing on Kjøkken got a bookmark and one Stop and came home paused ("Kan ikke spilles på Sonos");
-  with `--group Kjøkken+Stua` (Kjøkken the coordinator) and only Stua allowed the sheet shows no group row; with the
+  Stua, a session playing on Kjøkken got a bookmark and one Stop and came home paused ("Rommet er ikke lenger
+  tillatt"); with `--group Kjøkken+Stua` (or `Stua+Kjøkken`) and only Stua allowed the sheet shows no group row (a
+  group needs every member allowed); a `group` script line putting Kjøkken under a playing, allowed Stua stops the
+  session within a minute (the scope's topology read); with the
   sheet open while the sync lands, Kjøkken's row goes (the switch's own refusal - the message, nothing in the fake's
   log - is pinned in the JVM tests: the sheet no longer offers the room).
 - Real speakers stay a device check (design 26a, "Device checks"): SSDP, Wi-Fi binding, the NRK service, Doze.

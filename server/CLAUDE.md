@@ -503,7 +503,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (settings, cover, uploads), device page card `#music` (app switch = `toggle_app` with `anchor=music`, auto-saving
   ticks, mobile data, volume cap Off/90/80/70/60 - NULL = off, Storytel switch, the Sonos rooms at `#music-sonos`
   - "All rooms" or one tick per room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event
-  `music_sonos_rooms_changed`, "The phone hasn't seen any speakers yet" before a report - the phone's `music_state`). Every form
+  `music_sonos_rooms_changed` (detail clipped to 300), refusals back at `#music-sonos` as `music_notice=sonos_*`, "The
+  phone hasn't seen any speakers yet" before a report - the phone's `music_state`). Every form
   redirects to its anchor; a 400 re-renders with the values and the error by the autofocused field. Changes nudge the
   phones they reach and log `music_*` / `storytel_login_*` events. PWA text is English like the rest.
 - **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, volume_cap_pct, storytel_generation}` (always the
