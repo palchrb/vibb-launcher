@@ -12,13 +12,13 @@ use super::music::{Canned, device_get, events, nudged, pretty_json, tick};
 use crate::music_net::FetchError;
 use crate::music_sweep::{self as sweep, CheckReport, parse_stamp, stamp};
 
-const PSAPI: &str = "https://psapi.nrk.no";
+pub(super) const PSAPI: &str = "https://psapi.nrk.no";
 
-fn at(text: &str) -> DateTime<Utc> {
+pub(super) fn at(text: &str) -> DateTime<Utc> {
     parse_stamp(text).unwrap()
 }
 
-fn t0() -> DateTime<Utc> {
+pub(super) fn t0() -> DateTime<Utc> {
     at("2026-10-09 12:00:00")
 }
 
@@ -27,7 +27,13 @@ fn fixture(name: &str) -> Vec<u8> {
 }
 
 /// An entry straight into the table (no add check), created at `created`.
-async fn entry(app: &TestApp, target: &str, name: &str, order: &str, created: &str) -> i64 {
+pub(super) async fn entry(
+    app: &TestApp,
+    target: &str,
+    name: &str,
+    order: &str,
+    created: &str,
+) -> i64 {
     let link = crate::music::parse_link(target).unwrap();
     sqlx::query_scalar(
         "INSERT INTO music_entries (name, category_id, source, target, key, play_order, cache, \
@@ -45,7 +51,7 @@ async fn entry(app: &TestApp, target: &str, name: &str, order: &str, created: &s
     .unwrap()
 }
 
-async fn tick_on(app: &TestApp, device: i64, entry: i64) {
+pub(super) async fn tick_on(app: &TestApp, device: i64, entry: i64) {
     sqlx::query("INSERT OR IGNORE INTO device_music_entries (device_id, entry_id) VALUES (?, ?)")
         .bind(device)
         .bind(entry)
@@ -54,18 +60,18 @@ async fn tick_on(app: &TestApp, device: i64, entry: i64) {
         .unwrap();
 }
 
-async fn check(app: &TestApp, entry: i64, now: DateTime<Utc>) -> CheckReport {
+pub(super) async fn check(app: &TestApp, entry: i64, now: DateTime<Utc>) -> CheckReport {
     sweep::check_entry(&app.state, entry, now)
         .await
         .unwrap()
         .expect("the entry is checked")
 }
 
-async fn listing(app: &TestApp, entry: i64) -> sweep::Listing {
+pub(super) async fn listing(app: &TestApp, entry: i64) -> sweep::Listing {
     sweep::load_listing(&app.db, entry).await.unwrap().unwrap()
 }
 
-async fn items(app: &TestApp, entry: i64) -> Vec<sweep::Item> {
+pub(super) async fn items(app: &TestApp, entry: i64) -> Vec<sweep::Item> {
     let mut conn = app.db.acquire().await.unwrap();
     sweep::load_items(&mut conn, entry).await.unwrap()
 }
@@ -79,7 +85,7 @@ fn states(items: &[sweep::Item]) -> Vec<String> {
 }
 
 /// A psapi episode stub.
-fn stub(kind: &str, slug: &str, key: &str, minutes_ago: i64) -> Value {
+pub(super) fn stub(kind: &str, slug: &str, key: &str, minutes_ago: i64) -> Value {
     let date = (t0() - TimeDelta::minutes(minutes_ago)).to_rfc3339();
     json!({
         "_links": {"self": {"href": format!("/radio/catalog/{kind}/{slug}/episodes/{key}")}},
@@ -92,12 +98,12 @@ fn stub(kind: &str, slug: &str, key: &str, minutes_ago: i64) -> Value {
     })
 }
 
-fn page_url(kind: &str, slug: &str, sort: &str, page: usize) -> String {
+pub(super) fn page_url(kind: &str, slug: &str, sort: &str, page: usize) -> String {
     format!("{PSAPI}/radio/catalog/{kind}/{slug}/episodes?page={page}&pageSize=50&sort={sort}")
 }
 
 /// psapi's episode pages of a podcast or series whose episodes are `newest_first` (both sorts).
-fn answer_pages(app: &TestApp, kind: &str, slug: &str, newest_first: &[String]) {
+pub(super) fn answer_pages(app: &TestApp, kind: &str, slug: &str, newest_first: &[String]) {
     let oldest_first: Vec<String> = newest_first.iter().rev().cloned().collect();
     for (sort, keys) in [("desc", newest_first.to_vec()), ("asc", oldest_first)] {
         let pages: Vec<&[String]> = if keys.is_empty() {
@@ -142,11 +148,11 @@ fn answer_pages(app: &TestApp, kind: &str, slug: &str, newest_first: &[String]) 
 }
 
 /// A routine check's first page: five episodes.
-fn small_url(kind: &str, slug: &str, sort: &str) -> String {
+pub(super) fn small_url(kind: &str, slug: &str, sort: &str) -> String {
     format!("{PSAPI}/radio/catalog/{kind}/{slug}/episodes?page=1&pageSize=5&sort={sort}")
 }
 
-fn manifest_url(kind: &str, key: &str) -> String {
+pub(super) fn manifest_url(kind: &str, key: &str) -> String {
     format!("{PSAPI}/playback/manifest/{kind}/{key}")
 }
 
@@ -154,13 +160,13 @@ fn audio(key: &str) -> String {
     format!("https://podkast.nrk.no/fil/{key}.mp3")
 }
 
-fn answer_manifests(app: &TestApp, kind: &str, keys: &[String]) {
+pub(super) fn answer_manifests(app: &TestApp, kind: &str, keys: &[String]) {
     for key in keys {
         answer_manifest(app, kind, key, &audio(key));
     }
 }
 
-fn answer_manifest(app: &TestApp, kind: &str, key: &str, url: &str) {
+pub(super) fn answer_manifest(app: &TestApp, kind: &str, key: &str, url: &str) {
     app.fetch.answer(
         &manifest_url(kind, key),
         200,
@@ -172,7 +178,7 @@ fn answer_manifest(app: &TestApp, kind: &str, key: &str, url: &str) {
     );
 }
 
-fn answer_root(app: &TestApp, kind: &str, slug: &str, title: &str, image: Option<&str>) {
+pub(super) fn answer_root(app: &TestApp, kind: &str, slug: &str, title: &str, image: Option<&str>) {
     let mut series = json!({"titles": {"title": title}});
     if let Some(image) = image {
         series["squareImage"] = json!([{"url": image, "width": 600}]);
@@ -184,12 +190,12 @@ fn answer_root(app: &TestApp, kind: &str, slug: &str, title: &str, image: Option
     );
 }
 
-fn keys_n(prefix: &str, n: usize) -> Vec<String> {
+pub(super) fn keys_n(prefix: &str, n: usize) -> Vec<String> {
     // Newest first: prefix_<n> ... prefix_1.
     (1..=n).rev().map(|i| format!("{prefix}_{i}")).collect()
 }
 
-fn jpeg(shade: u8) -> Vec<u8> {
+pub(super) fn jpeg(shade: u8) -> Vec<u8> {
     let image = image::RgbImage::from_pixel(64, 64, image::Rgb([shade, 100, 50]));
     let mut out = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageRgb8(image)
@@ -198,14 +204,14 @@ fn jpeg(shade: u8) -> Vec<u8> {
     out.into_inner()
 }
 
-async fn library(app: &TestApp, token: &str) -> (Value, String) {
+pub(super) async fn library(app: &TestApp, token: &str) -> (Value, String) {
     let res = device_get(app, "/api/devices/music/library", token, &[]).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     let etag = res.headers[header::ETAG].to_str().unwrap().to_string();
     (res.json(), etag)
 }
 
-fn lib_entry(library: &Value, id: i64) -> Value {
+pub(super) fn lib_entry(library: &Value, id: i64) -> Value {
     library["entries"]
         .as_array()
         .unwrap()
@@ -224,6 +230,8 @@ fn lib_entry(library: &Value, id: i64) -> Value {
 #[tokio::test]
 async fn a_recorded_nrk_podcast_is_filled_from_psapi() {
     let app = TestApp::new().await;
+    // Episode art has its own tests (music_art.rs): these count the listing's requests.
+    app.state.music_sweep.set_art_per_check(0);
     let id = entry(
         &app,
         "https://radio.nrk.no/podkast/abels_taarn",
@@ -295,6 +303,8 @@ async fn a_recorded_nrk_podcast_is_filled_from_psapi() {
 #[tokio::test]
 async fn a_new_episode_moves_the_library_version_and_the_etag() {
     let app = TestApp::new().await;
+    // Episode art has its own tests (music_art.rs): these count the listing's requests.
+    app.state.music_sweep.set_art_per_check(0);
     let (phone, token) = app.enrolled_device("Ella").await;
     let (other, other_token) = app.enrolled_device("Max").await;
     let id = entry(
@@ -617,6 +627,8 @@ async fn the_rss_fallback_keeps_psapis_keys() {
 #[tokio::test]
 async fn a_long_series_window_follows_the_play_order() {
     let app = TestApp::new().await;
+    // Episode art has its own tests (music_art.rs): these count the listing's requests.
+    app.state.music_sweep.set_art_per_check(0);
     let (phone, token) = app.enrolled_device("Ella").await;
     let id = entry(
         &app,
@@ -802,7 +814,7 @@ async fn a_programme_link_walks_the_metadata_chain() {
 // RSS
 // ------------------------------------------------------------------------------------------------
 
-fn feed(items: &[(&str, &str)], newest_first: bool) -> String {
+pub(super) fn feed(items: &[(&str, &str)], newest_first: bool) -> String {
     let mut body = String::from(
         "<?xml version=\"1.0\"?><rss xmlns:itunes=\"http://www.itunes.com/dtds/podcast-1.0.dtd\"><channel><title>Rull</title>",
     );
@@ -1442,8 +1454,10 @@ async fn changes_wake_the_sweeper() {
 
 /// A family's library for the load runs: 30 NRK podcasts and 10 feeds, all ticked and listed at
 /// t0 (by a pass), nothing new afterwards.
-async fn day_library(setting: i64) -> (TestApp, i64) {
+pub(super) async fn day_library(setting: i64) -> (TestApp, i64) {
     let app = TestApp::new().await;
+    // 21b's request counts are the listing's; episode art's day is in music_art.rs.
+    app.state.music_sweep.set_art_per_check(0);
     app.state
         .music_sweep
         .set_limits(sweep::MAX_CHECK_REQUESTS, std::time::Duration::ZERO);
@@ -1498,7 +1512,7 @@ async fn day_library(setting: i64) -> (TestApp, i64) {
 /// Runs the sweeper itself (`run_pass`, as `run` does) over a day of the fake clock, a pass at
 /// every due time; returns the number of passes. A pass that never ends, or an entry checked
 /// again and again (QA 1c #1), shows in the request counts.
-async fn run_day(app: &TestApp) -> usize {
+pub(super) async fn run_day(app: &TestApp) -> usize {
     let end = t0() + TimeDelta::hours(24);
     let mut passes = 0;
     loop {
@@ -2251,6 +2265,17 @@ async fn music_listing_snapshot() {
          <pubDate>Fri, 09 Oct 2026 06:00:00 GMT</pubDate></item>\
          </channel></rss>",
     );
+    // Its own picture (design 27): the listing names it by hash. A PNG, so the stored JPEG (and
+    // its hash) is the same on every machine.
+    let picture = image::RgbImage::from_fn(64, 64, |x, y| {
+        image::Rgb([(x * 4) as u8, (y * 4) as u8, 90])
+    });
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(picture)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    app.fetch
+        .answer("https://example.org/ny.jpg", 200, png.into_inner());
     check(&app, id, t0() + TimeDelta::hours(6)).await;
     let res = device_get(&app, &uri, &token, &[]).await;
     assert_eq!(res.status, StatusCode::OK);
@@ -2310,6 +2335,13 @@ fn a_listing_past_1_mb_is_cut_from_the_end_opposite_its_anchor() {
         reported_at: None,
         rechecked_at: None,
         recheck: false,
+        art_hash: None,
+        art_from: None,
+        art_state: None,
+        art_print: None,
+        art_at: None,
+        art_fetched_at: None,
+        art_fails: 0,
     };
     let mut list: Vec<sweep::Item> = (0..1200).map(|n| item(n, "ok")).collect();
     list[600].state = "gone".into();
@@ -2975,6 +3007,8 @@ async fn a_cover_for_an_entry_deleted_mid_check_is_pruned() {
 #[tokio::test]
 async fn a_routine_nrk_check_starts_with_five_episodes() {
     let app = TestApp::new().await;
+    // Episode art has its own tests (music_art.rs): these count the listing's requests.
+    app.state.music_sweep.set_art_per_check(0);
     let id = entry(
         &app,
         "https://radio.nrk.no/podkast/small",

@@ -61,13 +61,27 @@ class ContractFilesTest {
     fun `the listing snapshot parses, oldest first, with withdrawn items as url null`() {
         val listing = ListingParser.parse(Fixtures.resource("music_listing.json"))!!
         assertEquals(1L, listing.entryId)
-        assertEquals("33e4fb66e77b8d7f", listing.version)
+        assertEquals("a8146790d70b89a3", listing.version)
         assertEquals(listOf("c00dbbc9dadf", "c2a6b03f190d"), listing.items.map { it.key })
         assertNull(listing.items[0].url)
         assertNull(listing.items[0].durationMs)
         assertEquals("https://cdn.example.org/ny.m3u8", listing.items[1].url)
         assertTrue(listing.items[1].hls)
         assertEquals(3_723_000L, listing.items[1].durationMs)
+        assertNull("no own picture", listing.items[0].art)
+        assertEquals("940b951005008e7207e7f8b8807ac39691025858882b8c67843a29b65e388187", listing.items[1].art)
+    }
+
+    @Test
+    fun `an item's art is a 64-hex hash or nothing (design 27)`() {
+        val base = Fixtures.resource("music_listing.json")
+        val hash = "940b951005008e7207e7f8b8807ac39691025858882b8c67843a29b65e388187"
+        fun artOf(text: String) = ListingParser.parse(text)!!.items[1].art
+        assertEquals(hash, artOf(base))
+        assertNull("an older server's URL", artOf(base.replace("\"$hash\"", "\"https://example.org/ny.jpg\"")))
+        assertNull("upper case", artOf(base.replace(hash, hash.uppercase())))
+        assertNull("too short", artOf(base.replace(hash, hash.drop(1))))
+        assertNull("a path", artOf(base.replace(hash, "../" + hash.drop(3))))
     }
 
     @Test

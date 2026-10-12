@@ -215,7 +215,8 @@ pub async fn prune_old_backups(retention_count: usize) {
 
 /// The database snapshot plus every contact photo (`contact_photos/<hash>.jpg`), wallpaper image
 /// (`wallpapers/<hash>.jpg`) and music cover (`music_covers/<hash>.jpg`). Never the parent's own
-/// music files (design 21: too big; a restore lists them as missing). A restore swaps in only the
+/// music files (design 21: too big; a restore lists them as missing), nor episode art (design 27:
+/// `photos::MUSIC_ART` is fetched again by the sweep). A restore swaps in only the
 /// database (deploy/install.sh); the server puts back missing files from the backups at startup
 /// (`photos::recover_missing`).
 pub(crate) fn build_backup_zip(

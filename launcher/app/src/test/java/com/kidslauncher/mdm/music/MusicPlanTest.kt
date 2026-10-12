@@ -87,7 +87,7 @@ class MusicPlanTest {
 
     @Test
     fun `the shared listing snapshot's version`() {
-        assertEquals("33e4fb66e77b8d7f", listingVersionOf(repo("server/testdata/music_listing.json").readText()))
+        assertEquals("a8146790d70b89a3", listingVersionOf(repo("server/testdata/music_listing.json").readText()))
         assertNull(listingVersionOf("{\"v\":9,\"version\":\"x\"}"))
     }
 
