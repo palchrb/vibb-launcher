@@ -73,7 +73,7 @@ class LockGlanceGuardTest {
         "GlanceCandidateFacts", "glanceCandidate", "groupSummary", "ongoing", "clearable", "media", "importance",
         "category", "glanceLevel", "ticked", "GlanceLevel", "TEXT", "glanceTitle", "conversationTitle", "newestSender",
         "cleanGlanceText", "GLANCE_TITLE_MAX", "GLANCE_TEXT_MAX", "glanceGroupText", "glanceCount", "isMediaNotification",
-        "glanceSuspended",
+        "glanceSuspended", "missedCall", "glanceMissedCall",
         "GlanceNotice", "key", "packageName", "conversationKey", "count", "whenMs", "postTimeMs", "suspended",
         // the platform: only these members
         "NotificationListenerService", "RankingMap", "Ranking", "getRanking", "isSuspended", "channel",

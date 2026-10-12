@@ -201,7 +201,8 @@ class GlanceRowsTest {
         whenMs: Long = 0,
         post: Long,
         suspended: Boolean = false,
-    ) = GlanceNotice(key, pkg, conversation, level, title, text, count, whenMs, post, suspended)
+        missedCall: Boolean = false,
+    ) = GlanceNotice(key, pkg, conversation, level, title, text, count, whenMs, post, suspended, missedCall)
 
     private fun rows(
         vararg notices: GlanceNotice,
@@ -301,6 +302,28 @@ class GlanceRowsTest {
         assertTrue(rows().isEmpty())
     }
 
+    /** Bug 25b-E: Element X sets `CATEGORY_MISSED_CALL` on a room notification that holds a missed
+     * call (an RTC notification event - its NotificationCreator); the row is a missed-call row. */
+    @Test
+    fun `an app's missed call is a missed-call row, its newest notification decides`() {
+        assertTrue(glanceMissedCall("missed_call"))
+        assertFalse(glanceMissedCall("msg"))
+        assertFalse(glanceMissedCall("call"))
+        assertFalse(glanceMissedCall(null))
+        // A ringing call ("call") is design 17's, never a row; a missed one is.
+        assertFalse(glanceCandidate(facts(category = "call"), ours))
+        assertTrue(glanceCandidate(facts(category = "missed_call"), ours))
+        val missed = rows(notice("k1", conversation = "room-a", title = "Pappa", post = 200, missedCall = true))[0] as GlanceMessageRow
+        assertTrue(missed.missedCall)
+        assertEquals("Pappa", missed.title)
+        val laterMessage = rows(
+            notice("k1", conversation = "room-a", post = 100, missedCall = true),
+            notice("k2", conversation = "room-a", post = 200),
+        )[0] as GlanceMessageRow
+        assertFalse("a newer message in the same room: a message row", laterMessage.missedCall)
+        assertEquals("GlanceRow(io.element.android.x)", missed.toString())
+    }
+
     @Test
     fun `toString is redacted - no name, number or text in a log line or crash report`() {
         val secrets = listOf("Pappa", "Kommer kl 5", "+4790000002", "room-a", "k-secret")
@@ -323,7 +346,7 @@ class GlanceRowsTest {
     fun `the kept facts are exactly the ones the design names`() {
         fun fields(type: Class<*>) = type.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }.map { it.name }.toSet()
         assertEquals(
-            setOf("key", "packageName", "conversationKey", "level", "title", "text", "count", "whenMs", "postTimeMs", "suspended"),
+            setOf("key", "packageName", "conversationKey", "level", "title", "text", "count", "whenMs", "postTimeMs", "suspended", "missedCall"),
             fields(GlanceNotice::class.java),
         )
         assertEquals(setOf("packageName", "groupSummary", "ongoing", "clearable", "media", "importance", "category"), fields(GlanceCandidateFacts::class.java))

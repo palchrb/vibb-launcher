@@ -284,7 +284,10 @@ class GlancePanel(
         val res = activity.resources
         val messages = res.getQuantityString(R.plurals.glance_messages, row.count, row.count)
         val title = row.title ?: label
+        val missed = activity.getString(R.string.glance_missed)
         val subtitle = when {
+            // A missed call in the app (Element Call, bug 25b-E): never "N meldinger".
+            row.missedCall -> "$missed · $label"
             row.level == GlanceLevel.APP_ONLY -> res.getQuantityString(R.plurals.glance_notices, row.count, row.count)
             row.level == GlanceLevel.TEXT && row.text != null -> row.text
             else -> "$label · $messages"
@@ -296,7 +299,8 @@ class GlancePanel(
         view.glanceRowSubtitle.visibility = View.VISIBLE
         view.glanceRowTime.text = time
         view.glanceRowInitial.visibility = View.GONE
-        view.glanceRowBadge.visibility = View.GONE
+        // The red phone badge on the app's icon for a missed call, as on a phone call's row.
+        view.glanceRowBadge.visibility = if (row.missedCall) View.VISIBLE else View.GONE
         val icon = appIcon(row.packageName)
         plainIcon(view)
         if (icon != null) {
@@ -307,11 +311,12 @@ class GlancePanel(
             view.glanceRowIcon.backgroundTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_music_control))
         }
         val count = if (row.level == GlanceLevel.APP_ONLY) subtitle else messages
-        describe(
-            view,
-            listOfNotNull(label, row.title, row.text.takeIf { row.level == GlanceLevel.TEXT }, count, time).distinct().joinToString(", "),
-            activity.getString(R.string.glance_open_action),
-        )
+        val spoken = when {
+            row.missedCall && row.title != null -> listOf(label, activity.getString(R.string.glance_missed_from, row.title), time)
+            row.missedCall -> listOf(label, missed, time)
+            else -> listOfNotNull(label, row.title, row.text.takeIf { row.level == GlanceLevel.TEXT }, count, time)
+        }
+        describe(view, spoken.distinct().joinToString(", "), activity.getString(R.string.glance_open_action))
     }
 
     private fun bindMissed(view: ViewLockGlanceRowBinding, row: GlanceMissedRow) {
