@@ -177,6 +177,19 @@ const val SOS_GESTURE_WINDOW_MS = 3_000L
 /** How long a probable SOS is left alone without the lock coming back to the front. */
 const val SOS_FLOW_MS = 60_000L
 
+/**
+ * Only a *stop* marks a probable SOS (a full-screen task of its own covers the lock): Recents - the
+ * Overview button right after waking - only pauses it and is re-fronted as always. A pause inside
+ * the window waits [SOS_PAUSE_GRACE_MS] for that stop before its check, else [PAUSE_REFRONT_MS].
+ */
+const val SOS_PAUSE_GRACE_MS = 700L
+
+fun pauseRefrontDelayMs(lastScreenOnAtMs: Long?, pausedAtMs: Long): Long =
+    if (sosGestureLikely(lastScreenOnAtMs, pausedAtMs, sosAppPresent = true)) SOS_PAUSE_GRACE_MS else PAUSE_REFRONT_MS
+
+/** A probable SOS is left alone until [untilMs] - never while one of our own screens is in front. */
+fun sosFlowNow(untilMs: Long, nowMs: Long, ownScreenInFront: Boolean): Boolean = nowMs < untilMs && !ownScreenInFront
+
 /** The lock left the front [leftFrontAtMs] (elapsed) probably because of the SOS gesture. */
 fun sosGestureLikely(lastScreenOnAtMs: Long?, leftFrontAtMs: Long, sosAppPresent: Boolean): Boolean =
     sosAppPresent && lastScreenOnAtMs != null && leftFrontAtMs - lastScreenOnAtMs in 0..SOS_GESTURE_WINDOW_MS

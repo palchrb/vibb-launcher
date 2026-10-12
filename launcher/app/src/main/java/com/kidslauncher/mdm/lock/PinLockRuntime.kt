@@ -166,6 +166,24 @@ object PinLockRuntime {
     /** The last screen-on (elapsed ms) and a probable Emergency SOS's end ([sosGestureLikely]). Main thread. */
     private var lastScreenOnElapsed: Long? = null
     private var sosFlowUntilElapsed = 0L
+
+    /** Our resumed activities other than the lock (bug 25b-H). Main thread. */
+    private var ownOthersResumed = 0
+    private val ownScreens = object : android.app.Application.ActivityLifecycleCallbacks {
+        override fun onActivityResumed(activity: android.app.Activity) {
+            if (activity !is PinLockActivity) ownOthersResumed++
+        }
+
+        override fun onActivityPaused(activity: android.app.Activity) {
+            if (activity !is PinLockActivity) ownOthersResumed = (ownOthersResumed - 1).coerceAtLeast(0)
+        }
+
+        override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {}
+        override fun onActivityStarted(activity: android.app.Activity) {}
+        override fun onActivityStopped(activity: android.app.Activity) {}
+        override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
+        override fun onActivityDestroyed(activity: android.app.Activity) {}
+    }
     private var emergencyCallSeen = false
     private var rememberedAlarmMs: Long? = null
     private var callsSeen = false
@@ -384,6 +402,8 @@ object PinLockRuntime {
         initialized = true
         val app = context.applicationContext
         appContext = app
+        // Bug 25b-H: one of our own screens in front (Home, the time-rule screen) is never the SOS.
+        (app as? android.app.Application)?.registerActivityLifecycleCallbacks(ownScreens)
         decide(app)
         // Design 16e: the first process start of a boot shows the mark for 3 s before the lock.
         bootMark = bootMarkAtStart(app)
@@ -1006,10 +1026,10 @@ object PinLockRuntime {
     fun onLockPaused(finishing: Boolean = false) {
         lockResumed = false
         if (!pauseStartsRefront(chromeLocked, finishing)) return
-        noteProbableSos()
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
-        handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
+        // Just after a screen-on the stop that marks Emergency SOS may still come (bug 25b-H).
+        handler.postDelayed(refrontCheck, pauseRefrontDelayMs(lastScreenOnElapsed, SystemClock.elapsedRealtime()))
     }
 
     /** PinLockActivity.onStop: unless it's a configuration change or the finish after an unlock,
@@ -1050,7 +1070,7 @@ object PinLockRuntime {
             emergencyFlow = emergencyFlowNow(telecom),
             alarmRinging = alarmNow(context),
             voipCall = VoipCalls.phase != VoipPhase.NONE,
-            sosFlow = SystemClock.elapsedRealtime() < sosFlowUntilElapsed,
+            sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),
         )
         when (val action = refrontAction(inputs, refrontAttempt)) {
             RefrontAction.Stop -> yielding = null

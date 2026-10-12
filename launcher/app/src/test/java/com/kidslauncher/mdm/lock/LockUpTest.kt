@@ -42,7 +42,7 @@ class LockUpTest {
         val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
         val paused = body(runtime, "onLockPaused")
         assertTrue(paused.contains("if (!pauseStartsRefront(chromeLocked, finishing)) return"))
-        assertTrue(paused.contains("handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)"))
+        assertTrue(paused.contains("handler.postDelayed(refrontCheck, pauseRefrontDelayMs("))
         val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
         assertTrue(activity.contains("PinLockRuntime.onLockPaused(isFinishing || finishingAfterUnlock)"))
         // A stop (a SystemUI restart, quickstep's Recents or app list, an app) re-fronts as quickly.
@@ -90,18 +90,29 @@ class LockUpTest {
         assertEquals("its emergency call", RefrontAction.Yield("system_call"), refrontAction(inputs.copy(telecomInCall = true), 0))
         assertEquals(RefrontAction.Stop, refrontAction(inputs.copy(lockResumed = true), 0))
         assertTrue(refrontAction(inputs.copy(sosFlow = false), 0) is RefrontAction.Refront)
+        // Only a stop marks it: Recents (the Overview button right after waking) only pauses the lock.
+        assertEquals(SOS_PAUSE_GRACE_MS, pauseRefrontDelayMs(10_000L, 10_500L))
+        assertEquals(PAUSE_REFRONT_MS, pauseRefrontDelayMs(10_000L, 10_001L + SOS_GESTURE_WINDOW_MS))
+        assertEquals(PAUSE_REFRONT_MS, pauseRefrontDelayMs(null, 10_500L))
+        assertTrue(SOS_PAUSE_GRACE_MS < 1_000L)
+        // Never while one of our own screens (Home, the time-rule screen) is in front.
+        assertTrue(sosFlowNow(untilMs = 70_000L, nowMs = 20_000L, ownScreenInFront = false))
+        assertFalse(sosFlowNow(70_000L, 20_000L, ownScreenInFront = true))
+        assertFalse(sosFlowNow(70_000L, 70_000L, false))
         val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
-        for (name in listOf("onLockPaused", "onLockStopped")) {
-            val b = body(runtime, name)
-            assertTrue(name, b.indexOf("noteProbableSos()") in 0 until b.indexOf("handler.postDelayed(refrontCheck"))
-        }
+        val stopped = body(runtime, "onLockStopped")
+        assertTrue(stopped.indexOf("noteProbableSos()") in 0 until stopped.indexOf("handler.postDelayed(refrontCheck"))
+        val paused = body(runtime, "onLockPaused")
+        assertFalse(paused.contains("noteProbableSos()"))
+        assertTrue(paused.contains("handler.postDelayed(refrontCheck, pauseRefrontDelayMs(lastScreenOnElapsed, SystemClock.elapsedRealtime()))"))
+        assertTrue(runtime.contains("registerActivityLifecycleCallbacks(ownScreens)"))
         assertTrue("the lock back in front ends it", body(runtime, "onLockResumed").contains("sosFlowUntilElapsed = 0L"))
         val note = body(runtime, "noteProbableSos")
         assertTrue(note.contains("!interactive(app)) return"))
         assertTrue(note.contains("sosAppPresent = emergencySosPackage(app) != null"))
         assertTrue(note.contains("sosFlowUntilElapsed = now + SOS_FLOW_MS"))
         assertTrue(runtime.contains("lastScreenOnElapsed = SystemClock.elapsedRealtime()"))
-        assertTrue(body(runtime, "runRefrontCheck").contains("sosFlow = SystemClock.elapsedRealtime() < sosFlowUntilElapsed,"))
+        assertTrue(body(runtime, "runRefrontCheck").contains("sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),"))
     }
 
     @Test

@@ -60,9 +60,21 @@ adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeLi
 # Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.
 adb shell dumpsys deviceidle whitelist +$P
 # Step 9 (B2): the device owner can't switch off the camera gesture - do it before enrolling
-# (Settings -> System -> Gestures -> "Quickly open camera" off), or with adb:
+# (Settings -> System -> Gestures -> "Quickly open camera" off), or with adb. Both keys (25b):
 adb shell settings put secure camera_double_tap_power_gesture_disabled 1
+adb shell settings put secure double_tap_power_button_gesture_enabled 0
 ```
+
+Power-button double press (bug 25b, read in AOSP 16 `GestureLauncherService`): Android 15 and older
+have only `camera_double_tap_power_gesture_disabled`. Android 16 adds `double_tap_power_button_gesture_enabled`
+(and `double_tap_power_button_gesture`: 0 camera, 1 wallet) for its "Double press power button: open
+camera or wallet" setting; where the build uses that multi-target mode (`config_doubleTapPowerGestureMode`
+= 2, AOSP 16's default, with the `launchWalletOptionOnPowerDoubleTap` flag on) the old key is **ignored**
+and the new one counts (unset = on) - so set both. Since 25b the lock is safe with the gesture on too (the cameras are off by policy
+while LOCKED, so SystemUI starts nothing); the keys only keep the camera from opening over Home. Check:
+`adb shell settings get secure double_tap_power_button_gesture_enabled` (`null` = the build's default).
+Five presses (Emergency SOS, `emergency_gesture_enabled`) stay on: since 25b the SOS app is pinned on the
+lock and the lock yields to it.
 
 Language and time zone (fix round 2026-10-06): adb provisioning doesn't set them - choose
 Android's language (e.g. Norsk bokmål) and time zone in Settings **before** `set-device-owner`/

@@ -38,6 +38,13 @@ restrictions" -> "Background connection" ("Bakgrunnstilkobling") -> Allow, then 
 device page's "Play and kiosk" card says which it is. Android's own battery page shows the launcher
 as "Unrestricted" whatever the real state - trust the device page.
 
+**Power-button gestures (bug 25b), in the same adb session:** `adb shell settings put secure
+camera_double_tap_power_gesture_disabled 1` and `adb shell settings put secure
+double_tap_power_button_gesture_enabled 0` (Android 16's "double press: camera or wallet" reads only the
+second key, 15 and older only the first - `docs/testing/emulator.md` §4). Without adb: Settings -> System
+-> Gestures -> "Quickly open camera" / "Double press power button" off, before enrolling. The lock is
+safe either way; these keep the camera from opening over Home. Leave Emergency SOS on.
+
 **With the provisioning QR there is no "before enrolling":** the QR enrolls the phone by itself,
 and its first policy blocks accounts and starts the kiosk at once. Untick "Block adding or removing
 accounts" on the device row before scanning, then follow the enrolled-phone steps below.
