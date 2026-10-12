@@ -28,8 +28,15 @@ async fn launcher_settings(app: &TestApp, token: &str) -> serde_json::Value {
         ui["app_display"].is_array(),
         "app_display always sent (design 14)"
     );
+    // Design 25, "Lock background": always sent, null until the parent chooses one.
+    assert!(
+        ui["lock_wallpaper"].is_null() || ui["lock_wallpaper"].is_i64(),
+        "lock_wallpaper always sent"
+    );
+    assert!(ui.as_object().unwrap().contains_key("lock_wallpaper"));
     ui.as_object_mut().unwrap().remove("wallpapers");
     ui.as_object_mut().unwrap().remove("app_display");
+    ui.as_object_mut().unwrap().remove("lock_wallpaper");
     ui
 }
 
