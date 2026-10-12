@@ -412,6 +412,22 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         "{card}"
     );
     assert!(card.contains(&button), "{card}");
+    assert!(!card.contains("more - the phone lists at most"), "{card}");
+    // More than the phone lists (QA of cmd-expiry, Low 2): said under the list.
+    post_status(
+        &app,
+        &token,
+        json!({ "relock_blocks": [music.clone()], "relock_blocks_total": 18 }),
+    )
+    .await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        status_card(&html).contains("And 17 more - the phone lists at most 16."),
+        "{html}"
+    );
     // Logged once.
     post_status(&app, &token, json!({ "relock_blocks": [music.clone()] })).await;
     let logged = events(&app, "phone_app_blocked").await;
@@ -509,6 +525,15 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
     assert!(!card.contains(&button), "{card}");
     assert!(!card.contains("Blocked: com.example.app"), "{card}");
     assert!(card.contains("it removed 1 Wi-Fi proxy."), "{card}");
+    // A total without the list is dropped.
+    post_status(&app, &token, json!({ "relock_blocks_total": 18 })).await;
+    let stored: Option<i64> = sqlx::query_scalar(
+        "SELECT relock_blocks_total FROM device_status ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, None);
 }
 
 /// QA Low 10: "Allow these apps" goes once the phone answered one pressed after the relock, and

@@ -337,6 +337,9 @@ pub struct DeviceStatus {
     /// Every app the phone has blocked now (design 24b, fix of 2026-10-12, migration 0067), see
     /// `window_relock::RelockBlock`. `None` from older launchers.
     pub relock_blocks_json: Option<String>,
+    /// How many blocks there are in all; the list holds at most `window_relock::BLOCKS_MAX` (QA
+    /// of cmd-expiry, Low 2, migration 0068). `None` from older launchers.
+    pub relock_blocks_total: Option<i64>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -1002,6 +1005,10 @@ pub struct StatusReportRequest {
     /// (`window_relock::sanitize_relock_blocks`). Absent = an older launcher, or not device owner.
     #[serde(default)]
     pub relock_blocks: Option<serde_json::Value>,
+    /// How many apps are blocked in all - `relock_blocks` stops at 16 (QA of cmd-expiry, Low 2).
+    /// Absent = an older launcher.
+    #[serde(default)]
+    pub relock_blocks_total: Option<i64>,
 }
 
 /// `StatusReportRequest.install_mode`.

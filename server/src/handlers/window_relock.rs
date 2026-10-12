@@ -82,7 +82,14 @@ pub async fn card(
         None => RelockNotes::default(),
     };
     let blocks = blocks
-        .map(|b| window_relock::blocks_note(&b, &pins, now_ms))
+        .map(|b| {
+            let mut note = window_relock::blocks_note(&b, &pins, now_ms);
+            note.more = window_relock::more_blocks_line(
+                b.len(),
+                latest.and_then(|s| s.relock_blocks_total),
+            );
+            note
+        })
         .unwrap_or_default();
     let foreign =
         window_relock::parse_foreign_access(latest.and_then(|s| s.foreign_access_json.as_deref()))

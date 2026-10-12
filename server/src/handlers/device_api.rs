@@ -617,6 +617,8 @@ async fn compute_dns_filter_version(
 pub(crate) const MAX_INSTALLED_APPS: usize = 1500;
 /// The longest app label kept.
 const MAX_APP_LABEL_CHARS: usize = 100;
+/// `relock_blocks_total` is kept within 0..this.
+const MAX_RELOCK_BLOCKS_TOTAL: i64 = 10_000;
 
 /// An Android package name as the platform allows it: letters, digits, `_` and `.`, at most 255.
 pub(crate) fn is_package_name(name: &str) -> bool {
@@ -1075,8 +1077,9 @@ pub async fn status(
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
-          foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
+          relock_blocks_total) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1119,6 +1122,13 @@ pub async fn status(
         report.admin_policies_pending.as_ref(),
     ))
     .bind(&relock_blocks_json)
+    // How many there are in all - the list stops at BLOCKS_MAX (QA of cmd-expiry, Low 2); only
+    // with the list.
+    .bind(relock_blocks_json.as_ref().and_then(|_| {
+        report
+            .relock_blocks_total
+            .map(|n| n.clamp(0, MAX_RELOCK_BLOCKS_TOTAL))
+    }))
     .execute(&state.db)
     .await
     .ok();

@@ -197,6 +197,13 @@ class PolicyResponseCompatTest {
             ),
             json["relock_blocks"],
         )
+        // How many in all (QA of cmd-expiry, Low 2): `relock_blocks_total`, left out unknown.
+        val counted = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relockBlocks = emptyList(), relockBlocksTotal = 18)
+        assertEquals(
+            ServerJson.parseToJsonElement("18"),
+            ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), counted)).jsonObject["relock_blocks_total"],
+        )
+        assertTrue("relock_blocks_total" !in json)
         // None: an empty list, sent; not device owner: left out.
         val empty = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relockBlocks = emptyList())
         assertEquals(ServerJson.parseToJsonElement("[]"), ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), empty)).jsonObject["relock_blocks"])

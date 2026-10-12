@@ -83,6 +83,9 @@ data class StatusReportRequest(
      * install check outside windows - see [RelockBlockReport]; an empty list = none; `null` = not
      * device owner (left out). */
     val relockBlocks: List<RelockBlockReport>? = null,
+    /** How many blocks there are in all: [relockBlocks] stops at `RELOCK_BLOCKS_MAX`, and the PWA
+     * says "and N more" (QA of cmd-expiry, Low 2). Sent with [relockBlocks]. */
+    val relockBlocksTotal: Int? = null,
 )
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the

@@ -197,6 +197,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     // Best-effort - a failed report must never affect the lock decision above.
     try {
+        // The current blocks and how many in all (design 24b fix, QA of cmd-expiry Low 2).
+        val blocks = WindowRelock.reportBlocks(context)
         api.sendStatus(
             StatusReportRequest(
                 lockReason = reason.name,
@@ -244,7 +246,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 relock = WindowRelock.lastReport(context),
                 unseenBoots = BootWitness.report(context),
                 foreignAccess = ForeignAccess.report(context),
-                relockBlocks = WindowRelock.reportBlocks(context),
+                relockBlocks = blocks?.first,
+                relockBlocksTotal = blocks?.second,
                 remoteWipeReady = LocateCommands.remoteWipeReady(context),
                 adminPoliciesPending = AdminPolicies.pending(context),
             )

@@ -336,6 +336,8 @@ pub struct BlocksNote {
     pub allow_button: bool,
     /// What it sends: the listed blocks it may let out, with the keys shown (Low 1).
     pub allow: Vec<AllowedBlock>,
+    /// The phone has more than it lists ([more_blocks_line], Low 2).
+    pub more: Option<String>,
 }
 
 /// [pins]: the catalog's pinned signers (M10). An app whose key differs from its pin - by the
@@ -416,7 +418,21 @@ pub fn blocks_note(
         items,
         allow_button,
         allow,
+        more: None,
     }
+}
+
+/// The line under the list when the phone has more blocks than it lists (QA of cmd-expiry, Low 2):
+/// [listed] shown, [total] in all (the phone's `relock_blocks_total`).
+pub fn more_blocks_line(listed: usize, total: Option<i64>) -> Option<String> {
+    let more = total? - i64::try_from(listed).ok()?;
+    (more > 0).then(|| {
+        format!(
+            "And {more} more - the phone lists at most {BLOCKS_MAX}. Look for them on the phone \
+             (Settings -> Apps) and uninstall what you don't know; \"Allow these apps\" lets out \
+             only the ones listed here."
+        )
+    })
 }
 
 /// The security log's line for apps the phone newly reports as blocked (`phone_app_blocked`):
@@ -1214,6 +1230,23 @@ mod tests {
                 package_name: "org.example.a".to_string(),
                 signer: Some("a".repeat(64))
             }]
+        );
+    }
+
+    /// QA of cmd-expiry, Low 2: more blocks than listed say so.
+    #[test]
+    fn more_blocks_than_listed_say_so() {
+        assert_eq!(more_blocks_line(16, None), None);
+        assert_eq!(more_blocks_line(16, Some(16)), None);
+        assert_eq!(more_blocks_line(2, Some(1)), None);
+        let line = more_blocks_line(16, Some(19)).unwrap();
+        assert!(
+            line.starts_with("And 3 more - the phone lists at most 16."),
+            "{line}"
+        );
+        assert!(
+            line.contains("lets out only the ones listed here"),
+            "{line}"
         );
     }
 

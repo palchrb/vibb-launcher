@@ -234,6 +234,13 @@ class RelockBlockTest {
         )
         // A blocked package that is gone isn't reported.
         assertEquals(2, currentBlocks(store.blocked(), store.blockNotes(), signers - "org.example.old").size)
+        assertEquals(3, currentBlocksTotal(store.blocked(), signers))
+        assertEquals(2, currentBlocksTotal(store.blocked(), signers - "org.example.old"))
+        // Past the cap the list stops, the total doesn't (QA of cmd-expiry, Low 2).
+        val many = (0 until RELOCK_BLOCKS_MAX + 3).associate { "org.example.app$it" to null as Set<String>? }
+        val manySigners = many.keys.associateWith { setOf(debugKey) }
+        assertEquals(RELOCK_BLOCKS_MAX, currentBlocks(many, emptyMap(), manySigners).size)
+        assertEquals(RELOCK_BLOCKS_MAX + 3, currentBlocksTotal(many, manySigners))
 
         // "Allow these apps": the debug build goes (with its note), the imposter stays.
         val left = allowBlocked(store.blocked(), signers, mapOf(CHAT to setOf(pinKey)))

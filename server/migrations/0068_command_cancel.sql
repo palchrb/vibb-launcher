@@ -7,3 +7,5 @@ ALTER TABLE device_commands ADD COLUMN cancel_reason TEXT;
 -- "Allow these apps" carries the apps the Status card listed, with the keys it showed (QA of
 -- cmd-expiry, Low 1): JSON [{package_name, signer}], NULL for every other command.
 ALTER TABLE device_commands ADD COLUMN payload TEXT;
+-- How many apps the phone blocks in all: relock_blocks lists at most 16 (QA of cmd-expiry, Low 2).
+ALTER TABLE device_status ADD COLUMN relock_blocks_total INTEGER;

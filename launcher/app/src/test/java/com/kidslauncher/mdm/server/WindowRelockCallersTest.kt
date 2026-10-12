@@ -68,7 +68,10 @@ class WindowRelockCallersTest {
         val quiet = install.substringAfter("catch (e: PackageManager.NameNotFoundException)").substringBefore("catch (e: Exception)")
         assertTrue("Log.w" !in quiet && ", e)" !in quiet)
         // The status report carries every current block, not only the last relock's.
-        assertTrue("relockBlocks = WindowRelock.reportBlocks(context)" in sources.getValue("server/MdmSyncWorker.kt"))
+        // With how many in all (QA of cmd-expiry, Low 2).
+        val sync = sources.getValue("server/MdmSyncWorker.kt")
+        assertTrue("val blocks = WindowRelock.reportBlocks(context)" in sync)
+        assertTrue("relockBlocks = blocks?.first," in sync && "relockBlocksTotal = blocks?.second," in sync)
     }
 
     @Test

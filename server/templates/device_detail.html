@@ -78,6 +78,9 @@
                 <li>{{ item }}</li>
                 {% endfor %}
             </ul>
+            {% if let Some(more) = relock.blocks.more %}
+            <p style="margin:8px 0 0;">{{ more }}</p>
+            {% endif %}
         </div>
         {% endif %}
         {% if let Some(text) = relock.notice %}

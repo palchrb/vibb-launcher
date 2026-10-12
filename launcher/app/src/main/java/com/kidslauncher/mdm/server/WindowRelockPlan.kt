@@ -195,6 +195,10 @@ const val RELOCK_BLOCKS_MAX = 16
  * more is left out), why and when (fix of 2026-10-12: an install-time block never reached the
  * PWA, so the parent couldn't let it out). Sorted, valid package names, at most [RELOCK_BLOCKS_MAX].
  */
+/** How many blocks [currentBlocks] would report without its cap - the report's `relock_blocks_total`. */
+fun currentBlocksTotal(blocked: Map<String, Set<String>?>, installedSigners: Map<String, Set<String>>): Int =
+    blocked.keys.count { it in installedSigners && reportPackages(listOf(it)).isNotEmpty() }
+
 fun currentBlocks(
     blocked: Map<String, Set<String>?>,
     notes: Map<String, BlockNote>,
