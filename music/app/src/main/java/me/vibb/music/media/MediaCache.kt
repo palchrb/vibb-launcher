@@ -88,7 +88,10 @@ object MediaCache {
      * CDN's own (the asset call's 302 was captured by the Storytel client), and a followed redirect
      * would put its target - a token in its query - into the cache index (Media3's `exo_redir`). A
      * CDN that redirects anyway fails the attempt with its 3xx status (`http_302`, transient: the
-     * next attempt mints again).
+     * next attempt mints again). That rests on two things (qa-26b-step3-code L5): no redirect, and the
+     * minted URL being OkHttp's canonical form (`StorytelApi.mintedUrl`) - `CacheDataSource` writes
+     * `exo_redir` whenever the request's uri differs from `OkHttpDataSource.getUri()`, which is the
+     * request's canonical `HttpUrl`, so a raw Location would land there with no redirect at all.
      */
     private val noRedirectClients: Map<Boolean, OkHttpClient> by lazy {
         mapOf(true to publicClient, false to lanClient).mapValues { (_, c) -> c.newBuilder().followRedirects(false).followSslRedirects(false).build() }

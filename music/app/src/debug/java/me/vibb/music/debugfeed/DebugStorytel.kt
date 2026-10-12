@@ -38,15 +38,17 @@ object DebugStorytel {
 
     /**
      * A login for a run without a launcher: `{"email", "password"}`, fake values only, stored as the next
-     * generation, then the file deleted (QA L13). The email is never logged.
+     * generation, then the file deleted (QA L13). The email is never logged; a malformed file is one fixed
+     * line, and the rest of the feed still applies.
      */
     fun seedLogin(context: Context, f: File) {
         try {
-            val o = JSON.parseToJsonElement(f.readText()) as? JsonObject
-            val email = o?.get("email")?.jsonPrimitive?.contentOrNull
-            val password = o?.get("password")?.jsonPrimitive?.contentOrNull
+            // Never the parser's message: it quotes the input, the password included (qa-26b-step3-code L1).
+            val o = runCatching { JSON.parseToJsonElement(f.readText()) as? JsonObject }.getOrNull()
+            val email = runCatching { o?.get("email")?.jsonPrimitive?.contentOrNull }.getOrNull()
+            val password = runCatching { o?.get("password")?.jsonPrimitive?.contentOrNull }.getOrNull()
             if (email == null || password == null) {
-                Log.w(TAG, "storytel.json: needs an email and a password")
+                Log.w(TAG, "storytel.json: not a JSON object with an email and a password - ignored")
                 return
             }
             val generation = StorytelLogin.generation(context) + 1

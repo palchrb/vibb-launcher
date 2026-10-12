@@ -33,7 +33,7 @@ data class Endpoints(
 /**
  * The one debug-only switch (design 26b §4.6, QA M2): null unless the debug feed's `config.json` sets
  * `storytel_base` (the emulator's fake Storytel on 10.0.2.2, a private address the guarded client
- * refuses). Only `src/debug` assigns it (SourceScanTest); a release build has no feed, so it stays null
+ * refuses; only 10.0.2.2 or loopback is taken). Only `src/debug` assigns it (SourceScanTest); a release build has no feed, so it stays null
  * there. It has exactly four readers, all below and nowhere else: (a) [endpoints], (b) [apiOverLan],
  * (c) [publicDownloads] and (d) [privateMintAllowed]. Nothing caches what they answer except
  * `StorytelAccount`, which keeps its one `StorytelApi` for as long as (a) and (b) answer the same.
@@ -57,7 +57,14 @@ object StorytelEndpoints {
     /** (d) Whether design 26b §5.1's minted-URL check on the Sonos path lets a private literal through (step 4b). */
     fun privateMintAllowed(): Boolean = parse(debugBase) != null
 
-    /** An http(s) base with a host, else none (a typo in the feed falls back to Storytel's hosts everywhere at once). */
+    /**
+     * The fake's homes only: the emulator's host (10.0.2.2) or loopback (qa-26b-step3-code L2). A
+     * `config.json` left behind on a real phone running a debug build must never send the family's real
+     * login (`pwd=` is as good as the password) over plain http to another host; a real phone reaches
+     * neither of these. Anything else - or a typo - is none: Storytel's hosts everywhere at once.
+     */
+    private val FAKE_HOSTS = setOf("10.0.2.2", "127.0.0.1", "localhost", "::1")
+
     private fun parse(base: String?): HttpUrl? =
-        base?.toHttpUrlOrNull()?.takeIf { it.host.isNotEmpty() && it.username.isEmpty() && it.password.isEmpty() }
+        base?.toHttpUrlOrNull()?.takeIf { it.host in FAKE_HOSTS && it.username.isEmpty() && it.password.isEmpty() }
 }

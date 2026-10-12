@@ -148,6 +148,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 if (downloadWaiting(netCaps(applicationContext), store.mobileData, false) != null) {
                     // The constraints, not a backoff, wait for the network.
                     Downloads.enqueue(applicationContext, store.mobileData)
+                    NewNotifier.update(applicationContext, store.snapshot())
                     Sync.writeReport(applicationContext)
                     return@withContext Result.success()
                 }
@@ -157,6 +158,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         // A refused Storytel login: back when its cooldown is over (one login an hour at most).
         val back = listOfNotNull(nextRetryAt, run.storytelRefusedUntil).minOrNull()
         back?.let { Downloads.enqueue(applicationContext, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
+        // A new book counts in the Nytt notification once its copy is on the phone (design 26b §3.4):
+        // after the download, not at the next sync (qa-26b-step3-code M1).
+        NewNotifier.update(applicationContext, store.snapshot())
         Sync.writeReport(applicationContext)
         Result.success()
     }

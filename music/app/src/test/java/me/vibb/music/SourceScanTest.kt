@@ -240,8 +240,12 @@ class SourceScanTest {
         for (line in debug.lines().filter { it.contains("Log.") }) {
             assertFalse(line, Regex("\\$\\{?(email|password|o\\b)").containsMatchIn(line))
         }
+        // qa-26b-step3-code L1: a malformed file never reaches the parser's message (it quotes the password)
+        assertTrue(seed.contains("val o = runCatching { JSON.parseToJsonElement(f.readText()) as? JsonObject }.getOrNull()"))
         val manifest = code(moduleFile("src/debug/AndroidManifest.xml"))
         assertTrue(manifest.contains("android:name=\"me.vibb.music.debugfeed.DebugStartup\""))
-        assertTrue("the start-up provider is not exported", manifest.substringAfter("DebugStartup").substringBefore("/>").contains("android:exported=\"false\""))
+        val provider = manifest.substringAfter("DebugStartup").substringBefore("/>")
+        assertTrue("the start-up provider is not exported", provider.contains("android:exported=\"false\""))
+        assertTrue("created before WorkManager's provider (L2)", provider.contains("android:initOrder=\"1000\""))
     }
 }

@@ -398,4 +398,20 @@ class GuardsTest {
         assertTrue(code("src/main/java/me/vibb/music/ui/MusicViewModel.kt").contains("store.snapshots().map { it.forRenderer(false) }"))
         assertTrue(code("src/main/java/me/vibb/music/sync/NewNotifier.kt").contains("val n = count(snap.forRenderer(false))"))
     }
+
+    /** qa-26b-step3-code M1, L4: the lines that wire step 3's pure rules into the workers. */
+    @Test
+    fun `the workers wire Storytel's news, report and cooldown, and the download job refreshes the Nytt notification`() {
+        val sync = code("src/main/java/me/vibb/music/sync/Sync.kt")
+        assertTrue("a new book is news though url-less", sync.contains("markSeen(store, entry.id, listing.items.map { it.key }, newsEligible(entry, listing.items))"))
+        assertTrue(sync.contains("val storytelEntries = snap.library?.entries.orEmpty().filter { it.source == Source.STORYTEL }.map { it.id }.toSet()"))
+        assertTrue(sync.contains("val states = reportWaiting(plan.states, storytelEntries, waiting, storytel, Downloads.freeBytes(context))"))
+        assertTrue(sync.contains("val storytel = StorytelAccount.get(context).state()"))
+        val downloads = code("src/main/java/me/vibb/music/sync/Downloads.kt")
+        assertTrue("a refused login's job comes back at the cooldown's end", downloads.contains("val back = listOfNotNull(nextRetryAt, run.storytelRefusedUntil).minOrNull()"))
+        val work = downloads.substringAfter("override suspend fun doWork(): Result").substringBefore("private class WorkerIo")
+        val reports = Regex("""Sync\.writeReport\(applicationContext\)""").findAll(work).count()
+        assertEquals(2, reports)
+        assertEquals("a new book's notification right after its download, beside each report", reports, Regex("""NewNotifier\.update\(applicationContext, store\.snapshot\(\)\)\n\s*Sync\.writeReport\(applicationContext\)""").findAll(work).count())
+    }
 }

@@ -381,4 +381,52 @@ class StorytelApiTest {
         assertTrue(api.assetUrl("111", 1_000, 10_000) is Mint.Url)
         assertEquals("http://127.0.0.1:8730/assets/v2/consumables/111/abook", requests.last().url.toString())
     }
+
+    /**
+     * qa-26b-step3-code L5: the minted URL is OkHttp's canonical form - what `OkHttpDataSource.getUri()`
+     * returns for the request - so `CacheDataSource` never writes it (a token) into `exo_redir`.
+     */
+    @Test
+    fun `the minted URL is canonical, so the cache index never records it`() {
+        val locations = listOf(
+            "https://cdn.example.invalid/a?consumableId=1&token=FAKE|SIG",
+            "https://cdn.example.invalid/a b.mp3?consumableId=1",
+            "HTTPS://CDN.Example.Invalid:443/mp3/x.mp3?consumableId=160661&token=FAKE-SIG-1",
+            "http://10.0.2.2:8730/cdn/111.wav?consumableId=111&token=FAKE-SIG-2",
+            "https://cdn.example.invalid/%7Ex/../y.mp3?consumableId=1&token=a%2Fb+c",
+            answer("asset_302.json").location!!,
+        )
+        for (location in locations) {
+            val minted = StorytelApi.mintedUrl(location)!!
+            assertEquals(location, minted, minted.toHttpUrl().toString())
+        }
+        assertEquals("https://cdn.example.invalid/mp3/x.mp3?consumableId=160661&token=FAKE-SIG-1", StorytelApi.mintedUrl(locations[2]))
+    }
+
+    /** qa-26b-step3-code L2: the debug switch takes only the fake's homes, the emulator's host and loopback. */
+    @Test
+    fun `the debug base is taken only for 10_0_2_2 and loopback`() {
+        val before = StorytelEndpoints.debugBase
+        try {
+            for (base in listOf("http://10.0.2.2:8730", "http://127.0.0.1:8730", "http://localhost:8730", "http://[::1]:8730")) {
+                StorytelEndpoints.debugBase = base
+                assertTrue(base, StorytelEndpoints.apiOverLan())
+                assertFalse(base, StorytelEndpoints.publicDownloads())
+                assertTrue(base, StorytelEndpoints.privateMintAllowed())
+                assertEquals(base.toHttpUrl().newBuilder().encodedPath("/api/login.action").build(), StorytelEndpoints.endpoints().login)
+            }
+            StorytelEndpoints.debugBase = "http://10.0.2.2:8730/some/path"
+            assertEquals("http://10.0.2.2:8730/", StorytelEndpoints.endpoints().api.toString())
+            assertEquals("http://10.0.2.2:8730/api/login.action", StorytelEndpoints.endpoints().login.toString())
+            for (base in listOf("http://192.168.1.20:8730", "http://evil.example.invalid", "https://10.0.2.2.example.invalid", "http://u:p@10.0.2.2:8730", "10.0.2.2:8730", "not a url", "", null)) {
+                StorytelEndpoints.debugBase = base
+                assertEquals("$base", Endpoints.STORYTEL, StorytelEndpoints.endpoints())
+                assertFalse("$base", StorytelEndpoints.apiOverLan())
+                assertTrue("$base", StorytelEndpoints.publicDownloads())
+                assertFalse("$base", StorytelEndpoints.privateMintAllowed())
+            }
+        } finally {
+            StorytelEndpoints.debugBase = before
+        }
+    }
 }

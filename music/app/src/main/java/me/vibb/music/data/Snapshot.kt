@@ -1,5 +1,12 @@
 package me.vibb.music.data
 
+/*
+ * What the screens and the player read. The renderer's view (`remote`, `forRenderer`, the Storytel
+ * branch of `visible`) is ported from palchrb/vibb `pi/vibb/content.py` (`expand_entries`,
+ * `PREFER_REMOTE`) and `pi/vibb/storytel.py` (`entries_for(remote)`; MIT License, Copyright (c) 2026
+ * palchrb), reimplemented in Kotlin under the GPL-3.0 (or later) - see NOTICE.md. Design 26b §3.2.
+ */
+
 import me.vibb.music.logic.Bookmark
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.KeepItem
