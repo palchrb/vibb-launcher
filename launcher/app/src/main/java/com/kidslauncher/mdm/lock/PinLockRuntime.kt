@@ -170,6 +170,9 @@ object PinLockRuntime {
     /** The last [HealTrigger.LOCK_RESUMED] heal (elapsed ms). Main thread. */
     private var lockResumedHealAt: Long? = null
 
+    /** A screen-off heal ran since the lock last resumed (main thread, bug 25b-C). */
+    private var screenOffHealed = false
+
     fun addModeListener(listener: () -> Unit) { modeListeners += listener }
     fun removeModeListener(listener: () -> Unit) { modeListeners -= listener }
     fun addChromeListener(listener: () -> Unit) { chromeListeners += listener }
@@ -642,6 +645,8 @@ object PinLockRuntime {
                 // Design 16d decision 1: lock task's status-bar flags sent to SystemUI again while
                 // the screen is off - a SystemUI or quickstep restart isn't visible to an app.
                 healStatusBar(app, HealTrigger.SCREEN_OFF)
+                // The lock-up after the next screen-on needs no visible heal of its own (bug 25b-C).
+                screenOffHealed = true
             } else {
                 // First, synchronously: end the Play update window before anything else (QA
                 // step 7 #8); the full re-apply follows in the background.
@@ -963,7 +968,9 @@ object PinLockRuntime {
         // qa-16d-code #2: a desync that begins with the screen on (a quickstep restart, the lock back
         // after a call, an alarm or a yield) is healed when the lock resumes - at most once a minute.
         val now = SystemClock.elapsedRealtime()
-        if (lockResumedHealDue(lockResumedHealAt, now)) {
+        val afterScreenOffHeal = screenOffHealed
+        screenOffHealed = false
+        if (lockResumedHealDue(lockResumedHealAt, now, afterScreenOffHeal)) {
             lockResumedHealAt = now
             healStatusBar(context, HealTrigger.LOCK_RESUMED)
         }

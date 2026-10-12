@@ -149,6 +149,11 @@ class StatusBarHealTest {
         assertFalse(lockResumedHealDue(5_000L, 5_000L))
         assertFalse(lockResumedHealDue(5_000L, 64_999L))
         assertTrue(lockResumedHealDue(5_000L, 65_000L))
+        // Bug 25b-C: the first resume after a screen-off heal (the lock-up after power-on) heals
+        // nothing visible - the screen-off heal re-sent the flags while the screen was dark.
+        assertFalse(lockResumedHealDue(null, 5_000L, healedSinceScreenOff = true))
+        assertFalse(lockResumedHealDue(5_000L, 500_000L, healedSinceScreenOff = true))
+        assertTrue(lockResumedHealDue(5_000L, 500_000L, healedSinceScreenOff = false))
     }
 
     // ---- the glue --------------------------------------------------------------------------------
@@ -211,7 +216,9 @@ class StatusBarHealTest {
         val screenOff = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("} else {")
         assertTrue(screenOff.contains("healStatusBar(app, HealTrigger.SCREEN_OFF)"))
         val resumed = body(runtime, "onLockResumed")
-        assertTrue(resumed.contains("if (lockResumedHealDue(lockResumedHealAt, now))"))
+        assertTrue(resumed.contains("if (lockResumedHealDue(lockResumedHealAt, now, afterScreenOffHeal))"))
+        assertTrue(resumed.contains("screenOffHealed = false"))
+        assertTrue(screenOff.contains("screenOffHealed = true"))
         assertTrue(resumed.contains("healStatusBar(context, HealTrigger.LOCK_RESUMED)"))
         // The LOCKED edge's pass stays on the main thread before the lock resumes (qa-16c-code #1):
         // the heal never replaces it.
