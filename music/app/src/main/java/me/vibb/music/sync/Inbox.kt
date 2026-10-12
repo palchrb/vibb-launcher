@@ -28,9 +28,10 @@ object Inbox {
         Store.writeAtomic(File(store.inboxDir, "$entryId.json"), text.toByteArray())
     }
 
-    /** A cover, stored under its hash only when the bytes hash to it. */
+    /** A cover (or an episode's picture, design 27), stored under its hash only when the bytes hash to it. */
     fun putCover(store: Store, hash: String, input: InputStream): Boolean =
         copyChecked(input, store.coverFile(hash), MAX_COVER_BYTES) { size, sha -> size > 0 && sha == hash }
+            .also { if (it) store.coversChanged() }
 
     /** An own file's copy: size and SHA-256 must match the library (21 §2 "Own files"). */
     fun putOwnFile(store: Store, file: OwnFile, input: InputStream): Boolean =

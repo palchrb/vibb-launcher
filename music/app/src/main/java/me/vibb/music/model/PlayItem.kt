@@ -12,10 +12,11 @@ data class PlayItem(
     val durationMs: Long?,
     /** An own file's id (plays from the app's copy). */
     val fileId: Long? = null,
-    /** An own file's embedded art (a cover hash). */
+    /** The item's own art (a cover hash): an own file's embedded art, or an episode's picture
+     * (design 27); null = the entry's cover. */
     val artHash: String? = null,
 )
 
-fun ListingItem.toPlayItem(entryId: Long) = PlayItem(entryId, key, title, url, hls, durationMs)
+fun ListingItem.toPlayItem(entryId: Long) = PlayItem(entryId, key, title, url, hls, durationMs, artHash = art)
 
 fun OwnFile.toPlayItem() = PlayItem(entry, key, title, null, false, durationMs, fileId = id, artHash = art)

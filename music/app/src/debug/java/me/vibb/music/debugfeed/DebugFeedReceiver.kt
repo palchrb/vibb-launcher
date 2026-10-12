@@ -22,7 +22,7 @@ import java.io.File
  *   debug-feed/library.json           the library (the server's /music/library, or its snapshot)
  *   debug-feed/items/<entry id>.json  listings (/music/entries/<id>/items)
  *   debug-feed/files/<file id>        own files' audio (size + SHA-256 checked against the library)
- *   debug-feed/covers/<hash>          cover JPEGs (checked against their hash)
+ *   debug-feed/covers/<hash>          cover JPEGs and episode pictures (checked against their hash)
  *   debug-feed/config.json            optional: {"mobile_data": true}
  *
  *   adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver  (creates the folder)

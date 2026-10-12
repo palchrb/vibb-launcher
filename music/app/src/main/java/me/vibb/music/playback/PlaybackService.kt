@@ -65,6 +65,7 @@ import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.nextAction
+import me.vibb.music.logic.nowWindow
 import me.vibb.music.logic.overlapStart
 import me.vibb.music.logic.pickPlan
 import me.vibb.music.logic.playAllowed
@@ -86,6 +87,7 @@ import me.vibb.music.media.ItemTag
 import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
+import me.vibb.music.sync.ArtWants
 import me.vibb.music.sync.ItemErrors
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.netCaps
@@ -397,6 +399,7 @@ class PlaybackService : MediaSessionService() {
             startedPlaying(a, index)
         }
         publish()
+        wantArtSoon()
     }
 
     /** Where item [index] starts when the queue jumps to it: its own position when resume is on. */
@@ -475,6 +478,30 @@ class PlaybackService : MediaSessionService() {
             runCatching { small.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) } }.onFailure { small.delete(); return null }
         }
         return Uri.fromFile(small)
+    }
+
+    // --- episode pictures (design 27 §2.2) ---
+
+    private val wantArtTick = Runnable { sendWantArt() }
+
+    /** A queue start or an item change: the want set goes to the launcher 2 s later (debounced). */
+    private fun wantArtSoon() {
+        handler.removeCallbacks(wantArtTick)
+        handler.postDelayed(wantArtTick, 2_000)
+    }
+
+    /** The pictures shown (the current item and its neighbours) are noted, and the want set sent when
+     * its `now` list has something missing that it didn't ask for last time (LiveBridge.wantArt). */
+    private fun sendWantArt() {
+        val a = active ?: return
+        val shown = nowWindow(a.items, exo.currentMediaItemIndex, reach = 1).map { it.artHash }
+        scope.launch {
+            val want = withContext(writer) {
+                store.noteShown(shown)
+                ArtWants.compute(this@PlaybackService)
+            }
+            LiveBridge.wantArt(want.now, want.later)
+        }
     }
 
     // --- transport ---
@@ -627,6 +654,7 @@ class PlaybackService : MediaSessionService() {
             }
             lastIndex = index
             wakeModeFor(a, index)
+            wantArtSoon()
             if (!playable(a, index)) {
                 // The queue moves on (21 §4.2's one line beyond the mockup).
                 PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)

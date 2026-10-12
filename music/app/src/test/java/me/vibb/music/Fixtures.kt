@@ -42,8 +42,11 @@ object Fixtures {
         Library("v1", categories, entries, files, emptySet())
 
     /** Listing rows (oldest first) for [entryId]: keys with a url unless listed in [gone]. */
-    fun items(entryId: Long, keys: List<String>, gone: Set<String> = emptySet(), hls: Boolean = false) =
-        keys.mapIndexed { i, k -> ItemRow(entryId, k, i, "Title $k", if (k in gone) null else "https://cdn.example.org/$k.mp3", hls, 600_000) }
+    fun items(entryId: Long, keys: List<String>, gone: Set<String> = emptySet(), hls: Boolean = false, art: Map<String, String> = emptyMap()) =
+        keys.mapIndexed { i, k -> ItemRow(entryId, k, i, "Title $k", if (k in gone) null else "https://cdn.example.org/$k.mp3", hls, 600_000, art[k]) }
+
+    /** A fake 64-hex picture hash (not a real SHA-256 of anything). */
+    fun art(name: String): String = name.toByteArray().joinToString("") { "%02x".format(it) }.padEnd(64, '0').take(64)
 
     fun done(entryId: Long, key: String, url: String = "https://cdn.example.org/$key.mp3", failedUrl: String? = null, finished: Boolean = true) =
         DownloadRow(entryId, key, "e$entryId:$key", url, false, finished, 1000, null, failedUrl)

@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.AppDownloads
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -206,7 +207,8 @@ object MusicCourier {
             if (MusicStore.deleteListing(app, id)) changed = true
         }
         if (head == null) {
-            // No library: nothing of it stays (covers, files waiting for the music app, partials).
+            // No library: nothing of it stays (covers, pictures, files waiting for the music app, partials).
+            MusicStore.clearWantArt(app)
             MusicStore.coversDir(app).listFiles().orEmpty().forEach { it.delete() }
             MusicStore.filesDir(app).listFiles().orEmpty().forEach { it.delete() }
             MusicStore.setReady(app, emptyMap())
@@ -217,6 +219,7 @@ object MusicCourier {
             changed = fetchListing(app, server, id, listings[id]) || changed
         }
         changed = syncCovers(app, server, head) || changed
+        changed = syncArt(app, server, music) || changed
         val ready = MusicStore.ready(app)
         val stale = readyFilesToDelete(head, ready, MusicStore.handedOver(app))
         if (stale.isNotEmpty()) {
@@ -275,26 +278,75 @@ object MusicCourier {
 
     private suspend fun syncCovers(app: Context, server: MusicServer, head: LibraryHead): Boolean {
         var changed = false
-        MusicStore.coversDir(app).listFiles().orEmpty().filter { it.name !in head.covers }.forEach { it.delete() }
+        // A cover the library no longer names goes, unless the music app wants it as an episode picture.
+        val present = MusicStore.coversDir(app).list().orEmpty().toSet()
+        artToDelete(present, head.covers, MusicStore.wantArt(app)).forEach { MusicStore.coverFile(app, it).delete() }
         for (hash in head.covers) {
-            val file = MusicStore.coverFile(app, hash)
-            if (file.isFile) continue
-            changed = guarded("cover $hash") {
-                val response = server.cover(hash)
-                if (!response.isSuccessful) {
-                    response.body()?.close()
-                    return@guarded false
-                }
-                val bytes = response.body()?.let { read(it, MAX_COVER_BYTES) }
-                if (bytes != null && MusicSync.sha256(bytes) == hash) {
-                    MusicStore.writeAtomic(file, bytes)
-                    true
-                } else {
-                    false
-                }
-            } || changed
+            if (MusicStore.coverFile(app, hash).isFile) continue
+            changed = (fetchCover(app, server, hash, MAX_COVER_BYTES) == true) || changed
         }
         return changed
+    }
+
+    /** The pictures fetchable now (design 27 §2.2, QA M6): what [artToFetch] allows on this network. */
+    fun artFetchable(app: Context, want: WantArt, music: MusicPolicy): List<String> {
+        val caps = AppDownloads.currentCaps(app)
+        return artToFetch(
+            want,
+            has = MusicStore.coversDir(app).list().orEmpty().toSet(),
+            failures = MusicStore.artFailures(app),
+            online = caps != null && caps.internet && caps.physical,
+            unmetered = caps?.notMetered == true,
+            mobileData = music.mobileData && caps?.notRoaming == true,
+            max = ART_PER_RUN,
+            nowMs = System.currentTimeMillis(),
+        )
+    }
+
+    /**
+     * Episode pictures (design 27 §2.2), after the covers: the music app's want set, through the
+     * cover route (≤ 1 MB, hash-checked), at most [ART_PER_RUN], `now` first. An HTTP error or a wrong
+     * hash counts toward the day's wait; a network error doesn't (it is tried again with the next run).
+     * Art in neither the library's covers nor the want set goes: the launcher holds a picture only
+     * until the music app has copied it (its next want set leaves it out).
+     */
+    private suspend fun syncArt(app: Context, server: MusicServer, music: MusicPolicy): Boolean {
+        val want = MusicStore.wantArt(app)
+        var changed = false
+        for (hash in artFetchable(app, want, music)) {
+            when (fetchCover(app, server, hash, MAX_ART_BYTES)) {
+                true -> {
+                    MusicStore.clearArtFailure(app, hash)
+                    changed = true
+                }
+                false -> MusicStore.recordArtFailure(app, hash, System.currentTimeMillis())
+                null -> Unit
+            }
+        }
+        val head = MusicStore.head(app)
+        val present = MusicStore.coversDir(app).list().orEmpty().toSet()
+        artToDelete(present, head?.covers.orEmpty(), MusicStore.wantArt(app)).forEach { MusicStore.coverFile(app, it).delete() }
+        return changed
+    }
+
+    /** One cover or picture: true = stored, false = refused (HTTP error, too big, wrong hash), null = a network error. */
+    private suspend fun fetchCover(app: Context, server: MusicServer, hash: String, max: Int): Boolean? = try {
+        val response = server.cover(hash)
+        if (!response.isSuccessful) {
+            response.body()?.close()
+            false
+        } else {
+            val bytes = response.body()?.let { read(it, max) }
+            if (bytes != null && MusicSync.sha256(bytes) == hash) {
+                MusicStore.writeAtomic(MusicStore.coverFile(app, hash), bytes)
+                true
+            } else {
+                false
+            }
+        }
+    } catch (e: IOException) {
+        Log.w(LOG_TAG, "cover $hash: ${e.javaClass.simpleName} - tried again after the next sync")
+        null
     }
 
     /** One request: a network error is logged and the fetch goes on with the next (L9). */

@@ -133,6 +133,24 @@ class MusicBridgeService : Service() {
             check()
             return readOnly(MusicStore.listingFile(this@MusicBridgeService, entryId))
         }
+
+        override fun wantArt(now: Array<out String?>?, later: Array<out String?>?) {
+            check()
+            val app = this@MusicBridgeService
+            val want = wantArtLists(now?.toList(), later?.toList())
+            scope.launch { wantArtChanged(app, want) }
+        }
+    }
+
+    /**
+     * The music app's want set (design 27 §2.2): stored (both lists at once), then a courier run only
+     * when a picture is fetchable now (QA M6) - not held, not backed off, `later` only on an allowed
+     * network - with the cached policy's music part.
+     */
+    private fun wantArtChanged(app: Context, want: WantArt) {
+        MusicStore.setWantArt(app, want)
+        val music = musicPolicy(currentPolicyDecision().policy?.music) ?: return
+        if (MusicCourier.artFetchable(app, want, music).isNotEmpty()) MusicCourier.request(app, music)
     }
 
     /**

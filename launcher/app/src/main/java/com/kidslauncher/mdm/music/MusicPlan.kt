@@ -208,3 +208,72 @@ fun musicState(packageName: String?, versionCode: Long?, report: JsonObject?, la
         for (key in keys) report?.get(key)?.takeIf { it !is JsonNull }?.let { put(key, it) }
     }
 }
+
+// Episode pictures (design 27 §2.2): the music app's want set, carried like covers.
+
+/** The want set's caps (bridge_contract.json `want_art`, the music app's own). */
+const val WANT_ART_MAX = 600
+const val WANT_ART_NOW_MAX = 5
+
+/** An episode picture is a 512 px JPEG: at most 1 MB, hash-checked like a cover. */
+const val MAX_ART_BYTES = 1024 * 1024
+
+/** At most this many picture GETs per courier run, `now` first (QA M6). */
+const val ART_PER_RUN = 50
+
+/** A picture that failed (an HTTP error or its hash) this often waits a day (as [OWN_FILE_HASH_BACKOFF_MS]). */
+const val ART_MAX_FAILURES = 2
+const val ART_BACKOFF_MS = 24 * 3_600_000L
+
+/** What the music app wants: [now] (the now-playing window: any network) and [later] (kept episodes and Nytt: the audio's gate). */
+data class WantArt(val now: List<String>, val later: List<String>) {
+    val all: Set<String> get() = (now + later).toSet()
+
+    companion object {
+        val NONE = WantArt(emptyList(), emptyList())
+    }
+}
+
+/** A picture's failures in a row and the last one's time. */
+data class ArtFailure(val count: Int, val lastAt: Long)
+
+/**
+ * `wantArt`'s lists as the launcher keeps them: 64-hex hashes only, each once ([now] wins), at most
+ * [WANT_ART_NOW_MAX] in [now] and [WANT_ART_MAX] in all.
+ */
+fun wantArtLists(now: List<String?>?, later: List<String?>?): WantArt {
+    val n = now.orEmpty().filterNotNull().filter { HASH.matches(it) }.distinct().take(WANT_ART_NOW_MAX)
+    val l = later.orEmpty().filterNotNull().filter { HASH.matches(it) && it !in n }.distinct().take(WANT_ART_MAX - n.size)
+    return WantArt(n, l)
+}
+
+/** Does a picture that failed wait at [nowMs]? */
+fun artBackedOff(failure: ArtFailure?, nowMs: Long): Boolean =
+    failure != null && failure.count >= ART_MAX_FAILURES && nowMs - failure.lastAt in 0 until ART_BACKOFF_MS
+
+/**
+ * The pictures to fetch now, at most [max], `now` first: none without a network ([online]); `now` on
+ * any network (roaming too: ~60 KB a picture); `later` only on an unmetered network or with the
+ * parent's mobile-data switch (not roaming) - the audio's download gate, since kept art goes with
+ * kept audio (21 §4.5). Never one the launcher [has], or one waiting out its failures.
+ */
+fun artToFetch(
+    want: WantArt,
+    has: Set<String>,
+    failures: Map<String, ArtFailure>,
+    online: Boolean,
+    unmetered: Boolean,
+    mobileData: Boolean,
+    max: Int,
+    nowMs: Long,
+): List<String> {
+    if (!online) return emptyList()
+    val later = if (unmetered || mobileData) want.later else emptyList()
+    return (want.now + later).filter { it !in has && !artBackedOff(failures[it], nowMs) }.distinct().take(max)
+}
+
+/** Cover files to delete: every one that is neither a library cover nor wanted (held until the music app copied it). */
+fun artToDelete(present: Set<String>, libraryCovers: Set<String>, want: WantArt): Set<String> {
+    val wanted = want.all
+    return present.filterTo(sortedSetOf()) { it !in libraryCovers && it !in wanted }
+}

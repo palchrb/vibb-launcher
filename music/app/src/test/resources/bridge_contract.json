@@ -21,5 +21,6 @@
     "extra_open": "me.vibb.music.extra.OPEN",
     "open_player": "player",
     "extra_resume": "me.vibb.music.extra.RESUME"
-  }
+  },
+  "want_art": {"max": 600, "now_max": 5}
 }

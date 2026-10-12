@@ -135,6 +135,63 @@ class MusicPlanTest {
         assertFalse(hashFailureSkips(2, now - OWN_FILE_HASH_BACKOFF_MS, now))
     }
 
+    // Episode pictures (design 27 §2.2).
+
+    private fun pic(n: Int) = "%064x".format(n)
+
+    @Test
+    fun `wantArt - only 64-hex hashes, each once, at most 5 now and 600 in all`() {
+        val w = wantArtLists(listOf(pic(1), "nope", null, pic(1), pic(2)), listOf(pic(2), pic(3), "A".repeat(64)))
+        assertEquals(listOf(pic(1), pic(2)), w.now)
+        assertEquals("now wins", listOf(pic(3)), w.later)
+        val big = wantArtLists((1..9).map { pic(it) }, (10..1000).map { pic(it) })
+        assertEquals(WANT_ART_NOW_MAX, big.now.size)
+        assertEquals(WANT_ART_MAX, big.now.size + big.later.size)
+        assertEquals(WantArt.NONE, wantArtLists(null, null))
+    }
+
+    @Test
+    fun `art to fetch - now on any network, later only unmetered or with mobile data, never held or backed off`() {
+        val want = WantArt(listOf(pic(1), pic(2)), listOf(pic(3), pic(4)))
+        val now = 1_800_000_000_000L
+        fun fetch(has: Set<String> = emptySet(), failures: Map<String, ArtFailure> = emptyMap(), online: Boolean = true, unmetered: Boolean = false, mobile: Boolean = false, max: Int = 50) =
+            artToFetch(want, has, failures, online, unmetered, mobile, max, now)
+        assertEquals("metered, no switch: now only", listOf(pic(1), pic(2)), fetch())
+        assertEquals("unmetered: all, now first", listOf(pic(1), pic(2), pic(3), pic(4)), fetch(unmetered = true))
+        assertEquals("the mobile-data switch", listOf(pic(1), pic(2), pic(3), pic(4)), fetch(mobile = true))
+        assertEquals("no network: nothing", emptyList<String>(), fetch(online = false, unmetered = true))
+        assertEquals("held ones aren't fetched", listOf(pic(2), pic(4)), fetch(has = setOf(pic(1), pic(3)), unmetered = true))
+        assertEquals("at most max per run", listOf(pic(1), pic(2), pic(3)), fetch(unmetered = true, max = 3))
+        val failed = mapOf(pic(1) to ArtFailure(2, now - 60_000), pic(2) to ArtFailure(1, now - 60_000), pic(3) to ArtFailure(5, now - ART_BACKOFF_MS))
+        assertEquals("two failures wait a day, one doesn't, a day later it is tried again", listOf(pic(2), pic(3), pic(4)), fetch(failures = failed, unmetered = true))
+    }
+
+    @Test
+    fun `art to delete - keeps library covers and the want set`() {
+        val want = WantArt(listOf(pic(1)), listOf(pic(2)))
+        assertEquals(sortedSetOf(pic(4), "junk"), artToDelete(setOf(pic(1), pic(2), pic(3), pic(4), "junk"), setOf(pic(3)), want))
+        assertEquals("nothing wanted: only covers stay", sortedSetOf(pic(1), pic(2)), artToDelete(setOf(pic(1), pic(2), pic(3)), setOf(pic(3)), WantArt.NONE))
+    }
+
+    @Test
+    fun `syncCovers no longer deletes wanted art, and the want set goes with the library`() {
+        val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
+        val covers = sync.substringAfter("private suspend fun syncCovers(").substringBefore("\n    }\n")
+        assertTrue(covers, covers.contains("artToDelete(present, head.covers, MusicStore.wantArt(app))"))
+        assertFalse(covers, covers.contains("!in head.covers }.forEach { it.delete() }"))
+        assertTrue("syncArt runs after syncCovers", sync.indexOf("syncArt(app, server, music)") > sync.indexOf("syncCovers(app, server, head) ||"))
+        val noLibrary = sync.substringAfter("if (head == null) {").substringBefore("return changed")
+        assertTrue(noLibrary.contains("MusicStore.clearWantArt(app)"))
+        val bridge = module("src/main/java/com/kidslauncher/mdm/music/MusicBridgeService.kt").readText()
+        assertTrue("a run only when something is fetchable now (M6)", bridge.contains("if (MusicCourier.artFetchable(app, want, music).isNotEmpty()) MusicCourier.request(app, music)"))
+    }
+
+    @Test
+    fun `the want set's caps are the shared contract's`() {
+        val caps = (contract["want_art"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content.toInt() }
+        assertEquals(mapOf("max" to WANT_ART_MAX, "now_max" to WANT_ART_NOW_MAX), caps)
+    }
+
     // The managed config.
 
     @Test
@@ -263,7 +320,7 @@ class MusicPlanTest {
         val source = module("src/main/java/com/kidslauncher/mdm/music/MusicBridgeService.kt").readText()
         val binder = source.substringAfter("object : IMusicBridge.Stub() {").substringBefore("\n    }\n")
         val methods = Regex("override fun (\\w+)\\([^)]*\\)[^{]*\\{\\s*([^\\n]*)").findAll(binder).toList()
-        assertEquals("all of IMusicBridge's methods", 11, methods.size)
+        assertEquals("all of IMusicBridge's methods", 12, methods.size)
         for (m in methods) assertEquals("${m.groupValues[1]} must call check() first", "check()", m.groupValues[2].trim())
     }
 }
