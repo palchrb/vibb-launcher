@@ -3,9 +3,9 @@ name: Music
 # The Vibb music app in music/ (design 21 §5). Two flows, like launcher.yml:
 # - Every push to master/main and every PR: music-build (debug, unsigned release, lint, unit tests)
 #   runs when music/, this workflow, the music files shared with the server, the launcher's copy
-#   of the bridge's AIDL (BridgeTest compares them) or scripts/fake-sonos.py (it serves the Sonos
-#   fixtures in music/app/src/test/resources/sonos/; its --selftest runs here) changed, and uploads
-#   the debug APK as a workflow artifact. Nothing is published, no secrets.
+#   of the bridge's AIDL (BridgeTest compares them), scripts/fake-sonos.py or scripts/fake-storytel.py
+#   (they serve the Sonos and Storytel fixtures in music/app/src/test/resources/; their --selftests run
+#   here) changed, and uploads the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
 #   master/main: music-release-build builds the unsigned release APK (no secrets),
 #   music-release-sign signs and verifies it in the protected "release" environment with the
@@ -61,7 +61,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/music_(library|listing|icons|state)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/bridge_contract\.json$|scripts/fake-sonos\.py$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/music_(library|listing|icons|state)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/bridge_contract\.json$|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$)'; then
           changed=true
         else
           changed=false
@@ -95,6 +95,11 @@ jobs:
       # The emulator's fake speaker answers from the same canned SOAP replies the unit tests parse
       # (design 26a §7, docs/testing/emulator.md §6g): it must still read every one. Stdlib only.
       run: python3 -I ../scripts/fake-sonos.py --selftest
+    - name: Fake Storytel selftest
+      # The emulator's fake Storytel answers from the same fixtures StorytelApiTest reads (design 26b
+      # §4.6, docs/testing/emulator.md §6h): the login, the 302, the CDN with Range, the token TTL and the
+      # dropped transfer, against itself. Stdlib only.
+      run: python3 -I ../scripts/fake-storytel.py --selftest
     - name: Upload APK
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
