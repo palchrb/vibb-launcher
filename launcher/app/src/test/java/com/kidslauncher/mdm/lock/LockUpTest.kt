@@ -54,11 +54,25 @@ class LockUpTest {
      * the "camera or wallet" double-press paths), so the gesture never starts a suspended camera -
      * which crashed SystemUI and let whatever came up show over the lock. */
     @Test
-    fun `the cameras are off by policy while locked and while the gesture's camera is suspended`() {
-        assertTrue(cameraPolicyDisabled(locked = true, gestureCameraSuspended = false))
-        assertTrue(cameraPolicyDisabled(locked = true, gestureCameraSuspended = true))
-        assertTrue("a time rule suspended it", cameraPolicyDisabled(locked = false, gestureCameraSuspended = true))
-        assertFalse(cameraPolicyDisabled(locked = false, gestureCameraSuspended = false))
+    fun `the cameras are off by policy only while LOCKED without a call`() {
+        assertTrue(cameraPolicyDisabled(locked = true, callActive = false))
+        // qa-25b-25f M1: a video call answered from the lock keeps its camera; unlocked (a time
+        // rule's usable apps included) the policy is never set.
+        assertFalse(cameraPolicyDisabled(locked = true, callActive = true))
+        assertFalse(cameraPolicyDisabled(locked = false, callActive = false))
+        assertFalse(cameraPolicyDisabled(locked = false, callActive = true))
+        assertTrue(cameraCallActive(ourCall = true, voipCall = false, telecomCall = false))
+        assertTrue(cameraCallActive(ourCall = false, voipCall = true, telecomCall = false))
+        assertTrue(cameraCallActive(ourCall = false, voipCall = false, telecomCall = true))
+        assertFalse(cameraCallActive(ourCall = false, voipCall = false, telecomCall = false))
+        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        // Every call event re-syncs it: our calls, VoIP, the system dialer's (re-front checks, the lock back).
+        assertTrue(runtime.contains("if (ctx != null) updateCallForCamera(ctx, telecomInCall(ctx))"))
+        assertTrue(body(runtime, "onVoipPhase").contains("updateCallForCamera(app, telecom)"))
+        assertTrue(body(runtime, "runRefrontCheck").contains("updateCallForCamera(context, telecom)"))
+        assertTrue(body(runtime, "onLockResumed").contains("updateCallForCamera(context, telecomInCall(context))"))
+        assertTrue(body(runtime, "updateCallForCamera").contains("CameraLock.onLockChanged(context.applicationContext)"))
+        assertTrue(body(code("java/com/kidslauncher/mdm/lock/CameraLock.kt"), "syncCameraPolicy").contains("cameraPolicyDisabled(locked, call)"))
         val lock = code("java/com/kidslauncher/mdm/lock/CameraLock.kt")
         val sync = body(lock, "sync")
         // While LOCKED the policy goes on before anything is suspended; unlocked it follows after.

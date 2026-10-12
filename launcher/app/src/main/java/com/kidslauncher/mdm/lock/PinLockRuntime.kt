@@ -718,9 +718,26 @@ object PinLockRuntime {
         screenOffHealed = true
     }
 
+    /**
+     * A call is live - ours, a VoIP call, or one the system dialer shows (qa-25b-25f M1): the
+     * camera stays enabled by policy then, even while LOCKED (a video call answered from the
+     * lock). Written on the main thread at each call event, read by CameraLock's thread.
+     */
+    @Volatile
+    var callForCamera = false
+        private set
+
+    private fun updateCallForCamera(context: Context, telecom: Boolean) {
+        val now = cameraCallActive(ourCall(), VoipCalls.phase != VoipPhase.NONE, telecom)
+        if (now == callForCamera) return
+        callForCamera = now
+        CameraLock.onLockChanged(context.applicationContext)
+    }
+
     private val callsListener: () -> Unit = {
         val ctx = appContext
         val any = OngoingCalls.hasLiveCall
+        if (ctx != null) updateCallForCamera(ctx, telecomInCall(ctx))
         // Design 16e: a call skips the boot's wait for the mark at once.
         if (ctx != null && !callsSeen && any) endBootMark(ctx, "a call")
         if (ctx != null && callsSeen && !any) dispatch(ctx, LockEvent.CallsEnded(interactive(ctx)))
@@ -736,6 +753,7 @@ object PinLockRuntime {
         // Another call (emergency included), the emergency flow or a ringing alarm always win
         // (qa-16-17-code #1): no card and no wake over them, and the lock doesn't come back over them.
         val telecom = telecomInCall(app)
+        updateCallForCamera(app, telecom)
         val ours = ourCall()
         val emergency = emergencyFlowNow(telecom)
         val alarm = alarmNow(app)
@@ -1009,6 +1027,8 @@ object PinLockRuntime {
         yielding = null
         sosFlowUntilElapsed = 0L
         narrowForSos(context, false)
+        // Back after a call the system dialer showed: the camera policy follows (qa-25b-25f M1).
+        updateCallForCamera(context, telecomInCall(context))
         handler.removeCallbacks(refrontCheck)
         // During our call, the call screen goes back on top (qa-10-code #1).
         dispatch(context.applicationContext, LockEvent.LockResumed(ourCall(), VoipCalls.phase))
@@ -1081,6 +1101,7 @@ object PinLockRuntime {
     private fun runRefrontCheck() {
         val context = appContext ?: return
         val telecom = telecomInCall(context)
+        updateCallForCamera(context, telecom)
         val inputs = RefrontInputs(
             locked = chromeLocked,
             lockResumed = lockResumed,
