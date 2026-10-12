@@ -178,6 +178,12 @@ async fn a_cancelled_command_never_reaches_the_phone() {
         row(&page, "wipe")
     );
     assert!(row(&page, "wipe").contains("never sent"));
+    // Labelled UTC, like the rest of the PWA (QA of cmd-expiry, Low 5).
+    assert!(
+        row(&page, "wipe").contains(" UTC - never sent"),
+        "{}",
+        row(&page, "wipe")
+    );
     assert!(
         !page.contains(&format!("/commands/{wipe}/cancel")),
         "no Cancel any more"
@@ -260,6 +266,17 @@ async fn the_locate_page_shows_waiting_expired_and_cancelled() {
         "nothing to cancel"
     );
     assert!(row(&page, "locate").contains("Waiting for the phone to check in - expires "));
+    assert!(
+        row(&page, "locate").contains(" UTC if it doesn&#39;t"),
+        "{}",
+        row(&page, "locate")
+    );
+    // The Requested column too.
+    let requested = row(&page, "locate");
+    assert!(
+        requested.contains(" UTC\n") || requested.contains(" UTC<"),
+        "{requested}"
+    );
     assert!(page.contains(&format!("/commands/{fresh}/cancel")));
     assert!(row(&page, "lock").contains("Waiting for the phone to check in"));
     assert!(

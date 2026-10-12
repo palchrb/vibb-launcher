@@ -122,7 +122,7 @@
             {% for c in commands %}
             <tr>
                 <td>{{ c.command }}</td>
-                <td>{{ c.requested_at }}
+                <td>{{ c.requested_at }} UTC
                     {% if let Some(cancel_id) = c.cancel_id %}
                     <form method="post" action="/devices/{{ device.id }}/commands/{{ cancel_id }}/cancel" style="margin-top:6px;">
                         <button type="submit" class="button-small button-secondary" aria-label="Cancel the {{ c.command }} asked for at {{ c.requested_at }} UTC">Cancel</button>

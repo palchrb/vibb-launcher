@@ -607,7 +607,7 @@ impl DeviceCommand {
             let at = self
                 .acknowledged_at
                 .as_deref()
-                .map(|at| format!(" {at}"))
+                .map(|at| format!(" {at} UTC"))
                 .unwrap_or_default();
             return if self.succeeded == Some(false) {
                 format!("Failed{at}: {result}")
@@ -631,27 +631,27 @@ impl DeviceCommand {
             }
             return match self.cancel_reason.as_deref() {
                 Some("restart") => format!(
-                    "Cancelled {cancelled} - the server restarted before the phone fetched it, so it was never sent"
+                    "Cancelled {cancelled} UTC - the server restarted before the phone fetched it, so it was never sent"
                 ),
                 Some("enrolled") => format!(
-                    "Cancelled {cancelled} - a new phone was enrolled on this page, so it was never sent"
+                    "Cancelled {cancelled} UTC - a new phone was enrolled on this page, so it was never sent"
                 ),
                 Some("replaced") => {
-                    format!("Replaced {cancelled} by a newer command of its kind - never sent")
+                    format!("Replaced {cancelled} UTC by a newer command of its kind - never sent")
                 }
-                _ => format!("Cancelled {cancelled} - never sent"),
+                _ => format!("Cancelled {cancelled} UTC - never sent"),
             };
         }
         if let Some(received) = &self.received_at {
             if self.command == "wipe" {
                 return format!(
-                    "Received {received} - the phone is wiping now; it stops checking in"
+                    "Received {received} UTC - the phone is wiping now; it stops checking in"
                 );
             }
             return if minutes_since(received, now).is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
-                format!("Received {received}, but the phone never said it finished")
+                format!("Received {received} UTC, but the phone never said it finished")
             } else {
-                format!("Received {received}, not finished yet")
+                format!("Received {received} UTC, not finished yet")
             };
         }
         let Some(delivered) = &self.delivered_at else {
@@ -667,7 +667,7 @@ impl DeviceCommand {
             {
                 let until = asked + chrono::Duration::minutes(COMMAND_EXPIRY_MINUTES);
                 return format!(
-                    "Waiting for the phone to check in - expires {} if it doesn't",
+                    "Waiting for the phone to check in - expires {} UTC if it doesn't",
                     until.format("%Y-%m-%d %H:%M:%S")
                 );
             }
@@ -678,29 +678,29 @@ impl DeviceCommand {
             // It confirms within seconds: after REDELIVER_AFTER_MINUTES it is offered again, and
             // after the last delivery (or the window) it is lost.
             if waited.is_none_or(|m| m < REDELIVER_AFTER_MINUTES) {
-                return format!("Delivered {delivered}, not confirmed yet");
+                return format!("Delivered {delivered} UTC, not confirmed yet");
             }
             return if self.redeliverable(now) {
                 format!(
-                    "Delivered {delivered}, not confirmed - offered again when the phone next checks in"
+                    "Delivered {delivered} UTC, not confirmed - offered again when the phone next checks in"
                 )
             } else {
                 format!(
-                    "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
+                    "Delivered {delivered} UTC, never confirmed - it may not have reached the phone: send it again"
                 )
             };
         }
         if self.command == "wipe" {
             return format!(
-                "Delivered {delivered}, not confirmed - this launcher can't confirm a wipe; a wiped phone stops checking in"
+                "Delivered {delivered} UTC, not confirmed - this launcher can't confirm a wipe; a wiped phone stops checking in"
             );
         }
         if waited.is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
             format!(
-                "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
+                "Delivered {delivered} UTC, never confirmed - it may not have reached the phone: send it again"
             )
         } else {
-            format!("Delivered {delivered}, not confirmed yet")
+            format!("Delivered {delivered} UTC, not confirmed yet")
         }
     }
 }

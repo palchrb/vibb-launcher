@@ -310,7 +310,7 @@ async fn the_locate_page_reads_receipts_and_failures() {
         line("locate")
     );
     assert!(
-        line("end_windows").contains("Failed 2026-10-11 10:00:00: wipe failed"),
+        line("end_windows").contains("Failed 2026-10-11 10:00:00 UTC: wipe failed"),
         "{}",
         line("end_windows")
     );
