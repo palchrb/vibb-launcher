@@ -187,7 +187,7 @@ page - clock, date, the music tile, the newest missed calls and messages (Elemen
 picks the apps and whether the text shows in the PWA's Apps card, "On the lock screen"), "Lås opp" and the emergency
 call. A row's tap asks for the code and then opens the conversation or the missed calls; under a time rule only what
 the rule leaves usable, over the time-rule screen. Read in memory only, never sent to the server; the lock's window
-is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the design's "Implementation status".
+is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the design's "Implementation status". **Lock fix round 25b** (2026-10-12): the camera gesture no longer crashes SystemUI on the lock (cameras off by policy while LOCKED), the lock re-fronts after a pause too (Recents), no transition or status-bar flicker at power-on, Emergency SOS works on the lock, Element X missed calls as missed-call rows, the music tile for any session on the glance page only (user decision); device checks in design 25.
 
 ## Next features (agreed 2026-10-05)
 

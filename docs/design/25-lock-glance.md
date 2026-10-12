@@ -986,3 +986,45 @@ the server half; the full launcher suite after steps 2, 3a and 3b.
       only `ALLOW_IF_VISIBLE`.
 - [ ] Whether the Jelly Star's notification assistant marks anything as sensitive (the redacted case).
 - [ ] The PWA on a phone: tick, untick and the switch keep the place (no jump), and the notes appear.
+
+## Lock fix round 25b (2026-10-12)
+
+The user's Android 16 emulator run of 22a62658 and three logcats. Branch `lock-fixes-25b`, one commit per bug.
+Every root cause except G predates design 25.
+
+| Bug | Root cause | Fix |
+| --- | --- | --- |
+| A (High) Recents on the lock | Quickstep 16 refuses Overview only in screen pinning; in a DO's LOCKED lock task the button follows SystemUI's disable flags (desync). The lock re-fronted only on onStop, and Recents only *pauses* it | A pause while LOCKED re-fronts after 200 ms (`pauseStartsRefront`), a stop too (was 500 ms) |
+| A/C (High) camera double-press | GestureLauncherService -> SystemUI started the camera that CameraLock had suspended -> NPE in system_server -> **SystemUI crashed** (the "small restart"); whatever came up meanwhile (quickstep's RecentsActivity, its app list = the "Calendar", a plain background) showed over the lock | While LOCKED (and while a time rule suspends the gesture's camera) the DO disables the cameras by policy (`setCameraDisabled`, `<disable-camera />`, `cameraPolicyDisabled`); AOSP 16 `CameraGestureHelper.canCameraGestureBeLaunched` checks that first on both double-press paths, so the gesture starts nothing. The user's first choice; the camera never opens over the lock, so no gallery or picker either |
+| C (High) status line flicker | The lock-resumed status-bar heal (16d) flipped features 113 -> 112 -> 113 right after each power-on | The first lock resume after a screen-off heal skips its own heal |
+| B (High) Home before the glance | The lock is started at the screen-off as a new task; its open transition ran at the screen-on from Home's last frame; the glance page could draw before its fit | No transition (`FLAG_ACTIVITY_NO_ANIMATION`, `overrideActivityTransition`, no window animation); a fit that changes the page skips its frame |
+| B residual: a plain-colour flash | (1) the screen-off receiver kept the main thread (fence, self-update, policy re-check, heal) before the new lock could be created - meanwhile the system shows its starting window (`windowBackground`); (2) mashing = five presses = SOS -> BlockedAppActivity -> re-front (H) | (1) that work runs 400 ms later and only while the screen is still off (`SCREEN_OFF_WORK_DELAY_MS`, `screenOffWorkDue`); (2) H |
+| D (Medium) clock splash | No code path starts the clock app (it is only pinned as a helper). Gone after an emulator restart; the theory - a clock task started by a tap during boot staying behind the lock, its starting window shown at each lock-up - can't be checked from code | Device check |
+| E Element X calls | Element X posts a missed Element Call with `CATEGORY_MISSED_CALL` (its `NotificationCreator.kt`) | `glanceMissedCall`: "Tapt anrop · Element X" with the red phone badge |
+| G music tile on the wrong stage | Design 25 kept step 4's compact row on the keypad and showed no tile for a paused session at a lock-up | User decision 2026-10-12 (§1.1): tile for any session, playing or paused; the keypad stage has no music |
+| H SOS -> "Emergency information is not available" | SystemUI starts the `com.android.systemui.action.LAUNCH_EMERGENCY` activity (system handlers only, `config_preferredEmergencySosPackage` first) as a new task; its package wasn't pinned | `HelperKind.EMERGENCY_SOS` (`emergencySosHandler`): pinned with the kiosk on (with or without the block bit) and off, never hidden or suspended, never listed. The re-front yields as "sos" for 60 s (or until the lock is back) when the lock is *stopped* within 3 s of a screen-on (the gesture's presses come <= 500 ms apart and are swallowed while the screen is on) and none of our own screens is in front |
+
+**Deviations and limits**
+- **The SOS yield is a timing heuristic.** No app can see which activity is in front (usage events need a permission
+  a device owner can't grant itself). A stop of the lock within 3 s of a screen-on leaves whatever is in front for up to
+  60 s. While LOCKED only pinned packages can be there: Home and Recents are out of lock task, the camera is off by
+  policy, our own screens are excluded, Recents only pauses (re-fronted as always, within 700 ms in that window).
+- **A re-front still shows one plain frame.** Bringing the lock's task back is a task switch; the system's snapshot of
+  a `FLAG_SECURE` window is the theme background (`shouldUseAppThemeSnapshot`), shown until the lock draws.
+- The gesture keys (`camera_double_tap_power_gesture_disabled`; Android 16's `double_tap_power_button_gesture_enabled`,
+  read instead in 16's default multi-target mode) are in `docs/testing/emulator.md` §4 and `docs/setup/google-account.md`.
+  They aren't reported in the status report (both are readable; a later step could add them).
+- `disable-camera` is a new admin policy tag: an updated phone may need a restart before `setCameraDisabled` works,
+  shown in `admin_policies_pending` and on the device page.
+
+**Device checks**
+- [ ] Double press power on the lock, gesture keys on: no SystemUI crash, nothing opens, the lock stays.
+- [ ] The Overview button on the glance page: Recents doesn't stay (`adb shell dumpsys statusbar` disable flags).
+- [ ] Power on after unlock, and quick power mashing: no Home and no plain frame (screenrecord).
+- [ ] Five presses: the SOS countdown (Pixel: Personal Safety) or Emergency information shows and stays; its call
+      places; cancel brings the lock back. With the kiosk on and off.
+- [ ] Wake, then Overview within 3 s: Recents goes within a second.
+- [ ] The clock splash (D) after tapping during boot.
+- [ ] The per-frame "Out of order buffers" for PinLockActivity (likely the emulator's mirroring of a secure surface).
+- [ ] Element X: a missed Element Call shows as "Tapt anrop · Element X".
+- [ ] A paused session's tile at a lock-up; the keypad stage without music.
