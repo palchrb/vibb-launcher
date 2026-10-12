@@ -365,7 +365,8 @@ Settings during setup, before step 4 - once managed the system language is locke
    - Restore the row.
 10. Leave USB debugging on during the test phase. Since step 4 the server blocks it by default
     (`DISALLOW_DEBUGGING_FEATURES`): before step 7 (enrolling), turn **"Block USB debugging" off** on the device page
-    and grant `adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION me.vibb.launcher`; turn the
+    and grant `adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION me.vibb.launcher` (and, since the
+    launcher's security wave, `... android.app.role.CALL_SCREENING me.vibb.launcher` - review L7); turn the
     switch back on at handover. Deploy order for an update: server first (migration 0023), set the switches and a PIN,
     then the launcher - a launcher on an older server applies the defaults (adb blocked). See 04-hardening.md
     "Runbook".

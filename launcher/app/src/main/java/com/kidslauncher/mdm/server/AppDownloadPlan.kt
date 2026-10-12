@@ -180,6 +180,11 @@ data class DownloadRecord(
     val etag: String? = null,
     val total: Long? = null,
     val firstSeenMs: Long = 0,
+    /** The catalog's pinned package and signing certificate (security review M10), refreshed from
+     * every list; blank/`null` on a record an older build wrote - the install then waits for the
+     * next list ([CatalogApkCheck]). */
+    val packageName: String = "",
+    val signerSha256: String? = null,
 )
 
 /** The partial file of [appId]'s release [tag]: `<appId>-<16 hex of SHA-256(tag)>.part` - stable
@@ -197,21 +202,27 @@ data class WantedDownload(
     val isLauncher: Boolean,
     val downloadUrl: String,
     val sha256: String?,
+    val packageName: String = "",
+    val signerSha256: String? = null,
 )
 
 /**
  * The records after a successful list fetch: exactly the wanted releases - a record of the same
- * release is kept (ETag, size, first seen; the list's URL, name and hash refreshed),
+ * release is kept (ETag, size, first seen; the list's URL, name, hash and pins refreshed),
  * a new release gets a fresh record seen [nowMs]; everything else (another tag, deselected,
  * installed, withdrawn) is dropped.
  */
 fun reconcileRecords(current: List<DownloadRecord>, wanted: List<WantedDownload>, nowMs: Long): List<DownloadRecord> =
     wanted.distinctBy { it.appId }.map { w ->
         val same = current.firstOrNull { it.appId == w.appId && it.tag == w.tag }
-        same?.copy(name = w.name, isLauncher = w.isLauncher, downloadUrl = w.downloadUrl, sha256 = w.sha256)
+        same?.copy(
+            name = w.name, isLauncher = w.isLauncher, downloadUrl = w.downloadUrl, sha256 = w.sha256,
+            packageName = w.packageName, signerSha256 = w.signerSha256,
+        )
             ?: DownloadRecord(
                 appId = w.appId, tag = w.tag, name = w.name, isLauncher = w.isLauncher,
                 downloadUrl = w.downloadUrl, sha256 = w.sha256, firstSeenMs = nowMs,
+                packageName = w.packageName, signerSha256 = w.signerSha256,
             )
     }
 

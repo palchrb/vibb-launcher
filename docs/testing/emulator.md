@@ -53,6 +53,8 @@ P=me.vibb.launcher.debug
 adb install -r ~/repos/handy/launcher/app/build/outputs/apk/debug/app-debug.apk
 adb shell dpm set-device-owner $P/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
+# Security review L7: the incoming-call filter when the launcher isn't the phone app.
+adb shell cmd role add-role-holder android.app.role.CALL_SCREENING $P
 adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeListenerService
 # Design 19b: the launcher on the power-save allowlist ("battery: Unrestricted"); expect "Added: ...".
 # Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.
@@ -492,6 +494,50 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   Wi-Fi" and the queue moves on); restart (`adb shell am force-stop`, or a reboot): the now-playing bar is back,
   paused, and one tap continues. The report the step-3 bridge will send is
   `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
+
+## 6g. The launcher's security wave (`docs/review/security-review-2026-10-10.md`)
+
+Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - the wipe is real.
+
+1. **Remote wipe (M8)**, API 34 and API 36 images, launcher as device owner and enrolled, with `adb logcat -s
+   LocateCommands DevicePolicyManagerService` running: Locate page -> Wipe. Expect the emulator to reboot into the
+   factory reset (the AVD comes back at the setup wizard) and no "Failed to wipe device" in the log. If a wipe is
+   ever refused, the phone keeps running and the Locate page must say "Failed ...: wipe failed, the phone keeps its
+   data: <the exception>" - never "Done". Restore the snapshot after each run.
+   On API 34 also the update path (QA of the launcher wave, Low 4): install the build before this wave, make it device
+   owner and enroll, update it in place to this build *without a reboot*: the Locate page says "Remote wipe works after
+   the phone restarts once" (the report's `remote_wipe_ready` is false) and a Wipe comes back "Failed ...
+   SecurityException"; after one restart the warning is gone and the wipe works.
+   **Admin policies after an update** (the keyguard camera switch on an Android 16 emulator): with the build before
+   this fix as device owner, update in place to this one without a reboot. `adb logcat -s AppEnforcer` may still show
+   "Failed to set the keyguard camera feature" (on versions that check the admin's declared policy), and the device
+   page's "Play and kiosk" card says "Restart the phone once: ..." (the report's `admin_policies_pending`). Restart:
+   the log line is gone, the warning goes with the next report, and `adb shell dumpsys device_policy | grep -i
+   keyguard` shows the camera feature disabled. A fresh install with this build has nothing pending.
+2. **Command receipts (L12)**: Locate page -> Lock. The Recent commands row goes "Delivered ..., not confirmed yet" ->
+   "Done ... (locked ...)" within seconds; `adb logcat -s CommandAnswers MdmSyncWorker` shows no "Couldn't send". A
+   wipe (snapshot!) reads "Received ... - the phone is wiping now" before the emulator reboots. A lost answer: on the
+   server, `UPDATE device_commands SET received_at = NULL, acknowledged_at = NULL, result = NULL, delivered_at =
+   datetime('now', '-3 minutes') WHERE id = <the lock's id>`, then "Sync now" on the phone: the log says "delivered
+   again - confirmed, not run twice", the screen doesn't lock again, and the row reads "Received ...".
+3. **Catalog APK check (M10)**: a catalog app from a manual upload (Apps page), checked for the phone: it installs.
+   The server refuses a release with another key itself, so to see the phone's check, change the pin under the cached
+   release (no "Check now" - that would re-check the file): `UPDATE tracked_apps SET signer_sha256 = '<64 other hex>'`
+   for a new upload of the app that isn't installed yet. The phone downloads it, logs "refused before installing:
+   WRONG_SIGNER", doesn't install it, and the device page's row says "Refused - signed with another key than this
+   app's"; the same with `package_name = 'org.example.other'` says "another Android package". With
+   `signer_sha256 = NULL` the phone doesn't download it ("no package and signing key"). A key-rotated APK of a pinned
+   app (`apksigner rotate`, `--rotation-min-sdk-version 33`) installs on API 33+: the pin is the old key, in the lineage.
+4. **Call screening without the phone-app role (L7)**, calls managed, `CALL_SCREENING` granted (§4): `adb shell cmd
+   role get-role-holders android.app.role.CALL_SCREENING` lists the launcher. Device page -> Calls: no role warning.
+   Then `adb shell cmd role remove-role-holder android.app.role.CALL_SCREENING $P`: after the next sync the page says
+   "Call-screening role not active". Add it back, take the dialer role away (Calls unmanaged and managed again won't
+   do it - `adb shell cmd role add-role-holder android.app.role.DIALER com.android.dialer` while `Block USB debugging`
+   is off; the launcher takes the role back at its next apply, so call right away): `adb emu gsm call <unknown>` is
+   rejected without ringing, an allowed contact rings in the system dialer, and a report sent meanwhile makes the page
+   say "Incoming calls are still filtered". Without either role the page says "not filtered". Also call from a withheld
+   number in that state (`adb emu gsm call` with a restricted presentation, or a real SIM): if it is rejected, the
+   page's "withheld numbers may ring through" can become a firm statement.
 
 ## 6b. Step 7: Play (optional)
 

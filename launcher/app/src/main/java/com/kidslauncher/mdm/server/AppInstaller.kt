@@ -55,7 +55,9 @@ object AppInstaller {
      * commit now ([InstallStart.DEFERRED]: the session is abandoned, the file kept). If anything
      * throws after it ran and before the commit went through, [commitFailed] releases the fence.
      * A session that wasn't committed is abandoned; [deleteOnFailure] `false` keeps the file (the
-     * launcher's pending APK). */
+     * launcher's pending APK). [expectedPackage] (security review M10: the catalog's pin, or our
+     * own package) goes to `setAppPackageName`: Android refuses the session's APK if it is another
+     * package. */
     fun installSilently(
         context: Context,
         apkFile: File,
@@ -66,10 +68,12 @@ object AppInstaller {
         beforeCommit: ((sessionId: Int) -> Boolean)? = null,
         commitFailed: (() -> Unit)? = null,
         deleteOnFailure: Boolean = true,
+        expectedPackage: String? = null,
     ): InstallStart {
         val packageInstaller = context.packageManager.packageInstaller
         val params =
             PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        expectedPackage?.takeIf { it.isNotBlank() }?.let { params.setAppPackageName(it) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         }

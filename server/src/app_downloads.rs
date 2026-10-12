@@ -29,7 +29,9 @@ pub struct AppDownloadEntry {
     /// The release as `GET /api/devices/apps` named it (`tag@asset_id` for GitHub apps).
     pub release_tag: String,
     /// "waiting_wifi" | "waiting_network" | "waiting_roaming" | "waiting_space" | "downloading" |
-    /// "installing".
+    /// "installing", or a release the phone refused to install (security review M10, the launcher's
+    /// check of the APK against the app's pins): "refused_package" | "refused_signer" |
+    /// "refused_unreadable" | "refused_unpinned".
     pub state: String,
     /// Bytes on the phone so far.
     pub bytes: i64,
@@ -105,6 +107,11 @@ fn waiting(state: &str) -> bool {
     state.starts_with("waiting")
 }
 
+/// The phone refused to install this release (security review M10).
+pub fn refused(entry: &AppDownloadEntry) -> bool {
+    entry.state.starts_with("refused")
+}
+
 /// "Waiting for Wi-Fi", "Downloading", ...
 fn state_text(state: &str) -> &'static str {
     match state {
@@ -114,6 +121,11 @@ fn state_text(state: &str) -> &'static str {
         "waiting_space" => "waiting for free storage on the phone",
         "downloading" => "downloading",
         "installing" => "installing",
+        "refused_package" => "refused - another Android package than this app's",
+        "refused_signer" => "refused - signed with another key than this app's",
+        "refused_unreadable" => "refused - the phone can't read the APK",
+        "refused_unpinned" => "refused - no package and signing key on the server yet",
+        other if other.starts_with("refused") => "refused by the phone",
         _ => "waiting",
     }
 }
@@ -184,7 +196,9 @@ pub fn launcher_label(entry: &AppDownloadEntry) -> String {
         },
         "downloading" => format!("downloading {name}"),
         "installing" => format!("{name} downloaded"),
-        other if waiting(other) => format!("{name} is {}", state_text(other)),
+        other if waiting(other) || other.starts_with("refused") => {
+            format!("{name} is {}", state_text(other))
+        }
         _ => format!("{name} waits"),
     };
     with_progress(format!("Installed · {line}"), entry)
@@ -245,6 +259,34 @@ mod tests {
             "Waiting - the phone is roaming since 6 Oct · 5 MB so far"
         );
         assert_eq!(new_app_label(&entry("installing", 0, None)), "Installing");
+    }
+
+    /// Security review M10: the phone's refusal of a release, with its reason - never "waiting".
+    #[test]
+    fn a_refused_release_says_why() {
+        let e = entry("refused_signer", 0, None);
+        assert!(refused(&e));
+        assert_eq!(
+            new_app_label(&e),
+            "Refused - signed with another key than this app's"
+        );
+        assert_eq!(
+            update_label(&e),
+            "Installed · update refused - signed with another key than this app's"
+        );
+        assert!(
+            new_app_label(&entry("refused_package", 0, None)).contains("another Android package")
+        );
+        assert!(new_app_label(&entry("refused_unreadable", 0, None)).contains("can't read"));
+        assert!(
+            new_app_label(&entry("refused_unpinned", 0, None))
+                .contains("no package and signing key")
+        );
+        assert_eq!(
+            new_app_label(&entry("refused_later", 0, None)),
+            "Refused by the phone"
+        );
+        assert!(!refused(&entry("waiting_wifi", 0, None)));
     }
 
     #[test]

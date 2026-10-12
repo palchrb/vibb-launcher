@@ -95,12 +95,15 @@
         <details>
             <summary class="button-small button-danger" style="display:inline-block; cursor:pointer;">Wipe&hellip;</summary>
             <form method="post" action="/devices/{{ device.id }}/command/wipe" style="margin-top:8px; min-width:280px;">
-                <div class="error" style="margin-bottom:8px;">This erases the device completely and can't be undone. There's no way to confirm afterward that it actually happened, since a wiped device can't check back in.</div>
+                <div class="error" style="margin-bottom:8px;">This erases the device completely and can't be undone. An up-to-date launcher confirms that it got the command right before it wipes (or says why it couldn't); after that a wiped device can't check back in.</div>
                 <label for="confirm_wipe">Type the device name ({{ device.name }}) to confirm</label>
                 <input type="text" id="confirm_wipe" name="confirm_name" placeholder="{{ device.name }}">
                 <button type="submit" class="button-small button-danger">Wipe this device</button>
             </form>
         </details>
+        {% if wipe_not_ready %}
+        <div class="error" style="flex-basis:100%; margin:0;">Remote wipe works after the phone restarts once: its last report says Android hasn't given the launcher the wipe permission yet (Android 14, after a launcher update). Until then a wipe is refused, and the commands below say so.</div>
+        {% endif %}
         <p class="subtitle" style="flex-basis:100%; margin:0;">Lock: with a kid's PIN set (Screen lock card on the device page), locks with the kid's PIN and turns the screen off; calls from allowed contacts and 112 still work. Without one, it only turns the screen off ("locked (Android)" in the result).</p>
     </div>
 

@@ -58,7 +58,7 @@ if (!hasTsnet) {
     if (providers.gradleProperty("requireTsnet").orNull == "true") {
         throw GradleException("libs/tsnet.aar is missing but -PrequireTsnet=true was given")
     }
-    logger.warn("libs/tsnet.aar not found - building with the tsnet stub (no embedded tailnet)")
+    logger.warn("libs/tsnet.aar not found - debug builds use the tsnet stub (no embedded tailnet); release builds fail")
 }
 
 // Release signing. Each value comes from the env var first (CI), then from a Gradle property
@@ -139,11 +139,12 @@ android {
         buildConfigField("long", "GIT_COMMIT_TIME_MS", "${gitCommitTimeMs}L")
     }
 
-    // libs/tsnet.aar is built by CI (Go + NDK, x86_64 only). Without it, compile a stub of its
-    // API instead so the app still builds and unit-tests locally; the stub fails every tailnet
-    // connect. CI passes -PrequireTsnet=true so a release can never ship the stub by accident.
+    // libs/tsnet.aar is built by CI (Go + NDK, x86_64 only). Without it, the debug build compiles
+    // a stub of its API instead so the app still builds and unit-tests locally; the stub fails
+    // every tailnet connect. A release build never gets the stub, whatever the flags (security
+    // review L13): checkReleaseHasTsnet fails it before anything compiles.
     if (!hasTsnet) {
-        sourceSets.getByName("main").java.srcDir("src/tsnetStub/java")
+        sourceSets.getByName("debug").java.srcDir("src/tsnetStub/java")
     }
 
     compileOptions {
@@ -268,11 +269,35 @@ abstract class CheckNoGoogleServices : DefaultTask() {
     }
 }
 
+/**
+ * Security review L13: a release build without libs/tsnet.aar would have no embedded tailnet and
+ * reach the server over the plain network. The stub is only in the debug source set, and this
+ * fails every release build without the aar at its first step - whatever -PrequireTsnet says.
+ */
+abstract class CheckHasTsnet : DefaultTask() {
+    @get:Input
+    abstract val aarPresent: Property<Boolean>
+
+    @TaskAction
+    fun check() {
+        if (!aarPresent.get()) {
+            throw GradleException(
+                "libs/tsnet.aar is missing: a release build never uses the tsnet stub (security review L13). " +
+                    "Build the aar (CI's build-tsnet action), or build the debug variant."
+            )
+        }
+    }
+}
+
 androidComponents {
     onVariants { variant ->
         val cap = variant.name.replaceFirstChar { it.uppercase() }
         val release = variant.buildType == "release"
         if (release) {
+            val tsnetGuard = tasks.register<CheckHasTsnet>("check${cap}HasTsnet") {
+                aarPresent.set(hasTsnet)
+            }
+            tasks.matching { it.name == "pre${cap}Build" }.configureEach { dependsOn(tsnetGuard) }
             val guard = tasks.register<CheckNoGoogleServices>("check${cap}HasNoGoogleServices") {
                 rootComponent.set(variant.runtimeConfiguration.incoming.resolutionResult.rootComponent)
                 bannedGroups.set(listOf("com.google.firebase", "com.google.android.gms", "com.google.android.datatransport"))

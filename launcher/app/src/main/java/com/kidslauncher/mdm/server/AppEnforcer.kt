@@ -27,7 +27,6 @@ import com.kidslauncher.mdm.calls.EmergencyDialer
 import com.kidslauncher.mdm.calls.MissedCallNotifier
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.RoleAction
-import com.kidslauncher.mdm.calls.RoleSnapshot
 import com.kidslauncher.mdm.calls.dialerRoleAction
 import com.kidslauncher.mdm.calls.roleReportNeeded
 import com.kidslauncher.mdm.push.SyncRunner
@@ -737,7 +736,7 @@ object AppEnforcer {
      * with the next sync. Coalesced by [SyncRunner]; once per change ([roleReportNeeded]).
      */
     private fun signalRoleChange(context: Context) {
-        val now = RoleSnapshot(CallSystem.dialerRoleHeld(context), CallSystem.redirectionRoleHeld(context))
+        val now = CallSystem.roles(context)
         if (!roleReportNeeded(CallPrefs.rolesSignalled(context), now)) return
         CallPrefs.rolesSignalled(context, now)
         try {
@@ -786,6 +785,8 @@ object AppEnforcer {
             val wanted = keyguardDisabledFeatures(current, managed)
             if (wanted != current) dpm.setKeyguardDisabledFeatures(admin, wanted)
         } catch (e: Exception) {
+            // Without the disable-keyguard-features policy granted (an update that added it, before
+            // the phone restarted - AdminPolicies): retried at every apply, and reported.
             Log.w(LOG_TAG, "Failed to set the keyguard camera feature", e)
         }
     }

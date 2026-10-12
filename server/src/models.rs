@@ -326,6 +326,11 @@ pub struct DeviceStatus {
     /// A device admin or accessibility service of an app outside the allowlist (design 24b's fix
     /// round), see `window_relock::ForeignAccess`. `None` = nothing found.
     pub foreign_access_json: Option<String>,
+    // remote_wipe_ready (migration 0065, QA of the launcher wave Low 4) is read directly by
+    // handlers::locate.
+    /// The launcher's declared device-admin policies Android hasn't granted yet (JSON list, see
+    /// [admin_policy_notice]; migration 0065). `None` from older launchers.
+    pub admin_policies_pending_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -486,10 +491,11 @@ pub struct DeviceLocation {
     pub received_at: String,
 }
 
-/// A queued remote command (ring/lock/wipe/locate) - `delivered_at` is set the
-/// instant `policy()` serves it to the device, `acknowledged_at` when the
-/// device reports back (never, for `wipe`). See
-/// migrations/0010_find_my_device.sql.
+/// A queued remote command (ring/lock/wipe/locate, design 24b's window commands) - `delivered_at`
+/// is set when `policy()` serves it to the device (again at each re-delivery, `deliveries`
+/// counts them, `first_delivered_at` keeps the first), `received_at` when the phone confirms it got it (security review L12: before it
+/// runs it, so a wipe confirms too), `acknowledged_at`/`result`/`succeeded` when it reports back
+/// what it did. See migrations/0010_find_my_device.sql and 0065_command_receipts.sql.
 #[derive(sqlx::FromRow, Clone)]
 pub struct DeviceCommand {
     pub id: i64,
@@ -499,34 +505,112 @@ pub struct DeviceCommand {
     pub delivered_at: Option<String>,
     pub acknowledged_at: Option<String>,
     pub result: Option<String>,
+    pub received_at: Option<String>,
+    pub deliveries: i64,
+    pub first_delivered_at: Option<String>,
+    /// `None` for results from before migration 0065 (and launchers that sent none).
+    pub succeeded: Option<bool>,
 }
 
 /// How long a delivered command may go unconfirmed before the page says it may be lost.
 const UNCONFIRMED_AFTER_MINUTES: i64 = 10;
 
+/// A phone that confirms commands (capability [COMMAND_RECEIPT_CAPABILITY]) gets a command it
+/// didn't confirm again, at most this many deliveries in all.
+pub const MAX_COMMAND_DELIVERIES: i64 = 3;
+
+/// The gap before an unconfirmed command is offered again (the phone confirms within seconds).
+pub const REDELIVER_AFTER_MINUTES: i64 = 2;
+
+/// An unconfirmed command is offered again only within this many minutes of its first delivery
+/// (QA of the launcher wave, High 1: a stale command must never replay). The phone confirms within
+/// seconds of a fetch, the server nudges it [REDELIVER_AFTER_MINUTES] after each delivery, and a
+/// phone whose stream is down syncs at least every 15 minutes - so three deliveries fit when the
+/// phone is reachable at all, and a ring, a lock or a pause that comes later than that is no longer
+/// what the parent asked for. After the window the page says "never confirmed - send it again".
+pub const REDELIVER_WINDOW_MINUTES: i64 = 15;
+
+/// Status-report capability of a launcher that confirms each command before running it
+/// (`POST /api/devices/command-receipt`, security review L12).
+pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";
+
+fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
+    chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|at| (now - at).num_minutes())
+}
+
 impl DeviceCommand {
+    /// Whether a phone that confirms commands may still be offered this one again: delivered, not
+    /// confirmed, under [MAX_COMMAND_DELIVERIES] and within [REDELIVER_WINDOW_MINUTES] of its first
+    /// delivery (the pop in `device_api::build_policy` applies the same rule, plus the 2-minute gap).
+    pub fn redeliverable(&self, now: chrono::NaiveDateTime) -> bool {
+        self.received_at.is_none()
+            && self.acknowledged_at.is_none()
+            && self.deliveries < MAX_COMMAND_DELIVERIES
+            && self
+                .first_delivered_at
+                .as_deref()
+                .and_then(|at| minutes_since(at, now))
+                .is_some_and(|m| m < REDELIVER_WINDOW_MINUTES)
+    }
+
     /// The status shown on the device's Find My Device page. Delivery is "the phone fetched it",
-    /// not "it ran" (security review L12): a fetched command the phone never confirms may have
-    /// been lost on the way, and the page says so, so the parent sends it again. A wipe never
-    /// confirms. `now` is UTC, like the stored times.
-    pub fn status_line(&self, now: chrono::NaiveDateTime) -> String {
+    /// not "it ran" (security review L12): a phone with `receipts` (it confirms every command
+    /// before running it) gets an unconfirmed one again, up to [MAX_COMMAND_DELIVERIES]; one that
+    /// is never confirmed may have been lost, and the page says so, so the parent sends it again.
+    /// An older launcher's wipe never confirms. `now` is UTC, like the stored times.
+    pub fn status_line(&self, now: chrono::NaiveDateTime, receipts: bool) -> String {
         if let Some(result) = &self.result {
-            return match &self.acknowledged_at {
-                Some(at) => format!("Done {at} ({result})"),
-                None => format!("Done ({result})"),
+            let at = self
+                .acknowledged_at
+                .as_deref()
+                .map(|at| format!(" {at}"))
+                .unwrap_or_default();
+            return if self.succeeded == Some(false) {
+                format!("Failed{at}: {result}")
+            } else {
+                format!("Done{at} ({result})")
+            };
+        }
+        if let Some(received) = &self.received_at {
+            if self.command == "wipe" {
+                return format!(
+                    "Received {received} - the phone is wiping now; it stops checking in"
+                );
+            }
+            return if minutes_since(received, now).is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
+                format!("Received {received}, but the phone never said it finished")
+            } else {
+                format!("Received {received}, not finished yet")
             };
         }
         let Some(delivered) = &self.delivered_at else {
             return "Waiting for the phone to check in".to_string();
         };
+        let waited = minutes_since(delivered, now);
+        if receipts {
+            // It confirms within seconds: after REDELIVER_AFTER_MINUTES it is offered again, and
+            // after the last delivery (or the window) it is lost.
+            if waited.is_none_or(|m| m < REDELIVER_AFTER_MINUTES) {
+                return format!("Delivered {delivered}, not confirmed yet");
+            }
+            return if self.redeliverable(now) {
+                format!(
+                    "Delivered {delivered}, not confirmed - offered again when the phone next checks in"
+                )
+            } else {
+                format!(
+                    "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
+                )
+            };
+        }
         if self.command == "wipe" {
             return format!(
-                "Delivered {delivered}, not confirmed - a wiped phone can't confirm; it stops checking in"
+                "Delivered {delivered}, not confirmed - this launcher can't confirm a wipe; a wiped phone stops checking in"
             );
         }
-        let stale = chrono::NaiveDateTime::parse_from_str(delivered, "%Y-%m-%d %H:%M:%S")
-            .is_ok_and(|at| (now - at).num_minutes() >= UNCONFIRMED_AFTER_MINUTES);
-        if stale {
+        if waited.is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
             format!(
                 "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
             )
@@ -698,14 +782,20 @@ pub struct PolicyContact {
     pub photo: Option<String>,
 }
 
-/// The oldest undelivered [DeviceCommand] for this device, if any - `policy()`
-/// marks it delivered the instant it's serialized into a response, so a
-/// second poll before the device acknowledges never hands out the same
-/// command twice. See `handlers::device_api::policy`.
+/// The oldest undelivered [DeviceCommand] for this device (or, for a phone that confirms
+/// commands, one it didn't confirm - security review L12), if any - `policy()` marks it delivered
+/// the instant it's serialized into a response, so a second poll within
+/// [REDELIVER_AFTER_MINUTES] never hands out the same command twice. See
+/// `handlers::device_api::policy`.
 #[derive(Serialize)]
 pub struct PendingCommand {
     pub id: i64,
     pub command: String,
+    /// The row's `requested_at` (UTC, "YYYY-MM-DD HH:MM:SS"). With the id it names the command
+    /// uniquely, also after a restored backup winds the id counter back or on another server (QA
+    /// of the launcher wave, Medium 1): the phone runs a command once by both, and sends it back
+    /// with its receipt and result.
+    pub requested_at: String,
 }
 
 #[derive(Deserialize)]
@@ -792,6 +882,16 @@ pub struct StatusReportRequest {
     /// older launchers and when the phone couldn't read it.
     #[serde(default)]
     pub battery_optimization_exempt: Option<bool>,
+    /// QA of the launcher wave, Low 4: the launcher can wipe the phone remotely now - false on
+    /// Android 14 until the phone restarts once after the update that declared the wipe policy.
+    /// Absent from older launchers and when the phone couldn't tell.
+    #[serde(default)]
+    pub remote_wipe_ready: Option<bool>,
+    /// The launcher's declared device-admin policies Android hasn't granted yet - a policy a
+    /// launcher update added may count only after the phone restarts once. Stored through the
+    /// known tags only ([admin_policies_json]).
+    #[serde(default)]
+    pub admin_policies_pending: Option<Vec<String>>,
     /// Design 24b: the last relock of a parent-PIN window - opaque, stored through the known
     /// fields only (`window_relock::sanitize_relock`).
     #[serde(default)]
@@ -863,6 +963,20 @@ pub struct CommandResultRequest {
     pub command_id: i64,
     pub success: bool,
     pub message: Option<String>,
+    /// [PendingCommand::requested_at] as the phone got it: when sent, the answer counts only for
+    /// that command (a restored or another server may reuse the id). Older launchers send none.
+    #[serde(default)]
+    pub requested_at: Option<String>,
+}
+
+/// `POST /api/devices/command-receipt`: the phone got the command and is about to run it (security
+/// review L12) - sent before anything runs, so a wipe confirms too.
+#[derive(Deserialize)]
+pub struct CommandReceiptRequest {
+    pub command_id: i64,
+    /// As [CommandResultRequest::requested_at].
+    #[serde(default)]
+    pub requested_at: Option<String>,
 }
 
 /// Reported by the device during a tracked app's download, or once if the install ultimately
@@ -927,4 +1041,50 @@ pub struct TrackedAppUpdate {
     /// the APK when the catalog didn't have it), what the phone checks the APK against before it
     /// installs it (the launcher's side comes with its security wave).
     pub signer_sha256: Option<String>,
+}
+
+/// The device-admin policies the launcher may report as not granted yet, with what the phone
+/// can't do until it restarts once (the wipe has its own line on the Locate page).
+const ADMIN_POLICY_EFFECTS: [(&str, &str); 3] = [
+    (
+        "disable-keyguard-features",
+        "turn off the camera on the lock screen",
+    ),
+    (
+        "limit-password",
+        "notice at once when an Android screen lock is removed",
+    ),
+    ("force-lock", "lock the screen from the Locate page"),
+];
+
+/// `StatusReportRequest.admin_policies_pending` as stored: the known tags only (the wipe's too),
+/// `None` when the phone sent none.
+pub fn admin_policies_json(pending: Option<&Vec<String>>) -> Option<String> {
+    let pending = pending?;
+    let known: Vec<&str> = ADMIN_POLICY_EFFECTS
+        .iter()
+        .map(|(tag, _)| *tag)
+        .chain(["wipe-data"])
+        .filter(|tag| pending.iter().any(|p| p == tag))
+        .collect();
+    serde_json::to_string(&known).ok()
+}
+
+/// The device page's warning while the launcher's admin lacks policies Android grants at the next
+/// restart (an Android 16 emulator refused the lock-screen camera switch that way).
+pub fn admin_policy_notice(json: Option<&str>) -> Option<String> {
+    let pending: Vec<String> = serde_json::from_str(json?).ok()?;
+    let effects: Vec<&str> = ADMIN_POLICY_EFFECTS
+        .iter()
+        .filter(|(tag, _)| pending.iter().any(|p| p == tag))
+        .map(|(_, effect)| *effect)
+        .collect();
+    if effects.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Restart the phone once: after a launcher update Android hasn't yet given the launcher what it \
+         needs to {}.",
+        effects.join(", and to ")
+    ))
 }

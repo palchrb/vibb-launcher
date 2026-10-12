@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -32,6 +33,8 @@ private const val LOG_TAG = "AppDownloads"
 private const val DIR = "app_downloads"
 private const val PREFS = "app_downloads"
 private const val KEY_RECORDS = "records"
+/** Refused catalog releases (security review M10), for the status report. */
+private const val KEY_REFUSALS = "refusals"
 private const val RELEASE_TAG_HEADER = "X-Release-Tag"
 
 /** The download wake lock times out by itself; progress renews it. */
@@ -102,6 +105,28 @@ object AppDownloadStore {
         val records = load(context)
         val kept = records.filterNot { it.appId == appId && (tag == null || it.tag == tag) }
         if (kept.size != records.size) save(context, kept)
+    }
+
+    /** The refused catalog releases ([CatalogRefusal]), for the status report. */
+    @Synchronized
+    fun refusals(context: Context): List<CatalogRefusal> {
+        val raw = prefs(context).getString(KEY_REFUSALS, null) ?: return emptyList()
+        return try {
+            ServerJson.decodeFromString<List<CatalogRefusal>>(raw)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Refusals don't decode", e)
+            emptyList()
+        }
+    }
+
+    /** Changes the refusals in one step under the lock. */
+    @Synchronized
+    fun mutateRefusals(context: Context, transform: (List<CatalogRefusal>) -> List<CatalogRefusal>) {
+        val before = refusals(context)
+        val after = transform(before)
+        if (after != before && !prefs(context).edit().putString(KEY_REFUSALS, ServerJson.encodeToString(after)).commit()) {
+            Log.w(LOG_TAG, "Couldn't write the refusals")
+        }
     }
 }
 
@@ -221,9 +246,12 @@ object AppDownloads {
     // ---- the sync ------------------------------------------------------------------------------
 
     /** After a successful list fetch: the records become exactly [wanted] (QA #4: the only place
-     * that drops a release because the list no longer has it), then the files are swept. */
-    fun reconcile(context: Context, wanted: List<WantedDownload>) {
+     * that drops a release because the list no longer has it), then the files are swept. The
+     * refusals follow the list too ([reconcileRefusals]: [listed] every catalog app's release,
+     * [unpinned] the ones the server has no pins for - security review M10). */
+    fun reconcile(context: Context, wanted: List<WantedDownload>, listed: Map<Long, String> = emptyMap(), unpinned: Map<Long, String> = emptyMap()) {
         val app = context.applicationContext
+        AppDownloadStore.mutateRefusals(app) { reconcileRefusals(it, listed, unpinned, System.currentTimeMillis()) }
         AppDownloadStore.mutate(app) { current ->
             // The install state as it is now, under the lock - not the sync's earlier snapshot: a
             // release the runner committed or handed over meanwhile is not wanted again (qa-13-code #3).
@@ -280,7 +308,7 @@ object AppDownloads {
         val allocatable = allocatableBytes(app)
         val now = System.currentTimeMillis()
         val running = active
-        val entries = downloadOrder(AppDownloadStore.load(app)).take(20).map { record ->
+        val downloads = downloadOrder(AppDownloadStore.load(app)).take(20).map { record ->
             val file = partial(app, record)
             val have = if (file.isFile) file.length() else 0L
             val state = if (running != null && running.record.appId == record.appId && running.record.tag == record.tag) {
@@ -298,6 +326,15 @@ object AppDownloads {
                 anyNetworkAtMs = anyNetworkAtMs(record.isLauncher, record.firstSeenMs),
             )
         }
+        // Refused catalog releases (security review M10): the reason as the state, until the
+        // server lists another release.
+        val refused = AppDownloadStore.refusals(app).map {
+            AppDownloadEntry(
+                trackedAppId = it.appId, releaseTag = it.tag, state = it.reason, bytes = 0, total = null,
+                sinceMs = it.atMs, anyNetworkAtMs = null,
+            )
+        }
+        val entries = (downloads + refused).take(20)
         return AppDownloadsReport(wifiOnly = wifiOnly, network = networkLabel(caps), entries = entries)
     }
 
@@ -664,6 +701,14 @@ object AppDownloads {
 
     /** The whole file is here: the hash, then install it (or hand our own update to the window). */
     private suspend fun finish(app: Context, rec: DownloadRecord, file: File, api: MdmApi, current: Active): Outcome {
+        if (!rec.isLauncher && !catalogPinned(rec.packageName, rec.signerSha256)) {
+            // A record an older build wrote, without the pins (security review M10): the next list
+            // brings them (an app the server can't pin isn't queued at all). The file waits.
+            Log.i(LOG_TAG, "${rec.name}: no pins in the record yet - asking for the list again")
+            relist(app)
+            notifyAppInstallResult(app, rec.appId, rec.name, success = true)
+            return Outcome.DEFER
+        }
         val sha256 = try {
             SelfUpdate.sha256(file)
         } catch (e: IOException) {
@@ -695,6 +740,13 @@ object AppDownloads {
     }
 
     private suspend fun install(app: Context, rec: DownloadRecord, file: File, api: MdmApi, current: Active): Outcome {
+        // Security review M10: the APK as Android reads it must be the catalog's package, signed
+        // with its pinned key (or a key whose lineage holds it) - before anything installs it.
+        val verdict = catalogVerdict(app, rec, file)
+        if (verdict != CatalogApkVerdict.OK) {
+            refuse(app, rec, file, api, verdict)
+            return Outcome.PROGRESS
+        }
         if (com.kidslauncher.mdm.music.MusicNowPlaying.deferInstall(app, file)) {
             Log.i(LOG_TAG, "${rec.name}: the music app is playing - its update waits for the pause")
             // No "Installing" notice in the shade while the kid listens.
@@ -708,7 +760,9 @@ object AppDownloads {
             // In flight from the commit until AppInstallReceiver's result (design 13 §4).
             TrackedAppUpdateState.recordAttemptStarted(app, key)
             notifyAppInstalling(app, rec.appId, rec.name)
-            AppInstaller.installSilently(app, file, key, rec.name, isLauncher = false, releaseTag = rec.tag)
+            AppInstaller.installSilently(
+                app, file, key, rec.name, isLauncher = false, releaseTag = rec.tag, expectedPackage = rec.packageName,
+            )
         }
         return when (started) {
             null -> {
@@ -732,6 +786,42 @@ object AppDownloads {
                 Outcome.PROGRESS
             }
         }
+    }
+
+    /** [catalogApkCheck] on the downloaded file: its package and signers as PackageManager reads them
+     * (an exception or `null` is "unreadable" - fails closed). */
+    private fun catalogVerdict(app: Context, rec: DownloadRecord, file: File): CatalogApkVerdict {
+        val archive = try {
+            app.packageManager.getPackageArchiveInfo(
+                file.absolutePath,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+            )
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "${rec.name}: PackageManager can't read the APK", e)
+            null
+        }
+        return catalogApkCheck(rec.packageName, rec.signerSha256, archive?.packageName, SelfUpdate.signers(archive?.signingInfo))
+    }
+
+    /**
+     * A catalog APK that failed [catalogApkCheck]: deleted, never installed. The same file would
+     * fail again, so the release is refused until the server lists another (no hourly download of
+     * the same APK); "not pinned" waits out the failure backoff instead (the server may pin it). The
+     * parent sees it: the install-failed report now, and the reason in every status report.
+     */
+    private suspend fun refuse(app: Context, rec: DownloadRecord, file: File, api: MdmApi, verdict: CatalogApkVerdict) {
+        Log.w(LOG_TAG, "${rec.name} ${rec.tag} refused before installing: ${verdict.name}")
+        file.delete()
+        val key = rec.appId.toString()
+        if (verdict == CatalogApkVerdict.NOT_PINNED) {
+            TrackedAppUpdateState.recordFailed(app, key, rec.tag)
+        } else {
+            TrackedAppUpdateState.recordRefused(app, key, rec.tag)
+        }
+        AppDownloadStore.remove(app, rec.appId, rec.tag)
+        AppDownloadStore.mutateRefusals(app) { withRefusal(it, CatalogRefusal(rec.appId, rec.tag, verdict.wire, System.currentTimeMillis())) }
+        notifyAppInstallResult(app, rec.appId, rec.name, success = false)
+        reportFailure(api, rec.appId)
     }
 
     /** Our own update: moved into `self_update/` and kept pending - the sync's last step commits it

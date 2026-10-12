@@ -36,6 +36,10 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             post(handlers::device_api::command_result),
         )
         .route(
+            "/api/devices/command-receipt",
+            post(handlers::device_api::command_receipt),
+        )
+        .route(
             "/api/devices/commands/stream",
             get(handlers::device_api::commands_stream),
         )

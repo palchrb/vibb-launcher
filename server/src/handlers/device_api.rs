@@ -11,10 +11,10 @@ use tokio_stream::wrappers::{BroadcastStream, WatchStream};
 
 use crate::AppState;
 use crate::models::{
-    CallPolicy, CommandResultRequest, DeviceContactRow, DevicePolicy, DnsBlocklistCategory,
-    DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse, GlobalSchedule,
-    InstallProgressReport, InstalledApp, LauncherUi, PendingCommand, PolicyContact, PolicyResponse,
-    StatusReportRequest, TrackedApp, TrackedAppUpdate,
+    CallPolicy, CommandReceiptRequest, CommandResultRequest, DeviceContactRow, DevicePolicy,
+    DnsBlocklistCategory, DnsEventReport, DnsFilterSettings, EnrollRequest, EnrollResponse,
+    GlobalSchedule, InstallProgressReport, InstalledApp, LauncherUi, PendingCommand, PolicyContact,
+    PolicyResponse, StatusReportRequest, TrackedApp, TrackedAppUpdate,
 };
 use crate::security::{self, AuthedDevice};
 use crate::time_rules::{LocationPolicy, TimePolicy};
@@ -150,17 +150,17 @@ pub async fn enroll(
         .await;
     state.command_streams.close_device(device_id);
     state.enrollment.refresh(&state.db).await;
-    security::record_security_event(
-        &state.db,
-        "device_enrolled",
-        None,
-        Some(&ip),
-        Some(&format!(
-            "{name} (device {device_id}), {} code",
-            kind.as_str()
-        )),
-    )
-    .await;
+    // A command meant for the phone this row had before - a wipe for a lost one - must never
+    // reach its replacement (QA of the launcher wave, Low 2).
+    let dropped = end_pending_commands(&state.db, device_id).await;
+    let mut detail = format!("{name} (device {device_id}), {} code", kind.as_str());
+    if dropped > 0 {
+        detail.push_str(&format!(
+            "; {dropped} command(s) for the earlier phone won't be sent"
+        ));
+    }
+    security::record_security_event(&state.db, "device_enrolled", None, Some(&ip), Some(&detail))
+        .await;
 
     Json(EnrollResponse {
         device_id,
@@ -313,21 +313,65 @@ pub(crate) async fn build_policy(
     };
 
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
-    // consumes a command, and two concurrent polls can't both get the same one. Delivery is
-    // still at-most-once - a command popped into a response the launcher then refuses (it
-    // rejects a suspicious policy, or can't decode it) is lost, which is why every command
-    // (ring/stop_ring/lock/wipe) must be safe to simply queue again. See
-    // migrations/0010_find_my_device.sql and handlers::locate.
-    let pending_command = sqlx::query_as::<_, (i64, String)>(
-        "UPDATE device_commands SET delivered_at = datetime('now') WHERE id = \
-         (SELECT id FROM device_commands WHERE device_id = ? AND delivered_at IS NULL \
+    // consumes a command, and two concurrent polls can't both get the same one. A launcher that
+    // confirms commands (security review L12) confirms each one before running it; one it didn't
+    // confirm - the response was lost, or it refused the policy - is offered again after
+    // REDELIVER_AFTER_MINUTES, at most MAX_COMMAND_DELIVERIES times in all and only within
+    // REDELIVER_WINDOW_MINUTES of its first delivery, so nothing stale ever replays (QA of the
+    // launcher wave, High 1; the phone runs a command once). For an older launcher delivery stays
+    // at-most-once, which is why every command must be safe to simply queue again. See
+    // migrations/0010_find_my_device.sql, 0065_command_receipts.sql and handlers::locate.
+    let receipts = sends_command_receipts(&state.db, device_id).await?;
+    let popped = sqlx::query_as::<_, (i64, String, String)>(
+        "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
+           first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
+         WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
+           AND received_at IS NULL AND acknowledged_at IS NULL \
+           AND (delivered_at IS NULL OR (? AND deliveries < ? \
+                AND delivered_at <= datetime('now', ?) \
+                AND first_delivered_at > datetime('now', ?))) \
           ORDER BY requested_at ASC, id ASC LIMIT 1) \
-         RETURNING id, command",
+         RETURNING id, command, requested_at",
     )
     .bind(device_id)
+    .bind(receipts)
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
+    .bind(format!(
+        "-{} minutes",
+        crate::models::REDELIVER_AFTER_MINUTES
+    ))
+    .bind(format!(
+        "-{} minutes",
+        crate::models::REDELIVER_WINDOW_MINUTES
+    ))
     .fetch_optional(&state.db)
-    .await?
-    .map(|(id, command)| PendingCommand { id, command });
+    .await?;
+    if let Some((id, _, requested_at)) = &popped {
+        // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
+        // one the phone didn't confirm is never offered again - a lost "pause" must not run after
+        // a later "lock again". Its row stays, as history.
+        sqlx::query(
+            "UPDATE device_commands SET deliveries = MAX(deliveries, ?) WHERE device_id = ? \
+             AND id != ? AND delivered_at IS NOT NULL AND received_at IS NULL \
+             AND acknowledged_at IS NULL AND (requested_at < ? OR (requested_at = ? AND id < ?))",
+        )
+        .bind(crate::models::MAX_COMMAND_DELIVERIES)
+        .bind(device_id)
+        .bind(id)
+        .bind(requested_at)
+        .bind(requested_at)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+        if receipts {
+            spawn_redelivery_nudge(state, device_id, *id);
+        }
+    }
+    let pending_command = popped.map(|(id, command, requested_at)| PendingCommand {
+        id,
+        command,
+        requested_at,
+    });
 
     Ok(PolicyResponse {
         allowlist,
@@ -990,8 +1034,8 @@ pub async fn status(
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
-          foreign_access_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          foreign_access_json, remote_wipe_ready, admin_policies_pending_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1029,6 +1073,10 @@ pub async fn status(
     .bind(unseen_boots.map(|(count, _)| count))
     .bind(unseen_boots.and_then(|(_, at)| at))
     .bind(&foreign_access_json)
+    .bind(report.remote_wipe_ready)
+    .bind(crate::models::admin_policies_json(
+        report.admin_policies_pending.as_ref(),
+    ))
     .execute(&state.db)
     .await
     .ok();
@@ -1255,31 +1303,164 @@ async fn log_play_events(
     }
 }
 
-/// The device reports back whether a delivered command actually succeeded -
-/// never called for `wipe` (the device is gone by the time it would report).
-/// Scoped to this device's own commands only, so one device can't ack
-/// another's queue entry.
+/// At an enrollment: the device's commands not yet delivered are deleted, and the delivered ones
+/// its phone never confirmed are used up (`deliveries` at the maximum), so none of them reaches the
+/// newly enrolled phone (QA of the launcher wave, Low 2). Returns how many; a DB error is logged.
+async fn end_pending_commands(db: &sqlx::SqlitePool, device_id: i64) -> u64 {
+    let deleted =
+        sqlx::query("DELETE FROM device_commands WHERE device_id = ? AND delivered_at IS NULL")
+            .bind(device_id)
+            .execute(db)
+            .await;
+    let used_up = sqlx::query(
+        "UPDATE device_commands SET deliveries = ? WHERE device_id = ? AND delivered_at IS NOT NULL \
+         AND received_at IS NULL AND acknowledged_at IS NULL AND deliveries < ?",
+    )
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
+    .bind(device_id)
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
+    .execute(db)
+    .await;
+    let mut count = 0;
+    for outcome in [deleted, used_up] {
+        match outcome {
+            Ok(done) => count += done.rows_affected(),
+            Err(err) => tracing::error!(device_id, %err, "can't end the device's pending commands"),
+        }
+    }
+    count
+}
+
+/// After a command went to a phone that confirms commands: once the re-delivery gap has passed,
+/// nudge the phone over its stream if it still hasn't confirmed, so a lost answer is made good
+/// within [crate::models::REDELIVER_WINDOW_MINUTES] rather than at the phone's 30-minute backstop
+/// (QA of the launcher wave, High 1). One nudge per delivery; nothing happens without a stream.
+fn spawn_redelivery_nudge(state: &AppState, device_id: i64, command_id: i64) {
+    let db = state.db.clone();
+    let notify = state.command_notify.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(
+            crate::models::REDELIVER_AFTER_MINUTES as u64 * 60 + 5,
+        ))
+        .await;
+        redelivery_nudge(&db, &notify, device_id, command_id).await;
+    });
+}
+
+/// The nudge itself ([spawn_redelivery_nudge]): sent when the command is still unconfirmed and may
+/// be offered again. Returns whether it nudged.
+pub(crate) async fn redelivery_nudge(
+    db: &sqlx::SqlitePool,
+    notify: &tokio::sync::broadcast::Sender<i64>,
+    device_id: i64,
+    command_id: i64,
+) -> bool {
+    let pending: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT id FROM device_commands WHERE id = ? AND device_id = ? AND received_at IS NULL \
+         AND acknowledged_at IS NULL AND deliveries < ? AND first_delivered_at > datetime('now', ?)",
+    )
+    .bind(command_id)
+    .bind(device_id)
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
+    .bind(format!("-{} minutes", crate::models::REDELIVER_WINDOW_MINUTES))
+    .fetch_optional(db)
+    .await;
+    match pending {
+        Ok(Some(_)) => {
+            let _ = notify.send(device_id);
+            true
+        }
+        Ok(None) => false,
+        Err(err) => {
+            tracing::warn!(device_id, command_id, %err, "can't check a command for re-delivery");
+            false
+        }
+    }
+}
+
+/// Whether this device's launcher confirms commands before running them (its latest status
+/// report has [crate::models::COMMAND_RECEIPT_CAPABILITY], security review L12).
+pub(crate) async fn sends_command_receipts(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let capabilities: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT capabilities_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(capabilities
+        .flatten()
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .is_some_and(|caps| {
+            caps.iter()
+                .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY)
+        }))
+}
+
+/// The phone got a command and is about to run it (security review L12) - sent before it runs,
+/// so a wipe is confirmed too. Scoped to this device's own commands - and, when the phone sends
+/// the command's `requested_at`, to that command, not a reuse of its id after a restore (QA
+/// Medium 1); the first receipt counts.
+pub async fn command_receipt(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    Json(req): Json<CommandReceiptRequest>,
+) -> impl IntoResponse {
+    let stored = sqlx::query(
+        "UPDATE device_commands SET received_at = COALESCE(received_at, datetime('now')) \
+         WHERE id = ? AND device_id = ? AND (? IS NULL OR requested_at = ?)",
+    )
+    .bind(req.command_id)
+    .bind(device.id)
+    .bind(&req.requested_at)
+    .bind(&req.requested_at)
+    .execute(&state.db)
+    .await;
+    match stored {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "can't store a command receipt");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+/// The device reports back whether a delivered command actually succeeded (a wipe only when it
+/// was refused - a wiped phone can't). A result implies the receipt. Scoped to this device's own
+/// commands only, so one device can't ack another's queue entry.
 pub async fn command_result(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
     Json(req): Json<CommandResultRequest>,
 ) -> impl IntoResponse {
-    sqlx::query(
-        "UPDATE device_commands SET acknowledged_at = datetime('now'), result = ? \
-         WHERE id = ? AND device_id = ?",
-    )
-    .bind(if req.success {
+    let result = if req.success {
         req.message.unwrap_or_else(|| "ok".to_string())
     } else {
         req.message.unwrap_or_else(|| "failed".to_string())
-    })
+    };
+    let stored = sqlx::query(
+        "UPDATE device_commands SET acknowledged_at = datetime('now'), result = ?, succeeded = ?, \
+         received_at = COALESCE(received_at, datetime('now')) \
+         WHERE id = ? AND device_id = ? AND (? IS NULL OR requested_at = ?)",
+    )
+    .bind(result.chars().take(500).collect::<String>())
+    .bind(req.success)
     .bind(req.command_id)
     .bind(device.id)
+    .bind(&req.requested_at)
+    .bind(&req.requested_at)
     .execute(&state.db)
-    .await
-    .ok();
-
-    StatusCode::NO_CONTENT
+    .await;
+    match stored {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "can't store a command result");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 
 /// Upserts this device's current download/install status for one tracked app - purely transient,

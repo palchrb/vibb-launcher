@@ -33,10 +33,20 @@ Server (from `server/`): `cargo test`, `cargo fmt --check`, `cargo clippy --all-
 Launcher (from `launcher/`, JDK 17, `local.properties` with `sdk.dir=...`):
 `./gradlew assembleDebug assembleRelease testDebugUnitTest`. Music app (from `music/`, the same JDK and
 `local.properties`): `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true`.
-Without `-PrequireTsnet=true` a missing
-`app/libs/tsnet.aar` falls back to a stub. No Firebase config is needed: FCM was removed in design 19 (the
+Without `app/libs/tsnet.aar` the debug build falls
+back to a stub and a release build fails (security review L13; `-PrequireTsnet=true` fails any build). No Firebase config is needed: FCM was removed in design 19 (the
 SSE stream is the only nudge), and `assembleRelease` fails if Firebase or Play services comes back on the
 release classpath.
+
+Gradle build chain (security review L9): both wrappers pin the distribution (`distributionSha256Sum`), CI validates
+both `gradle-wrapper.jar`s (`gradle/actions/wrapper-validation`, pinned by commit) before Gradle runs, and both apps
+verify every dependency's SHA-256 against `gradle/verification-metadata.xml` (no signatures; sources/javadoc jars
+trusted for the IDE). A new or bumped dependency or plugin fails the build until its checksums are added: run
+`./gradlew --write-verification-metadata sha256 --continue help build` (launcher: with `libs/tsnet.aar` present) and
+review the diff - new entries are trust on first use, so compare them with the publisher's `.sha1`/`.sha256` where it
+has them. CI's aapt2 (`com.android.tools.build:aapt2:<AGP>-<build>:linux`) is never resolved on an aarch64 machine
+with the `aapt2FromMavenOverride`: an AGP bump needs its entry by hand (resolve it in a throwaway build, as on
+2026-10-11).
 
 Shared between the two and checked by tests on both sides: `server/testdata/phone_vectors.json` and
 `launcher/app/src/test/resources/phone_vectors.json` must be identical (server `phone::tests`,
@@ -56,8 +66,8 @@ keeps the music app's, the music app sends exactly those.
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
-  (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read, `music.yml` also
-  on the shared `server/testdata/music_*.json` and the launcher's copy of the bridge AIDL; `server-ci.yml`'s
+  (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
+  shared snapshots, `music/gradle/` and `music.yml`; `music.yml` also on the shared `server/testdata/music_*.json` and the launcher's copy of the bridge AIDL; `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in
   `server-ci.yml` and `server-release.yml` (security review L9) - move them on deliberately, both files at once.

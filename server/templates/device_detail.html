@@ -291,7 +291,7 @@
         {% if allowlist_corrupt %}
         <div class="error">The stored app list for this device can't be read, so the phone gets an error instead of its policy and keeps enforcing the last one it had. The checkboxes below don't show what the phone allows, and changing them fails. Check this server's log ("failed to build device policy"), or restore a backup.</div>
         {% endif %}
-        <p class="subtitle">Every app currently on this device, plus anything from the <a href="/apps">Apps</a> catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; checking one that isn't installed installs and allows it. Unchecking disallows it - and uninstalls it too, unless it's preinstalled and can't be removed. Each checkbox saves itself immediately - no separate Save button. A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed - never Settings, a browser or a file manager.</p>
+        <p class="subtitle">Every app currently on this device, plus anything from the <a href="/apps">Apps</a> catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; checking one that isn't installed installs and allows it. Unchecking disallows it - and uninstalls it too, unless it's preinstalled and can't be removed; checking it again before the phone syncs cancels the uninstall. Each checkbox saves itself immediately - no separate Save button. A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed - never Settings, a browser or a file manager.</p>
         <p class="subtitle">Only a checked app's keyboard and accessibility service can be turned on in the phone's Settings - an accessibility service not even during a pause, since it could read the parent PIN. Check the app first.</p>
         <form method="post" action="/devices/{{ device.id }}/app-updates">
             <label class="checkbox-row">
@@ -369,7 +369,7 @@
             <input type="hidden" name="anchor" value="music">
             <label class="checkbox-row">
                 <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} onchange="this.form.submit()">
-                <span>The music app on this phone (installed and allowed like any app from the catalog) <span class="app-status" style="white-space:normal;">{{ app.status }}</span></span>
+                <span>The music app on this phone (installed and allowed like any app from the catalog; unticking uninstalls it) <span class="app-status" style="white-space:normal;">{{ app.status }}</span></span>
             </label>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
         </form>

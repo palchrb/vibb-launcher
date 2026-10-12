@@ -77,6 +77,12 @@ jobs:
         working-directory: music
     steps:
     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+    - name: Validate the Gradle wrappers
+      # Security review L9: every gradle-wrapper.jar in the checkout (launcher/ and music/) must be
+      # one Gradle published; the wrapper itself checks the distribution (distributionSha256Sum).
+      uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      with:
+        min-wrapper-count: 2
     - name: set up JDK 17
       uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
       with:
@@ -126,6 +132,12 @@ jobs:
     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       with:
         fetch-depth: 0
+    - name: Validate the Gradle wrappers
+      # Security review L9: every gradle-wrapper.jar in the checkout (launcher/ and music/) must be
+      # one Gradle published; the wrapper itself checks the distribution (distributionSha256Sum).
+      uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      with:
+        min-wrapper-count: 2
     - name: Refuse tags whose commit is not on master/main
       run: |
         for b in main master; do

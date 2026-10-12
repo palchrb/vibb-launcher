@@ -812,6 +812,11 @@ pub(crate) async fn play_card(
             .ok()
             .flatten()
             .unwrap_or(true);
+    if let Some(notice) = crate::models::admin_policy_notice(
+        latest.and_then(|s| s.admin_policies_pending_json.as_deref()),
+    ) {
+        warnings.push(notice);
+    }
     if latest.and_then(|s| s.play_store_suspendable) == Some(false) {
         warnings.push(if block_activity_start {
             "Play can't be suspended on this phone - Play is blocked only while kiosk is on."
@@ -1152,7 +1157,8 @@ async fn render_device(
         .collect();
 
     // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
-    // A fresh progress row above still wins for the live percentage.
+    // A fresh progress row above still wins for the live percentage - but not over a release the
+    // phone refused (security review M10): its reason beats "Install failed".
     let downloads = crate::app_downloads::parse(
         latest_status
             .as_ref()
@@ -1162,7 +1168,9 @@ async fn render_device(
         downloads
             .as_ref()
             .and_then(|d| d.entry(tracked_app_id))
-            .filter(|_| !install_progress.contains_key(&tracked_app_id))
+            .filter(|e| {
+                crate::app_downloads::refused(e) || !install_progress.contains_key(&tracked_app_id)
+            })
     };
 
     let mut apps: Vec<UnifiedAppRow> = Vec::new();
@@ -1190,7 +1198,8 @@ async fn render_device(
                 "Installed".to_string()
             },
             is_installing: false,
-            install_failed: false,
+            // An update the phone refused (security review M10) shows like a failed install.
+            install_failed: update.is_some_and(crate::app_downloads::refused),
             checked: allowed.contains(&app.package_name),
             tracked_app_id: tracked_match.map(|t| t.id),
             show_no_release_hint: false,
@@ -1213,13 +1222,14 @@ async fn render_device(
         }
         let has_release = t.latest_release_tag.is_some();
         let progress = install_progress.get(&t.id).copied();
-        let (status_label, is_installing, install_failed) = match progress {
-            Some((_, true)) => ("Install failed".to_string(), false, true),
-            Some((percent, false)) => (format!("Installing {percent}%"), true, false),
-            None => match download_of(t.id) {
-                Some(download) => (crate::app_downloads::new_app_label(download), false, false),
-                None => ("Not installed".to_string(), false, false),
-            },
+        let (status_label, is_installing, install_failed) = match (progress, download_of(t.id)) {
+            (_, Some(download)) if crate::app_downloads::refused(download) => {
+                (crate::app_downloads::new_app_label(download), false, true)
+            }
+            (Some((_, true)), _) => ("Install failed".to_string(), false, true),
+            (Some((percent, false)), _) => (format!("Installing {percent}%"), true, false),
+            (None, Some(download)) => (crate::app_downloads::new_app_label(download), false, false),
+            (None, None) => ("Not installed".to_string(), false, false),
         };
         apps.push(UnifiedAppRow {
             status_label,
@@ -1555,8 +1565,8 @@ fn policy_problem_text(state: &str) -> String {
 ///
 /// Checking: adds the `device_tracked_apps` row if there's a catalog entry to track (so a
 /// not-yet-installed app actually gets pushed, and an already-installed one starts picking up
-/// future updates), and allows the package if there's one on file - both no-ops if already in
-/// that state.
+/// future updates), allows the package if there's one on file - both no-ops if already in
+/// that state - and cancels an uninstall an earlier uncheck queued.
 ///
 /// Unchecking: removes the `device_tracked_apps` row and disallows the package the same way.
 /// Whether it *also* queues a silent uninstall depends on current on-device status - a preinstalled
@@ -1623,6 +1633,36 @@ pub async fn toggle_app(
             .execute(&state.db)
             .await
             .ok();
+        }
+        // Checked again before the phone synced: the uninstall the uncheck queued is off (the
+        // catalog app's own package too, when the row had none) - else the next sync would still
+        // remove the app ("deleted by your administrator").
+        let catalog_package: Option<String> = match tracked_app_id {
+            Some(tid) => sqlx::query_scalar(
+                "SELECT package_name FROM tracked_apps WHERE id = ? AND package_name != ''",
+            )
+            .bind(tid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten(),
+            None => None,
+        };
+        for package in [Some(package_name.as_str()), catalog_package.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|p| !p.is_empty())
+        {
+            if let Err(err) = sqlx::query(
+                "DELETE FROM device_pending_uninstalls WHERE device_id = ? AND package_name = ?",
+            )
+            .bind(id)
+            .bind(package)
+            .execute(&state.db)
+            .await
+            {
+                tracing::error!(device_id = id, package, %err, "can't cancel a queued uninstall");
+            }
         }
         if !package_name.is_empty()
             && let Err(err) = add_to_allowlist(&state, id, &package_name).await

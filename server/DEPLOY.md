@@ -181,9 +181,11 @@ One-time means one key per phone setup. Settings > Provisioning holds a single k
 before setting up a phone (or setting one up again), make a new key in the Tailscale admin console and paste it
 there. The phone uses it once; after that the key, and any photo of the QR, is worth nothing. Remove it from
 Provisioning afterwards if you like - it is dead either way. A phone already set up keeps working on its stored node
-state; the key only matters for a setup. The key is write-only on Settings > Provisioning since 0.23.0. (The
-launcher still keeps its copy of the used key; deleting it after the first connect comes with the launcher's security
-wave.)
+state; the key only matters for a setup. The key is write-only on Settings > Provisioning since 0.23.0. The launcher
+deletes its copy once the phone is on the tailnet (launcher security wave, M12) and comes up from the stored node state
+after that - its Settings then say "On the tailnet - the key was deleted". A phone whose node was removed from the
+tailnet may come back by scanning a new QR (tsnet logs in again with the key it was started with once its stored node
+is refused) - not verified; if it doesn't, set it up again (wipe, then provision).
 
 ### Phones' long-lived connection through a proxy
 

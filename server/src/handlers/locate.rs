@@ -43,6 +43,8 @@ struct LocateTemplate {
     last_fix_at_js: String,
     /// Just pressed "Update location now": the page polls for a fresh fix.
     waiting_for_fix: bool,
+    /// The phone's last report said it can't wipe itself yet (QA of the launcher wave, Low 4).
+    wipe_not_ready: bool,
     /// The phone's answer to the newest `locate` command ("fix ±12 m, 3 s old", "location is
     /// off for this device", "no location fix"), once it has answered (QA step 6 #7).
     locate_result: Option<String>,
@@ -133,10 +135,16 @@ async fn render_locate_page(
         Vec::new()
     };
     let now = chrono::Utc::now().naive_utc();
+    let receipts = match &selected {
+        Some(dev) => crate::handlers::device_api::sends_command_receipts(&state.db, dev.id)
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
     let commands = commands
         .into_iter()
         .map(|command| {
-            let status = command.status_line(now);
+            let status = command.status_line(now, receipts);
             (command, status)
         })
         .collect();
@@ -175,6 +183,17 @@ async fn render_locate_page(
         .map(|l| describe_fix(&l.captured_at, l.accuracy_meters, chrono::Utc::now()));
     let last_fix_at = newest.map(|l| l.captured_at).unwrap_or_default();
     let locate_result = latest_locate(state, selected_id).await.and_then(|(_, r)| r);
+    let wipe_not_ready = sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT remote_wipe_ready FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(selected_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+        == Some(false);
 
     Html(
         LocateTemplate {
@@ -193,6 +212,7 @@ async fn render_locate_page(
             last_fix_at_js: js_string(&last_fix_at),
             waiting_for_fix,
             locate_result,
+            wipe_not_ready,
         }
         .render()
         .unwrap(),
@@ -227,8 +247,8 @@ pub async fn locations_json(
 /// `end_windows`/`allow_blocked`/`start_pause`) before inserting the
 /// new one - "your last action wins", and doubles as a way to cancel a
 /// queued-but-not-yet-delivered wipe by queuing something else before it
-/// lands. Once a command is delivered it's no longer touched by this.
-/// Broadcasts on `command_notify` afterwards so a connected device's SSE
+/// lands. A delivered one the phone didn't confirm is no longer offered again
+/// (security review L12: its row stays, as history). Broadcasts on `command_notify` afterwards so a connected device's SSE
 /// listener (see `device_api::commands_stream`) wakes it immediately instead
 /// of waiting for its next 2-minute poll - a `send` with no subscribers
 /// (device offline/asleep) is expected and harmless, it just falls back to
@@ -240,6 +260,19 @@ async fn queue_command(state: &AppState, device_id: i64, command: &str) {
         "DELETE FROM device_commands WHERE device_id = ? AND delivered_at IS NULL \
          AND command NOT IN (?, ?, ?)",
     )
+    .bind(device_id)
+    .bind(end_windows)
+    .bind(allow_blocked)
+    .bind(start_pause)
+    .execute(&state.db)
+    .await
+    .ok();
+    sqlx::query(
+        "UPDATE device_commands SET deliveries = MAX(deliveries, ?) WHERE device_id = ? \
+         AND delivered_at IS NOT NULL AND received_at IS NULL AND acknowledged_at IS NULL \
+         AND command NOT IN (?, ?, ?)",
+    )
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
     .bind(device_id)
     .bind(end_windows)
     .bind(allow_blocked)

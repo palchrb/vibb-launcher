@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import android.app.PendingIntent
+import android.app.admin.DeviceAdminInfo
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -387,12 +388,35 @@ object LocateCommands {
         }
     }
 
-    /** Irreversible - the caller never gets an acknowledgement back, since the device is gone. */
-    fun wipe(dpm: DevicePolicyManager, admin: ComponentName) {
-        try {
-            dpm.wipeData(0)
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to wipe device", e)
+    /** [remoteWipeReady] for this phone; `null` when we aren't device owner or it can't be read. */
+    fun remoteWipeReady(context: Context): Boolean? = try {
+        val dpm = context.getSystemService(DevicePolicyManager::class.java)
+        if (dpm == null || !dpm.isDeviceOwnerApp(context.packageName)) {
+            null
+        } else {
+            val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
+            remoteWipeReady(Build.VERSION.SDK_INT, dpm.hasGrantedPolicy(admin, DeviceAdminInfo.USES_POLICY_WIPE_DATA))
         }
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't read the wipe policy", e)
+        null
+    }
+
+    /**
+     * Factory-resets the phone (security review M8: `wipeDevice` on API 34+, [wipeCall]). Irreversible;
+     * a reset that starts never returns - the phone reboots into it. A call that returns or throws
+     * didn't wipe (but a dying system server, [WipeOutcome.GOING_DOWN]), and the result says so, so
+     * the parent never believes a lost phone is erased when it isn't ([wipeOutcome], QA Low 3).
+     */
+    fun wipe(dpm: DevicePolicyManager): Pair<WipeOutcome, String> = try {
+        when (wipeCall(Build.VERSION.SDK_INT)) {
+            WipeCall.WIPE_DEVICE -> dpm.wipeDevice(WIPE_FLAGS)
+            WipeCall.WIPE_DATA -> dpm.wipeData(WIPE_FLAGS)
+        }
+        WipeOutcome.RETURNED to wipeResultMessage(WipeOutcome.RETURNED)
+    } catch (e: Exception) {
+        Log.e(LOG_TAG, "Failed to wipe device", e)
+        val outcome = wipeOutcome(e.javaClass.simpleName, e.cause?.javaClass?.simpleName)
+        outcome to wipeResultMessage(outcome, "${e.javaClass.simpleName}: ${e.message}")
     }
 }

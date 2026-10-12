@@ -511,11 +511,14 @@ th {
 .app-status {
     margin-left: auto;
     padding: 2px 8px;
-    border-radius: 999px;
+    border-radius: 12px;
     background: var(--color-border);
     color: var(--color-text-muted);
     font-size: 0.8rem;
-    white-space: nowrap;
+    /* A short label stays one pill; a long one (a download's progress, a refused release's reason)
+       wraps instead of being cut off at 360 px. */
+    white-space: normal;
+    text-align: right;
 }
 
 .app-status[data-failed="true"] {

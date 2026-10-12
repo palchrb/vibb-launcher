@@ -40,7 +40,7 @@ class PolicyResponseCompatTest {
           "override_pin_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
           "override_pin_salt": "a3c1f0e2d4b6a8c0e2f4a6b8c0d2e4f6",
           "quick_controls_mask": 3,
-          "pending_command": {"id": 12, "command": "ring"},
+          "pending_command": {"id": 12, "command": "ring", "requested_at": "2026-10-11 18:00:00"},
           "vpn_filter_enabled": true,
           "dns_filter_version": "5d41402abc4b2a76b9719d911017c592",
           "dns_upstream_provider": "quad9",
@@ -59,6 +59,7 @@ class PolicyResponseCompatTest {
         assertEquals(63L, policy.lockTaskFeatures)
         assertEquals(3L, policy.quickControlsMask)
         assertEquals("ring", policy.pendingCommand?.command)
+        assertEquals("2026-10-11 18:00:00", policy.pendingCommand?.requestedAt)
         assertEquals("quad9", policy.dnsUpstreamProvider)
         assertEquals(listOf("org.example.old"), policy.packagesToUninstall)
         assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
@@ -568,7 +569,7 @@ class PolicyResponseCompatTest {
         val report = StatusReportRequest(
             lockReason = "NONE", kioskEngaged = true, capabilities = listOf("call_policy_v1"),
             callState = CallState(
-                state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false,
+                state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false, screeningRoleHeld = true,
                 defaultDialer = "x", systemDialer = "y", smsRestricted = true, outgoingRestricted = false,
                 defaultSmsPackage = null, lastError = null, lastEmergencyCallAt = null, callbackWindowUntil = null,
                 callLogReadable = false, bootPolicy = "ok",
@@ -579,7 +580,7 @@ class PolicyResponseCompatTest {
         val callState = json["call_state"]!!.jsonObject
         assertEquals(
             setOf(
-                "state", "dialer_role_held", "redirection_role_held", "default_dialer", "system_dialer",
+                "state", "dialer_role_held", "redirection_role_held", "screening_role_held", "default_dialer", "system_dialer",
                 "sms_restricted", "outgoing_restricted", "default_sms_package", "last_error",
                 "last_emergency_call_at", "callback_window_until", "call_log_readable", "boot_policy",
             ),
@@ -664,7 +665,7 @@ class PolicyResponseCompatTest {
         )
         assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
         val failed = CallState(
-            state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, defaultDialer = null, systemDialer = null,
+            state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, screeningRoleHeld = false, defaultDialer = null, systemDialer = null,
             smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,
             lastEmergencyCallAt = null, callbackWindowUntil = null, callLogReadable = true, bootPolicy = "ok",
             inCallUiFailedAt = "2026-10-05T08:00:00Z",

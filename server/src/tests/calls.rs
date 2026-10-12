@@ -681,6 +681,79 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     }
 }
 
+/// Security review L7: incoming calls are filtered by the phone app's screening or the
+/// call-screening role; the page says when neither does, and when the backup role is missing.
+#[tokio::test]
+async fn calls_page_says_whether_incoming_calls_are_filtered() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_managed(&app, id, true, true).await;
+    let not_filtered = "incoming calls are not filtered - anyone can call this phone";
+    let still_filtered = "Incoming calls are still filtered";
+    let backup_missing = "Call-screening role not active";
+    for (dialer, screening, expected, absent) in [
+        (
+            false,
+            None,
+            vec![not_filtered],
+            vec![still_filtered, backup_missing],
+        ),
+        (
+            false,
+            Some(false),
+            vec![not_filtered],
+            vec![still_filtered, backup_missing],
+        ),
+        (
+            false,
+            Some(true),
+            vec![still_filtered, "withheld numbers may ring through"],
+            vec![not_filtered, backup_missing],
+        ),
+        (
+            true,
+            Some(false),
+            vec![backup_missing],
+            vec![not_filtered, still_filtered],
+        ),
+        (
+            true,
+            Some(true),
+            vec![],
+            vec![not_filtered, still_filtered, backup_missing],
+        ),
+        (
+            true,
+            None,
+            vec![],
+            vec![not_filtered, still_filtered, backup_missing],
+        ),
+    ] {
+        let mut call_state = good_call_state();
+        call_state["dialer_role_held"] = json!(dialer);
+        if let Some(screening) = screening {
+            call_state["screening_role_held"] = json!(screening);
+        }
+        post_status(
+            &app,
+            &token,
+            json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
+        )
+        .await;
+        let page = calls_page(&app, &cookie, id).await;
+        for text in &expected {
+            assert!(page.contains(text), "{dialer} {screening:?} {text}: {page}");
+        }
+        for text in &absent {
+            assert!(
+                !page.contains(text),
+                "{dialer} {screening:?} not {text}: {page}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn allowlisted_messages_app_with_sms_off_is_flagged() {
     let app = TestApp::new().await;

@@ -236,8 +236,9 @@ pub(crate) async fn call_warnings(
 }
 
 /// What the parent should know about this phone's calls, from its latest status report: the
-/// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer or
-/// call-redirection role isn't ours, an error, the fail-closed state, an allowlisted Messages app
+/// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer,
+/// call-redirection or call-screening role isn't ours (security review L7: without the dialer and
+/// the screening role nothing filters incoming calls), an error, the fail-closed state, an allowlisted Messages app
 /// while SMS is off (QA #8), an unreadable call log (QA step 2 #7), and recent emergency calls /
 /// an open callback window (QA #2). Right after the parent changed `calls_managed`, a report from
 /// before the change shows "waiting" instead of the role warnings - for at most 5 minutes; after
@@ -400,11 +401,33 @@ pub(crate) async fn call_report(
                 .to_string(),
         );
     }
+    // Security review L7: Telecom binds one screening service besides the carrier's - the
+    // call-screening role's holder, else the default phone app's (CallsManager
+    // .setUpCallFilterGraph). Without either role nothing screens incoming calls; with another app
+    // holding the screening role, that app screens them instead of the launcher. A launcher from
+    // before the wave doesn't report the screening role (`None`).
+    let screening = flag("screening_role_held");
     if flag("dialer_role_held") == Some(false) {
-        warnings.push(
-            "Phone app role not active: the launcher isn't the phone's default phone app, so \
-             calls are not screened and the phone can only call emergency numbers. Open the \
+        warnings.push(if screening == Some(true) {
+            "Phone app role not active: the launcher isn't the phone's default phone app, so the \
+             phone can only call emergency numbers. Incoming calls are still filtered (it holds \
+             the call-screening role), though calls from withheld numbers may ring through. Open the \
              launcher's home screen on the phone and accept the \"default phone app\" prompt."
+                .to_string()
+        } else {
+            "Phone app role not active: the launcher isn't the phone's default phone app, so \
+             incoming calls are not filtered - anyone can call this phone - and it can only call \
+             emergency numbers. Open the launcher's home screen on the phone and accept the \
+             \"default phone app\" prompt."
+                .to_string()
+        });
+    } else if screening == Some(false) {
+        warnings.push(
+            "Call-screening role not active: if another app holds it, that app screens incoming \
+             calls instead of the launcher (the launcher still hangs up calls that aren't \
+             allowed, after they may ring briefly), and if the launcher ever loses the phone-app \
+             role nothing filters them. Run `adb shell cmd role add-role-holder \
+             android.app.role.CALL_SCREENING <launcher package>` or accept the prompt on the phone."
                 .to_string(),
         );
     }
