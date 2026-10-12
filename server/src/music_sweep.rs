@@ -2417,7 +2417,8 @@ async fn reference_prints(
         .as_deref()
         .and_then(parse_stamp)
         .is_some_and(|at| at > now - hours(24));
-    if !changed || tried_recently {
+    // Within the day's requests too ("at most 400 a day"); left for the next check otherwise.
+    if !changed || tried_recently || art_requests_today(&state.db, now).await? >= ART_PER_DAY {
         return Ok(());
     }
     plan.art.alt_at = Some(stamp(now));

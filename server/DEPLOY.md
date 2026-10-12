@@ -533,9 +533,11 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
   the feed's image host, at most 20 a check and 400 a day server-wide, the first 200 episodes of each entry in play
   order, newest first. A picture that is the series cover (by URL, or by its print under another URL or size) costs
   nothing more. The first days after the update fill the back catalogue (30 NRK entries x 100 episodes is at most
-  about 3,000 requests, so a week or more); after that it is one request per new episode with a new picture. Once,
-  right after the update, each NRK entry's next check reads its episode pages again for the bigger picture (2-3
-  requests per entry). The log line says `, art 7 (3 own, 4 same)`.
+  about 3,000 requests, so a week or more); after that it is one request per new episode with a new picture. A
+  picture whose URL only changes its query (signed or cache-busting links) isn't fetched again; one that moves is
+  fetched again at most weekly. An image host that is down costs 3 requests a check and no picture's tries. Once,
+  right after the update, each NRK entry's next check reads its root and its episode pages again for the bigger
+  picture (3-4 requests per entry). The log line says `, art 7 (3 own, 4 same)`.
 - **Storage**: `data/music_art/` holds the pictures (512 px JPEGs, about 40-70 KB each; expect up to ~150 MB for 30
   NRK entries with pictures for every episode). It is **not** in the backups: after a restore the server forgets
   the pictures it can't find and fetches them again, a few at a time. Pruned with the episodes.
