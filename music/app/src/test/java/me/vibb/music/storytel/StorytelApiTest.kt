@@ -1,5 +1,10 @@
 package me.vibb.music.storytel
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -329,6 +334,58 @@ class StorytelApiTest {
         assertTrue(downloadMint is Mint.Url)
         assertTrue("the waiter got the lock after the login and used its JWT", waiterMint is Mint.Url)
         assertEquals("never two logins at once, nor one after the other", 1, logins.size)
+    }
+
+    /**
+     * The main session's review of step 3, Low 2: `StorytelAccount.mint` is `runInterruptible(Dispatchers.IO) {
+     * api.assetUrl(...) }` (GuardsTest pins the line); here the same construct over the JVM's StorytelApi. A
+     * cancelled caller interrupts the thread: the wait for another's login ends at once (not at the 60 s
+     * deadline), and so does a request blocked in an interruptible wait (OkHttp's Okio checks the flag at
+     * each read and write); the caller gets a CancellationException, never the mint's answer, and no
+     * cooldown is written for an interrupted login.
+     */
+    @Test
+    fun `a cancelled mint interrupts its thread - the lock's wait and a blocked request end at once`() = runBlocking {
+        val clock = { System.nanoTime() / 1_000_000 }
+        val inLogin = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val interrupted = CopyOnWriteArrayList<String>()
+        val http = StorytelHttp { r ->
+            if (r.url.encodedPath.endsWith("login.action")) {
+                inLogin.countDown()
+                try {
+                    release.await(30, TimeUnit.SECONDS)
+                } catch (e: InterruptedException) {
+                    interrupted += "login"
+                    throw e
+                }
+                ok
+            } else {
+                cdn
+            }
+        }
+        val store = Store()
+        val api = StorytelApi(http, { StorytelLogin.Login(1, email, password) }, store, clock, { 0 })
+        // A download job's mint holds the login lock, blocked in its request.
+        val download = async(Dispatchers.IO) { runInterruptible(Dispatchers.IO) { api.assetUrl("111", 15_000, clock() + 60_000) } }
+        assertTrue(inLogin.await(5, TimeUnit.SECONDS))
+        // A second mint waits for the lock (its deadline 60 s away); cancelled, it stops waiting at once.
+        val waiter = async(Dispatchers.IO) { runInterruptible(Dispatchers.IO) { api.assetUrl("222", 15_000, clock() + 60_000) } }
+        Thread.sleep(100)
+        var started = clock()
+        waiter.cancel()
+        assertTrue("the waiter is cancelled", runCatching { waiter.await() }.exceptionOrNull() is CancellationException)
+        assertTrue("within a second, not at its deadline", clock() - started < 1_000)
+        // The holder's request is blocked; cancelled, its thread is interrupted out of it.
+        started = clock()
+        download.cancel()
+        assertTrue(runCatching { download.await() }.exceptionOrNull() is CancellationException)
+        assertTrue(clock() - started < 1_000)
+        assertEquals(listOf("login"), interrupted.toList())
+        assertNull("an interrupted login is no refusal", store.stamp)
+        // The lock is free again and the next mint logs in normally.
+        release.countDown()
+        assertTrue(runInterruptible(Dispatchers.IO) { api.assetUrl("333", 15_000, clock() + 10_000) } is Mint.Url)
     }
 
     @Test

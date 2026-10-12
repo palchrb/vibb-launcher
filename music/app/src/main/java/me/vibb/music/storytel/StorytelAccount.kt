@@ -3,7 +3,7 @@ package me.vibb.music.storytel
 import android.content.Context
 import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runInterruptible
 import kotlinx.serialization.Serializable
 import me.vibb.music.BuildConfig
 import me.vibb.music.bridge.StorytelLogin
@@ -30,10 +30,14 @@ class StorytelAccount private constructor(private val api: StorytelApi) {
      * A fresh signed CDN URL for book [cid] (`asset_url`), or why there is none (design 26b §4.1). On
      * IO: the login lock can block a thread up to the deadline. [timeoutMs] bounds the asset call,
      * [deadlineMs] (SystemClock.elapsedRealtime) the whole mint - downloads `(15 s, now + 60 s)`, the
-     * Sonos path `(6 s, now + 10 s)`.
+     * Sonos path `(6 s, now + 10 s)`. Interruptible (the main session's review of step 3, Low 2): a
+     * cancelled caller - a download job WorkManager stops, step 4b's superseded Sonos play - interrupts
+     * the blocked thread, so the wait for the login lock ends at once and an OkHttp call at its next read
+     * or write (Okio checks the flag), instead of the caller hanging on the call up to its deadline; the
+     * caller gets its CancellationException, never the mint's answer.
      */
     suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =
-        withContext(Dispatchers.IO) { api.assetUrl(cid, timeoutMs, deadlineMs) }
+        runInterruptible(Dispatchers.IO) { api.assetUrl(cid, timeoutMs, deadlineMs) }
 
     /** The report's `storytel`: `none`, `refused` or `ok` (design 26b §4.5). Off the main thread: it opens the sealed login. */
     fun state(): String = api.state()

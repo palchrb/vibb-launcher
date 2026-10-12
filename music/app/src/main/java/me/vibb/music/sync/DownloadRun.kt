@@ -46,6 +46,9 @@ interface DownloadIo {
     /** Free bytes where the cache lives (noBackupFilesDir). */
     fun freeBytes(): Long
 
+    /** The bytes of an item's (partial) copy in the cache now. */
+    fun cachedBytes(cacheKey: String, hls: Boolean): Long
+
     /** A fresh CDN URL for Storytel book [cid]: the account's one mint, off the main thread (design 26b §4.2). */
     suspend fun mint(cid: String): Mint
 }
@@ -63,7 +66,11 @@ interface DownloadIo {
  * 3. the row names the book by its source id (`storytel:book:<cid>`), so a partial copy survives a
  *    re-mint and the next attempt resumes with Range from the cached bytes against the new token;
  * 4. `http_416` drops the partial and fetches once from 0 with a freshly minted URL (L7).
- * A failure is stored on the row (source id, code, time, attempts in a row) for `mayRetry`.
+ * A failure is stored on the row (source id, code, time, attempts in a row) for `mayRetry`; a not-done
+ * row's `bytes` hold the partial copy's size at its last failure, and a failure after the copy grew
+ * counts as the first again (main session's review of step 3, Low 1: a slow but progressing download - a
+ * 300 MB book over a weak Wi-Fi, a job stopped at its 10-minute limit - must not back off towards 6 h
+ * while it keeps getting further; only failures that get nowhere double the wait).
  */
 class DownloadRun(private val io: DownloadIo) {
     /** Set once Storytel books stopped for this run; the run's other items go on. */
@@ -100,7 +107,9 @@ class DownloadRun(private val io: DownloadIo) {
         // A partial copy from another source may be another file: start over (qa-21-step2-code L7). A
         // Storytel book's source never changes with a new mint, so its partial stays (design 26b §4.3).
         if (old != null && !old.done && old.url != source) io.removeCopy(old.cacheKey, old.hls)
-        io.saveRow(DownloadRow(w.entry.id, w.item.key, cacheKey, source, w.item.hls, false, 0, null, old?.failedUrl, old?.failedCode, old?.failedAt, old?.attempts ?: 0))
+        // The partial's size at the last failure rides along (fail() compares it); a dropped one is 0.
+        val lastBytes = old?.takeIf { !it.done && it.url == source }?.bytes ?: 0
+        io.saveRow(DownloadRow(w.entry.id, w.item.key, cacheKey, source, w.item.hls, false, lastBytes, null, old?.failedUrl, old?.failedCode, old?.failedAt, old?.attempts ?: 0))
         var code = fetchFrom(w, from.url, source)
         if (code == "http_416") {
             // The file changed under a partial copy: drop it and fetch from the start, once - for a
@@ -149,12 +158,17 @@ class DownloadRun(private val io: DownloadIo) {
         io.errorCode(e)
     }
 
-    /** The item error, and the row's failure (`mayRetry`: the same source and code count up). */
+    /**
+     * The item error, and the row's failure (`mayRetry`: the same source and code count up - unless the
+     * partial copy grew since the last failure, which starts the count again; Low 1).
+     */
     private suspend fun fail(w: WantedDownload, source: String, code: String) {
         io.recordError(w.entry.id, w.item.key, code)
         val row = io.row(w.entry.id, w.item.key)
             ?: DownloadRow(w.entry.id, w.item.key, itemCacheKey(w.entry.key, w.item.key), source, w.item.hls, false, 0, null, null)
-        val attempts = if (row.failedUrl == source && row.failedCode == code) row.attempts + 1 else 1
-        io.saveRow(row.copy(failedUrl = source, failedCode = code, failedAt = io.nowMs(), attempts = attempts))
+        val cached = io.cachedBytes(row.cacheKey, row.hls)
+        val grew = cached > row.bytes
+        val attempts = if (row.failedUrl == source && row.failedCode == code && !grew) row.attempts + 1 else 1
+        io.saveRow(row.copy(bytes = cached, failedUrl = source, failedCode = code, failedAt = io.nowMs(), attempts = attempts))
     }
 }

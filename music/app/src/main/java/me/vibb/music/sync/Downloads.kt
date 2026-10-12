@@ -188,6 +188,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
 
         override fun freeBytes(): Long = Downloads.freeBytes(context)
 
+        override fun cachedBytes(cacheKey: String, hls: Boolean): Long = MediaCache.cachedBytes(context, cacheKey, hls)
+
         /** A download's mint: the asset call 15 s, the whole mint (the login and its lock included) within 60 s. */
         override suspend fun mint(cid: String): Mint =
             StorytelAccount.get(context).mint(cid, MINT_TIMEOUT_MS, SystemClock.elapsedRealtime() + MINT_BUDGET_MS)

@@ -58,6 +58,9 @@ class StorytelDownloadTest {
         val removed = mutableListOf<String>()
         val minted = mutableListOf<String>()
         val fetched = mutableListOf<Pair<String, String>>()
+
+        /** Each cache key's partial copy now, in bytes (the test moves it between attempts). */
+        val cached = mutableMapOf<String, Long>()
         private var signatures = 0
 
         override suspend fun row(entryId: Long, itemKey: String) = rows[entryId to itemKey]
@@ -82,6 +85,7 @@ class StorytelDownloadTest {
         }
         override fun nowMs() = now
         override fun freeBytes() = free
+        override fun cachedBytes(cacheKey: String, hls: Boolean) = cached[cacheKey] ?: 0L
         override suspend fun mint(cid: String): Mint {
             minted += cid
             return mints[cid]?.removeFirstOrNull()
@@ -268,6 +272,39 @@ class StorytelDownloadTest {
         val row = io.rows.getValue(7L to "111")
         assertEquals("http_403", row.failedCode)
         assertEquals("the same source and code count up, whatever the token", 2, row.attempts)
+    }
+
+    @Test
+    fun `a slow but progressing download starts its count again - only failures that get nowhere double the wait`() {
+        // The main session's review of step 3, Low 1: a 300 MB book over a weak Wi-Fi fails again and again,
+        // each attempt further on; it must not back off towards 6 h while it progresses.
+        val e = series()
+        val io = Io(fetches = mutableMapOf("111" to ArrayDeque(listOf("network", "network", "network", "network"))))
+        io.cached["e7:111"] = 40_000_000L
+        io.run(wanted(keys = listOf("111")))
+        var row = io.rows.getValue(7L to "111")
+        assertEquals(1, row.attempts)
+        assertEquals("the partial's size at the failure", 40_000_000L, row.bytes)
+        io.cached["e7:111"] = 90_000_000L
+        io.run(wanted(keys = listOf("111")))
+        row = io.rows.getValue(7L to "111")
+        assertEquals("it grew: the first failure again", 1, row.attempts)
+        assertEquals(90_000_000L, row.bytes)
+        assertEquals("so the plan tries it after 2 min", now + RETRY_FIRST_MS, downloadPlan(snapshot(library(listOf(e)), listed(e)), io.rows.values.toList(), now).nextRetryAt)
+        // no progress: counted up, the wait doubles
+        io.run(wanted(keys = listOf("111")))
+        row = io.rows.getValue(7L to "111")
+        assertEquals(2, row.attempts)
+        assertEquals(now + 2 * RETRY_FIRST_MS, downloadPlan(snapshot(library(listOf(e)), listed(e)), io.rows.values.toList(), now).nextRetryAt)
+        // a mint that fails gets no further either: counted (a different code starts at 1, then counts up)
+        io.mints["111"] = ArrayDeque(listOf(Mint.Failed(503), Mint.Failed(503)))
+        io.run(wanted(keys = listOf("111")))
+        io.run(wanted(keys = listOf("111")))
+        row = io.rows.getValue(7L to "111")
+        assertEquals("http_503", row.failedCode)
+        assertEquals(2, row.attempts)
+        assertEquals("the partial is kept, its size too", 90_000_000L, row.bytes)
+        assertEquals("the failed mints fetched nothing", listOf("network"), io.fetches.getValue("111").toList())
     }
 
     @Test

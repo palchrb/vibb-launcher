@@ -57,6 +57,7 @@ data class DownloadRow(
     val url: String,
     val hls: Boolean,
     val done: Boolean,
+    /** Done: the copy's size. Not done: the partial copy's size at the last failure (`DownloadRun.fail`), else 0. */
     val bytes: Long,
     /** The HLS variant fetched (one rendition, played with the same stream key); null = progressive or a media playlist. */
     val variant: Int?,

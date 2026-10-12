@@ -410,7 +410,8 @@ class GuardsTest {
         assertEquals("one StorytelApi for the process", setOf("StorytelApi.kt", "StorytelAccount.kt"), callers("StorytelApi("))
         assertEquals(setOf("Downloads.kt", "Sync.kt"), callers("StorytelAccount.get("))
         val account = code("src/main/java/me/vibb/music/storytel/StorytelAccount.kt")
-        assertTrue(account.contains("suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =\n        withContext(Dispatchers.IO) { api.assetUrl(cid, timeoutMs, deadlineMs) }"))
+        // On IO and interruptible (the main session's review of step 3, Low 2; StorytelApiTest's cancelled mints).
+        assertTrue(account.contains("suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =\n        runInterruptible(Dispatchers.IO) { api.assetUrl(cid, timeoutMs, deadlineMs) }"))
         assertEquals("built in one place, kept while the switch says the same", 1, Regex("StorytelApi\\(").findAll(account).count())
         assertTrue(account.contains("instance?.takeIf { builtFor == key } ?: build("))
         val downloads = code("src/main/java/me/vibb/music/sync/Downloads.kt")
