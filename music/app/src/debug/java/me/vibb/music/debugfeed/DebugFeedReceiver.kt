@@ -41,7 +41,7 @@ import java.io.File
  *   adb shell am broadcast -n me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
  *
  * It goes through the same checks the bridge will (Inbox) and then runs the sync at once.
- * docs/testing/emulator.md §6f has the steps (§6g for Sonos).
+ * docs/testing/emulator.md §6f has the steps (§6h for Sonos).
  */
 class DebugFeedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

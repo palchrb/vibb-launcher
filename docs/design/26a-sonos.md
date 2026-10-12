@@ -634,7 +634,7 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    `t+30 STOPPED ""` for a migration, `t+10 x-rincon:RINCON_B` for grouped-away, `t+5 drop` for unreachable), logs every
    SOAP call; no SSDP (the emulator's user-mode network carries no multicast and every host fake is 10.0.2.2), so the
    cache is seeded through the debug feed (`debug-feed/sonos.json` with ip, **port**, uid, name; `src/debug` only;
-   `checkReleaseHasNoDebugFeed`). `docs/testing/emulator.md` §6g.
+   `checkReleaseHasNoDebugFeed`). `docs/testing/emulator.md` §6h.
 2. **Renderer axis, local only**: `Renderer`, `LocalRenderer`, `saveNow`, `MediaSession.setPlayer`, the `Output` key
    widening, `rendererReady` (trivially complete), the `GuardsTest` pins; every existing music test green (135 today)
    plus the new ones; no behaviour change (emulator smoke: §6f).
@@ -791,7 +791,7 @@ Android build** (the sandbox can't reach dl.google.com, so no Android SDK or Goo
 - **Fixtures and the fake**: 26 canned replies in `music/app/src/test/resources/sonos/` (§7's list, plus GetVolume,
   GetMute, an empty answer, `/status/accounts` and an NRK position); `scripts/fake-sonos.py` builds every answer from
   those files (`--selftest`, `--print-seed`, `--script` with grouped-away, takeover, migration, drop/back, stall and
-  volume events); the debug feed merges `debug-feed/sonos.json` into the cache; `docs/testing/emulator.md` §6g.
+  volume events); the debug feed merges `debug-feed/sonos.json` into the cache; `docs/testing/emulator.md` §6h.
 - **Tests**: 98 new JVM tests in 9 classes - `SonosFixturesTest` 11 (every fixture, the client on the wire against a
   loopback socket server), `DidlTest` 6 (expected strings printed by vibb's own `didl()`), `SonosUrisTest` 7 (values
   printed by vibb's own functions), `SsdpTest` 4, `TopologyTest` 12 (`sonos_groups.py` 1-4), `SpeakerCacheTest` 8
@@ -810,7 +810,7 @@ Android build** (the sandbox can't reach dl.google.com, so no Android SDK or Goo
   members they call (not the real SDK). A harness-only test drove the Kotlin client against `scripts/fake-sonos.py`
   (seed, topology refresh, a hushed play with a settled seek, polls, grouped away, the migration probe, adopt, pause,
   stop): green. `python3 -I scripts/fake-sonos.py --selftest`: OK.
-- **Device checks**: none new (the list above stands); the emulator's are in §6g, from step 3a on.
+- **Device checks**: none new (the list above stands); the emulator's are in §6h, from step 3a on.
 
 Choices made while building (each against the spec text, with its reason):
 1. **The port comes from the topology's `Location` too**, not only from the debug feed (§2.1 says only the feed sets
@@ -988,7 +988,7 @@ controller, `cd1fedf` the renderer, `5512865` the wiring and the UI), with the r
 `SonosActorTest`, +1 `PlayBodyTest`, +2 `GuardsTest`, +1 `FitTest`), lint 0 errors and the same 41 warnings;
 `python3 -I scripts/fake-sonos.py --selftest` OK. `SourceScanTest`, `ReportTest`, `BridgeTest` and
 `ContractFilesTest` are untouched and green; no launcher, AIDL, contract or server change. **Not run on an emulator
-or a phone** (no KVM here): §6g's 3a checks and §6f's smoke (the local sleep fade moved) are owed, listed below.
+or a phone** (no KVM here): §6h's 3a checks and §6f's smoke (the local sleep fade moved) are owed, listed below.
 
 - **The controller** (`M/sonos/SonosController.kt`, pure; `SonosBookmarks.kt`): main-thread state over an injected
   actor (`SonosWork`), clock and bookmark store (`SonosStore`). `load`/`playTile`/`playPause` (§4.2, §4.5: the body
@@ -1070,7 +1070,7 @@ Choices made while building (each against the spec text, with its reason):
 14. The SimpleBasePlayer is never `release()`d (`COMMAND_RELEASE` isn't offered); `SonosRenderer.release()` stops the
     poller and the actor and drops the posted callbacks.
 
-Owed checks: emulator §6g (now listing 3a's: the sheet, switch phone -> Stua -> Kjøkken -> phone with one Stop per
+Owed checks: emulator §6h (now listing 3a's: the sheet, switch phone -> Stua -> Kjøkken -> phone with one Stop per
 room left, same tile, grouped-away, taken-over and migration scripts, the ramp, the volume keys, an own-files
 entry, a failed start; the image needs the emulated Wi-Fi) and §6f (the local sleep fade, now in `LocalRenderer`);
 the device checks above stand.
@@ -1239,7 +1239,7 @@ Choices made while building (each against the spec text, with its reason):
     disarm; the FGS-timeout check below confirms it.
 
 Owed checks:
-- Emulator (§6g, now listing 3b's): adopt after a kill while the fake plays (reads only, the right item, Home's RESUME
+- Emulator (§6h, now listing 3b's): adopt after a kill while the fake plays (reads only, the right item, Home's RESUME
   starts nothing twice), a stopped or taken-over fake at start (the phone, paused), `MEDIA_PLAY` on a room with no
   queue, suspension with and without the service (`stop` then `seturi x-rincon-queue:`), the swipe while paused (one
   Stop), the volume keys against the cap and the override, `gsm call` / `gsm cancel`, the locks in `dumpsys power`.
@@ -1355,7 +1355,7 @@ Choices made while building (each against the spec text, with its reason):
    template, the migration and the tests: the form needs a route.
 
 Owed checks:
-- Emulator (§6g, now listing 3c's): the card without and with reported rooms, the scope narrowed while Kjøkken plays
+- Emulator (§6h, now listing 3c's): the card without and with reported rooms, the scope narrowed while Kjøkken plays
   (the bookmark and one Stop in the fake's log, home paused), `--group Kjøkken+Stua` with Kjøkken unticked (no group
   row).
 - Device (the list above): a restricted room refused, a group with a disallowed coordinator hidden, the card with and
@@ -1546,9 +1546,9 @@ skipped, as the main session decided); all five points and both notes above were
   or runs out is NO_ANSWER (the room stays recorded, the next look parks it) instead of an exception out of the
   receiver. §6.1. Tests: the park's budget after a slow first look (6250 of 8000), the 0.5 s floor after a late
   answer, a failing Stop -> NO_ANSWER with the bookmark written first.
-- **L3, stale text.** `Ssdp.kt` (the header, `DatagramSsdpIo`), `Topology.kt`'s `location` doc, `emulator.md` §6g (Wi-Fi
+- **L3, stale text.** `Ssdp.kt` (the header, `DatagramSsdpIo`), `Topology.kt`'s `location` doc, `emulator.md` §6h (Wi-Fi
   is a gate, the device check names the VPN and `EPERM`); §7 lists the start cap, the lowered cap, `volOpt`, the
-  bedtime looks and park budget, the tailnet filter and the bind ban; §6g gains the start-cap check (the fake's new
+  bedtime looks and park budget, the tailnet filter and the bind ban; §6h gains the start-cap check (the fake's new
   `--volume 90`: `GetVolume`, `SetVolume 40` before `SetAVTransportURI`, both rooms with `--group`) and the lowered-cap
   one.
 - **L4.** `tailnetLiteral` and its KDoc moved above `privateLiteral`'s, which is back on its function.
@@ -1583,7 +1583,7 @@ Deploy order:
 3. **Music app** `music-v0.2.0-rc.1`, installed through the catalog (the `release` environment's deployment rule must
    allow `music-v*` tags, design 21 §5). The stable `music-v0.2.0` after the emulator and device checks below.
 
-Owed before the stable tag: the emulator checks (`docs/testing/emulator.md` §6g with 3a's, 3b's and 3c's lists, and
+Owed before the stable tag: the emulator checks (`docs/testing/emulator.md` §6h with 3a's, 3b's and 3c's lists, and
 §6f's smoke for the local sleep fade) and the device checks (the "Device checks" section, plus 3b's Doze hour, the
 FGS timeout, bedtime with and without the app, calls, adopt after a kill, and 3c's fix round's group and regroup
 checks). Open questions still standing: 3a (a) steps on a room start at 0 (vibb) while the phone's resume an item's

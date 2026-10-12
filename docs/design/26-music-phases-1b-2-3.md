@@ -13,7 +13,7 @@ can't see elsewhere, in particular the working rules the main session keeps in i
 - **Phase 1b (Sonos) is built on `music-1b-sonos`** (status 2026-10-12; spec and every step's status in
   `26a-sonos.md`): steps 1-4 (the `sonos/` core, the renderer axis, the renderer, lifecycle and phone rules, room
   scoping, the docs), each with QA's code review and its fix round; main merged in. **Not done yet:** the emulator
-  checks (`docs/testing/emulator.md` §6g) and the device checks on the Jelly Star with real speakers (26a "Device
+  checks (`docs/testing/emulator.md` §6h) and the device checks on the Jelly Star with real speakers (26a "Device
   checks" and each step's owed list); the merge to `main` is the user's; `music-v0.2.0-rc.1` is tagged on the merge
   commit after it (26a "Release").
 - **Read first:** root `CLAUDE.md`, `music/CLAUDE.md`, `docs/design/20-vibb-music.md` (its decision sections win over

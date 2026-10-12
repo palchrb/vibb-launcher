@@ -21,7 +21,7 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
 - `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
   `push-all.sh` (push the current branch), `smoke-test.sh` (adb/emulator-console smoke test of lock and
   calls, remote-capable; `docs/testing/emulator.md` §5b), `fake-sonos.py` (fake Sonos speakers for the
-  music app on the emulator, answering from the music app's Sonos test fixtures; §6g).
+  music app on the emulator, answering from the music app's Sonos test fixtures; §6h).
 - `PLAN.md` - the plan and status.
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.

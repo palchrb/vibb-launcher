@@ -99,7 +99,7 @@ jobs:
       run: ./gradlew build -PwarningsAsErrors=true
     - name: Fake Sonos speaker selftest
       # The emulator's fake speaker answers from the same canned SOAP replies the unit tests parse
-      # (design 26a §7, docs/testing/emulator.md §6g): it must still read every one. Stdlib only.
+      # (design 26a §7, docs/testing/emulator.md §6h): it must still read every one. Stdlib only.
       run: python3 -I ../scripts/fake-sonos.py --selftest
     - name: Upload APK
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

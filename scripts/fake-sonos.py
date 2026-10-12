@@ -22,7 +22,7 @@ fault_<code>.xml (701's with the code when there is none), the topology in zgs_w
 design 26a §2.2 (AVTransport, RenderingControl, ZoneGroupTopology), the device description and
 /status/accounts, and logs every SOAP call. No SSDP: the emulator's user-mode network carries no
 multicast and every host fake is 10.0.2.2, so the app's cache is seeded through the debug feed
-(debug-feed/sonos.json, docs/testing/emulator.md §6g); --print-seed prints that file.
+(debug-feed/sonos.json, docs/testing/emulator.md §6h); --print-seed prints that file.
 
 The transport: SetAVTransportURI sets the uri (STOPPED), Play plays (TRANSITIONING for
 --transition-s first), RelTime runs in real time and the track ends by itself at its duration (from
