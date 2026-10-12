@@ -1115,6 +1115,73 @@ async fn nrks_wide_series_image_is_a_series_picture() {
     assert_eq!(calls_to(&app, wide), 0);
 }
 
+/// Code QA L1: an NRK entry listed before the update (no 16:9 reference yet, the refresh flag
+/// set) reads its root at its next check, before the refresh and the backfill judge its episodes:
+/// an episode on the 16:9 fallback is the series picture from the start, never a short-lived
+/// carousel. The root is read once, not at every check.
+#[tokio::test]
+async fn an_existing_nrk_entry_reads_its_wide_picture_before_the_refresh() {
+    let app = TestApp::new().await;
+    let id = entry(
+        &app,
+        "https://radio.nrk.no/podkast/gml",
+        "Gml",
+        "auto",
+        CREATED,
+    )
+    .await;
+    let square = "https://gfx.nrk.no/gml-sq600";
+    let wide = "https://gfx.nrk.no/gml-wide960";
+    let root = format!("{PSAPI}/radio/catalog/podcast/gml");
+    app.fetch.answer(
+        &root,
+        200,
+        json!({"series": {
+            "titles": {"title": "Gml"},
+            "squareImage": [{"url": square, "width": 600}],
+            "image": [{"url": wide, "width": 960}]
+        }})
+        .to_string(),
+    );
+    let episode_wide = "https://gfx.nrk.no/gml-wide600";
+    let stubs = vec![art_stub("gml", "g1", 0, &[], &[(episode_wide, 600)])];
+    answer_stubs(&app, "gml", &stubs);
+    answer_manifests(&app, "podcast", &["g1".into()]);
+    app.fetch.answer(square, 200, png(0b0000_0001, 600, 600));
+    app.fetch.answer(wide, 200, png(0b1110_0000, 960, 540));
+    app.fetch
+        .answer(episode_wide, 200, png(0b1110_0000, 600, 338));
+    // Listed by an older server: no art columns, the migration's flag.
+    app.state.music_sweep.set_art_per_check(0);
+    check(&app, id, t0()).await;
+    app.state
+        .music_sweep
+        .set_art_per_check(sweep::ART_PER_CHECK);
+    sqlx::query(
+        "UPDATE music_listings SET cover_alt_url = NULL, cover_alt_print = NULL, \
+         cover_alt_at = NULL, art_refs = NULL, art_refresh = 1 WHERE entry_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE music_items SET art_from = NULL, art_state = NULL WHERE entry_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.fetch.clear_calls();
+    check(&app, id, t0() + TimeDelta::hours(12)).await;
+    assert_eq!(calls_to(&app, &root), 1, "the root once");
+    assert_eq!(calls_to(&app, wide), 1);
+    let item = &items(&app, id).await[0];
+    assert_eq!(item.art_state.as_deref(), Some("same"), "never own");
+    assert!(listing(&app, id).await.cover_alt_at.is_some());
+    app.fetch.clear_calls();
+    check(&app, id, t0() + TimeDelta::hours(24)).await;
+    assert_eq!(calls_to(&app, &root), 0, "not again before the week");
+}
+
 // ------------------------------------------------------------------------------------------------
 // The one-time refresh (QA M3)
 // ------------------------------------------------------------------------------------------------
@@ -1170,8 +1237,8 @@ async fn nrk_episodes_listed_before_get_the_512_picture_once() {
         .unwrap();
     app.fetch.clear_calls();
     let report = check(&app, id, t0() + TimeDelta::hours(12)).await;
-    // The routine 5, then the refresh's full page.
-    assert_eq!(report.requests, 2, "{:?}", app.fetch.calls.lock().unwrap());
+    // The root (for the references, code QA L1), the routine 5, then the refresh's full page.
+    assert_eq!(report.requests, 3, "{:?}", app.fetch.calls.lock().unwrap());
     let list = items(&app, id).await;
     assert!(
         list.iter()

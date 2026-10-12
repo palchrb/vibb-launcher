@@ -1590,9 +1590,13 @@ async fn nrk_check(
     let now = job.now;
     plan.lan = Some(false);
     if !mode.recheck_only {
-        // The root: on the first fill and once a week (title and image).
+        // The root: on the first fill and once a week (title and image); and once for the
+        // episode-art references (NRK's 16:9 picture, code QA L1) before the one-time refresh
+        // judges the back catalogue.
         let root_due = plan.items.is_empty()
             || plan.title.is_none()
+            || plan.art.refresh
+            || plan.art.alt_at.is_none()
             || plan
                 .root_at
                 .as_deref()
