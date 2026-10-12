@@ -996,7 +996,9 @@ object PinLockRuntime {
         if (!stopStartsRefront(chromeLocked, changingConfigurations, finishing)) return
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
-        handler.postDelayed(refrontCheck, refrontDelayMs(0))
+        // As quick as the pause's check (bug 25b-A): whatever came over the lock - Recents, a
+        // SystemUI restart, an app - is covered again within PAUSE_REFRONT_MS.
+        handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
     }
 
     private fun runRefrontCheck() {

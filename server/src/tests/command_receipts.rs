@@ -680,6 +680,22 @@ async fn the_device_page_asks_for_a_restart_while_admin_policies_are_pending() {
             assert!(page.contains("turn off the camera on the lock screen, and to notice at once"));
         }
     }
+    // Bug 25b: the camera policy the lock needs (the power button's camera gesture).
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true, "admin_policies_pending": ["disable-camera"] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let page = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains(notice));
+    assert!(page.contains("camera gesture from opening the camera over the lock"));
     let stored: Option<String> = sqlx::query_scalar(
         "SELECT admin_policies_pending_json FROM device_status WHERE device_id = ? ORDER BY id LIMIT 1",
     )

@@ -55,9 +55,9 @@ class AdminPoliciesTest {
 
     @Test
     fun `the values are DeviceAdminInfo's`() {
-        // USES_POLICY_LIMIT_PASSWORD 0, _FORCE_LOCK 3, _WIPE_DATA 4, _DISABLE_KEYGUARD_FEATURES 9.
+        // USES_POLICY_LIMIT_PASSWORD 0, _FORCE_LOCK 3, _WIPE_DATA 4, _DISABLE_CAMERA 8, _DISABLE_KEYGUARD_FEATURES 9.
         assertEquals(
-            mapOf("limit-password" to 0, "force-lock" to 3, "wipe-data" to 4, "disable-keyguard-features" to 9),
+            mapOf("limit-password" to 0, "force-lock" to 3, "wipe-data" to 4, "disable-camera" to 8, "disable-keyguard-features" to 9),
             DECLARED_ADMIN_POLICIES,
         )
     }

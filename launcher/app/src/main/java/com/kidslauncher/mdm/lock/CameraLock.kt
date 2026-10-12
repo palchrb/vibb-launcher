@@ -97,7 +97,8 @@ object CameraLock {
      * newly allowed camera is suspended at once. */
     fun refreshTargets(context: Context, controllable: Set<String>) {
         targets = resolveTargets(context.applicationContext, controllable)
-        if (PinLockRuntime.chromeLocked) onLockChanged(context)
+        // Also unlocked: a time rule may just have suspended the gesture's camera (the policy follows).
+        onLockChanged(context)
     }
 
     private fun sync(app: Context, locked: Boolean) {
@@ -111,6 +112,8 @@ object CameraLock {
         }
         val admin = ComponentName(app, MdmDeviceAdminReceiver::class.java)
         val pm = app.packageManager
+        // The camera policy first while LOCKED: the gesture must never meet a suspended camera.
+        if (locked) syncCameraPolicy(app, dpm, admin, locked = true)
         val wanted = if (locked) targets ?: resolveTargets(app, controllablePackages(pm).toSet()).also { targets = it } else emptySet()
         val suspendedNow = (wanted + recorded).filterTo(mutableSetOf()) { pkg ->
             try {
@@ -165,6 +168,47 @@ object CameraLock {
             }
             CameraLockStep.Nothing -> {
                 if (!locked && held.isNotEmpty()) held = emptySet()
+            }
+        }
+        // Unlocked: the policy follows whether the gesture's camera is still suspended (a time rule).
+        if (!locked) syncCameraPolicy(app, dpm, admin, locked = false)
+    }
+
+    /** The last camera policy written (`null` = not in this process yet). */
+    @Volatile
+    private var cameraPolicy: Boolean? = null
+
+    /** [cameraPolicyDisabled] written with `setCameraDisabled` when it changes (needs the
+     * `disable-camera` admin policy; refused or failed: logged, the next pass retries). */
+    private fun syncCameraPolicy(app: Context, dpm: DevicePolicyManager, admin: ComponentName, locked: Boolean) {
+        val pm = app.packageManager
+        val gestureSuspended = gestureCameras(app).any { pkg ->
+            try {
+                pm.isPackageSuspended(pkg)
+            } catch (e: Exception) {
+                false
+            }
+        }
+        val disabled = cameraPolicyDisabled(locked, gestureSuspended)
+        if (cameraPolicy == disabled) return
+        try {
+            if (dpm.getCameraDisabled(admin) != disabled) dpm.setCameraDisabled(admin, disabled)
+            cameraPolicy = disabled
+            Log.i(LOG_TAG, "Camera ${if (disabled) "disabled" else "enabled"} by policy (locked $locked, gesture camera suspended $gestureSuspended)")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't set the camera policy: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** The packages the power-button gesture would start (its insecure and secure camera intents). */
+    private fun gestureCameras(app: Context): Set<String> {
+        val pm = app.packageManager
+        return listOf(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA, MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE).mapNotNullTo(mutableSetOf()) { action ->
+            try {
+                pm.resolveActivity(Intent(action), PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()))
+                    ?.activityInfo?.packageName
+            } catch (e: Exception) {
+                null
             }
         }
     }

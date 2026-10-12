@@ -45,6 +45,33 @@ class LockUpTest {
         assertTrue(paused.contains("handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)"))
         val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
         assertTrue(activity.contains("PinLockRuntime.onLockPaused(isFinishing || finishingAfterUnlock)"))
+        // A stop (a SystemUI restart, quickstep's Recents or app list, an app) re-fronts as quickly.
+        assertTrue(body(runtime, "onLockStopped").contains("handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)"))
+    }
+
+    /** Bug 25b (the camera gesture): SystemUI's canCameraGestureBeLaunched returns false first for a
+     * policy-disabled camera (AOSP 16 CameraGestureHelper.isCameraAllowedByAdmin, both the plain and
+     * the "camera or wallet" double-press paths), so the gesture never starts a suspended camera -
+     * which crashed SystemUI and let whatever came up show over the lock. */
+    @Test
+    fun `the cameras are off by policy while locked and while the gesture's camera is suspended`() {
+        assertTrue(cameraPolicyDisabled(locked = true, gestureCameraSuspended = false))
+        assertTrue(cameraPolicyDisabled(locked = true, gestureCameraSuspended = true))
+        assertTrue("a time rule suspended it", cameraPolicyDisabled(locked = false, gestureCameraSuspended = true))
+        assertFalse(cameraPolicyDisabled(locked = false, gestureCameraSuspended = false))
+        val lock = code("java/com/kidslauncher/mdm/lock/CameraLock.kt")
+        val sync = body(lock, "sync")
+        // While LOCKED the policy goes on before anything is suspended; unlocked it follows after.
+        val policyFirst = sync.indexOf("if (locked) syncCameraPolicy(app, dpm, admin, locked = true)")
+        assertTrue(policyFirst >= 0)
+        assertTrue(policyFirst < sync.indexOf("dpm.setPackagesSuspended(admin, step.packages.toTypedArray(), true)"))
+        assertTrue(sync.contains("if (!locked) syncCameraPolicy(app, dpm, admin, locked = false)"))
+        assertTrue(body(lock, "syncCameraPolicy").contains("dpm.setCameraDisabled(admin, disabled)"))
+        // Every apply() re-syncs it (a time rule's suspension comes from apply()).
+        assertTrue(body(lock, "refreshTargets").contains("onLockChanged(context)"))
+        assertFalse(body(lock, "refreshTargets").contains("if (PinLockRuntime.chromeLocked)"))
+        val admin = file("res/xml/device_admin.xml").readText()
+        assertTrue(admin.contains("<disable-camera />"))
     }
 
     @Test
