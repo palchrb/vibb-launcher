@@ -1028,3 +1028,77 @@ Every root cause except G predates design 25.
 - [ ] The per-frame "Out of order buffers" for PinLockActivity (likely the emulator's mirroring of a secure surface).
 - [ ] Element X: a missed Element Call shows as "Tapt anrop · Element X".
 - [ ] A paused session's tile at a lock-up; the keypad stage without music.
+
+## Lock background (25f, 2026-10-12)
+
+**The user's request:** the lock's background is the same as Home's wallpaper by default, with an option in the PWA to
+choose a separate lock picture.
+
+**Today:** both lock stages have a solid `kid_ground` (#0C0C14). Home shows the wallpaper the kid picked
+(`WallpaperStore.state.current`), out of the ones the parent ticked for this phone (`launcher_ui.wallpapers`,
+design 08).
+
+### Behaviour
+- **Default "Same as Home":** the lock (the glance page and the keypad stage, kiosk on and off) shows the wallpaper Home
+  shows, photos included, and follows the kid's pick.
+- **A separate lock picture:** the parent chooses one of the wallpapers ticked for this phone on the device page. The lock
+  shows it whatever the kid picks for Home.
+  - If it is unticked, deleted, not yet downloaded or unreadable, the lock falls back to Home's wallpaper.
+  - Only wallpapers the phone may use can be chosen, because the image route only serves a ticked wallpaper.
+- **Legibility:** the lock keeps its light ink (white clock, the dark cards, the keys) on every background.
+  - A black scrim is laid over the wallpaper: the lightest one that gives white text 4.5:1 against the wallpaper's
+    lightest part (`lockScrim`, pure).
+  - Photos always get at least `MIN_IMAGE_SCRIM`, as on Home. The cap is 0.6, which reaches 4.5:1 even on white, so
+    no label shadow is needed.
+  - The cards (rows, music tile, keys) keep their own opaque backgrounds.
+- **What draws it:** the lock draws the wallpaper itself (`WallpaperRender.GroundDrawable`, the one decoded photo of the
+  store or a second one for a separate lock photo). It never shows through to Android's wallpaper: the lock's window
+  stays opaque and `FLAG_SECURE`.
+- **The starting window and the re-front's snapshot** stay `kid_ground` (a theme can't carry the photo). A wallpaper
+  close to it makes that frame less visible, but that is the only frame that differs.
+
+### Privacy
+Design 08 (QA 08 #1) kept a photo off *Android's* lock screen unless the parent ticked "also on the lock screen",
+because anyone holding the locked phone sees it.
+- Handy's PIN lock replaces Android's lock screen since step 10, and the user now asks for Home's wallpaper on it **by
+  default**.
+- So a photo the kid picks for Home shows on handy's lock too.
+- The per-photo `lock_screen` tick keeps governing only Android's own lock wallpaper (`WallpaperApplier`, `FLAG_LOCK`),
+  which nothing shows while handy's lock is on.
+- The PWA text says so: "the lock shows Home's wallpaper - photos included - unless you choose another".
+- **Veto if wrong:** "Same as Home" could skip photos without the tick (navy instead).
+
+### Data, policy, PWA
+- **Migration `0069_lock_wallpaper.sql`** (the next after `cmd-expiry`'s 0068),
+  a new table:
+  - `device_lock_wallpaper (device_id INTEGER PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, wallpaper_id INTEGER NOT NULL, FOREIGN KEY (device_id, wallpaper_id) REFERENCES device_wallpapers(device_id, wallpaper_id) ON DELETE CASCADE)`.
+  - No row means "Same as Home".
+  - The composite key makes untick and delete fall back by themselves.
+  - So saving the ticks deletes only the unticked rows (it used to delete all and insert again, which would clear the
+    lock choice on every save).
+- **Policy:** `launcher_ui.lock_wallpaper` is the id or `null`, always present. It is pinned on both sides
+  (`policy_json_keys_snapshot`, `PolicyResponseCompatTest`); an older launcher ignores it.
+- **PWA:** on the device page's Wallpapers card, under the ticks, a "Lock screen background" select:
+  - "Same as Home", then every ticked wallpaper;
+  - `POST /devices/{id}/lock-wallpaper` with `wallpaper` = `""` or an id;
+  - an id that isn't ticked for this phone is a 400 and nothing changes;
+  - it nudges the phone, redirects to `/devices/{id}` without a fragment (`scroll-restore.js` keeps the place, as the
+    lock-screen ticks do), and is a security event `lock_wallpaper_changed`.
+- **Launcher:**
+  - Pure `lockWallpaper(allowed, lockId, home, cached)`: the chosen one if it is allowed and usable, else `home`.
+  - `WallpaperStore.State` gains `lock` (the wallpaper) and `lockBitmap` (Home's bitmap when it is the same photo,
+    else one more decode).
+  - `PinLockActivity` sets the ground on its root and on the glance root at create and on every store change (a
+    listener between onStart and onStop).
+
+### Tests
+- **Server:** the route (ticked, not ticked = 400, unknown device = 404, `""` = same as Home); the untick and delete
+  fallback; saving the ticks keeps the choice; the policy snapshot; the 360 px PWA in light and dark.
+- **Launcher:** `lockWallpaper`, `lockScrim` (white reaches 4.5:1 on white, black, navy and photos' statistics; at least
+  the photo minimum), `PolicyResponseCompatTest`, a source guard that the lock's window stays opaque (no
+  `windowShowWallpaper`).
+- **Device:**
+  - [ ] the lock with a photo, a gradient and navy, at 320 dp;
+  - [ ] the kid changes Home's wallpaper and the lock follows;
+  - [ ] a separate lock picture, then unticked;
+  - [ ] the keypad legible on a light photo.

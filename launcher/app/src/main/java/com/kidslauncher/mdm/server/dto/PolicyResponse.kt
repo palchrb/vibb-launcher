@@ -145,6 +145,9 @@ data class LauncherUi(
      * missing from an older server = only the built-in navy
      * ([com.kidslauncher.mdm.ui.wallpaper.effectiveWallpaper]). */
     val wallpapers: List<PolicyWallpaper> = emptyList(),
+    /** The lock's own background (design 25, "Lock background"): the id of one of [wallpapers], or
+     * null/missing - the lock shows Home's ([com.kidslauncher.mdm.ui.wallpaper.lockWallpaper]). */
+    val lockWallpaper: Long? = null,
     /** How apps show on this phone (design 14): `[{package_name, label, icon, color}]`, the
      * catalog default resolved against the phone's own choice by the server. Kept as raw JSON and
      * read field by field ([com.kidslauncher.mdm.appdisplay.appDisplayMap], QA #1): nothing in it - a

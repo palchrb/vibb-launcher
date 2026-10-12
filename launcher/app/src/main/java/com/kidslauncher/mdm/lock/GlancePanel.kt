@@ -170,6 +170,12 @@ class GlancePanel(
         labels.clear()
     }
 
+    /** The lock's background behind the page (design 25, "Lock background") - opaque, the page
+     * still covers the keypad stage. */
+    fun ground(drawable: android.graphics.drawable.Drawable) = guarded("ground") {
+        glance.root.background = drawable
+    }
+
     /** The keypad's back arrow: the glance page again. */
     fun back() = step(GlanceStageEvent.Back)
 

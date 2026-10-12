@@ -29,6 +29,7 @@ import com.kidslauncher.mdm.databinding.ActivityPinLockBinding
 import com.kidslauncher.mdm.databinding.ViewVoipRingBinding
 import com.kidslauncher.mdm.server.ParentPinResult
 import com.kidslauncher.mdm.ui.ParentPinDialog
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -199,6 +200,25 @@ class PinLockActivity : AppCompatActivity() {
         PinLockRuntime.addChromeListener(chromeListener)
         VoipCalls.addListener(voipListener)
         render()
+        // Design 25, "Lock background": Home's wallpaper (or the parent's lock picture) behind
+        // both stages once the store has worked it out; the plain ground until then.
+        WallpaperStore.ensureLoaded(this)
+        applyLockGround()
+    }
+
+    private val wallpaperListener: () -> Unit = { applyLockGround() }
+
+    /** The lock's background on the keypad stage and the glance page ([lockGround]). A fault keeps
+     * the plain ground - never a crash that trips the guard. */
+    private fun applyLockGround() {
+        try {
+            val state = WallpaperStore.state
+            if (!state.lockReady) return
+            binding.root.background = lockGround(state)
+            glance?.ground(lockGround(state))
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "The lock's background couldn't be set: ${e.javaClass.simpleName}")
+        }
     }
 
     private val voipListener: () -> Unit = {
@@ -273,6 +293,8 @@ class PinLockActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         glance?.start()
+        WallpaperStore.addListener(wallpaperListener)
+        applyLockGround()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -312,6 +334,7 @@ class PinLockActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        WallpaperStore.removeListener(wallpaperListener)
         glance?.stop()
         PinLockRuntime.onLockStopped(isChangingConfigurations, isFinishing || finishingAfterUnlock)
         super.onStop()
@@ -656,3 +679,8 @@ class PinLockActivity : AppCompatActivity() {
         private var homeAskedAtElapsed = 0L
     }
 }
+
+/** The lock's background (design 25, "Lock background"): its wallpaper under its black scrim -
+ * drawn by us, the window stays opaque (never Android's wallpaper showing through). */
+internal fun lockGround(state: WallpaperStore.State): android.graphics.drawable.Drawable =
+    com.kidslauncher.mdm.ui.wallpaper.WallpaperRender.GroundDrawable(state.lock.fill, state.lockBitmap, state.lockScrimArgb)

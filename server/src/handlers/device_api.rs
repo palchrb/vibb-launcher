@@ -453,6 +453,17 @@ pub(crate) async fn build_policy(
                     );
                     Vec::new()
                 }),
+            // Cosmetic too: a failing query leaves the lock on Home's wallpaper.
+            lock_wallpaper: crate::wallpapers::lock_wallpaper(&state.db, device_id)
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::error!(
+                        device_id,
+                        %err,
+                        "couldn't load the lock's wallpaper - policy sent with Home's"
+                    );
+                    None
+                }),
             // Cosmetic like the wallpapers: a failing query sends no names and icons.
             app_display: crate::app_display::policy_app_display(&state.db, device_id)
                 .await

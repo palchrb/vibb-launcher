@@ -609,3 +609,127 @@ fn a_file_deleted_during_a_backup_is_skipped() {
     assert!(archive.by_name(&format!("wallpapers/{kept}.jpg")).is_ok());
     assert_eq!(archive.len(), 1);
 }
+
+async fn lock_choice(app: &TestApp, cookie: &str, device: i64, value: &str) -> TestResponse {
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{device}/lock-wallpaper"),
+        Some(cookie),
+        &[("wallpaper", value)],
+    )
+    .await
+}
+
+async fn lock_wallpaper(app: &TestApp, token: &str) -> serde_json::Value {
+    let res = app
+        .request(Method::GET, "/api/devices/policy", Some(token), None)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    res.json()["launcher_ui"]["lock_wallpaper"].clone()
+}
+
+/// Design 25, "Lock background": Home's wallpaper by default (null), a ticked one by choice;
+/// unticking or deleting it falls back by itself, saving the ticks keeps it.
+#[tokio::test]
+async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let (other, _) = app.enrolled_device("other").await;
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(null));
+
+    // A ticked one (navy, id 1): sent, nudged, logged.
+    let mut nudges = app.state.command_notify.subscribe();
+    let res = lock_choice(&app, &cookie, id, "1").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    assert_eq!(
+        res.location().map(str::to_string),
+        Some(format!("/devices/{id}"))
+    );
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(1));
+    let logged: Vec<String> = sqlx::query_scalar(
+        "SELECT detail FROM security_events WHERE event_type = 'lock_wallpaper_changed' ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        logged,
+        [format!("device {id}: lock screen background: wallpaper 1")]
+    );
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("Lock screen background"));
+    assert!(
+        page.contains(r#"<option value="1" selected>Navy</option>"#),
+        "{page}"
+    );
+
+    // Not ticked for this phone (an upload on no phone), unknown, not a number: 400, unchanged.
+    upload(
+        &app,
+        &cookie,
+        "a",
+        false,
+        &encode(&top_black(90, 200), ImageFormat::Png),
+    )
+    .await;
+    let (a, _) = newest(&app).await;
+    for bad in [a.to_string(), "999".to_string(), "x".to_string()] {
+        assert_eq!(
+            lock_choice(&app, &cookie, id, &bad).await.status,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(1));
+    assert_eq!(
+        lock_choice(&app, &cookie, 999, "1").await.status,
+        StatusCode::NOT_FOUND
+    );
+    // The other phone is untouched.
+    let other_lock: Option<i64> =
+        sqlx::query_scalar("SELECT wallpaper_id FROM device_lock_wallpaper WHERE device_id = ?")
+            .bind(other)
+            .fetch_optional(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(other_lock, None);
+
+    // Saving the ticks with navy still ticked keeps the choice; the photo can now be chosen.
+    tick(&app, &cookie, id, &[1, 2, a]).await;
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(1));
+    lock_choice(&app, &cookie, id, &a.to_string()).await;
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(a));
+    // Unticked: Home's again.
+    tick(&app, &cookie, id, &[1, 2]).await;
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(null));
+    // Deleted: Home's again.
+    tick(&app, &cookie, id, &[1, 2, a]).await;
+    lock_choice(&app, &cookie, id, &a.to_string()).await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/wallpapers/{a}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(null));
+    // "" = same as Home.
+    lock_choice(&app, &cookie, id, "2").await;
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(2));
+    lock_choice(&app, &cookie, id, "").await;
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(null));
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains(r#"<option value="" selected>Same as Home</option>"#),
+        "{page}"
+    );
+}
