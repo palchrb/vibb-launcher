@@ -71,6 +71,8 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   kill criteria: if App Remote can't connect without showing Spotify, the Spotify source is dropped.
 - The spike needs a real phone with Spotify installed, so the session can only build the spike APK and its checklist;
   the user runs it on the Jelly Star. Nothing else in phase 3 starts before the spike's answers.
+- **The spike**: `docs/testing/spotify-spike.md` (terms verdict, preparation, checklist items 0-10 incl. the Web
+  Playback SDK in a WebView) and the app `spike/spotify/`, on branch `spotify-spike`.
 
 ## How to work (the user's rules; the main session keeps them in memory)
 

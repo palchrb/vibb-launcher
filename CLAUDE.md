@@ -21,6 +21,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
 - `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
   `push-all.sh` (push the current branch), `smoke-test.sh` (adb/emulator-console smoke test of lock and
   calls, remote-capable; `docs/testing/emulator.md` §5b).
+- `spike/` - throwaway experiments, each a standalone project outside every CI build job, GPL like everything
+  else. `spike/spotify/` - the Spotify engine spike (`docs/testing/spotify-spike.md`; built only by the manual
+  `spotify-spike.yml`). Spotify's App Remote AAR is downloaded at build time, never committed.
 - `PLAN.md` - the plan and status.
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
