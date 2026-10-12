@@ -108,4 +108,15 @@ class WallpapersTest {
         assertEquals("unticked (not in the list): Home's", sky, lockWallpaper(allowed, 99, sky, cached))
         assertEquals(navy, lockWallpaper(emptyList(), 5, navy, cached))
     }
+
+    /** qa-25b-25f: a separate lock photo that can't be decoded falls back to Home's, scrim included. */
+    @Test
+    fun `an unreadable lock photo falls back to Home's`() {
+        assertEquals(sky, lockAfterDecode(sjo, decoded = false, home = sky))
+        assertEquals(sjo, lockAfterDecode(sjo, decoded = true, home = sky))
+        assertEquals("colours need no decode", navy, lockAfterDecode(navy, decoded = false, home = sky))
+        val store = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/ui/wallpaper/WallpaperStore.kt") }.first { it.exists() }.readText()
+        // The scrim is worked out for the wallpaper actually shown (after the fallback).
+        assertTrue(store.indexOf("lock = lockAfterDecode(lock, decoded = lockBitmap != null, home = current)") in 0 until store.indexOf("val lockScrimAlpha = when (val f = lock.fill)"))
+    }
 }

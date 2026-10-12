@@ -205,4 +205,17 @@ class LockUpTest {
         val onCreate = body(code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt"), "onCreate")
         assertTrue(onCreate.contains("if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false"))
     }
+
+    /** qa-25b-25f: a process start while not LOCKED syncs the camera lock - and with it the policy,
+     * which `cameraPolicy == null` forces to be read and set back to enabled. */
+    @Test
+    fun `a process start while unlocked sets the camera policy back`() {
+        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        val start = runtime.substringAfter("if (!chromeLocked) {").substringBefore("}")
+        assertTrue(start.contains("CameraLock.onLockChanged(app)"))
+        val lock = code("java/com/kidslauncher/mdm/lock/CameraLock.kt")
+        assertTrue(body(lock, "sync").contains("if (!locked) syncCameraPolicy(app, dpm, admin, locked = false)"))
+        assertTrue(lock.contains("private var cameraPolicy: Boolean? = null"))
+        assertTrue(body(lock, "syncCameraPolicy").contains("if (dpm.getCameraDisabled(admin) != disabled) dpm.setCameraDisabled(admin, disabled)"))
+    }
 }
