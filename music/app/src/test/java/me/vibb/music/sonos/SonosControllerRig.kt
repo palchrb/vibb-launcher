@@ -80,8 +80,9 @@ class FakeHost : SonosHost {
     /** The uri each follow went out with (renderer.json writes it through storedUri, design 26b §5.3). */
     val followedUris = mutableListOf<Pair<String?, String>>()
 
-    /** Storytel plays that got no URL: (item key, code). */
+    /** Storytel plays that got no URL: (item key, code); [unavailableEntries] the entry each was for. */
     val unavailable = mutableListOf<Pair<String, String>>()
+    val unavailableEntries = mutableListOf<Long>()
 
     override fun followed(uid: String, name: String?, itemKey: String?, uri: String) {
         onFollowed()
@@ -89,8 +90,9 @@ class FakeHost : SonosHost {
         followedUris.add(itemKey to uri)
     }
 
-    override fun storytelUnavailable(itemKey: String, code: String) {
+    override fun storytelUnavailable(entryId: Long, itemKey: String, code: String) {
         unavailable.add(itemKey to code)
+        unavailableEntries.add(entryId)
     }
 
     override fun ramp(volume: Int?) {

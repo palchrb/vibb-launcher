@@ -80,10 +80,12 @@ class SonosTransport(
      * [cap] (a session's start, design 26a §5.3) the speaker's volume is brought down to it first,
      * inside the hush ([capVolume]), and so is every other room of its group ([members], the row's
      * uids; each its own RenderingControl, best effort within [MEMBER_CAP_BUDGET_MS]: a member that
-     * doesn't answer never holds the play up). Throws [UnknownUid], [UpnpFault] or
-     * [SpeakerUnreachable] - the failed-play path is the caller's.
+     * doesn't answer never holds the play up). [gate] is asked right before `SetAVTransportURI` (the
+     * play job's token, design 26b §5.1, qa-26b-step4b-code L1-L2): false ends the play there with
+     * nothing sent - null (the mute put back; a cap already set stays, which is harmless). Throws
+     * [UnknownUid], [UpnpFault] or [SpeakerUnreachable] - the failed-play path is the caller's.
      */
-    suspend fun play(body: PlayBody, cap: Int? = null, members: List<String> = emptyList()): PlayResult = mutex.withLock {
+    suspend fun play(body: PlayBody, cap: Int? = null, members: List<String> = emptyList(), gate: () -> Boolean = { true }): PlayResult? = mutex.withLock {
         session.beginPlay(body.uid, body.kind)
         val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
         val start = body.startS
@@ -109,6 +111,7 @@ class SonosTransport(
                     } catch (_: Exception) {
                     }
                     val built = didl(body.uri, body.title, body.artist, body.album, body.art, body.durationS)
+                    if (!gate()) return@withLock null
                     spk.setAvTransportUri(body.uri, built)
                     spk.play()
                     body.uri to built
@@ -121,6 +124,7 @@ class SonosTransport(
                         uri, body.title, body.artist, body.album, body.art, body.durationS,
                         upnpClass = NrkService.UPNP_CLASS, protocol = NrkService.PROTOCOL, desc = NrkService.DESC,
                     )
+                    if (!gate()) return@withLock null
                     spk.setAvTransportUri(uri, built)
                     spk.play()
                     uri to built

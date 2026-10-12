@@ -105,12 +105,12 @@ internal class SonosRenderer(
             onFollowed()
         }
 
-        override fun storytelUnavailable(itemKey: String, code: String) {
+        override fun storytelUnavailable(entryId: Long, itemKey: String, code: String) {
             SonosHome.log("sonos: a Storytel book got no URL ($code)")
-            // design 26b §5.1: locked, not in this country, gone - the book's item error on the parent's card;
-            // a login's failure is the account's state (the report's `storytel`), the rest transient
+            // design 26b §5.1: locked, not in this country, gone - the book's item error on the parent's card,
+            // under the entry the play was for (qa-26b-step4b-code L3); a login's failure is the account's state
+            // (the report's `storytel`), the rest transient
             if (code != NO_AUDIO) return
-            val entryId = queue()?.entry?.id ?: return
             scope.launch(writer) { ItemErrors.record(context, entryId, itemKey, NO_AUDIO) }
         }
 

@@ -3,6 +3,7 @@ package me.vibb.music.sonos
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -28,7 +29,7 @@ class SonosTransportTest {
     @Test
     fun `hush 1 - a resume is muted across the Play to Seek window, then back`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X")
-        val r = rig(spk).play(body.copy(startS = 120.0))
+        val r = rig(spk).play(body.copy(startS = 120.0))!!
         assertTrue(r.sought)
         assertEquals(listOf("mute true", "seturi", "play", "seek 0:02:00", "mute false"), spk.commands)
         assertFalse(spk.muted)
@@ -42,7 +43,7 @@ class SonosTransportTest {
     @Test
     fun `hush 2 - a deliberately muted speaker stays muted`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X", muted = true)
-        rig(spk).play(body.copy(startS = 60.0))
+        rig(spk).play(body.copy(startS = 60.0))!!
         assertEquals("mute true", spk.commands.first())
         assertEquals("mute true", spk.commands.last())
         assertTrue(spk.muted)
@@ -51,7 +52,7 @@ class SonosTransportTest {
     @Test
     fun `hush 3 - a from-the-top play never touches mute`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X")
-        val r = rig(spk).play(body.copy(startS = 4.9))
+        val r = rig(spk).play(body.copy(startS = 4.9))!!
         assertTrue(r.sought)
         assertFalse(spk.log.any { it.contains("mute") })
         assertEquals(listOf("seturi", "play"), spk.commands)
@@ -61,7 +62,7 @@ class SonosTransportTest {
     fun `hush 4 - SetURI dies mid-flight - play throws but the mute is restored`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X").apply { failOn = mapOf("seturi" to { SpeakerUnreachable("speaker went away") }) }
         try {
-            rig(spk).play(body.copy(startS = 120.0))
+            rig(spk).play(body.copy(startS = 120.0))!!
             fail("play() should have thrown")
         } catch (_: SpeakerUnreachable) {
         }
@@ -72,7 +73,7 @@ class SonosTransportTest {
     @Test
     fun `hush - a speaker that can't read its mute is played unhushed`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X").apply { failOn = mapOf("getmute" to { UpnpFault(402, null) }) }
-        rig(spk).play(body.copy(startS = 120.0))
+        rig(spk).play(body.copy(startS = 120.0))!!
         assertEquals(listOf("seturi", "play", "seek 0:02:00"), spk.commands)
     }
 
@@ -80,7 +81,7 @@ class SonosTransportTest {
     fun `seek settled - 701 retried, then the degrade after three`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X")
         repeat(3) { spk.seekFaults.add(UpnpFault(701, null)) }
-        val r = rig(spk).play(body.copy(startS = 427.0))
+        val r = rig(spk).play(body.copy(startS = 427.0))!!
         assertFalse("sought=false is a degrade, never an error", r.sought)
         assertEquals(3, spk.log.count { it == "seek 0:07:07 refused" })
         assertEquals(listOf(400L, 400L, 400L), clock.sleeps)
@@ -93,7 +94,7 @@ class SonosTransportTest {
         for (code in listOf(710, 711)) {
             val spk = FakeSpeaker("RINCON_X")
             spk.seekFaults.add(UpnpFault(code, null))
-            assertTrue(rig(spk).play(body.copy(startS = 60.0)).sought)
+            assertTrue(rig(spk).play(body.copy(startS = 60.0))!!.sought)
             assertEquals(listOf("seek 0:01:00 refused", "seek 0:01:00"), spk.log.filter { it.startsWith("seek") })
         }
     }
@@ -104,7 +105,7 @@ class SonosTransportTest {
             val spk = FakeSpeaker("RINCON_X")
             spk.seekFaults.add(e)
             spk.seekFaults.add(UpnpFault(701, null))
-            assertFalse(rig(spk).play(body.copy(startS = 60.0)).sought)
+            assertFalse(rig(spk).play(body.copy(startS = 60.0))!!.sought)
             assertEquals(1, spk.log.count { it.startsWith("seek") })
         }
     }
@@ -128,7 +129,7 @@ class SonosTransportTest {
         val spk = FakeSpeaker("RINCON_X")
         val r = rig(spk).play(
             PlayBody("RINCON_X", Kind.NRK_PROGRAM, "https://radio.nrk.no/serie/barnas-supersommer", "Kap. 3", "Barnas Supersommer", null, null, 0.0, series = "barnas-supersommer", programId = "MKTT81008181"),
-        )
+        )!!
         val built = "x-sonos-http:series%3abarnas-supersommer%3a1%3aMKTT81008181.unknown?sid=277&flags=0&sn=7"
         assertEquals(built, r.uri)
         assertEquals(built, spk.lastUri)
@@ -140,10 +141,32 @@ class SonosTransportTest {
     @Test
     fun `url - the queue clear's errors are ignored, the DIDL carries the body`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X").apply { failOn = mapOf("clearqueue" to { UpnpFault(804, null) }) }
-        val r = rig(spk).play(body.copy(durationS = 1453.0, art = "http://10.0.0.5/c.jpg"))
+        val r = rig(spk).play(body.copy(durationS = 1453.0, art = "http://10.0.0.5/c.jpg"))!!
         assertEquals("http://c/e.mp3", r.uri)
         assertEquals(didl("http://c/e.mp3", "Sommerfuglen", null, "Barnas Supersommer", "http://10.0.0.5/c.jpg", 1453.0), r.didl)
         assertEquals(r.didl, spk.lastMeta)
+    }
+
+    @Test
+    fun `the gate is asked right before SetAVTransportURI - closed, nothing sent, the mute put back, no result`() = runBlocking {
+        // design 26b §5.1, qa-26b-step4b-code L1: the play job's token after the speaker check, the hush, the cap
+        // and the queue clear - a step or a suspension in that window still sends no SetAVTransportURI
+        val spk = FakeSpeaker("RINCON_X")
+        var asked = 0
+        val r = rig(spk).play(body.copy(startS = 120.0), gate = { asked++; spk.log.contains("clearqueue").not() })
+        assertNull(r)
+        assertEquals(1, asked)
+        assertEquals("the hush and the clear went, the mute back, no uri, no Play", listOf("mute true", "mute false"), spk.commands)
+        assertFalse(spk.log.contains("seturi"))
+        val nrk = FakeSpeaker("RINCON_X")
+        assertNull(
+            rig(nrk).play(
+                PlayBody("RINCON_X", Kind.NRK_PROGRAM, "https://radio.nrk.no/serie/x", "Kap. 3", "X", null, null, 0.0, series = "x", programId = "MKTT81008181"),
+                gate = { false },
+            ),
+        )
+        assertFalse(nrk.log.contains("seturi"))
+        assertEquals("an open gate plays", "http://c/e.mp3", rig(FakeSpeaker("RINCON_X")).play(body, gate = { true })!!.uri)
     }
 
     @Test

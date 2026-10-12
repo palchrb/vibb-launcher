@@ -72,6 +72,7 @@ import me.vibb.music.logic.callPauseStep
 import me.vibb.music.logic.callTimerEnded
 import me.vibb.music.logic.artOrCover
 import me.vibb.music.logic.canShuffle
+import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
 import me.vibb.music.logic.firstPlayable
@@ -89,6 +90,7 @@ import me.vibb.music.logic.homePlan
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.resumeOverlapMs
 import me.vibb.music.logic.storedPlan
+import me.vibb.music.logic.storedRowAwaitsBook
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.smallArtMissing
 import me.vibb.music.logic.sourceId
@@ -487,7 +489,11 @@ class PlaybackService : MediaSessionService() {
                         return@launch
                     }
                     val restored = restore()
-                    if (restored == null) {
+                    if (restored == Restored.NotOnPhone) {
+                        // the kid's book isn't on the phone (design 26b §5.6, qa-26b-step4b-code M1): "Ikke lastet
+                        // ned", nothing starts, the stored queue stays resumable
+                        future.setException(UnsupportedOperationException("not on the phone"))
+                    } else if (restored !is Restored.Queue) {
                         Resumable.set(this@PlaybackService, false)
                         future.setException(UnsupportedOperationException("nothing to resume"))
                     } else {
@@ -573,6 +579,7 @@ class PlaybackService : MediaSessionService() {
             return
         }
         val (snap, rows) = loadForRenderer()
+        if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, snap.bookmarks[entry.key], shown, listed) }) return
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val plan = coverTapPlan(snap.order(entry).map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return
@@ -596,7 +603,7 @@ class PlaybackService : MediaSessionService() {
             renderer.play()
             return
         }
-        val (a, index, pos) = restore() ?: return
+        val (a, index, pos) = restore() as? Restored.Queue ?: return
         start(a, QueuePlan(a.items.map { it.key }, index, pos))
     }
 
@@ -608,7 +615,7 @@ class PlaybackService : MediaSessionService() {
      */
     private suspend fun restoreThen(then: String?, positionMs: Long, args: Bundle) {
         if (active == null || renderer.itemCount() == 0) {
-            val (a, index, pos) = restore() ?: return
+            val (a, index, pos) = restore() as? Restored.Queue ?: return
             start(a, QueuePlan(a.items.map { it.key }, index, pos), play = false)
         }
         when (then) {
@@ -621,15 +628,43 @@ class PlaybackService : MediaSessionService() {
         publish()
     }
 
-    /** The stored queue (21 §4.4: back after a restart, paused until a tap). */
-    private suspend fun restore(): Triple<Active, Int, Long>? {
-        val row = withContext(Dispatchers.IO) { store.db.nowPlaying() } ?: return null
+    /** What [restore] found: the stored queue, nothing, or a stored book that isn't on the phone. */
+    private sealed interface Restored {
+        data class Queue(val active: Active, val index: Int, val posMs: Long) : Restored
+
+        data object Empty : Restored
+
+        data object NotOnPhone : Restored
+    }
+
+    /**
+     * The stored queue (21 §4.4: back after a restart, paused until a tap). Its current item a Storytel
+     * book that isn't on the phone (heard on a room): nothing starts and "Ikke lastet ned" - never the
+     * next book there, never a moved bookmark (design 26b §5.6, qa-26b-step4b-code M1) - for RESUME,
+     * `restoreThen` and a headset's play alike.
+     */
+    private suspend fun restore(): Restored {
+        val row = withContext(Dispatchers.IO) { store.db.nowPlaying() } ?: return Restored.Empty
         val (snap, rows) = loadForRenderer()
-        val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return null
         val stored = row.keys.split('\n').filter { it.isNotEmpty() }
-        val plan = storedPlan(stored, row.index, row.posMs, snap.order(entry).map { it.key }.toSet()) { startPos(entry, snap.positions[entry.key]?.get(it)) } ?: return null
-        val (a, p) = queueFor(snap, rows, entry, plan, row.shuffled, renderer.kind) ?: return null
-        return Triple(a, p.startIndex, p.startPosMs)
+        if (awaitsBook(snap, row.entryId) { entry, shown, listed -> storedRowAwaitsBook(entry, stored, row.index, shown, listed) }) return Restored.NotOnPhone
+        val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return Restored.Empty
+        val plan = storedPlan(stored, row.index, row.posMs, snap.order(entry).map { it.key }.toSet()) { startPos(entry, snap.positions[entry.key]?.get(it)) } ?: return Restored.Empty
+        val (a, p) = queueFor(snap, rows, entry, plan, row.shuffled, renderer.kind) ?: return Restored.Empty
+        return Restored.Queue(a, p.startIndex, p.startPosMs)
+    }
+
+    /**
+     * The kid's place in [entryId] is a Storytel book the phone hasn't got ([rule] over the entry, the
+     * keys [snap] shows - the renderer's view, so a room never waits - and every listed key): says "Ikke
+     * lastet ned" and is true; nothing is started or saved (design 26b §5.6, qa-26b-step4b-code M1).
+     */
+    private fun awaitsBook(snap: Snapshot, entryId: Long, rule: (Entry, List<String>, List<String>) -> Boolean): Boolean {
+        val entry = snap.library?.entries?.firstOrNull { it.id == entryId } ?: return false
+        if (!rule(entry, snap.order(entry).map { it.key }, snap.listed[entry.id].orEmpty().map { it.key })) return false
+        PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+        publish()
+        return true
     }
 
     private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {

@@ -474,8 +474,14 @@ class GuardsTest {
         // ... which mints only inside the play's actor job (IO), between the two token checks (M6), 6 s / 10 s
         val play = sonos.substringAfter("private fun playIndex(").substringBefore("\n    }\n")
         val job = play.substringAfter("work.submit<PlayResult?>({").substringBefore("}) { r ->")
-        assertTrue(job.contains("if (!stillWanted(g)) return@submit null\n                b = body.copy(uri = mintFor(cid), mint = null)\n                if (!stillWanted(g)) return@submit null"))
-        assertTrue("the mint before the transport's play (the cap and the hush inside it)", job.indexOf("mintFor(cid)") < job.indexOf("transport.play(b, startCap, room)"))
+        assertTrue(play.contains("val gate: () -> Boolean = if (cid != null) ({ stillWanted(g) }) else ({ !closed && mayPlay() })"))
+        assertTrue("every play job asks first (L2)", job.trimStart().startsWith("if (!gate()) return@submit null\n"))
+        assertTrue(job.contains("b = body.copy(uri = mintFor(cid), mint = null)\n                if (!gate()) return@submit null"))
+        assertTrue("the mint before the transport's play (the cap and the hush inside it)", job.indexOf("mintFor(cid)") < job.indexOf("transport.play(b, startCap, room, gate)"))
+        // ... and the token once more right before SetAVTransportURI, inside the play (L1)
+        val transport = code("src/main/java/me/vibb/music/sonos/SonosTransport.kt").substringAfter("suspend fun play(").substringBefore("\n    }\n")
+        assertEquals(2, Regex("""if \(!gate\(\)\) return@withLock null\n\s*spk\.setAvTransportUri\(""").findAll(transport).count())
+        assertEquals(2, Regex("""setAvTransportUri\(""").findAll(transport).count())
         assertEquals("the job is the only caller", 2, Regex("""\bmintFor\(""").findAll(sonos).count())
         assertEquals(1, Regex("""minter\.mint\(""").findAll(sonos).count())
         assertTrue(sonos.substringAfter("private suspend fun mintFor(").contains("minter.mint(cid, MINT_TIMEOUT_MS, elapsedMs() + MINT_BUDGET_MS)"))
@@ -523,6 +529,33 @@ class GuardsTest {
         assertTrue(absent.contains("return"))
         assertFalse(absent.contains("start("))
         assertTrue(home.indexOf("item.key !in order") < home.indexOf("start(a, plan, play = play)"))
+    }
+
+    @Test
+    fun `on the phone a Storytel place on a book that isn't downloaded starts nothing - every path (qa-26b-step4b-code M1)`() {
+        fun body(start: String) = service.substringAfter(start).substringBefore("\n    }\n")
+        // the cover tap, before any plan (coverTapPlan would start book 1 from 0)
+        val entry = body("private suspend fun playEntry(")
+        assertTrue(entry.contains("if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, snap.bookmarks[entry.key], shown, listed) }) return"))
+        assertTrue(entry.indexOf("awaitsBook(") < entry.indexOf("coverTapPlan("))
+        // the stored queue (restoredQueue would skip to the next book there), for every caller
+        val restore = body("private suspend fun restore(): Restored {")
+        assertTrue(restore.contains("if (awaitsBook(snap, row.entryId) { entry, shown, listed -> storedRowAwaitsBook(entry, stored, row.index, shown, listed) }) return Restored.NotOnPhone"))
+        assertTrue(restore.indexOf("awaitsBook(") < restore.indexOf("storedPlan("))
+        assertTrue("RESUME", body("private suspend fun resumeLast() {").contains("restore() as? Restored.Queue ?: return"))
+        assertTrue("restoreThen", body("private suspend fun restoreThen(").contains("restore() as? Restored.Queue ?: return"))
+        val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("return future")
+        val notOnPhone = resumption.substringAfter("if (restored == Restored.NotOnPhone) {").substringBefore("} else if")
+        assertTrue("a headset's play", notOnPhone.contains("future.setException("))
+        assertFalse("the stored queue stays resumable", notOnPhone.contains("Resumable.set"))
+        assertEquals("restore's three callers", 3, Regex("""\brestore\(\)""").findAll(service).count() - 1)
+        // the one place that says it: "Ikke lastet ned", nothing started or saved
+        val awaits = body("private fun awaitsBook(")
+        assertTrue(awaits.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)"))
+        for (move in listOf("start(", "saveNow(", "persistPlace", ".play()")) assertFalse(move, awaits.contains(move))
+        // the screens agree: no switch for such a cover tap
+        val switch = code("src/main/java/me/vibb/music/ui/UiModel.kt").substringAfter("fun playSwitch(").substringBefore("\n}\n")
+        assertTrue(switch.contains("if (itemKey == null && coverTapAwaitsBook(entry, snap.bookmarks[entry.key], all.map { it.key }, shown.listed[entry.id].orEmpty().map { it.key })) return null"))
     }
 
     @Test

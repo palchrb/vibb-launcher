@@ -189,7 +189,7 @@ class SourceScanTest {
             // design 26b step 4b: a Storytel play's signed URL in memory - the body, the result, a snapshot, a hint
             "src/main/java/me/vibb/music/sonos/PlayBody.kt" to listOf("data class PlayBody("),
             "src/main/java/me/vibb/music/sonos/SonosTransport.kt" to listOf("data class PlayResult("),
-            "src/main/java/me/vibb/music/sonos/SonosSession.kt" to listOf("data class Moved(", "data class Fields("),
+            "src/main/java/me/vibb/music/sonos/SonosSession.kt" to listOf("data class Moved(", "data class Fields(", "data class PositionInfo("),
         )
         for ((path, classes) in holders) {
             val text = code(moduleFile(path))

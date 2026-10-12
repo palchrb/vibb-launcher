@@ -357,4 +357,32 @@ class StorytelRulesTest {
         // room -> phone with book 2 playing: the phone's view has no book 2 - comeHome starts nothing ("Ikke lastet ned")
         assertFalse("160662" in phoneQueue)
     }
+
+    @Test
+    fun `M1 - on the phone the kid's place on a book that isn't downloaded waits - the cover tap and the stored queue`() {
+        val entry = roomSnap.library!!.entries.single()
+        val phone = roomSnap.forRenderer(false)
+        val shown = phone.order(entry).map { it.key }
+        val listed = roomSnap.listed[entry.id].orEmpty().map { it.key }
+        // the cover tap (playEntry, the screens' playSwitch): the bookmark on book 2, not on the phone
+        assertTrue(coverTapAwaitsBook(entry, phone.bookmarks[entry.key], shown, listed))
+        assertFalse("on the phone", coverTapAwaitsBook(entry, Bookmark("160663", 0), shown, listed))
+        assertFalse("no bookmark: book 1", coverTapAwaitsBook(entry, null, shown, listed))
+        assertFalse("a book that left the list: the phone's own rules", coverTapAwaitsBook(entry, Bookmark("999", 0), shown, listed))
+        assertFalse("resume off: the cover tap ignores the bookmark", coverTapAwaitsBook(entry.copy(resume = false), phone.bookmarks[entry.key], shown, listed))
+        assertFalse("a room shows every book: it never waits", coverTapAwaitsBook(entry, phone.bookmarks[entry.key], roomSnap.forRenderer(true).order(entry).map { it.key }, listed))
+        // what the plan would do without the rule: book 1 from 0 (vibb's accident, §9)
+        assertEquals(QueuePlan(listOf("160661", "160663"), 0, 0), coverTapPlan(shown, true, phone.bookmarks[entry.key], false))
+        // the stored queue (RESUME, restoreThen, a headset's play): the room's row [2,3,4,5,1] at book 2
+        val row = listOf("160662", "160663", "160664", "160665", "160661")
+        assertTrue(storedRowAwaitsBook(entry, row, 0, shown, listed))
+        assertFalse(storedRowAwaitsBook(entry, row, 1, shown, listed))
+        assertFalse("an index past the row", storedRowAwaitsBook(entry, row, 9, shown, listed))
+        // without the rule restoredQueue would skip to book 3
+        assertEquals("160663", storedPlan(row, 0, 120_000, shown.toSet()) { 0 }!!.let { it.keys[it.startIndex] })
+        // every other source keeps the phone's rules
+        val rss = entry(3)
+        assertFalse(bookNotOnPhone(rss, "x", emptyList(), listOf("x")))
+        assertFalse(coverTapAwaitsBook(rss, Bookmark("x", 0), emptyList(), listOf("x")))
+    }
 }

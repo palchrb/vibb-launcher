@@ -1350,4 +1350,69 @@ class SonosControllerTest {
         val written = RendererChoice(RendererChoice.SONOS, r.uid, "Barnerom", 9, "111", "storytel:book:111").followed("RINCON_KITCHEN01400", "Kjøkken", series, "111", hint)
         assertEquals("storytel:book:111", written.uri)
     }
+
+    @Test
+    fun `L1 - the token is asked again right before SetAVTransportURI - a step during the start's cap sends no superseded uri`() {
+        // the window between the mint and SetAVTransportURI holds the speaker check, the hush, the cap (members
+        // included) and the queue clear: a step pressed there is the kid's latest want, the older play sends no uri
+        r.capPct = 40
+        var stepped = false
+        r.spk.failOn = mapOf(
+            "getvolume" to {
+                if (!stepped) {
+                    stepped = true
+                    r.c.stepTo(1, 0)
+                }
+                SpeakerUnreachable("slow")
+            },
+        )
+        r.c.load(series, books, 0, 0)
+        r.c.playTile()
+        r.work.drain()
+        assertTrue(stepped)
+        assertEquals("only the step's book reached the speaker", 1, setUris())
+        assertEquals(FakeMinter.signed("222", 2), r.spk.lastUri)
+        assertEquals(listOf("222"), r.host.played.map { it.first })
+        assertNull(r.c.takeLost())
+    }
+
+    @Test
+    fun `L2 - an RSS play queued behind a slow mint is gated too - a suspension during the mint sends nothing`() {
+        r.c.load(series, books, 0, 0)
+        r.c.playTile()
+        r.minter.during = {
+            // the kid taps an RSS entry while the book mints, then the launcher suspends the app
+            r.c.load(r.entry, r.items, 1, 0)
+            r.c.playTile()
+            r.allowed = false
+        }
+        r.work.drain()
+        assertEquals(listOf("111"), r.minter.calls.map { it.cid })
+        assertEquals("neither play reached the speaker", emptyList<String>(), r.spk.log)
+        assertNull("dropped, not lost", r.c.takeLost())
+        assertEquals("the RSS episode waits at its place", 1, r.c.spec(r.now).index)
+        assertEquals(PlayPhase.IDLE, r.c.spec(r.now).phase)
+        r.allowed = true
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(r.url(1), r.spk.lastUri)
+        // and a release drains a queued url play without sending it
+        val rig = ControllerRig()
+        rig.c.load(rig.entry, rig.items, 0, 0)
+        rig.c.playTile()
+        rig.c.close()
+        rig.work.drain()
+        assertEquals(emptyList<String>(), rig.spk.log)
+    }
+
+    @Test
+    fun `L3 - a no_audio mint is recorded under the entry the play was sent for, whatever plays meanwhile`() {
+        r.minter.answer = { Mint.NoAudio(403) }
+        r.c.load(series, books, 1, 0)
+        r.c.playTile()
+        r.minter.during = { r.c.load(r.entry, r.items, 0, 0) } // another entry tapped while the book minted
+        r.work.drain()
+        assertEquals(listOf("222" to "no_audio"), r.host.unavailable)
+        assertEquals("the series, never the RSS entry now loaded", listOf(9L), r.host.unavailableEntries)
+    }
 }

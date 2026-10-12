@@ -89,8 +89,11 @@ interface SonosHost {
      */
     fun followed(uid: String, name: String?, itemKey: String?, uri: String) {}
 
-    /** A Storytel play got no URL (design 26b §5.1): `no_audio` is the book's item error. */
-    fun storytelUnavailable(itemKey: String, code: String) {}
+    /**
+     * A Storytel play got no URL (design 26b §5.1): `no_audio` is the book's item error, under the entry
+     * the play was sent for ([entryId], captured at submit - never the service's current one; qa L3).
+     */
+    fun storytelUnavailable(entryId: Long, itemKey: String, code: String) {}
 
     /** The sleep ramp runs from [volume] (null: it ended, the volume is back). */
     fun ramp(volume: Int?) {}
@@ -794,17 +797,20 @@ class SonosController(
         val room = if (startCap != null) members(target) else emptyList()
         val volSet = volSets
         val cid = body.mint
+        // The job's token (design 26b §5.1, M6; qa-26b-step4b-code L1, L2): a Storytel play is the kid's latest
+        // want or nothing (the generation too); every play - an NRK/RSS one queued behind a mint included - only
+        // while not released and playing is allowed. Asked before the job's work and again right before
+        // SetAVTransportURI (inside transport.play); a dropped job is null, with nothing sent.
+        val gate: () -> Boolean = if (cid != null) ({ stillWanted(g) }) else ({ !closed && mayPlay() })
         work.submit<PlayResult?>({
+            if (!gate()) return@submit null
             var b = body
             if (cid != null) {
-                // design 26b §5.1 (M6): the token before the mint - a job superseded while it queued never
-                // mints - and again after it, right before SetAVTransportURI: a step, a release or a
-                // suspension during the mint's seconds leaves nothing sent. A dropped job is null.
-                if (!stillWanted(g)) return@submit null
+                // a job superseded while it queued never mints; one superseded during the mint sends nothing
                 b = body.copy(uri = mintFor(cid), mint = null)
-                if (!stillWanted(g)) return@submit null
+                if (!gate()) return@submit null
             }
-            var result = transport.play(b, startCap, room)
+            var result = transport.play(b, startCap, room, gate) ?: return@submit null
             if (restore != null) {
                 try {
                     transport.volume(restore, target)
@@ -817,7 +823,7 @@ class SonosController(
             result
         }) { r ->
             try {
-                (r.exceptionOrNull() as? StorytelUnavailable)?.let { host.storytelUnavailable(item.key, it.code) }
+                (r.exceptionOrNull() as? StorytelUnavailable)?.let { u -> entryId?.let { host.storytelUnavailable(it, item.key, u.code) } }
                 if (closed) {
                     Unit
                 } else if (g != gen) {
@@ -875,12 +881,13 @@ class SonosController(
     }
 
     /**
-     * A play of the current generation its token dropped after the mint (design 26b §5.1): playing
-     * stopped being allowed meanwhile (a time rule's suspension). Nothing went out - no failed-play path,
-     * no refusal: the item waits for the next play at its place, as a skip that may not play does.
+     * A play of the current generation its token dropped (design 26b §5.1; qa-26b-step4b-code L2): playing
+     * stopped being allowed while it queued or minted (a time rule's suspension). Nothing went out - no
+     * failed-play path, no refusal: the item waits for the next play at its place, as a skip that may
+     * not play does.
      */
     private fun dropped(idx: Int, startS: Double, deliberate: Boolean) {
-        host.log("sonos: a play dropped after its mint - playing isn't allowed now")
+        host.log("sonos: a play dropped before SetAVTransportURI - playing isn't allowed now")
         pending = null
         optTr = null
         index = idx

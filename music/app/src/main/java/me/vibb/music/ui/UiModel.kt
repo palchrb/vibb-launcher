@@ -8,6 +8,7 @@ import me.vibb.music.logic.Kind
 import me.vibb.music.logic.PlayRequest
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.countedOrder
+import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapStart
 import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
@@ -104,6 +105,8 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
     val shown = snap.forRenderer(onRoom)
     val entry = shown.entries.firstOrNull { it.id == entryId } ?: return null
     val all = shown.order(entry)
+    // the phone waits for the bookmark's book (design 26b §5.6, qa-26b-step4b-code M1): the service starts nothing
+    if (itemKey == null && coverTapAwaitsBook(entry, snap.bookmarks[entry.key], all.map { it.key }, shown.listed[entry.id].orEmpty().map { it.key })) return null
     val order = if (onRoom) all.filter { PlayBodies.speakerPlayable(entry, it) } else all
     if (order.isEmpty()) return null
     val keys = order.map { it.key }

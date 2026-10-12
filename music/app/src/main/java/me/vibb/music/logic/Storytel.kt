@@ -128,6 +128,29 @@ fun sonosMintCode(mint: Mint): String? = when (mint) {
     is Mint.NoAudio, is Mint.Failed, is Mint.Unreachable -> mintItemError(mint)
 }
 
+/**
+ * Does the phone wait for [key]'s copy (design 26b §5.6, qa-26b-step4b-code M1)? A Storytel book that
+ * is listed ([listed]) but not in the phone's view ([shown]: no copy) - heard on a room, or not fetched
+ * yet. Where the kid's place is such a book, the phone starts nothing and says "Ikke lastet ned": never
+ * another book (vibb's book 1 from 0 is an accident, §9), and the entry's bookmark stays on it (the
+ * keep set fetches it first, §3.3). False for every other source, an unknown key, or a book that left
+ * the list (then the phone's own rules pick the start).
+ */
+fun bookNotOnPhone(entry: Entry, key: String?, shown: Collection<String>, listed: Collection<String>): Boolean =
+    entry.source == Source.STORYTEL && key != null && key !in shown && key in listed
+
+/** A cover tap on the phone ([coverTapPlan]: resume on, at the bookmark): waits when the bookmark's book isn't on the phone. */
+fun coverTapAwaitsBook(entry: Entry, bookmark: Bookmark?, shown: Collection<String>, listed: Collection<String>): Boolean =
+    entry.resume && bookNotOnPhone(entry, bookmark?.itemKey, shown, listed)
+
+/**
+ * The stored queue on the phone (RESUME, `restoreThen`, a headset's play: [storedPlan]) waits when the
+ * row's current item ([stored] at [rowIndex]) is a book that isn't on the phone - [restoredQueue] would
+ * skip to the next one there.
+ */
+fun storedRowAwaitsBook(entry: Entry, stored: List<String>, rowIndex: Int, shown: Collection<String>, listed: Collection<String>): Boolean =
+    bookNotOnPhone(entry, stored.getOrNull(rowIndex), shown, listed)
+
 /** `DISK_FLOOR`: no Storytel book starts below this much free space (vibb's own floor, Storytel's only). */
 const val STORYTEL_FREE_FLOOR = 1_500_000_000L
 

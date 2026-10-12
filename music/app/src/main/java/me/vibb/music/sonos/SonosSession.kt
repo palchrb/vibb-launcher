@@ -51,7 +51,12 @@ data class PositionInfo(
     val relTime: String?,
     val trackDuration: String?,
     val trackMetaData: String?,
-)
+) {
+    /** A Storytel book's TrackURI (and the DIDL's `res`) is a signed URL: neither is printed (design 26b §0; qa L4). */
+    override fun toString(): String =
+        "PositionInfo(track=$track, trackUri=${trackUri?.let(::redactUri)}, relTime=$relTime, trackDuration=$trackDuration, " +
+            "trackMetaData=${trackMetaData?.length} chars)"
+}
 
 /** What a poll reads from the session's speaker. Each call may throw (a [SonosException]). */
 interface SpeakerIo {

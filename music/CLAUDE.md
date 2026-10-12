@@ -95,11 +95,28 @@ fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: th
   looper); every SOAP sequence runs in the room's one `SonosActor` (a Channel consumed on IO), its results posted back
   to main before the next job runs. Handlers return a completed future at once and express intent through the
   optimistic fields; nothing waits on SOAP on main. A play generation drops a superseded result.
-- **renderer.json** (`RendererChoice`, `noBackupFilesDir`): the room, the entry, the item and the **built** uri,
+- **renderer.json** (`RendererChoice`, `noBackupFilesDir`): the room, the entry, the item and the **built** uri -
+  for a Storytel book its marker `storytel:book:<cid>`, never the signed URL: a uri is written only by
+  `RendererChoice.played`/`followed`/`adopted`, each through `storedUri` (design 26b §5.3, `GuardsTest`) -
   written before a switch's first SOAP; it goes back to the phone only on a definite answer (`roomVerdict`). At start
   `RendererGate` holds every custom command and playback resumption until one look at the stored room has decided
-  (`adoptLive`: vibb's adopt, **zero transport commands**, kept only for our own live PLAYING/PAUSED stream; else the
-  phone, paused). On a room, resumption starts the speaker (gated) and returns no local items.
+  (`adoptLive`: vibb's adopt, **zero transport commands**, kept only for our own live PLAYING/PAUSED stream - matched
+  through `sameStream`, a marker by the live URL's `consumableId` - the session going on with the live TrackURI; else
+  the phone, paused). On a room, resumption starts the speaker (gated) and returns no local items.
+- **Storytel on a room** (design 26b §5): a book is speaker-playable downloaded or not (`speakerDropReason`); its
+  URL is minted **inside the play's actor job** (`StorytelAccount.mint`, 6 s for the asset call, 10 s in all), never
+  for a resume, a seek, the stall retry, adopt or a follow. Every play job carries a token (`!closed && mayPlay()`,
+  for a book also its generation), asked before the job's work, after the mint and right before `SetAVTransportURI`
+  (`transport.play`'s `gate`): a superseded, released or suspended play sends nothing. The minted URL gets the
+  speaker filter's address checks (`mintedDropReason`; a private literal only with the debug switch). A failed mint
+  sends nothing, touches no volume and is 1b's failed play (`no_audio` the book's item error). The actor never
+  cancels a job, so everything behind a mint waits up to 10 s: `HANDOFF_MS` 25 s, `SonosTail.MAX_MS` 26 s,
+  `SWITCH_WAIT_MAX_MS` 35 s. Each service call site reads the renderer's view (`load(remote)`, §5.6): the room's for
+  the look, adopt, phone -> room (a series re-planned over the room's order) and the standalone suspension; the
+  phone's coming home. **On the phone a Storytel place on a book that isn't downloaded starts nothing** - the cover
+  tap, RESUME, `restoreThen`, a headset's play, coming home: "Ikke lastet ned", never another book, the bookmark
+  unmoved (`bookNotOnPhone`). A signed URL is never logged or printed (`redactUri`; the `toString`s of `PlayBody`,
+  `PlayResult`, `Fields`, `Moved`, `PositionInfo`).
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
   button, room -> phone plays on only when the speaker was PLAYING. **Every play path is gated** (`playAllowed`, then
   the controller's `mayPlay` before any SOAP): a start, a resume, a step, a natural advance, OUTPUT to a `sonos:` key

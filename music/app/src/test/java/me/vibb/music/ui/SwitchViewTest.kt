@@ -163,9 +163,19 @@ class SwitchViewTest {
         val sw = playSwitch(bookSnap, 7, "160663", playingA, 1_000)!!
         assertEquals(listOf("160661", "160663"), sw.view.queue.map { it.key })
         assertEquals("Del 3 av 5: the series' reading order (26b §3.5, M5)", 3 to 5, playerNumber(bookSnap, sw.view))
-        // the cover tap: the bookmark's book isn't on the phone, so the phone's queue starts elsewhere
-        val cover = playSwitch(bookSnap, 7, null, playingA, 1_000)!!
-        assertTrue(cover.view.queue.map { it.key }.all { it in setOf("160661", "160663") })
+        // the cover tap: the bookmark's book isn't on the phone - the phone starts nothing ("Ikke lastet ned",
+        // design 26b §5.6, qa-26b-step4b-code M1), so no switch; never book 1 from 0
+        assertNull(playSwitch(bookSnap, 7, null, playingA, 1_000))
+        // with the bookmark on a book that is on the phone, the cover tap switches as before
+        val onPhone = snapshot(
+            library(listOf(a, series)),
+            items(1, listOf("a1", "a2")) + items(7, books, gone = books.toSet()),
+            downloads = listOf(done(7, "160661", url = "storytel:book:160661"), done(7, "160663", url = "storytel:book:160663")),
+            bookmarks = mapOf(series.key to ("160663" to 120_000L)),
+        )
+        assertEquals("160663", playSwitch(onPhone, 7, null, playingA, 1_000)!!.view.item.key)
+        // a pick from the list still plays a book that is on the phone (only the cover tap waits)
+        assertEquals("160661", playSwitch(bookSnap, 7, "160661", playingA, 1_000)!!.view.item.key)
         // once the player is there, its number is the switch's
         val hub = PlayerHub.State(live = true, entryId = 7, keys = listOf("160661", "160663"), index = 1, playing = true)
         val there = nowView(bookSnap, hub, null)!!
