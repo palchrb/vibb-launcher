@@ -343,3 +343,44 @@ Left for the launcher wave:
   a rotation the pinned key is the older one: compare against the signing lineage (`signingCertificateHistory`,
   `hasSigningCertificate`), not only the current signer. With more than one signer the server pins only the first.
 - L9's Gradle side, L12's explicit receipt, and deleting the Tailscale key after the first connect (M12).
+
+## Launcher security wave status (2026-10-11)
+
+Done on branch `launcher-sec` (rebased onto `main` at `c9462785`), one commit per finding, each checked against the
+code of the day first. Server 0.24.0 grows migration 0065 and two small API additions (both sides in the same commit).
+Not run: anything on an emulator or a phone (no KVM here) - the device checks are in `docs/testing/emulator.md` §6g.
+
+Tests after the rebase: launcher `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` (924 tests;
+the release with a throwaway `tsnet.aar` packed from the stub), music `testDebugUnitTest assembleDebug assembleRelease
+lint -PwarningsAsErrors=true` (137 tests), server `cargo test` (546), `cargo fmt --check` clean, `cargo clippy
+--all-targets` the same 12 warnings as `main`. Both apps' `./gradlew build` also ran from an empty Gradle home with
+dependency verification on. The changed pages (Locate, device, calls) were checked headless at 360 px, light and dark.
+
+| ID | Commit | What was done |
+|---|---|---|
+| L13 | `a43cdac5` | The tsnet stub is in the debug source set only; every release variant's `preBuild` depends on `checkReleaseHasTsnet`, which fails without `libs/tsnet.aar` whatever `-PrequireTsnet` says. Debug builds and unit tests keep the stub. |
+| L8 | `1b7cb328` | `bearerInterceptor` adds the device token only to the server's own origin (scheme, host, port), for `createMdmApi` and the music client. |
+| M12 (launcher) | `6c545938` | Once `connect` returns an address the launcher deletes `tailscale_auth_key` and marks the node joined (one commit); later starts come up from tsnet's stored node state with no key (tsnet never reads the key once the node exists). Settings says "On the tailnet - the key was deleted"; DEPLOY.md updated. |
+| M8 | `3bfe1597`, `c467de52` | Confirmed in AOSP 14/15's `DevicePolicyManagerService`: `wipeData(0)` from a device owner on the system user, targeting 34+, means "remove this user" and throws. Now `wipeDevice(0)` (API 34+), FRP kept (flags 0), `<wipe-data />` declared (AOSP 14 without its policy-engine flag needs it). A refused wipe answers the command; the Locate page shows "Failed: wipe failed, the phone keeps its data: ...". |
+| L12 (phone + server) | `ae534585` | The phone confirms each command (`POST /api/devices/command-receipt`) before running it - a wipe too, right before wiping - remembers the ids it ran (runs each once) and keeps unsent receipts/results for the next sync. The server offers a command a confirming phone (capability `command_receipt_v1`) didn't confirm again after 2 minutes, at most 3 deliveries (migration 0065: `received_at`, `deliveries`, `succeeded`); older launchers keep at-most-once. The Locate page reads "Received ...", "the phone is wiping now", "offered again", "Failed ...". A new command stops an unconfirmed one coming again. |
+| L7 | `663bbd83` | Telecom binds one screening service besides the carrier's: the `ROLE_CALL_SCREENING` holder's, else the phone app's (`CallsManager.setUpCallFilterGraph`). The launcher reports `screening_role_held`, asks for the role in Home's daily prompt (after the dialer and redirection roles) and is granted it with adb at provisioning (docs). The server's calls warnings now say whether incoming calls are still filtered without the dialer role, or not at all, and warn when the screening role is missing. |
+| M10 (phone) | `4ce7bd91` | Before a catalog install: `getPackageArchiveInfo(GET_SIGNING_CERTIFICATES)` - the package must be the pin, the pinned certificate must be in the APK's signers or their lineage (`signingCertificateHistory`, so a v3.1 rotation passes; with several signers it must be one of them); an unreadable manifest or signer fails closed; the session gets `setAppPackageName`. A catalog app without both pins isn't downloaded. A refusal reaches the server as the install-failed report and as an `app_downloads` entry with state `refused_package`/`_signer`/`_unreadable`/`_unpinned` until the release changes; the device page says why, styled as failed (status pills now wrap at 360 px). |
+| L9 (Gradle) | `4b85993f` | `distributionSha256Sum` in both wrappers; `gradle/actions/wrapper-validation` (pinned by commit) in the four Gradle jobs before Gradle runs; `gradle/verification-metadata.xml` (SHA-256 of every artifact, generated from an empty Gradle home; CI's x86_64 aapt2 added by hand and checked against Google Maven's `.sha1`; sources/javadoc jars trusted for the IDE; no signature checks). |
+
+Deviations and notes:
+- **M8:** the review expected an `IllegalStateException`; AOSP throws a `SecurityException` ("User 0 is a system user
+  and cannot be removed"). `WIPE_RESET_PROTECTION_DATA` is not set (FRP protects a lost phone, `qa-backup.md` Low 2).
+  Not tested on an emulator - the review's "ferdig når" for M8 waits for that (§6g item 1).
+- **M10:** fail closed also means a catalog app the server can't pin - a v1-only APK, or one whose manifest it can't
+  read - is no longer installed by the launcher. `hasSigningCertificate` works only for installed packages; for the
+  APK file the same lineage comes from its `SigningInfo`. The launcher's own update keeps its stronger check against
+  its own installed signers.
+- **L12:** "match it on both sides" grew into re-delivery: a receipt alone would only have improved the page.
+  Re-delivery needs the capability, so a launcher from before this wave is never sent a command twice.
+- **L9:** dependency verification is checksum-only (`verify-signatures` false): many Android artifacts aren't signed
+  with keys that can be pinned without a key-server round trip in CI. A dependency bump now needs
+  `--write-verification-metadata` (root `CLAUDE.md`); an AGP bump also needs the aapt2 entry by hand.
+- **L7:** like `ROLE_CALL_REDIRECTION`, the screening role has no device-owner API: provisioning must grant it with adb
+  (or the parent accepts Home's prompt).
+- **L13:** a local release build now needs a `libs/tsnet.aar`; without Go, a throwaway aar packed from the stub's
+  classes works (never for a phone).
