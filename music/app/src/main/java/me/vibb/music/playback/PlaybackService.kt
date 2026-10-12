@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -101,9 +102,11 @@ import me.vibb.music.sonos.SonosSuspension
 import me.vibb.music.sonos.SonosTail
 import me.vibb.music.sonos.adoptIndex
 import me.vibb.music.sonos.adoptPlan
+import me.vibb.music.sonos.Room
+import me.vibb.music.sonos.SpeakerCache
 import me.vibb.music.sonos.allowedRooms
+import me.vibb.music.sonos.groupAllowed
 import me.vibb.music.sonos.mustLeaveRoom
-import me.vibb.music.sonos.roomAllowed
 import me.vibb.music.sonos.ourLiveSession
 import me.vibb.music.sonos.roomVerdict
 import me.vibb.music.sync.ItemErrors
@@ -225,23 +228,49 @@ class PlaybackService : MediaSessionService() {
         val choice = home.choice()
         scope.launch {
             try {
+                // the scope before anything shows a room or adopts one (qa-26a-step3c-code L7)
+                roomScope = allowedRoomsNow()
+                publish()
                 if (startupLook(choice)) adopt(choice)
             } finally {
                 rendererReady.settle()
             }
         }
-        scope.launch { home.rooms.state.collect { publish() } }
+        // Design 26a §5.5, qa-26a-step3c-code M1: the household's groups changed (the sheet's
+        // refresh, a scan, the scope's watch below) - the sheet again, and a session on a room whose
+        // group now holds a forbidden room leaves it.
+        scope.launch {
+            home.rooms.state.collect {
+                publish()
+                if (renderer is SonosRenderer) leaveIfNotAllowed()
+            }
+        }
         // Design 26a §5.5: a new room scope (the sync applied a library) narrows the sheet, and a
         // session on a room it dropped is stopped - bookmark first - and comes home paused.
         scope.launch {
             store.libraries().map { it?.sonosRooms }.distinctUntilChanged().flowOn(Dispatchers.IO).collect { rooms ->
                 roomScope = rooms
                 publish()
-                rendererReady.await()
-                switching.withLock { leaveDisallowedRoom() }
+                leaveIfNotAllowed()
+            }
+        }
+        // M1: while a session plays on a room under a limited scope, the household's groups are read
+        // every [SCOPE_WATCH_MS] (one GetZoneGroupState, never a discovery round), so a forbidden room
+        // an adult groups into ours is noticed. Every room allowed (the default): nothing is read.
+        scope.launch {
+            while (true) {
+                delay(SCOPE_WATCH_MS)
+                val sonos = renderer as? SonosRenderer ?: continue
+                if (roomScope != null && sonos.showsPlaying) withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }
             }
         }
         publish()
+    }
+
+    /** [leaveDisallowedRoom] once the renderer is settled, under the switch lock. */
+    private suspend fun leaveIfNotAllowed() {
+        rendererReady.await()
+        switching.withLock { leaveDisallowedRoom() }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -1137,7 +1166,9 @@ class PlaybackService : MediaSessionService() {
         return SonosRenderer(
             this, home, store, scope, writer, { active }, uid, name,
             onArmedPlaying = { locks.hold(owner, it) },
-            roomAllowed = { roomAllowed(roomScope, it) },
+            roomAllowed = { groupAllowed(roomScope, home.rooms.state.value.rooms, it) },
+            // M1: the session followed its stream to another coordinator - is that room allowed?
+            onFollowed = { scope.launch { leaveIfNotAllowed() } },
         )
     }
 
@@ -1203,17 +1234,21 @@ class PlaybackService : MediaSessionService() {
     /** The parent's room scope now, from the library (design 26a §5.5; null = every room). */
     private suspend fun allowedRoomsNow(): List<String>? = withContext(Dispatchers.IO) { store.library() }?.sonosRooms
 
+    /** The household's rows as the speaker cache has them now (the groups: who sounds with whom). */
+    private suspend fun roomsNow(): List<Room> = withContext(Dispatchers.IO) { SpeakerCache.rooms(home.cache.load()) }
+
     /**
-     * Design 26a §5.5: a session on a room the parent's scope doesn't allow (the sync applied a
-     * library that dropped it, or adopt found our stream there) leaves it - the hand-off (the live
-     * classify, the bookmark at that second, the ours-gated Stop) - and the phone takes the queue,
-     * paused, as when a start fails. Nothing starts. Called under the switch lock.
+     * Design 26a §5.5: a session on a room the parent's scope doesn't allow as the household is
+     * grouped now (the sync applied a library that dropped it, adopt found our stream there, a
+     * forbidden room was grouped into ours, the stream migrated to a forbidden coordinator) leaves it -
+     * the hand-off (the live classify, the bookmark at that second, the ours-gated Stop) - and the phone
+     * takes the queue, paused, as when a start fails. Nothing starts. Called under the switch lock.
      */
     private suspend fun leaveDisallowedRoom() {
         val sonos = renderer as? SonosRenderer ?: return
-        if (!mustLeaveRoom(sonos.uid, allowedRoomsNow())) return
-        SonosHome.log("sonos: ${sonos.uid} isn't allowed on this phone any more - bookmark, stop, the phone (paused)")
-        PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+        if (!mustLeaveRoom(sonos.uid, roomsNow(), allowedRoomsNow())) return
+        SonosHome.log("sonos: ${sonos.uid} isn't allowed on this phone (now) - bookmark, stop, the phone (paused)")
+        PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)
         handOff(sonos)
         comeHome(sonos, play = false)
     }
@@ -1280,9 +1315,9 @@ class PlaybackService : MediaSessionService() {
      */
     private suspend fun toRoom(uid: String) {
         // The parent's room scope (design 26a §5.5): a room outside it is refused before anything moves.
-        if (!roomAllowed(allowedRoomsNow(), uid)) {
-            SonosHome.log("sonos: $uid isn't allowed on this phone - refused")
-            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+        if (!groupAllowed(allowedRoomsNow(), roomsNow(), uid)) {
+            SonosHome.log("sonos: $uid (or a room grouped with it) isn't allowed on this phone - refused")
+            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)
             publish()
             return
         }
@@ -1413,5 +1448,8 @@ class PlaybackService : MediaSessionService() {
 
         /** A recorded room is looked at again before a play at most this often (the cabin case: no speaker answers). */
         const val ROOM_LOOK_MS = 15_000L
+
+        /** How often the household's groups are read while a session plays under a limited room scope (§5.5, M1). */
+        const val SCOPE_WATCH_MS = 60_000L
     }
 }

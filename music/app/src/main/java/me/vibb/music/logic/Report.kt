@@ -28,8 +28,10 @@ data class ReportedRoom(val uid: String, val name: String)
 
 /**
  * `music_state.sonos_rooms` from the speaker cache's players (uid -> name): Sonos-shaped uids only,
- * names as the server keeps them (whitespace collapsed, control characters out, at most
- * [SONOS_ROOM_NAME_MAX] characters), by name, at most [SONOS_ROOMS_MAX]. Never an ip.
+ * names exactly as the server's `cut_title` keeps them - split on Unicode White_Space and joined
+ * with one space, then control characters (Cc) out, then cut to [SONOS_ROOM_NAME_MAX] characters, in
+ * that order (qa-26a-step3c-code L6: so the stored report equals the sent one) - by name, at most
+ * [SONOS_ROOMS_MAX]. Never an ip.
  */
 fun reportedRooms(players: Map<String, String?>): List<ReportedRoom> =
     players.filterKeys { SONOS_UID.matches(it) }
@@ -38,7 +40,8 @@ fun reportedRooms(players: Map<String, String?>): List<ReportedRoom> =
         .take(SONOS_ROOMS_MAX)
 
 private fun roomName(name: String?): String {
-    val clean = name.orEmpty().trim().split(SPACES).joinToString(" ").filterNot { Character.isISOControl(it) }
+    // Rust's split_whitespace (White_Space, not Java's isWhitespace, which also takes U+001C-U+001F), then is_control
+    val clean = name.orEmpty().split(SPACES).filter { it.isNotEmpty() }.joinToString(" ").filterNot { Character.isISOControl(it) }
     val points = clean.codePoints().limit(SONOS_ROOM_NAME_MAX.toLong()).toArray()
     return String(points, 0, points.size)
 }

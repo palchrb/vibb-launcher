@@ -52,8 +52,12 @@ data class SpeakerDoc(
     @SerialName("topology_at") val topologyAt: Double? = null,
 )
 
-/** One picker row (`_sonos_choices`): [uid] is what a tap targets (a group's coordinator). */
-data class Room(val label: String, val uid: String, val names: List<String>)
+/**
+ * One picker row (`_sonos_choices`): [uid] is what a tap targets (a group's coordinator); [members]
+ * are the uids that sound when it plays, coordinator first ([uid] alone for a solo room) - the
+ * parent's room scope allows a row only when it allows every one of them (design 26a §5.5).
+ */
+data class Room(val label: String, val uid: String, val names: List<String>, val members: List<String> = listOf(uid))
 
 /** What the "Spill av på" sheet shows: [stale] = nobody answered, [scanning] = an SSDP round runs. */
 data class RoomsView(val rooms: List<Room>, val stale: Boolean, val scanning: Boolean)
@@ -120,7 +124,7 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
             for (g in doc.groups.filter { it.members.size > 1 }) {
                 val members = g.members.filter { it in names }
                 if (members.size < 2 || g.coordinator !in names) continue
-                rows.add(Room(members.joinToString(" + ") { names.getValue(it) }, g.coordinator, members.map { names.getValue(it) }))
+                rows.add(Room(members.joinToString(" + ") { names.getValue(it) }, g.coordinator, members.map { names.getValue(it) }, members))
                 absorbed.addAll(members)
             }
             for ((uid, _) in players) if (uid !in absorbed) rows.add(Room(names.getValue(uid), uid, listOf(names.getValue(uid))))
@@ -156,6 +160,20 @@ class RoomDirectory(
     val state: StateFlow<RoomsView> = views.asStateFlow()
 
     val scanning: Boolean get() = roundRunning.get()
+
+    /**
+     * One topology refresh and the rows published - never a discovery round, nothing published when
+     * nobody answers. The parent's room scope watches the household's groups with it while a
+     * session plays on a room (design 26a §5.5, qa-26a-step3c-code M1). True when a speaker answered.
+     */
+    fun refreshQuietly(): Boolean = try {
+        refreshTopology()
+        view()
+        true
+    } catch (e: IOException) {
+        log("rooms: the scope's look at the groups got no answer (${e.javaClass.simpleName})")
+        false
+    }
 
     /** The cache as it is (a plain read), published. */
     fun view(stale: Boolean = false): RoomsView =

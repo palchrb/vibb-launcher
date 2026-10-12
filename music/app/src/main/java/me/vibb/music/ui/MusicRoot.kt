@@ -136,6 +136,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     PlayerHub.Message.CANT_PLAY -> R.string.cant_play
                     PlayerHub.Message.NOT_DOWNLOADED -> R.string.not_downloaded
                     PlayerHub.Message.CANT_PLAY_ON_SONOS -> R.string.cant_play_on_sonos
+                    PlayerHub.Message.ROOM_NOT_ALLOWED -> R.string.room_not_allowed
                 }
                 Line(stringResource(text), 14, 800, Palette.fg, maxLines = 2, center = true)
             }

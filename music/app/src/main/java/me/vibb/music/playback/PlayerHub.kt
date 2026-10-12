@@ -93,9 +93,11 @@ object PlayerHub {
 
     /**
      * NOT_DOWNLOADED: not on the phone and no network to stream it; CANT_PLAY: it failed anyway;
-     * CANT_PLAY_ON_SONOS: nothing of it a speaker can play, or the speaker refused (design 26a §4.2).
+     * CANT_PLAY_ON_SONOS: nothing of it a speaker can play, or the speaker refused (design 26a §4.2);
+     * ROOM_NOT_ALLOWED: the parent's room scope doesn't (any longer) allow the room or a room grouped
+     * with it - the session came home, or the pick was refused (§5.5).
      */
-    enum class Message { NOT_DOWNLOADED, CANT_PLAY, CANT_PLAY_ON_SONOS }
+    enum class Message { NOT_DOWNLOADED, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED }
 
     internal val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState

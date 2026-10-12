@@ -25,6 +25,7 @@
     <string name="cant_play">Can\'t play right now</string>
     <string name="not_downloaded">Not downloaded - needs Wi-Fi</string>
     <string name="cant_play_on_sonos">Can\'t play on Sonos</string>
+    <string name="room_not_allowed">This room is no longer allowed</string>
 
     <!-- Player -->
     <string name="play">Play</string>

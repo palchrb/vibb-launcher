@@ -121,6 +121,8 @@ class ReportTest {
         // cut by characters, never inside one (a supplementary character counts once, as on the server)
         val emoji = reportedRooms(mapOf("RINCON_000E58A0B1C201400" to "\uD83D\uDD0A".repeat(45))).single().name
         assertEquals(SONOS_ROOM_NAME_MAX, emoji.codePointCount(0, emoji.length))
+        // the server's cleaning, in its order (qa-26a-step3c-code L6; music_state_keeps_sonos_rooms_checked)
+        assertEquals(" Stua  x", reportedRooms(mapOf("RINCON_000E58A0B1C201400" to "\u001C Stua \u0007 x\u2003")).single().name)
         val many = reportedRooms((0 until 50).associate { "RINCON_000E58A0B1C2%02d400".format(it) to "Rom %02d".format(it) })
         assertEquals(SONOS_ROOMS_MAX, many.size)
         assertEquals("Rom 00", many.first().name)

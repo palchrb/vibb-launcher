@@ -143,7 +143,7 @@ class TopologyTest {
             groups = listOf(CachedGroup("RINCON_B", listOf("RINCON_B", "RINCON_A")), CachedGroup("RINCON_C", listOf("RINCON_C"))),
         )
         val rows = SpeakerCache.rooms(doc)
-        assertEquals(Room("Kjøkken + Stua", "RINCON_B", listOf("Kjøkken", "Stua")), rows[0])
+        assertEquals(Room("Kjøkken + Stua", "RINCON_B", listOf("Kjøkken", "Stua"), listOf("RINCON_B", "RINCON_A")), rows[0])
         assertTrue("solo zones unchanged", Room("Bad", "RINCON_C", listOf("Bad")) in rows)
         assertEquals("absorbed members don't repeat as solo rows", 2, rows.size)
     }
@@ -165,7 +165,7 @@ class TopologyTest {
         val c = cache()
         val doc = c.applyTopology(Topology.parse(zoneGroupState("zgs_bare.xml"))!!)
         assertEquals(
-            listOf(Room("Stua + Kjøkken + Bad", "RINCON_STUA01400", listOf("Stua", "Kjøkken", "Bad")), Room("Barnerom", "RINCON_BARNEROM01400", listOf("Barnerom"))),
+            listOf(Room("Stua + Kjøkken + Bad", "RINCON_STUA01400", listOf("Stua", "Kjøkken", "Bad"), listOf("RINCON_STUA01400", "RINCON_KJOKKEN01400", "RINCON_BAD01400")), Room("Barnerom", "RINCON_BARNEROM01400", listOf("Barnerom"))),
             SpeakerCache.rooms(doc),
         )
     }

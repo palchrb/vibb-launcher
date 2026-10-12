@@ -23,6 +23,7 @@
     <string name="cant_play">Kan ikke spilles nå</string>
     <string name="not_downloaded">Ikke lastet ned - trenger Wi-Fi</string>
     <string name="cant_play_on_sonos">Kan ikke spilles på Sonos</string>
+    <string name="room_not_allowed">Rommet er ikke lenger tillatt</string>
 
     <!-- Avspilling -->
     <string name="play">Spill</string>

@@ -62,8 +62,10 @@ internal class SonosRenderer(
     name: String?,
     /** Hold the wake lock and the Wi-Fi lock while true ([SonosController.armedPlaying], design 26a §6.3). */
     private val onArmedPlaying: (Boolean) -> Unit = {},
-    /** The parent's room scope (design 26a §5.5): may a play go to this room's uid? */
+    /** The parent's room scope (design 26a §5.5): may a play go to this room's uid (and its group)? */
     private val roomAllowed: (String) -> Boolean = { true },
+    /** The session followed its stream to another coordinator (§4.8): the scope looks again (qa-26a-step3c-code M1). */
+    private val onFollowed: () -> Unit = {},
 ) : Renderer {
     private val handler = Handler(Looper.getMainLooper())
     private val actorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -92,7 +94,10 @@ internal class SonosRenderer(
             writeChoice { it.copy(entryId = entryId, itemKey = itemKey, uri = uri) }
         }
 
-        override fun followed(uid: String, name: String?) = writeChoice { it.copy(uid = uid, name = name) }
+        override fun followed(uid: String, name: String?) {
+            writeChoice { it.copy(uid = uid, name = name) }
+            onFollowed()
+        }
 
         override fun ramp(volume: Int?) = writeChoice { it.copy(volume = volume, volumeUid = volume?.let { _ -> controller.uid }) }
 

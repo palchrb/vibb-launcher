@@ -69,7 +69,10 @@ class GuardsTest {
         assertTrue("settled in onCreate", onCreate.contains("rendererReady.settle()"))
         assertEquals("and nowhere else", 1, Regex("""rendererReady\.settle\(""").findAll(service).count())
         // step 3b: at once on the phone, after the look at a room - and always (finally); RendererGateTest
-        assertTrue(onCreate.contains("try {\n                if (startupLook(choice)) adopt(choice)\n            } finally {\n                rendererReady.settle()"))
+        assertTrue(onCreate.contains("if (startupLook(choice)) adopt(choice)\n            } finally {\n                rendererReady.settle()"))
+        // the room scope read first (qa-26a-step3c-code L7), inside the try: the gate settles whatever happens
+        val startup = onCreate.substringAfter("scope.launch {\n            try {").substringBefore("} finally {")
+        assertTrue(startup.contains("roomScope = allowedRoomsNow()") && startup.contains("if (startupLook(choice)) adopt(choice)"))
         assertFalse("no reset of renderer.json at start any more", onCreate.contains("RendererChoice.local"))
     }
 
@@ -197,7 +200,7 @@ class GuardsTest {
         assertTrue(service.contains("attach(sonosRenderer(uid, name))"))
         assertTrue(service.contains("attach(sonos)\n        active = a"))
         assertEquals("every room's renderer holds the locks", 1, Regex("""SonosRenderer\(""").findAll(service).count())
-        assertTrue(service.contains("onArmedPlaying = { locks.hold(owner, it) },\n            roomAllowed = { roomAllowed(roomScope, it) },"))
+        assertTrue(service.contains("onArmedPlaying = { locks.hold(owner, it) },\n            roomAllowed = { groupAllowed(roomScope, home.rooms.state.value.rooms, it) },"))
         assertTrue(service.substringAfter("private suspend fun comeHome(").substringBefore("sonos.release()\n        active = null").contains("if (renderer !== sonos) return\n        attach(local)"))
         // a headset arriving or leaving touches the output choice only, never the renderer (sonos_renderer.py 5)
         val devices = service.substringAfter("private val deviceCallback").substringBefore("private val saveTick")
@@ -259,34 +262,51 @@ class GuardsTest {
     }
 
     @Test
-    fun `the parent's room scope - the sheet, the switch refused, a dropped room left at the sync and after adopt`() {
-        // design 26a §5.5: the sheet lists only allowed rooms (a group by its coordinator, RoomScopeTest)
+    fun `the parent's room scope - the sheet, the switch refused, a dropped room left at the sync, after adopt, on a regroup and a follow`() {
+        // design 26a §5.5: the sheet lists only allowed rooms (a group only with every member allowed, RoomScopeTest)
         val publish = service.substringAfter("private fun publish() {").substringBefore("\n    }\n")
         assertTrue(publish.contains("rooms = allowedRooms(home.rooms.state.value, roomScope),"))
-        assertEquals("the sheet's rows come from publish only", 1, Regex("""home\.rooms\.state\.value""").findAll(service).count())
-        // OUTPUT to a room outside the scope: refused with the message before anything moves
+        assertEquals("the sheet's rows in publish, the belt's groups", 2, Regex("""home\.rooms\.state\.value""").findAll(service).count())
+        // OUTPUT to a room outside the scope (or grouped with one): refused with its own line before anything moves
         val toRoom = service.substringAfter("private suspend fun toRoom(uid: String) {").substringBefore("\n    }\n")
         val refusal = toRoom.substringBefore("val old = renderer")
-        assertTrue(refusal.contains("if (!roomAllowed(allowedRoomsNow(), uid)) {"))
-        assertTrue(refusal.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)"))
+        assertTrue(refusal.contains("if (!groupAllowed(allowedRoomsNow(), roomsNow(), uid)) {"))
+        assertTrue(refusal.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)"))
         assertTrue(refusal.contains("return"))
         for (move in listOf("handOff(", "saveNow(", "home.write(", "attach(", "start(", ".play()")) assertFalse(move, refusal.contains(move))
-        // a session on a dropped room: the bookmark and the ours-gated Stop (the hand-off) before the phone, paused
+        // a session on a room not allowed as grouped now: the bookmark and the ours-gated Stop (the hand-off) before the phone, paused
         val leave = service.substringAfter("private suspend fun leaveDisallowedRoom() {").substringBefore("\n    }\n")
-        assertTrue(leave.contains("if (!mustLeaveRoom(sonos.uid, allowedRoomsNow())) return"))
+        assertTrue(leave.contains("if (!mustLeaveRoom(sonos.uid, roomsNow(), allowedRoomsNow())) return"))
+        assertTrue(leave.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)"))
+        assertFalse("its own line (qa-26a-step3c-code L1)", leave.contains("CANT_PLAY_ON_SONOS"))
         assertTrue(leave.indexOf("handOff(sonos)") in 0 until leave.indexOf("comeHome(sonos, play = false)"))
-        // ... at the next sync (the library's scope changed), under the switch lock once the renderer is settled
+        val gate = service.substringAfter("private suspend fun leaveIfNotAllowed() {").substringBefore("\n    }\n")
+        assertTrue(gate.contains("rendererReady.await()\n        switching.withLock { leaveDisallowedRoom() }"))
+        // ... at the next sync, when the groups change (M1), and after a follow (M1)
         val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
         val sync = onCreate.substringAfter("store.libraries().map { it?.sonosRooms }.distinctUntilChanged()")
-        assertTrue(sync.contains("roomScope = rooms\n                publish()\n                rendererReady.await()\n                switching.withLock { leaveDisallowedRoom() }"))
+        assertTrue(sync.contains("roomScope = rooms\n                publish()\n                leaveIfNotAllowed()"))
+        assertTrue(onCreate.contains("home.rooms.state.collect {\n                publish()\n                if (renderer is SonosRenderer) leaveIfNotAllowed()"))
+        assertTrue(service.contains("onFollowed = { scope.launch { leaveIfNotAllowed() } },"))
+        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        assertTrue(renderer.contains("writeChoice { it.copy(uid = uid, name = name) }\n            onFollowed()"))
+        // the groups are watched only under a limited scope while a room plays, and never with a discovery round
+        val watch = onCreate.substringAfter("delay(SCOPE_WATCH_MS)").substringBefore("\n        publish()")
+        assertTrue(watch.contains("if (roomScope != null && sonos.showsPlaying) withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }"))
+        val quietly = code("src/main/java/me/vibb/music/sonos/SpeakerCache.kt").substringAfter("fun refreshQuietly(): Boolean = try {").substringBefore("\n    }\n")
+        assertFalse(quietly.contains("rescanInBackground") || quietly.contains("round("))
+        // the scope is read before the startup look and the first rows (L7)
+        val startup = onCreate.substringAfter("scope.launch {\n            try {").substringBefore("} finally {")
+        assertTrue(startup.indexOf("roomScope = allowedRoomsNow()") in 0 until startup.indexOf("adopt(choice)"))
         // ... and after an adopt of our stream on such a room (the look holds the switch lock)
         val look = service.substringAfter("private suspend fun lookAtRoom(choice: RendererChoice) {").substringBefore("\n    }\n")
         assertTrue(look.trimEnd().endsWith("leaveDisallowedRoom()"))
         assertTrue(look.indexOf("sonos.adopt(") in 0 until look.indexOf("leaveDisallowedRoom()"))
-        assertEquals("defined once; the sync and the look", 3, Regex("""\bleaveDisallowedRoom\(""").findAll(service).count())
+        assertEquals("defined once; the gate and the look", 3, Regex("""\bleaveDisallowedRoom\(""").findAll(service).count())
         // the belt: every play the room's controller sends asks the scope too
-        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
         assertTrue(renderer.contains("&& roomAllowed(this@SonosRenderer.uid) },"))
+        // the kid's line, both languages
+        assertTrue(code("src/main/java/me/vibb/music/ui/MusicRoot.kt").contains("PlayerHub.Message.ROOM_NOT_ALLOWED -> R.string.room_not_allowed"))
     }
 
     @Test
