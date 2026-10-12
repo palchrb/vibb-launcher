@@ -429,14 +429,14 @@ pub(crate) async fn call_report(
                 .to_string()
         });
     } else if screening == Some(false) {
-        // A hint, not a problem (the user's emulator, 2026-10-12): the phone app's own screening and
-        // in-call service filter incoming calls; the role only backs them up.
+        // A hint, not an error (the user's emulator, 2026-10-12), and nothing it can't know (QA of
+        // cmd-expiry, Medium 3): the phone can't read who else holds the role (RoleManager
+        // .getRoleHolders is a system API), and another holder screens instead of the launcher.
         report.hints.push(
-            "Incoming calls are filtered: the launcher is the phone app. The call-screening role \
-             is an extra safeguard - it keeps filtering if the launcher ever lost the phone-app \
-             role. To add it: accept the prompt on the phone's home screen (at most once a day), \
-             or run `adb shell cmd role add-role-holder android.app.role.CALL_SCREENING <launcher \
-             package>`."
+            "The launcher is the phone app and hangs up calls that aren't allowed. Another app \
+             could screen incoming calls first unless the launcher holds the call-screening role: \
+             grant it with `adb shell cmd role add-role-holder android.app.role.CALL_SCREENING \
+             <launcher package>`."
                 .to_string(),
         );
     }
@@ -444,8 +444,7 @@ pub(crate) async fn call_report(
         warnings.push(
             "Call-redirection role not active: calls to numbers that aren't allowed are only hung \
              up after they start, so the other phone may ring briefly. Run `adb shell cmd role \
-             add-role-holder android.app.role.CALL_REDIRECTION <launcher package>` or accept the \
-             prompt on the phone."
+             add-role-holder android.app.role.CALL_REDIRECTION <launcher package>`."
                 .to_string(),
         );
     }

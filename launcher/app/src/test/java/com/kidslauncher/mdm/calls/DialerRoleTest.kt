@@ -78,35 +78,15 @@ class DialerRoleTest {
             rolePromptFor(state, dialer, error, redirection, screening)
         assertEquals(null, prompt())
         assertEquals(ROLE_DIALER, prompt(dialer = false, error = true, redirection = false, screening = false))
-        assertEquals("no error yet: the device-owner call may still take it", ROLE_CALL_SCREENING, prompt(dialer = false, screening = false))
-        assertEquals(ROLE_CALL_REDIRECTION, prompt(redirection = false, screening = false))
-        assertEquals(ROLE_CALL_SCREENING, prompt(screening = false))
-        assertEquals(ROLE_CALL_SCREENING, prompt(state = failClosed, screening = false))
+        assertEquals("not the phone app: screening filters incoming calls", ROLE_CALL_SCREENING, prompt(dialer = false, screening = false))
+        assertEquals(ROLE_CALL_SCREENING, prompt(state = failClosed, dialer = false, screening = false))
+        // QA of cmd-expiry, Medium 2: with our dialer role the default-apps lock is on and Android
+        // refuses exclusive-role prompts under it - nothing is prompted, adb grants them.
+        assertEquals(null, prompt(redirection = false, screening = false))
+        assertEquals(null, prompt(screening = false))
         assertEquals("unmanaged: nothing", null, prompt(state = unmanaged, dialer = false, error = true, screening = false))
         assertEquals("android.app.role.CALL_SCREENING", ROLE_CALL_SCREENING)
         assertEquals("android.app.role.CALL_REDIRECTION", ROLE_CALL_REDIRECTION)
         assertEquals("android.app.role.DIALER", ROLE_DIALER)
-    }
-
-    /** The user's emulator (2026-10-12): the screening prompt never appeared. Android 14+ refuses an
-     * exclusive role's request while DISALLOW_CONFIG_DEFAULT_APPS is set - which it is as soon as our
-     * dialer role is held - so Home lifts it for that prompt and puts it back. */
-    @Test
-    fun `the redirection and screening prompts lift the default-apps lock`() {
-        assertTrue(promptNeedsDefaultAppsLift(ROLE_CALL_SCREENING, defaultAppsLocked = true))
-        assertTrue(promptNeedsDefaultAppsLift(ROLE_CALL_REDIRECTION, defaultAppsLocked = true))
-        assertFalse("not locked: nothing to lift", promptNeedsDefaultAppsLift(ROLE_CALL_SCREENING, defaultAppsLocked = false))
-        assertFalse("the dialer prompt only comes without our dialer role, so unlocked", promptNeedsDefaultAppsLift(ROLE_DIALER, defaultAppsLocked = true))
-        assertTrue("the lock is on exactly when the screening prompt can come", lockDefaultApps(managed, dialerRoleHeld = true))
-
-        val src = listOf("src", "app/src").map { java.io.File(it) }.first { java.io.File(it, "main/java").isDirectory }
-        val home = java.io.File(src, "main/java/com/kidslauncher/mdm/ui/HomeActivity.kt").readText()
-        val prompt = home.substringAfter("private fun promptForCallRoleIfNeeded()").substringBefore("/** Whether [promptForCallRoleIfNeeded] lifted")
-        val lift = prompt.indexOf("AppEnforcer.setDefaultAppsLocked(this, false)")
-        val launch = prompt.indexOf("rolePrompt.launch(")
-        assertTrue("lifted before the prompt", lift in 0 until launch)
-        val done = home.substringAfter("private fun onRolePromptDone()").substringBefore("\n    }\n")
-        assertTrue("put back when it returns", "AppEnforcer.apply(app, currentPolicyDecision().policy)" in done)
-        assertTrue("registerForActivityResult(ActivityResultContracts.StartActivityForResult())" in home)
     }
 }

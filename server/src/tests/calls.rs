@@ -693,7 +693,7 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
     set_managed(&app, id, true, true).await;
     let not_filtered = "incoming calls are not filtered - anyone can call this phone";
     let still_filtered = "Incoming calls are still filtered";
-    let hint = "Incoming calls are filtered: the launcher is the phone app. The call-screening role is an extra safeguard";
+    let hint = "The launcher is the phone app and hangs up calls that aren&#39;t allowed. Another app could screen incoming calls first";
     for (dialer, screening, errors, hints, absent) in [
         (
             false,
