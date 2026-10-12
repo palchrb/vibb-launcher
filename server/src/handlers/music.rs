@@ -2633,6 +2633,8 @@ pub struct SonosRoomRow {
 pub struct SonosRoomsCard {
     pub all: bool,
     pub rows: Vec<SonosRoomRow>,
+    /// One-shot message after a refused save (`?music_notice=sonos_...`).
+    pub notice: Option<&'static str>,
 }
 
 impl SonosRoomsCard {
@@ -2665,6 +2667,7 @@ impl SonosRoomsCard {
         SonosRoomsCard {
             all: scope.is_none(),
             rows,
+            notice: None,
         }
     }
 
@@ -2700,6 +2703,8 @@ pub fn notice_text(code: &str) -> Option<&'static str> {
             "Not ticked: with that entry this phone's music library would be bigger than 3 MB. \
              Untick another entry first."
         }
+        "sonos_too_many" => "Not saved: at most 32 speakers can be ticked. Untick one first.",
+        "sonos_unknown" => "Not saved: that isn't a Sonos speaker.",
         _ => return None,
     })
 }
@@ -2711,6 +2716,11 @@ pub(crate) async fn device_card(
     notice: Option<&str>,
     notice_entry: Option<i64>,
 ) -> Result<MusicCard, sqlx::Error> {
+    // A refused Sonos save goes by the Sonos rooms (qa-26a-step3c-code L4).
+    let (sonos_notice, notice) = match notice {
+        Some(code) if code.starts_with("sonos_") => (notice_text(code), None),
+        other => (None, other),
+    };
     let notice = notice.and_then(notice_text);
     // A notice about one entry goes by its row; otherwise at the card's top.
     let (row_notice, notice) = match notice_entry {
@@ -2806,13 +2816,14 @@ pub(crate) async fn device_card(
             .fetch_optional(&state.db)
             .await?
             .flatten();
-    let sonos = SonosRoomsCard::build(
+    let mut sonos = SonosRoomsCard::build(
         device_id,
         stored_rooms.as_deref(),
         state_report
             .as_ref()
             .map_or(&[][..], |report| &report.sonos_rooms),
     );
+    sonos.notice = sonos_notice;
     match &state_report {
         Some(report) => {
             if let Some(package) = &report.package {
@@ -3061,14 +3072,14 @@ pub async fn save_device_sonos_rooms(
             continue;
         }
         if !music::is_sonos_uid(value) {
-            return (StatusCode::BAD_REQUEST, "Unknown speaker").into_response();
+            return refused_rooms(id, "sonos_unknown");
         }
         if !rooms.contains(value) {
             rooms.push(value.clone());
         }
     }
     if rooms.len() > music::MAX_SONOS_ROOMS {
-        return (StatusCode::BAD_REQUEST, "Too many speakers").into_response();
+        return refused_rooms(id, "sonos_too_many");
     }
     let stored = (!all).then(|| serde_json::to_string(&rooms).expect("a list of strings"));
     let saved: Result<Option<Option<String>>, sqlx::Error> = async {
@@ -3117,8 +3128,24 @@ pub async fn save_device_sonos_rooms(
     } else {
         format!("device {id}: only {}", names.join(", "))
     };
-    log_event(&state, &admin, "music_sonos_rooms_changed", &detail).await;
+    // Up to 32 names the phone sent: the row keeps a short detail (qa-26a-step3c-code L5).
+    log_event(
+        &state,
+        &admin,
+        "music_sonos_rooms_changed",
+        crate::audit::clip(&detail, MAX_ROOMS_EVENT_CHARS),
+    )
+    .await;
     Redirect::to(&format!("/devices/{id}#music-sonos")).into_response()
+}
+
+/// The security event's detail is cut to this many characters.
+const MAX_ROOMS_EVENT_CHARS: usize = 300;
+
+/// A refused Sonos save: back to the rooms with the reason by them, nothing stored (qa-26a-step3c-code
+/// L4; the form is a row of auto-saving ticks, so the page as it was is the values as entered).
+fn refused_rooms(id: i64, code: &str) -> Response {
+    Redirect::to(&format!("/devices/{id}?music_notice={code}#music-sonos")).into_response()
 }
 
 #[cfg(test)]

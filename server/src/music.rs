@@ -1770,6 +1770,12 @@ mod tests {
             ]
         );
         assert_eq!(kitchen.chars().count(), MAX_SONOS_ROOM_NAME_CHARS);
+        // The music app cleans names the same way, in the same order (ReportTest, qa-26a-step3c-code L6).
+        let odd = serde_json::json!({"sonos_rooms": [
+            {"uid": "RINCON_000E58A0B1C201400", "name": "\u{1C} Stua \u{7} x\u{2003}"}
+        ]});
+        let state = parse_music_state(sanitize_music_state(&odd).as_deref()).unwrap();
+        assert_eq!(state.sonos_rooms[0].name, " Stua  x");
         let many = serde_json::json!({"sonos_rooms": (0..50).map(|i| serde_json::json!(
             {"uid": format!("RINCON_000E58A0B1C2{i:02}400"), "name": format!("Rom {i}")})).collect::<Vec<_>>()});
         let state = parse_music_state(sanitize_music_state(&many).as_deref()).unwrap();

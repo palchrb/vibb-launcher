@@ -2435,8 +2435,9 @@ async fn the_device_card_scopes_sonos_rooms() {
             .text(),
     );
     assert!(page.contains(&format!(
-        "{STUA} <span class=\"subtitle\">- not seen by the phone lately"
+        "A speaker the phone no longer knows <span class=\"subtitle\" style=\"font-size:12px;\">{STUA}</span>"
     )));
+    assert!(!page.contains("<span>Stua</span>"));
 
     // None ticked: none allowed.
     save_rooms(&app, &cookie, device, &[]).await;
@@ -2456,18 +2457,39 @@ async fn the_device_card_scopes_sonos_rooms() {
     assert_eq!(again["sonos_rooms"], Value::Null);
     assert_eq!(again["version"], all["version"]);
 
-    // Refused: a uid that isn't a speaker's, too many, an unknown phone. Nothing changes.
+    // Refused: a uid that isn't a speaker's, too many - back by the rooms with the reason
+    // (qa-26a-step3c-code L4); an unknown phone. Nothing changes.
     let res = save_rooms(&app, &cookie, device, &[("room", "192.168.1.20")]).await;
-    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{device}?music_notice=sonos_unknown#music-sonos").as_str())
+    );
     let many: Vec<String> = (0..33)
         .map(|i| format!("RINCON_000E58A0B1C2{i:02}400"))
         .collect();
     let fields: Vec<(&str, &str)> = many.iter().map(|uid| ("room", uid.as_str())).collect();
+    let res = save_rooms(&app, &cookie, device, &fields).await;
     assert_eq!(
-        save_rooms(&app, &cookie, device, &fields).await.status,
-        StatusCode::BAD_REQUEST
+        res.location(),
+        Some(format!("/devices/{device}?music_notice=sonos_too_many#music-sonos").as_str())
     );
     assert_eq!(stored_rooms(&app, device).await, None);
+    let page = app
+        .get_page(
+            &format!("/devices/{device}?music_notice=sonos_too_many"),
+            &cookie,
+        )
+        .await
+        .text();
+    let sonos = page.split("id=\"music-sonos\"").nth(1).unwrap();
+    assert!(sonos.starts_with(">Sonos speakers</h3>"));
+    assert!(sonos.contains("Not saved: at most 32 speakers can be ticked."));
+    let top = page.split("id=\"music\"").nth(1).unwrap();
+    assert_eq!(
+        top.matches("Not saved: at most 32").count(),
+        1,
+        "by the rooms, not also at the card's top"
+    );
     assert_eq!(
         save_rooms(&app, &cookie, 999, &[("all", "on")])
             .await
@@ -2484,6 +2506,27 @@ async fn the_device_card_scopes_sonos_rooms() {
             format!("device {device}: all rooms"),
         ]
     );
+
+    // 32 long names: the event keeps a short detail (qa-26a-step3c-code L5).
+    let long: Vec<(String, String)> = (0..32)
+        .map(|i| {
+            (
+                format!("RINCON_000E58A0B1C2{i:02}400"),
+                format!("{i:02} {}", "x".repeat(37)),
+            )
+        })
+        .collect();
+    let rooms: Vec<(&str, &str)> = long.iter().map(|(u, n)| (u.as_str(), n.as_str())).collect();
+    report_rooms(&app, &token, &rooms).await;
+    let fields: Vec<(&str, &str)> = long.iter().map(|(u, _)| ("room", u.as_str())).collect();
+    save_rooms(&app, &cookie, device, &fields).await;
+    assert_eq!(library().await["sonos_rooms"].as_array().unwrap().len(), 32);
+    let detail = events(&app, "music_sonos_rooms_changed")
+        .await
+        .pop()
+        .unwrap();
+    assert!(detail.starts_with(&format!("device {device}: only 00 xxx")));
+    assert_eq!(detail.chars().count(), 300);
 }
 
 #[tokio::test]
