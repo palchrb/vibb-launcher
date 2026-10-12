@@ -347,7 +347,7 @@
         {% if lock_screen.unreadable %}
         <div class="error">The apps shown on the lock screen couldn't be read - check the server log.</div>
         {% else if lock_screen.apps.is_empty() %}
-        <p class="subtitle">No apps to choose from yet - the phone hasn't reported its apps.</p>
+        <p class="subtitle">{{ lock_screen.empty_text }}</p>
         {% else %}
         <div class="app-checkbox-list">
             {% for app in lock_screen.apps %}

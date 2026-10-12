@@ -129,6 +129,8 @@ pub struct LockScreenCard {
     pub apps: Vec<LockScreenApp>,
     /// The ticks couldn't be read: the subsection says so instead of showing every box unticked.
     pub unreadable: bool,
+    /// What the subsection says when [apps] is empty ([empty_text]).
+    pub empty_text: &'static str,
 }
 
 /// One app's mini-form.
@@ -148,7 +150,7 @@ pub struct LockScreenApp {
 pub fn card_apps(
     listed: impl IntoIterator<Item = (String, String)>,
     ticked: &BTreeSet<String>,
-    unlisted_note: &'static str,
+    allowlist: Option<&BTreeSet<String>>,
 ) -> Vec<LockScreenApp> {
     let mut seen = BTreeSet::new();
     let mut apps: Vec<LockScreenApp> = listed
@@ -169,16 +171,34 @@ pub fn card_apps(
                 package_name: package.clone(),
                 label: package.clone(),
                 on: true,
-                note: Some(unlisted_note),
+                note: Some(unlisted_note(allowlist, package)),
             }),
     );
     apps
 }
 
-/// [card_apps]'s note for a ticked package outside the list: with an allowlist it isn't allowed;
-/// without one it isn't on the phone (every reported app is listed then).
+/// [card_apps]'s note for a ticked package outside the list (code QA Low 6): "not allowed" only when
+/// the phone has an allowlist ([allowlist]) without it; otherwise - no allowlist, or allowed but neither
+/// reported installed nor a selected catalog app - it isn't on the phone.
+pub fn unlisted_note(allowlist: Option<&BTreeSet<String>>, package: &str) -> &'static str {
+    match allowlist {
+        Some(allowed) if !allowed.contains(package) => NOT_ALLOWED_TICKED,
+        _ => NOT_ON_PHONE_TICKED,
+    }
+}
+
 pub const NOT_ALLOWED_TICKED: &str = "not allowed - ticked";
 pub const NOT_ON_PHONE_TICKED: &str = "not on the phone - ticked";
+
+/// The subsection's text when it has no app to list (code QA Low 6): the phone hasn't reported its
+/// apps yet, or it has but none is allowed (an allowlist) or listed.
+pub fn empty_text(reported: bool, has_allowlist: bool) -> &'static str {
+    match (reported, has_allowlist) {
+        (false, _) => "No apps to choose from yet - the phone hasn't reported its apps.",
+        (true, true) => "No allowed apps to choose from - allow an app above first.",
+        (true, false) => "No apps to choose from - the phone reported none.",
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -272,7 +292,14 @@ mod tests {
         let ticked: BTreeSet<String> = [ELEMENT_X, "com.old.chat", "com.google.android.gms"]
             .map(str::to_string)
             .into();
-        let apps = card_apps(listed, &ticked, NOT_ALLOWED_TICKED);
+        let allowed: BTreeSet<String> = ["org.signal", ELEMENT_X, "com.allowed.later"]
+            .map(str::to_string)
+            .into();
+        let ticked: BTreeSet<String> = ticked
+            .into_iter()
+            .chain(["com.allowed.later".to_string()])
+            .collect();
+        let apps = card_apps(listed.clone(), &ticked, Some(&allowed));
         assert_eq!(
             apps,
             [
@@ -289,6 +316,12 @@ mod tests {
                     note: None,
                 },
                 LockScreenApp {
+                    package_name: "com.allowed.later".to_string(),
+                    label: "com.allowed.later".to_string(),
+                    on: true,
+                    note: Some(NOT_ON_PHONE_TICKED),
+                },
+                LockScreenApp {
                     package_name: "com.old.chat".to_string(),
                     label: "com.old.chat".to_string(),
                     on: true,
@@ -296,5 +329,20 @@ mod tests {
                 },
             ]
         );
+        // Without an allowlist nothing is "not allowed".
+        let open = card_apps(listed, &ticked, None);
+        assert!(
+            open.iter()
+                .filter(|a| a.note.is_some())
+                .all(|a| a.note == Some(NOT_ON_PHONE_TICKED))
+        );
+    }
+
+    #[test]
+    fn the_empty_subsection_says_why() {
+        assert!(empty_text(false, true).contains("hasn't reported its apps"));
+        assert!(empty_text(false, false).contains("hasn't reported its apps"));
+        assert!(empty_text(true, true).contains("No allowed apps"));
+        assert!(!empty_text(true, false).contains("hasn't reported"));
     }
 }

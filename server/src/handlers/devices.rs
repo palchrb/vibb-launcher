@@ -574,8 +574,16 @@ async fn lock_screen_card(
     latest_status: Option<&DeviceStatus>,
     apps: &[UnifiedAppRow],
     installed: &[InstalledApp],
+    allowed: &std::collections::HashSet<String>,
 ) -> crate::lock_glance::LockScreenCard {
-    use crate::lock_glance::{self, LockScreenCard, NOT_ALLOWED_TICKED, NOT_ON_PHONE_TICKED};
+    use crate::lock_glance::{self, LockScreenCard};
+    // The parsed allowlist, when the phone has one: a ticked package outside the list is "not
+    // allowed" only when it isn't in it (code QA Low 6).
+    let allowlist: Option<std::collections::BTreeSet<String>> = policy
+        .allowlist_json
+        .is_some()
+        .then(|| allowed.iter().cloned().collect());
+    let empty_text = lock_glance::empty_text(latest_status.is_some(), allowlist.is_some());
     let launcher =
         |package: &str| crate::handlers::device_api::installed_by_launcher(state, Some(package));
     let capable = latest_status
@@ -596,6 +604,7 @@ async fn lock_screen_card(
                 notes,
                 apps: Vec::new(),
                 unreadable: true,
+                empty_text,
             };
         }
     };
@@ -604,7 +613,7 @@ async fn lock_screen_card(
             .iter()
             .filter(|a| a.checked && !a.is_launcher && !launcher(&a.package_name))
             .map(|a| (a.package_name.clone(), a.label.clone()));
-        lock_glance::card_apps(listed, &ticked, NOT_ALLOWED_TICKED)
+        lock_glance::card_apps(listed, &ticked, allowlist.as_ref())
     } else {
         let mut listed: Vec<(String, String)> = installed
             .iter()
@@ -612,13 +621,14 @@ async fn lock_screen_card(
             .map(|a| (a.package_name.clone(), a.label.clone()))
             .collect();
         listed.sort_by_key(|(_, label)| label.to_lowercase());
-        lock_glance::card_apps(listed, &ticked, NOT_ON_PHONE_TICKED)
+        lock_glance::card_apps(listed, &ticked, None)
     };
     LockScreenCard {
         show_text: policy.lock_glance_text,
         notes,
         apps,
         unreadable: false,
+        empty_text,
     }
 }
 
@@ -1338,8 +1348,15 @@ async fn render_device(
         .unwrap_or(false);
     let any_app_installing = apps.iter().any(|a| a.is_installing);
     let display_forms = app_display_forms(&state, id, &apps, entered.as_ref()).await;
-    let lock_screen =
-        lock_screen_card(&state, &policy, latest_status.as_ref(), &apps, &installed).await;
+    let lock_screen = lock_screen_card(
+        &state,
+        &policy,
+        latest_status.as_ref(),
+        &apps,
+        &installed,
+        &allowed,
+    )
+    .await;
     let app_downloads_line = downloads
         .as_ref()
         .and_then(crate::app_downloads::network_line);

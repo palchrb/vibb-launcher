@@ -561,6 +561,50 @@ async fn without_an_allowlist_every_reported_app_is_listed() {
     );
 }
 
+/// Code QA Low 6: a ticked package that is allowed but neither reported nor a selected catalog app
+/// isn't "not allowed"; an empty list says why.
+#[tokio::test]
+async fn unlisted_ticks_and_the_empty_list_say_the_right_thing() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    // Before any report: "hasn't reported", Element X's default tick shown so it can be removed.
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(form_of(subsection(&page), ELEMENT_X).is_some());
+    report(&app, &token, &[("com.example.game", "Game")], json!({})).await;
+    // Element X in the allowlist (Play-installed later, say) but not reported: not on the phone.
+    set_allowlist(&app, id, Some(&[ELEMENT_X])).await;
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let element = form_of(subsection(&page), ELEMENT_X).expect("the tick");
+    assert!(
+        element.contains("not on the phone - ticked") && !element.contains("not allowed"),
+        "{element}"
+    );
+    // The phone reported its apps, nothing is allowed and nothing is ticked: no "hasn't reported".
+    set_allowlist(&app, id, Some(&[])).await;
+    sqlx::query("DELETE FROM device_lock_glance_apps WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let section = subsection(&page);
+    assert!(
+        section.contains("No allowed apps to choose from"),
+        "{section}"
+    );
+    assert!(!section.contains("hasn't reported its apps"));
+}
+
 #[tokio::test]
 async fn the_page_shows_each_note() {
     let app = TestApp::new().await;
