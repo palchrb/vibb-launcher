@@ -1111,3 +1111,24 @@ because anyone holding the locked phone sees it.
   - [ ] the kid changes Home's wallpaper and the lock follows;
   - [ ] a separate lock picture, then unticked;
   - [ ] the keypad legible on a light photo.
+
+## Lock fix round 25c (2026-10-12, qa-25b-25f-code.md)
+
+| Finding | Fix |
+| --- | --- |
+| H1 the SOS yield kept anything that stopped the lock in the window | While the "sos" yield runs, lock task is narrowed to our package, the lock's helpers and the SOS app (Android removes every other locked task); at most 15 s; ended by the lock in front, the screen off or any other yield. A sharper signal doesn't exist for an app (no broadcast, the gesture setting not readable, the front package needs usage access) |
+| M1 the camera off for every app | The policy only while LOCKED **and no call** is live (ours, VoIP, the system dialer's); never unlocked, so the time-rule screen's usable apps keep their camera |
+| M2 "sos" before "alarm" | The SOS yield is last: a woken alarm, a call or a VoIP call come first |
+| M3 the scrim for white only | The scrim is computed for every ink on the wallpaper (`LOCK_INKS`), cap 0.8 |
+| L1-L6 | Opaque paint for the photo; the first frame waits up to 150 ms for the background after a process start; the SOS package cached; APP_ONLY rows never say "Tapt anrop"; the camera policy pending only on Android 14; the limits rewritten |
+
+**Where the camera double-press can still crash SystemUI** (only with the gesture on - `docs/testing/emulator.md` §4
+keeps it off - and only where the camera policy is off while the gesture's camera is suspended):
+- **a call while LOCKED** (phone or VoIP): the camera lock still suspends the camera apps, the policy is off for the
+  call's video. A double-press during the call can crash SystemUI. The lock re-fronts after the call; during it the
+  call screen is exempt anyway;
+- **a time rule that suspends the camera app**, unlocked: the time-rule screen re-fronts itself.
+
+Keeping the camera apps unsuspended in those states would let the gesture open the camera (and its gallery) over the
+lock or the rule instead, so they stay suspended. [device] whether the crash happens at all with a suspended (not
+hidden) camera in these states.
