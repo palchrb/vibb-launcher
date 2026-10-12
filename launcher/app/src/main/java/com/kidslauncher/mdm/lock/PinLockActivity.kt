@@ -204,6 +204,22 @@ class PinLockActivity : AppCompatActivity() {
         // both stages once the store has worked it out; the plain ground until then.
         WallpaperStore.ensureLoaded(this)
         applyLockGround()
+        // qa-25b-25f L2: after a process start the store hasn't worked the background out yet - the
+        // first frame waits for it (at most LOCK_GROUND_WAIT_MS) rather than switching from the
+        // plain ground to the wallpaper in view.
+        if (!WallpaperStore.state.lockReady) {
+            var since = 0L
+            frame.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (since == 0L) since = now
+                    if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false
+                    if (frame.viewTreeObserver.isAlive) frame.viewTreeObserver.removeOnPreDrawListener(this)
+                    applyLockGround()
+                    return true
+                }
+            })
+        }
     }
 
     private val wallpaperListener: () -> Unit = { applyLockGround() }
@@ -684,3 +700,10 @@ class PinLockActivity : AppCompatActivity() {
  * drawn by us, the window stays opaque (never Android's wallpaper showing through). */
 internal fun lockGround(state: WallpaperStore.State): android.graphics.drawable.Drawable =
     com.kidslauncher.mdm.ui.wallpaper.WallpaperRender.GroundDrawable(state.lock.fill, state.lockBitmap, state.lockScrimArgb)
+
+/** qa-25b-25f L2: how long the lock's first frame may wait for its background after a process start. */
+internal const val LOCK_GROUND_WAIT_MS = 150L
+
+/** The first frame waits while the background isn't worked out yet, at most [LOCK_GROUND_WAIT_MS]. */
+internal fun holdForLockGround(lockReady: Boolean, heldSinceMs: Long, nowMs: Long): Boolean =
+    !lockReady && nowMs - heldSinceMs < LOCK_GROUND_WAIT_MS

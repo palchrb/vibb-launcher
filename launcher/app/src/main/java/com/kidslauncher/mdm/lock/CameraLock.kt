@@ -97,7 +97,7 @@ object CameraLock {
      * newly allowed camera is suspended at once. */
     fun refreshTargets(context: Context, controllable: Set<String>) {
         targets = resolveTargets(context.applicationContext, controllable)
-        // Also unlocked: a time rule may just have suspended the gesture's camera (the policy follows).
+        // Also unlocked: the camera policy is re-checked (never set unlocked, qa-25b-25f M1).
         onLockChanged(context)
     }
 
@@ -181,40 +181,18 @@ object CameraLock {
     /** [cameraPolicyDisabled] written with `setCameraDisabled` when it changes (needs the
      * `disable-camera` admin policy; refused or failed: logged, the next pass retries). */
     private fun syncCameraPolicy(app: Context, dpm: DevicePolicyManager, admin: ComponentName, locked: Boolean) {
-        val pm = app.packageManager
-        val gestureSuspended = gestureCameras(app).any { pkg ->
-            try {
-                pm.isPackageSuspended(pkg)
-            } catch (e: Exception) {
-                false
-            }
-        }
-        val disabled = cameraPolicyDisabled(locked, gestureSuspended)
+        val call = PinLockRuntime.callForCamera
+        val disabled = cameraPolicyDisabled(locked, call)
         if (cameraPolicy == disabled) return
         try {
             if (dpm.getCameraDisabled(admin) != disabled) dpm.setCameraDisabled(admin, disabled)
             cameraPolicy = disabled
-            Log.i(LOG_TAG, "Camera ${if (disabled) "disabled" else "enabled"} by policy (locked $locked, gesture camera suspended $gestureSuspended)")
+            Log.i(LOG_TAG, "Camera ${if (disabled) "disabled" else "enabled"} by policy (locked $locked, call $call)")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't set the camera policy: ${e.javaClass.simpleName}")
         }
     }
 
-    /** The packages the power-button gesture would start (its insecure and secure camera intents). */
-    private fun gestureCameras(app: Context): Set<String> {
-        val pm = app.packageManager
-        return listOf(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA, MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE).mapNotNullTo(mutableSetOf()) { action ->
-            try {
-                pm.resolveActivity(Intent(action), PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()))
-                    ?.activityInfo?.packageName
-            } catch (e: Exception) {
-                null
-            }
-        }
-    }
-
-    /** The camera handlers on this phone ([cameraHandlers]: the system handlers of the camera
-     * actions, of third-party apps only the gesture's default) as [cameraLockTargets] keeps them. */
     private fun resolveTargets(app: Context, controllable: Set<String>): Set<String> {
         val pm = app.packageManager
         fun handlers(action: String, systemOnly: Boolean): List<String> = try {

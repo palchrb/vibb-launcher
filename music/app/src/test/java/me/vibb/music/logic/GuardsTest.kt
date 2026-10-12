@@ -51,7 +51,8 @@ class GuardsTest {
         assertTrue("counted before the coroutine", command.indexOf("if (moves) waitingMoves(+1)") < command.indexOf("scope.launch {"))
         assertTrue("and after it, also when cancelled", command.trimEnd().endsWith("}.invokeOnCompletion { if (moves) waitingMoves(-1) }"))
         assertTrue(service.substringAfter("private fun publish() {").substringBefore("\n    }\n").contains("waiting = waitingMoves.get() > 0,"))
-        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE)"))
+        // design 27's swipe (SKIP_TO) waits behind a room switch like a tap (the merge of design 27)
+        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE, SKIP_TO)"))
     }
 
     @Test
@@ -65,7 +66,9 @@ class GuardsTest {
         assertTrue(root.contains("vm.switching = playSwitch(s, id, null, current, SystemClock.elapsedRealtime(), onRoom)"))
         assertTrue(root.contains("vm.switching = playSwitch(s, id, key, current, SystemClock.elapsedRealtime(), onRoom)"))
         assertTrue(root.contains("vm.switching = skipSwitch(s, n, forward, position, SystemClock.elapsedRealtime(), onRoom)"))
-        assertEquals("every switch is built for the renderer", 3, Regex("""(playSwitch|skipSwitch)\(""").findAll(root).count())
+        // design 27's carousel swipe too (the merge of design 27): the room's queue, from 0 while it plays
+        assertTrue(root.contains("swipeSwitch(s, n, target, current?.ref, held?.request, SystemClock.elapsedRealtime(), onRoom)"))
+        assertEquals("every switch is built for the renderer", 4, Regex("""(playSwitch|skipSwitch|swipeSwitch)\(""").findAll(root).count())
     }
 
     @Test
@@ -189,6 +192,49 @@ class GuardsTest {
         assertTrue(saveBookmark.contains("NowPlayingRow(") && saveBookmark.contains("BookmarkRow(a.entry.key, item.key, 0, now)"))
         val local = code("src/main/java/me/vibb/music/playback/LocalRenderer.kt")
         assertTrue(local.substringAfter("override fun saveNow(force: Boolean)").contains("val pos = exo.currentPosition"))
+    }
+
+    @Test
+    fun `design 27's swipe and late art go through the renderer - a room steps the speaker, the art is the player's only`() {
+        // The merge of design 27 (design 26a): SKIP_TO counts in the renderer's queue (a room's is the
+        // speaker-playable Active.items) and moves through goTo -> renderer.seekTo, a room's stepTo.
+        val skipTo = service.substringAfter("private fun skipTo(args: Bundle) {").substringBefore("\n    }\n")
+        assertTrue(skipTo.contains("if (renderer.itemCount() == 0) return"))
+        assertTrue(skipTo.contains("swipeTarget(loaded, a.items.map { it.key }, renderer.currentIndex(), "))
+        assertTrue(skipTo.contains("goTo(a, target, args.getBoolean(Commands.ARG_FORWARD, true))"))
+        val goTo = service.substringAfter("private fun goTo(a: Active, index: Int, forward: Boolean) {").substringBefore("\n    }\n")
+        assertTrue(goTo.contains("renderer.seekTo(target, startPos(a, target))"))
+        val sonos = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        assertTrue("another index is a step", sonos.contains("override fun seekTo(index: Int, ms: Long) = if (index == controller.index) controller.seek(ms) else controller.stepTo(index, ms)"))
+        // THEN_SKIP_TO after a restore, like THEN_NEXT
+        assertTrue(service.substringAfter("private suspend fun restoreThen(").substringBefore("\n    }\n").contains("Commands.THEN_SKIP_TO -> skipTo(args)"))
+        // A late picture swaps the session player's item in place, on either renderer; the speaker gets nothing.
+        val refresh = service.substringAfter("private fun refreshArt() {").substringBefore("\n    }\n")
+        assertTrue(refresh.contains("renderer.replaceItem(index, "))
+        assertTrue(refresh.contains("renderer.itemAt(it)?.mediaId == mediaId"))
+        val replace = sonos.substringAfter("override fun replaceItem(index: Int, item: MediaItem) {").substringBefore("\n    }\n")
+        assertTrue(replace.contains("mediaItems = mediaItems.toMutableList().also { it[index] = item }"))
+        assertTrue(replace.contains("sbp.refresh()"))
+        assertFalse("no SOAP for a picture", replace.contains("controller.") || replace.contains("actor") || replace.contains("transport"))
+        assertTrue(code("src/main/java/me/vibb/music/playback/LocalRenderer.kt").contains("override fun replaceItem(index: Int, item: MediaItem) = exo.replaceMediaItem(index, item)"))
+        // the want set's window and the item change follow the renderer's index
+        assertTrue(service.contains("nowWindow(a.items, renderer.currentIndex(), reach = 1)"))
+        val changed = service.substringAfter("private fun onItemChanged(index: Int, auto: Boolean) {").substringBefore("\n    }\n")
+        assertTrue(changed.contains("wantArtSoon()\n        refreshArt()"))
+    }
+
+    @Test
+    fun `a room switch finds the playing item by key - a late picture's copies can't make it start item 0`() {
+        // qa-26a-merge27-code L1: refreshArt (not under `switching`) may replace Active.items with copies
+        // (withItemArt) while toRoom waits for a hand-off; an object lookup then misses the item.
+        val queue = listOf("k1", "k2", "k3").map { me.vibb.music.model.PlayItem(5, it, "Title $it", "https://cdn.example.org/$it.mp3", false, 600_000) }
+        val captured = queue[1]
+        val swapped = withItemArt(queue, "k2", "a".repeat(64))
+        assertEquals("the object is gone", -1, swapped.indexOf(captured))
+        assertEquals("the key still finds it", 1, swapped.indexOfFirst { it.key == captured.key })
+        val toRoom = service.substringAfter("private suspend fun toRoom(uid: String) {").substringBefore("\n    }\n")
+        assertTrue(toRoom.contains("a0.items.indexOfFirst { it.key == item.key }"))
+        assertFalse(toRoom.contains("indexOf(item)"))
     }
 
     @Test

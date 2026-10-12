@@ -1,7 +1,7 @@
 {
   "v": 1,
   "entry": 1,
-  "version": "33e4fb66e77b8d7f",
+  "version": "a8146790d70b89a3",
   "items": [
     {
       "key": "c00dbbc9dadf",
@@ -17,7 +17,7 @@
       "url": "https://cdn.example.org/ny.m3u8",
       "hls": true,
       "duration_ms": 3723000,
-      "art": "https://example.org/ny.jpg"
+      "art": "940b951005008e7207e7f8b8807ac39691025858882b8c67843a29b65e388187"
     }
   ]
 }

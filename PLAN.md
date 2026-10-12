@@ -102,14 +102,16 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 vibb). Phase 1 (NRK, RSS, own files, the launcher bridge, Home card, lock view, volume cap) is on `main`, released as
 `music-v0.0.2` (`music-v0.0.1` before it); its Jelly Star checks still to come. **Phase 1b, Sonos** (design 26a: rooms in "Spill av på", the phone as
 UPnP controller, adopt after a restart, bedtime stops the speaker, calls pause it, the parent's volume cap and room
-scope) is built and QA'd on branch `music-1b-sonos`, main merged in (last 2026-10-12, `444ca58`: main's instant
-switch adapted to the rooms); owed: the emulator checks against
+scope) is built and QA'd on branch `music-1b-sonos`, main merged in (last 2026-10-12, `620e578`: design 27's
+episode art and carousel, the swipe routed through the renderer; before it `444ca58`, main's instant switch adapted
+to the rooms); owed: the emulator checks against
 `scripts/fake-sonos.py` and the device checks with real speakers. Release after the user's merge: server (migration
 0071, in 0.24.0 unless that is tagged first), a launcher release, then `music-v0.2.0-rc.1` on the merge commit
 (26a "Release"). **Phase 2, Storytel** (design 26b: the server reads the shelf and lists it, the phone logs in,
 mints and downloads, Storytel on Sonos) is being built on branch `music-2-storytel` (steps 1-3 done and QA'd;
-music-1b-sonos with main merged in 2026-10-12); its server migration is **0072** (`0072_music_storytel.sql`, above 1b's
-0071, design 27's reserved 0070 shipping first or with it - 26b "Release"); then `music-v0.3.0-rc.1`. Phase 3
+music-1b-sonos with main merged in 2026-10-12, again with design 27 the same day - step 4a rebuilt on 27's episode art
+as server work: a book's cover as the item's `art` hash); its server migration is **0072** (`0072_music_storytel.sql`,
+above design 27's 0070 and 1b's 0071, which ship first or with it - 26b "Release"); then `music-v0.3.0-rc.1`. Phase 3
 (Spotify) follows design 26.
 
 ## Repos

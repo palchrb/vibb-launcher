@@ -6,7 +6,7 @@ lock's tile), 26 (coordination), the code on `main` (`acc8938d`), and palchrb/vi
 `_download_image`, `_sync_episode_images`, `_image_local_or_remote`, `prune_cache`), `pi/ui.py` (`render_now`,
 `artwork_async`, `episode_art`, `_art_disk`, `handle_carousel`, `NOW_RETURN_S`), `pi/daemon.py` (/status art), and the
 tests `covers.py`, `ui_cover.py`, `ui_episode_row_art.py`, `wake_mpv_art_local.py`, `now_playing.py`,
-`media_track_art.py`. Mockup: `docs/design/mockups/vibb-music/Main.dc.html` (the player view; v16).
+`media_track_art.py`. Mockup: `docs/design/mockups/vibb-music/Main.dc.html` (the player view; v18).
 
 **The request (user, 2026-10-12):** "Download per-episode album art and also show a carousel in Now Playing. Some
 podcasts have per-episode album art, others don't, and we must handle that. vibb on the Pi already does this, at
@@ -31,7 +31,7 @@ mixed feeds.
 - **Carousel:** vibb's only carousel is the browse carousel, one tile per entry with the series cover. Flipping is a
   preview, and A plays. Now Playing is a single cover, with B/Y as previous/next.
 - **New here, so not a vibb port:**
-  - the Now Playing carousel (§3), whose swipe behaviour is open question 1;
+  - the Now Playing carousel (§3), where a swipe switches episode (user decision 1);
   - the server doing the fetching and resizing (§1, in place of the Pi's sync);
   - the "same picture as the series cover" check (§1.3), which the carousel rule needs.
 
@@ -235,24 +235,18 @@ than 24 h ago. In order:
 
 ## 3. The Now Playing carousel
 
-### 3.1 When it shows (user decision; the mixed-feed rule is this spec's, vibb has none)
-- **Pure `showsCarousel(entry, order)` in `EpisodeArt.kt`,** over the listing's hashes (not over which files are on
-  the phone, so the layout never flickers while pictures arrive). Take the first 10 items of the entry's play order
-  (all of them when there are fewer). The carousel shows when both hold:
-  - at least **half** of them have own art (`artHash != null && artHash != entry.cover`);
-  - and there are **at least 2 different pictures** among them.
-  - It also needs a queue of more than one item.
+### 3.1 When it shows (user decisions 2026-10-12, QA H4; vibb has no carousel)
+- **Pure `showsCarousel(queue, cover)` in `EpisodeArt.kt`,** over `NowView.queue` (the visible items, in the queue's
+  order) and the listing's hashes (not over which files are on the phone, so the layout never flickers while pictures
+  arrive). The carousel shows when the queue has more than one item and its pages show **at least two different
+  pictures**, each page being the item's own art or else the entry's cover (the fallback counts as one picture).
 - **Otherwise the player is exactly today's:** one cover, the item's own art or else the entry's cover.
-- **Mixed feeds:**
-  - A podcast that started per-episode art recently gets the carousel, because its newest episodes come first in
-    play order. Episodes without art show the series cover in it (mockup: "Askeladden").
-  - A podcast with a stray picture or two doesn't get one. Its odd episode still shows its own picture in the single
-    cover, as on vibb.
-  - Open question 2.
-- **The same rule applies to own-file entries**, whose files have embedded art (vibb `70a22d4e` "every song wears
-  its own cover"):
-  - a compilation with a cover per track gets the carousel;
-  - an album whose tracks all embed the same picture doesn't (one picture).
+- **Cases:**
+  - A podcast where a single episode has its own picture: two pictures, so the carousel. Episodes without art show
+    the series cover in it (mockup: "Askeladden").
+  - A podcast without episode art: one picture, today's player.
+  - An own-files compilation with a cover per track gets the carousel (vibb `70a22d4e` "every song wears its own
+    cover"); an album whose songs all carry one cover doesn't, and its single cover is the track's art.
   - **Later phases:** Storytel series with one cover per book (vibb `entries_for`) can set `artHash` and get it too.
 - **Server backfill:** the art for the first items in play order arrives first (§1.4), so an entry switches from no
   carousel to carousel at most once, early.
@@ -261,7 +255,7 @@ than 24 h ago. In order:
 - **The pages are the queue**, `NowView.queue` in its order: rotated to the bookmark, or the shuffled order when
   shuffle is on, the same order the list shows. It wraps like previous/next (`nextAction`). It uses virtual pages, like
   the library (`carouselPageCount`/`carouselIndex`/`carouselStartPage`), so two items wrap too.
-- **Swipe: switches to that episode (recommended; open question 1).**
+- **Swipe: switches to that episode (user decision 1).**
   - When the pager settles on another page after the user's drag or fling, the player goes there:
     `actions.skipTo(key, forward)` with the direction of travel.
   - It is the same as previous/next, except that a swipe back always goes to the previous item. The "previous
@@ -280,7 +274,8 @@ than 24 h ago. In order:
     search), the pager animates one page, or jumps when it is further.
   - A new queue (a cover tap, a list pick, the shuffle toggle) re-keys the pager, which jumps straight to the current
     item.
-  - While its own skip is pending (until the player's index matches, at most 1.5 s), the pager isn't pulled back.
+  - While its own skip is pending, the pager isn't pulled back: a swipe is a `PlayRequest` (`logic/Switch.kt`, QA H3),
+    shown while `requestStands`; it ends as soon as the player moves, to the target or elsewhere.
 - **Motion**, exactly as the library's (21 §4.2):
   - the finger is followed, then a no-bounce spring snap (stiffness 700);
   - neighbours scale 1 → 0.733 and fade 1 → 0.45 with the page offset, pulled in so their near edge stays put;
@@ -305,8 +300,7 @@ than 24 h ago. In order:
   - The Home card's `EXTRA_RESUME` works as today (honoured once). The carousel only shows where that resume lands.
 - **The launcher:** Home's card, the lock's tile (design 25) and the media notification show the current episode's
   picture (§2.4). They get no carousel.
-- **No preview state:** nothing to time out, so vibb's `NOW_RETURN_S` snap-back has nothing to undo. If the user picks
-  the preview behaviour in question 1, it comes back: preview, tap to play, snap back to the playing item after 10 s.
+- **No preview state:** nothing to time out, so vibb's `NOW_RETURN_S` snap-back has nothing to undo.
 
 ### 3.3 Layout (pure `Fit.kt`; `FitTest` at 320, 360 and 411 dp)
 - The carousel replaces only the cover box (the `weight(1f)` box that today centres a cover of at most 224 dp). The
@@ -352,7 +346,8 @@ The change is local; the shared hot spots are small and named here.
   - `app/src/main/aidl/me/vibb/bridge/IMusicBridge.aidl` (appended);
   - `music/MusicBridgeService.kt`, `MusicStore.kt`, `MusicSync.kt` (`syncArt`, `syncCovers`' keep rule);
   - `MusicPlan.kt` (pure `artToFetch` / `artToDelete`);
-  - the tests `MusicPlanTest`, `BridgeTest`.
+  - the tests `MusicPlanTest` (including its listing-version pin, updated with the listing snapshot - QA M4),
+    `BridgeTest`.
 - **Music app:**
   - the same AIDL;
   - `model/Listing.kt`, `model/PlayItem.kt`;
@@ -372,7 +367,9 @@ The change is local; the shared hot spots are small and named here.
 
 **Overlaps with the 1b-3 session:**
 - `PlayerScreen`: one block. The output picker is not touched.
-- `PlaybackService`: one custom command next to next/previous. Sonos must route `SKIP_TO` as it routes next.
+- `PlaybackService`: one custom command next to next/previous. Sonos must route `SKIP_TO` as it routes next (QA M7 e).
+- The merged `music-cover-instant` work (`logic/Switch.kt`, `NowView.cover`, `PrefetchCovers`, QA H3): a swipe is a
+  `PlayRequest`; `PrefetchCovers` stays for the single-cover look.
 - The AIDL: if both sessions append, the later merge goes last, in both copies.
 - The Room version.
 - `MainActivity`'s actions interface: one method.
@@ -414,7 +411,8 @@ Rebase on `main` before the last test run. The Storytel phase can reuse `PlayIte
      - an older launcher (no `wantArt`) leaves series covers.
 3. **The player** (music app UI + service): §2.4, §3.
    - Tests:
-     - `showsCarousel` (all own; half; a stray picture; all the same picture; one item; own files);
+     - `showsCarousel` (all own; one own picture among 300 shows it; none doesn't; an identical-picture album
+       doesn't; one item; own files);
      - `artOrCover`;
      - the pager rules as pure functions (settle → one skip with its direction, a fling = one skip, the follow on an
        outside index change, re-key on a new queue, pending suppression);
@@ -455,7 +453,7 @@ Rebase on `main` before the last test run. The Storytel phase can reuse `PlayIte
 4. A tap on the centre picture is play/pause.
 5. Own-file entries follow the same carousel rule.
 
-## 8. Open questions for the user
+## 8. Open questions for the user (answered: see "User decisions" below)
 1. **What does a swipe do?**
    - **Recommendation: it switches to that episode at once,** as swiping the cover does in phone music players. The
      place is kept (resume), so a mistaken swipe costs one swipe back. A preview would leave the title, seek line and
@@ -751,3 +749,81 @@ No other real user questions: M2, M3 and M6 are design fixes with obvious defaul
 - **Q1, decided from the user's own rule** ("no per-episode art looks as today"): the carousel shows when its pages show
   **at least two different pictures**, with the series cover counting as one. An album whose songs all carry the same
   cover looks as today. A podcast where a single episode has its own picture still gets the carousel, as decided.
+
+## Implementation status (2026-10-12)
+
+Built on branch `music-episode-art-27`, rebased onto `main` `7335a66a`. Not pushed, not merged. Nothing was run on a
+device or the emulator.
+
+**Commits:**
+- `574a422f` Step 1 (server and the listing contract). Migration `0070_music_episode_art.sql`. The listing
+  snapshot, the music app's copy, `Listing.kt`'s 64-hex filter, `ContractFilesTest` and the launcher's
+  `MusicPlanTest` version pin (`a8146790d70b89a3`, QA M4) are in this one commit.
+- `4a24db1f` Server docs: `server/CLAUDE.md` ("Vibb music: episode art") and `server/DEPLOY.md` (`data/music_art` isn't
+  backed up, the Pi checks).
+- `af494ab7` The flaky `flags_are_kept_until_their_item_is_asked`: it flagged after a fixed 30 ms while a check ran,
+  so under load the flag landed before the check read its rows, or after it committed. It now waits for the check's
+  first request (`CannedFetch::in_flight()`).
+- `07ec4568` Step 2 (the courier): `items.artHash` (Room 2, the `ReapplyListings` auto migration, QA H1), the want set
+  (`logic/EpisodeArt.kt`, `sync/ArtPlan.kt`), `wantArt` appended to the AIDL in both apps, `bridge_contract.json`'s
+  `want_art` caps, the launcher's `syncArt`/`artToFetch`/`artToDelete` and failure backoff (QA M6), the music app's
+  prune of covers and small copies (QA L3, L4).
+- `a6cc2f2c` The launcher nudges the music app once when a new want set names pictures it already holds.
+- `4dba4307` Step 3 (the player): `PlayerArt`/`EpisodeCarousel`, `SKIP_TO` and `THEN_SKIP_TO`, `Cover`'s fallback,
+  `Store.coversVersion` (QA M5), the lazy art map and `replaceMediaItem` (QA H2), the mockup's rule and saved place,
+  and this spec's body (QA M1).
+- `8159da2c` The server's art pass skips items without a source or picture URL (a Storytel part is `ok` with
+  `url` NULL), and the covers version moves atomically.
+
+**Deviations and choices:**
+- QA H1's migration test: the music app has no Room testing or Robolectric, and no dependency was added. The test runs
+  `ReapplyListings.onPostMigrate` against a recording `SupportSQLiteDatabase` proxy and checks the exported
+  `schemas/.../2.json` and `listingsWanted` with an empty version. KSP validates the auto migration at build time.
+- The want set: library covers are left out (they come their own way). The prune's universe is capped with the lists
+  (600) plus the 20 recent pictures. The recent set is the current item and its neighbours, noted on each item change
+  (`recent_art.txt`).
+- The launcher: a network error doesn't count toward a picture's backoff, only an HTTP error or a wrong hash does.
+  No network: nothing is fetchable, so `wantArt` starts no courier run. `now` goes on any network, roaming included
+  (about 60 KB a picture, QA L4).
+- The pager's "pending" hold is the `PlayRequest` (QA H3). For quick swipes, `PlayRequest.via` lets the player pass
+  through an earlier swipe's target without ending the later request. The pager also records the index shown when it
+  skipped, so it isn't pulled back before the request shows.
+- Decoding (QA L3): covers decode scaled to the size the player's 224 dp cover needs, never above the file (336 px at
+  density 1.5, the Jelly Star; the whole 512 px file from density 2.3 up; code QA L12), and the bitmap cache counts
+  bytes (16 MiB).
+- `PlayerScreen` takes `numberOf(item)` in place of `number`, so "Episode N av M" follows the landing page.
+- Server-side choices are in the step 1 report: `art_fetched_at`, the reference-print columns, and the monthly backlog
+  retry (QA L1 e). The server version stays 0.24.0.
+
+**Tests and checks:**
+- Server: `cargo test` 618 passed (after the code QA fix round). `cargo fmt --check` is clean. `cargo clippy --all-targets` gives 12 warnings, none
+  in the new code.
+- Launcher: `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` passed (1027 tests), release
+  built with the stub `tsnet.aar`.
+- Music app: `testDebugUnitTest assembleDebug assembleRelease lint -PwarningsAsErrors=true` passed (189 tests). Lint
+  has nothing new.
+- The PWA was checked headless at 360 px in light and dark: the count line is cut off with "…", and nothing scrolls
+  sideways.
+
+- Code QA fix round (`docs/design/qa-27-code.md`, 0 High, 2 Medium, 12 Low, all fixed; its "Fixes" table): the server
+  commits `bcc471e1`..`c93bc466` (M1, M2, L1-L6; migration 0070 edited in place: `music_art_requests`,
+  `music_items.art_tone`), and `7906a0cc` (L7-L12, music and launcher).
+
+**Coordination for the session building Sonos, Storytel and Spotify** (code QA 27; read before rebasing onto this):
+- **Room:** version 2 is taken (`schemas/.../2.json`, the `ReapplyListings` auto migration). A later bump is version 3
+  with its own `AutoMigration(2, 3)`; don't edit 2.json.
+- **Server migration:** 0070 is taken.
+- **AIDL:** append after `wantArt` in both copies, and update `MusicPlanTest`'s method count (12 now).
+- **Changed signatures:**
+  - `Actions.skipTo` (every `Actions` implementation and fake);
+  - `PlayerScreen(numberOf, …, onSkipTo)`, which meets the output-picker edits only at the call site in `MusicRoot`;
+  - `Cover(…, fallback, content)`: `fallback` comes before `content`, so a positional `content` argument breaks;
+  - `Commands.ALL` (now with `SKIP_TO`).
+- **Sonos:** `skipTo` and `goTo` drive `exo` directly. The Sonos output must route `SKIP_TO` (and `THEN_SKIP_TO`) as
+  it routes next.
+- **Storytel per-book covers:** `music::art_in_library` serves only `source IN ('nrk','rss')`, and the art pass's
+  `art_candidate` skips items without a url. Setting `music_items.art_hash` for books needs both widened. On the phone,
+  `PlayItem.artHash` and `showsCarousel` work as they are.
+
+**Device checks still to do:** all of §6, plus QA H2's lock-tile check and L5's TalkBack and animations-off checks. On
+the Pi, the checks are in `server/DEPLOY.md`. Sonos (phase 1b-3) must route `SKIP_TO` as it routes next.

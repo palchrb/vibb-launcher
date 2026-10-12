@@ -40,4 +40,9 @@ interface IMusicBridge {
 
     /** The entry's listing, read-only, or null when the launcher has none. */
     ParcelFileDescriptor openListing(long entryId);
+
+    /** The pictures the music app wants (design 27): [now] (the now-playing window, fetched on any
+     *  network) and [later] (the kept episodes' and Nytt's, with the audio's network gate), 64-hex
+     *  hashes it doesn't hold. Each call replaces the last; openCover hands them over. */
+    oneway void wantArt(in String[] now, in String[] later);
 }

@@ -351,4 +351,20 @@ class GlanceRowsTest {
         )
         assertEquals(setOf("packageName", "groupSummary", "ongoing", "clearable", "media", "importance", "category"), fields(GlanceCandidateFacts::class.java))
     }
+
+    /** qa-25b-25f L4: a missed call shows only from SENDER up, with the count when there is more. */
+    @Test
+    fun `a missed-call row never tells more than the app's level`() {
+        assertEquals(GlanceSubtitle.NOTICES, glanceSubtitle(GlanceLevel.APP_ONLY, missedCall = true, count = 1, hasText = false))
+        assertEquals(GlanceSubtitle.NOTICES, glanceSubtitle(GlanceLevel.APP_ONLY, missedCall = false, count = 3, hasText = false))
+        assertEquals(GlanceSubtitle.MISSED_CALL, glanceSubtitle(GlanceLevel.SENDER, missedCall = true, count = 1, hasText = false))
+        assertEquals(GlanceSubtitle.MISSED_CALL_AND_COUNT, glanceSubtitle(GlanceLevel.SENDER, missedCall = true, count = 3, hasText = false))
+        assertEquals(GlanceSubtitle.MISSED_CALL, glanceSubtitle(GlanceLevel.TEXT, missedCall = true, count = 1, hasText = true))
+        assertEquals(GlanceSubtitle.TEXT, glanceSubtitle(GlanceLevel.TEXT, missedCall = false, count = 1, hasText = true))
+        assertEquals(GlanceSubtitle.COUNT, glanceSubtitle(GlanceLevel.TEXT, missedCall = false, count = 2, hasText = false))
+        assertEquals(GlanceSubtitle.COUNT, glanceSubtitle(GlanceLevel.SENDER, missedCall = false, count = 2, hasText = false))
+        val panel = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
+        // The badge follows the shown kind, not the raw flag.
+        assertTrue(panel.contains("view.glanceRowBadge.visibility = if (missedShown) View.VISIBLE else View.GONE"))
+    }
 }

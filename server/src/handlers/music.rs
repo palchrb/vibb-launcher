@@ -149,7 +149,7 @@ pub struct SweepCard {
     pub source_title: Option<String>,
     /// A feed on the home network or tailnet.
     pub lan: bool,
-    /// "42 episodes · newest: <title> · 9 Oct".
+    /// "42 episodes · 31 with episode art · newest: <title> · 9 Oct".
     pub episodes: Option<String>,
     /// "first 100 episodes (the series has more)", "list cut to the newest 812 (size limit)".
     pub notes: Vec<String>,
@@ -1981,6 +1981,10 @@ pub async fn delete_entry(
         .await
         .ok();
     MUSIC_COVERS.prune(&state.db, &state.music_cover_dir).await;
+    // Its items went with it (cascade): so did their episode pictures (design 27 §1.4).
+    crate::photos::MUSIC_ART
+        .prune(&state.db, &state.music_art_dir)
+        .await;
     nudge(&state, &phones);
     log_event(
         &state,
@@ -2666,6 +2670,8 @@ struct SweepView {
     listings: HashMap<i64, crate::music_sweep::Listing>,
     /// Entry -> the newest listed item's title and date.
     newest: HashMap<i64, (Option<String>, Option<String>)>,
+    /// Entry -> how many listed items have their own picture (design 27 §1.5).
+    with_art: HashMap<i64, i64>,
     /// Entry -> its schedule and how many due entries come before it.
     schedule: HashMap<i64, (crate::music_sweep::Scheduled, usize)>,
     /// Entry -> the phones with it ticked (id, name), by name.
@@ -2703,6 +2709,14 @@ impl SweepView {
             .into_iter()
             .map(|(entry, title, published, seen)| (entry, (title, published.or(Some(seen)))))
             .collect();
+        let with_art: HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
+            "SELECT entry_id, COUNT(*) FROM music_items \
+             WHERE art_hash IS NOT NULL AND state != 'pending' GROUP BY entry_id",
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
         let mut ahead = 0;
         let schedule = sweep::schedule(&state.db, now)
             .await?
@@ -2758,6 +2772,7 @@ impl SweepView {
             current,
             listings,
             newest,
+            with_art,
             schedule,
             phones,
             reports,
@@ -2915,6 +2930,9 @@ impl SweepView {
                 l.item_count,
                 if l.item_count == 1 { "" } else { "s" }
             );
+            if let Some(count) = self.with_art.get(&entry.id).filter(|c| **c > 0) {
+                text.push_str(&format!(" · {count} with episode art"));
+            }
             if let Some((title, date)) = self.newest.get(&entry.id) {
                 if let Some(title) = title {
                     text.push_str(&format!(" · newest: {title}"));

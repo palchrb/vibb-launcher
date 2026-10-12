@@ -70,11 +70,14 @@ import me.vibb.music.logic.TransportAction
 import me.vibb.music.logic.callMode
 import me.vibb.music.logic.callPauseStep
 import me.vibb.music.logic.callTimerEnded
+import me.vibb.music.logic.artOrCover
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
+import me.vibb.music.logic.firstPlayable
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.nextAction
+import me.vibb.music.logic.nowWindow
 import me.vibb.music.logic.overlapStart
 import me.vibb.music.logic.pickPlan
 import me.vibb.music.logic.playAllowed
@@ -87,9 +90,12 @@ import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.resumeOverlapMs
 import me.vibb.music.logic.storedPlan
 import me.vibb.music.logic.seekGate
+import me.vibb.music.logic.smallArtMissing
 import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.streamAllowed
+import me.vibb.music.logic.swipeTarget
 import me.vibb.music.logic.toggledQueue
+import me.vibb.music.logic.withItemArt
 import me.vibb.music.media.ItemTag
 import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Entry
@@ -112,6 +118,7 @@ import me.vibb.music.sonos.groupAllowed
 import me.vibb.music.sonos.mustLeaveRoom
 import me.vibb.music.sonos.ourLiveSession
 import me.vibb.music.sonos.roomVerdict
+import me.vibb.music.sync.ArtWants
 import me.vibb.music.sync.ItemErrors
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.netCaps
@@ -130,8 +137,9 @@ internal class Active(
     val copies: MutableSet<String>,
     val downloads: MutableMap<String, DownloadRow>,
     var shuffled: Boolean,
-    /** Cover hash -> its ≤ 300 px copy, made off the main thread. */
-    val art: Map<String, Uri?>,
+    /** Cover hash -> its ≤ 300 px copy: only copies that exist, made off the main thread (design
+     * 27, QA H2); read and filled on the main thread. */
+    val art: MutableMap<String, Uri>,
     /** The player's duration per item, once known (done marks don't depend on the listing's). */
     val durations: MutableMap<String, Long> = mutableMapOf(),
 )
@@ -269,6 +277,8 @@ class PlaybackService : MediaSessionService() {
                 if (roomScope != null && sonos.showsPlaying) withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }
             }
         }
+        // A picture landing (the sync copied it) refreshes the current item's artwork (QA M5/H2).
+        scope.launch { store.coversVersion.collect { refreshArt() } }
         publish()
     }
 
@@ -442,7 +452,8 @@ class PlaybackService : MediaSessionService() {
                         Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY))
                         Commands.PLAY_ITEM -> playItem(args.getLong(Commands.ARG_ENTRY), args.getString(Commands.ARG_KEY).orEmpty())
                         Commands.RESUME -> resumeLast()
-                        Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION))
+                        Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION), args)
+                        Commands.SKIP_TO -> skipTo(args)
                         Commands.SHUFFLE -> toggleShuffle()
                         Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
                         Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
@@ -509,8 +520,14 @@ class PlaybackService : MediaSessionService() {
         val byKey = order.associateBy { it.key }
         val items = keys.mapNotNull { byKey[it] }.filter { kind == RendererKind.LOCAL || PlayBodies.speakerPlayable(entry, it) }
         if (items.isEmpty()) return null
-        val hashes = (listOfNotNull(entry.cover) + order.mapNotNull { it.artHash }).toSet()
-        val art = withContext(writer) { hashes.associateWith { artwork(it) } }
+        // The entry's cover is made now; an item's own picture only where its small copy exists - the
+        // rest when it becomes current (refreshArt), never a decode per queue item up front (QA H2).
+        val art = withContext(writer) {
+            val map = HashMap<String, Uri>()
+            entry.cover?.let { c -> artwork(c)?.let { map[c] = it } }
+            for (hash in order.mapNotNull { it.artHash }.toSet()) smallArt(hash).takeIf { it.isFile }?.let { map[hash] = Uri.fromFile(it) }
+            map
+        }
         return Active(
             entry, order, items,
             snap.positions[entry.key].orEmpty().toMutableMap(),
@@ -576,8 +593,13 @@ class PlaybackService : MediaSessionService() {
         start(a, QueuePlan(a.items.map { it.key }, index, pos))
     }
 
-    /** The player's controls before play after a restart: the stored queue loaded paused, then the action. */
-    private suspend fun restoreThen(then: String?, positionMs: Long) {
+    /**
+     * The player's controls before play after a restart: the stored queue loaded paused, then the
+     * action. One at a time (design 27 QA L10: two quick swipes on a restored queue load it once, then
+     * skip in order): every custom command runs under [switching], which main's own `restoring` lock
+     * did before the merge with design 26a.
+     */
+    private suspend fun restoreThen(then: String?, positionMs: Long, args: Bundle) {
         if (active == null || renderer.itemCount() == 0) {
             val (a, index, pos) = restore() ?: return
             start(a, QueuePlan(a.items.map { it.key }, index, pos), play = false)
@@ -587,6 +609,7 @@ class PlaybackService : MediaSessionService() {
             Commands.THEN_PREVIOUS -> skipPrevious()
             Commands.THEN_SEEK -> renderer.seekTo(positionMs)
             Commands.THEN_SHUFFLE -> toggleShuffle()
+            Commands.THEN_SKIP_TO -> skipTo(args)
         }
         publish()
     }
@@ -628,6 +651,7 @@ class PlaybackService : MediaSessionService() {
             startedPlaying(a, index)
         }
         publish()
+        wantArtSoon()
     }
 
     /** Where item [index] starts when the queue jumps to it: its own position when resume is on. */
@@ -646,16 +670,9 @@ class PlaybackService : MediaSessionService() {
 
     /** The first index from [index] on (or back) that can play now; null when none. */
     private fun playableFrom(a: Active, index: Int, forward: Boolean, wrap: Boolean): Int? {
-        val n = a.items.size
         val caps = netCaps(this)
         val mobileData = store.mobileData
-        for (step in 0 until n) {
-            val i = if (forward) index + step else index - step
-            val j = if (wrap) i.mod(n) else i
-            if (j !in 0 until n) return null
-            if (playable(a, j, caps, mobileData)) return j
-        }
-        return null
+        return firstPlayable(a.items.size, index, forward, wrap) { playable(a, it, caps, mobileData) }
     }
 
     /** A copy plays without holding Wi-Fi awake; a stream needs it (qa-21-step2-code L18). */
@@ -695,15 +712,60 @@ class PlaybackService : MediaSessionService() {
             .setAlbumTitle(a.entry.name)
             .setIsPlayable(true)
             .setIsBrowsable(false)
-        (item.artHash ?: a.entry.cover)?.let { a.art[it] }?.let { meta.setArtworkUri(it) }
+        artUri(a, item)?.let { meta.setArtworkUri(it) }
         item.durationMs?.let { meta.setDurationMs(it) }
         return b.setMediaMetadata(meta.build()).build()
     }
 
+    /**
+     * The item's own picture when its small copy exists, else the entry's cover ([artOrCover]); main
+     * thread. A copy the prune deleted counts as missing (QA L8): the series cover shows, never nothing.
+     */
+    private fun artUri(a: Active, item: PlayItem): Uri? = artOrCover(item, a.entry) { hasCopy(a, it) }?.let { a.art[it] }
+
+    private fun hasCopy(a: Active, hash: String): Boolean = a.art[hash]?.path?.let { File(it).isFile } == true
+
+    private fun smallArt(hash: String) = File(store.smallArtDir, "$hash.jpg")
+
+    /**
+     * The current item's picture landed after its queue was built (design 27, QA H2): its small copy
+     * is made off the main thread, then the item's metadata is swapped in place
+     * (`Renderer.replaceItem`: on the phone `replaceMediaItem`, the same source so playback goes on;
+     * on a Sonos room only the session player's item, no SOAP) - the notification, the lock's tile
+     * and Home's card show it - and the launcher's snapshot gets it too.
+     */
+    private fun refreshArt() {
+        val a = active ?: return
+        val queued = a.items.getOrNull(renderer.currentIndex()) ?: return
+        scope.launch {
+            // The item's art as the store has it now: a listing applied during the queue may have given
+            // it a picture its queued copy doesn't know (QA L7). Own files' art comes with the library.
+            val fresh = if (queued.fileId != null) queued.artHash else withContext(writer) { store.db.itemArt(a.entry.id, queued.key) }
+            if (active !== a) return@launch
+            val item = if (fresh == queued.artHash) queued else queued.copy(artHash = fresh)
+            if (item !== queued) a.items = withItemArt(a.items, item.key, fresh)
+            val missing = smallArtMissing(listOf(item.artHash, a.entry.cover)) { hasCopy(a, it) }
+            val made = withContext(writer) { missing.filter { store.coverFile(it).isFile }.mapNotNull { h -> artwork(h)?.let { h to it } } }
+            if (active !== a) return@launch
+            a.art.putAll(made)
+            missing.filter { h -> made.none { it.first == h } }.forEach { a.art.remove(it) }
+            val uri = artUri(a, item)
+            val mediaId = "${a.entry.id}/${item.key}"
+            // through the renderer (design 26a): on a Sonos room the session's player shows the same art
+            val index = (0 until renderer.itemCount()).firstOrNull { renderer.itemAt(it)?.mediaId == mediaId } ?: return@launch
+            val old = renderer.itemAt(index) ?: return@launch
+            if (old.mediaMetadata.artworkUri != uri) {
+                // The series cover when the item's copy went and nothing replaces it (QA L8).
+                renderer.replaceItem(index, old.buildUpon().setMediaMetadata(old.mediaMetadata.buildUpon().setArtworkUri(uri).build()).build())
+            }
+            reportNowPlaying(refresh = true)
+        }
+    }
+
     /** A ≤ 300 px copy of a cover, for the media notification and the launcher's media views (off the main thread). */
     private fun artwork(hash: String): Uri? {
-        val small = File(cacheDir, "art/$hash.jpg")
-        if (!small.exists()) {
+        val small = smallArt(hash)
+        if (!small.isFile) {
             val src = store.coverFile(hash).takeIf { it.exists() } ?: return null
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(src.path, bounds)
@@ -717,7 +779,46 @@ class PlaybackService : MediaSessionService() {
         return Uri.fromFile(small)
     }
 
+    // --- episode pictures (design 27 §2.2) ---
+
+    private val wantArtTick = Runnable { sendWantArt() }
+
+    /** A queue start or an item change: the want set goes to the launcher 2 s later (debounced). */
+    private fun wantArtSoon() {
+        handler.removeCallbacks(wantArtTick)
+        handler.postDelayed(wantArtTick, 2_000)
+    }
+
+    /** The pictures shown (the current item and its neighbours) are noted, and the want set sent when
+     * its `now` list has something missing that it didn't ask for last time (LiveBridge.wantArt). */
+    private fun sendWantArt() {
+        val a = active ?: return
+        val shown = nowWindow(a.items, renderer.currentIndex(), reach = 1).map { it.artHash }
+        scope.launch {
+            val want = withContext(writer) {
+                store.noteShown(shown)
+                ArtWants.compute(this@PlaybackService)
+            }
+            LiveBridge.wantArt(want.now, want.later)
+        }
+    }
+
     // --- transport ---
+
+    /**
+     * `SKIP_TO` (a swipe, design 27 §3.2): as next or previous, but to the item picked - never a
+     * restart; an unplayable one skips on in the swipe's direction (goTo), paused stays paused. Only
+     * for the entry loaded. The target is an index of `Active.items`, the renderer's queue - on a
+     * Sonos room the speaker-playable items - and goes through [goTo] -> `renderer.seekTo` (a room's
+     * `stepTo`: from 0 while playing, design 26a §4.3), never ExoPlayer directly.
+     */
+    private fun skipTo(args: Bundle) {
+        val a = active ?: return
+        if (renderer.itemCount() == 0) return
+        val loaded = a.entry.id == args.getLong(Commands.ARG_ENTRY, -1)
+        val target = swipeTarget(loaded, a.items.map { it.key }, renderer.currentIndex(), args.getString(Commands.ARG_KEY).orEmpty()) ?: return
+        goTo(a, target, args.getBoolean(Commands.ARG_FORWARD, true))
+    }
 
     private fun skipNext() {
         val a = active ?: return
@@ -911,6 +1012,8 @@ class PlaybackService : MediaSessionService() {
         }
         lastIndex = index
         wakeModeFor(a, index)
+        wantArtSoon()
+        refreshArt()
         if (!playable(a, index)) {
             // The queue moves on (21 §4.2's one line beyond the mockup).
             PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
@@ -1134,7 +1237,9 @@ class PlaybackService : MediaSessionService() {
             LiveBridge.setNowPlaying(null)
             return
         }
-        val art = (item.artHash ?: a.entry.cover)?.let { a.art[it] }?.path?.let { File(it) }
+        // The item's own picture once its copy is on the phone, else the entry's cover (artOrCover):
+        // every report looks again, so Home's card and the lock's tile get a late picture (design 27).
+        val art = artUri(a, item)?.path?.let { File(it) }
             ?.takeIf { it.isFile && it.length() <= 64 * 1024 }?.let { runCatching { it.readBytes() }.getOrNull() }
         LiveBridge.setNowPlaying(
             Bundle().apply {
@@ -1359,7 +1464,9 @@ class PlaybackService : MediaSessionService() {
         if (renderer !== old) return // changed under us (the switch lock makes this a belt)
         val place = if (current != null) {
             val (a0, item) = current
-            a0.entry to QueuePlan(a0.items.map { it.key }, a0.items.indexOf(item), resumeFrom(a0.positions[item.key]))
+            // by key: refreshArt may have replaced the items with copies meanwhile (a late picture,
+            // `withItemArt`), and an object lookup would start item 0 (qa-26a-merge27-code L1)
+            a0.entry to QueuePlan(a0.items.map { it.key }, a0.items.indexOfFirst { it.key == item.key }, resumeFrom(a0.positions[item.key]))
         } else {
             withContext(Dispatchers.IO) { store.db.nowPlaying() }?.let { row ->
                 val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return@let null

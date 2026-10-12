@@ -23,6 +23,7 @@ mod listeners;
 mod locations;
 mod lock_glance;
 mod music;
+mod music_art;
 mod music_storytel;
 mod music_sweep;
 mod parent_pin;
@@ -161,6 +162,7 @@ impl TestApp {
             tracked_apps_dir: std::sync::Arc::new(dir.path().join("tracked_apps")),
             music_files_dir: std::sync::Arc::new(dir.path().join("music_files")),
             music_cover_dir: std::sync::Arc::new(dir.path().join("music_covers")),
+            music_art_dir: std::sync::Arc::new(dir.path().join("music_art")),
             music_key: Some(std::sync::Arc::new(
                 crate::music_secret::MusicKey::from_bytes(&[42; 32]),
             )),

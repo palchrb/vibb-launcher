@@ -100,6 +100,11 @@ fun lockScreenFill(home: Wallpaper): WallpaperFill =
 fun lockWallpaper(allowed: List<Wallpaper>, lockId: Long?, home: Wallpaper, cachedHashes: Set<String>): Wallpaper =
     allowed.firstOrNull { it.id == lockId && usable(it, cachedHashes) } ?: home
 
+/** The lock's wallpaper once its photo was decoded or not: a separate lock photo that can't be read
+ * falls back to Home's ([home]) - and the scrim is then worked out for Home's. */
+fun lockAfterDecode(lock: Wallpaper, decoded: Boolean, home: Wallpaper): Wallpaper =
+    if (lock.fill is WallpaperFill.Image && !decoded) home else lock
+
 /** The images this phone may cache: allowed images only - everything else is deleted. */
 fun wantedWallpaperHashes(allowed: List<Wallpaper>): Set<String> =
     allowed.mapNotNullTo(mutableSetOf()) { (it.fill as? WallpaperFill.Image)?.hash }

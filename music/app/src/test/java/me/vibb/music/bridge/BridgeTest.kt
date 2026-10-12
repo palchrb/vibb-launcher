@@ -132,6 +132,9 @@ class BridgeTest {
         assertEquals(player["extra_open"], me.vibb.music.ui.MainActivity.EXTRA_OPEN)
         assertEquals(player["open_player"], me.vibb.music.ui.MainActivity.OPEN_PLAYER)
         assertEquals(player["extra_resume"], me.vibb.music.ui.MainActivity.EXTRA_RESUME)
+        // wantArt's caps (design 27 §2.2): what the app sends at most, what the launcher keeps at most.
+        val wantArt = (contract["want_art"] as JsonObject).mapValues { (it.value as JsonPrimitive).content.toInt() }
+        assertEquals(mapOf("max" to me.vibb.music.logic.WANT_ART_MAX, "now_max" to me.vibb.music.logic.WANT_ART_NOW_MAX), wantArt)
         assertTrue("the player is exported", Regex("android:name=\"\\.ui\\.MainActivity\"\\s+android:exported=\"true\"").containsMatchIn(manifest))
     }
 

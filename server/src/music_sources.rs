@@ -45,6 +45,9 @@ fn psapi_time(text: &str) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
+/// An episode's picture is the smallest variant at least this wide (design 27 §1.1).
+pub const EPISODE_ART_WIDTH: u64 = 512;
+
 /// vibb's `_pick_image`: the smallest variant at least `want` px wide, else the largest.
 pub fn pick_image(images: Option<&Value>, want: u64) -> Option<String> {
     let mut found: Vec<(u64, String)> = images?
@@ -64,6 +67,19 @@ pub fn pick_image(images: Option<&Value>, want: u64) -> Option<String> {
         .find(|(width, _)| *width >= want)
         .or(found.last())
         .map(|(_, url)| url.clone())
+}
+
+/// An image list under `key`, treating `null` and `[]` as missing (vibb's Python `or`, design 27
+/// code QA L5): `squareImage: []` falls back to `image`.
+fn images<'v>(object: &'v Value, key: &str) -> Option<&'v Value> {
+    object
+        .get(key)
+        .filter(|list| list.as_array().is_some_and(|a| !a.is_empty()))
+}
+
+/// The square image list, else the 16:9 one.
+fn square_or_wide(object: &Value) -> Option<&Value> {
+    images(object, "squareImage").or_else(|| images(object, "image"))
 }
 
 /// One episode in a psapi page.
@@ -104,10 +120,9 @@ fn stub_of(episode: &Value) -> Option<Stub> {
             .get("durationInSeconds")
             .and_then(Value::as_f64)
             .and_then(duration_ms),
-        art: pick_image(
-            episode.get("squareImage").or_else(|| episode.get("image")),
-            300,
-        ),
+        // vibb picks 300; the server stores 512 px (design 27 §1.1, the series cover's rule), so
+        // an episode that uses the series picture has the cover's URL and costs no request.
+        art: pick_image(square_or_wide(episode), EPISODE_ART_WIDTH),
         available_until: episode
             .pointer("/usageRights/to/date")
             .and_then(Value::as_str)
@@ -141,6 +156,9 @@ pub fn parse_page(body: &[u8]) -> Option<Page> {
 pub struct Root {
     pub title: Option<String>,
     pub image: Option<String>,
+    /// The show's 16:9 `image` when the cover is its `squareImage` (design 27 QA M2 b): an episode
+    /// without a square image falls back to it, and it is the series picture too.
+    pub wide_image: Option<String>,
 }
 
 pub fn parse_root(body: &[u8]) -> Option<Root> {
@@ -151,10 +169,9 @@ pub fn parse_root(body: &[u8]) -> Option<Root> {
             .pointer("/titles/title")
             .and_then(Value::as_str)
             .and_then(cut),
-        image: pick_image(
-            series.get("squareImage").or_else(|| series.get("image")),
-            512,
-        ),
+        image: pick_image(square_or_wide(series), 512),
+        wide_image: images(series, "squareImage")
+            .and_then(|_| pick_image(images(series, "image"), EPISODE_ART_WIDTH)),
     })
 }
 
@@ -713,12 +730,10 @@ mod tests {
             first.published_at.unwrap().to_rfc3339(),
             "2026-10-09T09:30:00+00:00"
         );
-        assert!(
-            first
-                .art
-                .as_deref()
-                .unwrap()
-                .starts_with("https://gfx.nrk.no/")
+        // The smallest variant of at least 512 px (design 27 §1.1): the 600 one.
+        assert_eq!(
+            first.art.as_deref(),
+            Some("https://gfx.nrk.no/iJM4L3gh1slXOtu2L4FZHAccWMpd8RA9sYW91WQLFJ4Q")
         );
         assert_eq!(
             page.next.as_deref(),
@@ -760,6 +775,45 @@ mod tests {
         let root = parse_root(&fixture("psapi_podcast_root.json")).unwrap();
         assert_eq!(root.title.as_deref(), Some("Abels tårn"));
         assert!(root.image.as_deref().unwrap().contains("gfx.nrk.no"));
+        assert_eq!(root.wide_image, None, "the recorded root has no 16:9 image");
+        let both = br#"{"series": {"squareImage": [{"url": "https://x/sq", "width": 600}],
+            "image": [{"url": "https://x/w300", "width": 300}, {"url": "https://x/w960", "width": 960}]}}"#;
+        let root = parse_root(both).unwrap();
+        assert_eq!(
+            (root.image.as_deref(), root.wide_image.as_deref()),
+            (Some("https://x/sq"), Some("https://x/w960"))
+        );
+        // null and [] are missing, as in vibb (`a or b`): the 16:9 image is the cover.
+        for empty in ["null", "[]"] {
+            let root = parse_root(
+                format!(r#"{{"series": {{"squareImage": {empty}, "image": [{{"url": "https://x/w960", "width": 960}}]}}}}"#)
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(
+                (root.image.as_deref(), root.wide_image.as_deref()),
+                (Some("https://x/w960"), None),
+                "{empty}"
+            );
+            let page = parse_page(
+                format!(r#"{{"_embedded": {{"episodes": [{{"_links": {{"self": {{"href": "/x/e1"}}}},
+                    "squareImage": {empty}, "image": [{{"url": "https://x/e-600", "width": 600}}]}}]}}}}"#)
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(
+                page.stubs[0].art.as_deref(),
+                Some("https://x/e-600"),
+                "{empty}"
+            );
+        }
+        let wide_only = br#"{"series": {"image": [{"url": "https://x/w960", "width": 960}]}}"#;
+        let root = parse_root(wide_only).unwrap();
+        assert_eq!(
+            (root.image.as_deref(), root.wide_image),
+            (Some("https://x/w960"), None),
+            "the 16:9 image is the cover itself"
+        );
         match parse_manifest(&fixture("psapi_manifest_podcast.json")).unwrap() {
             Manifest::Playable {
                 url,

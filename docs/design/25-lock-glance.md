@@ -1005,10 +1005,18 @@ Every root cause except G predates design 25.
 | H SOS -> "Emergency information is not available" | SystemUI starts the `com.android.systemui.action.LAUNCH_EMERGENCY` activity (system handlers only, `config_preferredEmergencySosPackage` first) as a new task; its package wasn't pinned | `HelperKind.EMERGENCY_SOS` (`emergencySosHandler`): pinned with the kiosk on (with or without the block bit) and off, never hidden or suspended, never listed. The re-front yields as "sos" for 60 s (or until the lock is back) when the lock is *stopped* within 3 s of a screen-on (the gesture's presses come <= 500 ms apart and are swallowed while the screen is on) and none of our own screens is in front |
 
 **Deviations and limits**
-- **The SOS yield is a timing heuristic.** No app can see which activity is in front (usage events need a permission
-  a device owner can't grant itself). A stop of the lock within 3 s of a screen-on leaves whatever is in front for up to
-  60 s. While LOCKED only pinned packages can be there: Home and Recents are out of lock task, the camera is off by
-  policy, our own screens are excluded, Recents only pauses (re-fronted as always, within 700 ms in that window).
+- **The SOS yield is a timing heuristic, made safe by lock task** (rewritten after qa-25b-25f H1/L6).
+  - No app can see which activity is in front: usage events need a permission a device owner can't grant itself, SystemUI
+    sends no broadcast, and the gesture setting isn't readable.
+  - A *stop* of the lock within 3 s of a screen-on marks a probable SOS. With the kiosk on, every allowed app is in
+    lock task. So the mark alone would keep whatever the kid brought up in that window: Recents to a thumbnail (a stop,
+    not a pause), a call or an app's full-screen intent that woke the screen, quickstep after a SystemUI crash.
+  - So while the "sos" yield runs, the lock-task list is the kiosk-off one (our package, the lock's helpers, the SOS
+    app): Android removes every other locked task at once.
+  - The yield lasts at most 15 s (the countdown and the dial; a placed call is held as "system_call").
+  - It ends the moment the lock is in front again, the screen goes off, or anything else is yielded to. A woken alarm,
+    a call or a VoIP call come first and are never an SOS.
+  - The price: an allowed app's task in lock task is closed when the yield narrows the list (it starts afresh).
 - **A re-front still shows one plain frame.** Bringing the lock's task back is a task switch; the system's snapshot of
   a `FLAG_SECURE` window is the theme background (`shouldUseAppThemeSnapshot`), shown until the lock draws.
 - The gesture keys (`camera_double_tap_power_gesture_disabled`; Android 16's `double_tap_power_button_gesture_enabled`,
@@ -1045,11 +1053,12 @@ design 08).
   shows it whatever the kid picks for Home.
   - If it is unticked, deleted, not yet downloaded or unreadable, the lock falls back to Home's wallpaper.
   - Only wallpapers the phone may use can be chosen, because the image route only serves a ticked wallpaper.
-- **Legibility:** the lock keeps its light ink (white clock, the dark cards, the keys) on every background.
-  - A black scrim is laid over the wallpaper: the lightest one that gives white text 4.5:1 against the wallpaper's
-    lightest part (`lockScrim`, pure).
-  - Photos always get at least `MIN_IMAGE_SCRIM`, as on Home. The cap is 0.6, which reaches 4.5:1 even on white, so
-    no label shadow is needed.
+- **Legibility:** the lock keeps its light inks (white clock, the dark cards, the keys) on every background.
+  - A black scrim is laid over the wallpaper: the lightest one that gives *every* ink drawn on the wallpaper 4.5:1
+    against its lightest part (`lockScrim`, pure; `LOCK_INKS`). Those inks are white, the dim date and "more" line,
+    "Foreldrekode" at 75 % and the red "Nødsamtale" (qa-25b-25f M3: it was white only).
+  - Photos always get at least `MIN_IMAGE_SCRIM`, as on Home. The cap is 0.8, which reaches 4.5:1 for every ink even
+    on white.
   - The cards (rows, music tile, keys) keep their own opaque backgrounds.
 - **What draws it:** the lock draws the wallpaper itself (`WallpaperRender.GroundDrawable`, the one decoded photo of the
   store or a second one for a separate lock photo). It never shows through to Android's wallpaper: the lock's window
@@ -1102,3 +1111,24 @@ because anyone holding the locked phone sees it.
   - [ ] the kid changes Home's wallpaper and the lock follows;
   - [ ] a separate lock picture, then unticked;
   - [ ] the keypad legible on a light photo.
+
+## Lock fix round 25c (2026-10-12, qa-25b-25f-code.md)
+
+| Finding | Fix |
+| --- | --- |
+| H1 the SOS yield kept anything that stopped the lock in the window | While the "sos" yield runs, lock task is narrowed to our package, the lock's helpers and the SOS app (Android removes every other locked task); at most 15 s; ended by the lock in front, the screen off or any other yield. A sharper signal doesn't exist for an app (no broadcast, the gesture setting not readable, the front package needs usage access) |
+| M1 the camera off for every app | The policy only while LOCKED **and no call** is live (ours, VoIP, the system dialer's); never unlocked, so the time-rule screen's usable apps keep their camera |
+| M2 "sos" before "alarm" | The SOS yield is last: a woken alarm, a call or a VoIP call come first |
+| M3 the scrim for white only | The scrim is computed for every ink on the wallpaper (`LOCK_INKS`), cap 0.8 |
+| L1-L6 | Opaque paint for the photo; the first frame waits up to 150 ms for the background after a process start; the SOS package cached; APP_ONLY rows never say "Tapt anrop"; the camera policy pending only on Android 14; the limits rewritten |
+
+**Where the camera double-press can still crash SystemUI** (only with the gesture on - `docs/testing/emulator.md` §4
+keeps it off - and only where the camera policy is off while the gesture's camera is suspended):
+- **a call while LOCKED** (phone or VoIP): the camera lock still suspends the camera apps, the policy is off for the
+  call's video. A double-press during the call can crash SystemUI. The lock re-fronts after the call; during it the
+  call screen is exempt anyway;
+- **a time rule that suspends the camera app**, unlocked: the time-rule screen re-fronts itself.
+
+Keeping the camera apps unsuspended in those states would let the gesture open the camera (and its gallery) over the
+lock or the rule instead, so they stay suspended. [device] whether the crash happens at all with a suspended (not
+hidden) camera in these states.

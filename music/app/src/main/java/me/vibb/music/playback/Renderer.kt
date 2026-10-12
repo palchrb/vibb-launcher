@@ -45,6 +45,16 @@ interface Renderer {
      */
     fun currentIndex(): Int
     fun itemCount(): Int
+
+    /** The MediaItem the service built for queue index [index] (its metadata), or null. */
+    fun itemAt(index: Int): MediaItem?
+
+    /**
+     * Item [index]'s metadata swapped in place (design 27, QA H2: its picture landed after the queue
+     * was built): the same item, so playback goes on and nothing is sent to a speaker; the session's
+     * player - the notification, the lock's tile, Home's card - shows the new art.
+     */
+    fun replaceItem(index: Int, item: MediaItem)
     fun play()
     fun pause()
 

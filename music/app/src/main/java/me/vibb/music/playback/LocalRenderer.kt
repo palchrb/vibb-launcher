@@ -125,6 +125,8 @@ internal class LocalRenderer(
     override fun durationMs(): Long? = exo.duration.takeIf { it > 0 }
     override fun currentIndex(): Int = exo.currentMediaItemIndex
     override fun itemCount(): Int = exo.mediaItemCount
+    override fun itemAt(index: Int): MediaItem? = if (index in 0 until exo.mediaItemCount) exo.getMediaItemAt(index) else null
+    override fun replaceItem(index: Int, item: MediaItem) = exo.replaceMediaItem(index, item)
     override fun play() = exo.play()
     override fun pause() = exo.pause()
     override fun prepare() = exo.prepare()

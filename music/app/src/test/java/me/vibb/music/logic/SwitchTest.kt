@@ -94,4 +94,30 @@ class SwitchTest {
         assertEquals(0, skipTarget(false, 1, 3, 60_000, PREV_RESTART_MAX_MS + 1)) // long-form steps back
         assertNull(skipTarget(true, 0, 1, 0, null))
     }
+
+    @Test
+    fun `quick swipes - the player passing through the first target doesn't end the second`() {
+        val first = PlayRequest(2, "b1", a1, 1_000)
+        val second = PlayRequest(2, "b2", a1, 1_200, swipeVia(first))
+        assertTrue(requestStands(second, a1, 1_300))
+        assertTrue("on its way through b1", requestStands(second, b1, 1_400))
+        assertFalse("there", requestStands(second, b2, 1_500))
+        assertFalse("elsewhere: the player is right", requestStands(second, ItemRef(2, "b3"), 1_500))
+        assertEquals(emptySet<ItemRef>(), swipeVia(null))
+    }
+
+    @Test
+    fun `quick swipes on a room - passing through holds while the swipe still waits, then the plain bound`() {
+        // The merge of design 27 into design 26a: a swipe (SKIP_TO) is in Commands.MOVES, so behind a
+        // room switch's hand-off it holds up to SWITCH_WAIT_MAX_MS, and the player passing through the
+        // first swipe's target doesn't end the second one meanwhile.
+        val first = PlayRequest(2, "b1", a1, 1_000)
+        val second = PlayRequest(2, "b2", a1, 1_200, swipeVia(first))
+        assertTrue(requestStands(second, b1, 1_200 + SWITCH_HOLD_MS, waiting = true))
+        assertTrue(requestStands(second, a1, 1_200 + SWITCH_WAIT_MAX_MS - 1, waiting = true))
+        assertFalse(requestStands(second, b1, 1_200 + SWITCH_WAIT_MAX_MS, waiting = true))
+        assertFalse(requestStands(second, b1, 1_200 + SWITCH_HOLD_MS, waiting = false))
+        assertFalse("there, waiting or not", requestStands(second, b2, 1_300, waiting = true))
+        assertFalse("before its own tap: never", requestStands(second, a1, 1_100, waiting = true))
+    }
 }

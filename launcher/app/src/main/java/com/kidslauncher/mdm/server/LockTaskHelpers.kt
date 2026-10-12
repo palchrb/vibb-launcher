@@ -177,8 +177,14 @@ fun lockTaskWhileLocked(
     fenced: Boolean = false,
     voipPackages: Set<String> = emptySet(),
     recentsPin: String? = null,
+    sosNarrowed: Set<String>? = null,
 ): LockTaskSetting = when {
     !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
+    // qa-25b-25f H1: during the "sos" yield the kiosk's list shrinks to the kiosk-off one, so Android
+    // removes every other locked task (an allowed app brought up in the SOS window).
+    kioskPackages != null && sosNarrowed != null -> LockTaskSetting(
+        setOf(ownPackage) + (sosNarrowed - PLAY_CORE), featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
+    )
     kioskPackages != null -> LockTaskSetting(
         kioskPackages - setOfNotNull(recentsPin), featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
     )
@@ -274,3 +280,11 @@ fun chromeWriteOrder(locked: Boolean): List<ChromeWrite> =
     } else {
         listOf(ChromeWrite.LOCK_TASK, ChromeWrite.STATUS_BAR, ChromeWrite.CREATE_WINDOWS)
     }
+
+/**
+ * The lock-task list during the "sos" yield (qa-25b-25f H1): our package, the lock's helpers
+ * ([lockHelpers]: [pinLockHelpers] - emergency dialer, Telecom, the system dialer, the clock app, the
+ * SOS app) and the [sosPackage] - never Play core, never an allowed app or the recents provider.
+ */
+fun sosNarrowedPackages(ownPackage: String, lockHelpers: Set<String>?, sosPackage: String?): Set<String> =
+    setOf(ownPackage) + lockHelpers.orEmpty() + setOfNotNull(sosPackage) - PLAY_CORE

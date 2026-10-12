@@ -1117,7 +1117,10 @@ async fn the_sweep_lists_a_series_like_a_feed() {
     assert_eq!(served["version"], serde_json::json!(version));
     assert_eq!(served["items"][0]["key"], serde_json::json!("160661"));
     assert_eq!(served["items"][0]["url"], serde_json::Value::Null);
-    assert_eq!(served["items"][1]["art"], serde_json::json!(COVER_2));
+    // Since design 27 a listing's `art` is the hash of the item's own stored picture, and the art pass
+    // takes only items with a url: a Storytel book's cover (`art_url` above) reaches no phone until
+    // step 4a (design 26b §8) widens it.
+    assert_eq!(served["items"][1]["art"], serde_json::Value::Null);
     assert_eq!(
         served["items"][2]["duration_ms"],
         serde_json::json!(650_000)

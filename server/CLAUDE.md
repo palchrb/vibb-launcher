@@ -330,14 +330,19 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 **Migration numbers 0058-0060 are skipped on `main`** (the wave took 0061/0062 while a branch held them). Never fill
 them: sqlx would apply them out of order on a 0.24 database, and `startup::pre_migration_backup` (`MAX(version) <
 latest`) would take no backup first. A new migration takes the next number after the highest one on `main`.
-**0070 is reserved** for design 27's episode art by the main session while `0071_music_sonos_rooms.sql` (design 26a)
-already sits above it (qa-26a-merge-code M1): the same hazard - if 0070 lands on a server that has run 0071, sqlx
-applies it out of order and `pre_migration_backup`, comparing only `MAX(version)`, takes no `pre-migrate-*.db`. So
-design 27's server ships before or together with 26a's, or the backup check compares the set of applied versions
-with the compiled ones (a change for the main session, not made yet).
+**0070 is design 27's** (`0070_music_episode_art.sql`, episode art) and `0071_music_sonos_rooms.sql` (design 26a) sits
+above it (qa-26a-merge-code M1): both deploy in order, 0070 before 0071 - the natural order since design 27 is on
+`main`. The same hazard stays for a server that ran 0071 without 0070 (a build of the Sonos branch from before it
+merged design 27): sqlx would apply 0070 out of order and `pre_migration_backup`, comparing only `MAX(version)`,
+would take no `pre-migrate-*.db`. Never deploy such a build; or the backup check compares the set of applied
+versions with the compiled ones (a change for the main session, not made yet).
 `0072_music_storytel.sql` (design 26b, written as 0066 on `music-2-storytel`, renumbered at the merge of
-`music-1b-sonos`) sits above both: 0070 (and 0071, were 26a's server not deployed first) reaching a server that has
-run 0072 is the same hazard, so the server that carries 0072 also carries 0071 and ships with or after design 27's.
+`music-1b-sonos`) sits above both: 0070 or 0071 reaching a server that has run 0072 is the same hazard. Since the
+Storytel branch merged design 27 (through `music-1b-sonos`, 2026-10-12) every build of it carries 0070-0072 and applies
+them in order; never deploy a build of it from before that merge (0071 and 0072 without 0070).
+**A migration file is frozen from its first commit on a pushed branch, comments included**: sqlx stores a checksum of
+the whole file and refuses to start (`VersionMismatch`) when an applied migration's text changed. Later notes go into
+this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -356,7 +361,7 @@ run 0072 is the same hazard, so the server that carries 0072 also carries 0071 a
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"
-- `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep"
+- `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)
 - `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (and design 24b's `end_windows`/`allow_blocked`/`start_pause`) (`requested_at`/`delivered_at` (the last delivery)/`deliveries`/`received_at`/`acknowledged_at`/`result`/`succeeded`/`cancelled_at`/`cancel_reason`/`payload` - `allow_blocked`'s list), see the Find My Device architecture bullet above
 
 ## Device-facing API (plain JSON, no envelope)
@@ -679,6 +684,54 @@ needed to manage the phone, delete on a schedule, never store notification or me
   picker, add, clear, entry page, the log floor by real events),
   fixtures in `testdata/storytel/`. `tests::music::CannedFetch` records each request (`requests`) and has
   `answer_once`.
+
+## Vibb music: episode art (design 27, `docs/design/27-music-episode-art.md`, migration `0070_music_episode_art.sql`)
+
+- **What**: the sweep fetches each NRK/RSS item's own picture (`art_url`: NRK's smallest variant of at least 512 px
+  of `squareImage` else `image` - `null`/`[]` count as missing, as vibb's `or` -, `music_sources::EPISODE_ART_WIDTH`; an RSS item's `itunes:image`) as a 512 px JPEG
+  in `photos::MUSIC_ART` (`AppState.music_art_dir`, `data/music_art`; its own lock; **not backed up**:
+  `recover_missing` forgets lost ones, `music_sweep::restamp_versions` then stores the listings' versions again
+  (code QA L6), and the sweep fetches them again). The listing's item `art` is the 64-hex hash
+  of that picture, or null (none, the series picture, not fetched yet, failed) - `testdata/music_listing.json`, the
+  music app's copy and the launcher's `MusicPlanTest` version pin change together. Served by the cover route:
+  `cover_in_library` first, else `music::art_in_library` (a listed, non-pending item of a listed NRK/RSS entry the
+  phone has ticked) from `music_art_dir`.
+- **The pass** (`music_sweep::art_pass`, after the listing, manifests and cover; not on recheck-only checks): the
+  first `ART_WINDOW` (200) `ok` items in play order (`effective_order`'s rule), this check's new items first (with
+  the backlog off, also items first seen since it went off, code QA L2); due = untried (`art_from` NULL or another
+  URL), `failed` with `art_fails < 3` a day after `art_at`, or a host error a day after `art_at`. A judged item whose
+  URL changed only in its query (signed, cache-busting) takes the new URL with no request (`same_resource`); one
+  moved to another path is due at most weekly (`ART_MOVED_RETRY_DAYS`, code QA M1). Step 1: the URL is the
+  cover's or NRK's 16:9 picture's -> `same`, no request. Step 2: another item (this entry's, else any entry's, one
+  with a file first) has a print for that URL -> judged against this entry's reference prints, no request; a `same`
+  elsewhere has no file, so an `own` here needs the request (QA L1 c). Step 3: one GET (`Kind::Image`,
+  `public_media` unless a LAN feed), `process_limited(Square)`, `photos::fingerprint_limited` (9x8 dHash + `tone_image`, the
+  quarters' mean RGB); within `SAME_PICTURE_BITS` (5) of a reference -> `same` (nothing stored), else `own`; two own
+  pictures of an entry are one hash only as `twins` (code QA L4: within `TWIN_BITS` 2, the same tone, and not
+  `low_detail` - a flat field or small text on one background). Known limit: the series line is dHash only, so a flat
+  episode picture can count as a flat series cover (the cover shows), and a recoloured series picture is `same`. A
+  failure never fails the check: a 4xx, a refused address or an undecodable picture uses one of 3 tries; a network
+  error, timeout or 5xx uses none, and `ART_NETWORK_FAILURES` (3) in a row end the pass (code QA M2). Budgets:
+  `ART_PER_CHECK` 20 (`Sweep::set_art_per_check` in the tests; 0 in tests that count listing requests),
+  `ART_PER_DAY` 400 counted in `music_art_requests` (one row per image request, the 16:9 reference included; rows
+  older than a day go; code QA M1); a request the budget stops leaves its item untried (QA L1 b). The log line adds `, art N (o own, s same)`.
+- **Reference prints** (QA M2, `music_listings`): `cover_print` (of a newly fetched cover, else read once from the
+  stored file), `cover_alt_url`/`cover_alt_print` (NRK's 16:9 `image` when the cover is its `squareImage`,
+  `Root::wide_image`, one request when its URL changes, at most daily; the root is read while `cover_alt_at` is NULL
+  or the refresh is pending, code QA L1) and `old_prints` (JSON, up to 3 earlier
+  covers). `art_refs` is the set the items were judged against; a change re-judges every item from its stored print
+  with no request (`own` that matches -> `same`, its file pruned; `same` that no longer matches -> untried).
+- **Backlog** (`art_backlog`, `art_same_run`, `art_backlog_at`): 5 fetched pictures in a row that are the series
+  picture with no `own` in the entry -> only new items are tried; an `own` turns it back on, and so does a month
+  (QA L1 e). **Refresh** (`art_refresh`, set by 0070 for NRK entries, QA M3): the next check walks the episode pages
+  from the kept end once more and updates `art_url` of known keys (untried), nothing added or dropped; cleared when
+  the walk finished within the budget.
+- **Stored** with the items in `finish` (the `MUSIC_ART` lock from writing the files to the commit; a hash copied
+  from another item that is no longer on disk is left untried), pruned after a `finish` that changed an art reference
+  and after an entry is deleted. The card's count line adds "· N with episode art".
+- Tests: `src/tests/music_art.rs`, `photos::tests` (the print, the tone), `music_sources::tests` (the 512 pick,
+  `wide_image`, `null`/`[]`). `CannedFetch::hold`/`release` (a gate every request waits at) and
+  `Sweep::pause_before_commit` (cfg(test)) let a test act inside a check without a clock (code QA L3).
 
 ## Parent PIN (design 24, `docs/design/24-parent-pin-hardening.md`, migrations `0056_parent_pin_easy.sql`, `0057_device_pin_events.sql`)
 

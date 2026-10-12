@@ -95,6 +95,9 @@ pub struct AppState {
     /// backed up) and the cover store (`data/music_covers`, `photos::MUSIC_COVERS`).
     pub music_files_dir: std::sync::Arc<std::path::PathBuf>,
     pub music_cover_dir: std::sync::Arc<std::path::PathBuf>,
+    /// Episode art the sweep fetched (`data/music_art`, `photos::MUSIC_ART`, design 27): its own
+    /// store, never backed up.
+    pub music_art_dir: std::sync::Arc<std::path::PathBuf>,
     /// The key the Storytel login is sealed with (`music_secret`); `None` = Storytel is off.
     pub music_key: Option<std::sync::Arc<music_secret::MusicKey>>,
     /// Every music source fetch - the add check, the sweep, source covers (design 21b §2.1/§2.7):
@@ -358,6 +361,7 @@ async fn main() {
         )),
         music_files_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_FILES_DIR)),
         music_cover_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_COVERS_DIR)),
+        music_art_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_ART_DIR)),
         music_key,
         music_fetch: std::sync::Arc::new(music_net::Gated::new(
             std::sync::Arc::new(music_net::HttpSource::new()),

@@ -27,10 +27,17 @@ val DECLARED_ADMIN_POLICIES: Map<String, Int> = linkedMapOf(
     "disable-keyguard-features" to 9, // USES_POLICY_DISABLE_KEYGUARD_FEATURES
 )
 
+/**
+ * Tags Android checks by a device owner's permission from 15 on (`setCameraDisabled`: DPMS's
+ * `MANAGE_DEVICE_POLICY_CAMERA` check), so a missing grant there needs no restart (qa-25b-25f L5).
+ * On 14 it depends on the policy-engine flag, which an app can't read - listed there.
+ */
+val PERMISSION_CHECKED_FROM_15: Set<String> = setOf("disable-camera")
+
 /** The declared tags Android hasn't granted yet ([granted]: tag -> `hasGrantedPolicy`, `null` =
- * unreadable, not listed), in a stable order. */
-fun pendingAdminPolicies(granted: Map<String, Boolean?>): List<String> =
-    DECLARED_ADMIN_POLICIES.keys.filter { granted[it] == false }
+ * unreadable, not listed), in a stable order - those that only count after a restart on [sdkInt]. */
+fun pendingAdminPolicies(granted: Map<String, Boolean?>, sdkInt: Int = 34): List<String> =
+    DECLARED_ADMIN_POLICIES.keys.filter { granted[it] == false && !(sdkInt >= 35 && it in PERMISSION_CHECKED_FROM_15) }
 
 object AdminPolicies {
     private const val LOG_TAG = "AdminPolicies"
@@ -43,7 +50,10 @@ object AdminPolicies {
             null
         } else {
             val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
-            pendingAdminPolicies(DECLARED_ADMIN_POLICIES.mapValues { (_, policy) -> dpm.hasGrantedPolicy(admin, policy) })
+            pendingAdminPolicies(
+                DECLARED_ADMIN_POLICIES.mapValues { (_, policy) -> dpm.hasGrantedPolicy(admin, policy) },
+                android.os.Build.VERSION.SDK_INT,
+            )
         }
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Couldn't read the granted admin policies", e)

@@ -20,6 +20,10 @@
 //!   per item a day, a whole entry once a day, 300 manifests a day server-wide.
 //! - **Covers**: NRK's square image or the RSS channel image, as a 512 px JPEG in
 //!   `photos::MUSIC_COVERS`, at most once a day.
+//! - **Episode art** ([art_pass], design `docs/design/27-music-episode-art.md` §1 with its QA): an
+//!   item's own picture as a 512 px JPEG in `photos::MUSIC_ART`, judged against the series
+//!   pictures by print; at most [ART_PER_CHECK] requests a check and [ART_PER_DAY] a day, the first
+//!   [ART_WINDOW] items in play order. The listing's `art` is its hash.
 //! - **The listing** ([build_listing]): `{v, entry, version, items}`, the `ok` and `gone` items
 //!   oldest first, at most [MAX_LISTING_BYTES]; served by `GET /api/devices/music/entries/{id}/items`.
 //! - **Storytel** (design `26b-storytel.md` §2.4): a series or standalone book is listed from the
@@ -32,8 +36,9 @@
 //!   Saving the login makes the entries that failed for want of one due at once.
 //!
 //! Ported in behaviour from palchrb/vibb `pi/vibb/content.py` (`_catalog`, `_new_episodes`,
-//! `_psapi_episodes`, `_manifest_url`, `_series`, `sync_feed`), `pi/vibb/storytel.py` (`sync`
-//! minus the downloads, `write_shelf`) and `pi/vibb/library.py` (`_cache_sweeper`,
+//! `_psapi_episodes`, `_manifest_url`, `_series`, `sync_feed`; for episode art, branch `pipewire`'s
+//! `_episode_image_file`, `_download_image`, `_sync_episode_images`), `pi/vibb/storytel.py`
+//! (`sync` minus the downloads, `write_shelf`) and `pi/vibb/library.py` (`_cache_sweeper`,
 //! `SYNC_INTERVAL_S`, `SYNC_STAGGER_S`, `SYNC_DELAY_S`; MIT, Copyright (c) palchrb), reimplemented
 //! in Rust under GPL-3.0 with 21b's and 26b's changes (see NOTICE.md).
 
@@ -93,6 +98,28 @@ pub const CHECK_NOW_PER_HOUR: i64 = 12;
 pub const CHECK_NOW_PER_DAY: i64 = 48;
 /// The listing format (`v`).
 pub const LISTING_FORMAT: u32 = 1;
+/// Episode art (design 27 §1.4): image requests per check, and per day server-wide (only requests
+/// count, QA L1 a)...
+pub const ART_PER_CHECK: u32 = 20;
+pub const ART_PER_DAY: i64 = 400;
+/// ...for the first this many `ok` items in play order.
+pub const ART_WINDOW: usize = 200;
+/// A failed picture is tried again a day later, at most this many times for one URL.
+pub const ART_MAX_FAILS: i64 = 3;
+/// This many fetched pictures in a row that are the series picture, with none of the entry's own,
+/// turn the backlog off (only new items are tried) ...
+pub const ART_BACKLOG_SAME: i64 = 5;
+/// ... until this many days later (QA L1 e: a carousel the entry would have isn't hidden for good).
+pub const ART_BACKLOG_RETRY_DAYS: i64 = 30;
+/// Network errors in a row (or 5xx answers) from image hosts that end a check's art pass (code QA
+/// M2, like [MANIFEST_NETWORK_FAILURES]): a dead host costs 3 requests, not the check's 10 minutes.
+pub const ART_NETWORK_FAILURES: u32 = 3;
+/// A judged picture whose URL moved to another path is fetched again at most this often (code QA
+/// M1: a feed that renames its pictures at every fetch). A change in the query alone keeps the
+/// result with no request.
+pub const ART_MOVED_RETRY_DAYS: i64 = 7;
+/// Earlier covers kept as reference prints (QA M2 c).
+const OLD_PRINTS: usize = 3;
 
 const RSS_FALLBACK: &str = "https://podkast.nrk.no/program";
 
@@ -127,9 +154,21 @@ pub struct Sweep {
     /// [MAX_CHECK_REQUESTS] and [ENTRY_SPACING] (smaller in the tests).
     request_budget: std::sync::atomic::AtomicU32,
     spacing_ms: std::sync::atomic::AtomicU64,
+    /// [ART_PER_CHECK] (0 in the tests that count other requests).
+    art_per_check: std::sync::atomic::AtomicU32,
     /// The tests' fake clock; `None` = the real one.
     clock: std::sync::Mutex<Option<DateTime<Utc>>>,
+    /// The tests' stop right before a check commits (`pause_before_commit`).
+    #[cfg(test)]
+    before_commit: std::sync::Mutex<Option<CommitPause>>,
 }
+
+/// Says "reached", then waits for "go".
+#[cfg(test)]
+type CommitPause = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+);
 
 impl Default for Sweep {
     fn default() -> Self {
@@ -138,7 +177,10 @@ impl Default for Sweep {
             current: Default::default(),
             request_budget: MAX_CHECK_REQUESTS.into(),
             spacing_ms: (ENTRY_SPACING.as_millis() as u64).into(),
+            art_per_check: ART_PER_CHECK.into(),
             clock: Default::default(),
+            #[cfg(test)]
+            before_commit: Default::default(),
         }
     }
 }
@@ -151,6 +193,41 @@ impl Sweep {
         self.request_budget.store(request_budget, Ordering::SeqCst);
         self.spacing_ms
             .store(spacing.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// The tests' knob: image requests per check (0 = no episode art fetched).
+    #[cfg(test)]
+    pub fn set_art_per_check(&self, requests: u32) {
+        self.art_per_check
+            .store(requests, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn art_per_check(&self) -> u32 {
+        self.art_per_check.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The tests' knob: the next check stops right before its commit (the store locks held, the
+    /// pictures written) and says so on the first channel; it goes on when the second is sent to.
+    #[cfg(test)]
+    pub fn pause_before_commit(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (reached, reached_rx) = tokio::sync::oneshot::channel();
+        let (go, go_rx) = tokio::sync::oneshot::channel();
+        *self.before_commit.lock().unwrap() = Some((reached, go_rx));
+        (reached_rx, go)
+    }
+
+    #[cfg(test)]
+    async fn at_commit(&self) {
+        let pause = self.before_commit.lock().unwrap().take();
+        if let Some((reached, go)) = pause {
+            let _ = reached.send(());
+            let _ = go.await;
+        }
     }
 
     /// The tests' fake clock (`None` = the real one again).
@@ -564,6 +641,19 @@ pub struct Item {
     pub reported_at: Option<String>,
     pub rechecked_at: Option<String>,
     pub recheck: bool,
+    /// Episode art (design 27 §1.2): the item's own picture (`own`), else none.
+    pub art_hash: Option<String>,
+    /// The `art_url` the art fields describe; another one is untried.
+    pub art_from: Option<String>,
+    /// `own`, `same` (the series picture) or `failed`.
+    pub art_state: Option<String>,
+    pub art_print: Option<i64>,
+    /// The picture's coarse colour (`photos::tone_image`), for the twin merge (code QA L4).
+    pub art_tone: Option<i64>,
+    pub art_at: Option<String>,
+    /// The last attempt that sent a request (the day's budget).
+    pub art_fetched_at: Option<String>,
+    pub art_fails: i64,
 }
 
 impl Item {
@@ -583,6 +673,14 @@ impl Item {
             reported_at: None,
             rechecked_at: None,
             recheck: false,
+            art_hash: None,
+            art_from: None,
+            art_state: None,
+            art_print: None,
+            art_tone: None,
+            art_at: None,
+            art_fetched_at: None,
+            art_fails: 0,
         }
     }
 
@@ -603,7 +701,10 @@ impl Item {
 }
 
 const ITEM_COLUMNS: &str = "key, state, title, url, hls, duration_ms, art_url, published_at, \
-     available_until, first_seen_at, attempts, reported_at, rechecked_at, recheck";
+     available_until, first_seen_at, attempts, reported_at, rechecked_at, recheck, art_hash, \
+     art_from, art_state, art_print, art_tone, art_at, art_fetched_at, art_fails";
+/// How many columns [ITEM_COLUMNS] names.
+const ITEM_COLUMN_COUNT: usize = 22;
 
 pub async fn load_items(
     db: &mut sqlx::SqliteConnection,
@@ -648,6 +749,18 @@ pub struct Listing {
     pub failing_since: Option<String>,
     pub failures: i64,
     pub requests: i64,
+    /// Episode art (design 27 §1.2, QA M2/M3).
+    pub cover_print: Option<i64>,
+    pub cover_alt_url: Option<String>,
+    pub cover_alt_print: Option<i64>,
+    pub cover_alt_at: Option<String>,
+    /// JSON array of up to [OLD_PRINTS] earlier covers' prints.
+    pub old_prints: Option<String>,
+    pub art_refs: Option<String>,
+    pub art_backlog: bool,
+    pub art_same_run: i64,
+    pub art_backlog_at: Option<String>,
+    pub art_refresh: bool,
 }
 
 pub async fn load_listing(
@@ -672,6 +785,8 @@ pub struct ListingItem {
     pub url: Option<String>,
     pub hls: bool,
     pub duration_ms: Option<i64>,
+    /// The item's own picture (`GET /api/devices/music/covers/{hash}`), else null: none, the
+    /// series picture, not fetched yet, or failed (design 27 §1.5).
     pub art: Option<String>,
 }
 
@@ -717,7 +832,8 @@ pub fn build_listing(
             url: if i.state == "ok" { i.url.clone() } else { None },
             hls: i.hls,
             duration_ms: i.duration_ms,
-            art: i.art_url.clone(),
+            // The 64-hex hash of the item's own picture (design 27 §1.5), else null.
+            art: i.art_hash.clone(),
         })
         .collect();
     if listed.is_empty() {
@@ -838,6 +954,50 @@ pub async fn device_listing(
     ))
 }
 
+/// Stores every listed entry's version again from its rows, where they changed outside a check:
+/// `photos::MUSIC_ART.recover_missing` forgot pictures after a restore (design 27 code QA L6).
+/// The library then names the listing the route serves (the version moves the revision, so the
+/// phones fetch it). Returns how many changed.
+pub async fn restamp_versions(db: &sqlx::SqlitePool) -> Result<usize, sqlx::Error> {
+    let listed: Vec<i64> = sqlx::query_scalar(
+        "SELECT l.entry_id FROM music_listings l JOIN music_entries e ON e.id = l.entry_id \
+         WHERE l.version IS NOT NULL AND e.source IN ('nrk', 'rss')",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut changed = 0;
+    for entry_id in listed {
+        let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+        let row: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT version, keep_end FROM music_listings WHERE entry_id = ?")
+                .bind(entry_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some((Some(version), keep_end)) = row else {
+            continue;
+        };
+        let items = load_items(&mut tx, entry_id).await?;
+        if let Some(built) = build_listing(entry_id, &items, keep_end.as_deref() == Some("first"))
+            && built.version != version
+        {
+            sqlx::query(
+                "UPDATE music_listings SET version = ?, item_count = ?, bytes = ?, cut = ? \
+                 WHERE entry_id = ?",
+            )
+            .bind(&built.version)
+            .bind(built.count as i64)
+            .bind(built.json.len() as i64)
+            .bind(built.cut)
+            .bind(entry_id)
+            .execute(&mut *tx)
+            .await?;
+            changed += 1;
+        }
+        tx.commit().await?;
+    }
+    Ok(changed)
+}
+
 // ------------------------------------------------------------------------------------------------
 // Phone reports (§2.5)
 // ------------------------------------------------------------------------------------------------
@@ -898,6 +1058,20 @@ pub struct CheckReport {
     pub changed: bool,
     pub phones: Vec<i64>,
     pub error: Option<String>,
+    /// Episode pictures judged in this check: the item's own, the series picture.
+    pub art_own: usize,
+    pub art_same: usize,
+}
+
+impl CheckReport {
+    /// The log line's art part (design 27 §1.4): ", art 7 (3 own, 4 same)", or nothing.
+    pub fn art_line(&self) -> String {
+        let all = self.art_own + self.art_same;
+        if all == 0 {
+            return String::new();
+        }
+        format!(", art {all} ({} own, {} same)", self.art_own, self.art_same)
+    }
 }
 
 /// One request's outcome inside a check.
@@ -1009,6 +1183,83 @@ struct Plan {
     /// The items re-asked in this check (a manifest, or the feed of a flagged RSS entry): their
     /// flags are cleared and `rechecked_at` stamped, even when the check then fails (QA 1c #1).
     rechecked: HashSet<String>,
+    /// Episode art (design 27): the reference prints and the backlog.
+    art: ArtPlan,
+}
+
+/// A check's episode-art state (design 27 §1.2-§1.4, QA M2/M3), from and to `music_listings`.
+#[derive(Default)]
+struct ArtPlan {
+    /// The cover's URL as of this check (a cover fetched now, else the stored one's).
+    cover_url: Option<String>,
+    cover_print: Option<i64>,
+    alt_url: Option<String>,
+    alt_print: Option<i64>,
+    alt_at: Option<String>,
+    /// NRK's 16:9 image as read from the root in this check (`None` = not read).
+    alt_candidate: Option<Option<String>>,
+    old_prints: Vec<i64>,
+    refs_key: Option<String>,
+    backlog: bool,
+    same_run: i64,
+    backlog_at: Option<String>,
+    refresh: bool,
+    /// New pictures to store at the commit, and hashes copied from another item (checked at the
+    /// commit, under the store's lock).
+    new_files: Vec<crate::photos::ProcessedPhoto>,
+    copied: HashSet<String>,
+    own: usize,
+    same: usize,
+}
+
+impl ArtPlan {
+    fn from_listing(old: &Listing) -> ArtPlan {
+        ArtPlan {
+            cover_print: old.cover_print,
+            alt_url: old.cover_alt_url.clone(),
+            alt_print: old.cover_alt_print,
+            alt_at: old.cover_alt_at.clone(),
+            alt_candidate: None,
+            old_prints: old
+                .old_prints
+                .as_deref()
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default(),
+            refs_key: old.art_refs.clone(),
+            // A listing row that doesn't exist yet: the column defaults.
+            backlog: old.art_backlog || old.checked_at.is_none(),
+            same_run: old.art_same_run,
+            backlog_at: old.art_backlog_at.clone(),
+            refresh: old.art_refresh,
+            ..Default::default()
+        }
+    }
+
+    /// Every print that is "the series picture": the cover's, NRK's 16:9 image's and the earlier
+    /// covers' (QA M2), without repeats, sorted.
+    fn refs(&self) -> Vec<i64> {
+        let mut refs: Vec<i64> = self
+            .cover_print
+            .into_iter()
+            .chain(self.alt_print)
+            .chain(self.old_prints.iter().copied())
+            .collect();
+        refs.sort_unstable();
+        refs.dedup();
+        refs
+    }
+
+    /// A new cover's print: the old one joins the earlier ones (at most [OLD_PRINTS]).
+    fn new_cover(&mut self, print: i64) {
+        if let Some(old) = self.cover_print
+            && !crate::photos::same_picture(old, print)
+        {
+            self.old_prints.retain(|p| *p != old);
+            self.old_prints.insert(0, old);
+            self.old_prints.truncate(OLD_PRINTS);
+        }
+        self.cover_print = Some(print);
+    }
 }
 
 impl Plan {
@@ -1148,6 +1399,7 @@ async fn run_check(
         new_items: 0,
         recheck_room,
         rechecked: HashSet::new(),
+        art: ArtPlan::from_listing(old),
     };
     let mut job = Job {
         source: state.music_fetch.as_ref(),
@@ -1207,7 +1459,17 @@ async fn run_check(
         }
     }
     let result = match result {
-        Ok(()) => Ok(cover(&mut job, &mut plan, link).await),
+        Ok(()) => {
+            let found = cover(&mut job, &mut plan, link).await;
+            if !mode.recheck_only {
+                // Episode art (design 27 §1.4): after the listing, the manifests and the cover.
+                reference_prints(state, &mut job, &mut plan, old, &found).await?;
+                let room = (ART_PER_DAY - art_requests_today(&state.db, now).await?).max(0);
+                let gets = (state.music_sweep.art_per_check() as i64).min(room) as u32;
+                art_pass(&state.db, &mut job, &mut plan, link, play_order, gets).await?;
+            }
+            Ok(found)
+        }
         Err(err) => Err(err),
     };
     let requests = job.requests;
@@ -1425,9 +1687,13 @@ async fn nrk_check(
     let now = job.now;
     plan.lan = Some(false);
     if !mode.recheck_only {
-        // The root: on the first fill and once a week (title and image).
+        // The root: on the first fill and once a week (title and image); and once for the
+        // episode-art references (NRK's 16:9 picture, code QA L1) before the one-time refresh
+        // judges the back catalogue.
         let root_due = plan.items.is_empty()
             || plan.title.is_none()
+            || plan.art.refresh
+            || plan.art.alt_at.is_none()
             || plan
                 .root_at
                 .as_deref()
@@ -1443,6 +1709,7 @@ async fn nrk_check(
             let root = sources::parse_root(&answer.body).ok_or(CheckError::NotFound)?;
             plan.title = root.title.or(plan.title.take());
             plan.cover_candidate = root.image;
+            plan.art.alt_candidate = Some(root.wide_image);
             plan.root_at = Some(stamp(now));
         }
         match link {
@@ -1455,8 +1722,60 @@ async fn nrk_check(
             }
             _ => podcast_list(job, plan, slug, mode).await?,
         }
+        if plan.art.refresh {
+            refresh_art_urls(job, plan, link, slug, kind).await;
+        }
     }
     resolve(job, plan, manifest_kind, whole, !mode.recheck_only).await
+}
+
+/// The one-time refresh of episode pictures (design 27 QA M3): episodes listed before took the
+/// 300 px picture, and a routine walk stops at the first known episode, so this walks the pages
+/// once more from the kept end and takes the 512 px picture of every episode it has. Nothing is
+/// added or dropped; a failure leaves the flag for the next check.
+async fn refresh_art_urls(job: &mut Job<'_>, plan: &mut Plan, link: &Link, slug: &str, kind: &str) {
+    // A programme chain has no pictures; the RSS fallback's keys aren't psapi's.
+    if matches!(
+        link,
+        Link::NrkSeries {
+            program: Some(_),
+            ..
+        }
+    ) || plan.fallback
+    {
+        plan.art.refresh = false;
+        return;
+    }
+    let sort = if plan.keep_end.as_deref() == Some("first") {
+        "asc"
+    } else {
+        "desc"
+    };
+    let start = WalkStart {
+        sort,
+        known: None,
+        max: MAX_NRK_ITEMS,
+        routine: false,
+    };
+    let Ok(walked) = walk(job, plan, kind, slug, start).await else {
+        return;
+    };
+    for stub in walked.stubs {
+        let Some(at) = plan.position(&stub.key) else {
+            continue;
+        };
+        let art = stub.art.filter(|a| music_net::media_url_ok(a));
+        let item = &mut plan.items[at];
+        if art.is_some() && item.art_url != art {
+            item.art_url = art;
+            // Untried for the new URL; the picture it has stays until the new one is judged.
+            item.art_from = None;
+        }
+    }
+    // A walk the budget cut short goes on next time.
+    if !job.spent() {
+        plan.art.refresh = false;
+    }
 }
 
 /// NRK podkast: the newest 100, walked `sort=desc` to the first known key. The RSS fallback only
@@ -2085,6 +2404,12 @@ async fn storytel_check(
 /// A cover fetched and processed, to be stored under the store's lock at the commit.
 struct CoverResult(Option<(String, crate::photos::ProcessedPhoto)>);
 
+impl CoverResult {
+    fn jpeg(&self) -> Option<&[u8]> {
+        self.0.as_ref().map(|(_, photo)| photo.jpeg.as_slice())
+    }
+}
+
 /// The source's cover (§2.6): fetched when there is none or its URL changed, at most once a day;
 /// a failure never fails the check (the old cover stays).
 async fn cover(job: &mut Job<'_>, plan: &mut Plan, link: &Link) -> CoverResult {
@@ -2124,6 +2449,536 @@ async fn cover(job: &mut Job<'_>, plan: &mut Plan, link: &Link) -> CoverResult {
 }
 
 // ------------------------------------------------------------------------------------------------
+// Episode art (design 27 §1.3-§1.4, with its QA M2, M3 and L1)
+// ------------------------------------------------------------------------------------------------
+
+/// Image requests the art pass sent in the last 24 h, server-wide, from `music_art_requests` (code
+/// QA M1: every request counts, a picture fetched twice twice; steps 1, 2 and 6 send none). Older
+/// rows are deleted on the way.
+pub async fn art_requests_today(
+    db: &sqlx::SqlitePool,
+    now: DateTime<Utc>,
+) -> Result<i64, sqlx::Error> {
+    let day_ago = stamp(now - hours(24));
+    sqlx::query("DELETE FROM music_art_requests WHERE at <= ?")
+        .bind(&day_ago)
+        .execute(db)
+        .await?;
+    sqlx::query_scalar("SELECT COUNT(*) FROM music_art_requests WHERE at > ?")
+        .bind(&day_ago)
+        .fetch_one(db)
+        .await
+}
+
+/// Counts one image request against the day ([art_requests_today]).
+async fn count_art_request(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO music_art_requests (at) VALUES (?)")
+        .bind(stamp(now))
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// The same picture's URL with another query (a signed or cache-busting URL, `?t=<n>`): the same
+/// scheme, host, port and path (code QA M1).
+fn same_resource(a: &str, b: &str) -> bool {
+    match (reqwest::Url::parse(a), reqwest::Url::parse(b)) {
+        (Ok(a), Ok(b)) => {
+            a.scheme() == b.scheme()
+                && a.host_str() == b.host_str()
+                && a.port_or_known_default() == b.port_or_known_default()
+                && a.path() == b.path()
+        }
+        _ => false,
+    }
+}
+
+/// The series pictures' prints (QA M2): a cover fetched now, else the stored cover's file (read
+/// once, no request); NRK's 16:9 image, fetched once when its URL changes (at most once a day,
+/// counted against the day's requests).
+async fn reference_prints(
+    state: &AppState,
+    job: &mut Job<'_>,
+    plan: &mut Plan,
+    old: &Listing,
+    found: &CoverResult,
+) -> Result<(), sqlx::Error> {
+    let now = job.now;
+    plan.art.cover_url = match &found.0 {
+        Some((url, _)) => Some(url.clone()),
+        None => plan.cover_url.clone(),
+    };
+    if let Some(jpeg) = found.jpeg() {
+        if let Some(print) = crate::photos::print_limited(jpeg.to_vec()).await {
+            plan.art.new_cover(print);
+        }
+    } else if plan.art.cover_print.is_none()
+        && let Some(path) = old
+            .cover_hash
+            .as_deref()
+            .and_then(|hash| crate::photos::path_for(&state.music_cover_dir, hash))
+        && let Ok(bytes) = tokio::fs::read(&path).await
+    {
+        plan.art.cover_print = crate::photos::print_limited(bytes).await;
+    }
+    let Some(candidate) = plan.art.alt_candidate.take() else {
+        return Ok(());
+    };
+    let Some(url) = candidate else {
+        // Looked: the root has no 16:9 picture besides its cover (`cover_alt_at` set, code QA L1).
+        plan.art.alt_url = None;
+        plan.art.alt_print = None;
+        plan.art.alt_at = Some(stamp(now));
+        return Ok(());
+    };
+    let changed = plan.art.alt_url.as_deref() != Some(url.as_str()) || plan.art.alt_print.is_none();
+    let tried_recently = plan
+        .art
+        .alt_at
+        .as_deref()
+        .and_then(parse_stamp)
+        .is_some_and(|at| at > now - hours(24));
+    // Within the day's requests too ("at most 400 a day"); left for the next check otherwise.
+    if !changed || tried_recently || art_requests_today(&state.db, now).await? >= ART_PER_DAY {
+        return Ok(());
+    }
+    plan.art.alt_at = Some(stamp(now));
+    if !music_net::media_url_ok(&url) || !job.public_media(&url).await {
+        return Ok(());
+    }
+    let got = job
+        .get(SourceRequest::new(url.clone(), Kind::Image, Reach::Public))
+        .await;
+    if !matches!(got, Got::Skipped) {
+        count_art_request(&state.db, now).await?;
+    }
+    let answer = match got {
+        Got::Answer(answer) if answer.status == 200 && !answer.truncated => answer,
+        _ => return Ok(()),
+    };
+    // Centre-cropped like an episode's 16:9 picture would be.
+    let Ok(photo) =
+        crate::photos::process_limited(answer.body.into(), crate::photos::Shape::Square).await
+    else {
+        return Ok(());
+    };
+    if let Some(print) = crate::photos::print_limited(photo.jpeg).await {
+        plan.art.alt_url = Some(url);
+        plan.art.alt_print = Some(print);
+    }
+    Ok(())
+}
+
+/// Whether a print is one of the series pictures.
+fn series_picture(print: i64, refs: &[i64]) -> bool {
+    refs.iter()
+        .any(|reference| crate::photos::same_picture(print, *reference))
+}
+
+/// Whether an item takes part in the art pass at all: listed (`ok`), with a source URL and a
+/// picture URL. Not every item came from NRK or RSS - a Storytel part is `ok` with no `url` - and
+/// those are skipped without taking a place in [ART_WINDOW].
+pub fn art_candidate(item: &Item) -> bool {
+    item.state == "ok" && item.url.is_some() && item.art_url.is_some()
+}
+
+/// Whether an item's picture is to be tried now (§1.3): a URL not tried yet, or a failure a day
+/// old with tries left; a judged picture's moved URL at most weekly.
+fn art_due(item: &Item, now: DateTime<Utc>) -> bool {
+    let Some(url) = item.art_url.as_deref() else {
+        return false;
+    };
+    if let Some(from) = item.art_from.as_deref()
+        && from != url
+    {
+        // A judged picture whose URL moved to another path (a query change is adopted before
+        // this, with no request): fetched again at most weekly (code QA M1).
+        let judged = matches!(item.art_state.as_deref(), Some("own" | "same"));
+        let recent = item
+            .art_at
+            .as_deref()
+            .and_then(parse_stamp)
+            .is_some_and(|at| at > now - TimeDelta::days(ART_MOVED_RETRY_DAYS));
+        return !(judged && recent);
+    }
+    if item.art_from.is_none() {
+        return true;
+    }
+    let day_old = item
+        .art_at
+        .as_deref()
+        .and_then(parse_stamp)
+        .is_none_or(|at| at <= now - hours(24));
+    match item.art_state.as_deref() {
+        Some("failed") => item.art_fails < ART_MAX_FAILS && day_old,
+        // Its host was down at the last try (code QA M2): a day later, no try used.
+        None => day_old,
+        _ => false,
+    }
+}
+
+fn art_untried(item: &mut Item) {
+    item.art_from = None;
+    item.art_state = None;
+    item.art_hash = None;
+    item.art_print = None;
+    item.art_tone = None;
+}
+
+fn art_same(item: &mut Item, url: String, print: Option<i64>, now: DateTime<Utc>) {
+    item.art_from = Some(url);
+    item.art_state = Some("same".to_string());
+    item.art_hash = None;
+    item.art_print = print;
+    item.art_tone = None;
+    item.art_at = Some(stamp(now));
+    item.art_fails = 0;
+}
+
+fn art_failed(item: &mut Item, url: String, now: DateTime<Utc>) {
+    item.art_from = Some(url);
+    item.art_state = Some("failed".to_string());
+    item.art_hash = None;
+    item.art_print = None;
+    item.art_tone = None;
+    item.art_at = Some(stamp(now));
+    item.art_fails += 1;
+}
+
+/// Two own pictures of an entry this close in print are one picture (QA M2's merge), when their
+/// colours match too and the print has structure enough to tell (code QA L4): a tighter line
+/// than the series picture's, since a wrong merge shows another episode's picture.
+pub const TWIN_BITS: u32 = 2;
+
+/// Whether two own pictures are one (the twin merge, [TWIN_BITS]).
+pub fn twins(a: (i64, Option<i64>), b: (i64, Option<i64>)) -> bool {
+    let (Some(tone_a), Some(tone_b)) = (a.1, b.1) else {
+        return false;
+    };
+    crate::photos::print_distance(a.0, b.0) <= TWIN_BITS
+        && !crate::photos::low_detail(a.0)
+        && crate::photos::same_tone(tone_a, tone_b)
+}
+
+/// The item's own picture. A picture the entry already has under another hash ([twins]) reuses
+/// that hash, so the phone sees one picture as one (QA M2).
+#[allow(clippy::too_many_arguments)]
+fn art_own(
+    plan: &mut Plan,
+    index: usize,
+    url: String,
+    hash: String,
+    print: i64,
+    tone: Option<i64>,
+    file: Option<crate::photos::ProcessedPhoto>,
+    now: DateTime<Utc>,
+) {
+    let twin = plan
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(at, other)| *at != index && other.art_state.as_deref() == Some("own"))
+        .find_map(|(_, other)| {
+            let print_b = other.art_print?;
+            twins((print, tone), (print_b, other.art_tone)).then(|| other.art_hash.clone())?
+        });
+    let hash = match twin {
+        Some(twin) => twin,
+        None => {
+            match file {
+                Some(file) if !plan.art.new_files.iter().any(|f| f.hash == file.hash) => {
+                    plan.art.new_files.push(file)
+                }
+                Some(_) => {}
+                None => {
+                    plan.art.copied.insert(hash.clone());
+                }
+            }
+            hash
+        }
+    };
+    let item = &mut plan.items[index];
+    item.art_from = Some(url);
+    item.art_state = Some("own".to_string());
+    item.art_hash = Some(hash);
+    item.art_print = Some(print);
+    item.art_tone = tone;
+    item.art_at = Some(stamp(now));
+    item.art_fails = 0;
+    plan.art.own += 1;
+    plan.art.backlog = true;
+    plan.art.backlog_at = None;
+    plan.art.same_run = 0;
+}
+
+/// What step 2 found: the stored picture (if any), its print and tone.
+type KnownArt = (Option<String>, i64, Option<i64>);
+
+/// Step 2: a result another item already has for this URL - this entry's first, else any entry's
+/// (one with a stored picture first). `(art_hash, art_print, art_tone)`.
+async fn known_art(
+    db: &sqlx::SqlitePool,
+    plan: &Plan,
+    index: usize,
+    url: &str,
+) -> Result<Option<KnownArt>, sqlx::Error> {
+    let judged = |item: &Item| matches!(item.art_state.as_deref(), Some("own" | "same"));
+    let mut own_entry: Vec<KnownArt> = plan
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(at, item)| *at != index && item.art_from.as_deref() == Some(url) && judged(item))
+        .filter_map(|(_, item)| {
+            item.art_print
+                .map(|p| (item.art_hash.clone(), p, item.art_tone))
+        })
+        .collect();
+    own_entry.sort_by_key(|(hash, _, _)| hash.is_none());
+    if let Some(found) = own_entry.into_iter().next() {
+        return Ok(Some(found));
+    }
+    sqlx::query_as(
+        "SELECT art_hash, art_print, art_tone FROM music_items \
+         WHERE art_from = ? AND art_print IS NOT NULL AND art_state IN ('own', 'same') \
+         ORDER BY art_hash IS NULL LIMIT 1",
+    )
+    .bind(url)
+    .fetch_optional(db)
+    .await
+}
+
+/// Step 6 (QA M2): the series pictures changed - judge every item again from its stored print,
+/// with no request. `own` that is now a series picture -> `same` (its file is pruned); `same` that
+/// no longer is -> untried (it stored no file, so the budget fetches it).
+fn rejudge(plan: &mut Plan, refs: &[i64]) {
+    let cover_url = plan.art.cover_url.clone();
+    let alt_url = plan.art.alt_url.clone();
+    for item in plan.items.iter_mut() {
+        match (item.art_state.as_deref(), item.art_print) {
+            (Some("own"), Some(print)) if series_picture(print, refs) => {
+                item.art_state = Some("same".to_string());
+                item.art_hash = None;
+            }
+            (Some("same"), Some(print)) if !series_picture(print, refs) => art_untried(item),
+            (Some("same"), None) if item.art_url != cover_url && item.art_url != alt_url => {
+                art_untried(item)
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The art pass of a check (§1.3-§1.4): the first [ART_WINDOW] `ok` items in play order, this
+/// check's new items first; at most `gets` image requests (the check's share of [ART_PER_CHECK]
+/// and [ART_PER_DAY]); a request the budget stops leaves its item untried (QA L1 b). Never fails
+/// the check: a failed picture shows the series cover.
+async fn art_pass(
+    db: &sqlx::SqlitePool,
+    job: &mut Job<'_>,
+    plan: &mut Plan,
+    link: &Link,
+    play_order: &str,
+    mut gets: u32,
+) -> Result<(), sqlx::Error> {
+    let now = job.now;
+    let refs = plan.art.refs();
+    // A picture the source no longer names.
+    for item in plan.items.iter_mut() {
+        if item.art_url.is_none() && (item.art_from.is_some() || item.art_state.is_some()) {
+            art_untried(item);
+            item.art_fails = 0;
+        }
+    }
+    // The same picture under a new query (signed or cache-busting URLs): the result stays, no
+    // request (code QA M1; vibb keys its picture by episode, not URL).
+    for item in plan.items.iter_mut() {
+        if let (Some(from), Some(url)) = (item.art_from.as_deref(), item.art_url.as_deref())
+            && from != url
+            && item.art_state.is_some()
+            && same_resource(from, url)
+        {
+            item.art_from = Some(url.to_string());
+        }
+    }
+    let refs_key = refs
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    if plan.art.refs_key.as_deref() != Some(refs_key.as_str()) {
+        rejudge(plan, &refs);
+        plan.art.refs_key = Some(refs_key);
+    }
+    // The backlog comes back once a month (QA L1 e).
+    if !plan.art.backlog
+        && plan
+            .art
+            .backlog_at
+            .as_deref()
+            .and_then(parse_stamp)
+            .is_none_or(|at| at + TimeDelta::days(ART_BACKLOG_RETRY_DAYS) <= now)
+    {
+        plan.art.backlog = true;
+        plan.art.backlog_at = None;
+        plan.art.same_run = 0;
+    }
+    // The play order (21 §4.4, `music::effective_order`): what the kid reaches first.
+    let series = matches!(link, Link::NrkSeries { .. });
+    let newest_first = match play_order {
+        "newest_first" => true,
+        "oldest_first" => false,
+        _ => !series || plan.keep_end.as_deref() == Some("newest"),
+    };
+    let mut order: Vec<usize> = (0..plan.items.len()).collect();
+    if newest_first {
+        order.reverse();
+    }
+    let this_check = stamp(now);
+    let backlog = plan.art.backlog;
+    // With the backlog off, an item first seen after it went off is still new: one that missed
+    // its first check (the day's budget, a host outage) isn't left for a month (code QA L2).
+    let off_since = if backlog {
+        None
+    } else {
+        plan.art.backlog_at.as_deref().and_then(parse_stamp)
+    };
+    let is_new = |item: &Item| {
+        item.first_seen_at == this_check
+            || off_since
+                .is_some_and(|off| parse_stamp(&item.first_seen_at).is_some_and(|f| f > off))
+    };
+    let (new, older): (Vec<usize>, Vec<usize>) = order
+        .into_iter()
+        .filter(|at| art_candidate(&plan.items[*at]))
+        .take(ART_WINDOW)
+        .partition(|at| is_new(&plan.items[*at]));
+    let candidates: Vec<usize> = new
+        .into_iter()
+        .chain(older.into_iter().filter(|_| backlog))
+        .filter(|at| art_due(&plan.items[*at], now))
+        .collect();
+    let lan = plan.lan == Some(true) && matches!(link, Link::Rss { .. });
+    let reach = if lan { Reach::Any } else { Reach::Public };
+    // Network errors (and 5xx answers) in a row: an image host that is down (code QA M2).
+    let mut unreachable = 0;
+    for index in candidates {
+        let Some(url) = plan.items[index].art_url.clone() else {
+            continue;
+        };
+        if plan.items[index].art_from.as_deref() != Some(url.as_str()) {
+            plan.items[index].art_fails = 0;
+        }
+        // 1. The series picture's own URL: no request.
+        let series_print = if plan.art.cover_url.as_deref() == Some(url.as_str()) {
+            Some(plan.art.cover_print)
+        } else if plan.art.alt_url.as_deref() == Some(url.as_str()) {
+            Some(plan.art.alt_print)
+        } else {
+            None
+        };
+        if let Some(print) = series_print {
+            art_same(&mut plan.items[index], url, print, now);
+            plan.art.same += 1;
+            continue;
+        }
+        // 2. A URL another item has a result for: judged for this entry, no request (a `same`
+        // elsewhere stored no file, so this entry's `own` needs the request, QA L1 c).
+        if let Some((hash, print, tone)) = known_art(db, plan, index, &url).await? {
+            if series_picture(print, &refs) {
+                art_same(&mut plan.items[index], url, Some(print), now);
+                plan.art.same += 1;
+                continue;
+            }
+            if let Some(hash) = hash {
+                art_own(plan, index, url, hash, print, tone, None, now);
+                continue;
+            }
+        }
+        // 3. One request, within the budgets.
+        if gets == 0 {
+            continue;
+        }
+        if job.spent() {
+            break;
+        }
+        if !music_net::media_url_ok(&url) || (!lan && !job.public_media(&url).await) {
+            art_failed(&mut plan.items[index], url, now);
+            continue;
+        }
+        let got = job
+            .get(SourceRequest::new(url.clone(), Kind::Image, reach))
+            .await;
+        if matches!(got, Got::Skipped) {
+            break;
+        }
+        gets -= 1;
+        count_art_request(db, now).await?;
+        plan.items[index].art_fetched_at = Some(stamp(now));
+        // A network error, a timeout or a 5xx is the host's trouble, not the picture's: it
+        // doesn't use up one of the picture's tries (a result it has stays; it waits a day), and
+        // a few in a row end the pass (code QA M2).
+        let host_trouble = match &got {
+            Got::Failed(_) => true,
+            Got::Answer(answer) => answer.status >= 500,
+            Got::Skipped => false,
+        };
+        if host_trouble {
+            let item = &mut plan.items[index];
+            item.art_at = Some(stamp(now));
+            if item.art_state.is_none() {
+                item.art_from = Some(url);
+            }
+            unreachable += 1;
+            if unreachable >= ART_NETWORK_FAILURES {
+                break;
+            }
+            continue;
+        }
+        unreachable = 0;
+        let photo = match got {
+            Got::Answer(answer) if answer.status == 200 && !answer.truncated => {
+                crate::photos::process_limited(answer.body.into(), crate::photos::Shape::Square)
+                    .await
+                    .ok()
+            }
+            _ => None,
+        };
+        let printed = match photo {
+            Some(photo) => crate::photos::fingerprint_limited(photo.jpeg.clone())
+                .await
+                .map(|print| (photo, print)),
+            None => None,
+        };
+        // 5. A failure never fails the check; the item shows the series cover.
+        let Some((photo, (print, tone))) = printed else {
+            art_failed(&mut plan.items[index], url, now);
+            continue;
+        };
+        // 4. The print: the series picture under another URL, size or re-encode, or its own.
+        if series_picture(print, &refs) {
+            art_same(&mut plan.items[index], url, Some(print), now);
+            plan.art.same += 1;
+            plan.art.same_run += 1;
+        } else {
+            let hash = photo.hash.clone();
+            art_own(plan, index, url, hash, print, Some(tone), Some(photo), now);
+        }
+    }
+    // An entry whose pictures are all the series picture: only new items from now on (§1.4).
+    if plan.art.backlog
+        && plan.art.same_run >= ART_BACKLOG_SAME
+        && !plan
+            .items
+            .iter()
+            .any(|i| i.art_state.as_deref() == Some("own"))
+    {
+        plan.art.backlog = false;
+        plan.art.backlog_at = Some(stamp(now));
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------------------------------------
 // The closing write
 // ------------------------------------------------------------------------------------------------
 
@@ -2136,7 +2991,7 @@ async fn finish(
     entry_id: i64,
     now: DateTime<Utc>,
     old: &Listing,
-    plan: Plan,
+    mut plan: Plan,
     result: Result<CoverResult, CheckError>,
     recheck_only: bool,
     requests: u32,
@@ -2145,6 +3000,8 @@ async fn finish(
         entry_id,
         new_items: plan.new_items,
         requests,
+        art_own: plan.art.own,
+        art_same: plan.art.same,
         ..Default::default()
     };
     let (cover, failure) = match result {
@@ -2174,11 +3031,51 @@ async fn finish(
                 .await;
         }
     };
+    // Episode art (design 27 §1.3): the same rule in its own store. A picture copied from
+    // another item must still be on disk (that item's entry may have been deleted and pruned).
+    let art_lock = if plan.art.new_files.is_empty() && plan.art.copied.is_empty() {
+        None
+    } else {
+        Some(crate::photos::MUSIC_ART.lock().await)
+    };
+    let mut art_lost: HashSet<String> = HashSet::new();
+    for photo in &plan.art.new_files {
+        if let Err(err) = crate::photos::store(&state.music_art_dir, photo).await {
+            tracing::warn!(%err, "couldn't store an episode picture");
+            art_lost.insert(photo.hash.clone());
+        }
+    }
+    for hash in &plan.art.copied {
+        let there = match crate::photos::path_for(&state.music_art_dir, hash) {
+            Some(path) => tokio::fs::try_exists(&path).await.unwrap_or(false),
+            None => false,
+        };
+        if !there {
+            art_lost.insert(hash.clone());
+        }
+    }
+    for item in plan.items.iter_mut() {
+        if item.art_hash.as_ref().is_some_and(|h| art_lost.contains(h)) {
+            art_untried(item);
+        }
+    }
+    let stored_art = !plan.art.new_files.is_empty();
+    let prune_art = |changed: bool| async move {
+        if changed {
+            crate::photos::MUSIC_ART
+                .prune(&state.db, &state.music_art_dir)
+                .await;
+        }
+    };
 
     let initial = {
         let mut conn = state.db.acquire().await?;
         load_items(&mut conn, entry_id).await?
     };
+    let art_hashes = |items: &[Item]| -> HashSet<String> {
+        items.iter().filter_map(|i| i.art_hash.clone()).collect()
+    };
+    let art_changed = stored_art || art_hashes(&initial) != art_hashes(&plan.items);
     let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
     let exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM music_entries WHERE id = ?)")
@@ -2189,7 +3086,9 @@ async fn finish(
         tx.rollback().await?;
         // A cover stored for it is nobody's now (QA 1c #11).
         drop(cover_lock);
+        drop(art_lock);
         prune(cover_hash.is_some()).await;
+        prune_art(stored_art).await;
         return Ok(None);
     }
     let anchored = plan.keep_end.as_deref() == Some("first");
@@ -2244,8 +3143,8 @@ async fn finish(
             .await?;
         for (seq, item) in plan.items.iter().enumerate() {
             sqlx::query(&format!(
-                "INSERT INTO music_items (entry_id, seq, {ITEM_COLUMNS}) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO music_items (entry_id, seq, {ITEM_COLUMNS}) VALUES ({})",
+                vec!["?"; ITEM_COLUMN_COUNT + 2].join(", ")
             ))
             .bind(entry_id)
             .bind(seq as i64)
@@ -2263,6 +3162,14 @@ async fn finish(
             .bind(&item.reported_at)
             .bind(&item.rechecked_at)
             .bind(item.recheck)
+            .bind(&item.art_hash)
+            .bind(&item.art_from)
+            .bind(&item.art_state)
+            .bind(item.art_print)
+            .bind(item.art_tone)
+            .bind(&item.art_at)
+            .bind(&item.art_fetched_at)
+            .bind(item.art_fails)
             .execute(&mut *tx)
             .await?;
         }
@@ -2324,7 +3231,9 @@ async fn finish(
            cover_hash = COALESCE(?, cover_hash), cover_at = ?, root_at = ?, etag = ?, \
            last_modified = ?, body_sha256 = ?, parser = ?, version = ?, \
            listed_at = CASE WHEN ? THEN ? ELSE listed_at END, full_recheck_at = ?, error = ?, \
-           error_at = ?, failing_since = ?, failures = ?, requests = ? \
+           error_at = ?, failing_since = ?, failures = ?, requests = ?, cover_print = ?, \
+           cover_alt_url = ?, cover_alt_print = ?, cover_alt_at = ?, old_prints = ?, \
+           art_refs = ?, art_backlog = ?, art_same_run = ?, art_backlog_at = ?, art_refresh = ? \
          WHERE entry_id = ?",
     )
     .bind(if keep_fields {
@@ -2380,12 +3289,31 @@ async fn finish(
     .bind(&failing_since)
     .bind(failures)
     .bind(report.requests as i64)
+    .bind(plan.art.cover_print)
+    .bind(&plan.art.alt_url)
+    .bind(plan.art.alt_print)
+    .bind(&plan.art.alt_at)
+    .bind(serde_json::to_string(&plan.art.old_prints).ok())
+    .bind(&plan.art.refs_key)
+    .bind(plan.art.backlog)
+    .bind(plan.art.same_run)
+    .bind(&plan.art.backlog_at)
+    // The refresh's new URLs are written only with the items.
+    .bind(if keep_fields {
+        old.art_refresh
+    } else {
+        plan.art.refresh
+    })
     .bind(entry_id)
     .execute(&mut *tx)
     .await?;
+    #[cfg(test)]
+    state.music_sweep.at_commit().await;
     tx.commit().await?;
     drop(cover_lock);
+    drop(art_lock);
     prune(cover_hash.is_some()).await;
+    prune_art(art_changed).await;
     report.changed = version != old.version
         || cover_hash.is_some()
         || (success && plan.keep_end != old.keep_end);
@@ -2472,12 +3400,13 @@ pub async fn run_pass(state: &AppState) -> bool {
         match check_entry(state, next.entry_id, state.music_sweep.now()).await {
             Ok(Some(report)) => {
                 tracing::info!(
-                    "music sweep: entry {} \"{}\": {} request{}, {} new{}",
+                    "music sweep: entry {} \"{}\": {} request{}, {} new{}{}",
                     report.entry_id,
                     report.name,
                     report.requests,
                     if report.requests == 1 { "" } else { "s" },
                     report.new_items,
+                    report.art_line(),
                     report
                         .error
                         .as_deref()

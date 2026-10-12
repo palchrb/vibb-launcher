@@ -11,6 +11,8 @@
     <string name="play_entry">Play %1$s</string>
     <string name="previous_entry">Previous: %1$s</string>
     <string name="next_entry">Next: %1$s</string>
+    <string name="pause_item">Pause: %1$s</string>
+    <string name="play_item">Play: %1$s</string>
     <string name="categories">Categories</string>
     <string name="category_all">All</string>
     <string name="open_player">Open the player</string>

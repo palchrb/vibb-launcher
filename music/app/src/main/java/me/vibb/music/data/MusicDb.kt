@@ -1,6 +1,7 @@
 package me.vibb.music.data
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -11,6 +12,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.AutoMigrationSpec
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 /*
@@ -34,6 +37,8 @@ data class ItemRow(
     val url: String?,
     val hls: Boolean,
     val durationMs: Long?,
+    /** The item's own picture (design 27): the 64-hex hash of its 512 px JPEG, or null (the entry's cover). */
+    val artHash: String? = null,
 )
 
 @Entity(tableName = "seen", primaryKeys = ["entryId", "key"])
@@ -105,6 +110,10 @@ interface MusicDao {
 
     @Query("SELECT * FROM items ORDER BY entryId, seq")
     suspend fun allItems(): List<ItemRow>
+
+    /** One listed item's own picture as applied now (design 27, QA L7). */
+    @Query("SELECT artHash FROM items WHERE entryId = :entryId AND `key` = :key")
+    suspend fun itemArt(entryId: Long, key: String): String?
 
     @Transaction
     suspend fun replaceListing(listing: ListingRow, items: List<ItemRow>) {
@@ -240,16 +249,31 @@ interface MusicDao {
     suspend fun clearNowPlaying()
 }
 
+/** What [MusicDb.ReapplyListings] runs after adding the column. */
+const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
+
 @Database(
     entities = [
         ListingRow::class, ItemRow::class, SeenRow::class, NewsRow::class, PositionRow::class, BookmarkRow::class,
         DownloadRow::class, ItemErrorRow::class, ShuffleRow::class, NowPlayingRow::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2, spec = MusicDb.ReapplyListings::class)],
 )
 abstract class MusicDb : RoomDatabase() {
     abstract fun dao(): MusicDao
+
+    /**
+     * Version 2 (design 27) adds `items.artHash`. The listings applied before it carried the art, but
+     * the old app dropped it, and their versions still equal the launcher's, so nothing would fetch
+     * them again (QA H1): an empty version makes the next sync pull and re-apply every listing from the
+     * launcher's copy (no server traffic). The rows stay: prune runs only on parsed listings, and an
+     * empty version is never served.
+     */
+    class ReapplyListings : AutoMigrationSpec {
+        override fun onPostMigrate(db: SupportSQLiteDatabase) = db.execSQL(REAPPLY_LISTINGS_SQL)
+    }
 
     companion object {
         @Volatile private var instance: MusicDb? = null

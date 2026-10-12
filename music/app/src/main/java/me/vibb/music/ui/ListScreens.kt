@@ -130,7 +130,7 @@ fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, o
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Cover(row.item.artHash ?: row.entry.cover, row.category, 12.dp, 0.dp, Modifier.size(48.dp))
+                        Cover(row.item.artHash ?: row.entry.cover, row.category, 12.dp, 0.dp, Modifier.size(48.dp), fallback = row.entry.cover)
                         Column(Modifier.weight(1f)) {
                             val label = when (row.kind) {
                                 Kind.OWN -> R.string.new_track
@@ -195,7 +195,7 @@ fun SearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     val art = (hit as? SearchHit.ItemHit)?.item?.artHash ?: hit.entry.cover
-                    Cover(art, categoryOf(hit.entry), 12.dp, 0.dp, Modifier.size(44.dp))
+                    Cover(art, categoryOf(hit.entry), 12.dp, 0.dp, Modifier.size(44.dp), fallback = hit.entry.cover)
                     Column(Modifier.weight(1f)) {
                         when (hit) {
                             is SearchHit.EntryHit -> {

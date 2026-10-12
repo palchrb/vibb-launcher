@@ -334,6 +334,9 @@ object AppEnforcer {
             PlayRuntime.cancelInstallMode(context)
             playState = playState.copy(installMode = false)
         }
+        // Cached for the lock's SOS yield (qa-25b-25f L3: never resolved at a lock stop).
+        val sos = emergencySosPackage(context)
+        com.kidslauncher.mdm.lock.PinLockRuntime.sosPackage = sos
         val plan = computeEnforcementPlan(
             allowlist = allowlist,
             kioskDesired = policy?.kioskDesired == true,
@@ -356,7 +359,7 @@ object AppEnforcer {
             blockActivityStart = policy?.blockActivityStart == true,
             lockTaskHelpers = if (policy?.blockActivityStart == true) resolveLockTaskHelpers(context) else emptySet(),
             recentsPackage = systemRecentsPackage(context),
-            emergencySos = emergencySosPackage(context),
+            emergencySos = sos,
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for

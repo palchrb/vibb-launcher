@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,10 +22,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.Crossfade
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -49,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import me.vibb.music.R
 import me.vibb.music.logic.Kind
 import me.vibb.music.logic.kindOf
+import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.RendererState
@@ -64,8 +67,8 @@ import me.vibb.music.sonos.RoomsView
 @Composable
 fun PlayerScreen(
     now: NowView,
-    /** The item's number in the list's order (a Storytel book's in the series, [playerNumber]). */
-    number: Int,
+    /** An item's number in the list's order (a Storytel book's in the series, [playerNumberOf]). */
+    numberOf: (PlayItem) -> Int,
     of: Int,
     positionMs: Long,
     sleepMinutes: Int?,
@@ -77,6 +80,8 @@ fun PlayerScreen(
     onPrevious: () -> Unit,
     onTogglePlay: () -> Unit,
     onNext: () -> Unit,
+    /** A swipe of the episode carousel (design 27): to queue index, in that direction. */
+    onSkipTo: (index: Int, forward: Boolean) -> Unit,
     onList: () -> Unit,
     onSleep: () -> Unit,
     onOutput: () -> Unit,
@@ -92,22 +97,22 @@ fun PlayerScreen(
                 rendererState?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }
             }
         }
-        // Next and previous show their cover on the first frame (an own file's art differs per track).
-        PrefetchCovers(listOf(now.index + 1, now.index - 1).mapNotNull { i -> now.queue.getOrNull(Math.floorMod(i, now.queue.size))?.artHash }.distinct())
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Cover(
-                now.cover, now.category, 26.dp, 104.dp,
-                Modifier.sizeIn(maxWidth = 224.dp, maxHeight = 224.dp).aspectRatio(1f).shadow(12.dp, RoundedCornerShape(26.dp)),
-            )
-        }
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Line(now.itemTitle, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
-            val numberText = when (kindOf(now.entry)) {
-                Kind.OWN -> R.string.track_of
-                Kind.AUDIOBOOK -> R.string.part_of
-                Kind.PODCAST -> R.string.episode_of
+        // The cover, or the episode carousel in its place (design 27 §3); the title and number under
+        // it follow the page the carousel is landing on.
+        var landing by remember(now.pagerKey) { mutableStateOf<Int?>(null) }
+        PlayerArt(now, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay) { landing = it }
+        val shown = landing?.let { now.queue.getOrNull(it) }?.takeIf { now.carousel } ?: now.item
+        Crossfade(shown.key, animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
+            val item = now.queue.firstOrNull { it.key == key } ?: shown
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Line(if (item == now.item) now.itemTitle else item.title, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
+                val numberText = when (kindOf(now.entry)) {
+                    Kind.OWN -> R.string.track_of
+                    Kind.AUDIOBOOK -> R.string.part_of
+                    Kind.PODCAST -> R.string.episode_of
+                }
+                Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
             }
-            Line(stringResource(numberText, number, of), 13, 700, Palette.sub)
         }
         SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)
         // v12's sizes where they fit, v15's compact ones on a 320 dp phone: always round, play centred.

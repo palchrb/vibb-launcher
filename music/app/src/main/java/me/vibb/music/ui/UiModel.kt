@@ -16,8 +16,10 @@ import me.vibb.music.logic.overallProgress
 import me.vibb.music.logic.pickPlan
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.seekGate
+import me.vibb.music.logic.showsCarousel
 import me.vibb.music.logic.skipTarget
 import me.vibb.music.logic.started
+import me.vibb.music.logic.swipeVia
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -71,9 +73,17 @@ data class NowView(
     val canShuffle: Boolean get() = canShuffle(entry)
     val ref: ItemRef get() = ItemRef(entry.id, item.key)
 
-    /** The cover hash shown: the item's own art, else the entry's. */
+    /** The cover hash shown: the item's own art, else the entry's ([Cover] falls back to [fallback]
+     * while the item's picture isn't on the phone). */
     val cover: String? get() = if (itemKnown) item.artHash ?: entry.cover else entry.cover
+    val fallback: String? get() = entry.cover
     val itemTitle: String get() = if (itemKnown) item.title else ""
+
+    /** The Now Playing carousel (design 27 §3.1) in place of the single cover. */
+    val carousel: Boolean by lazy { itemKnown && showsCarousel(queue, entry.cover) }
+
+    /** The carousel's pager starts over when this changes: another entry or another key list (QA M7 b). */
+    val pagerKey: Pair<Long, List<String>> get() = entry.id to queue.map { it.key }
 }
 
 /** A tap the player hasn't shown yet ([requestStands]) and what the screens show meanwhile. */
@@ -130,10 +140,28 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
  */
 fun skipSwitch(snap: Snapshot, now: NowView, forward: Boolean, posMs: Long, atMs: Long, onRoom: Boolean = false): Switch? {
     val target = skipTarget(forward, now.index, now.queue.size, posMs, now.durationMs) ?: return null
+    return toIndex(snap, now, target, PlayRequest(now.entry.id, now.queue[target].key, now.ref, atMs), onRoom)
+}
+
+/**
+ * A swipe of the Now Playing carousel to queue index [target] of [now] (design 27 §3.2): the item
+ * shows at once with its saved place (title and seek bar follow the picture), until the player is
+ * there. [current]: what the player shows; [earlier]: a swipe's request that still stands (quick
+ * swipes: the player passes through its target first). [onRoom]: as [skipSwitch] - the pages are the
+ * room's queue (what a speaker can play), and a swipe on a playing room starts the item from 0
+ * (the service's `SKIP_TO` -> `goTo` -> `SonosController.stepTo`; design 26a, the merge of design 27).
+ */
+fun swipeSwitch(snap: Snapshot, now: NowView, target: Int, current: ItemRef?, earlier: PlayRequest?, atMs: Long, onRoom: Boolean = false): Switch? {
+    val item = now.queue.getOrNull(target) ?: return null
+    if (target == now.index && now.itemKnown) return null
+    return toIndex(snap, now, target, PlayRequest(now.entry.id, item.key, current, atMs, swipeVia(earlier)), onRoom)
+}
+
+private fun toIndex(snap: Snapshot, now: NowView, target: Int, request: PlayRequest, onRoom: Boolean): Switch {
     val item = now.queue[target]
     val pos = if (onRoom && now.playing) 0 else if (now.entry.resume) seekGate(resumeFrom(snap.positions[now.entry.key]?.get(item.key))) else 0
     val view = now.copy(index = target, live = false, storedPosMs = pos, durationMs = item.durationMs, itemKnown = true)
-    return Switch(PlayRequest(now.entry.id, item.key, now.ref, atMs), view)
+    return Switch(request, view)
 }
 
 /** The now-playing view from the player's state, else from the stored row; null when there is none. */
@@ -167,14 +195,26 @@ fun listOrder(snap: Snapshot, now: NowView): List<PlayItem> = if (now.shuffled) 
  * for what the player holds and for a tap's switch ([playSwitch], [skipSwitch]), on the phone or a room
  * (a room's queue leaves out what a speaker can't play, the play order doesn't).
  */
-fun playerNumber(snap: Snapshot, now: NowView): Pair<Int, Int> {
-    val order = countedOrder(
-        now.entry,
-        listOrder(snap, now).map { it.key },
-        snap.listed[now.entry.id].orEmpty().map { it.key },
-    )
-    return order.indexOf(now.item.key) + 1 to order.size
-}
+fun playerNumber(snap: Snapshot, now: NowView): Pair<Int, Int> = playerNumberOf(snap, now, now.item) to countedKeys(snap, now).size
+
+/**
+ * [item]'s N in [playerNumber]'s count (the same order): the carousel's landing page shows its own
+ * "N av M" (design 27 §3.2) - on a room too, where the pages are the speaker-playable queue but the
+ * count is the play order's, and for Storytel the series' reading order (a swipe to book 3 of 5 says
+ * "3 av 5" on the landing page as the player does once it is there).
+ */
+fun playerNumberOf(snap: Snapshot, now: NowView, item: PlayItem): Int = countedKeys(snap, now).indexOf(item.key) + 1
+
+/**
+ * The keys [playerNumber] and [playerNumberOf] count in: the list's order, or for Storytel the series'
+ * reading order ([countedOrder], design 26b §3.5, QA M5). One function, so the carousel and the player
+ * can't disagree (qa-26a-merge27-code, "The Storytel seam").
+ */
+private fun countedKeys(snap: Snapshot, now: NowView): List<String> = countedOrder(
+    now.entry,
+    listOrder(snap, now).map { it.key },
+    snap.listed[now.entry.id].orEmpty().map { it.key },
+)
 
 /** Equal dots: at most [max] shown, a window that keeps the current one in view. */
 fun dotWindow(n: Int, current: Int, max: Int = 20): IntRange {
