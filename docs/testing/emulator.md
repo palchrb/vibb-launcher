@@ -564,6 +564,70 @@ t+15 volume 60
   log - is pinned in the JVM tests: the sheet no longer offers the room).
 - Real speakers stay a device check (design 26a, "Device checks"): SSDP, Wi-Fi binding, the NRK service, Doze.
 
+## 6h. Vibb music with Storytel (design 26b): the fake Storytel
+
+No real account is used on the emulator: `scripts/fake-storytel.py` on the VM is the login, the asset call (the
+302 the app captures) and a CDN serving silent WAV books with Range. Its answers come from the fixtures the JVM tests
+read (`music/app/src/test/resources/storytel/`; fake values only: `k@example.invalid` / `hemmelig`, `FAKE-JWT-1`,
+`FAKE-SIG-<n>`), and it logs every request with its Range and token. The app reaches it through the one debug switch
+(`storytel_base` in the debug feed's `config.json`, `src/debug` only; read again at every process start, so a
+download job in a fresh process still goes to the fake). Python 3, stdlib only.
+
+```
+python3 -I scripts/fake-storytel.py --selftest                 # fixtures, the fake against itself (no emulator)
+python3 -I scripts/fake-storytel.py                            # port 8730, books 111:20,222:5,333:5 (MB); Ctrl+C ends it
+#   --books 111:300,222:5,333:5   cid:MB in reading order    --locked 222        403 without Location for that book
+#   --drop-at 40                  each book's first transfer closed at 40 %
+#   --token-ttl 30                a token is refused (403) 30 s after its mint
+#   --refuse | --no-jwt           the login refused (403) | 200 without a jwt
+#   --slow-mint 5                 every 302 after 5 s (step 4b)
+mkdir -p debug-feed/items
+cp server/testdata/music_library.json debug-feed/library.json     # entry 5 "Kokosbananas" is storytel:series:26175
+python3 -I scripts/fake-storytel.py --print-listing 5 > debug-feed/items/5.json
+echo '{"storytel_base": "http://10.0.2.2:8730"}' > debug-feed/config.json
+echo '{"email": "k@example.invalid", "password": "hemmelig"}' > debug-feed/storytel.json   # fake values only
+R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
+adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
+adb shell am broadcast -n $R        # "storytel: http://10.0.2.2:8730", "storytel: a login seeded (generation N)"
+adb logcat -s VibbMusicDebugFeed WM-WorkerWrapper ExoPlayerImpl
+adb shell run-as me.vibb.music.debug cat files/music/report.json     # "storytel", "downloads", "item_errors"
+```
+
+`storytel.json` is deleted once read (it sits on shared storage) and stored as the next login generation, so pushing
+it again ends a refused login's hour like a new save on the server would. The library snapshot's other entries have no
+listings here and stay hidden. What to check (design 26b §8 step 3):
+
+- **Reading order**: the fake's log mints and fetches 111, 222, 333 in that order, one book at a time, one `asset`
+  line per book; the tile appears with the first book ("Lydbok · fortsetter der du slapp"), the report reaches
+  `have 3, want 3`.
+- **The bookmark's book first**: play book 3 a little (the bookmark is on 333), push a library without entry 5 and
+  broadcast (the books are deleted: `cache_bytes` drops, the tile goes - the switch-off case), then the library with
+  entry 5 again and its listing: the fake's log fetches 333 first, then 111 and 222; the tile reads "del 3 av 3".
+- **Resume after the URL expired**: `--books 111:50,222:5,333:5 --drop-at 40 --token-ttl 30`: book 111's first
+  transfer is cut at 40 % (`dropped at 40 %`), the report's `item_errors` says `network`; about 2 minutes later the
+  next job mints again (`asset 111: 302 ... token=FAKE-SIG-<n+1>`) and the CDN line shows `206 Range bytes=<N>-` with
+  the new token - never a 200 from 0 - and the book completes (`have` counts it).
+- **A book Storytel refuses**: `--locked 222`: `item_errors` holds `no_audio` for 222, 111 and 333 download; the
+  next try of 222 is a day later.
+- **A refused login**: `--refuse` (and a fresh login: push `storytel.json` again): the report says
+  `"storytel": "refused"` and the entry's `waiting` is `login`; the fake's log shows one login, and no further login
+  within the hour (a sync or a download job in that hour sends the fake nothing); after the hour one login again.
+- **Offline**: airplane mode: the downloaded books play, the others are hidden (with books 1 and 3 only: the list
+  shows those two), the tile and the player still say "del N av 3".
+- **Copy only**: a book plays with the fake stopped (Ctrl+C): no request in its log during playback.
+- **No secrets** (none of these may match):
+
+```
+adb logcat -d | grep -E 'FAKE-JWT|FAKE-SIG|pwd=|token=|k@example|hemmelig'
+adb shell run-as me.vibb.music.debug sh -c 'cat no_backup/media/*.exi databases/exoplayer_internal.db databases/music.db' | strings | grep -E 'token=|FAKE-|pwd=|k@example'
+adb shell run-as me.vibb.music.debug cat files/music/report.json | grep -E 'token=|FAKE-|k@example'
+```
+
+  Media3 keeps the cache's metadata (the `exo_redir` key a followed redirect would write) in
+  `databases/exoplayer_internal.db`; Storytel's CDN requests never follow a redirect, so no token can land there.
+- Real Storytel stays a device check (design 26b, "Device checks"): the real login, a 300 MB book over Wi-Fi that
+  drops for more than an hour, downloads under Doze.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and
