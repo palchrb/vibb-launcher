@@ -51,12 +51,10 @@ class LockGlanceTest {
     }
 
     @Test
-    fun `the tile - appears while playing, stays paused, goes with the session, none for a paused one at a lock-up`() {
-        assertTrue(glanceTile(playing, shown = false))
-        assertFalse("lock-up while paused", glanceTile(paused, shown = false))
-        assertTrue("paused while shown", glanceTile(paused, shown = true))
-        assertFalse("no session (no listener access, suspended, gone)", glanceTile(null, shown = true))
-        assertFalse(glanceTile(null, shown = false))
+    fun `the tile - whenever there is a session, playing or paused, also at a lock-up (25b-G)`() {
+        assertTrue(glanceTile(playing))
+        assertTrue("paused - also at a lock-up (user decision 2026-10-12)", glanceTile(paused))
+        assertFalse("no session (no listener access, suspended, gone)", glanceTile(null))
         assertTrue(glanceTicks(tileShown = true, pageShown = true, session = playing))
         assertFalse(glanceTicks(tileShown = true, pageShown = true, session = paused))
         assertFalse(glanceTicks(tileShown = false, pageShown = true, session = playing))
@@ -437,10 +435,8 @@ class LockGlanceLayoutTest {
             assertTrue("$screen: tile controls", fixedWidth(controls) <= content - 2 * tile.dim("padding"))
             assertTrue("$screen: compact tile", content - fixedWidth(compact) >= 120f)
             assertTrue("$screen: row", content - fixedWidth(row, text = 60f) >= 120f)
-            // Home's card (16 dp sides on Home) and the keypad's compact row (16 dp sides on the lock).
-            for (layout in listOf("view_home_music_card", "view_lock_media_row")) {
-                assertTrue("$screen: $layout", screen - 32f - fixedWidth(parse(layout)) >= 120f)
-            }
+            // Home's card (16 dp sides on Home).
+            assertTrue("$screen: Home's card", screen - 32f - fixedWidth(parse("view_home_music_card")) >= 120f)
         }
     }
 

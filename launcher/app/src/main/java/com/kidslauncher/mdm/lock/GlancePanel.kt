@@ -31,7 +31,6 @@ import com.kidslauncher.mdm.calls.RelativeDay
 import com.kidslauncher.mdm.calls.relativeDay
 import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
 import com.kidslauncher.mdm.databinding.ViewLockGlanceRowBinding
-import com.kidslauncher.mdm.databinding.ViewLockMediaRowBinding
 import com.kidslauncher.mdm.music.MusicLockPanel
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
@@ -68,13 +67,12 @@ class GlancePanel(
     frame: FrameLayout,
     /** The keypad stage under the page: hidden from accessibility while covered. */
     private val keypad: View,
-    row: ViewLockMediaRowBinding,
     /** The stage changed: the activity renders the keypad's prompt. */
     private val onStage: () -> Unit,
     private val onEmergency: () -> Unit,
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
-    private val music = MusicLockPanel(activity, glance, row) { render() }
+    private val music = MusicLockPanel(activity, glance) { render() }
     private var started = false
 
     /** The stage (memory only). */
@@ -228,7 +226,7 @@ class GlancePanel(
         glance.root.visibility = if (shown) View.VISIBLE else View.GONE
         keypad.importantForAccessibility =
             if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
-        tileUp = glanceTile(music.lookUp(), tileUp)
+        tileUp = glanceTile(music.lookUp())
         try {
             rows = GlanceStore.rows(MissedCallNotifier.current)
             bindRows()

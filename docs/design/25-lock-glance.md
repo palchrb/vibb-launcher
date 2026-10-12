@@ -55,20 +55,23 @@ The first page shows:
 - `GLANCE` -> `KEYPAD`: "Lås opp" (no target) or a row (with that row's target, §1.4).
 - `KEYPAD` -> `GLANCE`: the back arrow (drops the target). A lock-up drops it too.
 - The VoIP ring card stays on top of both stages (design 17, unchanged).
-- **The music tile** (pure `glanceTile(session, shown)`): it appears when the music app's session (`shownSession`,
-  step 4) is playing, stays while it is paused, and goes when the session ends; at the next lock-up a paused session
-  shows no tile. `session == null` (no listener access, the app suspended or gone) = no tile. Its controls are step
-  4's: play/pause, previous, next (the compact tile: play/pause only, §1.2). Nothing opens the player.
+- **The music tile** (pure `glanceTile(session)`; **user decision 2026-10-12**, bug 25b-G - was "appears while
+  playing, stays paused, none for a paused session at a lock-up"): it shows whenever the music app has a session
+  (`shownSession`, step 4), **playing or paused**, also at a lock-up, and goes when the session ends.
+  `session == null` (no listener access, the app suspended or gone) = no tile. Its controls are step 4's:
+  play/pause, previous, next. The full tile (with previous/next) is preferred; the compact one (play/pause only,
+  §1.2) only when the rows don't fit beside the full one (`glanceFit`'s order, unchanged). Nothing opens the player.
 - **The keypad stage** always has the back arrow (to the glance page), never the clock or the date (the glance page
-  has them; mockup C). The compact music row stays while a session is live (step 4). The prompt: the usual
+  has them; mockup C). **No music** (user decision 2026-10-12, 25b-G: "skal være kjedelig" - everything
+  interesting is on the glance page): step 4's compact row (`view_lock_media_row.xml`) is gone. The prompt: the usual
   wait/wrong/checking/unusable texts first; else with a target "Skriv koden for å åpne Element X" (app label,
   `AppDisplay.shownLabel`) or "Skriv koden for å se tapte anrop"; else "Skriv inn koden din". The prompt row already
   takes two lines between the arrow's columns (qa-21-step4-code L5), so the hint costs no height.
   - `pin_clock`/`pin_date` leave `activity_pin_lock.xml`; `PinKeypadLayout`'s date/clock compact steps go
     (`finalKeySizePx(.., compactExhausted = true)` always: keys shrink to the 32 dp floor rather than clip).
   - The arrow is always visible, so the prompt's side margins are static (`setMediaKeypad` goes).
-  - Budget (`PinLockLayoutTest`, 320x569 dp, status bar 48 dp, nav 24/48 dp): with the compact row the stage is
-    step 4's music stage today (keys >= 52 dp); without it the keys get more room.
+  - Budget (`PinLockLayoutTest`, 320x569 dp, status bar 48 dp, nav 24/48 dp): keys >= 56 dp (the compact row's
+    64 dp went with 25b-G).
 
 ### 1.2 The glance page (`view_lock_glance.xml`, replaces `view_lock_media.xml`; mockup A and B)
 
@@ -137,8 +140,8 @@ default [AOSP 16 `UiAutomation`], so UI dumps still see them).
   `GlanceStore` and `MissedCallNotifier` between the lock's onStart and onStop. Its render is wrapped: an exception
   hides the rows and logs the exception class only - a glance fault must never trip the lock's crash guard (3
   crashes switch the lock off).
-- `music/MusicLockPanel.kt`: binds the full and the compact tile and the keypad's compact row while a session is live;
-  no stage logic any more. `LockMediaGuardTest` keeps it opening nothing.
+- `music/MusicLockPanel.kt`: binds the full and the compact tile while a session is live (the keypad's compact row
+  went with 25b-G); no stage logic any more. `LockMediaGuardTest` keeps it opening nothing.
 - `PinLockActivity`: `glance` replaces `music`; `setMediaKeypad`/`mediaKeypad`/`compactStep` go; `FLAG_SECURE`; the
   unlock path of §1.4.
 

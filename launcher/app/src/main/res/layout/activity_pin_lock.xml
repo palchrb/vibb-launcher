@@ -116,10 +116,4 @@
         android:textColor="@color/kid_ink"
         android:textSize="13sp" />
 
-    <!-- The compact now-playing row of the keypad stage while a session is live (design 21 step 4). -->
-    <include
-        android:id="@+id/pin_media_row"
-        layout="@layout/view_lock_media_row"
-        android:visibility="gone" />
-
 </LinearLayout>

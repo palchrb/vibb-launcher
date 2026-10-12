@@ -14,7 +14,8 @@ import javax.xml.parsers.DocumentBuilderFactory
  * fixed parts' heights come from activity_pin_lock.xml (text at 1.4 x its size - Nunito's line
  * is about 1.36 em without font padding), so a layout change that breaks the budget fails here.
  * Since design 25 the keypad stage has no clock or date (the glance page has them), the back arrow
- * is always there and the prompt takes two lines between its columns.
+ * is always there and the prompt takes two lines between its columns; since 25b-G (user decision
+ * 2026-10-12) it has no music row either - the keypad stage is plain, the music is on the glance page.
  */
 class PinLockLayoutTest {
     private val ns = "http://schemas.android.com/apk/res/android"
@@ -31,22 +32,10 @@ class PinLockLayoutTest {
 
     private fun id(e: Element) = e.getAttributeNS(ns, "id").substringAfter("/")
 
-    /** The compact music row shows while a session is live (design 21 step 4). */
-    private fun shown(e: Element, music: Boolean): Boolean =
-        if (id(e) == "pin_media_row") music else e.getAttributeNS(ns, "visibility") != "gone"
-
-    /** The compact row's own layout (an include in activity_pin_lock.xml). */
-    private val mediaRow: Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
-        .newDocumentBuilder().parse(file("res/layout/view_lock_media_row.xml")).documentElement
-
     /** Height of everything but the keypad (dp), margins and the root's padding included. */
-    private fun fixedHeightDp(music: Boolean = false): Float {
+    private fun fixedHeightDp(): Float {
         var total = root.dim("paddingTop") + root.dim("paddingBottom")
-        for (child in children().filter { shown(it, music) }) {
-            if (id(child) == "pin_media_row") {
-                total += mediaRow.dim("layout_marginTop") + mediaRow.dim("minHeight")
-                continue
-            }
+        for (child in children().filter { it.getAttributeNS(ns, "visibility") != "gone" }) {
             total += child.dim("layout_marginTop") + child.dim("layout_marginBottom")
             if (id(child) == "pin_keypad") continue
             val explicit = child.getAttributeNS(ns, "layout_height").takeIf { it.endsWith("dp") }
@@ -59,26 +48,36 @@ class PinLockLayoutTest {
         return total
     }
 
-    private fun keySizeDp(screenHeightDp: Float, screenWidthDp: Float, statusBarDp: Float, navBarDp: Float, music: Boolean = false): Float {
-        val keypad = screenHeightDp - statusBarDp - navBarDp - fixedHeightDp(music)
+    private fun keySizeDp(screenHeightDp: Float, screenWidthDp: Float, statusBarDp: Float, navBarDp: Float): Float {
+        val keypad = screenHeightDp - statusBarDp - navBarDp - fixedHeightDp()
         val width = screenWidthDp - root.dim("paddingStart") - root.dim("paddingEnd")
         return PinKeypadLayout.keySizePx(keypad.toInt(), width.toInt(), 1f).toFloat()
     }
 
     @Test
-    fun `the keypad fits 320x569 dp with keys of at least 52 dp, with and without the music row`() {
-        // Gesture navigation (24 dp) and 3-button navigation (48 dp) - qa-fixround-2026-10-06 #4;
-        // design 21 step 4 QA #11: the lock's keys stay >= 52 dp with the compact row too.
-        for (music in listOf(false, true)) {
-            for (navBar in listOf(24f, 48f)) {
-                val size = keySizeDp(569f, 320f, statusBarDp = 48f, navBarDp = navBar, music = music)
-                assertTrue("music $music, nav $navBar: key size $size dp", size >= 52f)
-                assertTrue(PinKeypadLayout.fits(size.toInt(), 1f))
-                assertTrue(size <= PinKeypadLayout.MAX_DP)
-            }
+    fun `the keypad fits 320x569 dp with keys of at least 56 dp - no music row any more`() {
+        // Gesture navigation (24 dp) and 3-button navigation (48 dp) - qa-fixround-2026-10-06 #4.
+        // Design 21 step 4 QA #11 kept >= 52 dp with the compact row; without it (25b-G) the keys
+        // get its 64 dp back.
+        for (navBar in listOf(24f, 48f)) {
+            val size = keySizeDp(569f, 320f, statusBarDp = 48f, navBarDp = navBar)
+            assertTrue("nav $navBar: key size $size dp", size >= 56f)
+            assertTrue(PinKeypadLayout.fits(size.toInt(), 1f))
+            assertTrue(size <= PinKeypadLayout.MAX_DP)
         }
-        // Without the row the keys get more room.
-        assertTrue(keySizeDp(569f, 320f, 48f, 48f) > keySizeDp(569f, 320f, 48f, 48f, music = true))
+    }
+
+    @Test
+    fun `the keypad stage has no music - the glance page has it (25b-G)`() {
+        val layout = file("res/layout/activity_pin_lock.xml").readText()
+        assertFalse(layout.contains("pin_media_row"))
+        assertFalse(layout.contains("view_lock_media_row"))
+        assertFalse(listOf("src/main", "app/src/main").any { File(it, "res/layout/view_lock_media_row.xml").exists() })
+        for (path in listOf("java/com/kidslauncher/mdm/music/MusicLockPanel.kt", "java/com/kidslauncher/mdm/lock/GlancePanel.kt",
+            "java/com/kidslauncher/mdm/lock/PinLockActivity.kt")) {
+            val code = file(path).readText()
+            assertFalse(path, code.contains("ViewLockMediaRowBinding") || code.contains("pinMediaRow") || code.contains("lockMediaRow"))
+        }
     }
 
     @Test
@@ -107,7 +106,7 @@ class PinLockLayoutTest {
         assertEquals("2", prompt.getAttributeNS(ns, "maxLines"))
         assertEquals("end", prompt.getAttributeNS(ns, "ellipsize"))
         val ids = children().map(::id)
-        assertEquals("the compact row is the last thing on the lock", "pin_media_row", ids.last())
+        assertEquals("the parent code is the last thing on the keypad stage", "pin_parent_code", ids.last())
     }
 
     @Test
@@ -130,8 +129,8 @@ class PinLockLayoutTest {
         assertTrue(ids.indexOf("pin_parent_code") > ids.indexOf("pin_emergency"))
         val weighted = children().filter { it.getAttributeNS(ns, "layout_weight").isNotEmpty() }.map(::id)
         assertEquals(listOf("pin_keypad"), weighted)
-        // Only the music row starts hidden (design 21 step 4).
-        assertEquals(listOf("pin_media_row"), children().filter { it.getAttributeNS(ns, "visibility") == "gone" }.map(::id))
+        // Nothing starts hidden (the music row went, 25b-G).
+        assertEquals(emptyList<String>(), children().filter { it.getAttributeNS(ns, "visibility") == "gone" }.map(::id))
     }
 
     @Test

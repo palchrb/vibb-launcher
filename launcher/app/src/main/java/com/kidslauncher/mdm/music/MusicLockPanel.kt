@@ -8,13 +8,13 @@ import android.os.SystemClock
 import android.view.View
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
-import com.kidslauncher.mdm.databinding.ViewLockMediaRowBinding
 import com.kidslauncher.mdm.lock.GlanceTileSize
 import com.kidslauncher.mdm.lock.glanceTicks
 
 /**
  * Vibb music on the PIN lock (design 21 step 4, design 25): the glance page's full and compact
- * tiles and the keypad's compact row, bound while a session is live. No stage logic - the glance
+ * tiles, bound while a session is live (the keypad stage has no music since 25b-G, user decision
+ * 2026-10-12: it stays plain). No stage logic - the glance
  * panel (lock/GlancePanel) decides whether a tile shows and which ([show], from its fit); this binds
  * the session's art, item, entry, progress and play/pause into them, watches the session between the
  * lock's onStart and onStop and tells the panel when it changed ([onChange]).
@@ -25,7 +25,6 @@ import com.kidslauncher.mdm.lock.glanceTicks
 class MusicLockPanel(
     private val activity: Activity,
     private val glance: ViewLockGlanceBinding,
-    private val row: ViewLockMediaRowBinding,
     private val onChange: () -> Unit,
 ) {
     private val handler = Handler(Looper.getMainLooper())
@@ -47,7 +46,6 @@ class MusicLockPanel(
         glance.lockMediaPrevious.setOnClickListener { MusicSessions.previous(activity, MusicSessions.reading.controller) }
         glance.lockMediaNext.setOnClickListener { MusicSessions.next(activity, MusicSessions.reading.controller) }
         glance.lockMediaCompactPlay.setOnClickListener { playPause() }
-        row.lockMediaRowPlay.setOnClickListener { playPause() }
     }
 
     /** onStart: watching the session. */
@@ -91,8 +89,6 @@ class MusicLockPanel(
         val shown = if (s == null) GlanceTileSize.NONE else tile
         glance.lockMediaTile.visibility = if (shown == GlanceTileSize.FULL) View.VISIBLE else View.GONE
         glance.lockMediaCompact.visibility = if (shown == GlanceTileSize.COMPACT) View.VISIBLE else View.GONE
-        // The keypad's compact row while a session is live (step 4).
-        row.root.visibility = if (s != null) View.VISIBLE else View.GONE
         if (s == null) return
         val playIcon = if (s.playing) R.drawable.ic_music_pause else R.drawable.ic_music_play
         val playLabel = activity.getString(if (s.playing) R.string.music_pause else R.string.music_play)
@@ -102,11 +98,9 @@ class MusicLockPanel(
             shownArt = art
             glance.lockMediaArt.setImageBitmap(art)
             glance.lockMediaCompactArt.setImageBitmap(art)
-            row.lockMediaRowArt.setImageBitmap(art)
             val glyph = if (art == null) View.VISIBLE else View.GONE
             glance.lockMediaGlyph.visibility = glyph
             glance.lockMediaCompactGlyph.visibility = glyph
-            row.lockMediaRowGlyph.visibility = glyph
         }
         val item = s.item ?: s.entry
         val entry = if (s.item != null) s.entry else null
@@ -125,11 +119,10 @@ class MusicLockPanel(
             bar.progress = progress
             bar.contentDescription = progressText
         }
-        for (button in listOf(glance.lockMediaPlay, glance.lockMediaCompactPlay, row.lockMediaRowPlay)) {
+        for (button in listOf(glance.lockMediaPlay, glance.lockMediaCompactPlay)) {
             button.setImageResource(playIcon)
             button.contentDescription = playLabel
         }
-        row.lockMediaRowEntry.text = s.entry ?: s.item
         if (glanceTicks(shown != GlanceTileSize.NONE, pageShown, s)) handler.postDelayed(ticker, 1_000)
     }
 }
