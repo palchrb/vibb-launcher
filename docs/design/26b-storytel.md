@@ -869,13 +869,16 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    regenerated (`MUSIC_LISTING_SNAPSHOT_WRITE=1`) only if its fixture gains a Storytel item, and then copied
    byte-identically to `music/app/src/test/resources/` (the launcher's `MusicPlanTest` version pin with it), one commit.
    Tests: `src/tests/music_storytel.rs` (a series check fetches each book's cover once, the listing's `art` is the hash
-   for an own cover and null for the series' own, a second check fetches nothing and keeps the hashes, the cover route
-   serves a ticked phone the book's picture and 404s an unticked one), `src/tests/music_art.rs` (a Storytel book is a
-   candidate, in reading order), `the_sweep_lists_a_series_like_a_feed`'s null `art` becomes the hash. No music or
-   launcher code. Acceptance: the server suite green (the music and launcher suites only if a shared file changed).
-   Emulator (§6i): a series' books show their own covers in the carousel and in Nytt (the fake Storytel's shelf with
-   per-book covers); an upgrade from a step-3 build (Room 1 -> main's 2) keeps every position and bookmark (the
-   `ReapplyListings` migration re-applies the listings, with the hashes). Owed: none.
+   for an own cover and null for the series' own, a second check keeps the hashes - that pins the result -, a failed
+   cover's second check the same day sends no request and keeps `art_fails` 1 - that pins the carry-over,
+   qa-26b-merge27-code M1 -, the cover route serves a ticked phone the book's picture and 404s an unticked one),
+   `src/tests/music_art.rs` (a Storytel book is a candidate), `the_sweep_lists_a_series_like_a_feed`: `items[0]`'s
+   `art` becomes the hash, `items[1]` stays null (`same`, the series cover; L2). No music or launcher code.
+   Acceptance: the server suite green (the music and launcher suites only if a shared file changed). Emulator (§6i):
+   an upgrade from a step-3 build (Room 1 -> main's 2) keeps every position and bookmark (the `ReapplyListings`
+   migration re-applies the listings, with the hashes). The covers themselves are a device check (the server's
+   bookshelf URL is a constant and its art pass refuses a private host, so no fake shelf reaches it; L3). Owed
+   [device check]: "Per-book covers".
    **b. Music: Storytel on Sonos.** Files: `M/sonos/{PlayBody,SonosController,SonosRenderer,SonosLifecycle,
    SonosTransport,SonosSuspension,SonosSession}.kt` (the mint body, the job's token, `sameStream`, adopt's live uri,
    `storedUri` on every write, the duration lookup, the redacted log), `M/storytel/StorytelAccount.kt` (the minter the
@@ -1000,6 +1003,9 @@ commit), 3 (the phone's download path), 4a (the server's art pass for books), 4b
   maintenance windows, slower but steadily, with the parent's card showing have/want rising. If it stalls (the bucket
   falls to rare or restricted, or no job runs for hours), the user decides between downloads only while charging and
   design 19b's battery exemption for the music app.
+- **Per-book covers** (step 4a; qa-26b-merge27-code L3): with the real server and the real shelf, a series whose books
+  have their own covers shows each book's cover in the player's carousel, in Nytt and on the lock's tile; the book whose
+  cover is the series' shows the series cover; the server log's check line for it says `, art N (o own, s same)`.
 - Sonos: a book not downloaded plays in a room (title and progress bar in the Sonos app; no cover, §9), next/previous, pause for
   two hours then play (if the speaker fails, one more tap starts from the bookmark), the app killed while a book plays
   (reopen: adopted, the right book and place), the signed Location carries `consumableId` (logcat's redacted line and
@@ -1986,6 +1992,11 @@ main's lock and wallpaper fixes that 1b took with design 27, and the launcher's 
 - **Owed emulator checks** (§6i): a series' books show their own covers in the carousel and in Nytt; an upgrade from a
   step-3 build keeps every position and bookmark (Room 1 -> 2 is main's `AutoMigration(1, 2)`; `ReapplyListings`
   re-applies the listings with their hashes at the next sync).
+
+**A dev database from before this merge won't open** (qa-26b-merge27-code Low 4): a `server/data/kidphone.db` that ran
+this branch at `7ad8b26` or earlier holds 1b's older 0071 header and 0072 without 0070, so the merged server stops at
+`VersionMismatch(71)`; delete `server/data/` first (or restore a backup taken on `main`), as the note above says for
+65/66. No deployed server ran this branch.
 
 **Tests after the merge** (local Rust, the sandbox's JDK 21): server `cargo test` **655 passed, 0 failures** (628 before; +27 from 1b's merge of design 27, the Storytel listing test adapted; the time-dependent `parent_pin` passed this run), `cargo fmt --check`
 clean, `cargo clippy --all-targets` the same 12 warnings (`models.rs`, `dns_engine.rs`, `handlers/devices.rs`); music

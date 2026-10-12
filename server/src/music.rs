@@ -1125,23 +1125,28 @@ pub async fn cover_in_library(
 }
 
 /// Whether `hash` is an episode picture of `device_id`'s library (design 27 §1.5, QA L1 f): a
-/// listed item (not `pending`) of a listed NRK/RSS entry the phone has ticked. Served from
-/// `music_art_dir`; checked after [cover_in_library].
+/// listed item (not `pending`) of a listed NRK/RSS entry the phone has ticked, or a book's cover
+/// of a Storytel entry behind the library's gate ([storytel_gate], design 26b step 4a: a phone
+/// can't fetch a cover it isn't sent). Served from `music_art_dir`; checked after
+/// [cover_in_library].
 pub async fn art_in_library(
     db: &sqlx::SqlitePool,
     device_id: i64,
     hash: &str,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
+    sqlx::query_scalar(concat!(
         "SELECT EXISTS(SELECT 1 FROM music_items i \
            JOIN music_entries e ON e.id = i.entry_id \
            JOIN device_music_entries d ON d.entry_id = i.entry_id \
            JOIN music_listings l ON l.entry_id = i.entry_id \
-           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss') AND i.state != 'pending' \
-             AND l.version IS NOT NULL AND i.art_hash = ?)",
-    )
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'storytel') \
+             AND i.state != 'pending' AND l.version IS NOT NULL AND i.art_hash = ? AND ",
+        storytel_gate!(),
+        ")"
+    ))
     .bind(device_id)
     .bind(hash)
+    .bind(device_id)
     .fetch_one(db)
     .await
 }

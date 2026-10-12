@@ -961,7 +961,7 @@ pub async fn device_listing(
 pub async fn restamp_versions(db: &sqlx::SqlitePool) -> Result<usize, sqlx::Error> {
     let listed: Vec<i64> = sqlx::query_scalar(
         "SELECT l.entry_id FROM music_listings l JOIN music_entries e ON e.id = l.entry_id \
-         WHERE l.version IS NOT NULL AND e.source IN ('nrk', 'rss')",
+         WHERE l.version IS NOT NULL AND e.source IN ('nrk', 'rss', 'storytel')",
     )
     .fetch_all(db)
     .await?;
@@ -2335,7 +2335,8 @@ async fn merge_feed(
 /// minutes old at most; fresh for Check now; a failed read is the check's error, never the kept
 /// shelf - QA M1 of 2b: the card must say why) and the group whose target is the entry's. The list is the group as it is now: one `ok` item per
 /// book in reading order, key = the consumable id, `url` NULL, the shelf's duration, the book's
-/// cover as art; every book is listed, locked and geo-flagged ones too (the phone tries each).
+/// cover as `art_url` (the art pass stores it and lists its hash, step 4a); every book is listed,
+/// locked and geo-flagged ones too (the phone tries each).
 async fn storytel_check(
     state: &AppState,
     job: &mut Job<'_>,
@@ -2369,8 +2370,15 @@ async fn storytel_check(
         .books
         .iter()
         .map(|book| {
-            let old = plan.position(&book.consumable_id).map(|at| &plan.items[at]);
-            let first_seen_at = old.map_or_else(|| stamp(now), |i| i.first_seen_at.clone());
+            // A book listed before keeps its row - its first sighting and what the art pass found
+            // (the hash, the URL it describes, the print, the tries; step 4a), as a feed's known
+            // item does in `merge_feed` - so a check never drops the hash or fetches the cover
+            // again. A changed cover URL is the art pass's to judge, as for a feed (design 27
+            // §1.3: the same picture under a new query is adopted, another path fetched again).
+            let row = match plan.position(&book.consumable_id) {
+                Some(at) => plan.items[at].clone(),
+                None => Item::new(book.consumable_id.clone(), now),
+            };
             Item {
                 state: "ok".to_string(),
                 title: crate::music::cut_title(&book.title, sources::MAX_TITLE_CHARS),
@@ -2378,8 +2386,8 @@ async fn storytel_check(
                 hls: false,
                 duration_ms: (book.duration_ms > 0).then_some(book.duration_ms),
                 art_url: book.cover.clone().filter(|a| music_net::media_url_ok(a)),
-                first_seen_at,
-                ..Item::new(book.consumable_id.clone(), now)
+                attempts: 0,
+                ..row
             }
         })
         .collect();
@@ -2575,11 +2583,14 @@ fn series_picture(print: i64, refs: &[i64]) -> bool {
         .any(|reference| crate::photos::same_picture(print, *reference))
 }
 
-/// Whether an item takes part in the art pass at all: listed (`ok`), with a source URL and a
-/// picture URL. Not every item came from NRK or RSS - a Storytel part is `ok` with no `url` - and
-/// those are skipped without taking a place in [ART_WINDOW].
-pub fn art_candidate(item: &Item) -> bool {
-    item.state == "ok" && item.url.is_some() && item.art_url.is_some()
+/// Whether an item takes part in the art pass at all: listed (`ok`) with a picture URL, and
+/// playable from the list - an NRK/RSS episode with its source URL, or a Storytel book (design 26b
+/// §5.5, step 4a: `ok` with `url` NULL by design, its `art_url` the shelf's cover). The entry's
+/// link tells the two apart: an NRK/RSS item without a URL isn't playable, and it is skipped
+/// without taking a place in [ART_WINDOW].
+pub fn art_candidate(item: &Item, link: &Link) -> bool {
+    let playable = item.url.is_some() || matches!(link, Link::Storytel { .. });
+    item.state == "ok" && playable && item.art_url.is_some()
 }
 
 /// Whether an item's picture is to be tried now (§1.3): a URL not tried yet, or a failure a day
@@ -2822,12 +2833,18 @@ async fn art_pass(
         plan.art.backlog_at = None;
         plan.art.same_run = 0;
     }
-    // The play order (21 §4.4, `music::effective_order`): what the kid reaches first.
-    let series = matches!(link, Link::NrkSeries { .. });
+    // The play order (21 §4.4, `music::effective_order`): what the kid reaches first. `auto` is
+    // newest first for a podcast or feed, from episode 1 for an NRK series that keeps its start,
+    // and from book 1 for Storytel (reading order: the phone's `naturallyNewestFirst(STORYTEL)`
+    // is false, design 26b §3.2).
     let newest_first = match play_order {
         "newest_first" => true,
         "oldest_first" => false,
-        _ => !series || plan.keep_end.as_deref() == Some("newest"),
+        _ => match link {
+            Link::Storytel { .. } => false,
+            Link::NrkSeries { .. } => plan.keep_end.as_deref() == Some("newest"),
+            Link::NrkPodcast { .. } | Link::Rss { .. } => true,
+        },
     };
     let mut order: Vec<usize> = (0..plan.items.len()).collect();
     if newest_first {
@@ -2849,7 +2866,7 @@ async fn art_pass(
     };
     let (new, older): (Vec<usize>, Vec<usize>) = order
         .into_iter()
-        .filter(|at| art_candidate(&plan.items[*at]))
+        .filter(|at| art_candidate(&plan.items[*at], link))
         .take(ART_WINDOW)
         .partition(|at| is_new(&plan.items[*at]));
     let candidates: Vec<usize> = new
