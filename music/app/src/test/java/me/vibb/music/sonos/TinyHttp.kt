@@ -11,14 +11,20 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 
 /**
- * A one-request-per-connection HTTP server on loopback for the SOAP tests. Plain sockets: unit tests
+ * A one-request-per-connection HTTP server on loopback for the SOAP and Storytel tests. Plain sockets: unit tests
  * compile against android.jar, which has no com.sun.net.httpserver, and the module has no
  * MockWebServer.
  */
 class TinyHttp(private val handler: (Request) -> Response) : Closeable {
     data class Request(val method: String, val path: String, val headers: Map<String, String>, val body: String)
 
-    data class Response(val code: Int, val body: String, val contentType: String = "text/xml; charset=\"utf-8\"")
+    data class Response(
+        val code: Int,
+        val body: String,
+        val contentType: String = "text/xml; charset=\"utf-8\"",
+        /** More response headers (a redirect's Location, for the Storytel tests). */
+        val headers: Map<String, String> = emptyMap(),
+    )
 
     private val server = ServerSocket(0, 50, InetAddress.getLoopbackAddress())
     val port: Int get() = server.localPort
@@ -57,6 +63,7 @@ class TinyHttp(private val handler: (Request) -> Response) : Closeable {
             val out = s.getOutputStream()
             out.write(
                 ("HTTP/1.1 ${response.code} X\r\nContent-Type: ${response.contentType}\r\n" +
+                    response.headers.entries.joinToString("") { "${it.key}: ${it.value}\r\n" } +
                     "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII),
             )
             out.write(bytes)

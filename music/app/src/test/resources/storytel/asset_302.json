@@ -1,0 +1,5 @@
+{
+  "consumable_id": "160661",
+  "status": 302,
+  "location": "https://cdn.example.invalid/mp3encoder-128/160661.mp3?consumableId=160661&token=FAKE-SIG-1"
+}

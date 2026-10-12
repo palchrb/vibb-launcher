@@ -21,7 +21,10 @@ object StorytelLogin {
     private const val ALIAS = "vibb_storytel"
     private const val AAD = "storytel-v1"
 
-    data class Login(val generation: Long, val email: String, val password: String)
+    data class Login(val generation: Long, val email: String, val password: String) {
+        /** The generation only: the generated one printed the email and the password (design 26b §0, QA L9). */
+        override fun toString(): String = "Login(generation=$generation, email=<redacted>, password=<redacted>)"
+    }
 
     private fun file(context: Context) = File(context.noBackupFilesDir, "storytel.bin")
 
