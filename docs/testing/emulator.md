@@ -660,6 +660,7 @@ python3 -I scripts/fake-storytel.py                            # port 8730, book
 #   --token-ttl 30                a token is refused (403) 30 s after its mint
 #   --refuse | --no-jwt           the login refused (403) | 200 without a jwt
 #   --slow-mint 5                 every 302 after 5 s (step 4b)
+#   --no-download 222,444         those books mint but the CDN answers 503: never on the phone, a room plays them (step 4b)
 mkdir -p debug-feed/items
 cp server/testdata/music_library.json debug-feed/library.json     # entry 5 "Kokosbananas" is storytel:series:26175
 python3 -I scripts/fake-storytel.py --print-listing 5 > debug-feed/items/5.json
@@ -713,8 +714,40 @@ adb shell run-as me.vibb.music.debug sh -c 'grep -raE -l "token=|FAKE-|pwd=|k@ex
   Media3 keeps the cache's metadata (`exo_len`, and the `exo_redir` a request whose uri differs from the answer's
   would write) in `databases/exoplayer_internal.db`; Storytel's CDN requests never follow a redirect and the minted
   URL is OkHttp's canonical form, so no token can land there.
+- **On a Sonos room** (design 26b step 4b; §6h's fake speakers and their debug-feed seed together with this fake):
+
+```
+python3 -I scripts/fake-storytel.py --books 111:5,222:5,333:5,444:5,555:5 --no-download 222,444,555 --slow-mint 5
+python3 -I scripts/fake-sonos.py                         # Stua, Kjøkken (§6h)
+python3 -I scripts/fake-storytel.py --print-listing 5 --books 111:5,222:5,333:5,444:5,555:5 > debug-feed/items/5.json
+adb shell run-as me.vibb.music.debug cat no_backup/renderer.json
+```
+
+  Books 1 and 3 download; 2, 4 and 5 stay off the phone (the CDN's `503`). **Reading the fake's `asset` lines**: the
+  download worker mints a kept-off book on every retry (2 minutes doubling), each followed by a `cdn <cid>: 503` line;
+  a Sonos play's mint has **no** following `cdn` line (the fake speaker never fetches). Then:
+  - Book 2 on Stua (pick it from the list with Stua chosen): one `asset 222` without a `cdn` line, `fake-sonos`'s
+    `SetAVTransportURI` with the DIDL's `res duration` and no `albumArtURI`; the player shows "Del 2 av 5".
+  - Next and previous mint again (one new `asset` line each); pause and resume don't.
+  - Next pressed three times during the 5 s mint: one `SetAVTransportURI`, for the last book pressed.
+  - **A suspension during the mint** (design 26b M6): start book 2 on Stua and within the 5 s `adb shell pm suspend
+    me.vibb.music.debug`: no `SetAVTransportURI` in `fake-sonos`'s log after it (the room comes home paused); `adb
+    shell pm unsuspend me.vibb.music.debug` afterwards.
+  - A stopped Stua (a `STOPPED ""` line in a `fake-sonos` script) then play: a new mint, from the bookmark.
+  - Phone -> Stua from book 3 (on the phone): the room's queue holds all five ("Del 3 av 5", the list's five rows).
+  - Kill the app while Stua plays book 2 (`adb shell am force-stop me.vibb.music.debug`), open it again: adopted
+    (`fake-sonos` logs only `GetPositionInfo`/`GetTransportInfo`, no Stop, no `SetAVTransportURI`), the right book
+    and place, no new `asset` line.
+  - Stua -> phone on book 2: the phone paused, "Ikke lastet ned"; then the cover tap, Home's resume and a headset's
+    play on the phone also say "Ikke lastet ned" and start nothing (the bookmark stays on book 2); a pick of book 1
+    from the list plays it.
+  - **A failed mint on a room**: `--refuse` (push `storytel.json` again for a fresh login) or `--locked 222`, then
+    book 2 on Stua: no SOAP to the speaker, "Kan ikke spilles på Sonos", the phone paused; with `--locked 222` the
+    report's `item_errors` holds `no_audio` for 222.
+  - `renderer.json` holds `storytel:book:222` after the play and after the adopt - never a `token=`; logcat's
+    `not-ours?` lines show scheme, host and path only; the no-secrets greps above still find nothing.
 - Real Storytel stays a device check (design 26b, "Device checks"): the real login, a 300 MB book over Wi-Fi that
-  drops for more than an hour, downloads under Doze.
+  drops for more than an hour, downloads under Doze, the Sonos items.
 
 ## 6b. Step 7: Play (optional)
 

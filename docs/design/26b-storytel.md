@@ -589,13 +589,19 @@ compares `pwd` with the fixture's hex):
   main) and the SOAP, during which a newer play, a release or a suspension can arrive. The job carries a thread-safe
   token - the generation it was queued at (an `AtomicLong` the controller bumps with `gen`), the renderer's `closed`
   (`@Volatile`, set by `abandon`/`close`/`release`) and the `mayPlay` lambda (`playAllowed(suspendedNow())`, safe off
-  main) - and checks it **before the mint** (a superseded job doesn't mint at all) and **again after the mint, before
-  `SetAVTransportURI`**; a failed check ends the job as superseded (no SOAP, no failed-play path). So a step during a
+  main) - and checks it **before the mint** (a superseded job doesn't mint at all), **after the mint** and **once more
+  right before `SetAVTransportURI`**, inside `transport.play` (its `gate`: after the speaker check, the hush, the cap
+  and the queue clear, which take seconds for a grouped room; qa-26b-step4b-code L1); a failed check ends the job as
+  superseded (no SOAP, no failed-play path; a current play stopped by `mayPlay` waits at its place). **Every** play job
+  - an NRK/RSS one queued behind a mint too - carries `!closed && mayPlay()` the same way (the generation stays
+  Storytel's: 1b's superseded url play still lands and is stopped by the hand-off; qa-26b-step4b-code L2). So a step during a
   mint gives one `SetAVTransportURI`, and a play queued before a suspension or `onDestroy` never sounds after it (the
   actor's drain, `SonosActor.DRAIN_MS` 30 s, outlasts the standalone suspension's 5 s wait for the tail; the token
   makes the drained job a no-op). `DRAIN_MS` 30 s still covers a mint (10 s) plus a hushed play with its settled seek
   (~10 s), so it stays.
-- `PlaybackService.HANDOFF_MS` 15 s -> 25 s: a hand-off can now queue behind a play that mints. On the service path that
+- `PlaybackService.HANDOFF_MS` 15 s -> 25 s: a hand-off can now queue behind a play that mints. `SonosTail.MAX_MS`
+  (the hand-off's budget + 1 s) moves to 26 s and `SWITCH_WAIT_MAX_MS` to 35 s (the tail, the adopt's 4 s look, the
+  load). On the service path that
   is longer than the suspension receiver's `goAsync` budget (`SUSPEND_BUDGET_MS` 9 s, `MusicApp.kt`): the receiver
   finishes, the service's `suspendStop` runs on in its own scope (1b), and the token above keeps a queued play silent.
 
@@ -624,7 +630,9 @@ or lost, and the kid's next play starts from the bookmark with a fresh URL (vibb
 - **Adopt takes the session uri from the live TrackURI** (vibb posts `snap.uri` to `/adopt`), so the polls after an
   adopt are ours by `normUri`; for NRK/RSS nothing changes (the two are equal). A live URI without `consumableId` is not
   ours: nothing is adopted, the phone, paused (1b). [device check: Storytel's Location carries it]
-- The migration follow's hint carries the session's (minted) uri; the new room's `renderer.json` gets the marker.
+- The migration follow's hint carries the session's (minted) uri; the new room's `renderer.json` gets the marker - the
+  follow writes a uri now (`RendererChoice.followed`, through `storedUri`), where 1b's follow wrote only the room. The
+  three writers of a uri are `RendererChoice.played`, `followed` and `adopted`.
 
 ### 5.4 Durations (`SonosController.onPoll`, adopt)
 For a Storytel session the duration comes first from the queue item named by the snapshot's `consumableId`
@@ -659,11 +667,17 @@ URL column and its own Room version 2, branch `abandoned/26b-step4a`) is not app
 | `toRoom` (phone -> room) | `true` | for a Storytel entry it **re-plans over the entry's remote order** (`homePlan`-like: the current item first, at its position), never `a0.items`; other entries keep 1b's `a0.items` plan (their local and remote visibility are the same, and a shuffled queue keeps its order) (the local queue holds only the downloaded books, so the room would skip the others and end early, where 1b's natural end clears the partial positions) |
 | `comeHome`'s `homePlan` (room -> phone) | `false` | it is the phone |
 | `SonosSuspension.entryMatcher` / `bookmark` (standalone) | `true` | the stored room |
-| `leaveDisallowedRoom`, `lost` | `false` for the queue the phone takes | it comes home |
+| `leaveDisallowedRoom`, `lost` | through `comeHome` (`false`) | it comes home; no site of its own |
 | the UI (`MusicViewModel`) | the shown output is a Sonos room | |
 
 **Room -> phone** (1b §4.6) with the current book not on the phone: the hand-off and its bookmark as 1b, then the phone
 **paused**, no queue started, "Ikke lastet ned - trenger Wi-Fi" (`NOT_DOWNLOADED`) - not another book from 0 (§9).
+**The same rule on every phone path** (the main session's decision on qa-26b-step4b-code M1): a Storytel place on a
+book that is listed but not on the phone (`bookNotOnPhone`) - the bookmark for a cover tap (`coverTapAwaitsBook`), the
+stored row's current item for RESUME, `restoreThen` and a headset's play (`storedRowAwaitsBook`, in `restore`) - starts
+nothing and says "Ikke lastet ned": never another downloaded book, never a moved bookmark (the keep set fetches that
+book first, §3.3); a pick of a downloaded book from the list still plays, and the screens' `playSwitch` shows no switch
+for such a cover tap.
 Tests: a Storytel adopt of an undownloaded book keeps playing (no Stop); phone -> room with books 1 and 3 of five
 downloaded puts all five on the room, at the current book and place.
 
@@ -884,11 +898,13 @@ testDebugUnitTest` when a file its tests read changes (step 2b: `MusicPlanTest` 
    bookshelf URL is a constant and its art pass refuses a private host, so no fake shelf reaches it; L3). Owed
    [device check]: "Per-book covers".
    **b. Music: Storytel on Sonos.** Files: `M/sonos/{PlayBody,SonosController,SonosRenderer,SonosLifecycle,
-   SonosTransport,SonosSuspension,SonosSession}.kt` (the mint body, the job's token, `sameStream`, adopt's live uri,
-   `storedUri` on every write, the duration lookup, the redacted log), `M/storytel/StorytelAccount.kt` (the minter the
-   controller gets), `M/playback/PlaybackService.kt` (§5.6's call sites, `toRoom`'s re-plan, `lookAtRoom`'s write,
-   coming home with a book not on the phone, `HANDOFF_MS`), `M/ui/MusicViewModel.kt`/`MusicRoot.kt` (the remote
-   snapshot on a room). Tests: `PlayBodyTest`, `SonosControllerTest`, `SonosLifecycleTest`, `SonosSessionTest`,
+   SonosTransport,SonosSuspension,SonosSession,RendererChoice,SonosTail}.kt` (the mint body, the job's token and the
+   transport's `gate`, `sameStream`, adopt's live uri, `storedUri` through `RendererChoice`'s three writers, the
+   duration lookup, the redacted log and `toString`s, `SonosTail.MAX_MS`), `M/logic/Storytel.kt` (`sonosMintCode`,
+   `bookNotOnPhone`), `M/logic/Switch.kt` (`SWITCH_WAIT_MAX_MS`), `M/playback/PlaybackService.kt` (§5.6's call
+   sites, `toRoom`'s re-plan, `lookAtRoom`'s write, a book not on the phone on every phone path, `HANDOFF_MS`),
+   `M/ui/MusicViewModel.kt`/`UiModel.kt` (the remote snapshot on a room, the cover tap's rule); `StorytelAccount.kt`
+   needed nothing (its `mint` is the minter the controller gets). Tests: `PlayBodyTest`, `SonosControllerTest`, `SonosLifecycleTest`, `SonosSessionTest`,
    `StorytelRulesTest`, `GuardsTest`. Acceptance: the music suite green, both fakes' selftests OK. Emulator (§6h + §6i
    together): a book not downloaded plays on Stua (one mint in the fake's log, the DIDL's duration; no art, 26a §9),
    next/previous mint again, pause/resume doesn't, a step mashed during a slow mint (`--slow-mint 5`) sends one
@@ -937,7 +953,7 @@ commit), 3 (the phone's download path), 4a (the server's art pass for books), 4b
 | `PREFER_REMOTE` global, `_EXPAND_CACHE` cleared on switches | `Snapshot.forRenderer(remote)` passed explicitly | 26a §9 (the thread race at daemon.py:1529) |
 | renderer.json holds no uri; adopt posts the live `snap.uri` | 1b stores the built uri - for Storytel the marker `storytel:book:<cid>` - and adopt takes the live uri | vibb keeps signed URLs out of state files; 1b's readers need a stable key |
 | `asset_url(timeout=6)` on the Sonos path, a login inside at 20 s | the whole mint within 10 s; `HANDOFF_MS` 25 s | the room's actor is shared with the polls and the hand-off (26a §0) |
-| room -> box with a book not downloaded: the rotate fails, book 1 plays from 0 | the phone comes home paused, "Ikke lastet ned" | vibb's result is an accident; a phone in a pocket must not start another book (design 20) |
+| room -> box with a book not downloaded: the rotate fails, book 1 plays from 0 | the phone comes home paused, "Ikke lastet ned"; and on the phone a cover tap, RESUME or a headset's play on such a book starts nothing either (§5.6) | vibb's result is an accident; a phone in a pocket must not start another book (design 20), nor move the bookmark off the kid's book |
 | (no item errors on the Pi; 21b's codes `http_*`, `bad_media`, `network`) | `no_audio` and `waiting: login` added | the phone's own mint failure and login wait must be visible to the parent |
 | log lines carry what they carry | Storytel logs carry cids and statuses; Sonos logs redact the query | design 20 §5: no credentials or JWT in logs, and a signed URL is a bearer |
 | an honest UA `vibb/1 (+codeberg...)` | the server's and the app's own honest UAs | vibb's rule (never a pinned app version), our names |
@@ -2257,3 +2273,53 @@ next/previous, two hours paused then play, the kill and adopt, `consumableId` in
 with the book downloaded and not). Owed - step 5's docs: `music/CLAUDE.md` (the mint and the job's token,
 renderer.json's marker, `HANDOFF_MS` 25 s and `SWITCH_WAIT_MAX_MS` 35 s, the room's view at the call sites) and
 `docs/testing/emulator.md` §6i's 4b lines with `--no-download`.
+
+### Fix round after QA's code review (qa-26b-step4b-code, 2026-10-12)
+
+`docs/design/qa-26b-step4b-code.md`: 0 High, 1 Medium, 6 Low, all fixed; the 11 choices above accepted (1 with L2, 3
+with L3). Code in `a1b96d7`, `docs/testing/emulator.md` and this design's text in the next commit. Suite after the
+round: `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` green, **574 JVM
+tests** (568 before, +6), 0 failures; lint 0 errors and the same 40 warnings; both fakes' selftests OK.
+- **M1** (decided by the main session): on the phone a Storytel place on a book that is listed but not on the phone
+  starts nothing and says "Ikke lastet ned" on every path - never another downloaded book, the entry's bookmark left
+  on the kid's book (the keep set fetches it first). Pure rules in `logic/Storytel.kt`: `bookNotOnPhone`,
+  `coverTapAwaitsBook` (resume on, the bookmark's book), `storedRowAwaitsBook` (the stored row's current item).
+  `PlaybackService`: `playEntry` asks before `coverTapPlan`; `restore()` returns `Restored.Queue`/`Empty`/`NotOnPhone`
+  and asks before `storedPlan`, so RESUME (`resumeLast`), `restoreThen` and a headset's play
+  (`onPlaybackResumption`, which then keeps the queue resumable - no `Resumable.set(false)`) all wait; one
+  `awaitsBook` says it and saves nothing. The look reads the renderer's view, so a room never waits; a pick from the
+  list still plays a downloaded book. `UiModel.playSwitch` shows no switch for such a cover tap. Tests:
+  `StorytelRulesTest` (each path's rule, with what the plan would do without it: book 1 from 0, the next book of the
+  stored row), `SwitchViewTest` (the phone's cover tap now null, with the bookmark on a book on the phone it
+  switches, a pick plays), `GuardsTest` (each call site, `restore`'s three callers, the resumption branch, the
+  screens).
+- **L1**: `SonosTransport.play(..., gate)` asks the token right before `setAvTransportUri` (both kinds), after the
+  speaker check, the hush, the cap and the queue clear; a closed gate returns null with nothing sent (the mute put
+  back). `SonosTransportTest` row; `SonosControllerTest`: a step pressed during the start's cap (inside `GetVolume`)
+  - only the step's book reaches the speaker. Removing the transport's gate turns 2 rows red.
+- **L2**: every play job carries a gate - `stillWanted(g)` for a book, `!closed && mayPlay()` for every other body -
+  asked at the job's start, after a mint and in `transport.play`; a current url play it drops goes through
+  `dropped()` like a book. `SonosControllerTest`: an RSS play tapped during a book's mint, then a suspension - nothing
+  reaches the speaker, the episode waits at its place, the next play goes out; a released controller drains a queued
+  url play without sending it. Reverting the url gate to `true` turns 1 row red. (No 1b test changed.)
+- **L3**: `SonosHost.storytelUnavailable(entryId, itemKey, code)` with the entry captured at submit;
+  `SonosRenderer` records `no_audio` under it. `SonosControllerTest`: another entry loaded during a `NoAudio` mint -
+  the recorded entry is the series.
+- **L4**: `PositionInfo` has a redacting `toString` (`trackUri` through `redactUri`, the DIDL as its length), in
+  `SourceScanTest`'s holders.
+- **L5**: `docs/testing/emulator.md` §6i gains `--no-download` in its flag list and the "On a Sonos room" checks:
+  everything the status's owed list names, plus a suspension during `--slow-mint 5` (`pm suspend` - no
+  `SetAVTransportURI` afterwards), a failed mint on Stua (`--refuse`, `--locked 222`: no SOAP, "Kan ikke spilles på
+  Sonos", `no_audio` for 222), M1's phone paths, and how to read the `asset` lines (a download mint is followed by a
+  `cdn <cid>: 503` line, a Sonos mint by none).
+- **L6**: §5.1 (the third check inside `transport.play`, every play job gated, `SonosTail.MAX_MS` and the switch's
+  35 s), §5.3 (the follow writes a uri; the three writers), §5.6 (the leave/lost row through `comeHome`; M1's rule on
+  every phone path), §8 4b's file list, §9's row (M1).
+- **Step 5's two doc items done here**: `music/CLAUDE.md` (renderer.json holds a Storytel book's marker through
+  `RendererChoice`'s writers and `storedUri`; a "Storytel on a room" rule - the mint in the job, the token and the
+  gate, the address checks, a failed mint, the serial actor and 25/26/35 s, the call sites' views, M1, the redacted
+  `toString`s) and `emulator.md` §6i (above). Step 5 still owes the rest of its list (`server/CLAUDE.md`,
+  `launcher/CLAUDE.md`, root `CLAUDE.md`, `NOTICE.md`, designs 21 and 26, `PLAN.md`).
+
+Owed: the emulator checks now listed in `docs/testing/emulator.md` §6i "On a Sonos room" (with §6h), and the Sonos
+device checks.
