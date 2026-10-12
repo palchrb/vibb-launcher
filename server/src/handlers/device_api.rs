@@ -1352,21 +1352,13 @@ async fn log_play_events(
 /// newly enrolled phone (QA of the launcher wave, Low 2). Returns how many; a DB error is logged.
 async fn end_pending_commands(db: &sqlx::SqlitePool, device_id: i64) -> u64 {
     // Cancelled, not deleted: the Locate page keeps them as history ("a new phone was enrolled").
-    // An expired one stays "Expired": it was never going to be sent anyway.
+    // Every one, expired ones too - expiry is read against the clock, which may be behind after a
+    // power cut (QA of cmd-expiry, Low 4); the page still says "Expired" for one that was.
     let cancelled = sqlx::query(
         "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'enrolled' \
-         WHERE device_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL \
-           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?))",
+         WHERE device_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL",
     )
     .bind(device_id)
-    .bind(crate::models::EXPIRING_COMMANDS[0])
-    .bind(crate::models::EXPIRING_COMMANDS[1])
-    .bind(crate::models::EXPIRING_COMMANDS[2])
-    .bind(crate::models::EXPIRING_COMMANDS[3])
-    .bind(format!(
-        "-{} minutes",
-        crate::models::COMMAND_EXPIRY_MINUTES
-    ))
     .execute(db)
     .await;
     let used_up = sqlx::query(
@@ -1386,6 +1378,31 @@ async fn end_pending_commands(db: &sqlx::SqlitePool, device_id: i64) -> u64 {
         }
     }
     count
+}
+
+/// At server start: every ring, pause or location update still waiting is cancelled (`restart`),
+/// whatever its age by the clock now - the clock may be behind after a power cut (no RTC), and the
+/// hour couldn't be trusted (QA of cmd-expiry, Low 4). A wipe or a lock keeps waiting. Logged on
+/// error, never fails the start.
+pub(crate) async fn end_expiring_at_start(db: &sqlx::SqlitePool) {
+    let ended = sqlx::query(
+        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'restart' \
+         WHERE delivered_at IS NULL AND cancelled_at IS NULL AND command IN (?, ?, ?, ?)",
+    )
+    .bind(crate::models::EXPIRING_COMMANDS[0])
+    .bind(crate::models::EXPIRING_COMMANDS[1])
+    .bind(crate::models::EXPIRING_COMMANDS[2])
+    .bind(crate::models::EXPIRING_COMMANDS[3])
+    .execute(db)
+    .await;
+    match ended {
+        Ok(done) if done.rows_affected() > 0 => tracing::info!(
+            count = done.rows_affected(),
+            "waiting rings, pauses and location updates ended at start"
+        ),
+        Ok(_) => {}
+        Err(err) => tracing::error!(%err, "can't end the waiting expiring commands at start"),
+    }
 }
 
 /// After a command went to a phone that confirms commands: once the re-delivery gap has passed,

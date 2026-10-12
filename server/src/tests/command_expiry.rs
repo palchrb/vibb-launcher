@@ -427,3 +427,53 @@ async fn a_waiting_lock_is_never_replaced() {
         );
     }
 }
+
+/// QA of cmd-expiry, Low 4: an enrollment cancels every waiting command, an expired one too (the
+/// clock may be behind after a power cut) - the page still says it expired - and a server start
+/// ends every waiting ring, pause or location update, whatever the clock says, while a wipe waits.
+#[tokio::test]
+async fn an_enrollment_or_a_restart_ends_what_could_expire() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, _) = app.enrolled_device("phone").await;
+    insert(&app, device, "ring", "datetime('now', '-2 hours')").await;
+    let code = app.new_code(device, crate::enrollment::Kind::Qr).await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(json!({ "enrollment_code": code })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let token = res.json()["device_token"].as_str().unwrap().to_string();
+    let reason: Option<String> =
+        sqlx::query_scalar("SELECT cancel_reason FROM device_commands WHERE command = 'ring'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        reason.as_deref(),
+        Some("enrolled"),
+        "cancelled, so a clock running behind can't revive it"
+    );
+    let page = locate_page(&app, &cookie, device).await;
+    assert!(
+        row(&page, "ring").contains("Expired"),
+        "{}",
+        row(&page, "ring")
+    );
+
+    let locate = insert(&app, device, "locate", "datetime('now')").await;
+    let wipe = insert(&app, device, "wipe", "datetime('now')").await;
+    crate::handlers::device_api::end_expiring_at_start(&app.db).await;
+    assert_eq!(policy(&app, &token).await["pending_command"]["id"], wipe);
+    let page = locate_page(&app, &cookie, device).await;
+    assert!(
+        row(&page, "locate").contains("the server restarted"),
+        "{}",
+        row(&page, "locate")
+    );
+    assert!(!page.contains(&format!("/commands/{locate}/cancel")));
+}

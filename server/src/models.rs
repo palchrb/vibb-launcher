@@ -613,7 +613,23 @@ impl DeviceCommand {
             };
         }
         if let Some(cancelled) = &self.cancelled_at {
+            // Expired before it was cancelled (an enrollment or a restart cancels those too).
+            let expired_first = command_expires(&self.command)
+                && chrono::NaiveDateTime::parse_from_str(cancelled, "%Y-%m-%d %H:%M:%S")
+                    .ok()
+                    .and_then(|at| minutes_since(&self.requested_at, at))
+                    .is_some_and(|m| m >= COMMAND_EXPIRY_MINUTES);
+            if expired_first
+                && matches!(self.cancel_reason.as_deref(), Some("enrolled" | "restart"))
+            {
+                return format!(
+                    "Expired - the phone didn't check in within {COMMAND_EXPIRY_MINUTES} minutes, so it was never sent"
+                );
+            }
             return match self.cancel_reason.as_deref() {
+                Some("restart") => format!(
+                    "Cancelled {cancelled} - the server restarted before the phone fetched it, so it was never sent"
+                ),
                 Some("enrolled") => format!(
                     "Cancelled {cancelled} - a new phone was enrolled on this page, so it was never sent"
                 ),
