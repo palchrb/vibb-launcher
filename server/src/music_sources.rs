@@ -69,6 +69,19 @@ pub fn pick_image(images: Option<&Value>, want: u64) -> Option<String> {
         .map(|(_, url)| url.clone())
 }
 
+/// An image list under `key`, treating `null` and `[]` as missing (vibb's Python `or`, design 27
+/// code QA L5): `squareImage: []` falls back to `image`.
+fn images<'v>(object: &'v Value, key: &str) -> Option<&'v Value> {
+    object
+        .get(key)
+        .filter(|list| list.as_array().is_some_and(|a| !a.is_empty()))
+}
+
+/// The square image list, else the 16:9 one.
+fn square_or_wide(object: &Value) -> Option<&Value> {
+    images(object, "squareImage").or_else(|| images(object, "image"))
+}
+
 /// One episode in a psapi page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stub {
@@ -109,10 +122,7 @@ fn stub_of(episode: &Value) -> Option<Stub> {
             .and_then(duration_ms),
         // vibb picks 300; the server stores 512 px (design 27 §1.1, the series cover's rule), so
         // an episode that uses the series picture has the cover's URL and costs no request.
-        art: pick_image(
-            episode.get("squareImage").or_else(|| episode.get("image")),
-            EPISODE_ART_WIDTH,
-        ),
+        art: pick_image(square_or_wide(episode), EPISODE_ART_WIDTH),
         available_until: episode
             .pointer("/usageRights/to/date")
             .and_then(Value::as_str)
@@ -159,13 +169,9 @@ pub fn parse_root(body: &[u8]) -> Option<Root> {
             .pointer("/titles/title")
             .and_then(Value::as_str)
             .and_then(cut),
-        image: pick_image(
-            series.get("squareImage").or_else(|| series.get("image")),
-            512,
-        ),
-        wide_image: series
-            .get("squareImage")
-            .and_then(|_| pick_image(series.get("image"), EPISODE_ART_WIDTH)),
+        image: pick_image(square_or_wide(series), 512),
+        wide_image: images(series, "squareImage")
+            .and_then(|_| pick_image(images(series, "image"), EPISODE_ART_WIDTH)),
     })
 }
 
@@ -777,6 +783,30 @@ mod tests {
             (root.image.as_deref(), root.wide_image.as_deref()),
             (Some("https://x/sq"), Some("https://x/w960"))
         );
+        // null and [] are missing, as in vibb (`a or b`): the 16:9 image is the cover.
+        for empty in ["null", "[]"] {
+            let root = parse_root(
+                format!(r#"{{"series": {{"squareImage": {empty}, "image": [{{"url": "https://x/w960", "width": 960}}]}}}}"#)
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(
+                (root.image.as_deref(), root.wide_image.as_deref()),
+                (Some("https://x/w960"), None),
+                "{empty}"
+            );
+            let page = parse_page(
+                format!(r#"{{"_embedded": {{"episodes": [{{"_links": {{"self": {{"href": "/x/e1"}}}},
+                    "squareImage": {empty}, "image": [{{"url": "https://x/e-600", "width": 600}}]}}]}}}}"#)
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(
+                page.stubs[0].art.as_deref(),
+                Some("https://x/e-600"),
+                "{empty}"
+            );
+        }
         let wide_only = br#"{"series": {"image": [{"url": "https://x/w960", "width": 960}]}}"#;
         let root = parse_root(wide_only).unwrap();
         assert_eq!(
