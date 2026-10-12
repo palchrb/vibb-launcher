@@ -61,7 +61,10 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.vibb.music.data.Store
+import me.vibb.music.logic.DecodedCover
+import me.vibb.music.logic.coverShown
 import me.vibb.music.logic.formatDuration
+import me.vibb.music.logic.needsDecode
 import me.vibb.music.model.Category
 import kotlin.math.abs
 
@@ -103,20 +106,25 @@ fun Line(text: String, size: Int, weight: Int, color: Color, modifier: Modifier 
 
 private val bitmaps = LruCache<String, ImageBitmap>(24)
 
-/** A cover file (512 px JPEG) decoded off the main thread, cached. */
+/**
+ * A cover file (512 px JPEG) decoded off the main thread, cached. The state outlives a change of
+ * [hash] (produceState remembers it unkeyed), so it holds the hash it was decoded for and shows only
+ * for that one ([coverShown]): from podcast A to B the player showed A's cover on.
+ */
 @Composable
 fun coverBitmap(hash: String?): ImageBitmap? {
     val context = LocalContext.current
     val cached = hash?.let { bitmaps.get(it) }
-    val state = produceState(cached, hash) {
-        if (hash == null || value != null) return@produceState
-        value = withContext(Dispatchers.IO) {
+    val state = produceState<DecodedCover<ImageBitmap>?>(null, hash) {
+        if (hash == null || !needsDecode(hash, value)) return@produceState
+        val image = bitmaps.get(hash) ?: withContext(Dispatchers.IO) {
             val file = Store.get(context).coverFile(hash)
             if (!file.exists()) return@withContext null
             BitmapFactory.decodeFile(file.path)?.asImageBitmap()?.also { bitmaps.put(hash, it) }
         }
+        value = image?.let { DecodedCover(hash, it) }
     }
-    return state.value
+    return coverShown(hash, cached, state.value)
 }
 
 /** A category's tile colour (the parent's pick; peach when unknown). */
