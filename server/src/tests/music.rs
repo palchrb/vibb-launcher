@@ -988,9 +988,11 @@ async fn snapshot_library(app: &TestApp, device: i64) {
          (2, 'Ukas nyheter', 4, 'rss', 'https://example.org/feed.xml', '40201d4c16fc', \
           'newest_first', 3, 1, NULL, 20), \
          (3, 'Bilturen', 1, 'own', NULL, 'own-5c0ffee1d0e5', 'auto', -1, 0, NULL, 30), \
-         (4, 'Not on this phone', 2, 'own', NULL, 'own-0b5e55ed4a11', 'auto', -1, 0, NULL, 40)",
+         (4, 'Not on this phone', 2, 'own', NULL, 'own-0b5e55ed4a11', 'auto', -1, 0, NULL, 40), \
+         (5, 'Kokosbananas', 3, 'storytel', 'storytel:series:26175', ?, 'auto', -1, 1, NULL, 50)",
     )
     .bind(&cover)
+    .bind(crate::music::state_key("storytel:series:26175"))
     .execute(&app.db)
     .await
     .unwrap();
@@ -1010,8 +1012,10 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO device_music_entries (device_id, entry_id) VALUES (?, 1), (?, 2), (?, 3)",
+        "INSERT INTO device_music_entries (device_id, entry_id) \
+         VALUES (?, 1), (?, 2), (?, 3), (?, 5)",
     )
+    .bind(device)
     .bind(device)
     .bind(device)
     .bind(device)
@@ -1019,13 +1023,29 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .await
     .unwrap();
     // The feed is listed (design 21b: `items` names its listing; its cover is the feed's own),
-    // the podcast not yet (`items: null`).
+    // the podcast not yet (`items: null`); the Storytel series is listed from the shelf (design
+    // 26b §2.4: anchored at its first book, its cover the series').
     sqlx::query(
         "INSERT INTO music_listings (entry_id, version, cover_hash, keep_end, listed_at) \
          VALUES (2, '0123456789abcdef', ?, NULL, '2026-10-09 12:00:00'), \
-                (1, NULL, NULL, NULL, NULL)",
+                (1, NULL, NULL, NULL, NULL), \
+                (5, '00ff00ff00ff00ff', ?, 'first', '2026-10-09 12:00:00')",
     )
     .bind("c".repeat(64))
+    .bind("d".repeat(64))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // Storytel entries reach the phone only with its switch on and a login stored (26b §2.7).
+    sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE music_storytel SET ciphertext = x'00', nonce = x'00', key_fingerprint = 'fake' \
+         WHERE id = 1",
+    )
     .execute(&app.db)
     .await
     .unwrap();
@@ -1187,8 +1207,8 @@ async fn music_library_snapshot() {
     category_keys.sort_unstable();
     assert_eq!(category_keys, ["color", "icon", "id", "name", "sort"]);
     // Only this phone's entries, their categories, files and covers.
-    assert_eq!(served["entries"].as_array().unwrap().len(), 3);
-    assert_eq!(served["categories"].as_array().unwrap().len(), 2);
+    assert_eq!(served["entries"].as_array().unwrap().len(), 4);
+    assert_eq!(served["categories"].as_array().unwrap().len(), 3);
     assert_eq!(served["files"].as_array().unwrap().len(), 2);
     assert_eq!(served["files"][1]["missing"], json!(true));
     assert_eq!(
@@ -1199,10 +1219,31 @@ async fn music_library_snapshot() {
     // The feed's own cover stands in for a parent's (design 21b §2.6).
     assert_eq!(
         served["covers"],
-        json!(["a".repeat(64), "b".repeat(64), "c".repeat(64)])
+        json!([
+            "a".repeat(64),
+            "b".repeat(64),
+            "c".repeat(64),
+            "d".repeat(64)
+        ])
     );
     assert_eq!(served["entries"][1]["items"], json!("0123456789abcdef"));
     assert_eq!(served["entries"][0]["items"], Value::Null, "never listed");
+    // The Storytel series (design 26b §2.7): its listing version and the shelf's cover, download-only
+    // (cache -1), resume on, never on the LAN; the auto order stays (the phone reads it oldest first).
+    let storytel = &served["entries"][3];
+    assert_eq!(storytel["source"], json!("storytel"));
+    assert_eq!(storytel["target"], json!("storytel:series:26175"));
+    assert_eq!(storytel["items"], json!("00ff00ff00ff00ff"));
+    assert_eq!(storytel["cover"], json!("d".repeat(64)));
+    assert_eq!(
+        (
+            &storytel["cache"],
+            &storytel["resume"],
+            &storytel["lan"],
+            &storytel["order"]
+        ),
+        (&json!(-1), &json!(true), &json!(false), &json!("auto"))
+    );
     // The policy names the same version as the document and its ETag.
     let version = served["version"].as_str().unwrap();
     assert_eq!(
@@ -1231,7 +1272,7 @@ async fn library_lan_only_for_a_lan_rss_feed() {
             .collect()
     };
     let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
-    assert_eq!(lan_of(&res.json()), [false, false, false]);
+    assert_eq!(lan_of(&res.json()), [false, false, false, false]);
     sqlx::query("UPDATE music_listings SET lan = 1")
         .execute(&app.db)
         .await
@@ -1242,7 +1283,11 @@ async fn library_lan_only_for_a_lan_rss_feed() {
         .await
         .unwrap();
     let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
-    assert_eq!(lan_of(&res.json()), [false, true, false]);
+    assert_eq!(
+        lan_of(&res.json()),
+        [false, true, false, false],
+        "never a Storytel entry"
+    );
 }
 
 #[tokio::test]

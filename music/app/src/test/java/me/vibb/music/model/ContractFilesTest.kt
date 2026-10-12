@@ -32,12 +32,13 @@ class ContractFilesTest {
     @Test
     fun `the library snapshot parses`() {
         val lib = LibraryParser.parse(Fixtures.resource("music_library.json"))!!
-        assertEquals("94fa6771e4c4befd", lib.version)
+        assertEquals("3250463627e4520c", lib.version)
         assertEquals("the parent's room scope (design 26a §5.5)", listOf("RINCON_000E58A0B1C201400"), lib.sonosRooms)
         assertTrue("the snapshot's feeds are public", lib.entries.none { it.lan })
-        assertEquals(listOf(1L, 4L), lib.categories.map { it.id })
-        assertEquals(listOf("music_note", "mic"), lib.categories.map { it.icon })
-        assertEquals(listOf(Source.NRK, Source.RSS, Source.OWN), lib.entries.map { it.source })
+        assertEquals(listOf(1L, 3L, 4L), lib.categories.map { it.id })
+        assertEquals(listOf("music_note", "menu_book", "mic"), lib.categories.map { it.icon })
+        assertEquals(listOf(Source.NRK, Source.RSS, Source.OWN, Source.STORYTEL), lib.entries.map { it.source })
+        assertEquals(setOf(1L, 2L, 3L, 5L), lib.entryIds)
         val nrk = lib.entry(1)!!
         assertEquals("abels_taarn", nrk.key)
         assertNull("never listed", nrk.items)
@@ -55,7 +56,15 @@ class ContractFilesTest {
         assertEquals("Hjulene på bussen", files[0].title)
         assertEquals(125_000L, files[0].durationMs)
         assertTrue(files[1].missing)
-        assertEquals(3, lib.covers.size)
+        // The Storytel series (design 26b §2.7): listed by the server, download-only, resume on.
+        val storytel = lib.entry(5)!!
+        assertEquals("storytel:series:26175", storytel.target)
+        assertEquals("00ff00ff00ff00ff", storytel.items)
+        assertEquals(-1, storytel.cache)
+        assertTrue(storytel.resume)
+        assertFalse(storytel.lan)
+        assertEquals("d".repeat(64), storytel.cover)
+        assertEquals(4, lib.covers.size)
     }
 
     @Test
@@ -74,11 +83,11 @@ class ContractFilesTest {
     @Test
     fun `an entry or file the app can't use is hidden, but its id stays named (H1)`() {
         val text = Fixtures.resource("music_library.json")
-            .replace("\"source\": \"rss\"", "\"source\": \"storytel\"") // not this phase
-            .replace("\"cache\": -1", "\"cache\": -2") // out of range
+            .replace("\"source\": \"rss\"", "\"source\": \"storytel\"") // a feed url isn't a Storytel target
+            .replace("\"cache\": -1", "\"cache\": -2") // out of range (the own files and the Storytel series)
         val lib = LibraryParser.parse(text)!!
         assertEquals(listOf(1L), lib.entries.map { it.id })
-        assertEquals("named, so nothing of them is deleted", setOf(1L, 2L, 3L), lib.entryIds)
+        assertEquals("named, so nothing of them is deleted", setOf(1L, 2L, 3L, 5L), lib.entryIds)
         assertTrue("the hidden entry's files are hidden", lib.files.isEmpty())
         assertEquals(setOf(1L, 2L), lib.fileIds)
     }
@@ -102,7 +111,7 @@ class ContractFilesTest {
             .replace("\"sort\": 10\n    }", "\"sort\": 10, \"mood\": [1]\n    }")
             .replace("\"missing\": false", "\"missing\": false, \"bpm\": 120")
         val parsed = LibraryParser.parse(lib)!!
-        assertEquals(3, parsed.entries.size)
+        assertEquals(4, parsed.entries.size)
         assertEquals(2, parsed.files.size)
         val listing = Fixtures.resource("music_listing.json")
             .replace("\"hls\": true,", "\"hls\": true, \"chapters\": [],")
@@ -160,7 +169,7 @@ class ContractFilesTest {
     fun `lan is read for RSS only, and absent means public`() {
         val base = Fixtures.resource("music_library.json")
         val lan = LibraryParser.parse(base.replace("\"lan\": false", "\"lan\": true"))!!
-        assertEquals(listOf(false, true, false), lan.entries.map { it.lan })
+        assertEquals(listOf(false, true, false, false), lan.entries.map { it.lan })
         val old = LibraryParser.parse(base.replace(",\n      \"lan\": false", ""))!!
         assertTrue(old.entries.none { it.lan })
     }
@@ -179,7 +188,7 @@ class ContractFilesTest {
         for (odd in listOf("\"RINCON_A\"", "{}", "true", "7")) {
             assertEquals("fail closed: $odd", emptyList<String>(), LibraryParser.parse(base.replace(list, "\"sonos_rooms\": $odd"))!!.sonosRooms)
         }
-        assertEquals("the rest of the library unchanged", 3, absent.entries.size)
+        assertEquals("the rest of the library unchanged", 4, absent.entries.size)
     }
 
     @Test

@@ -79,10 +79,16 @@ class MusicPlanTest {
     @Test
     fun `the shared library snapshot as the launcher reads it`() {
         val head = libraryHead(repo("server/testdata/music_library.json").readText())!!
-        assertEquals(3, head.covers.size)
+        assertEquals(4, head.covers.size)
         assertEquals(listOf(1L, 2L), head.files.map { it.id })
         assertTrue(head.files[1].missing)
-        assertEquals("own entries have no listing", mapOf(1L to null, 2L to "0123456789abcdef"), head.listings)
+        // A Storytel entry's listing rides the courier like any other (design 26b §2.7): no launcher change.
+        assertEquals(
+            "own entries have no listing",
+            mapOf(1L to null, 2L to "0123456789abcdef", 5L to "00ff00ff00ff00ff"),
+            head.listings,
+        )
+        assertEquals(listOf(5L), listingsToFetch(head, mapOf(2L to "0123456789abcdef")))
         assertNull(libraryHead("{\"v\": 2}"))
     }
 

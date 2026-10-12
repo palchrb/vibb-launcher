@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "version": "94fa6771e4c4befd",
+  "version": "3250463627e4520c",
   "categories": [
     {
       "id": 1,
@@ -8,6 +8,13 @@
       "icon": "music_note",
       "color": "rose",
       "sort": 10
+    },
+    {
+      "id": 3,
+      "name": "Lydbøker",
+      "icon": "menu_book",
+      "color": "terracotta",
+      "sort": 30
     },
     {
       "id": 4,
@@ -62,6 +69,21 @@
       "items": null,
       "lan": false,
       "sort": 30
+    },
+    {
+      "id": 5,
+      "key": "7ac843e9f5d4",
+      "name": "Kokosbananas",
+      "category": 3,
+      "source": "storytel",
+      "target": "storytel:series:26175",
+      "order": "auto",
+      "cache": -1,
+      "resume": true,
+      "cover": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "items": "00ff00ff00ff00ff",
+      "lan": false,
+      "sort": 50
     }
   ],
   "files": [
@@ -95,7 +117,8 @@
   "covers": [
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   ],
   "sonos_rooms": [
     "RINCON_000E58A0B1C201400"
