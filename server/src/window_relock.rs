@@ -226,6 +226,51 @@ pub struct RelockBlock {
     pub at_ms: Option<i64>,
 }
 
+/// One app "Allow these apps" lets out (QA of cmd-expiry, Low 1): the package and the signing key
+/// the Status card showed for it (`None` = the phone couldn't read it). Sent with the command
+/// (`PendingCommand.allow`); the phone lets out only a listed block whose key is still that one -
+/// never a block that came after the parent looked, nor an app replaced since.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AllowedBlock {
+    pub package_name: String,
+    pub signer: Option<String>,
+}
+
+/// The Status card's hidden form value for "Allow these apps": `package:key` (the key empty when
+/// unknown), comma-separated - [parse_allow_form] reads it back.
+pub fn allow_form_value(allow: &[AllowedBlock]) -> String {
+    allow
+        .iter()
+        .map(|a| format!("{}:{}", a.package_name, a.signer.as_deref().unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The posted list: valid package names, each once, with a valid key or none; anything else is
+/// left out. At most [BLOCKS_MAX] - the card never lists more.
+pub fn parse_allow_form(value: &str) -> Vec<AllowedBlock> {
+    let mut out: Vec<AllowedBlock> = Vec::new();
+    for entry in value.split(',') {
+        let Some((name, key)) = entry.trim().split_once(':') else {
+            continue;
+        };
+        if !crate::time_rules::valid_package_name(name)
+            || out.iter().any(|a| a.package_name == name)
+            || !(key.is_empty() || valid_signer(key))
+        {
+            continue;
+        }
+        out.push(AllowedBlock {
+            package_name: name.to_string(),
+            signer: (!key.is_empty()).then(|| key.to_string()),
+        });
+        if out.len() == BLOCKS_MAX {
+            break;
+        }
+    }
+    out
+}
+
 /// At most this many blocks are kept (the launcher's `RELOCK_BLOCKS_MAX`).
 pub const BLOCKS_MAX: usize = 16;
 const BLOCK_REASONS: [&str; 4] = ["outside_play", "other_key", "catalog_key", "unknown"];
@@ -289,6 +334,8 @@ pub struct BlocksNote {
     /// "Allow these apps" lets at least one of them out (not one with another key than the
     /// catalog's pin).
     pub allow_button: bool,
+    /// What it sends: the listed blocks it may let out, with the keys shown (Low 1).
+    pub allow: Vec<AllowedBlock>,
 }
 
 /// [pins]: the catalog's pinned signers (M10). An app whose key differs from its pin - by the
@@ -348,7 +395,15 @@ pub fn blocks_note(
             format!("{}{key}: {why}{when}.", b.package_name)
         })
         .collect();
-    let allow_button = blocks.iter().any(|b| !not_catalogs(b));
+    let allow: Vec<AllowedBlock> = blocks
+        .iter()
+        .filter(|b| !not_catalogs(b))
+        .map(|b| AllowedBlock {
+            package_name: b.package_name.clone(),
+            signer: b.signer.clone(),
+        })
+        .collect();
+    let allow_button = !allow.is_empty();
     let mut text = "Blocked on the phone - hidden whatever its tick under Apps:".to_string();
     if allow_button {
         text =
@@ -360,6 +415,7 @@ pub fn blocks_note(
         text: Some(text),
         items,
         allow_button,
+        allow,
     }
 }
 
@@ -529,6 +585,8 @@ pub struct RelockNotes {
     pub lines: Vec<String>,
     /// Some blocked app is on the allowed list: "Allow these apps" brings it back.
     pub allow_button: bool,
+    /// What it sends: the listed apps it may let out, with their keys (QA of cmd-expiry, Low 1).
+    pub allow: Vec<AllowedBlock>,
 }
 
 pub fn relock_notes(
@@ -565,7 +623,16 @@ pub fn relock_notes(
     });
     // Signed with another key than the catalog pinned: not the catalog's app, whatever its name.
     let not_catalogs = |p: &String| matches!((pins.get(p), r.blocked_signers.get(p)), (Some(pin), Some(key)) if pin != key);
-    let allow_button = r.blocked.iter().any(|p| !not_catalogs(p));
+    let allow: Vec<AllowedBlock> = r
+        .blocked
+        .iter()
+        .filter(|p| !not_catalogs(p))
+        .map(|p| AllowedBlock {
+            package_name: p.clone(),
+            signer: r.blocked_signers.get(p).cloned(),
+        })
+        .collect();
+    let allow_button = !allow.is_empty();
     if !r.blocked.is_empty() {
         let apps: Vec<String> = r
             .blocked
@@ -635,6 +702,7 @@ pub fn relock_notes(
     RelockNotes {
         lines,
         allow_button,
+        allow,
     }
 }
 
@@ -1101,6 +1169,51 @@ mod tests {
         assert_eq!(
             blocks_note(&[], &HashMap::new(), NOW),
             BlocksNote::default()
+        );
+    }
+
+    /// QA of cmd-expiry, Low 1: "Allow these apps" sends the listed apps it may let out, with the
+    /// keys shown - not a catalog imposter - and reads back only valid entries.
+    #[test]
+    fn allow_sends_the_listed_apps_and_their_keys() {
+        let blocks =
+            parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
+        let note = blocks_note(&blocks, &HashMap::new(), NOW);
+        let value = allow_form_value(&note.allow);
+        let key = blocks[0].signer.clone().unwrap();
+        assert_eq!(value, format!("me.vibb.music.debug:{key},org.example.old:"));
+        assert_eq!(parse_allow_form(&value), note.allow);
+        assert_eq!(note.allow[1].signer, None);
+        let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
+        let note = blocks_note(&blocks, &pins, NOW);
+        assert_eq!(allow_form_value(&note.allow), "org.example.old:");
+        // Junk, repeats and bad keys go; at most BLOCKS_MAX.
+        assert_eq!(
+            parse_allow_form("x y:, org.example.a:XYZ,org.example.b:,org.example.b:,nocolon"),
+            vec![AllowedBlock {
+                package_name: "org.example.b".to_string(),
+                signer: None
+            }]
+        );
+        let many: Vec<String> = (0..30).map(|i| format!("org.example.app{i}:")).collect();
+        assert_eq!(parse_allow_form(&many.join(",")).len(), BLOCKS_MAX);
+        // An older launcher's relock line: its allowable apps, with their keys.
+        let mut r = RelockReport {
+            at_ms: NOW - 60_000,
+            blocked: vec!["org.example.a".to_string(), "org.example.b".to_string()],
+            ..Default::default()
+        };
+        r.blocked_signers
+            .insert("org.example.a".to_string(), "a".repeat(64));
+        r.blocked_signers
+            .insert("org.example.b".to_string(), "b".repeat(64));
+        let pins = HashMap::from([("org.example.b".to_string(), "9".repeat(64))]);
+        assert_eq!(
+            relock_notes(&r, NOW, &pins).allow,
+            vec![AllowedBlock {
+                package_name: "org.example.a".to_string(),
+                signer: Some("a".repeat(64))
+            }]
         );
     }
 

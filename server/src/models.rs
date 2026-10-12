@@ -883,6 +883,11 @@ pub struct PendingCommand {
     /// of the launcher wave, Medium 1): the phone runs a command once by both, and sends it back
     /// with its receipt and result.
     pub requested_at: String,
+    /// `allow_blocked` only: the apps the Status card listed, with the keys it showed - the phone
+    /// lets out only those, each while its key is still that one (QA of cmd-expiry, Low 1).
+    /// Left out for every other command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<crate::window_relock::AllowedBlock>>,
 }
 
 #[derive(Deserialize)]

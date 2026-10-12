@@ -246,6 +246,34 @@ class RelockBlockTest {
     }
 
     @Test
+    fun `Allow these apps lets out only the listed blocks whose key is still the one shown (QA of cmd-expiry, Low 1)`() {
+        val keyA = "a1" + "0".repeat(60) + "a1"
+        val keyB = "b2" + "0".repeat(60) + "b2"
+        val other = "c3" + "0".repeat(60) + "c3"
+        val blocked = mapOf("org.example.a" to null, "org.example.b" to null, "org.example.late" to null, "org.example.old" to null)
+        val installed = mapOf(
+            "org.example.a" to setOf(keyA),
+            // Replaced since the parent looked: another key now.
+            "org.example.b" to setOf(other),
+            // Blocked after the parent looked: not listed.
+            "org.example.late" to setOf(keyB),
+            // Its key unreadable then and now.
+            "org.example.old" to setOf("short"),
+        )
+        val listed = mapOf("org.example.a" to keyA, "org.example.b" to keyB, "org.example.old" to null)
+        assertEquals(
+            setOf("org.example.b", "org.example.late"),
+            allowBlocked(blocked, installed, emptyMap(), listed).keys,
+        )
+        // An empty list lets out nothing; a gone package leaves anyway.
+        assertEquals(blocked.keys - "org.example.a", allowBlocked(blocked, installed - "org.example.a", emptyMap(), emptyMap()).keys)
+        // A listed catalog imposter stays.
+        assertEquals(setOf("org.example.a"), allowBlocked(mapOf("org.example.a" to null), installed, mapOf("org.example.a" to setOf(other)), listed).keys)
+        // An older server: every block but the imposter goes.
+        assertTrue(allowBlocked(blocked, installed, emptyMap(), null).isEmpty())
+    }
+
+    @Test
     fun `the reasons follow the pin, then the window start's key, then the installer`() {
         val evil = pkg(signers = setOf(EVIL))
         assertEquals(BlockReason.CATALOG_KEY, blockReason(evil, setOf(REAL), setOf(EVIL)))

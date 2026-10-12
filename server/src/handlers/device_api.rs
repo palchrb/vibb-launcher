@@ -341,7 +341,7 @@ pub(crate) async fn build_policy(
     // location update past its hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
     // migrations/0010_find_my_device.sql, 0065_command_receipts.sql, 0068 and handlers::locate.
     let receipts = sends_command_receipts(&state.db, device_id).await?;
-    let popped = sqlx::query_as::<_, (i64, String, String)>(
+    let popped = sqlx::query_as::<_, (i64, String, String, Option<String>)>(
         "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
            first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
          WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
@@ -351,7 +351,7 @@ pub(crate) async fn build_policy(
                 AND delivered_at <= datetime('now', ?) \
                 AND first_delivered_at > datetime('now', ?))) \
           ORDER BY requested_at ASC, id ASC LIMIT 1) \
-         RETURNING id, command, requested_at",
+         RETURNING id, command, requested_at, payload",
     )
     .bind(device_id)
     .bind(crate::models::EXPIRING_COMMANDS[0])
@@ -374,7 +374,7 @@ pub(crate) async fn build_policy(
     ))
     .fetch_optional(&state.db)
     .await?;
-    if let Some((id, _, requested_at)) = &popped {
+    if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
         // one the phone didn't confirm is never offered again - a lost "pause" must not run after
         // a later "lock again". Its row stays, as history.
@@ -395,7 +395,12 @@ pub(crate) async fn build_policy(
             spawn_redelivery_nudge(state, device_id, *id);
         }
     }
-    let pending_command = popped.map(|(id, command, requested_at)| PendingCommand {
+    // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a row queued
+    // before 0068 has none, and the phone then lets out every block, as it did.
+    let pending_command = popped.map(|(id, command, requested_at, payload)| PendingCommand {
+        allow: payload
+            .filter(|_| command == crate::window_relock::ALLOW_BLOCKED)
+            .and_then(|p| serde_json::from_str(&p).ok()),
         id,
         command,
         requested_at,

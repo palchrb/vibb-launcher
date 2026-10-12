@@ -85,6 +85,7 @@
         {% endif %}
         {% if relock.allow_button %}
         <form method="post" action="/devices/{{ device.id }}/allow-blocked">
+            <input type="hidden" name="blocks" value="{{ relock.allow_value }}">
             <button type="submit" class="button-small button-secondary">Allow these apps</button>
         </form>
         {% endif %}

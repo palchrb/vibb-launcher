@@ -4,3 +4,6 @@
 -- locate not fetched within an hour) is computed from requested_at, not stored.
 ALTER TABLE device_commands ADD COLUMN cancelled_at TEXT;
 ALTER TABLE device_commands ADD COLUMN cancel_reason TEXT;
+-- "Allow these apps" carries the apps the Status card listed, with the keys it showed (QA of
+-- cmd-expiry, Low 1): JSON [{package_name, signer}], NULL for every other command.
+ALTER TABLE device_commands ADD COLUMN payload TEXT;

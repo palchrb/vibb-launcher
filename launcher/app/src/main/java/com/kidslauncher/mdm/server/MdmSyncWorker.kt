@@ -400,9 +400,11 @@ private suspend fun dispatchPendingCommand(
             requestFollowUpSync(context)
         }
 
-        // Design 24b: "Allow these apps" - the relock's blocks go; this sync's apply shows them.
+        // Design 24b: "Allow these apps" - the blocks the PWA listed go (QA of cmd-expiry, Low 1);
+        // this sync's apply shows them.
         "allow_blocked" -> {
-            val count = WindowRelock.allowBlocked(context)
+            val listed = pending.allow?.associate { it.packageName to it.signer?.lowercase() }
+            val count = WindowRelock.allowBlocked(context, listed)
             reportCommandResult(context, api, pending, success = true, message = "allowed: $count apps")
             requestFollowUpSync(context)
         }

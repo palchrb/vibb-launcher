@@ -271,17 +271,36 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
     let (id, _token) = app.enrolled_device("phone").await;
     let mut nudges = app.state.command_notify.subscribe();
 
-    for (path, command, notice) in [
-        ("end-windows", "end_windows", "end_windows_sent"),
-        ("allow-blocked", "allow_blocked", "allow_blocked_sent"),
-        ("start-pause", "start_pause", "start_pause_sent"),
+    let allow = [("blocks", "org.example.app:")];
+    for (path, command, notice, fields, logged_as) in [
+        (
+            "end-windows",
+            "end_windows",
+            "end_windows_sent",
+            &[][..],
+            "end_windows",
+        ),
+        (
+            "allow-blocked",
+            "allow_blocked",
+            "allow_blocked_sent",
+            &allow[..],
+            "allow_blocked: org.example.app",
+        ),
+        (
+            "start-pause",
+            "start_pause",
+            "start_pause_sent",
+            &[][..],
+            "start_pause",
+        ),
     ] {
         let res = app
             .request_form(
                 Method::POST,
                 &format!("/devices/{id}/{path}"),
                 Some(&cookie),
-                &[],
+                fields,
             )
             .await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
@@ -292,7 +311,11 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
         );
         assert_eq!(nudges.try_recv().ok(), Some(id));
         let logged = events(&app, "device_command_queued").await;
-        assert_eq!(logged.last().map(String::as_str), Some(command));
+        assert_eq!(
+            logged.last().map(String::as_str),
+            Some(logged_as),
+            "{command}"
+        );
     }
     // None deleted another.
     assert_eq!(
@@ -398,18 +421,43 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         "{logged:?}"
     );
 
-    // The parent allows it; the phone takes the command, answers, and reports no block.
+    // The button sends what the card listed, with the key it showed (QA of cmd-expiry, Low 1).
+    let listed = format!("me.vibb.music.debug:{key}");
+    assert!(
+        card.contains(&format!("name=\"blocks\" value=\"{listed}\"")),
+        "{card}"
+    );
+    // Nothing listed (a stale or hand-made form): nothing is queued.
+    for blocks in ["", "not a package:", "org.example.app:XYZ"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/allow-blocked"),
+                Some(&cookie),
+                &[("blocks", blocks)],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{blocks}");
+    }
+    assert!(commands(&app, id).await.is_empty());
+
+    // The parent allows it; the phone takes the command - with the list -, answers, and reports
+    // no block.
     app.request_form(
         Method::POST,
         &format!("/devices/{id}/allow-blocked"),
         Some(&cookie),
-        &[],
+        &[("blocks", &listed)],
     )
     .await;
     let res = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
     assert_eq!(res.json()["pending_command"]["command"], "allow_blocked");
+    assert_eq!(
+        res.json()["pending_command"]["allow"],
+        json!([{ "package_name": "me.vibb.music.debug", "signer": key }])
+    );
     let command_id = res.json()["pending_command"]["id"].as_i64().unwrap();
     app.request(
         Method::POST,
@@ -488,7 +536,7 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         Method::POST,
         &format!("/devices/{id}/allow-blocked"),
         Some(&cookie),
-        &[],
+        &[("blocks", "com.example.app:")],
     )
     .await;
     // Sent, not answered: the button stays, and the card says so.
