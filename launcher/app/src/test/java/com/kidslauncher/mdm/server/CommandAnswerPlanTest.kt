@@ -10,25 +10,38 @@ import java.io.File
 
 /** Security review L12: the phone confirms every command before it runs it, and runs each id once. */
 class CommandAnswerPlanTest {
+    private val at = "2026-10-11 18:00:00"
+
     @Test
     fun `a command delivered again is not run twice`() {
         var state = CommandAnswerState()
-        val (first, afterFirst) = firstSight(state, 7)
+        val (first, afterFirst) = firstSight(state, commandKey(7, at))
         assertTrue(first)
         state = afterFirst
-        val (again, afterAgain) = firstSight(state, 7)
+        val (again, afterAgain) = firstSight(state, commandKey(7, at))
         assertFalse(again)
         assertEquals(state, afterAgain)
-        assertTrue(firstSight(state, 8).first)
+        assertTrue(firstSight(state, commandKey(8, at)).first)
+    }
+
+    /** QA Medium 1: a restored server backup (or another server) hands out an id again - for
+     * another command, asked for at another time. The phone runs it. */
+    @Test
+    fun `an id the phone saw before still runs when it names another command`() {
+        val state = firstSight(CommandAnswerState(), commandKey(481, "2026-10-10 20:00:00")).second
+        assertTrue(firstSight(state, commandKey(481, "2026-10-11 07:15:02")).first)
+        assertFalse(firstSight(state, commandKey(481, "2026-10-10 20:00:00")).first)
+        assertEquals("an older server sends no time: the id alone", "481", commandKey(481, null))
+        assertEquals("481", commandKey(481, ""))
     }
 
     @Test
-    fun `only the newest ids are remembered`() {
+    fun `only the newest commands are remembered`() {
         var state = CommandAnswerState()
-        for (id in 1L..(MAX_SEEN_COMMANDS + 5)) state = firstSight(state, id).second
-        assertEquals(MAX_SEEN_COMMANDS, state.seen.size)
-        assertTrue("the oldest are gone", firstSight(state, 1).first)
-        assertFalse(firstSight(state, MAX_SEEN_COMMANDS + 5L).first)
+        for (id in 1L..(MAX_SEEN_COMMANDS + 5)) state = firstSight(state, commandKey(id, at)).second
+        assertEquals(MAX_SEEN_COMMANDS, state.ran.size)
+        assertTrue("the oldest are gone", firstSight(state, commandKey(1, at)).first)
+        assertFalse(firstSight(state, commandKey(MAX_SEEN_COMMANDS + 5L, at)).first)
     }
 
     @Test
@@ -37,6 +50,8 @@ class CommandAnswerPlanTest {
         state = withAnswer(state, CommandAnswer(1, ANSWER_RECEIPT))
         state = withAnswer(state, CommandAnswer(1, ANSWER_RESULT, false, "failed to lock"))
         state = withAnswer(state, CommandAnswer(1, ANSWER_RESULT, true, "locked (Android)"))
+        // Another command with the same id (another server's): its own answer.
+        assertEquals(3, withAnswer(state, CommandAnswer(1, ANSWER_RESULT, true, "x", requestedAt = at)).outbox.size)
         assertEquals(
             listOf(CommandAnswer(1, ANSWER_RECEIPT), CommandAnswer(1, ANSWER_RESULT, true, "locked (Android)")),
             state.outbox,
@@ -73,9 +88,25 @@ class CommandAnswerPlanTest {
     @Test
     fun `the receipt uses the server's keys and the capability is reported`() {
         val json = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(CommandReceiptRequest.serializer(), CommandReceiptRequest(42, at)),
+        ).jsonObject
+        assertEquals(setOf("command_id", "requested_at"), json.keys)
+        val legacy = ServerJson.parseToJsonElement(
             ServerJson.encodeToString(CommandReceiptRequest.serializer(), CommandReceiptRequest(42)),
         ).jsonObject
-        assertEquals(setOf("command_id"), json.keys)
+        assertEquals("unknown time: left out", setOf("command_id"), legacy.keys)
+        val result = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(
+                com.kidslauncher.mdm.server.dto.CommandResultRequest.serializer(),
+                com.kidslauncher.mdm.server.dto.CommandResultRequest(42, false, "x", at),
+            ),
+        ).jsonObject
+        assertEquals(setOf("command_id", "success", "message", "requested_at"), result.keys)
+        val pending = ServerJson.decodeFromString(
+            com.kidslauncher.mdm.server.dto.PendingCommand.serializer(),
+            """{"id": 42, "command": "lock", "requested_at": "$at"}""",
+        )
+        assertEquals(at, pending.requestedAt)
         assertEquals("command_receipt_v1", COMMAND_RECEIPT_CAPABILITY)
         assertTrue(COMMAND_RECEIPT_CAPABILITY in STATUS_CAPABILITIES)
     }
@@ -86,8 +117,8 @@ class CommandAnswerPlanTest {
         val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
         val sync = File(src, "main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
         val dispatch = sync.substringAfter("private suspend fun dispatchPendingCommand(").substringBefore("\nprivate ")
-        val begin = dispatch.indexOf("CommandAnswers.begin(context, pending.id)")
-        val receipt = dispatch.indexOf("CommandAnswers.receipt(context, api, pending.id)")
+        val begin = dispatch.indexOf("CommandAnswers.begin(context, pending)")
+        val receipt = dispatch.indexOf("CommandAnswers.receipt(context, api, pending)")
         val repeat = dispatch.indexOf("if (!fresh)")
         val commands = dispatch.indexOf("when (pending.command)")
         assertTrue(begin in 0 until receipt)
@@ -95,5 +126,20 @@ class CommandAnswerPlanTest {
         val flush = sync.indexOf("CommandAnswers.flush(context, api)")
         val report = sync.indexOf("api.sendStatus(")
         assertTrue("the outbox goes after the status report", report in 0 until flush)
+    }
+
+    /** QA Medium 1: a new enrollment empties what the phone ran and queued (both enroll paths). */
+    @Test
+    fun `an enrollment clears the command answers`() {
+        val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        for (path in listOf(
+            "main/java/com/kidslauncher/mdm/server/Provisioning.kt",
+            "main/java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt",
+        )) {
+            val text = File(src, path).readText()
+            val clearEvents = text.indexOf("ParentPin.clearEvents(context)")
+            val clearAnswers = text.indexOf("CommandAnswers.clear(context)")
+            assertTrue("$path clears the answers next to the PIN events", clearEvents >= 0 && clearAnswers > clearEvents)
+        }
     }
 }

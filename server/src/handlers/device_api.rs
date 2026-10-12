@@ -367,7 +367,11 @@ pub(crate) async fn build_policy(
             spawn_redelivery_nudge(state, device_id, *id);
         }
     }
-    let pending_command = popped.map(|(id, command, _)| PendingCommand { id, command });
+    let pending_command = popped.map(|(id, command, requested_at)| PendingCommand {
+        id,
+        command,
+        requested_at,
+    });
 
     Ok(PolicyResponse {
         allowlist,
@@ -1393,7 +1397,9 @@ pub(crate) async fn sends_command_receipts(
 }
 
 /// The phone got a command and is about to run it (security review L12) - sent before it runs,
-/// so a wipe is confirmed too. Scoped to this device's own commands; the first receipt counts.
+/// so a wipe is confirmed too. Scoped to this device's own commands - and, when the phone sends
+/// the command's `requested_at`, to that command, not a reuse of its id after a restore (QA
+/// Medium 1); the first receipt counts.
 pub async fn command_receipt(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
@@ -1401,10 +1407,12 @@ pub async fn command_receipt(
 ) -> impl IntoResponse {
     let stored = sqlx::query(
         "UPDATE device_commands SET received_at = COALESCE(received_at, datetime('now')) \
-         WHERE id = ? AND device_id = ?",
+         WHERE id = ? AND device_id = ? AND (? IS NULL OR requested_at = ?)",
     )
     .bind(req.command_id)
     .bind(device.id)
+    .bind(&req.requested_at)
+    .bind(&req.requested_at)
     .execute(&state.db)
     .await;
     match stored {
@@ -1431,12 +1439,15 @@ pub async fn command_result(
     };
     let stored = sqlx::query(
         "UPDATE device_commands SET acknowledged_at = datetime('now'), result = ?, succeeded = ?, \
-         received_at = COALESCE(received_at, datetime('now')) WHERE id = ? AND device_id = ?",
+         received_at = COALESCE(received_at, datetime('now')) \
+         WHERE id = ? AND device_id = ? AND (? IS NULL OR requested_at = ?)",
     )
     .bind(result.chars().take(500).collect::<String>())
     .bind(req.success)
     .bind(req.command_id)
     .bind(device.id)
+    .bind(&req.requested_at)
+    .bind(&req.requested_at)
     .execute(&state.db)
     .await;
     match stored {

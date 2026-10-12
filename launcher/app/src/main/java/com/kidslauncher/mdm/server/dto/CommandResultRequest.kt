@@ -9,4 +9,6 @@ data class CommandResultRequest(
     val commandId: Long,
     val success: Boolean,
     val message: String? = null,
+    /** [PendingCommand.requestedAt], as in [CommandReceiptRequest]. */
+    val requestedAt: String? = null,
 )

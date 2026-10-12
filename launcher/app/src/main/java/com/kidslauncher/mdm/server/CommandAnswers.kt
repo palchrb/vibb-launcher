@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.kidslauncher.mdm.server.dto.CommandReceiptRequest
 import com.kidslauncher.mdm.server.dto.CommandResultRequest
+import com.kidslauncher.mdm.server.dto.PendingCommand
 
 private const val LOG_TAG = "CommandAnswers"
 private const val PREFS = "command_answers"
@@ -39,25 +40,32 @@ object CommandAnswers {
         return after
     }
 
-    /** Marks [id] as run before it runs; `false` = it ran already (delivered again). */
+    /** Marks [command] as run before it runs; `false` = it ran already (delivered again). */
     @Synchronized
-    fun begin(context: Context, id: Long): Boolean {
+    fun begin(context: Context, command: PendingCommand): Boolean {
         var fresh = true
         update(context) { state ->
-            val (first, next) = firstSight(state, id)
+            val (first, next) = firstSight(state, commandKey(command.id, command.requestedAt))
             fresh = first
             next
         }
         return fresh
     }
 
+    /** A new enrollment: the commands run and the answers queued were another server's (or this
+     * one's before a restore) - QA of the launcher wave, Medium 1. */
+    @Synchronized
+    fun clear(context: Context) {
+        if (!prefs(context).edit().clear().commit()) Log.w(LOG_TAG, "Couldn't clear the command answers")
+    }
+
     /** The receipt, before the command runs (a wipe's only answer when it works). */
-    suspend fun receipt(context: Context, api: MdmApi, id: Long) =
-        send(context, api, CommandAnswer(id, ANSWER_RECEIPT))
+    suspend fun receipt(context: Context, api: MdmApi, command: PendingCommand) =
+        send(context, api, CommandAnswer(command.id, ANSWER_RECEIPT, requestedAt = command.requestedAt))
 
     /** What the command did. */
-    suspend fun result(context: Context, api: MdmApi, id: Long, success: Boolean, message: String?) =
-        send(context, api, CommandAnswer(id, ANSWER_RESULT, success, message))
+    suspend fun result(context: Context, api: MdmApi, command: PendingCommand, success: Boolean, message: String?) =
+        send(context, api, CommandAnswer(command.id, ANSWER_RESULT, success, message, command.requestedAt))
 
     private suspend fun send(context: Context, api: MdmApi, answer: CommandAnswer) {
         when (answerFate(post(api, answer))) {
@@ -83,8 +91,10 @@ object CommandAnswers {
     /** The HTTP status, `null` = no answer. */
     private suspend fun post(api: MdmApi, answer: CommandAnswer): Int? = try {
         when (answer.kind) {
-            ANSWER_RECEIPT -> api.sendCommandReceipt(CommandReceiptRequest(answer.commandId)).code()
-            else -> api.sendCommandResult(CommandResultRequest(answer.commandId, answer.success, answer.message)).code()
+            ANSWER_RECEIPT -> api.sendCommandReceipt(CommandReceiptRequest(answer.commandId, answer.requestedAt)).code()
+            else -> api.sendCommandResult(
+                CommandResultRequest(answer.commandId, answer.success, answer.message, answer.requestedAt),
+            ).code()
         }
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e

@@ -534,3 +534,75 @@ async fn a_new_enrollment_never_gets_the_earlier_phones_commands() {
         "{detail}"
     );
 }
+
+/// QA Medium 1: an id is unique only together with `requested_at` - a restored backup winds the
+/// id counter back. The policy names both, and an answer that names an older command with the
+/// same id doesn't count for the new one.
+#[tokio::test]
+async fn an_answer_counts_only_for_the_command_it_names() {
+    let app = TestApp::new().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    report_receipts(&app, &token).await;
+    let old = queue(&app, device, "ring").await;
+    let first = policy(&app, &token).await["pending_command"].clone();
+    assert_eq!(first["id"], old);
+    let old_requested = first["requested_at"]
+        .as_str()
+        .expect("requested_at")
+        .to_string();
+    // The restore: the row and the counter go back; the next command gets the same id.
+    sqlx::query("DELETE FROM device_commands WHERE id = ?")
+        .bind(old)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sqlite_sequence SET seq = ? WHERE name = 'device_commands'")
+        .bind(old - 1)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let new: i64 = sqlx::query_scalar(
+        "INSERT INTO device_commands (device_id, command, requested_at) \
+         VALUES (?, 'lock', datetime('now', '+1 minutes')) RETURNING id",
+    )
+    .bind(device)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(new, old, "the restored counter hands out the id again");
+    // The phone's outbox still holds the old ring's receipt and result.
+    for (path, body) in [
+        (
+            "/api/devices/command-receipt",
+            json!({ "command_id": old, "requested_at": old_requested }),
+        ),
+        (
+            "/api/devices/command-result",
+            json!({ "command_id": old, "success": true, "message": "ringing", "requested_at": old_requested }),
+        ),
+    ] {
+        let res = app
+            .request(Method::POST, path, Some(&token), Some(body))
+            .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT);
+    }
+    assert_eq!(
+        row(&app, new).await.0,
+        None,
+        "the lock isn't confirmed by the ring's answers"
+    );
+    let next = policy(&app, &token).await["pending_command"].clone();
+    assert_eq!(next["command"], "lock");
+    assert_ne!(next["requested_at"], old_requested.as_str());
+    // Its own receipt counts (one without requested_at - an older launcher - is the first test).
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/command-receipt",
+            Some(&token),
+            Some(json!({ "command_id": new, "requested_at": next["requested_at"] })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert!(row(&app, new).await.0.is_some());
+}

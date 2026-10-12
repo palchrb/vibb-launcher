@@ -45,6 +45,8 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
             mdm.enrolled(true)
             // A new enrollment: the queued parent-PIN events were about the old one (design 24).
             ParentPin.clearEvents(context)
+            // And the commands it ran and the answers it queued (QA of the launcher wave, Medium 1).
+            CommandAnswers.clear(context)
             Result.success(Unit)
         } else {
             Result.failure(Exception("HTTP ${response.code()}"))

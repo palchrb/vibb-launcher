@@ -7,4 +7,6 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class CommandReceiptRequest(
     val commandId: Long,
+    /** [PendingCommand.requestedAt]: the receipt counts only for that command (left out when unknown). */
+    val requestedAt: String? = null,
 )

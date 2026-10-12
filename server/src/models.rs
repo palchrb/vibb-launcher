@@ -786,6 +786,11 @@ pub struct PolicyContact {
 pub struct PendingCommand {
     pub id: i64,
     pub command: String,
+    /// The row's `requested_at` (UTC, "YYYY-MM-DD HH:MM:SS"). With the id it names the command
+    /// uniquely, also after a restored backup winds the id counter back or on another server (QA
+    /// of the launcher wave, Medium 1): the phone runs a command once by both, and sends it back
+    /// with its receipt and result.
+    pub requested_at: String,
 }
 
 #[derive(Deserialize)]
@@ -943,6 +948,10 @@ pub struct CommandResultRequest {
     pub command_id: i64,
     pub success: bool,
     pub message: Option<String>,
+    /// [PendingCommand::requested_at] as the phone got it: when sent, the answer counts only for
+    /// that command (a restored or another server may reuse the id). Older launchers send none.
+    #[serde(default)]
+    pub requested_at: Option<String>,
 }
 
 /// `POST /api/devices/command-receipt`: the phone got the command and is about to run it (security
@@ -950,6 +959,9 @@ pub struct CommandResultRequest {
 #[derive(Deserialize)]
 pub struct CommandReceiptRequest {
     pub command_id: i64,
+    /// As [CommandResultRequest::requested_at].
+    #[serde(default)]
+    pub requested_at: Option<String>,
 }
 
 /// Reported by the device during a tracked app's download, or once if the install ultimately

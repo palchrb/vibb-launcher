@@ -14,8 +14,16 @@ import kotlinx.serialization.Serializable
 /** Status-report capability: this launcher confirms commands, so the server may offer one again. */
 const val COMMAND_RECEIPT_CAPABILITY = "command_receipt_v1"
 
-/** Command ids remembered as run - far more than the server's three deliveries of one command. */
+/** Commands remembered as run - far more than the server's three deliveries of one command. */
 const val MAX_SEEN_COMMANDS = 32
+
+/**
+ * What names a command: its id with the server's `requested_at` (QA of the launcher wave, Medium
+ * 1) - a restored server backup winds the id counter back, and another server starts again at 1,
+ * so an id alone can name a new command the phone mistakes for one it ran. An older server sends
+ * no time: the id alone.
+ */
+fun commandKey(id: Long, requestedAt: String?): String = if (requestedAt.isNullOrBlank()) "$id" else "$id@$requestedAt"
 
 /** Answers waiting for the server, at most. */
 const val MAX_QUEUED_ANSWERS = 32
@@ -23,33 +31,38 @@ const val MAX_QUEUED_ANSWERS = 32
 const val ANSWER_RECEIPT = "receipt"
 const val ANSWER_RESULT = "result"
 
-/** A receipt ([ANSWER_RECEIPT]) or a result ([ANSWER_RESULT], with [success] and [message]). */
+/** A receipt ([ANSWER_RECEIPT]) or a result ([ANSWER_RESULT], with [success] and [message]) for
+ * the command [commandId] asked for at [requestedAt] (sent back, so it counts only for that one). */
 @Serializable
 data class CommandAnswer(
     val commandId: Long,
     val kind: String,
     val success: Boolean = true,
     val message: String? = null,
+    val requestedAt: String? = null,
 )
 
-/** CE prefs `command_answers`: the ids run (newest last) and the answers not delivered yet. */
+/** CE prefs `command_answers`: the commands run ([commandKey], newest last) and the answers not
+ * delivered yet. Emptied by a new enrollment (another server's ids mean other commands). */
 @Serializable
 data class CommandAnswerState(
-    val seen: List<Long> = emptyList(),
+    val ran: List<String> = emptyList(),
     val outbox: List<CommandAnswer> = emptyList(),
 )
 
-/** Whether [id] is new - `false` = delivered again: confirm it again, never run it twice. The
- * state remembers it either way (the newest [MAX_SEEN_COMMANDS]). */
-fun firstSight(state: CommandAnswerState, id: Long): Pair<Boolean, CommandAnswerState> {
-    if (id in state.seen) return false to state
-    return true to state.copy(seen = (state.seen + id).takeLast(MAX_SEEN_COMMANDS))
+/** Whether the command [key] ([commandKey]) is new - `false` = delivered again: confirm it again,
+ * never run it twice. The state remembers it either way (the newest [MAX_SEEN_COMMANDS]). */
+fun firstSight(state: CommandAnswerState, key: String): Pair<Boolean, CommandAnswerState> {
+    if (key in state.ran) return false to state
+    return true to state.copy(ran = (state.ran + key).takeLast(MAX_SEEN_COMMANDS))
 }
 
 /** [answer] queued for the next sync: it replaces one of the same command and kind; when full,
  * the oldest receipt goes first (a result says more), then the oldest answer. */
 fun withAnswer(state: CommandAnswerState, answer: CommandAnswer): CommandAnswerState {
-    val out = state.outbox.filterNot { it.commandId == answer.commandId && it.kind == answer.kind }.toMutableList()
+    val out = state.outbox.filterNot {
+        it.commandId == answer.commandId && it.requestedAt == answer.requestedAt && it.kind == answer.kind
+    }.toMutableList()
     out += answer
     while (out.size > MAX_QUEUED_ANSWERS) {
         val receipt = out.indexOfFirst { it.kind == ANSWER_RECEIPT }

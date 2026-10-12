@@ -354,6 +354,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     mdm.enrolled(true)
                     // The queued parent-PIN events were about the old enrollment (design 24).
                     com.kidslauncher.mdm.server.ParentPin.clearEvents(context)
+                    com.kidslauncher.mdm.server.CommandAnswers.clear(context)
                     // First policy now, not at the next backstop (up to 30 min away).
                     com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "enrolled")
                     Toast.makeText(context, R.string.toast_mdm_enroll_success, Toast.LENGTH_LONG)

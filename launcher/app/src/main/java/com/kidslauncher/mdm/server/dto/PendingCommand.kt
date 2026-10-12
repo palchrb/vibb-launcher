@@ -9,4 +9,8 @@ import kotlinx.serialization.Serializable
 data class PendingCommand(
     val id: Long,
     val command: String,
+    /** When the parent asked for it (the server's UTC "YYYY-MM-DD HH:MM:SS"): with [id] it names
+     * the command uniquely, also after a restored server backup reuses an id or on another server
+     * (QA of the launcher wave, Medium 1). `null` from an older server. */
+    val requestedAt: String? = null,
 )
