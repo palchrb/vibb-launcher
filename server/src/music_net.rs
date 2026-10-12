@@ -36,6 +36,10 @@ pub enum Kind {
     Feed,
     /// A cover image.
     Image,
+    /// The Storytel login (design 26b §2.2; vibb's login timeout).
+    Login,
+    /// The Storytel bookshelf.
+    Shelf,
 }
 
 impl Kind {
@@ -45,6 +49,8 @@ impl Kind {
             Kind::Manifest => 256_000,
             Kind::Feed => MAX_FEED_BYTES,
             Kind::Image => 10_000_000,
+            Kind::Login => 64_000,
+            Kind::Shelf => 8_000_000,
         }
     }
 
@@ -54,6 +60,8 @@ impl Kind {
             Kind::Manifest => 15,
             Kind::Feed => 120,
             Kind::Image => 60,
+            Kind::Login => 20,
+            Kind::Shelf => 30,
         })
     }
 }
@@ -67,6 +75,8 @@ pub enum Reach {
     Any,
 }
 
+/// One request. No `Debug`: a Storytel login's URL carries the e-mail and the encrypted password
+/// (`pwd=`), and its bookshelf request the bearer (design 26b §0).
 pub struct SourceRequest {
     pub url: String,
     pub kind: Kind,
@@ -74,6 +84,11 @@ pub struct SourceRequest {
     /// Conditional GET (RSS): `If-None-Match` and `If-Modified-Since`.
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    /// GET unless said otherwise (the Storytel bookshelf is a POST, design 26b §2.2).
+    pub method: reqwest::Method,
+    /// Extra request headers (Storytel's bearer, `Accept`, the bookshelf's content type).
+    pub headers: Vec<(reqwest::header::HeaderName, String)>,
+    pub body: Option<Vec<u8>>,
 }
 
 impl SourceRequest {
@@ -84,6 +99,9 @@ impl SourceRequest {
             reach,
             etag: None,
             last_modified: None,
+            method: reqwest::Method::GET,
+            headers: Vec::new(),
+            body: None,
         }
     }
 }
@@ -337,10 +355,13 @@ fn header(response: &reqwest::Response, name: reqwest::header::HeaderName) -> Op
         .map(|v| v.chars().take(500).collect())
 }
 
+/// The error's text without its URL (design 26b §2.1): reqwest's `Display` prints the URL, and a
+/// Storytel login's URL carries the e-mail and the encrypted password - no message ever holds one.
 fn network_error(err: reqwest::Error) -> FetchError {
     if err.is_timeout() {
         return FetchError::Timeout;
     }
+    let err = err.without_url();
     let mut text = err.to_string();
     let mut source = std::error::Error::source(&err);
     while let Some(inner) = source {
@@ -372,7 +393,15 @@ impl Source for HttpSource {
                 Reach::Public => &self.public,
                 Reach::Any => &self.any,
             };
-            let mut builder = client.get(&request.url).timeout(request.kind.overall());
+            let mut builder = client
+                .request(request.method.clone(), &request.url)
+                .timeout(request.kind.overall());
+            for (name, value) in &request.headers {
+                builder = builder.header(name, value);
+            }
+            if let Some(body) = request.body {
+                builder = builder.body(body);
+            }
             if let Some(etag) = &request.etag {
                 builder = builder.header(reqwest::header::IF_NONE_MATCH, etag);
             }

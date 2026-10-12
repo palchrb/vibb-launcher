@@ -28,14 +28,36 @@ pub struct Canned {
     pub last_modified: Option<String>,
 }
 
+/// One request as the canned fetch saw it (design 26b §2.2: the Storytel bookshelf's shape).
+/// Never logged.
+#[derive(Clone)]
+pub struct Recorded {
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Vec<u8>>,
+}
+
+impl Recorded {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
 /// Every music source fetch in the tests (`AppState.music_fetch`, behind the real gate): canned
-/// answers by URL (anything else is a network error), canned DNS (unknown hosts resolve to a
-/// public address), a public-only request to a host that resolves only privately is refused like
-/// the real resolver does, `If-None-Match` matching a canned ETag answers 304. Every URL asked for
-/// is recorded, and how many requests were in flight at once.
+/// answers by URL (anything else is a network error; `answer_once` answers go first, once each),
+/// canned DNS (unknown hosts resolve to a public address), a public-only request to a host that
+/// resolves only privately is refused like the real resolver does, `If-None-Match` matching a
+/// canned ETag answers 304. Every URL asked for is recorded (with its method, headers and body in
+/// `requests`), and how many requests were in flight at once.
 #[derive(Default)]
 pub struct CannedFetch {
     answers: Mutex<HashMap<String, Canned>>,
+    once: Mutex<HashMap<String, std::collections::VecDeque<Canned>>>,
+    pub requests: Mutex<Vec<Recorded>>,
     failures: Mutex<HashMap<String, crate::music_net::FetchError>>,
     dns: Mutex<HashMap<String, Vec<std::net::IpAddr>>>,
     pub calls: Mutex<Vec<String>>,
@@ -58,6 +80,20 @@ impl CannedFetch {
                 ..Default::default()
             },
         );
+    }
+
+    /// Answers the next request for `url` once, before the standing answer.
+    pub fn answer_once(&self, url: &str, status: u16, body: impl Into<Vec<u8>>) {
+        self.once
+            .lock()
+            .unwrap()
+            .entry(url.to_string())
+            .or_default()
+            .push_back(Canned {
+                status,
+                body: body.into(),
+                ..Default::default()
+            });
     }
 
     pub fn canned(&self, url: &str, answer: Canned) {
@@ -88,6 +124,7 @@ impl CannedFetch {
 
     pub fn clear_calls(&self) {
         self.calls.lock().unwrap().clear();
+        self.requests.lock().unwrap().clear();
         self.conditional.lock().unwrap().clear();
         self.reaches.lock().unwrap().clear();
     }
@@ -123,6 +160,16 @@ impl crate::music_net::Source for CannedFetch {
             }
             self.in_flight.fetch_sub(1, Ordering::SeqCst);
             self.calls.lock().unwrap().push(request.url.clone());
+            self.requests.lock().unwrap().push(Recorded {
+                method: request.method.to_string(),
+                url: request.url.clone(),
+                headers: request
+                    .headers
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.clone()))
+                    .collect(),
+                body: request.body.clone(),
+            });
             self.conditional
                 .lock()
                 .unwrap()
@@ -145,7 +192,15 @@ impl crate::music_net::Source for CannedFetch {
             if let Some(err) = self.failures.lock().unwrap().get(&request.url) {
                 return Err(err.clone());
             }
-            let Some(answer) = self.answers.lock().unwrap().get(&request.url).cloned() else {
+            let once = self
+                .once
+                .lock()
+                .unwrap()
+                .get_mut(&request.url)
+                .and_then(|queue| queue.pop_front());
+            let Some(answer) =
+                once.or_else(|| self.answers.lock().unwrap().get(&request.url).cloned())
+            else {
                 return Err(crate::music_net::FetchError::Network(
                     "no route to host".to_string(),
                 ));
