@@ -1,5 +1,6 @@
 package me.vibb.music.ui
 
+import me.vibb.music.Fixtures.done
 import me.vibb.music.Fixtures.entry
 import me.vibb.music.Fixtures.file
 import me.vibb.music.Fixtures.items
@@ -141,5 +142,71 @@ class SwitchViewTest {
         assertEquals(90_000L, paused.view.storedPosMs)
         // on the phone the same step resumes the item's place, playing or not
         assertEquals(90_000L, skipSwitch(roomSnap, now, true, 0, 1_000)!!.view.storedPosMs)
+    }
+
+    // -- Storytel (design 26b §3.2, §3.5, §5.6; the merge of music-1b-sonos 2026-10-12) --
+
+    private val books = listOf("160661", "160662", "160663", "160664", "160665")
+    private val series = entry(7, Source.STORYTEL, target = "storytel:series:26175", cache = -1)
+
+    /** Books 1 and 3 of five on the phone; the bookmark on book 2, heard on a room. */
+    private val bookSnap = snapshot(
+        library(listOf(a, series)),
+        items(1, listOf("a1", "a2")) + items(7, books, gone = books.toSet()),
+        downloads = listOf(done(7, "160661", url = "storytel:book:160661"), done(7, "160663", url = "storytel:book:160663")),
+        bookmarks = mapOf(series.key to ("160662" to 120_000L)),
+    )
+
+    /** What step 4b's speaker filter says (a Storytel book is speaker-playable, downloaded or not; 26b §5.1). */
+    private val speaker4b = { e: me.vibb.music.model.Entry, item: me.vibb.music.model.PlayItem ->
+        e.source == Source.STORYTEL || me.vibb.music.sonos.PlayBodies.speakerPlayable(e, item)
+    }
+
+    @Test
+    fun `a Storytel tap on the phone queues the books on the phone and numbers them in the series`() {
+        val sw = playSwitch(bookSnap, 7, "160663", playingA, 1_000)!!
+        assertEquals(listOf("160661", "160663"), sw.view.queue.map { it.key })
+        assertEquals("Del 3 av 5: the series' reading order (26b §3.5, M5)", 3 to 5, playerNumber(bookSnap, sw.view))
+        // the cover tap: the bookmark's book isn't on the phone, so the phone's queue starts elsewhere
+        val cover = playSwitch(bookSnap, 7, null, playingA, 1_000)!!
+        assertTrue(cover.view.queue.map { it.key }.all { it in setOf("160661", "160663") })
+        // once the player is there, its number is the switch's
+        val hub = PlayerHub.State(live = true, entryId = 7, keys = listOf("160661", "160663"), index = 1, playing = true)
+        val there = nowView(bookSnap, hub, null)!!
+        assertEquals(there.ref, sw.view.ref)
+        assertEquals(playerNumber(bookSnap, there), playerNumber(bookSnap, sw.view))
+    }
+
+    @Test
+    fun `a Storytel tap on a room reads the room's view - no switch until 4b's filter, then the whole series`() {
+        // Today the speaker filter drops every Storytel book (no url), as the service's queue does:
+        // no switch, the service says "Kan ikke spilles på Sonos".
+        assertNull(playSwitch(bookSnap, 7, "160663", playingA, 1_000, onRoom = true))
+        assertNull(playSwitch(bookSnap, 7, null, playingA, 1_000, onRoom = true))
+        // With 4b's filter the room's queue is every book (forRenderer(true)), whatever the phone holds,
+        // and the cover tap starts at the bookmark's book - not on the phone - at its place.
+        val pick = playSwitch(bookSnap, 7, "160662", playingA, 1_000, onRoom = true, speakerPlayable = speaker4b)!!
+        assertEquals(books, pick.view.queue.map { it.key })
+        assertEquals("160662", pick.view.item.key)
+        assertEquals(2 to 5, playerNumber(bookSnap, pick.view))
+        val cover = playSwitch(bookSnap, 7, null, playingA, 1_000, onRoom = true, speakerPlayable = speaker4b)!!
+        assertEquals("160662", cover.view.item.key)
+        assertEquals(120_000L, cover.view.storedPosMs)
+        // nothing on the phone at all: the room still has the series (the carousel's room view, 26b §3.2)
+        val none = snapshot(library(listOf(series)), items(7, books, gone = books.toSet()))
+        assertNull(playSwitch(none, 7, null, null, 1_000))
+        assertEquals(books, playSwitch(none, 7, null, null, 1_000, onRoom = true, speakerPlayable = speaker4b)!!.view.queue.map { it.key })
+        // the phone's view is the phone's whatever snapshot the caller holds
+        assertEquals(
+            listOf("160661", "160663"),
+            playSwitch(bookSnap.forRenderer(true), 7, "160663", playingA, 1_000)!!.view.queue.map { it.key },
+        )
+        // next on a playing room counts in the room's queue (the hub's keys), from 0; the number follows the series
+        val hub = PlayerHub.State(live = true, entryId = 7, keys = books, index = 1, playing = true, output = Output("sonos:RINCON_000E58A0B1C201400", OutputKind.SONOS, "Stua"))
+        val now = nowView(bookSnap, hub, null)!!
+        val next = skipSwitch(bookSnap, now, true, 0, 1_000, onRoom = true)!!
+        assertEquals("160663", next.view.item.key)
+        assertEquals(0L, next.view.storedPosMs)
+        assertEquals(3 to 5, playerNumber(bookSnap, next.view))
     }
 }

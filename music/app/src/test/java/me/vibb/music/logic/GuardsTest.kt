@@ -424,6 +424,13 @@ class GuardsTest {
         assertTrue(service.contains("store.snapshot().forRenderer(false) to store.db.downloads()"))
         assertTrue(code("src/main/java/me/vibb/music/ui/MusicViewModel.kt").contains("store.snapshots().map { it.forRenderer(false) }"))
         assertTrue(code("src/main/java/me/vibb/music/sync/NewNotifier.kt").contains("val n = count(snap.forRenderer(false))"))
+        // A tap's switch reads the renderer's view itself (26b §5.6; the merge of music-1b-sonos): on a room the
+        // whole series, as the room's queue after 4b, whatever snapshot the screens hold.
+        val switch = code("src/main/java/me/vibb/music/ui/UiModel.kt").substringAfter("fun playSwitch(").substringBefore("\n}\n")
+        assertTrue(switch.contains("val shown = snap.forRenderer(onRoom)"))
+        assertTrue(switch.contains("val entry = shown.entries.firstOrNull { it.id == entryId } ?: return null"))
+        assertTrue(switch.contains("val all = shown.order(entry)"))
+        assertFalse("no other view of the entry in the switch", Regex("""snap\.(entries|order|visible)""").containsMatchIn(switch))
     }
 
     /** qa-26b-step3-code M1, L4: the lines that wire step 3's pure rules into the workers. */
