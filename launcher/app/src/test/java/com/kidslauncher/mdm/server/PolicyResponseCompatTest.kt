@@ -197,6 +197,13 @@ class PolicyResponseCompatTest {
             ),
             json["relock_blocks"],
         )
+        // How many in all (QA of cmd-expiry, Low 2): `relock_blocks_total`, left out unknown.
+        val counted = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relockBlocks = emptyList(), relockBlocksTotal = 18)
+        assertEquals(
+            ServerJson.parseToJsonElement("18"),
+            ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), counted)).jsonObject["relock_blocks_total"],
+        )
+        assertTrue("relock_blocks_total" !in json)
         // None: an empty list, sent; not device owner: left out.
         val empty = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relockBlocks = emptyList())
         assertEquals(ServerJson.parseToJsonElement("[]"), ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), empty)).jsonObject["relock_blocks"])
@@ -228,6 +235,22 @@ class PolicyResponseCompatTest {
             assertEquals(command, policy.pendingCommand?.command)
             assertEquals(7L, policy.pendingCommand?.id)
         }
+        // "Allow these apps" carries the apps the PWA listed (QA of cmd-expiry, Low 1); the server's
+        // an_install_time_block_is_listed_allowed_and_cleared pins this shape (its first entry).
+        val key = "d3b0" + "0".repeat(56) + "6a6e"
+        val allow = ServerJson.decodeFromString(
+            PolicyResponse.serializer(),
+            """{"pending_command": {"id": 8, "command": "allow_blocked", "requested_at": "2026-10-12 10:00:00",
+                "allow": [{"package_name": "me.vibb.music.debug", "signer": "$key"}, {"package_name": "org.example.old", "signer": null}]}}""",
+        )
+        assertEquals(
+            listOf(
+                com.kidslauncher.mdm.server.dto.AllowedBlock("me.vibb.music.debug", key),
+                com.kidslauncher.mdm.server.dto.AllowedBlock("org.example.old", null),
+            ),
+            allow.pendingCommand?.allow,
+        )
+        assertEquals(null, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "ring"}}""").pendingCommand?.allow)
         assertEquals("ended: pause, install mode", endWindowsResult(setOf(WindowKind.PAUSE), installMode = true))
         assertEquals("ended: override, pause", endWindowsResult(setOf(WindowKind.PAUSE, WindowKind.OVERRIDE), installMode = false))
         assertEquals("nothing was open", endWindowsResult(emptySet(), installMode = false))

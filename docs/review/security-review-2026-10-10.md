@@ -389,3 +389,14 @@ Deviations and notes:
   (`disable-keyguard-features` was missing; `limit-password` replaces `watch-login` for `onPasswordChanged`), and
   ticking an app again cancels the uninstall its untick queued. Open user decision: an age limit at first delivery for
   `start_pause`/`ring`/`stop_ring`/`locate` (recommended: an hour), never for `wipe`/`lock`.
+- **Command expiry and cancel** (the user's decision 2026-10-12, "Delvis utløp + Avbryt"; branch `cmd-expiry`, migration
+  0068): `start_pause`, `ring`, `stop_ring` and `locate` are never handed out - first or again - once an hour old and
+  show as "Expired"; `wipe` and `lock` wait however long it takes; every command still waiting has "Cancel" next to its
+  request time on the Locate page (it races the pop cleanly, logged as `device_command_cancelled`); an enrollment
+  cancels what waited for the earlier phone. On the same branch, from the user's emulator: a catalog app uninstalled
+  by hand is installed again, and the missing call-screening role is a calm hint while the launcher is the phone app.
+  QA (`qa-cmd-expiry-and-blocks.md`, 0 High, 3 Medium, 6 Low) is fixed: a new Ring, Locate or Lock replaces only a
+  waiting command of its own kind, and a wipe or lock is never replaced (kept as history); Home's prompt no longer
+  lifts `DISALLOW_CONFIG_DEFAULT_APPS` (the restriction stays on; the roles are granted with adb); the screening
+  hint no longer claims calls are filtered; "Allow these apps" lets out only the listed blocks with the keys shown;
+  an enrollment, and a server start, end waiting expiring commands whatever the clock says.

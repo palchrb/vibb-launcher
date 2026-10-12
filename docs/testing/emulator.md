@@ -548,6 +548,9 @@ Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - 
    app's"; the same with `package_name = 'org.example.other'` says "another Android package". With
    `signer_sha256 = NULL` the phone doesn't download it ("no package and signing key"). A key-rotated APK of a pinned
    app (`apksigner rotate`, `--rotation-min-sdk-version 33`) installs on API 33+: the pin is the old key, in the lineage.
+   **No role prompt while the launcher is the phone app**: `adb shell dumpsys user | grep -i no_config_default_apps`
+   shows the restriction on, and Home shows no caller-ID or redirection prompt (Android refuses them under it).
+   Grant both roles with adb at provisioning (§4).
 4. **Call screening without the phone-app role (L7)**, calls managed, `CALL_SCREENING` granted (§4): `adb shell cmd
    role get-role-holders android.app.role.CALL_SCREENING` lists the launcher. Device page -> Calls: no role warning.
    Then `adb shell cmd role remove-role-holder android.app.role.CALL_SCREENING $P`: after the next sync the page says

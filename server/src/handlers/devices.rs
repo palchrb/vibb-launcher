@@ -416,6 +416,8 @@ struct DeviceDetailTemplate {
     calls_summary: String,
     /// `calls::call_warnings` - emergency calls, a launcher that can't enforce calls, roles.
     call_warnings: Vec<String>,
+    /// `calls::call_warnings`' hints: good to know, nothing wrong (plain lines).
+    call_hints: Vec<String>,
     /// The stored allowlist isn't valid JSON: the phone gets a 500 for its policy (and keeps its
     /// cached one), and the app checkboxes below show nothing as allowed (QA step 1 #11).
     allowlist_corrupt: bool,
@@ -1395,11 +1397,14 @@ async fn render_device(
         format!("Managed - {contacts}, {calls}, {sms}.")
     };
 
-    let call_warnings = crate::handlers::calls::call_warnings(&state, &policy)
+    let (call_warnings, call_hints) = crate::handlers::calls::call_warnings(&state, &policy)
         .await
         .unwrap_or_else(|err| {
             tracing::error!(device_id = id, %err, "failed to read call warnings");
-            vec!["Couldn't read this phone's call state - check the server log.".to_string()]
+            (
+                vec!["Couldn't read this phone's call state - check the server log.".to_string()],
+                Vec::new(),
+            )
         });
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
@@ -1493,6 +1498,8 @@ async fn render_device(
         latest_status.as_ref(),
         notice,
         chrono::Utc::now().timestamp_millis(),
+        // Whether each blocked app is ticked under Apps (QA of cmd-expiry, Low 3).
+        (policy.allowlist_json.is_some() && !allowlist_corrupt).then_some(&allowed),
     )
     .await;
     // When "Block safe mode" went on, for the unseen-boots advice (QA 24b Low 12).
@@ -1566,6 +1573,7 @@ async fn render_device(
             title: device.name.clone(),
             calls_summary,
             call_warnings,
+            call_hints,
             allowlist_corrupt,
             managed_without_pin: (policy.allowlist_json.is_some() || policy.calls_managed)
                 && policy.override_pin_hash.is_none(),

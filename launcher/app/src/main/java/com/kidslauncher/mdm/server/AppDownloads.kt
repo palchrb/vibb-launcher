@@ -742,7 +742,7 @@ object AppDownloads {
     private suspend fun install(app: Context, rec: DownloadRecord, file: File, api: MdmApi, current: Active): Outcome {
         // Security review M10: the APK as Android reads it must be the catalog's package, signed
         // with its pinned key (or a key whose lineage holds it) - before anything installs it.
-        val verdict = catalogVerdict(app, rec, file)
+        val (verdict, versionCode) = catalogVerdict(app, rec, file)
         if (verdict != CatalogApkVerdict.OK) {
             refuse(app, rec, file, api, verdict)
             return Outcome.PROGRESS
@@ -762,6 +762,7 @@ object AppDownloads {
             notifyAppInstalling(app, rec.appId, rec.name)
             AppInstaller.installSilently(
                 app, file, key, rec.name, isLauncher = false, releaseTag = rec.tag, expectedPackage = rec.packageName,
+                versionCode = versionCode,
             )
         }
         return when (started) {
@@ -790,7 +791,7 @@ object AppDownloads {
 
     /** [catalogApkCheck] on the downloaded file: its package and signers as PackageManager reads them
      * (an exception or `null` is "unreadable" - fails closed). */
-    private fun catalogVerdict(app: Context, rec: DownloadRecord, file: File): CatalogApkVerdict {
+    private fun catalogVerdict(app: Context, rec: DownloadRecord, file: File): Pair<CatalogApkVerdict, Long?> {
         val archive = try {
             app.packageManager.getPackageArchiveInfo(
                 file.absolutePath,
@@ -800,7 +801,8 @@ object AppDownloads {
             Log.w(LOG_TAG, "${rec.name}: PackageManager can't read the APK", e)
             null
         }
-        return catalogApkCheck(rec.packageName, rec.signerSha256, archive?.packageName, SelfUpdate.signers(archive?.signingInfo))
+        return catalogApkCheck(rec.packageName, rec.signerSha256, archive?.packageName, SelfUpdate.signers(archive?.signingInfo)) to
+            archive?.longVersionCode
     }
 
     /**

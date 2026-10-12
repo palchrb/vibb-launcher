@@ -338,16 +338,18 @@ object WindowRelock {
         }
     }
 
-    /** The PWA's `allow_blocked`: the `relock_blocked` entries go - but an app signed with another
-     * key than the catalog's pin stays ([allowBlocked], fix round QA Medium 2); the sync's apply()
-     * right after the command shows them again. Returns how many were let out. */
-    fun allowBlocked(context: Context): Int {
+    /** The PWA's `allow_blocked`: the `relock_blocked` entries it [listed] go (all with `null`,
+     * from an older server) - each only while its key is the one the PWA showed, and never an app
+     * signed with another key than the catalog's pin ([allowBlocked], fix round QA Medium 2, QA of
+     * cmd-expiry Low 1); the sync's apply() right after the command shows them again. Returns how
+     * many were let out. */
+    fun allowBlocked(context: Context, listed: Map<String, String?>?): Int {
         val app = context.applicationContext
         val store = store(app)
         synchronized(WindowRelockStore.LOCK) {
             val before = store.blocked()
             val packages = installedPackages(app, withInstaller = false)
-            val after = allowBlocked(before, packages.associate { it.name to it.signers }, lockedSigners(store))
+            val after = allowBlocked(before, packages.associate { it.name to it.signers }, lockedSigners(store), listed)
             val letOut = packages.filter { it.name in before && it.name !in after }.associate { it.name to it.updatedAt }
             store.saveAllowed(after, letOut)
             return before.size - after.size
@@ -410,9 +412,11 @@ object WindowRelock {
     /**
      * The status report's `relock_blocks` (fix of 2026-10-12): every current block with its app's
      * signing key now and its [BlockNote] - an install-time block too, which no relock report
-     * carries. `null` when not device owner (nothing is blocked then). Never throws.
+     * carries - with how many there are in all (`relock_blocks_total`, the list stops at
+     * [RELOCK_BLOCKS_MAX]; QA of cmd-expiry, Low 2). `null` when not device owner (nothing is
+     * blocked then). Never throws.
      */
-    fun reportBlocks(context: Context): List<com.kidslauncher.mdm.server.dto.RelockBlockReport>? = try {
+    fun reportBlocks(context: Context): Pair<List<com.kidslauncher.mdm.server.dto.RelockBlockReport>, Int>? = try {
         val app = context.applicationContext
         val dpm = dpm(app)
         if (dpm == null || !dpm.isDeviceOwnerApp(app.packageName)) {
@@ -427,7 +431,7 @@ object WindowRelock {
                     null
                 }
             }.toMap()
-            currentBlocks(blocked, store.blockNotes(), signers)
+            currentBlocks(blocked, store.blockNotes(), signers) to currentBlocksTotal(blocked, signers)
         }
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Couldn't list the blocks for the report", e)

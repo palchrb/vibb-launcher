@@ -3,17 +3,17 @@
 //! hours" (`start_pause`), the last relock's findings and the warning when the phone refuses the
 //! parent PIN (`foreign_access`, the fix round) - `crate::window_relock`.
 
-use axum::Extension;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
+use axum::{Extension, Form};
 
 use crate::AppState;
 use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::window_relock::{
-    self, ALLOW_BLOCKED, BlocksNote, END_WINDOWS, ForeignNote, RelockNotes, START_PAUSE,
-    WINDOW_RELOCK_CAPABILITY,
+    self, ALLOW_BLOCKED, AllowedBlock, BlocksNote, END_WINDOWS, ForeignNote, RelockNotes,
+    START_PAUSE, WINDOW_RELOCK_CAPABILITY,
 };
 
 /// What the Status card shows for design 24b.
@@ -37,6 +37,9 @@ pub struct RelockCard {
     /// "Allow these apps": a current block it lets out, or - from an older launcher - the last
     /// relock's.
     pub allow_button: bool,
+    /// Its hidden `blocks` value: the listed apps and the keys shown
+    /// ([window_relock::allow_form_value], QA of cmd-expiry Low 1).
+    pub allow_value: String,
 }
 
 pub async fn card(
@@ -45,6 +48,7 @@ pub async fn card(
     latest: Option<&DeviceStatus>,
     notice: Option<&str>,
     now_ms: i64,
+    allowed: Option<&std::collections::HashSet<String>>,
 ) -> RelockCard {
     let capable = latest.is_some_and(|s| {
         s.capabilities_json
@@ -79,18 +83,33 @@ pub async fn card(
         None => RelockNotes::default(),
     };
     let blocks = blocks
-        .map(|b| window_relock::blocks_note(&b, &pins, now_ms))
+        .map(|b| {
+            let mut note = window_relock::blocks_note(&b, &pins, now_ms, allowed);
+            note.more = window_relock::more_blocks_line(
+                b.len(),
+                latest.and_then(|s| s.relock_blocks_total),
+            );
+            note
+        })
         .unwrap_or_default();
     let foreign =
         window_relock::parse_foreign_access(latest.and_then(|s| s.foreign_access_json.as_deref()))
             .map(|f| {
                 window_relock::foreign_note(&f, latest.is_some_and(|s| s.restrictions_paused))
             });
+    // One of the two lists is empty: with `relock_blocks` the relock's line yields to them.
+    let allow: Vec<AllowedBlock> = blocks
+        .allow
+        .iter()
+        .chain(notes.allow.iter())
+        .cloned()
+        .collect();
     RelockCard {
         capable,
         lock_again: capable && open,
         notice: notice.and_then(window_relock::flash_text),
         allow_button: notes.allow_button || blocks.allow_button,
+        allow_value: window_relock::allow_form_value(&allow),
         blocks,
         notes,
         pause_button: capable && !latest.is_some_and(|s| s.restrictions_paused),
@@ -102,12 +121,16 @@ pub async fn card(
     }
 }
 
+/// A row of [last_answers]: command, requested_at, acknowledged_at, result, delivered, cancelled.
+type AnswerRow = (String, String, Option<String>, Option<String>, bool, bool);
+
 /// The newest of each of this design's commands for [device_id], with the phone's answer. Empty on
 /// a database error.
 async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_relock::CommandAnswer> {
     let [end_windows, allow_blocked, start_pause] = window_relock::OWN_INSERT_COMMANDS;
-    let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT command, requested_at, acknowledged_at, result FROM device_commands \
+    let rows: Vec<AnswerRow> = sqlx::query_as(
+        "SELECT command, requested_at, acknowledged_at, result, delivered_at IS NOT NULL, \
+         cancelled_at IS NOT NULL FROM device_commands \
          WHERE id IN (SELECT MAX(id) FROM device_commands WHERE device_id = ? \
                       AND command IN (?, ?, ?) GROUP BY command) \
          ORDER BY id",
@@ -129,14 +152,18 @@ async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_reloc
             .map(|t| t.and_utc().timestamp_millis())
     };
     rows.into_iter()
-        .filter_map(|(command, requested, acknowledged, result)| {
-            Some(window_relock::CommandAnswer {
-                command,
-                requested_ms: ms(&requested)?,
-                acknowledged_ms: acknowledged.as_deref().and_then(ms),
-                result,
-            })
-        })
+        .filter_map(
+            |(command, requested, acknowledged, result, delivered, cancelled)| {
+                Some(window_relock::CommandAnswer {
+                    command,
+                    requested_ms: ms(&requested)?,
+                    acknowledged_ms: acknowledged.as_deref().and_then(ms),
+                    result,
+                    delivered,
+                    cancelled,
+                })
+            },
+        )
         .collect()
 }
 
@@ -160,10 +187,12 @@ async fn catalog_pins(db: &sqlx::SqlitePool) -> std::collections::HashMap<String
 /// One of this design's commands: its own insert, never deleted by another command and deleting
 /// none (QA #8 - `locate::queue_command` leaves them alone). The phone syncs once more after
 /// dispatching one, so a command queued behind it follows within seconds. Nudges the phone.
+/// [payload]: `allow_blocked`'s list (JSON of [AllowedBlock]s), else `None`.
 async fn queue_own_command(
     state: &AppState,
     device_id: i64,
     command: &str,
+    payload: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM devices WHERE id = ?")
         .bind(device_id)
@@ -172,24 +201,43 @@ async fn queue_own_command(
     if exists.is_none() {
         return Ok(false);
     }
-    sqlx::query("INSERT INTO device_commands (device_id, command) VALUES (?, ?)")
+    sqlx::query("INSERT INTO device_commands (device_id, command, payload) VALUES (?, ?, ?)")
         .bind(device_id)
         .bind(command)
+        .bind(payload)
         .execute(&state.db)
         .await?;
     let _ = state.command_notify.send(device_id);
     Ok(true)
 }
 
-async fn queue(state: &AppState, id: i64, admin: &str, command: &str, notice: &str) -> Response {
-    match queue_own_command(state, id, command).await {
+async fn queue(
+    state: &AppState,
+    id: i64,
+    admin: &str,
+    command: &str,
+    notice: &str,
+    allow: Option<&[AllowedBlock]>,
+) -> Response {
+    let payload = allow.and_then(|a| serde_json::to_string(a).ok());
+    match queue_own_command(state, id, command, payload.as_deref()).await {
         Ok(true) => {
+            let detail = match allow {
+                Some(a) => format!(
+                    "{command}: {}",
+                    a.iter()
+                        .map(|b| b.package_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                None => command.to_string(),
+            };
             security::record_security_event(
                 &state.db,
                 "device_command_queued",
                 Some(admin),
                 None,
-                Some(command),
+                Some(&detail),
             )
             .await;
             // No #fragment: scroll-restore.js keeps the place, the notice is in the Status card.
@@ -214,22 +262,48 @@ pub async fn end_windows(
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    queue(&state, id, &admin.username, END_WINDOWS, "end_windows_sent").await
+    queue(
+        &state,
+        id,
+        &admin.username,
+        END_WINDOWS,
+        "end_windows_sent",
+        None,
+    )
+    .await
 }
 
-/// `POST /devices/{id}/allow-blocked` (full auth): "Allow these apps" - the phone drops every
-/// block its relock set; apps on the allowed list show again.
+#[derive(serde::Deserialize)]
+pub struct AllowForm {
+    /// The card's list ([window_relock::allow_form_value]).
+    #[serde(default)]
+    pub blocks: String,
+}
+
+/// `POST /devices/{id}/allow-blocked` (full auth): "Allow these apps" - the phone lets out the
+/// blocks the card listed, each only while its signing key is still the one shown (QA of
+/// cmd-expiry, Low 1); apps on the allowed list show again.
 pub async fn allow_blocked(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<AllowForm>,
 ) -> Response {
+    let allow = window_relock::parse_allow_form(&form.blocks);
+    if allow.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "No app to allow - reload the device page and press \"Allow these apps\" again.",
+        )
+            .into_response();
+    }
     queue(
         &state,
         id,
         &admin.username,
         ALLOW_BLOCKED,
         "allow_blocked_sent",
+        Some(&allow),
     )
     .await
 }
@@ -242,7 +316,15 @@ pub async fn start_pause(
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    queue(&state, id, &admin.username, START_PAUSE, "start_pause_sent").await
+    queue(
+        &state,
+        id,
+        &admin.username,
+        START_PAUSE,
+        "start_pause_sent",
+        None,
+    )
+    .await
 }
 
 /// The latest report's `relock_blocks`, read before a new report is stored.

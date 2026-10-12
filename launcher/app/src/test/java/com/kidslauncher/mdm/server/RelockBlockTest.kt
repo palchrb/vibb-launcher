@@ -234,6 +234,13 @@ class RelockBlockTest {
         )
         // A blocked package that is gone isn't reported.
         assertEquals(2, currentBlocks(store.blocked(), store.blockNotes(), signers - "org.example.old").size)
+        assertEquals(3, currentBlocksTotal(store.blocked(), signers))
+        assertEquals(2, currentBlocksTotal(store.blocked(), signers - "org.example.old"))
+        // Past the cap the list stops, the total doesn't (QA of cmd-expiry, Low 2).
+        val many = (0 until RELOCK_BLOCKS_MAX + 3).associate { "org.example.app$it" to null as Set<String>? }
+        val manySigners = many.keys.associateWith { setOf(debugKey) }
+        assertEquals(RELOCK_BLOCKS_MAX, currentBlocks(many, emptyMap(), manySigners).size)
+        assertEquals(RELOCK_BLOCKS_MAX + 3, currentBlocksTotal(many, manySigners))
 
         // "Allow these apps": the debug build goes (with its note), the imposter stays.
         val left = allowBlocked(store.blocked(), signers, mapOf(CHAT to setOf(pinKey)))
@@ -243,6 +250,34 @@ class RelockBlockTest {
         assertEquals(listOf(CHAT), currentBlocks(store.blocked(), store.blockNotes(), signers).map { it.packageName })
         // Unhiding it sends a package-added: the allowed install isn't blocked again.
         assertNull(blockAfterInstall(installed, store.blocked(), emptyMap(), trusted, now + 1_000, store.allowed()))
+    }
+
+    @Test
+    fun `Allow these apps lets out only the listed blocks whose key is still the one shown (QA of cmd-expiry, Low 1)`() {
+        val keyA = "a1" + "0".repeat(60) + "a1"
+        val keyB = "b2" + "0".repeat(60) + "b2"
+        val other = "c3" + "0".repeat(60) + "c3"
+        val blocked = mapOf("org.example.a" to null, "org.example.b" to null, "org.example.late" to null, "org.example.old" to null)
+        val installed = mapOf(
+            "org.example.a" to setOf(keyA),
+            // Replaced since the parent looked: another key now.
+            "org.example.b" to setOf(other),
+            // Blocked after the parent looked: not listed.
+            "org.example.late" to setOf(keyB),
+            // Its key unreadable then and now.
+            "org.example.old" to setOf("short"),
+        )
+        val listed = mapOf("org.example.a" to keyA, "org.example.b" to keyB, "org.example.old" to null)
+        assertEquals(
+            setOf("org.example.b", "org.example.late"),
+            allowBlocked(blocked, installed, emptyMap(), listed).keys,
+        )
+        // An empty list lets out nothing; a gone package leaves anyway.
+        assertEquals(blocked.keys - "org.example.a", allowBlocked(blocked, installed - "org.example.a", emptyMap(), emptyMap()).keys)
+        // A listed catalog imposter stays.
+        assertEquals(setOf("org.example.a"), allowBlocked(mapOf("org.example.a" to null), installed, mapOf("org.example.a" to setOf(other)), listed).keys)
+        // An older server: every block but the imposter goes.
+        assertTrue(allowBlocked(blocked, installed, emptyMap(), null).isEmpty())
     }
 
     @Test

@@ -682,7 +682,9 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
 }
 
 /// Security review L7: incoming calls are filtered by the phone app's screening or the
-/// call-screening role; the page says when neither does, and when the backup role is missing.
+/// call-screening role; the page says when neither does (an error), and - only as a plain hint -
+/// that the screening role is missing while the launcher is the phone app (the user's emulator,
+/// 2026-10-12: the old error read as if calls weren't filtered).
 #[tokio::test]
 async fn calls_page_says_whether_incoming_calls_are_filtered() {
     let app = TestApp::new().await;
@@ -691,43 +693,49 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
     set_managed(&app, id, true, true).await;
     let not_filtered = "incoming calls are not filtered - anyone can call this phone";
     let still_filtered = "Incoming calls are still filtered";
-    let backup_missing = "Call-screening role not active";
-    for (dialer, screening, expected, absent) in [
+    let hint = "The launcher is the phone app and hangs up calls that aren&#39;t allowed. Another app could screen incoming calls first";
+    for (dialer, screening, errors, hints, absent) in [
         (
             false,
             None,
             vec![not_filtered],
-            vec![still_filtered, backup_missing],
+            vec![],
+            vec![still_filtered, hint],
         ),
         (
             false,
             Some(false),
             vec![not_filtered],
-            vec![still_filtered, backup_missing],
+            vec![],
+            vec![still_filtered, hint],
         ),
         (
             false,
             Some(true),
             vec![still_filtered, "withheld numbers may ring through"],
-            vec![not_filtered, backup_missing],
+            vec![],
+            vec![not_filtered, hint],
         ),
         (
             true,
             Some(false),
-            vec![backup_missing],
+            vec![],
+            vec![hint],
             vec![not_filtered, still_filtered],
         ),
         (
             true,
             Some(true),
             vec![],
-            vec![not_filtered, still_filtered, backup_missing],
+            vec![],
+            vec![not_filtered, still_filtered, hint],
         ),
         (
             true,
             None,
             vec![],
-            vec![not_filtered, still_filtered, backup_missing],
+            vec![],
+            vec![not_filtered, still_filtered, hint],
         ),
     ] {
         let mut call_state = good_call_state();
@@ -741,14 +749,41 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
             json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
         )
         .await;
-        let page = calls_page(&app, &cookie, id).await;
-        for text in &expected {
-            assert!(page.contains(text), "{dialer} {screening:?} {text}: {page}");
+        for page in [
+            calls_page(&app, &cookie, id).await,
+            app.get_page(&format!("/devices/{id}"), &cookie)
+                .await
+                .text(),
+        ] {
+            // The element a text sits in: the last tag opened before it.
+            let element = |text: &str| -> &str {
+                let at = page
+                    .find(text)
+                    .unwrap_or_else(|| panic!("{dialer} {screening:?} {text}: {page}"));
+                let open = page[..at].rfind('<').unwrap();
+                &page[open..at]
+            };
+            for text in &errors {
+                assert!(
+                    element(text).starts_with("<div class=\"error\">"),
+                    "{text} is an error"
+                );
+            }
+            for text in &hints {
+                assert!(
+                    element(text).starts_with("<p class=\"subtitle\">"),
+                    "{text} is a plain line"
+                );
+            }
+            for text in &absent {
+                assert!(!page.contains(text), "{dialer} {screening:?} not {text}");
+            }
         }
-        for text in &absent {
+        if !hints.is_empty() {
+            let page = calls_page(&app, &cookie, id).await;
             assert!(
-                !page.contains(text),
-                "{dialer} {screening:?} not {text}: {page}"
+                page.contains("<h2>About this phone</h2>"),
+                "no error: not \"Check this phone\""
             );
         }
     }

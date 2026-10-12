@@ -337,6 +337,9 @@ pub struct DeviceStatus {
     /// Every app the phone has blocked now (design 24b, fix of 2026-10-12, migration 0067), see
     /// `window_relock::RelockBlock`. `None` from older launchers.
     pub relock_blocks_json: Option<String>,
+    /// How many blocks there are in all; the list holds at most `window_relock::BLOCKS_MAX` (QA
+    /// of cmd-expiry, Low 2, migration 0068). `None` from older launchers.
+    pub relock_blocks_total: Option<i64>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -516,6 +519,25 @@ pub struct DeviceCommand {
     pub first_delivered_at: Option<String>,
     /// `None` for results from before migration 0065 (and launchers that sent none).
     pub succeeded: Option<bool>,
+    /// Cancelled before it reached the phone (migration 0068): by the parent on the Locate page,
+    /// or by an enrollment into the row ([cancel_reason] "enrolled").
+    pub cancelled_at: Option<String>,
+    pub cancel_reason: Option<String>,
+}
+
+/// Commands that expire when the phone doesn't fetch them within [COMMAND_EXPIRY_MINUTES] of the
+/// request (the user's decision, 2026-10-12): a pause, a ring, its stop or a location update that
+/// comes later than that is no longer what the parent asked for. They are never handed out after
+/// that - not first, not again (L12's re-delivery). A wipe and a lock wait for the phone however
+/// long it takes - a lost phone that comes back weeks later must still be wiped or locked -, and so
+/// do design 24b's "Lock again" and "Allow these apps" (not part of the decision).
+pub const EXPIRING_COMMANDS: [&str; 4] = ["start_pause", "ring", "stop_ring", "locate"];
+
+/// See [EXPIRING_COMMANDS].
+pub const COMMAND_EXPIRY_MINUTES: i64 = 60;
+
+pub fn command_expires(command: &str) -> bool {
+    EXPIRING_COMMANDS.contains(&command)
 }
 
 /// How long a delivered command may go unconfirmed before the page says it may be lost.
@@ -547,11 +569,25 @@ fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
 }
 
 impl DeviceCommand {
+    /// Past its hour ([EXPIRING_COMMANDS]): never handed out from then on.
+    fn past_expiry(&self, now: chrono::NaiveDateTime) -> bool {
+        command_expires(&self.command)
+            && minutes_since(&self.requested_at, now).is_some_and(|m| m >= COMMAND_EXPIRY_MINUTES)
+    }
+
+    /// The Locate page's "Cancel": still waiting for the phone.
+    pub fn cancellable(&self, now: chrono::NaiveDateTime) -> bool {
+        self.delivered_at.is_none() && self.cancelled_at.is_none() && !self.past_expiry(now)
+    }
+
     /// Whether a phone that confirms commands may still be offered this one again: delivered, not
-    /// confirmed, under [MAX_COMMAND_DELIVERIES] and within [REDELIVER_WINDOW_MINUTES] of its first
-    /// delivery (the pop in `device_api::build_policy` applies the same rule, plus the 2-minute gap).
+    /// confirmed, under [MAX_COMMAND_DELIVERIES], within [REDELIVER_WINDOW_MINUTES] of its first
+    /// delivery and, for an [EXPIRING_COMMANDS] one, within its hour (the pop in
+    /// `device_api::build_policy` applies the same rule, plus the 2-minute gap).
     pub fn redeliverable(&self, now: chrono::NaiveDateTime) -> bool {
-        self.received_at.is_none()
+        !self.past_expiry(now)
+            && self.cancelled_at.is_none()
+            && self.received_at.is_none()
             && self.acknowledged_at.is_none()
             && self.deliveries < MAX_COMMAND_DELIVERIES
             && self
@@ -571,7 +607,7 @@ impl DeviceCommand {
             let at = self
                 .acknowledged_at
                 .as_deref()
-                .map(|at| format!(" {at}"))
+                .map(|at| format!(" {at} UTC"))
                 .unwrap_or_default();
             return if self.succeeded == Some(false) {
                 format!("Failed{at}: {result}")
@@ -579,19 +615,62 @@ impl DeviceCommand {
                 format!("Done{at} ({result})")
             };
         }
+        if let Some(cancelled) = &self.cancelled_at {
+            // Expired before it was cancelled (an enrollment or a restart cancels those too).
+            let expired_first = command_expires(&self.command)
+                && chrono::NaiveDateTime::parse_from_str(cancelled, "%Y-%m-%d %H:%M:%S")
+                    .ok()
+                    .and_then(|at| minutes_since(&self.requested_at, at))
+                    .is_some_and(|m| m >= COMMAND_EXPIRY_MINUTES);
+            if expired_first
+                && matches!(self.cancel_reason.as_deref(), Some("enrolled" | "restart"))
+            {
+                return format!(
+                    "Expired - the phone didn't check in within {COMMAND_EXPIRY_MINUTES} minutes, so it was never sent"
+                );
+            }
+            return match self.cancel_reason.as_deref() {
+                Some("restart") => format!(
+                    "Cancelled {cancelled} UTC - the server restarted before the phone fetched it, so it was never sent"
+                ),
+                Some("enrolled") => format!(
+                    "Cancelled {cancelled} UTC - a new phone was enrolled on this page, so it was never sent"
+                ),
+                Some("replaced") => {
+                    format!("Replaced {cancelled} UTC by a newer command of its kind - never sent")
+                }
+                _ => format!("Cancelled {cancelled} UTC - never sent"),
+            };
+        }
         if let Some(received) = &self.received_at {
             if self.command == "wipe" {
                 return format!(
-                    "Received {received} - the phone is wiping now; it stops checking in"
+                    "Received {received} UTC - the phone is wiping now; it stops checking in"
                 );
             }
             return if minutes_since(received, now).is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
-                format!("Received {received}, but the phone never said it finished")
+                format!("Received {received} UTC, but the phone never said it finished")
             } else {
-                format!("Received {received}, not finished yet")
+                format!("Received {received} UTC, not finished yet")
             };
         }
         let Some(delivered) = &self.delivered_at else {
+            if self.past_expiry(now) {
+                return format!(
+                    "Expired - the phone didn't check in within {} minutes, so it was never sent",
+                    COMMAND_EXPIRY_MINUTES
+                );
+            }
+            if command_expires(&self.command)
+                && let Ok(asked) =
+                    chrono::NaiveDateTime::parse_from_str(&self.requested_at, "%Y-%m-%d %H:%M:%S")
+            {
+                let until = asked + chrono::Duration::minutes(COMMAND_EXPIRY_MINUTES);
+                return format!(
+                    "Waiting for the phone to check in - expires {} UTC if it doesn't",
+                    until.format("%Y-%m-%d %H:%M:%S")
+                );
+            }
             return "Waiting for the phone to check in".to_string();
         };
         let waited = minutes_since(delivered, now);
@@ -599,29 +678,29 @@ impl DeviceCommand {
             // It confirms within seconds: after REDELIVER_AFTER_MINUTES it is offered again, and
             // after the last delivery (or the window) it is lost.
             if waited.is_none_or(|m| m < REDELIVER_AFTER_MINUTES) {
-                return format!("Delivered {delivered}, not confirmed yet");
+                return format!("Delivered {delivered} UTC, not confirmed yet");
             }
             return if self.redeliverable(now) {
                 format!(
-                    "Delivered {delivered}, not confirmed - offered again when the phone next checks in"
+                    "Delivered {delivered} UTC, not confirmed - offered again when the phone next checks in"
                 )
             } else {
                 format!(
-                    "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
+                    "Delivered {delivered} UTC, never confirmed - it may not have reached the phone: send it again"
                 )
             };
         }
         if self.command == "wipe" {
             return format!(
-                "Delivered {delivered}, not confirmed - this launcher can't confirm a wipe; a wiped phone stops checking in"
+                "Delivered {delivered} UTC, not confirmed - this launcher can't confirm a wipe; a wiped phone stops checking in"
             );
         }
         if waited.is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
             format!(
-                "Delivered {delivered}, never confirmed - it may not have reached the phone: send it again"
+                "Delivered {delivered} UTC, never confirmed - it may not have reached the phone: send it again"
             )
         } else {
-            format!("Delivered {delivered}, not confirmed yet")
+            format!("Delivered {delivered} UTC, not confirmed yet")
         }
     }
 }
@@ -807,6 +886,11 @@ pub struct PendingCommand {
     /// of the launcher wave, Medium 1): the phone runs a command once by both, and sends it back
     /// with its receipt and result.
     pub requested_at: String,
+    /// `allow_blocked` only: the apps the Status card listed, with the keys it showed - the phone
+    /// lets out only those, each while its key is still that one (QA of cmd-expiry, Low 1).
+    /// Left out for every other command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<crate::window_relock::AllowedBlock>>,
 }
 
 #[derive(Deserialize)]
@@ -921,6 +1005,10 @@ pub struct StatusReportRequest {
     /// (`window_relock::sanitize_relock_blocks`). Absent = an older launcher, or not device owner.
     #[serde(default)]
     pub relock_blocks: Option<serde_json::Value>,
+    /// How many apps are blocked in all - `relock_blocks` stops at 16 (QA of cmd-expiry, Low 2).
+    /// Absent = an older launcher.
+    #[serde(default)]
+    pub relock_blocks_total: Option<i64>,
 }
 
 /// `StatusReportRequest.install_mode`.

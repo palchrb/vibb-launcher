@@ -15,6 +15,7 @@ const val APP_INSTALL_KEY_EXTRA = "install_key"
 const val APP_INSTALL_NAME_EXTRA = "install_name"
 const val APP_INSTALL_IS_LAUNCHER_EXTRA = "is_launcher"
 const val APP_INSTALL_RELEASE_TAG_EXTRA = "release_tag"
+const val APP_INSTALL_VERSION_CODE_EXTRA = "version_code"
 const val APP_UNINSTALL_ACTION = "com.kidslauncher.mdm.APP_UNINSTALL_RESULT"
 const val APP_UNINSTALL_PACKAGE_NAME_EXTRA = "package_name"
 
@@ -57,7 +58,8 @@ object AppInstaller {
      * A session that wasn't committed is abandoned; [deleteOnFailure] `false` keeps the file (the
      * launcher's pending APK). [expectedPackage] (security review M10: the catalog's pin, or our
      * own package) goes to `setAppPackageName`: Android refuses the session's APK if it is another
-     * package. */
+     * package. [versionCode] (the APK's, when known) is recorded with the installed release, so the
+     * sync can tell a copy removed or replaced outside the launcher ([catalogReleaseStillInstalled]). */
     fun installSilently(
         context: Context,
         apkFile: File,
@@ -69,6 +71,7 @@ object AppInstaller {
         commitFailed: (() -> Unit)? = null,
         deleteOnFailure: Boolean = true,
         expectedPackage: String? = null,
+        versionCode: Long? = null,
     ): InstallStart {
         val packageInstaller = context.packageManager.packageInstaller
         val params =
@@ -107,6 +110,7 @@ object AppInstaller {
                     .putExtra(APP_INSTALL_NAME_EXTRA, displayName)
                     .putExtra(APP_INSTALL_IS_LAUNCHER_EXTRA, isLauncher)
                     .putExtra(APP_INSTALL_RELEASE_TAG_EXTRA, releaseTag)
+                    .apply { versionCode?.let { putExtra(APP_INSTALL_VERSION_CODE_EXTRA, it) } }
                 val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         PendingIntent.FLAG_MUTABLE

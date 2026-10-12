@@ -226,6 +226,51 @@ pub struct RelockBlock {
     pub at_ms: Option<i64>,
 }
 
+/// One app "Allow these apps" lets out (QA of cmd-expiry, Low 1): the package and the signing key
+/// the Status card showed for it (`None` = the phone couldn't read it). Sent with the command
+/// (`PendingCommand.allow`); the phone lets out only a listed block whose key is still that one -
+/// never a block that came after the parent looked, nor an app replaced since.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AllowedBlock {
+    pub package_name: String,
+    pub signer: Option<String>,
+}
+
+/// The Status card's hidden form value for "Allow these apps": `package:key` (the key empty when
+/// unknown), comma-separated - [parse_allow_form] reads it back.
+pub fn allow_form_value(allow: &[AllowedBlock]) -> String {
+    allow
+        .iter()
+        .map(|a| format!("{}:{}", a.package_name, a.signer.as_deref().unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The posted list: valid package names, each once, with a valid key or none; anything else is
+/// left out. At most [BLOCKS_MAX] - the card never lists more.
+pub fn parse_allow_form(value: &str) -> Vec<AllowedBlock> {
+    let mut out: Vec<AllowedBlock> = Vec::new();
+    for entry in value.split(',') {
+        let Some((name, key)) = entry.trim().split_once(':') else {
+            continue;
+        };
+        if !crate::time_rules::valid_package_name(name)
+            || out.iter().any(|a| a.package_name == name)
+            || !(key.is_empty() || valid_signer(key))
+        {
+            continue;
+        }
+        out.push(AllowedBlock {
+            package_name: name.to_string(),
+            signer: (!key.is_empty()).then(|| key.to_string()),
+        });
+        if out.len() == BLOCKS_MAX {
+            break;
+        }
+    }
+    out
+}
+
 /// At most this many blocks are kept (the launcher's `RELOCK_BLOCKS_MAX`).
 pub const BLOCKS_MAX: usize = 16;
 const BLOCK_REASONS: [&str; 4] = ["outside_play", "other_key", "catalog_key", "unknown"];
@@ -284,19 +329,37 @@ pub fn parse_relock_blocks(json: Option<&str>) -> Option<Vec<RelockBlock>> {
 pub struct BlocksNote {
     /// The heading, `None` without blocks.
     pub text: Option<String>,
-    /// One line per app: its key, why and when.
-    pub items: Vec<String>,
+    /// One line per app: its key, why and when, and whether it is ticked under Apps.
+    pub items: Vec<BlockItem>,
     /// "Allow these apps" lets at least one of them out (not one with another key than the
     /// catalog's pin).
     pub allow_button: bool,
+    /// What it sends: the listed blocks it may let out, with the keys shown (Low 1).
+    pub allow: Vec<AllowedBlock>,
+    /// The phone has more than it lists ([more_blocks_line], Low 2).
+    pub more: Option<String>,
+}
+
+/// One app of [BlocksNote::items].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockItem {
+    pub package_name: String,
+    /// Its key, why and when.
+    pub text: String,
+    /// Ticked under Apps - it shows after "Allow these apps" - or not, so it stays hidden until
+    /// it is ticked too (QA of cmd-expiry, Low 3). `None`: apps aren't managed, or it stays
+    /// blocked anyway (another key than the catalog's).
+    pub ticked: Option<bool>,
 }
 
 /// [pins]: the catalog's pinned signers (M10). An app whose key differs from its pin - by the
-/// server's pin or the phone's reason - stays blocked through "Allow these apps".
+/// server's pin or the phone's reason - stays blocked through "Allow these apps". [allowed]: the
+/// ticked apps, `None` when apps aren't managed.
 pub fn blocks_note(
     blocks: &[RelockBlock],
     pins: &std::collections::HashMap<String, String>,
     now_ms: i64,
+    allowed: Option<&std::collections::HashSet<String>>,
 ) -> BlocksNote {
     if blocks.is_empty() {
         return BlocksNote::default();
@@ -345,10 +408,24 @@ pub fn blocks_note(
                 ),
                 _ => String::new(),
             };
-            format!("{}{key}: {why}{when}.", b.package_name)
+            BlockItem {
+                package_name: b.package_name.clone(),
+                text: format!("{}{key}: {why}{when}.", b.package_name),
+                ticked: allowed
+                    .filter(|_| !not_catalogs(b))
+                    .map(|a| a.contains(&b.package_name)),
+            }
         })
         .collect();
-    let allow_button = blocks.iter().any(|b| !not_catalogs(b));
+    let allow: Vec<AllowedBlock> = blocks
+        .iter()
+        .filter(|b| !not_catalogs(b))
+        .map(|b| AllowedBlock {
+            package_name: b.package_name.clone(),
+            signer: b.signer.clone(),
+        })
+        .collect();
+    let allow_button = !allow.is_empty();
     let mut text = "Blocked on the phone - hidden whatever its tick under Apps:".to_string();
     if allow_button {
         text =
@@ -360,7 +437,22 @@ pub fn blocks_note(
         text: Some(text),
         items,
         allow_button,
+        allow,
+        more: None,
     }
+}
+
+/// The line under the list when the phone has more blocks than it lists (QA of cmd-expiry, Low 2):
+/// [listed] shown, [total] in all (the phone's `relock_blocks_total`).
+pub fn more_blocks_line(listed: usize, total: Option<i64>) -> Option<String> {
+    let more = total? - i64::try_from(listed).ok()?;
+    (more > 0).then(|| {
+        format!(
+            "And {more} more - the phone lists at most {BLOCKS_MAX}. Look for them on the phone \
+             (Settings -> Apps) and uninstall what you don't know; \"Allow these apps\" lets out \
+             only the ones listed here."
+        )
+    })
 }
 
 /// The security log's line for apps the phone newly reports as blocked (`phone_app_blocked`):
@@ -529,6 +621,8 @@ pub struct RelockNotes {
     pub lines: Vec<String>,
     /// Some blocked app is on the allowed list: "Allow these apps" brings it back.
     pub allow_button: bool,
+    /// What it sends: the listed apps it may let out, with their keys (QA of cmd-expiry, Low 1).
+    pub allow: Vec<AllowedBlock>,
 }
 
 pub fn relock_notes(
@@ -565,7 +659,16 @@ pub fn relock_notes(
     });
     // Signed with another key than the catalog pinned: not the catalog's app, whatever its name.
     let not_catalogs = |p: &String| matches!((pins.get(p), r.blocked_signers.get(p)), (Some(pin), Some(key)) if pin != key);
-    let allow_button = r.blocked.iter().any(|p| !not_catalogs(p));
+    let allow: Vec<AllowedBlock> = r
+        .blocked
+        .iter()
+        .filter(|p| !not_catalogs(p))
+        .map(|p| AllowedBlock {
+            package_name: p.clone(),
+            signer: r.blocked_signers.get(p).cloned(),
+        })
+        .collect();
+    let allow_button = !allow.is_empty();
     if !r.blocked.is_empty() {
         let apps: Vec<String> = r
             .blocked
@@ -635,6 +738,7 @@ pub fn relock_notes(
     RelockNotes {
         lines,
         allow_button,
+        allow,
     }
 }
 
@@ -696,6 +800,10 @@ pub struct CommandAnswer {
     pub requested_ms: i64,
     pub acknowledged_ms: Option<i64>,
     pub result: Option<String>,
+    /// The phone fetched it.
+    pub delivered: bool,
+    /// Cancelled before it reached the phone (by the parent, or by an enrollment).
+    pub cancelled: bool,
 }
 
 fn command_label(command: &str) -> Option<&'static str> {
@@ -722,6 +830,17 @@ pub fn answer_line(answer: &CommandAnswer, now_ms: i64) -> Option<String> {
             format!("the phone answered \"{result}\"")
         }
         (Some(_), None) => "the phone answered".to_string(),
+        (None, _) if answer.cancelled => "cancelled before it reached the phone".to_string(),
+        // Expiry (the user's decision, 2026-10-12): a pause the phone didn't fetch within the hour
+        // is never sent.
+        (None, _)
+            if !answer.delivered
+                && crate::models::command_expires(&answer.command)
+                && now_ms - answer.requested_ms
+                    >= crate::models::COMMAND_EXPIRY_MINUTES * 60 * 1000 =>
+        {
+            "expired - the phone didn't check in within an hour, so it was never sent".to_string()
+        }
         (None, _) => "no answer from the phone yet".to_string(),
     };
     Some(format!("\"{label}\" pressed {when}: {said}."))
@@ -936,6 +1055,8 @@ mod tests {
             requested_ms: NOW - 2 * 60 * 60 * 1000,
             acknowledged_ms: ack,
             result: result.map(str::to_string),
+            delivered: ack.is_some(),
+            cancelled: false,
         };
         assert_eq!(
             answer_line(&answer(Some(NOW), Some("ended: pause")), NOW).unwrap(),
@@ -970,6 +1091,36 @@ mod tests {
         };
         assert!(!allowed_since_relock(Some(&unanswered), 0));
         assert!(!allowed_since_relock(None, 0));
+        // Expiry and cancel (2026-10-12): a pause never fetched within the hour expired; "Lock
+        // again" waits however long it takes; a cancelled one says so.
+        let pause = |minutes: i64| CommandAnswer {
+            command: START_PAUSE.to_string(),
+            requested_ms: NOW - minutes * 60 * 1000,
+            ..answer(None, None)
+        };
+        assert!(answer_line(&pause(61), NOW).unwrap().ends_with(
+            "expired - the phone didn't check in within an hour, so it was never sent."
+        ));
+        assert!(
+            answer_line(&pause(59), NOW)
+                .unwrap()
+                .ends_with("no answer from the phone yet.")
+        );
+        assert!(
+            answer_line(&answer(None, None), NOW)
+                .unwrap()
+                .ends_with("no answer from the phone yet."),
+            "2 h old, but it doesn't expire"
+        );
+        let cancelled = CommandAnswer {
+            cancelled: true,
+            ..pause(5)
+        };
+        assert!(
+            answer_line(&cancelled, NOW)
+                .unwrap()
+                .ends_with("cancelled before it reached the phone.")
+        );
     }
 
     /// The launcher's `relock_blocks` literal (PolicyResponseCompatTest).
@@ -1025,23 +1176,24 @@ mod tests {
     fn every_block_is_listed_with_its_key_and_why_and_a_catalog_imposter_stays() {
         let blocks: Vec<RelockBlock> =
             parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
-        let note = blocks_note(&blocks, &HashMap::new(), NOW);
+        let note = blocks_note(&blocks, &HashMap::new(), NOW, None);
         assert!(note.allow_button);
+        assert_eq!(note.items[0].ticked, None);
         assert_eq!(
-            note.items[0],
+            note.items[0].text,
             "me.vibb.music.debug (signing key 3f2a0000…0000c0de): installed from outside Play (a \
              download or adb) - noticed at its install, 2025-10-10 12:40 UTC (3 h ago)."
         );
         assert_eq!(
-            note.items[1],
+            note.items[1].text,
             "org.example.old: blocked when the phone locked again."
         );
         assert!(note.text.unwrap().contains("press \"Allow these apps\""));
         // The catalog pins another key: not the catalog's app - it stays, and alone it gets no button.
         let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
-        let note = blocks_note(&blocks[..1], &pins, NOW);
+        let note = blocks_note(&blocks[..1], &pins, NOW, None);
         assert!(!note.allow_button);
-        assert!(note.items[0].contains(
+        assert!(note.items[0].text.contains(
             "signed with another key than the catalog's (99999999…99999999), so it isn't the \
              catalog's app and stays blocked: uninstall it"
         ));
@@ -1049,11 +1201,80 @@ mod tests {
         // The phone's own reason says so too (its pin, kept from the app list).
         let mut imposter = blocks[0].clone();
         imposter.reason = "catalog_key".to_string();
-        assert!(!blocks_note(&[imposter], &HashMap::new(), NOW).allow_button);
+        assert!(!blocks_note(&[imposter.clone()], &HashMap::new(), NOW, None).allow_button);
         // None: nothing.
         assert_eq!(
-            blocks_note(&[], &HashMap::new(), NOW),
+            blocks_note(&[], &HashMap::new(), NOW, None),
             BlocksNote::default()
+        );
+        // Ticked or not under Apps, each (QA of cmd-expiry, Low 3); an imposter stays anyway.
+        let ticked = std::collections::HashSet::from(["org.example.old".to_string()]);
+        let note = blocks_note(&blocks, &HashMap::new(), NOW, Some(&ticked));
+        assert_eq!(note.items[0].ticked, Some(false));
+        assert_eq!(note.items[1].ticked, Some(true));
+        let note = blocks_note(&[imposter], &HashMap::new(), NOW, Some(&ticked));
+        assert_eq!(note.items[0].ticked, None);
+    }
+
+    /// QA of cmd-expiry, Low 1: "Allow these apps" sends the listed apps it may let out, with the
+    /// keys shown - not a catalog imposter - and reads back only valid entries.
+    #[test]
+    fn allow_sends_the_listed_apps_and_their_keys() {
+        let blocks =
+            parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
+        let note = blocks_note(&blocks, &HashMap::new(), NOW, None);
+        let value = allow_form_value(&note.allow);
+        let key = blocks[0].signer.clone().unwrap();
+        assert_eq!(value, format!("me.vibb.music.debug:{key},org.example.old:"));
+        assert_eq!(parse_allow_form(&value), note.allow);
+        assert_eq!(note.allow[1].signer, None);
+        let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
+        let note = blocks_note(&blocks, &pins, NOW, None);
+        assert_eq!(allow_form_value(&note.allow), "org.example.old:");
+        // Junk, repeats and bad keys go; at most BLOCKS_MAX.
+        assert_eq!(
+            parse_allow_form("x y:, org.example.a:XYZ,org.example.b:,org.example.b:,nocolon"),
+            vec![AllowedBlock {
+                package_name: "org.example.b".to_string(),
+                signer: None
+            }]
+        );
+        let many: Vec<String> = (0..30).map(|i| format!("org.example.app{i}:")).collect();
+        assert_eq!(parse_allow_form(&many.join(",")).len(), BLOCKS_MAX);
+        // An older launcher's relock line: its allowable apps, with their keys.
+        let mut r = RelockReport {
+            at_ms: NOW - 60_000,
+            blocked: vec!["org.example.a".to_string(), "org.example.b".to_string()],
+            ..Default::default()
+        };
+        r.blocked_signers
+            .insert("org.example.a".to_string(), "a".repeat(64));
+        r.blocked_signers
+            .insert("org.example.b".to_string(), "b".repeat(64));
+        let pins = HashMap::from([("org.example.b".to_string(), "9".repeat(64))]);
+        assert_eq!(
+            relock_notes(&r, NOW, &pins).allow,
+            vec![AllowedBlock {
+                package_name: "org.example.a".to_string(),
+                signer: Some("a".repeat(64))
+            }]
+        );
+    }
+
+    /// QA of cmd-expiry, Low 2: more blocks than listed say so.
+    #[test]
+    fn more_blocks_than_listed_say_so() {
+        assert_eq!(more_blocks_line(16, None), None);
+        assert_eq!(more_blocks_line(16, Some(16)), None);
+        assert_eq!(more_blocks_line(2, Some(1)), None);
+        let line = more_blocks_line(16, Some(19)).unwrap();
+        assert!(
+            line.starts_with("And 3 more - the phone lists at most 16."),
+            "{line}"
+        );
+        assert!(
+            line.contains("lets out only the ones listed here"),
+            "{line}"
         );
     }
 

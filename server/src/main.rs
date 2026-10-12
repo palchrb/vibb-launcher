@@ -814,6 +814,10 @@ pub fn build_admin_router(
         )
         .route("/devices/{id}/command/lock", post(handlers::locate::lock))
         .route("/devices/{id}/command/wipe", post(handlers::locate::wipe))
+        .route(
+            "/devices/{id}/commands/{command_id}/cancel",
+            post(handlers::locate::cancel_command),
+        )
         .route("/apps", get(handlers::tracked_apps::list_apps))
         .route(
             "/apps/tracked/new",
@@ -1176,6 +1180,10 @@ pub async fn try_connect_db(database_url: &str) -> Result<SqlitePool, String> {
     time_rules::migrate_legacy(&db)
         .await
         .map_err(|err| format!("failed to convert the old schedules into time rules: {err}"))?;
+    // A ring, pause or location update still waiting when the server stopped is never sent after
+    // it starts again: the Pi has no RTC, so its clock may run behind until NTP fixes it, and the
+    // hour couldn't be trusted (QA of cmd-expiry, Low 4).
+    handlers::device_api::end_expiring_at_start(&db).await;
 
     Ok(db)
 }

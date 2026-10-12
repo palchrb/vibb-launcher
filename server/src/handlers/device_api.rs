@@ -336,21 +336,32 @@ pub(crate) async fn build_policy(
     // REDELIVER_AFTER_MINUTES, at most MAX_COMMAND_DELIVERIES times in all and only within
     // REDELIVER_WINDOW_MINUTES of its first delivery, so nothing stale ever replays (QA of the
     // launcher wave, High 1; the phone runs a command once). For an older launcher delivery stays
-    // at-most-once, which is why every command must be safe to simply queue again. See
-    // migrations/0010_find_my_device.sql, 0065_command_receipts.sql and handlers::locate.
+    // at-most-once, which is why every command must be safe to simply queue again. A command
+    // the parent cancelled is never handed out, nor - first or again - a pause, ring, stop or
+    // location update past its hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
+    // migrations/0010_find_my_device.sql, 0065_command_receipts.sql, 0068 and handlers::locate.
     let receipts = sends_command_receipts(&state.db, device_id).await?;
-    let popped = sqlx::query_as::<_, (i64, String, String)>(
+    let popped = sqlx::query_as::<_, (i64, String, String, Option<String>)>(
         "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
            first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
          WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
-           AND received_at IS NULL AND acknowledged_at IS NULL \
+           AND received_at IS NULL AND acknowledged_at IS NULL AND cancelled_at IS NULL \
+           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
            AND (delivered_at IS NULL OR (? AND deliveries < ? \
                 AND delivered_at <= datetime('now', ?) \
                 AND first_delivered_at > datetime('now', ?))) \
           ORDER BY requested_at ASC, id ASC LIMIT 1) \
-         RETURNING id, command, requested_at",
+         RETURNING id, command, requested_at, payload",
     )
     .bind(device_id)
+    .bind(crate::models::EXPIRING_COMMANDS[0])
+    .bind(crate::models::EXPIRING_COMMANDS[1])
+    .bind(crate::models::EXPIRING_COMMANDS[2])
+    .bind(crate::models::EXPIRING_COMMANDS[3])
+    .bind(format!(
+        "-{} minutes",
+        crate::models::COMMAND_EXPIRY_MINUTES
+    ))
     .bind(receipts)
     .bind(crate::models::MAX_COMMAND_DELIVERIES)
     .bind(format!(
@@ -363,7 +374,7 @@ pub(crate) async fn build_policy(
     ))
     .fetch_optional(&state.db)
     .await?;
-    if let Some((id, _, requested_at)) = &popped {
+    if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
         // one the phone didn't confirm is never offered again - a lost "pause" must not run after
         // a later "lock again". Its row stays, as history.
@@ -384,7 +395,12 @@ pub(crate) async fn build_policy(
             spawn_redelivery_nudge(state, device_id, *id);
         }
     }
-    let pending_command = popped.map(|(id, command, requested_at)| PendingCommand {
+    // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a row queued
+    // before 0068 has none, and the phone then lets out every block, as it did.
+    let pending_command = popped.map(|(id, command, requested_at, payload)| PendingCommand {
+        allow: payload
+            .filter(|_| command == crate::window_relock::ALLOW_BLOCKED)
+            .and_then(|p| serde_json::from_str(&p).ok()),
         id,
         command,
         requested_at,
@@ -601,6 +617,8 @@ async fn compute_dns_filter_version(
 pub(crate) const MAX_INSTALLED_APPS: usize = 1500;
 /// The longest app label kept.
 const MAX_APP_LABEL_CHARS: usize = 100;
+/// `relock_blocks_total` is kept within 0..this.
+const MAX_RELOCK_BLOCKS_TOTAL: i64 = 10_000;
 
 /// An Android package name as the platform allows it: letters, digits, `_` and `.`, at most 255.
 pub(crate) fn is_package_name(name: &str) -> bool {
@@ -1059,8 +1077,9 @@ pub async fn status(
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
-          foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
+          relock_blocks_total) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1103,6 +1122,13 @@ pub async fn status(
         report.admin_policies_pending.as_ref(),
     ))
     .bind(&relock_blocks_json)
+    // How many there are in all - the list stops at BLOCKS_MAX (QA of cmd-expiry, Low 2); only
+    // with the list.
+    .bind(relock_blocks_json.as_ref().and_then(|_| {
+        report
+            .relock_blocks_total
+            .map(|n| n.clamp(0, MAX_RELOCK_BLOCKS_TOTAL))
+    }))
     .execute(&state.db)
     .await
     .ok();
@@ -1336,15 +1362,20 @@ async fn log_play_events(
     }
 }
 
-/// At an enrollment: the device's commands not yet delivered are deleted, and the delivered ones
+/// At an enrollment: the device's commands not yet delivered are cancelled, and the delivered ones
 /// its phone never confirmed are used up (`deliveries` at the maximum), so none of them reaches the
 /// newly enrolled phone (QA of the launcher wave, Low 2). Returns how many; a DB error is logged.
 async fn end_pending_commands(db: &sqlx::SqlitePool, device_id: i64) -> u64 {
-    let deleted =
-        sqlx::query("DELETE FROM device_commands WHERE device_id = ? AND delivered_at IS NULL")
-            .bind(device_id)
-            .execute(db)
-            .await;
+    // Cancelled, not deleted: the Locate page keeps them as history ("a new phone was enrolled").
+    // Every one, expired ones too - expiry is read against the clock, which may be behind after a
+    // power cut (QA of cmd-expiry, Low 4); the page still says "Expired" for one that was.
+    let cancelled = sqlx::query(
+        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'enrolled' \
+         WHERE device_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL",
+    )
+    .bind(device_id)
+    .execute(db)
+    .await;
     let used_up = sqlx::query(
         "UPDATE device_commands SET deliveries = ? WHERE device_id = ? AND delivered_at IS NOT NULL \
          AND received_at IS NULL AND acknowledged_at IS NULL AND deliveries < ?",
@@ -1355,13 +1386,38 @@ async fn end_pending_commands(db: &sqlx::SqlitePool, device_id: i64) -> u64 {
     .execute(db)
     .await;
     let mut count = 0;
-    for outcome in [deleted, used_up] {
+    for outcome in [cancelled, used_up] {
         match outcome {
             Ok(done) => count += done.rows_affected(),
             Err(err) => tracing::error!(device_id, %err, "can't end the device's pending commands"),
         }
     }
     count
+}
+
+/// At server start: every ring, pause or location update still waiting is cancelled (`restart`),
+/// whatever its age by the clock now - the clock may be behind after a power cut (no RTC), and the
+/// hour couldn't be trusted (QA of cmd-expiry, Low 4). A wipe or a lock keeps waiting. Logged on
+/// error, never fails the start.
+pub(crate) async fn end_expiring_at_start(db: &sqlx::SqlitePool) {
+    let ended = sqlx::query(
+        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'restart' \
+         WHERE delivered_at IS NULL AND cancelled_at IS NULL AND command IN (?, ?, ?, ?)",
+    )
+    .bind(crate::models::EXPIRING_COMMANDS[0])
+    .bind(crate::models::EXPIRING_COMMANDS[1])
+    .bind(crate::models::EXPIRING_COMMANDS[2])
+    .bind(crate::models::EXPIRING_COMMANDS[3])
+    .execute(db)
+    .await;
+    match ended {
+        Ok(done) if done.rows_affected() > 0 => tracing::info!(
+            count = done.rows_affected(),
+            "waiting rings, pauses and location updates ended at start"
+        ),
+        Ok(_) => {}
+        Err(err) => tracing::error!(%err, "can't end the waiting expiring commands at start"),
+    }
 }
 
 /// After a command went to a phone that confirms commands: once the re-delivery gap has passed,
@@ -1390,12 +1446,16 @@ pub(crate) async fn redelivery_nudge(
 ) -> bool {
     let pending: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "SELECT id FROM device_commands WHERE id = ? AND device_id = ? AND received_at IS NULL \
-         AND acknowledged_at IS NULL AND deliveries < ? AND first_delivered_at > datetime('now', ?)",
+         AND acknowledged_at IS NULL AND cancelled_at IS NULL AND deliveries < ? \
+         AND first_delivered_at > datetime('now', ?)",
     )
     .bind(command_id)
     .bind(device_id)
     .bind(crate::models::MAX_COMMAND_DELIVERIES)
-    .bind(format!("-{} minutes", crate::models::REDELIVER_WINDOW_MINUTES))
+    .bind(format!(
+        "-{} minutes",
+        crate::models::REDELIVER_WINDOW_MINUTES
+    ))
     .fetch_optional(db)
     .await;
     match pending {

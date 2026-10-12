@@ -188,16 +188,17 @@ async fn a_new_command_stops_an_unconfirmed_one_coming_again() {
     let res = app
         .request_form(
             Method::POST,
-            &format!("/devices/{device}/command/lock"),
+            &format!("/devices/{device}/command/stop-ring"),
             Some(&cookie),
             &[],
         )
         .await;
     assert!(res.status.is_redirection(), "{}", res.status);
     age_delivery(&app, ring, 3).await;
+    // A command of the same kind replaces it (QA of cmd-expiry, Medium 1: only the same kind).
     assert_eq!(
         policy(&app, &token).await["pending_command"]["command"],
-        "lock"
+        "stop_ring"
     );
     age_delivery(&app, ring, 30).await;
     assert!(
@@ -309,7 +310,7 @@ async fn the_locate_page_reads_receipts_and_failures() {
         line("locate")
     );
     assert!(
-        line("end_windows").contains("Failed 2026-10-11 10:00:00: wipe failed"),
+        line("end_windows").contains("Failed 2026-10-11 10:00:00 UTC: wipe failed"),
         "{}",
         line("end_windows")
     );
@@ -512,16 +513,20 @@ async fn a_new_enrollment_never_gets_the_earlier_phones_commands() {
         policy(&app, &new_token).await["pending_command"].is_null(),
         "neither the wipe nor the lock"
     );
-    let commands: Vec<String> =
-        sqlx::query_scalar("SELECT command FROM device_commands WHERE device_id = ? ORDER BY id")
-            .bind(device)
-            .fetch_all(&app.db)
-            .await
-            .unwrap();
+    let commands: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT command, cancel_reason FROM device_commands WHERE device_id = ? ORDER BY id",
+    )
+    .bind(device)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
     assert_eq!(
         commands,
-        ["lock"],
-        "the undelivered wipe is gone, the lock stays history"
+        [
+            ("lock".to_string(), None),
+            ("wipe".to_string(), Some("enrolled".to_string()))
+        ],
+        "the undelivered wipe is cancelled, the lock stays history"
     );
     let detail: String = sqlx::query_scalar(
         "SELECT detail FROM security_events WHERE event_type = 'device_enrolled' ORDER BY id DESC LIMIT 1",

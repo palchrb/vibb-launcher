@@ -42,12 +42,13 @@ data class RoleSnapshot(val dialerHeld: Boolean, val redirectionHeld: Boolean, v
 /**
  * The system role prompt Home may show (at most once a day, [shouldPromptForRole]), `null` = none -
  * [ROLE_DIALER]/[ROLE_CALL_REDIRECTION]/[ROLE_CALL_SCREENING] (the RoleManager names, literal to
- * stay Android-free). In this order: the dialer role when the device-owner call couldn't take it
- * ([dialerError]); call redirection (no device-owner API) once the dialer role is held; call
- * screening (no device-owner API either) whenever it isn't held - security review L7: Telecom binds
- * the screening role holder's service instead of the phone app's, so it filters incoming calls
- * when the launcher isn't the phone app, and keeps another app from screening instead of us. Only
- * while calls are managed.
+ * stay Android-free). The dialer role when the device-owner call couldn't take it ([dialerError]);
+ * else, while we aren't the phone app, call screening (security review L7: it filters incoming calls
+ * then). Never while we hold the dialer role: then [lockDefaultApps] sets DISALLOW_CONFIG_DEFAULT_APPS,
+ * and on Android 14+ PermissionController refuses every exclusive role's request under it (AOSP
+ * `Role.getRestrictionIntentAsUser` opens "blocked by your admin") - the restriction stays on (QA of
+ * cmd-expiry, Medium 2: lifting it for a prompt let the kid change default apps), so call
+ * redirection and call screening are granted with adb at provisioning. Only while calls are managed.
  */
 fun rolePromptFor(
     state: CallPolicyState,
@@ -57,8 +58,8 @@ fun rolePromptFor(
     screeningHeld: Boolean,
 ): String? = when {
     !state.managed -> null
-    !dialerHeld && dialerError -> ROLE_DIALER
-    dialerHeld && !redirectionHeld -> ROLE_CALL_REDIRECTION
+    dialerHeld -> null
+    dialerError -> ROLE_DIALER
     !screeningHeld -> ROLE_CALL_SCREENING
     else -> null
 }
