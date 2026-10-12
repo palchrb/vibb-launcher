@@ -5,9 +5,12 @@ import me.vibb.music.Fixtures.file
 import me.vibb.music.Fixtures.items
 import me.vibb.music.Fixtures.library
 import me.vibb.music.Fixtures.snapshot
+import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.requestStands
 import me.vibb.music.model.Source
+import me.vibb.music.playback.Output
+import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.PlayerHub
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -76,5 +79,67 @@ class SwitchViewTest {
         assertEquals(coverA, sw.view.cover)
         assertEquals("", sw.view.itemTitle)
         assertTrue(sw.view.shuffled)
+    }
+
+    // -- on a Sonos room (design 26a; the merge of main 2026-10-12) --
+
+    /** B with b2 HLS (an RSS entry's HLS: no speaker plays it, `PlayBodies.speakerDropReason`). */
+    private val roomSnap = snapshot(
+        library(listOf(a, b)),
+        items(1, listOf("a1", "a2")) + items(2, listOf("b1", "b2", "b3")).map { if (it.key == "b2") it.copy(hls = true) else it },
+        positions = mapOf(b.key to mapOf("b1" to ItemPosition(90_000, false), "b3" to ItemPosition(90_000, false))),
+        bookmarks = mapOf(b.key to ("b2" to 60_000L)),
+    )
+
+    @Test
+    fun `on a room a cover tap shows the item the speaker starts - the next it can play, from 0`() {
+        val order = roomSnap.order(b).map { it.key }
+        val phone = playSwitch(roomSnap, 2, null, playingA, 1_000)!!
+        assertEquals("b2", phone.view.item.key)
+        assertEquals(60_000L, phone.view.storedPosMs)
+        val room = playSwitch(roomSnap, 2, null, playingA, 1_000, onRoom = true)!!
+        val next = order[(order.indexOf("b2") + 1) % order.size]
+        assertEquals(next, room.view.item.key)
+        assertEquals("a moved start begins at 0 (PlayBodies.speakerPlan)", 0L, room.view.storedPosMs)
+        assertFalse("the room's queue leaves b2 out", room.view.queue.any { it.key == "b2" })
+        assertNull("a cover tap's request names no item", room.request.itemKey)
+        assertFalse(requestStands(room.request, ItemRef(2, next), 1_100))
+    }
+
+    @Test
+    fun `on a room a pick the speaker can't play shows the next it can, and the request expects that one`() {
+        val order = roomSnap.order(b).map { it.key }
+        val next = order[(order.indexOf("b2") + 1) % order.size]
+        val sw = playSwitch(roomSnap, 2, "b2", playingA, 1_000, onRoom = true)!!
+        assertEquals(next, sw.view.item.key)
+        assertEquals(next, sw.request.itemKey)
+        assertTrue(requestStands(sw.request, playingA.ref, 1_100))
+        assertFalse(requestStands(sw.request, ItemRef(2, next), 1_200))
+        // nothing a speaker can play: no switch (the service says "Kan ikke spilles på Sonos")
+        val own = entry(3, Source.OWN)
+        val s = snapshot(library(listOf(own), listOf(file(31, 3))), ownCopies = setOf(31))
+        assertNull(playSwitch(s, 3, null, null, 1_000, onRoom = true))
+        assertTrue(playSwitch(s, 3, null, null, 1_000) != null)
+    }
+
+    @Test
+    fun `on a room next counts in the room's queue, and the number agrees with the player's once it is there`() {
+        // The service's queue on a room: b2 left out (hub keys = Active.items).
+        val keys = roomSnap.order(b).map { it.key }.filter { it != "b2" }
+        val hub = PlayerHub.State(live = true, entryId = 2, keys = keys, index = 0, playing = true, output = Output("sonos:RINCON_000E58A0B1C201400", OutputKind.SONOS, "Stua"))
+        val now = nowView(roomSnap, hub, null)!!
+        val sw = skipSwitch(roomSnap, now, true, 0, 1_000, onRoom = true)!!
+        assertEquals(keys[1], sw.view.item.key)
+        assertEquals("a step on a playing room starts at 0", 0L, sw.view.storedPosMs)
+        val there = nowView(roomSnap, hub.copy(index = 1), null)!!
+        assertEquals(there.ref, ItemRef(2, sw.view.item.key))
+        assertEquals(playerNumber(roomSnap, there), playerNumber(roomSnap, sw.view))
+        // "N av M" counts the play order, b2 too
+        assertEquals(roomSnap.order(b).size, playerNumber(roomSnap, sw.view).second)
+        // paused, the room starts the item where the phone would (SonosController.stepTo's paused branch)
+        val paused = skipSwitch(roomSnap, now.copy(playing = false), true, 0, 1_000, onRoom = true)!!
+        assertEquals(90_000L, paused.view.storedPosMs)
+        // on the phone the same step resumes the item's place, playing or not
+        assertEquals(90_000L, skipSwitch(roomSnap, now, true, 0, 1_000)!!.view.storedPosMs)
     }
 }

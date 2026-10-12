@@ -20,14 +20,28 @@ data class PlayRequest(val entryId: Long, val itemKey: String?, val from: ItemRe
 const val SWITCH_HOLD_MS = 3_000L
 
 /**
+ * ... unless the player service still has the tap's command waiting (`PlayerHub.State.waiting`):
+ * behind the renderer's settle at start (the look at a recorded Sonos room, up to 4 s), a room
+ * switch's hand-off (the old room's bookmark and Stop, up to 15 s) or the look at a recorded room
+ * before a play (design 26a §4.6-§4.7). A Sonos play takes seconds there, and the hold mustn't run
+ * out into the old item meanwhile; once the command has run the plain hold applies again. Bounded,
+ * so a service that never answers can't hold the screens.
+ */
+const val SWITCH_WAIT_MAX_MS = 20_000L
+
+/** When a request held from [PlayRequest.atMs] stops standing by itself; [waiting]: [SWITCH_WAIT_MAX_MS]. */
+fun holdEndsAt(request: PlayRequest, waiting: Boolean): Long = request.atMs + if (waiting) SWITCH_WAIT_MAX_MS else SWITCH_HOLD_MS
+
+/**
  * The screens show [request] rather than [current] (what the player says plays): while the player
  * still shows what it showed at the tap and that isn't already what was asked for (a tap on the
- * entry or item already loaded), for at most [SWITCH_HOLD_MS]. As soon as the player moves - to the
+ * entry or item already loaded), for at most [SWITCH_HOLD_MS] - or [SWITCH_WAIT_MAX_MS] while the
+ * service still has the command [waiting] ([holdEndsAt]). As soon as the player moves - to the
  * request, or elsewhere (an item it couldn't play skipped) - the player is shown again.
  */
-fun requestStands(request: PlayRequest?, current: ItemRef?, nowMs: Long): Boolean {
+fun requestStands(request: PlayRequest?, current: ItemRef?, nowMs: Long, waiting: Boolean = false): Boolean {
     request ?: return false
-    if (nowMs - request.atMs !in 0 until SWITCH_HOLD_MS) return false
+    if (nowMs < request.atMs || nowMs >= holdEndsAt(request, waiting)) return false
     if (current != request.from) return false
     val reached = current != null && current.entryId == request.entryId && (request.itemKey == null || request.itemKey == current.itemKey)
     return !reached

@@ -887,6 +887,22 @@ class SonosControllerTest {
         assertFalse("no playlist edits from outside", androidx.media3.common.Player.COMMAND_SET_MEDIA_ITEM in commands)
     }
 
+    // -- the instant switch (logic/Switch.kt, the merge of main 2026-10-12) --
+
+    @Test
+    fun `a step on a playing room shows the target at once, from 0 - the screens' skip switch counts on both`() {
+        playing()
+        val changes = r.host.changes
+        r.c.stepTo(1, 42_000) // the phone's resume place for ep2
+        // before the speaker has answered anything: the index the service publishes is the target
+        assertEquals(1, r.c.index)
+        assertTrue("the service is told at once", r.host.changes > changes)
+        r.work.drain()
+        assertEquals(r.url(1), r.spk.lastUri)
+        assertFalse("a step on a playing room starts from 0, not the resume place", r.spk.commands.any { it.startsWith("seek") })
+        assertEquals(0L, r.c.spec(r.now).positionAt(r.now))
+    }
+
     // -- the fix round (qa-26a-step3a-code) --
 
     @Test

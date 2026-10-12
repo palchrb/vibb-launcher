@@ -61,6 +61,12 @@ object Commands {
      * gate reads [ARG_OUTPUT] (`Output.sonosUid`) beside this set (design 26a §3.3).
      */
     val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)
+
+    /**
+     * The commands a tap's instant switch waits for (`logic/Switch.kt`): a cover, a pick, and
+     * next/previous on the restored queue. While one is accepted but hasn't run, [PlayerHub.State.waiting].
+     */
+    val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE)
 }
 
 /**
@@ -89,6 +95,12 @@ object PlayerHub {
         val rendererState: RendererState? = null,
         /** The Sonos rows of "Spill av på", stale and scanning (`RoomDirectory.state`, design 26a §5.1). */
         val rooms: RoomsView = RoomsView(emptyList(), stale = false, scanning = false),
+        /**
+         * A [Commands.MOVES] command is accepted but hasn't run yet: it waits for the renderer (the
+         * settle at start, a room switch, a look at a recorded room; design 26a §4.6-§4.7). The
+         * screens hold a tap's switch meanwhile (`logic/Switch.kt`, `holdEndsAt`).
+         */
+        val waiting: Boolean = false,
     )
 
     /**

@@ -43,6 +43,18 @@ class GuardsTest {
     }
 
     @Test
+    fun `a tap's command is waiting from its acceptance to its end, whatever ends it - the screens' switch holds on it`() {
+        // The instant switch (logic/Switch.kt) holds longer while PlayerHub.State.waiting: a room switch's
+        // hand-off or the look at a room delays the play by seconds (the merge of main, 2026-10-12).
+        val command = service.substringAfter("override fun onCustomCommand(").substringBefore("return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))")
+        assertTrue(command.contains("val moves = customCommand.customAction in Commands.MOVES"))
+        assertTrue("counted before the coroutine", command.indexOf("if (moves) waitingMoves(+1)") < command.indexOf("scope.launch {"))
+        assertTrue("and after it, also when cancelled", command.trimEnd().endsWith("}.invokeOnCompletion { if (moves) waitingMoves(-1) }"))
+        assertTrue(service.substringAfter("private fun publish() {").substringBefore("\n    }\n").contains("waiting = waitingMoves.get() > 0,"))
+        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE)"))
+    }
+
+    @Test
     fun `the renderer changes in one place, which hands the service's events to the new one only`() {
         // qa-26a-step2-code M1: the old renderer is saved and paused before it is detached.
         val attach = service.substringAfter("private fun attach(next: Renderer) {").substringBefore("\n    }\n")

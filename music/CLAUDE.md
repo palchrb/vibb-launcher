@@ -138,6 +138,12 @@ fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: th
   SOAP is LAN control traffic and has no address guard, but the speaker-playable filter keeps a `publicOnly` entry's
   private-literal audio, a `lan` entry's tailnet-literal audio (100.64/10, fd7a:115c:a1e0::/48: no speaker reaches
   the tailnet), own files, withdrawn items and non-series HLS off the speaker.
+- **The instant switch on a room** (`logic/Switch.kt`, `ui/UiModel.kt`): a tap's view is built for the renderer that
+  plays (`onRoom`: the speaker-playable queue, a moved start at 0, a step on a playing room from 0) and counted with
+  `playerNumber`; the hold lasts while the service still has the tap's command waiting (`PlayerHub.State.waiting`,
+  `Commands.MOVES`, at most `SWITCH_WAIT_MAX_MS`) - a room switch or the look at a room delays a play by seconds.
+  A new queue-moving command (design 27's `SKIP_TO`) goes into `MOVES` and through the `Renderer` (`goTo` ->
+  `renderer.seekTo(index, ms)`), never ExoPlayer directly.
 - Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
   control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
   widths, the category tiles, the carousel, the bar's room label (a three-member group) and the Sonos state lines.

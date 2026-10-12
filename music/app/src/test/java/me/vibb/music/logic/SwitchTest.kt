@@ -39,6 +39,22 @@ class SwitchTest {
     }
 
     @Test
+    fun `while the service still has the command waiting, the hold is longer - bounded`() {
+        // A Sonos room switch's hand-off or the look at a recorded room: the play runs seconds later.
+        val tap = PlayRequest(2, null, a1, 1_000)
+        assertTrue(requestStands(tap, a1, 1_000 + SWITCH_HOLD_MS, waiting = true))
+        assertTrue(requestStands(tap, a1, 1_000 + SWITCH_WAIT_MAX_MS - 1, waiting = true))
+        assertFalse(requestStands(tap, a1, 1_000 + SWITCH_WAIT_MAX_MS, waiting = true))
+        // the command ran (refused, or silently nothing): the plain hold again
+        assertFalse(requestStands(tap, a1, 1_000 + SWITCH_HOLD_MS, waiting = false))
+        // the player getting there ends it, waiting or not
+        assertFalse(requestStands(tap, b1, 1_500, waiting = true))
+        assertEquals(1_000 + SWITCH_HOLD_MS, holdEndsAt(tap, false))
+        assertEquals(1_000 + SWITCH_WAIT_MAX_MS, holdEndsAt(tap, true))
+        assertTrue(SWITCH_WAIT_MAX_MS > 15_000) // the hand-off's own bound (PlaybackService.HANDOFF_MS)
+    }
+
+    @Test
     fun `a tap on what is already loaded is no switch`() {
         assertFalse(requestStands(PlayRequest(1, null, a1, 1_000), a1, 1_000))
         assertFalse(requestStands(PlayRequest(1, "a1", a1, 1_000), a1, 1_000))

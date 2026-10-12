@@ -40,6 +40,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -115,6 +116,7 @@ import me.vibb.music.sync.netCaps
 import me.vibb.music.ui.MainActivity
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /** The queue the player holds, in play order (or shuffled); the service's, read by [LocalRenderer.saveNow]. */
 internal class Active(
@@ -425,6 +427,9 @@ class PlaybackService : MediaSessionService() {
             if ((Commands.ALL + Commands.LAUNCHER).none { it.customAction == customCommand.customAction }) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
+            // A tap's switch shows on the screens until this has run (PlayerHub.State.waiting, logic/Switch.kt).
+            val moves = customCommand.customAction in Commands.MOVES
+            if (moves) waitingMoves(+1)
             // Main.immediate: with the renderer settled this runs at once, as before step 2.
             scope.launch {
                 rendererReady.await()
@@ -445,7 +450,7 @@ class PlaybackService : MediaSessionService() {
                         Commands.CALL_RELEASE -> launcherCall(false)
                     }
                 }
-            }
+            }.invokeOnCompletion { if (moves) waitingMoves(-1) }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
 
@@ -1157,7 +1162,16 @@ class PlaybackService : MediaSessionService() {
             rendererState = renderer.rendererState,
             // only the rooms the parent allows (design 26a §5.5): a group by its coordinator
             rooms = allowedRooms(home.rooms.state.value, roomScope),
+            waiting = waitingMoves.get() > 0,
         )
+    }
+
+    /** [Commands.MOVES] accepted and not yet run (a command's end, a cancel too: invokeOnCompletion). */
+    private val waitingMoves = AtomicInteger()
+
+    private fun waitingMoves(delta: Int) {
+        val waiting = waitingMoves.addAndGet(delta) > 0
+        PlayerHub.mutableState.update { it.copy(waiting = waiting) }
     }
 
     // --- the renderer: the phone or a Sonos room (design 26a §4.6) ---
