@@ -150,17 +150,17 @@ pub async fn enroll(
         .await;
     state.command_streams.close_device(device_id);
     state.enrollment.refresh(&state.db).await;
-    security::record_security_event(
-        &state.db,
-        "device_enrolled",
-        None,
-        Some(&ip),
-        Some(&format!(
-            "{name} (device {device_id}), {} code",
-            kind.as_str()
-        )),
-    )
-    .await;
+    // A command meant for the phone this row had before - a wipe for a lost one - must never
+    // reach its replacement (QA of the launcher wave, Low 2).
+    let dropped = end_pending_commands(&state.db, device_id).await;
+    let mut detail = format!("{name} (device {device_id}), {} code", kind.as_str());
+    if dropped > 0 {
+        detail.push_str(&format!(
+            "; {dropped} command(s) for the earlier phone won't be sent"
+        ));
+    }
+    security::record_security_event(&state.db, "device_enrolled", None, Some(&ip), Some(&detail))
+        .await;
 
     Json(EnrollResponse {
         device_id,
@@ -1293,6 +1293,34 @@ async fn log_play_events(
         )
         .await;
     }
+}
+
+/// At an enrollment: the device's commands not yet delivered are deleted, and the delivered ones
+/// its phone never confirmed are used up (`deliveries` at the maximum), so none of them reaches the
+/// newly enrolled phone (QA of the launcher wave, Low 2). Returns how many; a DB error is logged.
+async fn end_pending_commands(db: &sqlx::SqlitePool, device_id: i64) -> u64 {
+    let deleted =
+        sqlx::query("DELETE FROM device_commands WHERE device_id = ? AND delivered_at IS NULL")
+            .bind(device_id)
+            .execute(db)
+            .await;
+    let used_up = sqlx::query(
+        "UPDATE device_commands SET deliveries = ? WHERE device_id = ? AND delivered_at IS NOT NULL \
+         AND received_at IS NULL AND acknowledged_at IS NULL AND deliveries < ?",
+    )
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
+    .bind(device_id)
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
+    .execute(db)
+    .await;
+    let mut count = 0;
+    for outcome in [deleted, used_up] {
+        match outcome {
+            Ok(done) => count += done.rows_affected(),
+            Err(err) => tracing::error!(device_id, %err, "can't end the device's pending commands"),
+        }
+    }
+    count
 }
 
 /// After a command went to a phone that confirms commands: once the re-delivery gap has passed,

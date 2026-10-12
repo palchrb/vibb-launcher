@@ -484,3 +484,53 @@ async fn an_unconfirmed_command_nudges_the_phone() {
         .await
     );
 }
+
+/// QA Low 2: a new enrollment into the same device row ends its pending commands - a wipe for a
+/// lost phone never reaches the replacement - and the security log says so.
+#[tokio::test]
+async fn a_new_enrollment_never_gets_the_earlier_phones_commands() {
+    let app = TestApp::new().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    report_receipts(&app, &token).await;
+    let lock = queue(&app, device, "lock").await;
+    assert_eq!(policy(&app, &token).await["pending_command"]["id"], lock);
+    queue(&app, device, "wipe").await;
+    age_delivery(&app, lock, 3).await;
+
+    let code = app.new_code(device, crate::enrollment::Kind::Qr).await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(json!({ "enrollment_code": code })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let new_token = res.json()["device_token"].as_str().unwrap().to_string();
+    assert!(
+        policy(&app, &new_token).await["pending_command"].is_null(),
+        "neither the wipe nor the lock"
+    );
+    let commands: Vec<String> =
+        sqlx::query_scalar("SELECT command FROM device_commands WHERE device_id = ? ORDER BY id")
+            .bind(device)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        commands,
+        ["lock"],
+        "the undelivered wipe is gone, the lock stays history"
+    );
+    let detail: String = sqlx::query_scalar(
+        "SELECT detail FROM security_events WHERE event_type = 'device_enrolled' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        detail.contains("2 command(s) for the earlier phone"),
+        "{detail}"
+    );
+}
