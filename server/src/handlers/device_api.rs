@@ -316,19 +316,22 @@ pub(crate) async fn build_policy(
     // consumes a command, and two concurrent polls can't both get the same one. A launcher that
     // confirms commands (security review L12) confirms each one before running it; one it didn't
     // confirm - the response was lost, or it refused the policy - is offered again after
-    // REDELIVER_AFTER_MINUTES, at most MAX_COMMAND_DELIVERIES times in all (the phone runs a
-    // command id once). For an older launcher delivery stays at-most-once, which is why every
-    // command must be safe to simply queue again. See migrations/0010_find_my_device.sql,
-    // 0065_command_receipts.sql and handlers::locate.
+    // REDELIVER_AFTER_MINUTES, at most MAX_COMMAND_DELIVERIES times in all and only within
+    // REDELIVER_WINDOW_MINUTES of its first delivery, so nothing stale ever replays (QA of the
+    // launcher wave, High 1; the phone runs a command once). For an older launcher delivery stays
+    // at-most-once, which is why every command must be safe to simply queue again. See
+    // migrations/0010_find_my_device.sql, 0065_command_receipts.sql and handlers::locate.
     let receipts = sends_command_receipts(&state.db, device_id).await?;
-    let pending_command = sqlx::query_as::<_, (i64, String)>(
-        "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1 \
+    let popped = sqlx::query_as::<_, (i64, String, String)>(
+        "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
+           first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
          WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
            AND received_at IS NULL AND acknowledged_at IS NULL \
            AND (delivered_at IS NULL OR (? AND deliveries < ? \
-                AND delivered_at <= datetime('now', ?))) \
+                AND delivered_at <= datetime('now', ?) \
+                AND first_delivered_at > datetime('now', ?))) \
           ORDER BY requested_at ASC, id ASC LIMIT 1) \
-         RETURNING id, command",
+         RETURNING id, command, requested_at",
     )
     .bind(device_id)
     .bind(receipts)
@@ -337,9 +340,18 @@ pub(crate) async fn build_policy(
         "-{} minutes",
         crate::models::REDELIVER_AFTER_MINUTES
     ))
+    .bind(format!(
+        "-{} minutes",
+        crate::models::REDELIVER_WINDOW_MINUTES
+    ))
     .fetch_optional(&state.db)
-    .await?
-    .map(|(id, command)| PendingCommand { id, command });
+    .await?;
+    if let Some((id, _, _)) = &popped {
+        if receipts {
+            spawn_redelivery_nudge(state, device_id, *id);
+        }
+    }
+    let pending_command = popped.map(|(id, command, _)| PendingCommand { id, command });
 
     Ok(PolicyResponse {
         allowlist,
@@ -1264,6 +1276,53 @@ async fn log_play_events(
             )),
         )
         .await;
+    }
+}
+
+/// After a command went to a phone that confirms commands: once the re-delivery gap has passed,
+/// nudge the phone over its stream if it still hasn't confirmed, so a lost answer is made good
+/// within [crate::models::REDELIVER_WINDOW_MINUTES] rather than at the phone's 30-minute backstop
+/// (QA of the launcher wave, High 1). One nudge per delivery; nothing happens without a stream.
+fn spawn_redelivery_nudge(state: &AppState, device_id: i64, command_id: i64) {
+    let db = state.db.clone();
+    let notify = state.command_notify.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(
+            crate::models::REDELIVER_AFTER_MINUTES as u64 * 60 + 5,
+        ))
+        .await;
+        redelivery_nudge(&db, &notify, device_id, command_id).await;
+    });
+}
+
+/// The nudge itself ([spawn_redelivery_nudge]): sent when the command is still unconfirmed and may
+/// be offered again. Returns whether it nudged.
+pub(crate) async fn redelivery_nudge(
+    db: &sqlx::SqlitePool,
+    notify: &tokio::sync::broadcast::Sender<i64>,
+    device_id: i64,
+    command_id: i64,
+) -> bool {
+    let pending: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT id FROM device_commands WHERE id = ? AND device_id = ? AND received_at IS NULL \
+         AND acknowledged_at IS NULL AND deliveries < ? AND first_delivered_at > datetime('now', ?)",
+    )
+    .bind(command_id)
+    .bind(device_id)
+    .bind(crate::models::MAX_COMMAND_DELIVERIES)
+    .bind(format!("-{} minutes", crate::models::REDELIVER_WINDOW_MINUTES))
+    .fetch_optional(db)
+    .await;
+    match pending {
+        Ok(Some(_)) => {
+            let _ = notify.send(device_id);
+            true
+        }
+        Ok(None) => false,
+        Err(err) => {
+            tracing::warn!(device_id, command_id, %err, "can't check a command for re-delivery");
+            false
+        }
     }
 }
 

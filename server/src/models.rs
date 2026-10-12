@@ -488,7 +488,7 @@ pub struct DeviceLocation {
 
 /// A queued remote command (ring/lock/wipe/locate, design 24b's window commands) - `delivered_at`
 /// is set when `policy()` serves it to the device (again at each re-delivery, `deliveries`
-/// counts them), `received_at` when the phone confirms it got it (security review L12: before it
+/// counts them, `first_delivered_at` keeps the first), `received_at` when the phone confirms it got it (security review L12: before it
 /// runs it, so a wipe confirms too), `acknowledged_at`/`result`/`succeeded` when it reports back
 /// what it did. See migrations/0010_find_my_device.sql and 0065_command_receipts.sql.
 #[derive(sqlx::FromRow, Clone)]
@@ -502,6 +502,7 @@ pub struct DeviceCommand {
     pub result: Option<String>,
     pub received_at: Option<String>,
     pub deliveries: i64,
+    pub first_delivered_at: Option<String>,
     /// `None` for results from before migration 0065 (and launchers that sent none).
     pub succeeded: Option<bool>,
 }
@@ -516,6 +517,14 @@ pub const MAX_COMMAND_DELIVERIES: i64 = 3;
 /// The gap before an unconfirmed command is offered again (the phone confirms within seconds).
 pub const REDELIVER_AFTER_MINUTES: i64 = 2;
 
+/// An unconfirmed command is offered again only within this many minutes of its first delivery
+/// (QA of the launcher wave, High 1: a stale command must never replay). The phone confirms within
+/// seconds of a fetch, the server nudges it [REDELIVER_AFTER_MINUTES] after each delivery, and a
+/// phone whose stream is down syncs at least every 15 minutes - so three deliveries fit when the
+/// phone is reachable at all, and a ring, a lock or a pause that comes later than that is no longer
+/// what the parent asked for. After the window the page says "never confirmed - send it again".
+pub const REDELIVER_WINDOW_MINUTES: i64 = 15;
+
 /// Status-report capability of a launcher that confirms each command before running it
 /// (`POST /api/devices/command-receipt`, security review L12).
 pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";
@@ -527,6 +536,20 @@ fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
 }
 
 impl DeviceCommand {
+    /// Whether a phone that confirms commands may still be offered this one again: delivered, not
+    /// confirmed, under [MAX_COMMAND_DELIVERIES] and within [REDELIVER_WINDOW_MINUTES] of its first
+    /// delivery (the pop in `device_api::build_policy` applies the same rule, plus the 2-minute gap).
+    pub fn redeliverable(&self, now: chrono::NaiveDateTime) -> bool {
+        self.received_at.is_none()
+            && self.acknowledged_at.is_none()
+            && self.deliveries < MAX_COMMAND_DELIVERIES
+            && self
+                .first_delivered_at
+                .as_deref()
+                .and_then(|at| minutes_since(at, now))
+                .is_some_and(|m| m < REDELIVER_WINDOW_MINUTES)
+    }
+
     /// The status shown on the device's Find My Device page. Delivery is "the phone fetched it",
     /// not "it ran" (security review L12): a phone with `receipts` (it confirms every command
     /// before running it) gets an unconfirmed one again, up to [MAX_COMMAND_DELIVERIES]; one that
@@ -563,11 +586,11 @@ impl DeviceCommand {
         let waited = minutes_since(delivered, now);
         if receipts {
             // It confirms within seconds: after REDELIVER_AFTER_MINUTES it is offered again, and
-            // after the last delivery it is lost.
+            // after the last delivery (or the window) it is lost.
             if waited.is_none_or(|m| m < REDELIVER_AFTER_MINUTES) {
                 return format!("Delivered {delivered}, not confirmed yet");
             }
-            return if self.deliveries < MAX_COMMAND_DELIVERIES {
+            return if self.redeliverable(now) {
                 format!(
                     "Delivered {delivered}, not confirmed - offered again when the phone next checks in"
                 )

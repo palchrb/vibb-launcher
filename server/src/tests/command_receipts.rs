@@ -264,8 +264,9 @@ async fn the_locate_page_reads_receipts_and_failures() {
         ),
     ] {
         sqlx::query(&format!(
-            "INSERT INTO device_commands (device_id, command, delivered_at, deliveries, received_at, \
-             acknowledged_at, result, succeeded) VALUES (?, ?, {delivered}, ?, {received}, \
+            "INSERT INTO device_commands (device_id, command, delivered_at, first_delivered_at, \
+             deliveries, received_at, acknowledged_at, result, succeeded) VALUES (?, ?, {delivered}, \
+             {delivered}, ?, {received}, \
              CASE WHEN {result} IS NULL THEN NULL ELSE '2026-10-11 10:00:00' END, {result}, {succeeded})"
         ))
         .bind(device)
@@ -311,5 +312,146 @@ async fn the_locate_page_reads_receipts_and_failures() {
         line("end_windows").contains("Failed 2026-10-11 10:00:00: wipe failed"),
         "{}",
         line("end_windows")
+    );
+}
+
+/// QA of the launcher wave, High 1: everything delivered before migration 0065 was delivered at
+/// most once (an older launcher never confirmed a wipe), so the migration marks it as used up.
+#[tokio::test]
+async fn the_migration_marks_old_deliveries_as_used_up() {
+    let (db, _dir) = super::cleanup::migrated_before(65).await;
+    let device: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES ('kid') RETURNING id")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    for (command, delivered, acknowledged) in [
+        ("wipe", "datetime('now', '-90 days')", "NULL"),
+        ("start_pause", "datetime('now', '-3 days')", "NULL"),
+        (
+            "lock",
+            "datetime('now', '-3 days')",
+            "datetime('now', '-3 days')",
+        ),
+        ("ring", "NULL", "NULL"),
+    ] {
+        sqlx::query(&format!(
+            "INSERT INTO device_commands (device_id, command, requested_at, delivered_at, acknowledged_at) \
+             VALUES (?, ?, datetime('now', '-90 days'), {delivered}, {acknowledged})"
+        ))
+        .bind(device)
+        .bind(command)
+        .execute(&db)
+        .await
+        .unwrap();
+    }
+    super::cleanup::finish(&db).await;
+    let rows: Vec<(String, i64, bool, bool)> = sqlx::query_as(
+        "SELECT command, deliveries, first_delivered_at IS delivered_at, received_at IS NOT NULL \
+         FROM device_commands ORDER BY id",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ("wipe".to_string(), 3, true, false),
+            ("start_pause".to_string(), 3, true, false),
+            ("lock".to_string(), 3, true, true),
+            ("ring".to_string(), 0, true, false),
+        ]
+    );
+}
+
+/// QA High 1: a wipe or pause from before the update (used up by the migration) is never sent
+/// again, nor is a command whose first delivery is older than the window - however old its gap.
+#[tokio::test]
+async fn a_stale_command_is_never_sent_again() {
+    let app = TestApp::new().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    for (command, first, deliveries) in [
+        ("wipe", "datetime('now', '-90 days')", 3),
+        ("start_pause", "datetime('now', '-3 days')", 3),
+        ("lock", "datetime('now', '-20 minutes')", 1),
+    ] {
+        sqlx::query(&format!(
+            "INSERT INTO device_commands (device_id, command, requested_at, delivered_at, \
+             first_delivered_at, deliveries) VALUES (?, ?, {first}, {first}, {first}, ?)"
+        ))
+        .bind(device)
+        .bind(command)
+        .bind(deliveries)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    report_receipts(&app, &token).await;
+    assert!(
+        policy(&app, &token).await["pending_command"].is_null(),
+        "nothing old replays"
+    );
+}
+
+/// QA High 1: a fresh unconfirmed command is offered again at most three times, all within the
+/// window counted from its first delivery.
+#[tokio::test]
+async fn re_delivery_ends_with_the_window() {
+    let app = TestApp::new().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    report_receipts(&app, &token).await;
+    let id = queue(&app, device, "lock").await;
+    assert_eq!(policy(&app, &token).await["pending_command"]["id"], id);
+    // The first delivery is 14 minutes ago: still in the window.
+    sqlx::query(
+        "UPDATE device_commands SET first_delivered_at = datetime('now', '-14 minutes'), \
+         delivered_at = datetime('now', '-3 minutes') WHERE id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(policy(&app, &token).await["pending_command"]["id"], id);
+    // Past the window: never again, though only two of three deliveries were used.
+    sqlx::query(
+        "UPDATE device_commands SET first_delivered_at = datetime('now', '-16 minutes'), \
+         delivered_at = datetime('now', '-3 minutes') WHERE id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert_eq!(row(&app, id).await.1, 2);
+}
+
+/// QA High 1: after a delivery to a phone that confirms, the server nudges it once the gap has
+/// passed - only while the command is still unconfirmed.
+#[tokio::test]
+async fn an_unconfirmed_command_nudges_the_phone() {
+    let app = TestApp::new().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    report_receipts(&app, &token).await;
+    let id = queue(&app, device, "ring").await;
+    policy(&app, &token).await;
+    let mut stream = app.state.command_notify.subscribe();
+    assert!(
+        crate::handlers::device_api::redelivery_nudge(
+            &app.db,
+            &app.state.command_notify,
+            device,
+            id
+        )
+        .await
+    );
+    assert_eq!(stream.recv().await.unwrap(), device);
+    assert_eq!(receipt(&app, &token, id).await, StatusCode::NO_CONTENT);
+    assert!(
+        !crate::handlers::device_api::redelivery_nudge(
+            &app.db,
+            &app.state.command_notify,
+            device,
+            id
+        )
+        .await
     );
 }
