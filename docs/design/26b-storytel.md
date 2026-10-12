@@ -1031,3 +1031,85 @@ M8, M9, L14 and §10's two questions.
 - **§8 re-checked**: each step's file list is complete for what it changes (M3's handlers and templates, M2's endpoints
   file, L9's `StorytelLogin.kt`, M5's `UiModel.kt`), the only shared-contract commit is named (2b), and each step is one
   sitting (4 split).
+
+## Step 2a implementation status (2026-10-12)
+
+Built on branch `music-2-storytel-2a` (from `685a6ae`), three commits: `music_net` (`b92b1ef`), the client and
+migration 0066 (`623183b`), the PWA (`7baa750`). Server only; the library, the sweep, the cards, the import and the
+contract snapshot still leave Storytel out (step 2b).
+- **In**: `S/storytel.rs` (new, vibb `storytel.py` credited in its header): `encrypt_password` (the `aes` block cipher,
+  CBC and PKCS#7 by hand, UPPERCASE hex), `login_url` (`form_urlencoded`, `@` as `%40`), the target grammar,
+  `normalize_shelf` (a `MapAccess` visitor keeps `items` in document order; no `preserve_order`), `StorytelError` with
+  its codes and picker texts, `StoredLogin` (moved here from `handlers::music_api`), `credentials`, `login_with`,
+  `probe` (login + one bookshelf within `PROBE_BUDGET` = 45 s), and `Account` (`AppState.storytel`: a tokio `Mutex`, the
+  JWT for an hour with one re-login on a 401, `bookshelf` = a fresh read, `shelf(max_age)` = 300 s or 0 with the last
+  good shelf of the same generation on failure, `keep`, `forget`; the cooldown and the outcome stamped in the row, only
+  for the generation they belong to). `S/music_net.rs`: `SourceRequest.{method, headers, body}`, `Kind::Login`/`Shelf`,
+  `network_error` from `err.without_url()`. `S/main.rs`: `AppState.storytel`, `GET /music/storytel`, `POST
+  /music/storytel/add`, `log_filter` (reqwest floored at `info`). `S/handlers/music.rs`: the save's probe (refused: 400,
+  nothing stored, `storytel_login_refused`; accepted/unreachable: sealed, generation + 1, the cooldown cleared, the
+  probe's JWT/shelf kept, a session-flash notice), clear (also `Account::forget`), the card's status line, the picker
+  and Add, the entry page's Storytel choices (0 saved as -1). Templates `music.html` (the card, the add form's hint),
+  new `music_storytel.html`, `music_entry.html`. `migrations/0066_music_storytel.sql` exactly as §2.8.
+  `testdata/storytel/{bookshelf,login_ok}.json`. `server/CLAUDE.md`: a section on the client, the picker and the
+  reqwest log floor (L10). `Cargo.toml`: `aes = "0.9"` (already in the lock).
+- **Tests**: the server suite 560 (540 before), fmt clean, clippy's 12 warnings are the branch's own (none added).
+  New: `storytel::tests` 12 - `password_vectors` (the four vectors, the login URL), `targets`,
+  `normalize_groups_by_model_id_in_reading_order` (the fixture: unsorted keys, format ids differing from `model.id`, a
+  locked third book, a geo book with numeric ids, an ebook-only row, the group cover from the first-seen book),
+  `normalize_follows_pythons_rules` (string and numeric series id in one group, `""`/`0` = standalone, null order,
+  duplicate id kept once, missing/bad ids skipped, a series id failing the grammar dropped, falsy/broken shelves),
+  `bookshelf_request_shape` (CannedFetch's record: POST, the body, the form type, the bearer, `Accept`),
+  `a_401_relogs_once` (once and always-401, the JWT kept, renewed after an hour and per generation),
+  `refused_login_cooldown` (the stamp, no request inside the hour, a 5xx, a new generation retries, `no_jwt` and an
+  outage without cooldown), `not_configured` (no login, no key, another key = `storytel_key` stored),
+  `the_shelf_cache_and_stale_beats_dead`, `the_probe_is_bounded`, `no_secret_in_errors` (a redirect loop and a dropped
+  connection over loopback; red without `without_url`), `secret_types_have_no_debug` (L9). `tests::music_storytel` 8 -
+  `routes_need_a_session`, `save_probes_then_seals`, `the_card_shows_no_login`, `picker_lists_groups`,
+  `add_takes_only_shelf_targets` (two targets in one form, L3), `clear_drops_storytel_from_libraries` (2a's half: the
+  revision triggers and the forgotten session; the library's gate is 2b's), `the_entry_page_offers_storytels_choices`,
+  `the_log_floors_reqwest_at_info`. The phase-1 Storytel tests pass unchanged (their saves now probe: no canned answer
+  = unreachable = saved). `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list` failed in some runs, also on
+  `685a6ae` without these changes (time-dependent, not Storytel's); the last full run was green.
+
+Choices made while building (each against the spec text, with its reason):
+1. **The card's error lines carry no time** ("Storytel couldn't be reached at the last try."): §2.8's columns (kept
+   exactly) have no time for `login_error`. The refused line has its times (`login_refused_at`), the accepted line
+   `login_ok_at`. Times read "10:02 UTC" today and "12 Oct 10:02 UTC" otherwise (the cards' `utc_time`).
+2. **`login_error` also holds the shelf's last outcome** (`http_503`, `too_big`, `bad_shelf`, `network`), cleared by a
+   good shelf: the probe's "unreachable" includes the shelf failing, and with the JWT kept for an hour a login-only code
+   would go stale.
+3. **The cooldown is active while `0 <= now - at < 1 h`** (§1.1 says `0 < ...`): the stamps are whole seconds, so a
+   retry in the same second would otherwise slip through.
+4. **The JWT's and the shelf's clock is `tokio::time::Instant` plus a per-account offset the tests move**
+   (`Account::advance`), not a paused runtime: a paused clock auto-advances while sqlx waits on its worker thread.
+5. **No generic `api(state, request)`**: the bookshelf is the server's only authenticated call, so `fetch_shelf` holds
+   vibb `_api`'s rule (one re-login and one retry on a 401). `credentials` returns the login with its generation and
+   the cooldown stamps, not a bare `StoredLogin`.
+6. **`normalize_shelf` edge cases**: a boolean or list id is no id (Python would key "True", which passes the
+   grammar); a shelf row that isn't an object is skipped (Python fails the whole shelf); a series id sent as `77` and
+   as `"77"` is one group (Python makes two with the same target); a duplicate consumable id is dropped across the
+   whole shelf.
+7. **Add refuses the whole form when any target isn't on the shelf** (400, nothing added; vibb 4c), and when nothing is
+   ticked; an unreadable shelf is a 503 with the reason; a full library part-way redirects with `full=1` (the page says
+   so), none added = 400. The redirect keeps `all=1`. Already-in-library targets are skipped silently.
+8. **The save's notice is a session flash** (the import's pattern), so the redirect stays `/music#storytel`; a refused
+   probe is a 400 with the text by the e-mail field (autofocus), as the other refused saves.
+9. **The picker right after a refusal** says "Nothing is tried again for an hour" (`Refused` carries no stamp); from the
+   next view on it names the time ("before 11:02 UTC") without a request.
+10. **The entry page**: a stored value outside vibb's choices shows as "The first N (from Vibb)"; the Storytel target
+    is plain text with a link to the shelf (a `storytel:` href isn't a link). An empty group name shows the target in
+    the picker; an entry gets "Storytel series"/"Storytel book" then.
+11. **Left for 2b** (its files): `music_sweep::Item`'s doc note (§2.8; 0066's header has it), `not_on_shelf`,
+    `kind_label`'s "Storytel series/book", and `music::tests::storytel_cache_zero_is_all`'s import and library parts
+    (2a pins the save; the helper is `storytel::cache_value`, with `storytel::CACHE_CHOICES`).
+
+Found in the spec: §2.3's "couldn't be reached (10:02 UTC)" needs a column §2.8 doesn't add (1 above); §1.1's `0 <`
+with whole-second stamps (3); §2.1's "the tests pause it" (4); §7 row 4's "per-phone downloads on the card" and row
+5's "the library loses the entries" are 2b's, not 2a's.
+
+Owed [device check] (unchanged from §8 2a, plus the PWA): the real login saved (accepted, "Storytel shows N series and
+books"), a wrong password refused with the old one kept, the picker on the real shelf (kids filter, locked and geo
+lines), a series and a standalone book added; `/music#storytel`, `/music/storytel` and a Storytel entry's page at 360
+px (no horizontal scroll, the 400s by their field, no jump) - no browser in the sandbox; `journalctl` with
+`RUST_LOG=debug` holds no `pwd=`, e-mail or JWT after a save and a picker visit.
