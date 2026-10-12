@@ -52,6 +52,9 @@ object WallpaperRender {
                     paint.color = PHOTO_PLACEHOLDER
                     canvas.drawRect(bounds, paint)
                 } else {
+                    // Opaque: the shared paint may still hold a scrim's colour from the last draw,
+                    // and drawBitmap is modulated by its alpha (qa-25b-25f L1).
+                    paint.color = 0xFF000000.toInt()
                     canvas.drawBitmap(bitmap, centreCrop(bitmap.width, bitmap.height, bounds), RectF(bounds), paint)
                 }
             }

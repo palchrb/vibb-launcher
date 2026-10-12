@@ -357,3 +357,21 @@ with the stub `tsnet.aar` copied in and removed afterwards):
 
 No probe tests were added. The findings above come from reading the code: these parts are pure functions or
 framework behaviour that the JVM unit tests (no Robolectric) can't exercise.
+
+---
+
+## Fixes (lock fix round 25c, branch `lock-fixes-25c`)
+
+| Finding | Commit | What changed |
+| --- | --- | --- |
+| H1 | 5aeee6fd | The "sos" yield narrows lock task to our package + the lock's helpers + the SOS app (`sosNarrowedPackages`, `LockTaskChrome.sosYield`; the helpers now cached with the kiosk on too); `SOS_FLOW_MS` 15 s; the mark ends on any outcome but its own yield (`sosMarkKept`). `SosYieldTest`: QA's five scenarios, the list, the guards |
+| M1 | 022fff42 | `cameraPolicyDisabled(locked, callActive)` = LOCKED and no live call; `PinLockRuntime.callForCamera` follows our calls, VoIP, the system dialer's (re-front checks, the lock back); never set unlocked. Remaining crash states listed in design 25 (25c) |
+| M2 | 49d87d3f | "sos" is the last yield: alarm, VoIP and calls first; the alarm's exemption ends as before |
+| M3 | 72bcb72a | `lockScrim` for every ink in `LOCK_INKS` (white, `kid_core_dim`, white at 75 %, `kid_emergency_text`), each blended at its alpha, the scrim at its 8-bit alpha; cap 0.8 |
+| L1 | 739755b7 | The photo is drawn with an opaque paint |
+| L2 | 58fc7c4e | After a process start the first frame waits for `lockReady`, at most 150 ms |
+| L3 | 5aeee6fd | `PinLockRuntime.sosPackage`, resolved at init (background) and by every `apply()` |
+| L4 | dc64eaf5 | `glanceSubtitle`: no missed-call text or badge at APP_ONLY; "Tapt anrop · N meldinger" when there is more than the call |
+| L5 | 0246b24c | `disable-camera` is not reported pending from SDK 35 (permission-checked there) |
+| L6 | 3bf68478 | Design 25's limits describe the SOS yield as it is |
+| Missing tests | e71efdb7 | Empty untick and device delete clear the lock choice; `lockAfterDecode`; the camera policy at a process start |

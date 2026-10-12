@@ -98,17 +98,42 @@ fun inkForFill(fill: WallpaperFill): InkChoice? = when (fill) {
 }
 
 /**
- * The PIN lock keeps its light ink on every background (design 25, "Lock background"): its cards
- * and keys are dark and opaque, only the clock, the date and a few links sit on the wallpaper.
- * So only a black scrim: the lightest (at least [minScrim]) that gives white 4.5:1 against the
- * background's lightest part, at most [LOCK_MAX_SCRIM] - which reaches 4.5:1 even on white.
+ * The PIN lock keeps its light inks on every background (design 25, "Lock background"): its cards
+ * and keys are dark and opaque; on the wallpaper itself sit the clock and prompt (white), the date
+ * and the "more" line (`kid_core_dim`, #FBE4DC at 78 %), "Foreldrekode" (white at the view's 75 %)
+ * and the glance page's red "Nødsamtale" (`kid_emergency_text`) - [LOCK_INKS]. So only a black
+ * scrim: the lightest (at least [minScrim]) that gives *every* one of them 4.5:1 against the
+ * background's lightest part (qa-25b-25f M3 - it was white only, and the emergency link got 2:1
+ * on Sky and Sunset), at most [LOCK_MAX_SCRIM], which gets there even on white. Judged at the
+ * scrim's 8-bit alpha, as drawn.
  */
-const val LOCK_MAX_SCRIM = 0.6
+const val LOCK_MAX_SCRIM = 0.8
 
-fun lockScrim(lightestLum: Double, minScrim: Double = 0.0): Double {
+/** The lock's inks on the wallpaper, ARGB (alpha = how they are drawn: the colour's or the view's). */
+val LOCK_INKS: List<Int> = listOf(
+    0xFFFFFFFF.toInt(), // kid_ink: the clock, the keypad's prompt
+    0xC7FBE4DC.toInt(), // kid_core_dim: the date, "+ N varsler til"
+    0xBFFFFFFF.toInt(), // kid_ink at alpha 0.75: "Foreldrekode"
+    0xFFFF8A8A.toInt(), // kid_emergency_text: the glance page's "Nødsamtale"
+)
+
+/** The contrast of [inkArgb] (its alpha blended as Android draws it, in sRGB values) on a grey of
+ * luminance [backgroundLum]. */
+fun inkContrastOn(inkArgb: Int, backgroundLum: Double): Double {
+    val a = ((inkArgb ushr 24) and 0xFF) / 255.0
+    val bg = toSrgb(backgroundLum)
+    fun channel(shift: Int): Double = toLinear(a * (((inkArgb shr shift) and 0xFF) / 255.0) + (1 - a) * bg)
+    val lum = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    return contrastRatio(lum, backgroundLum)
+}
+
+fun lockScrim(lightestLum: Double, minScrim: Double = 0.0, inks: List<Int> = LOCK_INKS): Double {
     var alpha = minScrim
     while (alpha < LOCK_MAX_SCRIM) {
-        if (contrastRatio(1.0, underScrim(lightestLum, alpha, towardsWhite = false)) >= LABEL_CONTRAST) return alpha
+        // The scrim as drawn: its 8-bit alpha.
+        val drawn = ((alpha * 255).toInt().coerceIn(0, 255)) / 255.0
+        val ground = underScrim(lightestLum, drawn, towardsWhite = false)
+        if (inks.all { inkContrastOn(it, ground) >= LABEL_CONTRAST }) return alpha
         alpha += 0.01
     }
     return LOCK_MAX_SCRIM

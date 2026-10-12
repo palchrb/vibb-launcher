@@ -186,10 +186,8 @@ object WallpaperStore {
                 (old.lock.fill as? WallpaperFill.Image)?.hash == lockFill.hash && old.lockBitmap != null -> old.lockBitmap
                 else -> decode(context, lockFill.hash)
             }
-            if (lockBitmap == null) {
-                lock = current
-                lockBitmap = if (current.fill is WallpaperFill.Image) bitmap else null
-            }
+            lock = lockAfterDecode(lock, decoded = lockBitmap != null, home = current)
+            if (lockBitmap == null) lockBitmap = if (current.fill is WallpaperFill.Image) bitmap else null
         }
         val lockScrimAlpha = when (val f = lock.fill) {
             is WallpaperFill.Image -> lockBitmap?.let { lockScrimForImage(imageStatsOf(f.hash, it)) } ?: LOCK_MAX_SCRIM
