@@ -33,7 +33,9 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
 From `music/` with JDK 17 and `local.properties` (`sdk.dir=...`):
 `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` (CI: `./gradlew build`). The
 shared files in `src/test/resources/` must equal `server/testdata/music_{library,listing,icons}.json`
-(`ContractFilesTest`). A release build without the signing properties is unsigned, as the launcher's.
+(`ContractFilesTest`). A release build without the signing properties is unsigned, as the launcher's. Dependencies
+are verified against `gradle/verification-metadata.xml` and the wrapper pins its distribution (security review L9,
+root `CLAUDE.md` "Build and test"; `BuildChainTest`).
 
 ## Rules that are easy to break
 
