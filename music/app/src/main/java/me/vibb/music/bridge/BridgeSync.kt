@@ -9,7 +9,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.bridge.IMusicBridge
 import me.vibb.bridge.IStorytelCallback
 import me.vibb.music.data.Store
+import me.vibb.music.logic.WantedArt
 import me.vibb.music.model.Source
+import me.vibb.music.sync.ArtWants
 import me.vibb.music.sync.Inbox
 
 private const val LOG_TAG = "BridgeSync"
@@ -29,7 +31,7 @@ object BridgeSync {
         Bridge.withBridge(context) { bridge ->
             pullLibrary(store, bridge, config)
             pullListings(store, bridge)
-            pullCovers(store, bridge)
+            pullCovers(context, store, bridge)
             pullFiles(store, bridge)
             pullStorytel(context, bridge, config)
         }
@@ -56,9 +58,11 @@ object BridgeSync {
         }
     }
 
-    private fun pullCovers(store: Store, bridge: IMusicBridge) {
+    /** The library's covers, then every wanted episode picture the launcher has (design 27 §2.2). */
+    private suspend fun pullCovers(context: Context, store: Store, bridge: IMusicBridge) {
         val lib = store.library() ?: return
-        for (hash in lib.covers) {
+        val want = ArtWants.compute(context)
+        for (hash in lib.covers + want.now + want.later) {
             if (store.coverFile(hash).isFile) continue
             bridge.openCover(hash)?.let { pfd -> ParcelFileDescriptor.AutoCloseInputStream(pfd).use { Inbox.putCover(store, hash, it) } }
         }
@@ -104,6 +108,15 @@ object BridgeSync {
             putStringArray(HELD_SHA256_KEY, held.map { it.sha256 }.toTypedArray())
         }
         Bridge.withBridge(context) { it.reportState(state) }
+    }
+
+    /**
+     * At the end of the sync, next to [push]: the pictures wanted (design 27 §2.2). An older launcher
+     * ignores the call (an unknown oneway transaction), and the app shows series covers, as before.
+     */
+    suspend fun wantArt(context: Context, want: WantedArt) {
+        if (!Bridge.config(context).managed) return
+        Bridge.withBridge(context) { it.wantArt(want.now.toTypedArray(), want.later.toTypedArray()) }
     }
 
     private fun read(pfd: ParcelFileDescriptor): ByteArray = ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes() }

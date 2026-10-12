@@ -54,11 +54,25 @@ class LockUpTest {
      * the "camera or wallet" double-press paths), so the gesture never starts a suspended camera -
      * which crashed SystemUI and let whatever came up show over the lock. */
     @Test
-    fun `the cameras are off by policy while locked and while the gesture's camera is suspended`() {
-        assertTrue(cameraPolicyDisabled(locked = true, gestureCameraSuspended = false))
-        assertTrue(cameraPolicyDisabled(locked = true, gestureCameraSuspended = true))
-        assertTrue("a time rule suspended it", cameraPolicyDisabled(locked = false, gestureCameraSuspended = true))
-        assertFalse(cameraPolicyDisabled(locked = false, gestureCameraSuspended = false))
+    fun `the cameras are off by policy only while LOCKED without a call`() {
+        assertTrue(cameraPolicyDisabled(locked = true, callActive = false))
+        // qa-25b-25f M1: a video call answered from the lock keeps its camera; unlocked (a time
+        // rule's usable apps included) the policy is never set.
+        assertFalse(cameraPolicyDisabled(locked = true, callActive = true))
+        assertFalse(cameraPolicyDisabled(locked = false, callActive = false))
+        assertFalse(cameraPolicyDisabled(locked = false, callActive = true))
+        assertTrue(cameraCallActive(ourCall = true, voipCall = false, telecomCall = false))
+        assertTrue(cameraCallActive(ourCall = false, voipCall = true, telecomCall = false))
+        assertTrue(cameraCallActive(ourCall = false, voipCall = false, telecomCall = true))
+        assertFalse(cameraCallActive(ourCall = false, voipCall = false, telecomCall = false))
+        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        // Every call event re-syncs it: our calls, VoIP, the system dialer's (re-front checks, the lock back).
+        assertTrue(runtime.contains("if (ctx != null) updateCallForCamera(ctx, telecomInCall(ctx))"))
+        assertTrue(body(runtime, "onVoipPhase").contains("updateCallForCamera(app, telecom)"))
+        assertTrue(body(runtime, "runRefrontCheck").contains("updateCallForCamera(context, telecom)"))
+        assertTrue(body(runtime, "onLockResumed").contains("updateCallForCamera(context, telecomInCall(context))"))
+        assertTrue(body(runtime, "updateCallForCamera").contains("CameraLock.onLockChanged(context.applicationContext)"))
+        assertTrue(body(code("java/com/kidslauncher/mdm/lock/CameraLock.kt"), "syncCameraPolicy").contains("cameraPolicyDisabled(locked, call)"))
         val lock = code("java/com/kidslauncher/mdm/lock/CameraLock.kt")
         val sync = body(lock, "sync")
         // While LOCKED the policy goes on before anything is suspended; unlocked it follows after.
@@ -83,11 +97,16 @@ class LockUpTest {
         assertFalse("no SOS app", sosGestureLikely(10_000L, 11_000L, false))
         assertFalse("no screen-on yet", sosGestureLikely(null, 11_000L, true))
         assertFalse("before the screen-on", sosGestureLikely(10_000L, 9_000L, true))
-        assertEquals(60_000L, SOS_FLOW_MS)
+        assertEquals("the countdown and the dial (qa-25b-25f H1)", 15_000L, SOS_FLOW_MS)
         val inputs = RefrontInputs(locked = true, lockResumed = false, interactive = true, ourCall = false,
             telecomInCall = false, emergencyFlow = false, alarmRinging = false, sosFlow = true)
         assertEquals(RefrontAction.Yield("sos"), refrontAction(inputs, 0))
         assertEquals("its emergency call", RefrontAction.Yield("system_call"), refrontAction(inputs.copy(telecomInCall = true), 0))
+        // qa-25b-25f M2: a woken alarm (and a VoIP call) win over a probable SOS, so the alarm's
+        // exemption still ends when the lock is back after it.
+        assertEquals(RefrontAction.Yield("alarm"), refrontAction(inputs.copy(alarmRinging = true), 0))
+        assertEquals(RefrontAction.Yield("voip"), refrontAction(inputs.copy(voipCall = true), 0))
+        assertEquals(null, alarmAfterResume(remembered = 1_000L, yieldedTo = refrontAction(inputs.copy(alarmRinging = true), 0).let { (it as RefrontAction.Yield).reason }))
         assertEquals(RefrontAction.Stop, refrontAction(inputs.copy(lockResumed = true), 0))
         assertTrue(refrontAction(inputs.copy(sosFlow = false), 0) is RefrontAction.Refront)
         // Only a stop marks it: Recents (the Overview button right after waking) only pauses the lock.
@@ -109,7 +128,9 @@ class LockUpTest {
         assertTrue("the lock back in front ends it", body(runtime, "onLockResumed").contains("sosFlowUntilElapsed = 0L"))
         val note = body(runtime, "noteProbableSos")
         assertTrue(note.contains("!interactive(app)) return"))
-        assertTrue(note.contains("sosAppPresent = emergencySosPackage(app) != null"))
+        // qa-25b-25f L3: the cached package - no PackageManager work at a lock stop.
+        assertTrue(note.contains("sosAppPresent = sosPackage != null"))
+        assertFalse(note.contains("emergencySosPackage("))
         assertTrue(note.contains("sosFlowUntilElapsed = now + SOS_FLOW_MS"))
         assertTrue(runtime.contains("lastScreenOnElapsed = SystemClock.elapsedRealtime()"))
         assertTrue(body(runtime, "runRefrontCheck").contains("sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),"))
@@ -172,5 +193,29 @@ class LockUpTest {
         val theme = styles.substringAfter("<style name=\"PinLockTheme\"").substringBefore("</style>")
         assertFalse(theme.contains("windowShowWallpaper"))
         assertFalse(theme.contains("windowIsTranslucent"))
+    }
+
+    /** qa-25b-25f L2: after a process start the first frame waits for the background, bounded. */
+    @Test
+    fun `the first frame waits briefly for the lock's background`() {
+        assertTrue(holdForLockGround(lockReady = false, heldSinceMs = 1_000L, nowMs = 1_100L))
+        assertFalse("ready", holdForLockGround(lockReady = true, heldSinceMs = 1_000L, nowMs = 1_000L))
+        assertFalse("never longer than the bound", holdForLockGround(false, 1_000L, 1_000L + LOCK_GROUND_WAIT_MS))
+        assertTrue(LOCK_GROUND_WAIT_MS <= 200L)
+        val onCreate = body(code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt"), "onCreate")
+        assertTrue(onCreate.contains("if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false"))
+    }
+
+    /** qa-25b-25f: a process start while not LOCKED syncs the camera lock - and with it the policy,
+     * which `cameraPolicy == null` forces to be read and set back to enabled. */
+    @Test
+    fun `a process start while unlocked sets the camera policy back`() {
+        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        val start = runtime.substringAfter("if (!chromeLocked) {").substringBefore("}")
+        assertTrue(start.contains("CameraLock.onLockChanged(app)"))
+        val lock = code("java/com/kidslauncher/mdm/lock/CameraLock.kt")
+        assertTrue(body(lock, "sync").contains("if (!locked) syncCameraPolicy(app, dpm, admin, locked = false)"))
+        assertTrue(lock.contains("private var cameraPolicy: Boolean? = null"))
+        assertTrue(body(lock, "syncCameraPolicy").contains("if (dpm.getCameraDisabled(admin) != disabled) dpm.setCameraDisabled(admin, disabled)"))
     }
 }

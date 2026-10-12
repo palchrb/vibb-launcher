@@ -133,6 +133,37 @@ class MusicBridgeService : Service() {
             check()
             return readOnly(MusicStore.listingFile(this@MusicBridgeService, entryId))
         }
+
+        override fun wantArt(now: Array<out String?>?, later: Array<out String?>?) {
+            check()
+            val app = this@MusicBridgeService
+            val want = wantArtLists(now?.toList(), later?.toList())
+            // Stored here, in the call: oneway calls from one client arrive in order, so the newest set
+            // is the one kept (QA L9). Only the nudge and the courier check run later.
+            MusicStore.setWantArt(app, want)
+            scope.launch { wantArtChanged(app, want) }
+        }
+    }
+
+    /**
+     * The music app's want set (design 27 §2.2): stored (both lists at once), then a courier run only
+     * when a picture is fetchable now (QA M6) - not held, not backed off, `later` only on an allowed
+     * network - with the cached policy's music part.
+     */
+    private fun wantArtChanged(app: Context, want: WantArt) {
+        // Pictures of the now window the launcher already holds (fetched for an earlier want set): the
+        // music app's sync copies them - nudged once per such set, never in a loop.
+        val nudge = synchronized(Companion) {
+            heldNudge(want, lastHeldNudge) { MusicStore.coverFile(app, it).isFile }?.also { lastHeldNudge = it }
+        }
+        if (nudge != null) MusicSync.nudge(app)
+        val music = musicPolicy(currentPolicyDecision().policy?.music) ?: return
+        if (MusicCourier.artFetchable(app, want, music).isNotEmpty()) MusicCourier.request(app, music)
+    }
+
+    private companion object {
+        @Volatile
+        var lastHeldNudge: Set<String> = emptySet()
     }
 
     /**

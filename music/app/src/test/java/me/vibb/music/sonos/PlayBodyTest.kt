@@ -34,6 +34,18 @@ class PlayBodyTest {
     }
 
     @Test
+    fun `design 27's episode art stays off the speaker - a hash is no URL, and nothing serves it on the LAN`() {
+        // The listing's art is a 64-hex hash since design 27 (server/testdata/music_listing.json); the
+        // server serves it only to the phone's bearer (GET /api/devices/music/covers/{hash}), and the
+        // phone's copy is a file - no http URL a speaker can fetch (the merge of design 27, design 26a).
+        val hash = "940b951005008e7207e7f8b8807ac39691025858882b8c67843a29b65e388187"
+        assertNull(PlayBodies.build(entry(), item().copy(artHash = hash), "RINCON_X", 0.0)!!.art)
+        assertNull(PlayBodies.build(entry(), item().copy(artHash = hash), "RINCON_X", 0.0, art = hash)!!.art)
+        val controller = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/sonos/SonosController.kt").readText()
+        assertTrue("the controller's body carries no art", controller.contains("PlayBodies.build(e, item, uid, startS)"))
+    }
+
+    @Test
     fun `an NRK series item is nrk_program - the slug from the target, the item key as the program id`() {
         val b = PlayBodies.build(nrkSerie, item(key = "MKTT81008181", url = "https://nrk-od.example/MKTT81008181/master.m3u8", hls = true, entryId = 7), "RINCON_X", 0.0)!!
         assertEquals(Kind.NRK_PROGRAM, b.kind)

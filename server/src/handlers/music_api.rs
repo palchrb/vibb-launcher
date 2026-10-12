@@ -145,11 +145,19 @@ pub async fn cover(
     let Some(path) = crate::photos::path_for(&state.music_cover_dir, &hash) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    match crate::music::cover_in_library(&state.db, device.id, &hash).await {
-        Ok(true) => {}
-        Ok(false) => return StatusCode::NOT_FOUND.into_response(),
+    // An entry's cover, else an episode's own picture (design 27 §1.5: the same route).
+    let path = match crate::music::cover_in_library(&state.db, device.id, &hash).await {
+        Ok(true) => path,
+        Ok(false) => match crate::music::art_in_library(&state.db, device.id, &hash).await {
+            Ok(true) => match crate::photos::path_for(&state.music_art_dir, &hash) {
+                Some(path) => path,
+                None => return StatusCode::NOT_FOUND.into_response(),
+            },
+            Ok(false) => return StatusCode::NOT_FOUND.into_response(),
+            Err(err) => return server_error(device.id, err, "music art lookup failed"),
+        },
         Err(err) => return server_error(device.id, err, "music cover lookup failed"),
-    }
+    };
     match tokio::fs::read(&path).await {
         Ok(bytes) => ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),

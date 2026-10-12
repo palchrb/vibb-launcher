@@ -21,3 +21,14 @@ fun <T : Any> coverShown(hash: String?, cached: T?, decoded: DecodedCover<T>?): 
     if (hash == null) return null
     return cached ?: decoded?.takeIf { it.hash == hash }?.image
 }
+
+/** A slot found no file for [hash] while the covers were at [version] (`Store.coversVersion`). */
+data class MissingCover(val hash: String, val version: Long)
+
+/**
+ * Should a slot try to decode [hash] now? When what it holds is for another hash, unless it already
+ * found no file for this hash at this covers [version]: a picture that lands while its slot is on
+ * screen moves the version and shows (QA M5), and a missing file isn't looked for on every frame.
+ */
+fun shouldDecode(hash: String?, decoded: DecodedCover<*>?, missing: MissingCover?, version: Long): Boolean =
+    needsDecode(hash, decoded) && missing != MissingCover(hash!!, version)

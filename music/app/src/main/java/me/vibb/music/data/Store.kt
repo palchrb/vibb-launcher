@@ -4,12 +4,18 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.update
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.coversToDelete
+import me.vibb.music.logic.isArtHash
+import me.vibb.music.logic.recentArt
 import me.vibb.music.model.Library
 import me.vibb.music.model.LibraryParser
 import java.io.File
@@ -30,6 +36,12 @@ class Store private constructor(context: Context) {
     val coversDir = File(dir, "covers")
     val ownDir = File(app.noBackupFilesDir, "own")
     val reportFile = File(dir, "report.json")
+
+    /** The pictures the player showed last (design 27, QA L4): kept by the prune a while. */
+    private val recentArtFile = File(dir, "recent_art.txt")
+
+    /** The ≤ 300 px copies of covers for the media session (PlaybackService), `<hash>.jpg`. */
+    val smallArtDir = File(app.cacheDir, "art")
     val entryErrorsFile = File(dir, "entry_errors.json")
     val db: MusicDao = MusicDb.get(app).dao()
     private val prefs = app.getSharedPreferences("music", Context.MODE_PRIVATE)
@@ -61,6 +73,50 @@ class Store private constructor(context: Context) {
     }
 
     fun coverFile(hash: String): File = File(coversDir, hash)
+
+    /** The cover files on the phone (library covers and episode art, design 27 §2.3). */
+    fun coverHashes(): Set<String> = coversDir.list().orEmpty().filter(::isArtHash).toSet()
+
+    private val coversVersionState = MutableStateFlow(0L)
+
+    /**
+     * Moves whenever a cover file lands or goes (QA M5): a slot that found no file for its hash tries
+     * again, and the player refreshes the current item's artwork.
+     */
+    val coversVersion: StateFlow<Long> = coversVersionState.asStateFlow()
+
+    fun coversChanged() {
+        coversVersionState.update { it + 1 } // from the sync, the player and the screens' threads
+    }
+
+    /**
+     * The prune (`prune_cache`, design 27 §2.3), only on a parsed library: every cover file that is
+     * neither in the library's covers nor in the want set's universe goes, with its ≤ 300 px copy
+     * (QA L3). True when something went.
+     */
+    fun pruneCovers(libraryCovers: Set<String>, keep: Set<String>): Boolean {
+        val gone = coversToDelete(coverHashes(), libraryCovers, keep)
+        gone.forEach { File(coversDir, it).delete() }
+        val smallGone = smallArtDir.list().orEmpty().filter { it.endsWith(".jpg") }.map { it.removeSuffix(".jpg") }
+            .filter { it !in libraryCovers && it !in keep }
+        smallGone.forEach { File(smallArtDir, "$it.jpg").delete() }
+        // The player looks again at what it shows (a deleted small copy falls back to the series cover, QA L8).
+        val changed = gone.isNotEmpty() || smallGone.isNotEmpty()
+        if (changed) coversChanged()
+        return changed
+    }
+
+    /** The pictures shown last, newest first. */
+    @Synchronized
+    fun recentArt(): List<String> = runCatching { recentArtFile.readLines() }.getOrDefault(emptyList()).filter(::isArtHash)
+
+    /** The player showed [hashes] (its current item and neighbours). */
+    @Synchronized
+    fun noteShown(hashes: List<String?>) {
+        val before = recentArt()
+        val after = recentArt(before, hashes)
+        if (after != before) runCatching { writeAtomic(recentArtFile, after.joinToString("\n").toByteArray()) }
+    }
 
     fun ownFile(fileId: Long): File = File(ownDir, fileId.toString())
 

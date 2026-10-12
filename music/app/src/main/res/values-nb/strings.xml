@@ -9,6 +9,8 @@
     <string name="play_entry">Spill %1$s</string>
     <string name="previous_entry">Forrige: %1$s</string>
     <string name="next_entry">Neste: %1$s</string>
+    <string name="pause_item">Pause: %1$s</string>
+    <string name="play_item">Spill: %1$s</string>
     <string name="categories">Kategorier</string>
     <string name="category_all">Alle</string>
     <string name="open_player">Åpne avspilling</string>

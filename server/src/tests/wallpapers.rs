@@ -733,3 +733,40 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
         "{page}"
     );
 }
+
+/// qa-25b-25f: unticking every wallpaper (an empty form - `json_each('[]')`) deletes every row and
+/// the lock choice with them; deleting the device removes its lock choice through both keys.
+#[tokio::test]
+async fn unticking_everything_or_deleting_the_device_clears_the_lock_choice() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    lock_choice(&app, &cookie, id, "1").await;
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(1));
+    let res = tick(&app, &cookie, id, &[]).await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(wallpapers(&app, &token).await.len(), 0);
+    assert_eq!(lock_wallpaper(&app, &token).await, json!(null));
+
+    tick(&app, &cookie, id, &[1]).await;
+    lock_choice(&app, &cookie, id, "1").await;
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_lock_wallpaper")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_lock_wallpaper")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}

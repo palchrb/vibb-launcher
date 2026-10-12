@@ -40,8 +40,9 @@ The server's music sweep (`server/src/music_sweep.rs`, `server/src/music_sources
 Rust, under the GPL-3.0 (or later), the behaviour of [palchrb/vibb](https://github.com/palchrb/vibb)'s
 `pi/vibb/content.py` (`_catalog`, `_new_episodes`, `_psapi_episodes`, `_episode_stub`, `_pick_image`, `_manifest_url`,
 `_series`, `_parse_feed`, `_feed_episode_id`, `sync_feed`) and `pi/vibb/library.py` (`_cache_sweeper` and its
-timings): NRK's psapi catalog walk, the playback manifests, the RSS fallback and feed parsing. vibb is licensed under
-the MIT License, Copyright (c) 2026 palchrb.
+timings): NRK's psapi catalog walk, the playback manifests, the RSS fallback and feed parsing. Its episode art
+(design 27) follows branch `pipewire`'s `_episode_image_file`, `_download_image` and `_sync_episode_images`. vibb is
+licensed under the MIT License, Copyright (c) 2026 palchrb.
 
 The music app (`music/`, design 21 step 2) reimplements in Kotlin, under the GPL-3.0 (or later), the behaviour of
 [palchrb/vibb](https://github.com/palchrb/vibb)'s `pi/vibb/bookmarks.py` (resume positions, `rotate_to_bookmark`),

@@ -12,9 +12,17 @@ data class ItemRef(val entryId: Long, val itemKey: String)
 
 /**
  * A tap that starts [entryId] ([itemKey]: that item; null: whatever a cover tap starts), made while
- * the screens showed [from] as playing (null: nothing), at [atMs] (`elapsedRealtime`).
+ * the screens showed [from] as playing (null: nothing), at [atMs] (`elapsedRealtime`). [via]: items
+ * the player may pass through on the way without ending it - the targets of quick swipes before
+ * this one in the Now Playing carousel (design 27), which the player reaches first.
  */
-data class PlayRequest(val entryId: Long, val itemKey: String?, val from: ItemRef?, val atMs: Long)
+data class PlayRequest(val entryId: Long, val itemKey: String?, val from: ItemRef?, val atMs: Long, val via: Set<ItemRef> = emptySet())
+
+/** A swipe's request made while [earlier] still stood: the player passes through what that one asked for. */
+fun swipeVia(earlier: PlayRequest?): Set<ItemRef> {
+    earlier ?: return emptySet()
+    return earlier.via + listOfNotNull(earlier.from) + listOfNotNull(earlier.itemKey?.let { ItemRef(earlier.entryId, it) })
+}
 
 /** The request is shown at most this long: the player refused it, or it never came. */
 const val SWITCH_HOLD_MS = 3_000L
@@ -44,7 +52,7 @@ fun holdEndsAt(request: PlayRequest, waiting: Boolean): Long = request.atMs + if
 fun requestStands(request: PlayRequest?, current: ItemRef?, nowMs: Long, waiting: Boolean = false): Boolean {
     request ?: return false
     if (nowMs < request.atMs || nowMs >= holdEndsAt(request, waiting)) return false
-    if (current != request.from) return false
+    if (current != request.from && current !in request.via) return false
     val reached = current != null && current.entryId == request.entryId && (request.itemKey == null || request.itemKey == current.itemKey)
     return !reached
 }

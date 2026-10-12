@@ -14,6 +14,7 @@ import com.kidslauncher.mdm.server.UpdateFence
 import com.kidslauncher.mdm.server.chromeWriteOrder
 import com.kidslauncher.mdm.server.fallbackKioskPackages
 import com.kidslauncher.mdm.server.lockTaskWhileLocked
+import com.kidslauncher.mdm.server.sosNarrowedPackages
 
 private const val LOG_TAG = "LockTaskChrome"
 
@@ -72,6 +73,23 @@ object LockTaskChrome {
     @Volatile
     private var recentsPinKnown = false
 
+    /** The "sos" yield runs (qa-25b-25f H1): a LOCKED pass with the kiosk on writes [sosNarrowedPackages]. */
+    @Volatile
+    private var sosNarrowing = false
+
+    /** The "sos" yield began or ended ([PinLockRuntime], main thread): one pass now - no
+     * PackageManager work (the helpers and the SOS app are cached). */
+    fun sosYield(context: Context, on: Boolean) {
+        synchronized(this) {
+            if (sosNarrowing == on) return
+            sosNarrowing = on
+            if (plan == null) applyFallback(context) else applyNow(context)
+        }
+    }
+
+    private fun sosNarrowed(context: Context, locked: Boolean, kioskOn: Boolean): Set<String>? =
+        if (sosNarrowing && locked && kioskOn) sosNarrowedPackages(context.packageName, helpers, PinLockRuntime.sosPackage) else null
+
     /** Whether the kiosk is on as far as we know (the plan, else the last pinned state). */
     val kioskOn: Boolean
         get() = plan?.let { it.kioskPackages != null } ?: LauncherPreferences.mdm().kioskEnabled()
@@ -88,7 +106,8 @@ object LockTaskChrome {
         // path never has to query PackageManager - and before taking the monitor (qa-16c-code #1):
         // a LOCKED pass the lock waits for must never wait for PackageManager work.
         val ticket = helperTickets.incrementAndGet()
-        val resolved = if (kioskPackages == null) runCatching(pinLockHelpers).getOrNull() else null
+        // Also with the kiosk on: the "sos" yield narrows the kiosk's list to them (qa-25b-25f H1).
+        val resolved = runCatching(pinLockHelpers).getOrNull()
         synchronized(this) {
             plan = Plan(kioskPackages, features, restrictCreateWindows, recentsPin)
             this.recentsPin = recentsPin
@@ -199,6 +218,7 @@ object LockTaskChrome {
             fenced = UpdateFence.fenced,
             voipPackages = if (locked && !kioskOn) voipPackages() else emptySet(),
             recentsPin = current.recentsPin,
+            sosNarrowed = sosNarrowed(context, locked, kioskOn),
         )
         return apply(context, dpm, setting, heal, kioskOn = kioskOn, locked = locked)
     }
@@ -237,6 +257,7 @@ object LockTaskChrome {
             fenced = UpdateFence.fenced,
             voipPackages = if (locked && !kiosk) voipPackages() else emptySet(),
             recentsPin = pin,
+            sosNarrowed = sosNarrowed(context, locked, kiosk),
         )
         return apply(context, dpm, setting, heal, kioskOn = kiosk, locked = locked)
     }

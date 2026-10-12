@@ -152,6 +152,20 @@ object LiveBridge {
         call { it.setNowPlaying(state) }
     }
 
+    private var sentNow: List<String>? = null
+
+    /**
+     * The player's want set (design 27 §2.2), on a queue start or an item change: sent only when its
+     * `now` list has something missing and differs from the last one sent. Both lists go (QA L4: a
+     * `now`-only call would let the launcher drop `later` pictures still in flight).
+     */
+    fun wantArt(now: List<String>, later: List<String>) {
+        if (now.isEmpty() || now == sentNow) return
+        if (bridge == null) return
+        sentNow = now
+        call { it.wantArt(now.toTypedArray(), later.toTypedArray()) }
+    }
+
     fun setForeground(front: Boolean) {
         if (inFront == front) return
         inFront = front

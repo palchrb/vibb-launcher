@@ -142,8 +142,22 @@ fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: th
   plays (`onRoom`: the speaker-playable queue, a moved start at 0, a step on a playing room from 0) and counted with
   `playerNumber`; the hold lasts while the service still has the tap's command waiting (`PlayerHub.State.waiting`,
   `Commands.MOVES`, at most `SWITCH_WAIT_MAX_MS`) - a room switch or the look at a room delays a play by seconds.
-  A new queue-moving command (design 27's `SKIP_TO`) goes into `MOVES` and through the `Renderer` (`goTo` ->
-  `renderer.seekTo(index, ms)`), never ExoPlayer directly.
+  Design 27's carousel swipe (`SKIP_TO`, `THEN_SKIP_TO`) is in `MOVES` and goes through the `Renderer` (`goTo` ->
+  `renderer.seekTo(index, ms)`: on a room `stepTo`, from 0 while playing - `swipeSwitch(..., onRoom)` shows that),
+  never ExoPlayer directly; its pages on a room are the speaker-playable queue, numbered by `playerNumberOf` (the
+  play order). A late episode picture swaps the session player's item in place (`Renderer.replaceItem`); the
+  speaker's DIDL carries no art - a listing's `art` is a hash the server serves only to the phone's bearer, so there
+  is no http URL a speaker could fetch (design 26a, "Merge of main with design 27").
+- Episode pictures (design 27): an item's own art is `items.artHash` (Room 2; its auto migration empties every
+  listing version so the next sync re-applies them) and `PlayItem.artHash`; every `Cover` gets the entry's cover as
+  `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`: the now window ±2, the keep sets' art, Nytt; sent as
+  `wantArt` at each sync's end and from the player 2 s after an item change), the prune (covers dir and the small
+  copies: neither a library cover nor in the want set's universe, only on a parsed library), `artOrCover` (the session,
+  `setNowPlaying`) and the carousel's rules: `showsCarousel` (more than one item and at least two different pictures
+  on its pages, the entry's cover counting as one), `swipeSkip`, `pagerFollow`, `swipeTarget`. A swipe is a
+  `PlayRequest` (`swipeSwitch`) and the `SKIP_TO` command (not in `PLAYS`; via `RESTORE` + `THEN_SKIP_TO` before play).
+  `Store.coversVersion` moves when a cover lands or goes: slots retry, the player swaps the current item's artwork
+  in place (`replaceMediaItem`).
 - Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
   control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
   widths, the category tiles, the carousel, the bar's room label (a three-member group) and the Sonos state lines.

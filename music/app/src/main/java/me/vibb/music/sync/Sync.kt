@@ -142,6 +142,10 @@ object Sync {
             store.ownCopies().filter { it !in lib.fileIds }.forEach { store.ownFile(it).delete() }
         }
         writeEntryErrors(store, entryErrors)
+        // Covers and episode pictures (design 27 §2.3, vibb `prune_cache`): only on a parsed library,
+        // after the listings are applied; a kept episode's picture stays as long as its audio.
+        val want = ArtWants.compute(context)
+        if (lib != null) store.pruneCovers(lib.covers, want.keep)
 
         // Keep/prune (only on parsed listings), then the downloads.
         val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis())
@@ -156,6 +160,13 @@ object Sync {
         }
         NewNotifier.update(context, store.snapshot())
         writeReport(context)
+        try {
+            BridgeSync.wantArt(context, want)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("Sync", "The want set didn't reach the launcher", e)
+        }
     }
 
     /** Apply one listing: items replaced, NY marked, errors against another version dropped. A
@@ -164,7 +175,7 @@ object Sync {
         val dao = store.db
         dao.replaceListing(
             ListingRow(entry.id, listing.version),
-            listing.items.mapIndexed { i, it -> ItemRow(entry.id, it.key, i, it.title, it.url, it.hls, it.durationMs) },
+            listing.items.mapIndexed { i, it -> ItemRow(entry.id, it.key, i, it.title, it.url, it.hls, it.durationMs, it.art) },
         )
         // Only items that can play are news (a withdrawn one without a copy is hidden).
         markSeen(store, entry.id, listing.items.map { it.key }, listing.items.filter { it.url != null }.map { it.key }.toSet())
@@ -205,7 +216,8 @@ object Sync {
         val waiting = downloadWaiting(netCaps(context), store.mobileData, storageLow)
         val states = plan.states.map { if (it.have < it.want) it.copy(waiting = waiting) else it }
         val errors = store.db.itemErrors().map { ItemError(it.entryId, it.version, it.itemKey, it.error) }
-        val ownBytes = store.ownDir.listFiles().orEmpty().sumOf { it.length() }
+        // Own files and the cover files (episode pictures included, design 27 §2.3).
+        val ownBytes = store.ownDir.listFiles().orEmpty().sumOf { it.length() } + store.coversDir.listFiles().orEmpty().sumOf { it.length() }
         val report = stateReport(
             BuildConfig.VERSION_CODE.toLong(),
             snap.library?.version,

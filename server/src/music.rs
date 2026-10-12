@@ -30,6 +30,8 @@ use sha2::{Digest, Sha256};
 pub const MUSIC_FILES_DIR: &str = "data/music_files";
 /// Covers (parent uploads and own files' embedded art), a `photos::Store` with its own prune.
 pub const MUSIC_COVERS_DIR: &str = "data/music_covers";
+/// Episode art (design 27, `photos::MUSIC_ART`): not backed up.
+pub const MUSIC_ART_DIR: &str = "data/music_art";
 
 /// At most this many entries in the library.
 pub const MAX_ENTRIES: i64 = 200;
@@ -1019,6 +1021,28 @@ pub async fn cover_in_library(
     .bind(hash)
     .bind(device_id)
     .bind(hash)
+    .bind(device_id)
+    .bind(hash)
+    .fetch_one(db)
+    .await
+}
+
+/// Whether `hash` is an episode picture of `device_id`'s library (design 27 §1.5, QA L1 f): a
+/// listed item (not `pending`) of a listed NRK/RSS entry the phone has ticked. Served from
+/// `music_art_dir`; checked after [cover_in_library].
+pub async fn art_in_library(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    hash: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM music_items i \
+           JOIN music_entries e ON e.id = i.entry_id \
+           JOIN device_music_entries d ON d.entry_id = i.entry_id \
+           JOIN music_listings l ON l.entry_id = i.entry_id \
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss') AND i.state != 'pending' \
+             AND l.version IS NOT NULL AND i.art_hash = ?)",
+    )
     .bind(device_id)
     .bind(hash)
     .fetch_one(db)

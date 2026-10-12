@@ -96,21 +96,28 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
         when (screen) {
             Screen.LIBRARY -> Library(vm, s, now, actions, playEntry)
             Screen.PLAYER -> now?.let { n ->
-                val (number, of) = playerNumber(s, n)
+                val (_, of) = playerNumber(s, n)
                 val position = livePosition(n)
                 val skip = { forward: Boolean ->
                     // The item next/previous goes to shows at once (not during another switch: the player isn't there yet).
                     if (held == null) vm.switching = skipSwitch(s, n, forward, position, SystemClock.elapsedRealtime(), onRoom)
                     if (forward) actions.next() else actions.previous()
                 }
+                // A swipe of the episode carousel (design 27 §3.2): the picked episode shows at once and plays from its place.
+                val skipTo = { target: Int, forward: Boolean ->
+                    val item = n.queue[target]
+                    swipeSwitch(s, n, target, current?.ref, held?.request, SystemClock.elapsedRealtime(), onRoom)?.let { vm.switching = it }
+                    actions.skipTo(n.entry.id, item.key, forward)
+                }
                 PlayerScreen(
-                    n, number, of, position, hub.sleepMinutes, hub.output, hub.rendererState,
+                    n, { item -> playerNumberOf(s, n, item) }, of, position, hub.sleepMinutes, hub.output, hub.rendererState,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,
                     onPrevious = { skip(false) },
                     onTogglePlay = actions::togglePlay,
                     onNext = { skip(true) },
+                    onSkipTo = skipTo,
                     onList = { vm.screen = Screen.LIST },
                     onSleep = { vm.sheet = SheetKind.SLEEP },
                     onOutput = { vm.sheet = SheetKind.OUTPUT },

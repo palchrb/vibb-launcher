@@ -142,4 +142,68 @@ class SwitchViewTest {
         // on the phone the same step resumes the item's place, playing or not
         assertEquals(90_000L, skipSwitch(roomSnap, now, true, 0, 1_000)!!.view.storedPosMs)
     }
+
+    // The episode carousel's swipe (design 27 §3.2).
+
+    @Test
+    fun `a swipe shows the picked episode at once, with its saved place`() {
+        val e = entry(5).copy(cover = coverA)
+        val s = snapshot(
+            library(listOf(e)),
+            items(5, listOf("e1", "e2", "e3"), art = mapOf("e1" to coverB)),
+            positions = mapOf(e.key to mapOf("e1" to me.vibb.music.logic.ItemPosition(90_000, false))),
+        )
+        val now = nowView(s, PlayerHub.State(live = true, entryId = 5, keys = listOf("e3", "e2", "e1"), index = 0, playing = false), null)!!
+        assertTrue(now.carousel)
+        val sw = swipeSwitch(s, now, 2, now.ref, null, 1_000)!!
+        assertEquals("e1", sw.view.item.key)
+        assertEquals(coverB, sw.view.cover)
+        assertEquals(coverA, sw.view.fallback)
+        assertEquals("the seek bar shows its saved place", 90_000L, sw.view.storedPosMs)
+        assertFalse("paused stays paused", sw.view.playing)
+        assertTrue(requestStands(sw.request, now.ref, 1_100))
+        assertNull("the item shown", swipeSwitch(s, now, 0, now.ref, null, 1_000))
+        assertNull(swipeSwitch(s, now, 7, now.ref, null, 1_000))
+        // A quick second swipe while the first stands: the player passing through e1 doesn't end it.
+        val second = swipeSwitch(s, sw.view, 1, now.ref, sw.request, 1_200)!!
+        assertTrue(requestStands(second.request, ItemRef(5, "e1"), 1_300))
+    }
+
+    @Test
+    fun `the pager starts over on a new key list - another queue, or an item dropped mid-play (QA M7 b)`() {
+        val e = entry(5)
+        val s = snapshot(library(listOf(e)), items(5, listOf("e1", "e2", "e3")))
+        val hub = PlayerHub.State(live = true, entryId = 5, keys = listOf("e3", "e2", "e1"), index = 0, playing = true)
+        val now = nowView(s, hub, null)!!
+        assertEquals("pausing changes nothing", now.pagerKey, nowView(s, hub.copy(playing = false, index = 1), null)!!.pagerKey)
+        val dropped = snapshot(library(listOf(e)), items(5, listOf("e1", "e3")))
+        assertTrue(now.pagerKey != nowView(dropped, hub, null)!!.pagerKey)
+        assertTrue(now.pagerKey != nowView(s, hub.copy(keys = listOf("e1", "e2", "e3")), null)!!.pagerKey)
+        assertFalse("no own art: no carousel", now.carousel)
+    }
+
+    @Test
+    fun `a swipe on a room - the pages are the room's queue, from 0 while it plays, the number counts the play order`() {
+        // The merge of design 27 into design 26a: e2 is an RSS entry's HLS (no speaker plays it), so the
+        // service's queue on a room - the hub's keys, the carousel's pages - leaves it out.
+        val e = entry(5).copy(cover = coverA)
+        val rows = items(5, listOf("e1", "e2", "e3"), art = mapOf("e1" to coverB)).map { if (it.key == "e2") it.copy(hls = true) else it }
+        val s = snapshot(library(listOf(e)), rows, positions = mapOf(e.key to mapOf("e3" to ItemPosition(90_000, false))))
+        val room = Output("sonos:RINCON_000E58A0B1C201400", OutputKind.SONOS, "Stua")
+        val hub = PlayerHub.State(live = true, entryId = 5, keys = listOf("e1", "e3"), index = 0, playing = true, output = room)
+        val now = nowView(s, hub, null)!!
+        assertTrue("own art on a page: the carousel, on a room too", now.carousel)
+        val sw = swipeSwitch(s, now, 1, now.ref, null, 1_000, onRoom = true)!!
+        assertEquals("e3", sw.view.item.key)
+        assertEquals("a swipe on a playing room starts at 0 (stepTo)", 0L, sw.view.storedPosMs)
+        assertEquals("paused, where the phone would", 90_000L, swipeSwitch(s, now.copy(playing = false), 1, now.ref, null, 1_000, onRoom = true)!!.view.storedPosMs)
+        assertEquals("on the phone: its place", 90_000L, swipeSwitch(s, now, 1, now.ref, null, 1_000)!!.view.storedPosMs)
+        // the landing page's "N av M": the play order, e2 counted
+        val order = s.order(e).map { it.key }
+        assertEquals(3, order.size)
+        assertEquals(order.indexOf("e3") + 1, playerNumberOf(s, sw.view, sw.view.item))
+        assertEquals(order.indexOf("e3") + 1 to 3, playerNumber(s, sw.view))
+        assertEquals(playerNumber(s, nowView(s, hub.copy(index = 1), null)!!), playerNumber(s, sw.view))
+        assertEquals(order.indexOf("e1") + 1, playerNumberOf(s, now, now.queue[0]))
+    }
 }

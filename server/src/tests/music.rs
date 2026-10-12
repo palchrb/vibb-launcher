@@ -44,6 +44,8 @@ pub struct CannedFetch {
     /// Which addresses each request was allowed to reach.
     pub reaches: Mutex<Vec<(String, crate::music_net::Reach)>>,
     delay_ms: std::sync::atomic::AtomicU64,
+    /// While armed ([CannedFetch::hold]), every request waits here until [CannedFetch::release].
+    gate: Mutex<Option<std::sync::Arc<tokio::sync::Semaphore>>>,
     in_flight: std::sync::atomic::AtomicUsize,
     pub most_in_flight: std::sync::atomic::AtomicUsize,
 }
@@ -86,6 +88,31 @@ impl CannedFetch {
         self.calls.lock().unwrap().len()
     }
 
+    /// From now on every request waits (counted in [CannedFetch::in_flight]) until [release].
+    pub fn hold(&self) {
+        *self.gate.lock().unwrap() = Some(std::sync::Arc::new(tokio::sync::Semaphore::new(0)));
+    }
+
+    /// Lets every waiting and later request through.
+    pub fn release(&self) {
+        if let Some(gate) = self.gate.lock().unwrap().take() {
+            gate.close();
+        }
+    }
+
+    /// Waits (without a deadline that could race) until a request is held at the gate.
+    pub async fn wait_in_flight(&self) {
+        while self.in_flight() == 0 {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    }
+
+    /// Requests being answered right now (the tests that act during a check wait for one).
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn clear_calls(&self) {
         self.calls.lock().unwrap().clear();
         self.conditional.lock().unwrap().clear();
@@ -117,6 +144,11 @@ impl crate::music_net::Source for CannedFetch {
         Box::pin(async move {
             let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             self.most_in_flight.fetch_max(now, Ordering::SeqCst);
+            let gate = self.gate.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                // Closed by `release`.
+                let _ = gate.acquire().await;
+            }
             let delay = self.delay_ms.load(Ordering::SeqCst);
             if delay > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;

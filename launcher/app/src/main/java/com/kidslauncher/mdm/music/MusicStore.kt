@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.music
 
 import android.content.Context
 import android.content.pm.PackageManager
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -30,6 +31,8 @@ object MusicStore {
     fun readyFile(context: Context, id: Long) = File(filesDir(context), id.toString())
     fun partialFile(context: Context, id: Long) = File(filesDir(context), "$id.part")
     fun nowPlayingArt(context: Context) = File(dir(context), "now_playing_art.jpg")
+    fun wantArtFile(context: Context) = File(dir(context), "want_art.json")
+    fun artFailuresFile(context: Context) = File(dir(context), "art_failures.json")
 
     fun prefs(context: Context) = context.applicationContext.getSharedPreferences("music_bridge", Context.MODE_PRIVATE)
 
@@ -118,6 +121,58 @@ object MusicStore {
         if (etag == null) e.remove("etag_$id") else e.putString("etag_$id", etag)
         if (total == null) e.remove("total_$id") else e.putLong("total_$id", total)
         e.commit()
+    }
+
+    @Serializable
+    private data class WantArtJson(val now: List<String>, val later: List<String>)
+
+    @Serializable
+    private data class ArtFailureJson(val count: Int, val at: Long)
+
+    private val failuresSerializer = MapSerializer(String.serializer(), ArtFailureJson.serializer())
+
+    /** The music app's last want set (design 27 §2.2); none when it never sent one. */
+    @Synchronized
+    fun wantArt(context: Context): WantArt = runCatching {
+        json.decodeFromString(WantArtJson.serializer(), wantArtFile(context).readText()).let { wantArtLists(it.now, it.later) }
+    }.getOrDefault(WantArt.NONE)
+
+    /** Both lists at once (one file, written atomically); failures of pictures no longer wanted are forgotten. */
+    @Synchronized
+    fun setWantArt(context: Context, want: WantArt) {
+        writeAtomic(wantArtFile(context), json.encodeToString(WantArtJson.serializer(), WantArtJson(want.now, want.later)).toByteArray())
+        val failures = artFailures(context)
+        val kept = failures.filterKeys { it in want.all }
+        if (kept.size != failures.size) putArtFailures(context, kept)
+    }
+
+    @Synchronized
+    fun clearWantArt(context: Context) {
+        wantArtFile(context).delete()
+        artFailuresFile(context).delete()
+    }
+
+    /** Pictures that failed (QA M6): hash -> failures in a row, the last one's time. */
+    @Synchronized
+    fun artFailures(context: Context): Map<String, ArtFailure> = runCatching {
+        json.decodeFromString(failuresSerializer, artFailuresFile(context).readText()).mapValues { ArtFailure(it.value.count, it.value.at) }
+    }.getOrDefault(emptyMap())
+
+    @Synchronized
+    fun recordArtFailure(context: Context, hash: String, nowMs: Long) {
+        val failures = artFailures(context)
+        putArtFailures(context, failures + (hash to ArtFailure((failures[hash]?.count ?: 0) + 1, nowMs)))
+    }
+
+    @Synchronized
+    fun clearArtFailure(context: Context, hash: String) {
+        val failures = artFailures(context)
+        if (hash in failures) putArtFailures(context, failures - hash)
+    }
+
+    private fun putArtFailures(context: Context, value: Map<String, ArtFailure>) {
+        val text = json.encodeToString(failuresSerializer, value.mapValues { ArtFailureJson(it.value.count, it.value.lastAt) })
+        runCatching { writeAtomic(artFailuresFile(context), text.toByteArray()) }
     }
 
     /** The music app's last report (`reportState`) and when it came. */

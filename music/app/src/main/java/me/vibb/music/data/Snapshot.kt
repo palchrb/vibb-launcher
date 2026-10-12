@@ -34,7 +34,7 @@ fun buildSnapshot(
             listed[e.id] = files.map { it.toPlayItem() }
             onPhone[e.id] = files.filter { it.id in ownCopies }.map { it.key }.toSet()
         } else {
-            listed[e.id] = byEntry[e.id].orEmpty().sortedBy { it.seq }.map { PlayItem(e.id, it.key, it.title, it.url, it.hls, it.durationMs) }
+            listed[e.id] = byEntry[e.id].orEmpty().sortedBy { it.seq }.map { PlayItem(e.id, it.key, it.title, it.url, it.hls, it.durationMs, artHash = it.artHash) }
             onPhone[e.id] = done[e.id].orEmpty()
         }
     }

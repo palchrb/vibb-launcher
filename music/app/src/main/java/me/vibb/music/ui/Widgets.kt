@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -64,9 +65,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.vibb.music.data.Store
 import me.vibb.music.logic.DecodedCover
+import me.vibb.music.logic.MissingCover
 import me.vibb.music.logic.coverShown
 import me.vibb.music.logic.formatDuration
-import me.vibb.music.logic.needsDecode
+import me.vibb.music.logic.shouldDecode
 import me.vibb.music.model.Category
 import kotlin.math.abs
 
@@ -106,29 +108,54 @@ fun Line(text: String, size: Int, weight: Int, color: Color, modifier: Modifier 
     BasicText(text, modifier, style = style, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 }
 
-private val bitmaps = LruCache<String, ImageBitmap>(24)
+/** Decoded covers, counted in bytes (QA L3: a 512 px picture is 1 MiB, and the pager composes five). */
+private val bitmaps = object : LruCache<String, ImageBitmap>(16 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: ImageBitmap): Int = value.width * value.height * 4
+}
+
+/** What a cover slot holds: the image decoded for a hash, or that the file for one wasn't there. */
+private data class CoverSlot(val decoded: DecodedCover<ImageBitmap>?, val missing: MissingCover?)
 
 /**
  * A cover file (512 px JPEG) decoded off the main thread, cached. The state outlives a change of
  * [hash] (produceState remembers it unkeyed), so it holds the hash it was decoded for and shows only
- * for that one ([coverShown]): from podcast A to B the player showed A's cover on.
+ * for that one ([coverShown]): from podcast A to B the player showed A's cover on. A file that isn't
+ * there yet is looked for again when a cover lands ([Store.coversVersion], QA M5).
  */
 @Composable
 fun coverBitmap(hash: String?): ImageBitmap? {
     val context = LocalContext.current
+    val version by Store.get(context).coversVersion.collectAsState()
     val cached = hash?.let { bitmaps.get(it) }
-    val state = produceState<DecodedCover<ImageBitmap>?>(null, hash) {
-        if (hash == null || !needsDecode(hash, value)) return@produceState
-        value = loadCover(context, hash)?.let { DecodedCover(hash, it) }
+    val state = produceState(CoverSlot(null, null), hash, version) {
+        if (hash == null || !shouldDecode(hash, value.decoded, value.missing, version)) return@produceState
+        val image = loadCover(context, hash)
+        value = if (image != null) CoverSlot(DecodedCover(hash, image), null) else value.copy(missing = MissingCover(hash, version))
     }
-    return coverShown(hash, cached, state.value)
+    return coverShown(hash, cached, state.value.decoded)
 }
 
-/** A cover from memory, else decoded (off the main thread) into it; null when there is no file. */
+/**
+ * A cover from memory, else decoded (off the main thread) into it; null when there is no file.
+ * Decoded at the largest size a cover is shown ([coverDecodePx]: the player's 224 dp), scaled while
+ * decoding, never above the file's 512 px: at density 1.5 (the Jelly Star) a picture decodes at
+ * 336 px, under half the memory of 512 (QA L3, code QA L12).
+ */
 private suspend fun loadCover(context: Context, hash: String): ImageBitmap? = bitmaps.get(hash) ?: withContext(Dispatchers.IO) {
     val file = Store.get(context).coverFile(hash)
     if (!file.exists()) return@withContext null
-    BitmapFactory.decodeFile(file.path)?.asImageBitmap()?.also { bitmaps.put(hash, it) }
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(file.path, bounds)
+    val side = minOf(bounds.outWidth, bounds.outHeight)
+    val target = coverDecodePx(side, context.resources.displayMetrics.density)
+    val options = BitmapFactory.Options().apply {
+        if (target < side) {
+            inScaled = true
+            inDensity = side
+            inTargetDensity = target
+        }
+    }
+    BitmapFactory.decodeFile(file.path, options)?.asImageBitmap()?.also { bitmaps.put(hash, it) }
 }
 
 /** Decodes [hashes] ahead (the covers next and previous go to), so they show on their first frame. */
@@ -147,12 +174,23 @@ fun categoryGlyph(category: Category?): Int =
     category?.icon?.let { MusicGlyphs.ICONS[it] } ?: MusicGlyphs.ICONS.getValue("music_note")
 
 /**
- * A cover: the image when there is one, else the mockup's gradient in the category colour with the
- * category glyph ([glyph] dp; 0 = none).
+ * A cover: the image when there is one, else [fallback]'s (an episode's picture not on the phone yet,
+ * or still decoding, shows the series cover - never the glyph, vibb `addf84eb`), else the mockup's
+ * gradient in the category colour with the category glyph ([glyph] dp; 0 = none).
  */
 @Composable
-fun Cover(hash: String?, category: Category?, radius: Dp, glyph: Dp, modifier: Modifier = Modifier, content: @Composable () -> Unit = {}) {
-    val bitmap = coverBitmap(hash)
+fun Cover(
+    hash: String?,
+    category: Category?,
+    radius: Dp,
+    glyph: Dp,
+    modifier: Modifier = Modifier,
+    fallback: String? = null,
+    content: @Composable () -> Unit = {},
+) {
+    val own = coverBitmap(hash)
+    val other = coverBitmap(fallback.takeIf { it != hash })
+    val bitmap = own ?: other
     val color = categoryColor(category)
     Box(
         modifier.clip(RoundedCornerShape(radius))

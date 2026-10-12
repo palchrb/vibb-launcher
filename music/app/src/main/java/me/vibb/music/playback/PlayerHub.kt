@@ -25,11 +25,18 @@ object Commands {
     /** "Se etter høyttalere": one SSDP round in the background. */
     const val ROOMS_RESCAN = "me.vibb.music.ROOMS_RESCAN"
 
+    /** A swipe of the episode carousel (design 27): to [ARG_KEY] of [ARG_ENTRY] (ignored unless that
+     * entry is loaded), as next or previous by [ARG_FORWARD]. Like next it starts nothing - not in
+     * [PLAYS]; on a Sonos room it goes through the renderer as next does (`goTo` ->
+     * `renderer.seekTo`, a room's `stepTo`; design 26a, the merge of design 27). */
+    const val SKIP_TO = "me.vibb.music.SKIP_TO"
+
     const val ARG_ENTRY = "entry"
     const val ARG_KEY = "key"
     const val ARG_MINUTES = "minutes"
     /** An [Output.key] (a String since design 26a step 2). */
     const val ARG_OUTPUT = "output"
+    const val ARG_FORWARD = "forward"
 
     /** [RESTORE]: the stored queue loaded paused, then this (one of the THEN_ values) - so the
      * player's controls work before play after a restart (qa-21-step2-code M6). */
@@ -40,8 +47,11 @@ object Commands {
     const val THEN_SEEK = "seek"
     const val THEN_SHUFFLE = "shuffle"
 
+    /** [RESTORE] then [SKIP_TO] (with its [ARG_ENTRY], [ARG_KEY], [ARG_FORWARD]): a swipe on the restored queue stays paused. */
+    const val THEN_SKIP_TO = "skip_to"
+
     val ALL: List<SessionCommand> =
-        listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN).map { SessionCommand(it, Bundle.EMPTY) }
+        listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO).map { SessionCommand(it, Bundle.EMPTY) }
 
     /**
      * The launcher's call rule (design 26a §6.7, qa-26a-step3b-code H1): a call that rings or is up
@@ -63,10 +73,12 @@ object Commands {
     val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)
 
     /**
-     * The commands a tap's instant switch waits for (`logic/Switch.kt`): a cover, a pick, and
-     * next/previous on the restored queue. While one is accepted but hasn't run, [PlayerHub.State.waiting].
+     * The commands a tap's instant switch waits for (`logic/Switch.kt`): a cover, a pick,
+     * next/previous on the restored queue and a carousel swipe (design 27's [SKIP_TO]; on a room it
+     * waits behind the renderer's settle and a switch's hand-off like the others). While one is
+     * accepted but hasn't run, [PlayerHub.State.waiting].
      */
-    val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE)
+    val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE, SKIP_TO)
 }
 
 /**

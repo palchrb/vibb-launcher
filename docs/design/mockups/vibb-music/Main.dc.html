@@ -388,12 +388,12 @@ class Component extends DCLogic {
   glyphs(e) { return { isMoon: e.glyph === 'moon', isBook: e.glyph === 'book', isMic: e.glyph === 'mic', isNote: e.glyph === 'note', isStar: e.glyph === 'star', isSun: e.glyph === 'sun', isTree: e.glyph === 'tree', isHeart: e.glyph === 'heart' }; }
   // An episode's picture: its own art, else the series cover (design 27).
   epArt(e, j) { const a = e.art && e.art[j]; return a ? { grad: a.grad, glyph: a.glyph } : { grad: e.grad, glyph: e.glyph }; }
-  // The carousel only for entries whose episodes have their own art (design 27 §3.1: at least half of the
-  // first 10 in play order, and at least two different pictures); otherwise the player looks as before.
+  // The carousel when its pages show at least two different pictures, the series cover counting as one
+  // (design 27, the user's decisions and QA H4): one episode with its own picture is enough; an album
+  // whose songs all carry one cover, or a podcast without episode art, looks as before.
   hasEpisodeArt(e) {
-    const first = (e.art || []).slice(0, 10);
-    const own = first.filter((a) => a);
-    return e.tracks.length > 1 && own.length * 2 >= Math.min(10, e.tracks.length) && new Set(own.map((a) => a.grad)).size >= 2;
+    const pages = e.tracks.map((t, j) => this.epArt(e, j).grad);
+    return e.tracks.length > 1 && new Set(pages).size >= 2;
   }
   renderVals() {
     const s = this.state;
@@ -427,13 +427,16 @@ class Component extends DCLogic {
     };
     const pj = (ti + nTracks - 1) % nTracks;
     const nj = (ti + 1) % nTracks;
-    // A swipe or a tap on a neighbour switches to that episode, wrapping like previous/next (design 27 §3.2).
+    // A swipe or a tap on a neighbour switches to that episode, wrapping like previous/next, and it plays
+    // from its saved place (design 27 §3.2, the user's decision 1).
     const stepWrap = (j) => () => {
       const t = Object.assign({}, s.track);
       const f = Object.assign({}, s.frac);
+      const saved = Object.assign({}, s.saved || {});
+      saved[npE.id + '/' + ti] = s.frac[npE.id];
       t[npE.id] = j;
-      f[npE.id] = 0;
-      this.setState({ track: t, frac: f, playingId: npE.id });
+      f[npE.id] = saved[npE.id + '/' + j] || 0;
+      this.setState({ track: t, frac: f, saved: saved, playingId: npE.id });
     };
     const outDefs = [
       { id: 'phone', label: 'Telefonen', sub: 'Innebygd høyttaler', kind: 'phone' },

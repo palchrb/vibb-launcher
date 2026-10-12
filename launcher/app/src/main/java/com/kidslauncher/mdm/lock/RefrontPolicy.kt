@@ -64,11 +64,13 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
     inputs.emergencyFlow -> RefrontAction.Yield("emergency")
-    inputs.sosFlow -> RefrontAction.Yield("sos")
     inputs.alarmRinging -> RefrontAction.Yield("alarm")
-    // Last: a phone call, the emergency flow and the alarm always win over a VoIP call
+    // A phone call, the emergency flow and the alarm always win over a VoIP call
     // (qa-16-17-code #1 - and the alarm's exemption ends only on a yield named "alarm").
     inputs.voipCall -> RefrontAction.Yield("voip")
+    // Last (qa-25b-25f M2): a probable SOS never hides a woken alarm, a call or a VoIP call - their
+    // yields end their own exemptions (the alarm's on a yield named "alarm").
+    inputs.sosFlow -> RefrontAction.Yield("sos")
     else -> RefrontAction.Refront(refrontDelayMs(attempt + 1))
 }
 
@@ -161,21 +163,27 @@ fun guardRearm(guard: CrashGuard, nowMs: Long): CrashGuard {
 
 /**
  * Bug 25b-H: Emergency SOS. Five quick power presses make SystemUI start the SOS activity (Personal
- * Safety's countdown, AOSP's Emergency information) as a task of its own - pinned now - and the
+ * Safety's countdown, AOSP's Emergency information) as a task of its own - pinned - and the
  * re-front would cover it within [PAUSE_REFRONT_MS]. No app can see which activity is in front
  * (usage events need a permission a device owner can't grant itself), so the timing tells: AOSP
  * 16's GestureLauncherService counts presses at most 500 ms apart and, once two came quickly,
  * swallows the rest while the screen is on - the screen turns on at the first or second press and
- * stays on, and the fifth comes at most about 2 s later. The lock leaving the front within
- * [SOS_GESTURE_WINDOW_MS] of a screen-on, with an SOS app on the phone, yields as "sos" for
- * [SOS_FLOW_MS] or until the lock is back in front (SOS cancelled or done); an emergency call
- * it places yields as a system call. While LOCKED nothing else can come up in that window but a
- * pinned package: Home and Recents are out of lock task, the camera is off by policy.
+ * stays on, and the fifth comes at most about 2 s later. A *stop* of the lock within
+ * [SOS_GESTURE_WINDOW_MS] of a screen-on, with an SOS app on the phone, marks a probable SOS.
+ *
+ * qa-25b-25f H1: that mark alone let whatever stopped the lock in the window (Recents to a
+ * thumbnail, a call or an app's full-screen intent that woke the screen) stay up. So while the
+ * "sos" yield runs the lock-task list is narrowed to our package, the lock's helpers and the SOS app
+ * ([sosNarrowedPackages], the kiosk-off LOCKED list): Android removes every other locked task at
+ * once, so only the SOS app (or an emergency call) can stay in front. The yield lasts at most
+ * [SOS_FLOW_MS] - the countdown and the dial; a placed call is held as "system_call" - and ends
+ * the moment the lock is in front again or anything else is yielded to ([sosMarkKept]); a woken
+ * alarm, a call or a VoIP call is never an SOS (they come first in [refrontAction]).
  */
 const val SOS_GESTURE_WINDOW_MS = 3_000L
 
 /** How long a probable SOS is left alone without the lock coming back to the front. */
-const val SOS_FLOW_MS = 60_000L
+const val SOS_FLOW_MS = 15_000L
 
 /**
  * Only a *stop* marks a probable SOS (a full-screen task of its own covers the lock): Recents - the
@@ -205,3 +213,7 @@ const val SCREEN_OFF_WORK_DELAY_MS = 400L
 /** The deferred screen-off work runs only while the screen is still off (a heal with the screen on
  * would be visible, the self-update wait would start with the phone in use). */
 fun screenOffWorkDue(interactive: Boolean): Boolean = !interactive
+
+/** The probable-SOS mark survives a re-front check only when that check yields to it: any other
+ * outcome (the lock in front, the screen off, a call, an alarm, a VoIP call) ends it. */
+fun sosMarkKept(action: RefrontAction): Boolean = action == RefrontAction.Yield("sos")

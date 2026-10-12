@@ -456,6 +456,7 @@ object PinLockRuntime {
             }
             LockTaskChrome.prefetchHelpers(app)
             LockTaskChrome.prefetchRecentsPin(app)
+            sosPackage = runCatching { emergencySosPackage(app) }.getOrNull()
         }
         // Design 16e (qa-16e-code #3): the boot cover's first frame, a device-protected file, read
         // once here - never by an ask on the main thread.
@@ -717,9 +718,26 @@ object PinLockRuntime {
         screenOffHealed = true
     }
 
+    /**
+     * A call is live - ours, a VoIP call, or one the system dialer shows (qa-25b-25f M1): the
+     * camera stays enabled by policy then, even while LOCKED (a video call answered from the
+     * lock). Written on the main thread at each call event, read by CameraLock's thread.
+     */
+    @Volatile
+    var callForCamera = false
+        private set
+
+    private fun updateCallForCamera(context: Context, telecom: Boolean) {
+        val now = cameraCallActive(ourCall(), VoipCalls.phase != VoipPhase.NONE, telecom)
+        if (now == callForCamera) return
+        callForCamera = now
+        CameraLock.onLockChanged(context.applicationContext)
+    }
+
     private val callsListener: () -> Unit = {
         val ctx = appContext
         val any = OngoingCalls.hasLiveCall
+        if (ctx != null) updateCallForCamera(ctx, telecomInCall(ctx))
         // Design 16e: a call skips the boot's wait for the mark at once.
         if (ctx != null && !callsSeen && any) endBootMark(ctx, "a call")
         if (ctx != null && callsSeen && !any) dispatch(ctx, LockEvent.CallsEnded(interactive(ctx)))
@@ -735,6 +753,7 @@ object PinLockRuntime {
         // Another call (emergency included), the emergency flow or a ringing alarm always win
         // (qa-16-17-code #1): no card and no wake over them, and the lock doesn't come back over them.
         val telecom = telecomInCall(app)
+        updateCallForCamera(app, telecom)
         val ours = ourCall()
         val emergency = emergencyFlowNow(telecom)
         val alarm = alarmNow(app)
@@ -1007,6 +1026,9 @@ object PinLockRuntime {
         rememberedAlarmMs = alarmAfterResume(rememberedAlarmMs, yielding)
         yielding = null
         sosFlowUntilElapsed = 0L
+        narrowForSos(context, false)
+        // Back after a call the system dialer showed: the camera policy follows (qa-25b-25f M1).
+        updateCallForCamera(context, telecomInCall(context))
         handler.removeCallbacks(refrontCheck)
         // During our call, the call screen goes back on top (qa-10-code #1).
         dispatch(context.applicationContext, LockEvent.LockResumed(ourCall(), VoipCalls.phase))
@@ -1045,22 +1067,41 @@ object PinLockRuntime {
         handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
     }
 
+    /** The Emergency SOS app ([emergencySosPackage]), resolved off the main thread - at init and by
+     * every `apply()` (qa-25b-25f L3: no PackageManager work at a lock stop). `null` = none or not yet. */
+    @Volatile
+    var sosPackage: String? = null
+
+    /** The "sos" yield narrows lock task ([LockTaskChrome.sosYield]) - set on the main thread. */
+    private var sosNarrowed = false
+
     /** The lock left the front: probably the Emergency SOS gesture ([sosGestureLikely], bug 25b-H)? */
     private fun noteProbableSos() {
         val app = appContext ?: return
         // A stop at the screen-off is no SOS (the gesture's presses keep the screen on).
         if (sosFlowUntilElapsed > 0L || !interactive(app)) return
         val now = SystemClock.elapsedRealtime()
-        // The package lookup only runs inside the window after a screen-on.
-        if (!sosGestureLikely(lastScreenOnElapsed, now, sosAppPresent = true)) return
-        if (!sosGestureLikely(lastScreenOnElapsed, now, sosAppPresent = emergencySosPackage(app) != null)) return
+        if (!sosGestureLikely(lastScreenOnElapsed, now, sosAppPresent = sosPackage != null)) return
         sosFlowUntilElapsed = now + SOS_FLOW_MS
         Log.i(LOG_TAG, "The lock left the front just after a screen-on: probably Emergency SOS")
+    }
+
+    /** The "sos" yield's narrowed lock task on or off (qa-25b-25f H1). Main thread. */
+    private fun narrowForSos(context: Context, on: Boolean) {
+        if (sosNarrowed == on) return
+        sosNarrowed = on
+        Log.i(LOG_TAG, if (on) "SOS yield: lock task narrowed to the lock's helpers and the SOS app" else "SOS yield over: lock task as before")
+        try {
+            LockTaskChrome.sosYield(context.applicationContext, on)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't change lock task for the SOS yield", e)
+        }
     }
 
     private fun runRefrontCheck() {
         val context = appContext ?: return
         val telecom = telecomInCall(context)
+        updateCallForCamera(context, telecom)
         val inputs = RefrontInputs(
             locked = chromeLocked,
             lockResumed = lockResumed,
@@ -1072,7 +1113,13 @@ object PinLockRuntime {
             voipCall = VoipCalls.phase != VoipPhase.NONE,
             sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),
         )
-        when (val action = refrontAction(inputs, refrontAttempt)) {
+        val action = refrontAction(inputs, refrontAttempt)
+        // qa-25b-25f H1: the mark ends on anything but its own yield; while it runs, only our
+        // package, the helpers and the SOS app stay in lock task.
+        val sos = sosMarkKept(action)
+        if (!sos) sosFlowUntilElapsed = 0L
+        narrowForSos(context, sos)
+        when (action) {
             RefrontAction.Stop -> yielding = null
             is RefrontAction.Yield -> {
                 // Design 16e: a call, the emergency flow, an alarm or VoIP skips the boot's wait.

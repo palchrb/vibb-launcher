@@ -165,6 +165,17 @@ internal class SonosRenderer(
     override fun durationMs(): Long? = controller.spec(clock()).durationMs
     override fun currentIndex(): Int = controller.index
     override fun itemCount(): Int = controller.items.size
+    override fun itemAt(index: Int): MediaItem? = mediaItems.getOrNull(index)
+
+    /**
+     * Only the player's metadata (design 27's late picture): the speaker's DIDL keeps what it got at
+     * the item's start - a speaker can't fetch the phone's art file (design 26a §2.5).
+     */
+    override fun replaceItem(index: Int, item: MediaItem) {
+        if (index !in mediaItems.indices || mediaItems[index].mediaId != item.mediaId) return
+        mediaItems = mediaItems.toMutableList().also { it[index] = item }
+        sbp.refresh()
+    }
 
     /** A tap on the loaded entry, RESUME, or the first play after [load] (the same-tile rule). */
     override fun play() = controller.playTile()

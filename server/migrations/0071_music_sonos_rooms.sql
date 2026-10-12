@@ -6,10 +6,11 @@
 --
 -- Written as 0065 on the branch `music-1b-sonos` (main had 0063-0064 then); renumbered 0071 at the
 -- merge of main on 2026-10-12 (main's 0065-0069 are the security wave's and design 25's). 0070 is
--- reserved for design 27's episode art by the main session (its spec still says "numbered after the
--- final rebase"). If 0070 reaches a server after this one ran, sqlx applies it out of order and
--- `startup::pre_migration_backup` (MAX(version) only) takes no backup first: design 27's server
--- ships before or together with this one (server/CLAUDE.md, "Data model").
+-- design 27's (`0070_music_episode_art.sql`, on main since 2026-10-12). Both deploy in order, 0070
+-- before 0071 - the natural order now that design 27 is on main. A server that ran this 0071
+-- without 0070 (a build of this branch from before the merge of design 27) would get 0070 out of
+-- order, and `startup::pre_migration_backup` (MAX(version) only) would take no backup first
+-- (server/CLAUDE.md, "Data model").
 --
 -- A new column and a trigger only: safe on an existing database.
 ALTER TABLE device_policy ADD COLUMN music_sonos_rooms_json TEXT;

@@ -211,4 +211,26 @@ class MusicSuspensionGuardTest {
         assertFalse(calls.contains("transportControls?.play()"))
         assertTrue(file("music/MusicSessions.kt").contains("VolumeCap.init(app)\n            MusicCalls.init(app)"))
     }
+
+    @Test
+    fun `the lock's music tile and Home's card show a Sonos room's session as the phone's - one session, any playback type`() {
+        // Design 26a (the merges of main): the music app's one MediaSession wraps whichever renderer
+        // plays, so on a room the surfaces read the same platform session (PLAYBACK_TYPE_REMOTE, its
+        // position anchored at the speaker's poll) - nothing filters on the playback type, and the tile
+        // takes its art from the session's metadata, which design 27's late picture swaps in place.
+        val sessions = file("music/MusicSessions.kt")
+        val lock = file("music/MusicLockPanel.kt")
+        for (source in listOf(sessions, lock)) {
+            assertFalse(source.contains("playbackInfo"))
+            assertFalse(source.contains("PLAYBACK_TYPE"))
+        }
+        assertTrue(sessions.contains("val music = controllers.firstOrNull { it.packageName in MUSIC_PACKAGES }"))
+        assertTrue(sessions.contains("override fun onMetadataChanged(metadata: MediaMetadata?) = update(newArt = true)"))
+        assertTrue(lock.contains("val art = MusicSessions.reading.art"))
+        assertTrue(lock.contains("val position = positionNow(s, SystemClock.elapsedRealtime())"))
+        // a room's poll-anchored position: PLAYING from the poll's measuredAt, paused stands still
+        val room = MusicSession("me.vibb.music", SessionPlay.PLAYING, "Abels tårn", "Episode 12", 120_000, 50_000, 1f, 1_800_000)
+        assertEquals(125_000, positionNow(room, nowElapsedMs = 55_000))
+        assertEquals(120_000, positionNow(room.copy(play = SessionPlay.PAUSED), nowElapsedMs = 55_000))
+    }
 }
