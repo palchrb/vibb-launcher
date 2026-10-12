@@ -152,4 +152,12 @@ class WallpaperInkTest {
         val keypad = listOf("src/main", "app/src/main").map { java.io.File(it, "res/layout/activity_pin_lock.xml") }.first { it.exists() }.readText()
         assertTrue(keypad.substringAfter("@+id/pin_parent_code").substringBefore("/>").contains("android:alpha=\"0.75\""))
     }
+
+    /** qa-25b-25f L1: a second draw of the same ground never paints the photo at the scrim's alpha. */
+    @Test
+    fun `the photo is drawn with an opaque paint`() {
+        val render = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/ui/wallpaper/WallpaperRender.kt") }.first { it.exists() }.readText()
+        val image = render.substringAfter("is WallpaperFill.Image ->").substringBefore("canvas.drawBitmap(")
+        assertTrue(image.contains("paint.color = 0xFF000000.toInt()"))
+    }
 }
