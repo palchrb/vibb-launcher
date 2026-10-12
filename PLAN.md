@@ -102,7 +102,8 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 vibb). Phase 1 (NRK, RSS, own files, the launcher bridge, Home card, lock view, volume cap) is on `main`, its Jelly
 Star checks and `music-v0.1.0` still to come. **Phase 1b, Sonos** (design 26a: rooms in "Spill av på", the phone as
 UPnP controller, adopt after a restart, bedtime stops the speaker, calls pause it, the parent's volume cap and room
-scope) is built and QA'd on branch `music-1b-sonos`, main merged in; owed: the emulator checks against
+scope) is built and QA'd on branch `music-1b-sonos`, main merged in (last 2026-10-12, `444ca58`: main's instant
+switch adapted to the rooms); owed: the emulator checks against
 `scripts/fake-sonos.py` and the device checks with real speakers. Release after the user's merge: server (migration
 0071, in 0.24.0 unless that is tagged first), a launcher release, then `music-v0.2.0-rc.1` on the merge commit
 (26a "Release"). Phases 2 (Storytel) and 3 (Spotify) follow design 26.

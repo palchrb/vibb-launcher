@@ -1560,18 +1560,93 @@ Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -Pwarnin
 failures**, lint clean (378 before this round); `python3 -I -B scripts/fake-sonos.py --selftest` OK. Launcher and
 server untouched in this round.
 
+## Merge of main (2026-10-12)
+
+`origin/main` at `444ca58` merged into `music-1b-sonos` (`0ba355b`, one merge commit, no rebase), then three commits:
+the migration (`0118da2`), the emulator section (`f58703a`), the adaptation (`9f70186`), and this section.
+
+**What came in:** the launcher security wave and its QA (command receipts, the remote wipe, the catalog APK check, call
+screening; the Gradle verification metadata and wrapper pins for `music/` with `BuildChainTest`, the wrapper validation
+in `launcher.yml`/`music.yml`); design 25 (the lock's glance page, `MusicLockPanel`, `lock/VisibleSender`) and 25f
+(the lock wallpaper), with migrations `0065_command_receipts.sql` to `0069_lock_wallpaper.sql`; design 27's spec
+(per-episode art and the Now Playing carousel - not built; it claims migration 0070 and Room version 2); and the
+music app's instant switch (`logic/Switch.kt`, `ui/SwitchViewTest`, `NowView.cover/itemTitle/ref`, `PrefetchCovers`,
+`coverShown`) and the always-light system bar icons. Main didn't touch `PlaybackService`, the AIDL,
+`bridge_contract.json` or the shared snapshots.
+
+**Conflicts and how they were resolved:**
+- Root `CLAUDE.md`, the CI paragraph: both lists kept (main's `launcher.yml` triggers on `music/gradle/` and
+  `music.yml`; this branch's `music.yml` trigger on `scripts/fake-sonos.py` and its selftest).
+- `music/CLAUDE.md`, "Build and test": main's verification-metadata sentence, then the fake-speaker paragraph.
+- `docs/testing/emulator.md`: both sides added a §6g. Main's (the security wave's device checks, cited from its review
+  docs and `launcher/CLAUDE.md`) keeps §6g; the fake-speaker section is **§6h**, and every reference on this side follows
+  (root and music `CLAUDE.md`, `music.yml`, `fake-sonos.py`, the debug feed's KDoc, this design (ten), design 26). QA
+  review records keep the numbers they were written against.
+- `music/.../ui/MusicRoot.kt`: `PlayerScreen`'s call takes main's `position` and this branch's `hub.rendererState`.
+- Merged by themselves and read through: `PlayerScreen.kt` (main's `now.cover`/`itemTitle`/`PrefetchCovers` beside the
+  room line), `MusicViewModel`, `MainActivity`, the launcher's `MusicSessions.kt` (main's `VisibleSender`), `music.yml`
+  (main's wrapper validation beside the selftest step), `launcher.yml`, `server/src/main.rs`, `device_detail.html`,
+  `server/CLAUDE.md`, PLAN.md, designs 21 and 26. The branch adds no Gradle dependency, so main's verification metadata
+  holds as it is.
+
+**The migration is `0071_music_sonos_rooms.sql`** (was 0065, which main's `0065_command_receipts.sql` now has; 0070 is
+design 27's). Its content is unchanged but the header; `server/CLAUDE.md`, `music.rs`, PLAN.md and this design follow.
+
+**The adaptation (main's instant switch on the renderer axis).** Main shows a tap's item until the player is there, for
+at most 3 s (`SWITCH_HOLD_MS`). On a room the identity moves as fast as on the phone - `SonosController.load` and
+`stepTo` flip the index before any SOAP, and `publish` follows at once - but the command itself can wait: behind
+`rendererReady` (the adopt look at start, `ADOPT_MS` 4 s), a room switch's hand-off under the `switching` lock
+(`HANDOFF_MS` 15 s), or `lookAgainBeforePlaying`. The hold then ran out into the old item. So:
+- `PlayerHub.State.waiting`: a `Commands.MOVES` command (`PLAY_ENTRY`, `PLAY_ITEM`, `RESTORE`) is accepted and hasn't
+  run - counted in `onCustomCommand` before the coroutine, released in `invokeOnCompletion` (a cancel too).
+  `requestStands(..., waiting)` / `holdEndsAt` hold up to `SWITCH_WAIT_MAX_MS` (20 s) while it waits; once it ran, the
+  3 s hold again (a silent refusal shows the player within it; a refusal with a message clears the switch at once).
+- `playSwitch`/`skipSwitch(..., onRoom)` (the hub's output is a room): the room's queue holds only what a speaker can
+  play, a start it can't play moves to the next it can at 0 (`PlayBodies.speakerPlan`'s rule), nothing playable is no
+  switch (the service says "Kan ikke spilles på Sonos"); a step on a playing room starts at 0 (`stepTo`, open question
+  3a (a)), paused where the phone would. The skip target is counted in the hub's queue, which on a room is the
+  service's speaker-playable `Active.items` - the same count `skipNext`/`skipPrevious` use.
+- **The numbering seam**: `playerNumber(snap, now)` in `UiModel.kt` (after `listOrder`) is the player's "N av M" for
+  the player's own view and a tap's switch alike; unshuffled it counts the play order (items a speaker can't play
+  included), shuffled the queue. The Storytel branch's `playerNumber`/`countedOrder` has the same name, signature and
+  place and replaces it at that merge.
+- Tests: `SwitchTest` +1 (the waiting hold and its bound), `SwitchViewTest` +3 (a cover tap and a pick on a room,
+  nothing playable, next in the room's queue with the number agreeing, from 0 playing / the place paused),
+  `SonosControllerTest` +1 (a step on a playing room flips the index before the speaker answers and starts at 0 - the
+  switch counts on it), `GuardsTest` +1 (the waiting count's pins). `music/CLAUDE.md` has the rule.
+
+**Design 27 (not on main yet; for its implementer):** `SKIP_TO` and `THEN_SKIP_TO` are not on main. When they come:
+the swipe's skip goes through `goTo(a, index, forward)` -> `renderer.seekTo(index, startPos)` (a room: `stepTo`, from 0
+while playing), never ExoPlayer directly; `SKIP_TO` joins `Commands.MOVES` if it is a custom command (and `PLAYS` only
+if it can start playing), and `THEN_SKIP_TO` runs under `switching` like `THEN_NEXT`; the carousel's "pending skip"
+(1.5 s) should read `PlayerHub.State.waiting` too. Per-item art on a room: `SonosRenderer`'s `MediaItemData` takes the
+same `artworkUri` as `mediaItem()`, so `setNowPlaying`'s art follows without a Sonos change. Main's AIDL has no `wantArt`
+yet and 1b appended nothing (`git diff 0c9d6ca..dadea05 -- '*.aidl'` is empty), so 27 appends after the current last
+method; the copies are byte-identical (`BridgeTest`, `MusicPlanTest`). Room version: 1b doesn't change it.
+
+**Tests after the merge** (local Rust 1.97, JDK 17): server `cargo test` **594 passed, 0 failures** (540 before),
+`cargo fmt --check` clean, `cargo clippy --all-targets` the same 12 warnings, none in this branch's code; music
+`assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **410 tests, 0 failures** (385
+before; 404 with the merge alone, +6 for the adaptation), lint 0 errors and the same 40 warnings;
+`python3 -I -B scripts/fake-sonos.py --selftest` OK; launcher `assembleDebug testDebugUnitTest` (the tsnet stub) **1012 tests, 0 failures** (900 at step 4) - its
+`assembleRelease` now refuses to build without `app/libs/tsnet.aar` (main's security review L13,
+`checkReleaseHasTsnet`), which this sandbox can't build; CI builds the aar first. The AIDL copies, `bridge_contract.json` and the shared snapshots are byte-identical
+(`ContractFilesTest`, `BridgeTest`, `MusicPlanTest` green).
+
 ## Release
 
 `music-v0.2.0-rc.1` is the user's tag, **on the merge commit on `main`** (`music.yml` refuses a tag whose commit isn't
 on `main`; root `CLAUDE.md`): versionName `0.2.0-rc.1`, versionCode 1999, a prerelease, never "latest". Design 26's
-review (#5) planned `music-v0.1.0` on `main` before 1b so phase 1's device checks test a fixed build; GitHub has no
-`music-v*` tag yet (2026-10-12), so if phase 1 is to keep a release of its own, tag it on `main` **before** merging this
-branch.
+review (#5) planned a phase 1 release on `main` before 1b so its device checks test a fixed build; phase 1 now has
+`music-v0.0.1` and `music-v0.0.2` (both on `22a6265`, main's design 25 merge; checked 2026-10-12 at the merge of
+main), and versionCode 1999 is above both.
 
 Deploy order:
-1. **Server.** 3c's server part (migration 0071, the card, the library's `sonos_rooms`, the report's rooms, the event)
-   rides in **0.24.0**: `server/Cargo.toml` says 0.24.0 on both sides and `server-v0.24.0` isn't tagged yet. If it is
-   tagged before this merge, bump `server/Cargo.toml` (and `Cargo.lock`) to 0.25.0 on `main` for the next one. Not
+1. **Server.** 3c's server part (migration **0071**, renumbered at the merge of main; the card, the library's
+   `sonos_rooms`, the report's rooms, the event) rides in **0.24.0**: `server/Cargo.toml` says 0.24.0 on `main` and
+   here (checked at the merge of main, 2026-10-12: the highest server tag is still `server-v0.19.0`), together with
+   main's 0065-0069. If `server-v0.24.0` is tagged before this branch lands, bump `server/Cargo.toml` (and `Cargo.lock`)
+   to 0.25.0 on `main` for the next one. Not
    required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an
    older server every room is allowed and the parent just has no card. Required before the parent can limit rooms,
    and the music catalog row (0.21.0+) before any **stable** `music-v*` (design 21 QA #11).
