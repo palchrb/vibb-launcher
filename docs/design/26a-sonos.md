@@ -104,8 +104,10 @@ The Pi keeps two axes apart (`renderer.py:1-13`): `output` (local|bt: where *our
   Never an ip in the UI.
 - `resolve(uid)` (`_speaker`, 246-264): the cached ip; `Soap.uidOf(ip)` (the `device_description` UDN) compared on
   the **play path only**; mismatch -> `UnknownUid`; unreachable -> let the poller classify.
-- **Network binding (QA M7):** SSDP and SOAP use clients bound to the Wi-Fi `Network` (`ConnectivityManager`); without
-  Wi-Fi the refresh is skipped and the sheet shows the cache as stale.
+- **Wi-Fi as a gate, never a binding (QA M7; corrected 2026-10-12, §6.5):** SSDP and SOAP run only while a Wi-Fi
+  `Network` is up (`ConnectivityManager` callback); without Wi-Fi the refresh is skipped and the sheet shows the cache
+  as stale. The sockets are **not** bound to that `Network`: the launcher's always-on VPN allows no bypass, so Android
+  refuses the bind (EPERM), and unbound sockets reach the LAN and the multicast group on the default route anyway.
 
 ### 2.2 SOAP (`Soap.kt`)
 - `call(ip, port, service, action, args: List<Pair<String,String>>): Map<String,String>`; POST
@@ -116,7 +118,8 @@ The Pi keeps two axes apart (`renderer.py:1-13`): `output` (local|bt: where *our
   JVM tests parse for real - `android.jar`'s `XmlPullParser` is a stub under `isReturnDefaultValues`) into the
   response's child elements; a `<s:Fault>` with
   `<errorCode>` -> `UpnpFault(code)`; transport errors -> `SpeakerUnreachable`. Timeouts: connect 2 s, read 5 s;
-  one OkHttp client with a connection pool (vibb's keep-alive session, 101-117), bound to Wi-Fi, and **no address
+  one OkHttp client with a connection pool (vibb's keep-alive session, 101-117), a fresh pool per Wi-Fi network, its
+  sockets bound to no network (§6.5), and **no address
   guard**: this is control traffic to the LAN (21b §2.7 is about audio origins; design 26 review #3).
 - Services: AVTransport (`/MediaRenderer/AVTransport/Control`, `urn:schemas-upnp-org:service:AVTransport:1`):
   `SetAVTransportURI(InstanceID=0, CurrentURI, CurrentURIMetaData)`, `Play(0, Speed=1)`, `Pause(0)`, `Stop(0)`,
@@ -491,12 +494,30 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    bookmark within 15 s of the truth, `vibb:sonos` held in `dumpsys power`, battery per hour (whether Wi-Fi stays up
    with the screen off is what this check finds out; the Wi-Fi lock is not counted on). If Doze still defers them, the launcher grants the music app
    the battery-optimisation exemption design 19b gives itself.
-4. **Network.** Clients bound to Wi-Fi (§2.1); Wi-Fi gone -> the speaker reads UNREACHABLE (backoff, disarm after
+4. **Network.** Only on Wi-Fi, never bound to it (§2.1, 5 below); Wi-Fi gone -> the speaker reads UNREACHABLE (backoff, disarm after
    600 s); the kid's phone away from home keeps the cache (the "cabin case", `sonosd.py:1050-1053`): the sheet lists
    home rooms marked stale and starts no scan without Wi-Fi.
-5. **Permissions:** `CHANGE_WIFI_MULTICAST_STATE` (the `MulticastLock`), `ACCESS_WIFI_STATE`, `WAKE_LOCK` (present).
-   The launcher's `KidVpnService` routes only `192.0.2.2/32`, so SSDP and LAN SOAP bypass the tun (design 26 review
-   #3); DNS is not involved (ips only). Still a [device check] with the VPN up. Android's coming local-network
+5. **Permissions and the VPN:** `CHANGE_WIFI_MULTICAST_STATE` (the `MulticastLock`), `ACCESS_WIFI_STATE`, `WAKE_LOCK`
+   (present). The launcher's `KidVpnService` (`L/server/KidVpnService.kt`) is the device's always-on VPN
+   (`setAlwaysOnVpnPackage(admin, pkg, lockdown = false)`, `L/server/AppEnforcer.kt`), covers every app (no allowed or
+   disallowed list), calls no `allowBypass()`, and routes only `192.0.2.2/32` (its fake DNS server). Two consequences
+   (corrected 2026-10-12 after the main session's review; the step 1-4 code bound every socket to the Wi-Fi `Network`):
+   - **No socket may be bound to the Wi-Fi `Network`.** For an app inside a VPN that doesn't allow bypass, Android
+     refuses `Network.bindSocket`/`bindProcessToNetwork` to any other network - netd answers EPERM
+     (`VpnService.Builder.allowBypass()`: "By default, all traffic from apps is forwarded through the VPN interface and
+     it is not possible for apps to side-step the VPN"); only the VPN app itself could (`protect()`). The music app is
+     not the VPN app, so a bound OkHttp socket factory failed every SOAP call and a bound SSDP socket every round
+     while the filter is on. `SourceScanTest` bans the binding APIs in `src/main`.
+   - **Unbound sockets reach the LAN and the multicast group.** The VPN's table holds only 192.0.2.2/32, and without
+     lockdown a lookup that finds no route there falls through to the default network's table (the launcher's own
+     design: "everything else flows over the real network untouched", `AppEnforcer.applyVpnRestrictions`). So SSDP to
+     239.255.255.250:1900 and SOAP to 192.168.x.x leave on Wi-Fi, and the `MulticastLock` lets the replies in
+     (design 26 review #3). DNS is not involved (ips only).
+   Wi-Fi stays a **gate**: no Wi-Fi network up -> nothing is tried, the speaker reads unreachable and the sheet stale.
+   Limit: if Wi-Fi is up but not the default network (a Wi-Fi without internet while mobile data is up, which Android
+   then prefers), the LAN traffic follows the default route and the speakers read unreachable; a home Wi-Fi with
+   internet is the case this is for. [device check] **VPN filter on: discovery and control still work** (the sheet
+   fills by SSDP, a play, a pause, the volume keys; logcat shows no `EPERM`). Android's coming local-network
    permission (`NEARBY_WIFI_DEVICES` on a later target SDK) is one the device owner can grant; noted for later.
 6. **Kiosk.** Nothing opens: no Sonos app, no links (`SourceScanTest`). The NRK service precondition is the
    household's, set once from a parent's Sonos app, not from the phone. The speaker resolves hosts outside the
@@ -702,7 +723,8 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
 - Volume keys: ±3 per press, the slider, the cap holds, a louder speaker set from the Sonos app is left alone.
 - An incoming phone call and an Element X voice/video call during Sonos playback and during local playback: paused
   at the ring, played again after only when it was playing; the kid's own pause during the call stays.
-- VPN filter on: discovery and control still work.
+- VPN filter on (the launcher's always-on `KidVpnService`): discovery and control still work - the sheet fills by
+  SSDP, a play, a pause, the volume keys; no `EPERM` in logcat (§6.5: no socket is bound to the Wi-Fi `Network`).
 - Room scope (step 3c, §5.5): the device card before the phone has seen a speaker ("The phone hasn't seen any speakers
   yet") and after (the real rooms under "All rooms"); "All rooms" off and one room unticked -> after the next sync the
   sheet lacks it, a session playing there was bookmarked, stopped and came home paused ("Rommet er ikke lenger

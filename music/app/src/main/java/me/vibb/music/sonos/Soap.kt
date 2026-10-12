@@ -12,15 +12,15 @@ import java.io.IOException
 import java.io.StringReader
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
-import javax.net.SocketFactory
 import javax.xml.parsers.DocumentBuilderFactory
 
 /*
  * The UPnP SOAP client: the dozen actions vibb reaches through SoCo (`pi/sonosd.py`; palchrb/vibb,
  * MIT License, Copyright (c) 2026 palchrb), written here because no GPL-compatible maintained UPnP
- * library exists (design 26 review #2). Design 26a §2.2. Android-free: the Wi-Fi binding comes in
- * as a SocketFactory (`Network.socketFactory`). Replies are parsed with javax.xml's DOM, which is in
- * the JDK and in Android, so the JVM tests parse for real (SonosFixturesTest).
+ * library exists (design 26 review #2). Design 26a §2.2. Android-free, and its sockets are bound to
+ * no `Network` (§6.5: the launcher's always-on VPN refuses the bind; the LAN is on the default route).
+ * Replies are parsed with javax.xml's DOM, which is in the JDK and in Android, so the JVM tests parse
+ * for real (SonosFixturesTest).
  *
  * No address guard: this is control traffic to the LAN (21b §2.7 is about audio origins). Every
  * URL is built with HttpUrl.Builder from the ip and port (SourceScanTest bans http literals).
@@ -49,8 +49,8 @@ enum class SonosService(val controlPath: String, val serviceType: String) {
 const val SONOS_PORT = 1400
 
 /**
- * The client comes from [client] on every call, so a Wi-Fi reconnect (a new `Network`, a new socket
- * factory) needs a new provider value only, not a rebuilt Soap and everything holding it
+ * The client comes from [client] on every call, so a Wi-Fi reconnect (a new `Network`, a fresh
+ * connection pool) needs a new provider value only, not a rebuilt Soap and everything holding it
  * (qa-26a-step1-code L2).
  */
 class Soap(private val client: () -> OkHttpClient) {
@@ -93,8 +93,8 @@ class Soap(private val client: () -> OkHttpClient) {
     }
 
     /**
-     * `http://<ip>:<port><path>` for an IP literal only: a name would be resolved outside the Wi-Fi
-     * binding, and a bad host or port is a [SpeakerUnreachable], never an IllegalArgumentException
+     * `http://<ip>:<port><path>` for an IP literal only: a name would go to the phone's DNS (the
+     * launcher's filter), never the LAN's, and a bad host or port is a [SpeakerUnreachable], never an IllegalArgumentException
      * escaping the failed-play path (qa-26a-step1-code L1).
      */
     private fun url(ip: String, port: Int, path: String): HttpUrl {
@@ -111,15 +111,14 @@ class Soap(private val client: () -> OkHttpClient) {
 
         /**
          * The one client (vibb's keep-alive session, sonosd.py:101-117): pooled connections,
-         * connect 2 s, read 5 s, no proxy, no redirects. [socketFactory] binds it to the Wi-Fi
-         * network (design 26a §2.1, QA M7).
+         * connect 2 s, read 5 s, no proxy, no redirects, the platform's own sockets (bound to no
+         * network, design 26a §6.5).
          */
-        fun client(socketFactory: SocketFactory? = null): OkHttpClient = OkHttpClient.Builder()
+        fun client(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(2, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .proxy(Proxy.NO_PROXY)
             .followRedirects(false)
-            .apply { if (socketFactory != null) socketFactory(socketFactory) }
             .build()
 
         /** The standard envelope, each argument escaped once (SoCo's, like Python's `escape`). */
