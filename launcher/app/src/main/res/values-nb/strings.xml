@@ -279,7 +279,29 @@
     <string name="music_previous">Forrige</string>
     <string name="music_next">Neste</string>
     <string name="lock_media_unlock">Lås opp</string>
-    <string name="lock_media_back">Tilbake til avspilling</string>
+    <string name="lock_media_back">Tilbake</string>
+    <!-- Design 25: låseskjermens første side - varslene og «flere»-linjen. -->
+    <plurals name="glance_messages">
+        <item quantity="one">%1$d melding</item>
+        <item quantity="other">%1$d meldinger</item>
+    </plurals>
+    <plurals name="glance_notices">
+        <item quantity="one">%1$d nytt varsel</item>
+        <item quantity="other">%1$d nye varsler</item>
+    </plurals>
+    <string name="glance_missed">Tapt anrop</string>
+    <plurals name="glance_missed_many">
+        <item quantity="one">%1$d tapt anrop</item>
+        <item quantity="other">%1$d tapte anrop</item>
+    </plurals>
+    <plurals name="glance_more">
+        <item quantity="one">+ %1$d varsel til</item>
+        <item quantity="other">+ %1$d varsler til</item>
+    </plurals>
+    <string name="glance_yesterday">i går</string>
+    <string name="glance_open_action">Lås opp og åpne</string>
+    <string name="glance_missed_action">Lås opp og se tapte anrop</string>
+    <string name="glance_missed_from">Tapt anrop fra %1$s</string>
     <!-- Design 24b: et foreldrekode-vindu som låses igjen av seg selv (varsel, banner på Hjem). -->
     <string name="notification_channel_window">Åpnet med foreldrekoden</string>
     <string name="window_override_open">Åpnet med foreldrekoden til %1$s</string>

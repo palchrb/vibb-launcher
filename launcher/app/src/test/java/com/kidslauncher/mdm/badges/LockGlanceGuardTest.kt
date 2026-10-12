@@ -161,11 +161,14 @@ class LockGlanceGuardTest {
 
     /** A log line in a glance file names a package, a count or an exception class - never a title,
      * name, text, key or shortcut id. */
-    private val allowedInterpolations = setOf("\$source", "\${e.javaClass.simpleName}", "\${next.apps.size}", "\${if (next.showText) \"on\" else \"off\"}")
+    private val allowedInterpolations = setOf(
+        "\$source", "\${e.javaClass.simpleName}", "\${next.apps.size}", "\${if (next.showText) \"on\" else \"off\"}",
+        "\$what", "\$pkg", "\${next.candidate}", "\${next.rows}", "\${next.more}",
+    )
 
     @Test
     fun `log lines carry only package names, counts and exception classes`() {
-        for (name in glanceFiles) {
+        for (name in glanceFiles + "GlancePanel.kt") {
             val lines = Regex("""\bLog\.\w\(.*""").findAll(code(name)).map { it.value }.toList()
             for (line in lines) {
                 assertFalse("$name: $line logs a throwable", Regex(""",\s*e\)""").containsMatchIn(line))
@@ -209,6 +212,58 @@ class LockGlanceGuardTest {
         for (name in listOf("StatusReportRequest.kt", "CallStateReport.kt")) {
             assertFalse(name, Regex("""(?i)glance""").containsMatchIn(code(name)))
         }
+    }
+
+    // ---- part 2: the lock (step 3) ------------------------------------------------------------
+
+    private val panel by lazy { code("GlancePanel.kt") }
+
+    @Test
+    fun `the glance panel opens nothing - a row only leads to the keypad`() {
+        for (forbidden in listOf(
+            "startActivity", ".send(", "Intent(", "sessionActivity", "LaunchIntent", "cancelNotification",
+            "snoozeNotification", "setNotificationsShown", "Settings.", "getSharedPreferences", "edit()",
+        )) {
+            assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
+        }
+        // Rows can't be swiped, long-pressed or dismissed from the lock.
+        for (forbidden in listOf("setOnLongClickListener", "setOnTouchListener", "ItemTouchHelper", "Swipe")) {
+            assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
+        }
+    }
+
+    @Test
+    fun `FLAG_SECURE is on the lock's window before its content`() {
+        val activity = code("PinLockActivity.kt")
+        val onCreate = body(activity, "onCreate")
+        val secure = onCreate.indexOf("window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)")
+        assertTrue(secure >= 0)
+        assertTrue(secure < onCreate.indexOf("setContentView("))
+        assertTrue(secure < onCreate.indexOf("ActivityPinLockBinding.inflate("))
+    }
+
+    @Test
+    fun `every row view is accessibility-data-sensitive`() {
+        val newRow = body(panel, "newRow")
+        assertTrue(newRow.contains("sensitive(view.root)"))
+        val sensitive = body(panel, "sensitive")
+        assertTrue(sensitive.contains("view.setAccessibilityDataSensitive(View.ACCESSIBILITY_DATA_SENSITIVE_YES)"))
+        assertTrue("and every child", sensitive.contains("sensitive(view.getChildAt(i))"))
+    }
+
+    @Test
+    fun `the panel catches everything, and the lock survives a panel that can't be built (QA Medium 2)`() {
+        for (name in listOf("start", "resume", "stop", "step", "render")) {
+            assertTrue("$name is guarded", Regex("""fun $name\([^)]*\) = guarded\(""").containsMatchIn(panel))
+        }
+        assertTrue(body(panel, "back").contains("step(GlanceStageEvent.Back)"))
+        assertTrue(body(panel, "guarded").contains("catch (e: Throwable)"))
+        assertTrue(panel.contains("guarded(\"fit\") { fitNow() }"))
+        assertTrue("the icon job", body(panel, "renderIcons").contains("catch (e: Throwable)"))
+        assertTrue("a row fault hides the rows", body(panel, "renderNow").contains("catch (e: Throwable)"))
+        val onCreate = body(code("PinLockActivity.kt"), "onCreate")
+        assertTrue(Regex("""glance = try \{\s*GlancePanel\(""").containsMatchIn(onCreate))
+        assertTrue(onCreate.contains("} catch (e: Throwable) {"))
     }
 
     // ---- wiring and fault containment ---------------------------------------------------------

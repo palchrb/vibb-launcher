@@ -4,100 +4,56 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.os.SystemClock
-import android.text.format.DateFormat
 import android.view.View
-import android.widget.FrameLayout
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.databinding.ViewLockMediaBinding
+import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
 import com.kidslauncher.mdm.databinding.ViewLockMediaRowBinding
-import com.kidslauncher.mdm.lock.LockMediaUi
-import com.kidslauncher.mdm.lock.LockStage
-import com.kidslauncher.mdm.lock.PinLockRuntime
-import com.kidslauncher.mdm.lock.lockMediaTicks
-import com.kidslauncher.mdm.lock.lockMediaUi
-import com.kidslauncher.mdm.lock.lockStageAfterChange
-import com.kidslauncher.mdm.lock.lockStageAtLockUp
-import com.kidslauncher.mdm.lock.lockStageDue
-import com.kidslauncher.mdm.ui.KidInsets
-import java.util.Locale
+import com.kidslauncher.mdm.lock.GlanceTileSize
+import com.kidslauncher.mdm.lock.glanceTicks
 
 /**
- * The PIN lock's media view and its keypad stage (design 21 §3, design 20's two-stage lock, mockup
- * Lock.dc.html v12; the rules are the pure lock/LockMedia.kt). The media view lies in the lock's
- * frame over the keypad (and under the VoIP ring screen); the keypad's back arrow and compact row
- * are in activity_pin_lock.xml. Watching the session between the lock's onStart and onStop; every
- * time the lock comes up with the screen on ([lockStageDue]) it shows the media view while the
- * music app plays, else the keypad.
+ * Vibb music on the PIN lock (design 21 step 4, design 25): the glance page's full and compact
+ * tiles and the keypad's compact row, bound while a session is live. No stage logic - the glance
+ * panel (lock/GlancePanel) decides whether a tile shows and which ([show], from its fit); this binds
+ * the session's art, item, entry, progress and play/pause into them, watches the session between the
+ * lock's onStart and onStop and tells the panel when it changed ([onChange]).
  *
- * It weakens nothing (LockMediaGuardTest): the session's play/pause, previous and next, "Lås opp"
- * and the back arrow (between the stages), and the lock's own emergency call ([onEmergency]) are
- * all it does - it never opens the music app, its session activity, a setting or a notification.
+ * It weakens nothing (LockMediaGuardTest): the session's play/pause, previous and next are all it
+ * does - it never opens the music app, its session activity, a setting or a notification.
  */
 class MusicLockPanel(
     private val activity: Activity,
-    frame: FrameLayout,
-    /** The keypad stage under the media view: hidden from accessibility while covered. */
-    private val keypad: View,
-    private val back: View,
+    private val glance: ViewLockGlanceBinding,
     private val row: ViewLockMediaRowBinding,
-    /** The keypad stage with a live session (back arrow and compact row): the clock and date give way. */
-    private val onMediaKeypad: (Boolean) -> Unit,
-    private val onEmergency: () -> Unit,
+    private val onChange: () -> Unit,
 ) {
-    private val media = ViewLockMediaBinding.inflate(activity.layoutInflater, frame, true)
     private val handler = Handler(Looper.getMainLooper())
     private var started = false
-    private var stage = LockStage.KEYPAD
-    /** `PinLockRuntime.screenOffs` when the stage was last decided (null = not yet). */
-    private var decidedAt: Int? = null
-    private var ui = LockMediaUi(mediaView = false, backArrow = false, compactRow = false)
     private var session: MusicSession? = null
     private var usable = false
+    private var tile = GlanceTileSize.NONE
     private var shownArt: Bitmap? = null
     private var artShown = false
-    private val ticker = Runnable { render(lookUp = false) }
-    private val changed: () -> Unit = { render() }
+    private val ticker = Runnable { render() }
+    private val changed: () -> Unit = {
+        lookUp()
+        onChange()
+    }
 
     init {
-        KidInsets.apply(media.root)
-        val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
-        val datePattern = DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM")
-        media.lockMediaDate.format12Hour = datePattern
-        media.lockMediaDate.format24Hour = datePattern
-        media.lockMediaPlay.setOnClickListener { playPause() }
-        media.lockMediaPrevious.setOnClickListener { MusicSessions.previous(activity, MusicSessions.reading.controller) }
-        media.lockMediaNext.setOnClickListener { MusicSessions.next(activity, MusicSessions.reading.controller) }
-        media.lockMediaUnlock.setOnClickListener { toStage(LockStage.KEYPAD) }
-        media.lockMediaEmergency.setOnClickListener { onEmergency() }
-        back.setOnClickListener { toStage(LockStage.MEDIA) }
+        glance.lockMediaPlay.setOnClickListener { playPause() }
+        glance.lockMediaPrevious.setOnClickListener { MusicSessions.previous(activity, MusicSessions.reading.controller) }
+        glance.lockMediaNext.setOnClickListener { MusicSessions.next(activity, MusicSessions.reading.controller) }
+        glance.lockMediaCompactPlay.setOnClickListener { playPause() }
         row.lockMediaRowPlay.setOnClickListener { playPause() }
     }
 
-    /** onStart: watching the session; the stage decided if the lock comes up now ([resume]). */
+    /** onStart: watching the session. */
     fun start() {
-        if (!started) {
-            started = true
-            MusicSessions.addListener(activity, changed)
-        }
-        resume()
-    }
-
-    /**
-     * onResume (and onStart): when the lock comes up with the screen on ([lockStageDue]) - the media
-     * view while the music app plays, else the keypad; otherwise the stage the kid is on.
-     */
-    fun resume() {
-        if (!started) return
-        val interactive = activity.getSystemService(PowerManager::class.java)?.isInteractive == true
-        val offs = PinLockRuntime.screenOffs
-        lookUp()
-        if (lockStageDue(interactive, decidedAt, offs)) {
-            stage = lockStageAtLockUp(session)
-            decidedAt = offs
-        }
-        render(lookUp = false)
+        if (started) return
+        started = true
+        MusicSessions.addListener(activity, changed)
     }
 
     /** onStop (and onDestroy): nothing watched or ticking while the lock isn't shown. */
@@ -108,53 +64,69 @@ class MusicLockPanel(
         MusicSessions.removeListener(changed)
     }
 
-    private fun lookUp() {
+    /** The session the lock may show, looked up again (`shownSession`: none without listener access,
+     * with the music app suspended or gone). */
+    fun lookUp(): MusicSession? {
         val reading = MusicSessions.reading
         usable = MusicSessions.usable(activity, reading.session?.packageName)
         session = shownSession(reading.access, usable, reading.session)
+        return session
     }
 
-    private fun toStage(next: LockStage) {
-        stage = next
-        render(lookUp = false)
+    /** The glance panel's choice: the full tile, the compact one or none. */
+    fun show(size: GlanceTileSize) {
+        tile = size
+        render()
     }
 
     private fun playPause() = MusicSessions.playPause(activity, MusicSessions.reading.controller, session)
 
-    private fun render(lookUp: Boolean = true) {
+    private fun render() {
         handler.removeCallbacks(ticker)
-        if (lookUp) lookUp() else session = shownSession(MusicSessions.reading.access, usable, MusicSessions.reading.session)
-        stage = lockStageAfterChange(stage, session)
-        val next = lockMediaUi(stage, session)
-        if (next.backArrow != ui.backArrow) onMediaKeypad(next.backArrow)
-        ui = next
-        media.root.visibility = if (ui.mediaView) View.VISIBLE else View.GONE
-        keypad.importantForAccessibility = if (ui.mediaView) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
-        back.visibility = if (ui.backArrow) View.VISIBLE else View.GONE
-        row.root.visibility = if (ui.compactRow) View.VISIBLE else View.GONE
-        val s = session ?: return
+        session = shownSession(MusicSessions.reading.access, usable, MusicSessions.reading.session)
+        val s = session
+        val shown = if (s == null) GlanceTileSize.NONE else tile
+        glance.lockMediaTile.visibility = if (shown == GlanceTileSize.FULL) View.VISIBLE else View.GONE
+        glance.lockMediaCompact.visibility = if (shown == GlanceTileSize.COMPACT) View.VISIBLE else View.GONE
+        // The keypad's compact row while a session is live (step 4).
+        row.root.visibility = if (s != null) View.VISIBLE else View.GONE
+        if (s == null) return
         val playIcon = if (s.playing) R.drawable.ic_music_pause else R.drawable.ic_music_play
         val playLabel = activity.getString(if (s.playing) R.string.music_pause else R.string.music_play)
         val art = MusicSessions.reading.art
         if (!artShown || art !== shownArt) {
             artShown = true
             shownArt = art
-            media.lockMediaArt.setImageBitmap(art)
+            glance.lockMediaArt.setImageBitmap(art)
+            glance.lockMediaCompactArt.setImageBitmap(art)
             row.lockMediaRowArt.setImageBitmap(art)
-            media.lockMediaGlyph.visibility = if (art == null) View.VISIBLE else View.GONE
-            row.lockMediaRowGlyph.visibility = if (art == null) View.VISIBLE else View.GONE
+            val glyph = if (art == null) View.VISIBLE else View.GONE
+            glance.lockMediaGlyph.visibility = glyph
+            glance.lockMediaCompactGlyph.visibility = glyph
+            row.lockMediaRowGlyph.visibility = glyph
         }
-        media.lockMediaItem.text = s.item ?: s.entry
-        media.lockMediaEntry.text = if (s.item != null) s.entry else null
+        val item = s.item ?: s.entry
+        val entry = if (s.item != null) s.entry else null
+        glance.lockMediaItem.text = item
+        glance.lockMediaEntry.text = entry
+        glance.lockMediaCompactItem.text = item
+        glance.lockMediaCompactEntry.text = entry
         val position = positionNow(s, SystemClock.elapsedRealtime())
-        media.lockMediaProgress.progress = progressPermille(position, s.durationMs)
-        media.lockMediaProgress.contentDescription =
-            if (s.durationMs > 0) activity.getString(R.string.music_time_of, clockText(position), clockText(s.durationMs)) else clockText(position)
-        media.lockMediaPlay.setImageResource(playIcon)
-        media.lockMediaPlay.contentDescription = playLabel
+        val progress = progressPermille(position, s.durationMs)
+        val progressText = if (s.durationMs > 0) {
+            activity.getString(R.string.music_time_of, clockText(position), clockText(s.durationMs))
+        } else {
+            clockText(position)
+        }
+        for (bar in listOf(glance.lockMediaProgress, glance.lockMediaCompactProgress)) {
+            bar.progress = progress
+            bar.contentDescription = progressText
+        }
+        for (button in listOf(glance.lockMediaPlay, glance.lockMediaCompactPlay, row.lockMediaRowPlay)) {
+            button.setImageResource(playIcon)
+            button.contentDescription = playLabel
+        }
         row.lockMediaRowEntry.text = s.entry ?: s.item
-        row.lockMediaRowPlay.setImageResource(playIcon)
-        row.lockMediaRowPlay.contentDescription = playLabel
-        if (lockMediaTicks(ui, s)) handler.postDelayed(ticker, 1_000)
+        if (glanceTicks(shown != GlanceTileSize.NONE, s)) handler.postDelayed(ticker, 1_000)
     }
 }

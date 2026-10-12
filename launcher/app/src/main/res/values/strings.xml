@@ -337,7 +337,29 @@
     <string name="music_previous">Previous</string>
     <string name="music_next">Next</string>
     <string name="lock_media_unlock">Unlock</string>
-    <string name="lock_media_back">Back to playback</string>
+    <string name="lock_media_back">Back</string>
+    <!-- Design 25: the lock's glance page - its notification rows and the "more" line. -->
+    <plurals name="glance_messages">
+        <item quantity="one">%1$d message</item>
+        <item quantity="other">%1$d messages</item>
+    </plurals>
+    <plurals name="glance_notices">
+        <item quantity="one">%1$d new notification</item>
+        <item quantity="other">%1$d new notifications</item>
+    </plurals>
+    <string name="glance_missed">Missed call</string>
+    <plurals name="glance_missed_many">
+        <item quantity="one">%1$d missed call</item>
+        <item quantity="other">%1$d missed calls</item>
+    </plurals>
+    <plurals name="glance_more">
+        <item quantity="one">+ %1$d more</item>
+        <item quantity="other">+ %1$d more</item>
+    </plurals>
+    <string name="glance_yesterday">yesterday</string>
+    <string name="glance_open_action">Unlock and open</string>
+    <string name="glance_missed_action">Unlock and see missed calls</string>
+    <string name="glance_missed_from">Missed call from %1$s</string>
     <!-- Design 24b: a parent-PIN window that locks again by itself (notification, Home banner). -->
     <string name="notification_channel_window">Opened with the parent code</string>
     <string name="window_override_open">Open with the parent code until %1$s</string>
