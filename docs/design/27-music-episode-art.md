@@ -466,3 +466,12 @@ Rebase on `main` before the last test run. The Storytel phase can reuse `PlayIte
    different pictures" the right line for showing the carousel? Below it the player looks as today, and the odd
    episode with its own picture still shows it.
    - **Recommendation: yes.** It follows what the kid plays first, and doesn't flip back and forth.
+
+## User decisions (2026-10-12)
+
+1. **A swipe switches episode** (the recommendation). The episode plays at its saved place, title and seek bar
+   follow the picture, and a tap on the centre is play/pause.
+2. **Mixed feeds: the carousel shows as soon as at least one episode has its own picture.** This replaces the
+   "at least half of the first 10, at least two different pictures" rule. Episodes without art show the series
+   cover in the carousel. An entry where no episode has its own picture looks exactly as today: one cover, no
+   carousel (user, earlier the same day).
