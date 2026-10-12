@@ -50,7 +50,7 @@ Option A splits vibb's one process in two (design 26 review item 4):
   a 5-minute shelf cache in memory); every request goes through `AppState.music_fetch` (`music_net::Gated`: one request
   in flight server-wide, 200 ms apart). Phone: one process-wide `StorytelAccount` (Android) over the pure `StorytelApi`;
   its callers are the download worker (WorkManager, IO) and a Sonos room's actor (IO) - **never the main thread**; a
-  `Mutex` around the login so the two never log in twice at once.
+  lock around the login inside `StorytelApi` (§4.2) so the two never log in twice at once.
 - **Secrets** (design 20 §5, design 21 §1.4): the password, the encrypted password (`pwd=` is AES with a public key and
   IV: as good as the password), the email, the JWT and a minted CDN URL (its `token=` is a bearer for that book) never
   reach a log, `music_state`, an event, a page, Room, a file other than the sealed login, or an error message. The PWA
@@ -87,7 +87,7 @@ Option A splits vibb's one process in two (design 26 review item 4):
 | `_encrypt_password` (openssl) | `storytel::encrypt_password` (`aes` crate, CBC by hand); `StorytelApi.encryptPassword` (`javax.crypto` `AES/CBC/PKCS5Padding`) | UPPERCASE hex; vibb's vector (§7) |
 | `_NoRedirect`, `_request` (the one HTTP seam) | server `music_net::SourceRequest` (method, headers, body, follow); phone `StorytelHttp` (the seam the tests fake) | follow=false only for the asset call |
 | `_jwt`, `login`, `_bearer`, `_api` | `storytel::Account::{login, bearer, api}`; `StorytelApi.{login, bearer, call}` | TTL 1 h, re-login once on 401, non-200 login = refused + cooldown, 200 without `accountInfo.jwt` = error, no cooldown |
-| `_LOGIN_COOLDOWN_S`, `_cooldown_*` | server `music_storytel.login_refused_at` + `_generation`; phone `noBackupFilesDir/storytel_refused.json` | 1 h, active while `0 < now - at < 1 h` and the generation is the stored login's |
+| `_LOGIN_COOLDOWN_S`, `_cooldown_*` | server `music_storytel.login_refused_at` + `_generation`; phone `noBackupFilesDir/storytel_refused.json` | 1 h, active while `0 <= now - at < 1 h` (vibb's `0 <` is float seconds; at ms resolution a mint right after a refusal would log in again - step 1, both sides) and the generation is the stored login's |
 | `bookshelf` | `storytel::Account::bookshelf` (server only) | POST, body `{"items":[]}` under `Content-Type: application/x-www-form-urlencoded`, bearer, `Accept: */*` |
 | `bookshelf_cached`, `RAW_SHELF_TTL_S` | `Account::shelf(max_age)` (in memory, 300 s; a failed fetch falls back to the last good shelf) | the sweep reads it, so a pass fetches the shelf once |
 | `asset_url` | `StorytelApi.assetUrl(cid, timeoutMs)` (phone only) | GET with bearer, no redirect followed, the `Location` or a status class (§4.1: `NoAudio`/`Failed`); 6 s on the Sonos path |
@@ -159,8 +159,9 @@ Option A splits vibb's one process in two (design 26 review item 4):
     `state.music_key` (`NotConfigured` without a login or a key, `KeyUnusable` when sealed with another key).
   - `login_with(state, email, password)`: the request and its outcome without touching the DB (the save's probe uses it
     with the entered login, §2.3); `login(state)` = `credentials` + the cooldown + `login_with` + the stamps.
-  - `login(state) -> Result<String, _>`: cooldown first (`music_storytel.login_refused_at` within 1 h of `Sweep::now()`
-    and `login_refused_generation = generation` -> `Cooldown { until }` with **no request**); then GET
+  - `login(state) -> Result<String, _>`: cooldown first (`music_storytel.login_refused_at` within 1 h of `Sweep::now()`,
+    i.e. `0 <= now - at < 1 h` as the phone's (§1.1; a stamp in the future is none) - **for the step 2a implementer: the
+    server matches the phone's boundary** - and `login_refused_generation = generation` -> `Cooldown { until }` with **no request**); then GET
     `LOGIN_URL?m=1&uid=<email>&pwd=<encrypt_password(pw)>` (`form_urlencoded::Serializer`, so `@` is `%40` as in
     Python's `urlencode`), `Kind::Login`, redirects followed (vibb). Not 200 -> stamp the cooldown for this generation
     and `Refused(status)` (a 5xx counts too, as vibb's "a refusal, not an outage"); 200 without a non-empty
@@ -377,18 +378,21 @@ Resume itself is phase 1's (the queue is the visible books).
 
 ### 4.1 `M/storytel/StorytelApi.kt` (pure, Android-free; `StorytelApiTest`)
 ```kotlin
+// M/storytel/StorytelHttp.kt - the seam and its types (step 1); each prints redacted (L9).
 /** The one HTTP seam (vibb `_request`): blocking, any status returned, IOException = unreachable. */
-interface StorytelHttp { fun send(request: StorytelRequest): StorytelResponse }
+fun interface StorytelHttp { fun send(request: StorytelRequest): StorytelResponse }
 data class StorytelRequest(val method: String, val url: HttpUrl, val headers: List<Pair<String, String>>, val follow: Boolean, val timeoutMs: Long)
-data class StorytelResponse(val status: Int, val location: String?, val body: ByteArray) // body capped at 64 KB
+class StorytelResponse(val status: Int, val location: String?, val body: ByteArray) // body capped at 64 KB; plain class (a ByteArray)
+
+// M/storytel/StorytelApi.kt
 
 sealed interface Mint {
-    data class Url(val url: String) : Mint          // the signed CDN URL: used once, never stored or logged
+    class Url(val url: String) : Mint               // the signed CDN URL: used once, never stored or logged
     data object NotConfigured : Mint                 // no login on the phone (or it can't be opened)
     data class Refused(val untilWallMs: Long) : Mint // refused now or inside the cooldown
     data class LoginFailed(val reason: String) : Mint // login unreachable, timed out, or 200 without a JWT: no cooldown
     data class NoAudio(val status: Int) : Mint       // 3xx without Location, 403, 404, 410, 451: item error `no_audio`
-    data class Failed(val status: Int) : Mint        // the asset call: 401 after the re-login, 408, 429, 5xx, other: `http_<status>`
+    data class Failed(val status: Int) : Mint        // the asset call: 401 after the re-login, 408, 429, 5xx, other (a non-3xx with a Location too): `http_<status>`
     data class Unreachable(val reason: String) : Mint // the asset call's transport failure or timeout: `network`
 }
 
@@ -407,18 +411,24 @@ class StorytelApi(
   `JWT_TTL_MS = 3_600_000`, `LOGIN_COOLDOWN_MS = 3_600_000`), with the UPSTREAM note.
 - `encryptPassword(pw)`: `Cipher.getInstance("AES/CBC/PKCS5Padding")` (PKCS#5 in JCA is PKCS#7 for AES), UTF-8 in,
   UPPERCASE hex out.
-- `login()`: the cooldown first (`CooldownStore.refusedAt(generation)`: `0 < wall - at < 1 h` -> `Refused`, **no
+- `login()`: the cooldown first (`CooldownStore.refusedAt(generation)`: `0 <= wall - at < 1 h` -> `Refused`, **no
   request**); then GET `<LOGIN_URL>?m=1&uid=<email>&pwd=<hex>` built with `HttpUrl.Builder.addQueryParameter` in that
-  order, follow on, 20 s (less when the deadline is nearer). Not 200 -> `CooldownStore.setRefused(generation, wall)` and
-  `Refused`; 200 without a non-empty `accountInfo.jwt` -> `LoginFailed("no jwt")` (no cooldown); `IOException` or the
+  order, follow on, 20 s (less when the deadline is nearer). Not 200 -> `CooldownStore.setRefused(generation, wall)` (a failed
+  write is swallowed: a mint never throws) and `Refused`; 200 without a non-empty `accountInfo.jwt` -> `LoginFailed("no jwt")` (no cooldown); `IOException` or the
   deadline -> `LoginFailed` (no cooldown). The JWT is kept **in memory only** with `elapsed + 1 h` and the login's
   generation.
 - `bearer(force)`: the kept JWT unless forced, expired or of another generation; else `login()`.
 - `assetUrl(cid, timeoutMs)`: GET `API/assets/v2/consumables/<cid>/abook`, `Authorization: Bearer <jwt>`, `Accept:
-  */*`, **follow = false**; a 401 -> `bearer(force = true)` and one retry; then a `Location` (absolute http(s)) is
-  `Url`; else the status decides (QA M7): a 3xx without a usable `Location`, 403, 404, 410 or 451 -> `NoAudio(status)`
-  (locked, geo, gone: permanent for a day); 401 after the re-login, 408, 429, 5xx and anything else -> `Failed(status)`
-  (transient); an `IOException` or the deadline -> `Unreachable`. The deadline bounds the whole call (login included).
+  */*`, **follow = false**; a 401 -> `bearer(force = true)` and one retry (a second 401 drops that JWT and stops the
+  run, `mintStopsRun`); then **on a 3xx only** a `Location` that `StorytelApi.mintedUrl` accepts (OkHttp's
+  `toHttpUrlOrNull`, http(s), a host, no userinfo, at most 8 KB; the canonical form) is `Url`; else the status decides
+  (QA M7): a 3xx without a usable `Location`, 403, 404, 410 or 451 -> `NoAudio(status)` (locked, geo, gone: permanent
+  for a day); 401 after the re-login, 408, 429, 5xx and anything else (a 4xx/5xx carrying a Location included) ->
+  `Failed(status)` (transient); any exception from the seam or the deadline -> `Unreachable`. The deadline bounds the
+  whole call (login included). A cid outside `[A-Za-z0-9_-]{1,64}` is `NoAudio(0)` without a request.
+- **The login lock** (QA L6; step 1): a `ReentrantLock` in `StorytelApi`, taken with `tryLock` for what is left of the
+  deadline; under it the stored login and the kept JWT are read again, so a waiter is served by the login it waited
+  for; an asset call holds no lock. `state()` (`none`/`refused`/`ok`) is here too.
 - Endpoints: `Endpoints.STORYTEL` (the real hosts); the debug feed may point both at the fake (§4.6).
 - `M/storytel/StorytelHttp.kt`: `OkHttpStorytelHttp(client: OkHttpClient, userAgent: String)` - the client is a
   parameter (QA M2): `StorytelAccount` passes `MediaCache.guarded(...)` (the public-only client: Storytel's API is
@@ -431,12 +441,16 @@ class StorytelApi(
 ### 4.2 `M/storytel/StorytelAccount.kt` (Android)
 The process-wide account: `StorytelApi` over `StorytelLogin.load(context)` (phase 1's Keystore-sealed login, read per
 login), a `CooldownStore` in `noBackupFilesDir/storytel_refused.json` (`{generation, at}`, tmp + rename), the clocks
-`SystemClock.elapsedRealtime` and `System.currentTimeMillis`, and a `Mutex` around the login and the JWT it guards (the
-download worker and a Sonos actor never log in twice at once; an asset call holds no lock). The wait for that `Mutex`
-counts against the caller's deadline (a download's login may hold it up to 20 s; a Sonos mint then fails at its 10 s, QA
-L6). The one signature: `suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint` (IO) - downloads `(15
-s, now + 60 s)`, the Sonos path `(6 s, now + 10 s)`. `fun state(): String` = `none` (no login stored) / `refused` (the
-cooldown runs for the stored generation) / `ok`. A new generation from the bridge needs no call: the JWT and the
+`SystemClock.elapsedRealtime` and `System.currentTimeMillis`. The lock around the login and the JWT it guards lives in
+`StorytelApi` (§4.1, built in step 1; the download worker and a Sonos actor never log in twice at once; an asset call
+holds no lock); its wait counts against the caller's deadline (a download's login may hold it up to 20 s; a Sonos mint
+then fails at its 10 s, QA L6). **Two conditions for step 3** (qa-26b-step1-code): `StorytelAccount` holds **exactly
+one `StorytelApi` for the process** (the lock and the JWT live in the instance; one per worker run, or per read of
+`debugBase`, would lose both and log in every run), and `mint` is `withContext(Dispatchers.IO) { api.assetUrl(...) }`
+(the lock blocks a thread for up to the deadline). The one signature: `suspend fun mint(cid: String, timeoutMs: Long,
+deadlineMs: Long): Mint` (IO) - downloads `(15 s, now + 60 s)`, the Sonos path `(6 s, now + 10 s)`. `fun state():
+String` delegates to `StorytelApi.state()` (off main: it opens the sealed login) = `none` (no login stored) /
+`refused` (the cooldown runs for the stored generation) / `ok`. A new generation from the bridge needs no call: the JWT and the
 cooldown are per generation (vibb `save_credentials` clears both). Generation 0 deletes the login (phase 1); the same
 sync's library has no Storytel entries any more (§2.7).
 
@@ -521,7 +535,7 @@ compares `pwd` with the fixture's hex):
 - `SonosController.playIndex`'s actor job resolves the mint **inside the job, right before** `transport.play` (vibb:
   "milliseconds before the SOAP /play"): `StorytelMinter.mint(cid, 6_000, elapsed + MINT_BUDGET_MS)` - the account's
   one signature (§4.2): the asset call 6 s (vibb's Sonos timeout), the whole mint, the login and the login `Mutex`'s
-  wait included, within `MINT_BUDGET_MS = 10_000`; a `Url` that passes `safeUrl` and isn't a private literal (unless the
+  wait included, within `MINT_BUDGET_MS = 10_000`; a `Url` (already through `StorytelApi.mintedUrl`, §4.1) that isn't a private literal (unless the
   debug switch, §4.6 (d)) becomes `body.copy(uri = url, mint = null)`; anything else fails the job with
   `StorytelUnavailable(code)`, which is 1b's failed play (a first start is Lost: "Kan ikke spilles på Sonos", the phone,
   paused; a step or an advance is dropped). **One mint per play** (vibb 5: two mints meant a second failure after the
@@ -651,9 +665,9 @@ book, a geo-flagged book and a numeric `model.id`, with `items` keys deliberatel
 | 5 a 401 re-logins exactly once and retries once | `storytel::tests::a_401_relogs_once` | `StorytelApiTest` (on the asset call) |
 | 6 grouping: `model.id` not the format id, series in reading order, standalone own group, ebook dropped, kids/locked as data | `storytel::tests::normalize_*` (+ first-seen order with unsorted keys, numeric ids, a missing id skipped) | n/a |
 | 7-10 outbox, flush, `push_bookmark` (ms, deviceId, action), offline queue | not ported (no mirroring, §9) | not ported |
-| 10b a refused login parks a 1 h cooldown, no request; a new password retries at once | `storytel::tests::refused_login_cooldown` (stamp, no request inside, a save's new generation clears) | `StorytelApiTest` (the store's stamp, a new generation clears) |
+| 10b a refused login parks a 1 h cooldown, no request; a new password retries at once | `storytel::tests::refused_login_cooldown` (stamp, no request inside, a save's new generation clears) | `StorytelApiTest` (the store's stamp, a new generation clears: the store is keyed by generation, so the old stamp no longer applies; step 3's file may keep one `{generation, at}` record) |
 | 11 unconfigured degrades cleanly | `storytel::tests::not_configured` (no login, no key, another key) | `StorytelApiTest` (`NotConfigured`, no request) |
-| `storytel_expand.py` 1 only downloaded books, reading order, keyed by id | - | `StorytelRulesTest` (`forRenderer(false)`) |
+| `storytel_expand.py` 1 only downloaded books, reading order, keyed by id | - | `StorytelRulesTest` (`Snapshot.visible` in step 1; `forRenderer(false)` from step 3) |
 | 2 per-book art beats the series cover | the listing's `art` per book (`music_sweep` test) | `PlayBodyTest` (the book's art to the speaker); the phone's screens keep the entry cover (§9) |
 | 3/4 prune keeps the dir while in the library, removes it once not | - | `OfflineTest` (Storytel copies kept while listed, pruned when the library drops the entry or the list drops the book) |
 | 5 `collection_image` local only | n/a (covers come through the bridge, phase 1) | n/a |
@@ -992,7 +1006,8 @@ M8, M9, L14 and §10's two questions.
   login (`LoginFailed`) is not reported as `login` - it is a network matter, and the shared rule already says `wifi`
   when the network is the cause.
 - **M5**: §3.5: for Storytel, "del N av M", `started`, the progress line and the player's "Del N av M" count the
-  series' reading order (`snap.listed`); `LibraryViewTest` rows; done in step 3 (`UiModel.kt`, `LibraryView.kt`).
+  series' reading order (`snap.listed`); `LibraryViewTest` rows; done in step 1 (`UiModel.kt`, `LibraryView.kt`;
+  the listing order, not the play order - qa-26b-step1-code L5).
 - **M6**: §5.1: the play job carries a thread-safe token (generation, `closed`, `mayPlay`) checked before the mint (a
   superseded job never mints) and after it, before `SetAVTransportURI`; `DRAIN_MS` 30 s rechecked and kept; the
   receiver's 9 s vs `HANDOFF_MS` 25 s explained. `SonosControllerTest` rows; the fake's `--slow-mint` for the emulator.
@@ -1128,3 +1143,38 @@ Found in the spec while building (no change made to §0-§13):
 Owed: none for step 1. For step 3 (from these choices): `StorytelAccount` = `StorytelApi` over `StorytelLogin.load`, the
 file `CooldownStore`, `SystemClock.elapsedRealtime`/`System.currentTimeMillis` and `OkHttpStorytelHttp(guarded client,
 "VibbMusic/<version>")`; route Storytel rows through `retryDelayFor` and `sourceId`; replace the `debugBase` pin.
+
+### Fix round after QA's code review (qa-26b-step1-code, 2026-10-12)
+
+All eight Lows fixed; QA accepted the twelve choices (1, 3, 4, 7, 8 now also in §1.1, §2.1, §4.1, §4.2, §7 and §13's
+text). Suite after the round: `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
+-PwarningsAsErrors=true` green, **413 JVM tests**, 0 failures (`StorytelRulesTest` 20, `LibraryViewTest` 11; the
+others' new rows sit in existing tests); lint unchanged.
+- **L1** (a refused login could throw): `cooldown.setRefused` runs in `runCatching`; the mint still returns `Refused`.
+  `StorytelApiTest`: a store whose write throws gives `Refused`, no exception.
+- **L2** (the `toString` pin could borrow the next class's body): the header regex now ends at the class's own `{`
+  (`[^)]*\)\s*(:[^{\n]*)?\{`) and a class without a body fails. Mutation: `StorytelRequest` as a bare `data class`
+  turns the pin red ("no body for ..."), reverted.
+- **L3** (the minted Location went through the listing's `safeUrl`): `StorytelApi.mintedUrl` - OkHttp's
+  `toHttpUrlOrNull`, http(s), a host, no username or password, at most 8 KB (`MINTED_URL_MAX`), the canonical form;
+  §5.1's check uses it. Rows: a `|` and a space are a `Url` (the space comes back `%20`), a 3000-character token is a
+  `Url`, userinfo (with or without a password), relative, `ftp:`, empty and over-8 KB stay `NoAudio`.
+- **L4** (a persistent 401 cost one login per book): a 401 on the retry with a fresh JWT drops that JWT (when it is
+  still the kept one), and `mintStopsRun(Failed(401))` is true (that book still gets `http_401`). Rows in
+  `StorytelApiTest` (the next mint starts with a login) and `StorytelRulesTest`.
+- **L5** ("Del N av M" counted the play order): `entryUi` and `playerNumber` pass the listing order (the reading order)
+  to `countedOrder`; with newest first, book 5 reads "del 5 av 5" on the tile and in the player. `LibraryViewTest` row.
+- **L6** (a listed 0 came back as a length): `durationByConsumableId` returns only a value > 0 (vibb's `if known:`).
+  Rows: a listed 0 and a missing length are null.
+- **L7** (`mayRetry` decided with phase 1's classes only): `mayRetry(..., delayMs = ::retryDelayMs)`, and
+  `downloadPlan` passes `retryDelayFor(entry, ...)` to it and to `nextRetryAt` (unchanged for NRK/RSS: `retryDelayFor`
+  falls back to `retryDelayMs`). `StorytelRulesTest`: `http_403` may retry after 2 min for a Storytel book, not for an
+  RSS item (a day), the default stays phase 1's, `no_audio` waits a day.
+- **L8** (the ported tests didn't credit vibb): the MIT credit line in `StorytelApiTest`, `StorytelHttpTest` and
+  `StorytelRulesTest`.
+- **Spec text** (no behaviour change): §0's threading line and §4.2 (the lock in `StorytelApi`; step 3's two conditions:
+  one `StorytelApi` for the process, `mint` on IO), §4.1 (the types in `StorytelHttp.kt`, `Mint.Url` a plain class, a
+  Location only on a 3xx through `mintedUrl`, the failed cooldown write swallowed, the malformed cid, the lock),
+  §1.1 and §2.1 (`0 <= now - at < 1 h`, with the note that the step 2a server matches it), §5.1 (`mintedUrl`), §7
+  (`storytel_expand.py` 1: `Snapshot.visible` now, `forRenderer(false)` from step 3; 10b through the
+  generation-keyed store), §13 (M5 done in step 1, in reading order).
