@@ -1069,7 +1069,7 @@ because anyone holding the locked phone sees it.
 - **Veto if wrong:** "Same as Home" could skip photos without the tick (navy instead).
 
 ### Data, policy, PWA
-- **Migration `0070_lock_wallpaper.sql`** (0068 and 0069 are taken by other branches; renumber at merge if needed),
+- **Migration `0069_lock_wallpaper.sql`** (the next after `cmd-expiry`'s 0068),
   a new table:
   - `device_lock_wallpaper (device_id INTEGER PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, wallpaper_id INTEGER NOT NULL, FOREIGN KEY (device_id, wallpaper_id) REFERENCES device_wallpapers(device_id, wallpaper_id) ON DELETE CASCADE)`.
   - No row means "Same as Home".
