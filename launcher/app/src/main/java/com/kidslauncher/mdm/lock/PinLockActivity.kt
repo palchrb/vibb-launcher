@@ -155,6 +155,8 @@ class PinLockActivity : AppCompatActivity() {
         }
         // Design 25 §1.2: no screenshot, recording or cast of either stage - before any content.
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Bug 25b-B: no open transition - at a screen-on the lock is simply there.
+        overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
         binding = ActivityPinLockBinding.inflate(layoutInflater)
         // The VoIP ring screen (design 17) lies over the keypad while an allowed app's call rings.
         val frame = FrameLayout(this)

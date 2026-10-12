@@ -94,6 +94,9 @@ class GlancePanel(
     private var rows: List<GlanceRow> = emptyList()
     private val rowViews = mutableListOf<ViewLockGlanceRowBinding>()
 
+    /** A fit changed the page in this traversal: its frame is skipped (the next one is fitted). */
+    private var refitPending = false
+
     /** The root height the current fit was made for (0 = a new fit is due). */
     private var fitFor = 0
     private var fit: GlanceFit? = null
@@ -117,6 +120,13 @@ class GlancePanel(
         // (gesture <-> 3-button navigation, QA Low 4).
         glance.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
             if (bottom - top > 0 && bottom - top != fitFor) guarded("fit") { fitNow() }
+        }
+        // Bug 25b-B/C: a fit that changed the page skips the frame it was made in - the first frame
+        // drawn is the fitted page, never the big clock and tile settling a moment later.
+        glance.root.viewTreeObserver.addOnPreDrawListener {
+            if (!refitPending) return@addOnPreDrawListener true
+            refitPending = false
+            false
         }
     }
 
@@ -471,7 +481,10 @@ class GlancePanel(
             more = measured(more, width),
         )
         val next = glanceFit(available, heights, tileUp, rows.size)
-        if (next != fit) Log.i(LOG_TAG, "Glance fit: candidate ${next.candidate}, ${next.rows} rows, ${next.more} more")
+        if (next != fit) {
+            Log.i(LOG_TAG, "Glance fit: candidate ${next.candidate}, ${next.rows} rows, ${next.more} more")
+            refitPending = true
+        }
         fit = next
         apply(next, shownRows)
     }

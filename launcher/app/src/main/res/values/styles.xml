@@ -61,6 +61,8 @@
         <item name="android:windowDisablePreview">false</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <!-- Bug 25b-B: no fade - at a screen-on the lock is there at once, never fading in over Home. -->
+        <item name="android:windowAnimationStyle">@null</item>
     </style>
 
     <!-- The call screens (step 10 mockups): gradient window, matching system bars. -->

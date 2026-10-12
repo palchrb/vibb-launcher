@@ -939,8 +939,11 @@ object PinLockRuntime {
         if (bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)) return false
         try {
             context.startActivity(
+                // No open animation (bug 25b-B): started while the display sleeps, the lock's
+                // transition otherwise played at the next screen-on - Home (its last, unlocked
+                // frame) first, the lock sliding in over it.
                 Intent(context, PinLockActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),
             )
             if (wake) {
                 voipWakeAskedAt = SystemClock.elapsedRealtime()
