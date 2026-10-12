@@ -752,27 +752,27 @@ No other real user questions: M2, M3 and M6 are design fixes with obvious defaul
 
 ## Implementation status (2026-10-12)
 
-Built on branch `music-episode-art-27`, rebased onto `main` `e3b61813`. Not pushed, not merged. Nothing was run on a
+Built on branch `music-episode-art-27`, rebased onto `main` `7335a66a`. Not pushed, not merged. Nothing was run on a
 device or the emulator.
 
 **Commits:**
-- `3ac53f38` Step 1 (server and the listing contract). Migration `0070_music_episode_art.sql`. The listing
+- `574a422f` Step 1 (server and the listing contract). Migration `0070_music_episode_art.sql`. The listing
   snapshot, the music app's copy, `Listing.kt`'s 64-hex filter, `ContractFilesTest` and the launcher's
   `MusicPlanTest` version pin (`a8146790d70b89a3`, QA M4) are in this one commit.
-- `9c0d18ae` Server docs: `server/CLAUDE.md` ("Vibb music: episode art") and `server/DEPLOY.md` (`data/music_art` isn't
+- `4a24db1f` Server docs: `server/CLAUDE.md` ("Vibb music: episode art") and `server/DEPLOY.md` (`data/music_art` isn't
   backed up, the Pi checks).
-- `9608c40c` The flaky `flags_are_kept_until_their_item_is_asked`: it flagged after a fixed 30 ms while a check ran,
+- `af494ab7` The flaky `flags_are_kept_until_their_item_is_asked`: it flagged after a fixed 30 ms while a check ran,
   so under load the flag landed before the check read its rows, or after it committed. It now waits for the check's
   first request (`CannedFetch::in_flight()`).
-- `26d03e1f` Step 2 (the courier): `items.artHash` (Room 2, the `ReapplyListings` auto migration, QA H1), the want set
+- `07ec4568` Step 2 (the courier): `items.artHash` (Room 2, the `ReapplyListings` auto migration, QA H1), the want set
   (`logic/EpisodeArt.kt`, `sync/ArtPlan.kt`), `wantArt` appended to the AIDL in both apps, `bridge_contract.json`'s
   `want_art` caps, the launcher's `syncArt`/`artToFetch`/`artToDelete` and failure backoff (QA M6), the music app's
   prune of covers and small copies (QA L3, L4).
-- `c117f3bc` The launcher nudges the music app once when a new want set names pictures it already holds.
-- `40713096` Step 3 (the player): `PlayerArt`/`EpisodeCarousel`, `SKIP_TO` and `THEN_SKIP_TO`, `Cover`'s fallback,
+- `a6cc2f2c` The launcher nudges the music app once when a new want set names pictures it already holds.
+- `4dba4307` Step 3 (the player): `PlayerArt`/`EpisodeCarousel`, `SKIP_TO` and `THEN_SKIP_TO`, `Cover`'s fallback,
   `Store.coversVersion` (QA M5), the lazy art map and `replaceMediaItem` (QA H2), the mockup's rule and saved place,
   and this spec's body (QA M1).
-- `cd32ab3f` The server's art pass skips items without a source or picture URL (a Storytel part is `ok` with
+- `8159da2c` The server's art pass skips items without a source or picture URL (a Storytel part is `ok` with
   `url` NULL), and the covers version moves atomically.
 
 **Deviations and choices:**
@@ -788,21 +788,42 @@ device or the emulator.
 - The pager's "pending" hold is the `PlayRequest` (QA H3). For quick swipes, `PlayRequest.via` lets the player pass
   through an earlier swipe's target without ending the later request. The pager also records the index shown when it
   skipped, so it isn't pulled back before the request shows.
-- Decoding (QA L3): covers decode at the size the player's 224 dp cover needs (`inSampleSize`), and the bitmap cache
-  counts bytes (16 MiB).
+- Decoding (QA L3): covers decode scaled to the size the player's 224 dp cover needs, never above the file (336 px at
+  density 1.5, the Jelly Star; the whole 512 px file from density 2.3 up; code QA L12), and the bitmap cache counts
+  bytes (16 MiB).
 - `PlayerScreen` takes `numberOf(item)` in place of `number`, so "Episode N av M" follows the landing page.
 - Server-side choices are in the step 1 report: `art_fetched_at`, the reference-print columns, and the monthly backlog
   retry (QA L1 e). The server version stays 0.24.0.
 
 **Tests and checks:**
-- Server: `cargo test` 611 passed. `cargo fmt --check` is clean. `cargo clippy --all-targets` gives 12 warnings, none
+- Server: `cargo test` 618 passed (after the code QA fix round). `cargo fmt --check` is clean. `cargo clippy --all-targets` gives 12 warnings, none
   in the new code.
-- Launcher: `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` passed (1010 tests), release
+- Launcher: `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` passed (1027 tests), release
   built with the stub `tsnet.aar`.
-- Music app: `testDebugUnitTest assembleDebug assembleRelease lint -PwarningsAsErrors=true` passed (185 tests). Lint
+- Music app: `testDebugUnitTest assembleDebug assembleRelease lint -PwarningsAsErrors=true` passed (189 tests). Lint
   has nothing new.
 - The PWA was checked headless at 360 px in light and dark: the count line is cut off with "…", and nothing scrolls
   sideways.
+
+- Code QA fix round (`docs/design/qa-27-code.md`, 0 High, 2 Medium, 12 Low, all fixed; its "Fixes" table): the server
+  commits `bcc471e1`..`c93bc466` (M1, M2, L1-L6; migration 0070 edited in place: `music_art_requests`,
+  `music_items.art_tone`), and `7906a0cc` (L7-L12, music and launcher).
+
+**Coordination for the session building Sonos, Storytel and Spotify** (code QA 27; read before rebasing onto this):
+- **Room:** version 2 is taken (`schemas/.../2.json`, the `ReapplyListings` auto migration). A later bump is version 3
+  with its own `AutoMigration(2, 3)`; don't edit 2.json.
+- **Server migration:** 0070 is taken.
+- **AIDL:** append after `wantArt` in both copies, and update `MusicPlanTest`'s method count (12 now).
+- **Changed signatures:**
+  - `Actions.skipTo` (every `Actions` implementation and fake);
+  - `PlayerScreen(numberOf, …, onSkipTo)`, which meets the output-picker edits only at the call site in `MusicRoot`;
+  - `Cover(…, fallback, content)`: `fallback` comes before `content`, so a positional `content` argument breaks;
+  - `Commands.ALL` (now with `SKIP_TO`).
+- **Sonos:** `skipTo` and `goTo` drive `exo` directly. The Sonos output must route `SKIP_TO` (and `THEN_SKIP_TO`) as
+  it routes next.
+- **Storytel per-book covers:** `music::art_in_library` serves only `source IN ('nrk','rss')`, and the art pass's
+  `art_candidate` skips items without a url. Setting `music_items.art_hash` for books needs both widened. On the phone,
+  `PlayItem.artHash` and `showsCarousel` work as they are.
 
 **Device checks still to do:** all of §6, plus QA H2's lock-tile check and L5's TalkBack and animations-off checks. On
 the Pi, the checks are in `server/DEPLOY.md`. Sonos (phase 1b-3) must route `SKIP_TO` as it routes next.
