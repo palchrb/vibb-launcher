@@ -1565,8 +1565,8 @@ fn policy_problem_text(state: &str) -> String {
 ///
 /// Checking: adds the `device_tracked_apps` row if there's a catalog entry to track (so a
 /// not-yet-installed app actually gets pushed, and an already-installed one starts picking up
-/// future updates), and allows the package if there's one on file - both no-ops if already in
-/// that state.
+/// future updates), allows the package if there's one on file - both no-ops if already in
+/// that state - and cancels an uninstall an earlier uncheck queued.
 ///
 /// Unchecking: removes the `device_tracked_apps` row and disallows the package the same way.
 /// Whether it *also* queues a silent uninstall depends on current on-device status - a preinstalled
@@ -1633,6 +1633,36 @@ pub async fn toggle_app(
             .execute(&state.db)
             .await
             .ok();
+        }
+        // Checked again before the phone synced: the uninstall the uncheck queued is off (the
+        // catalog app's own package too, when the row had none) - else the next sync would still
+        // remove the app ("deleted by your administrator").
+        let catalog_package: Option<String> = match tracked_app_id {
+            Some(tid) => sqlx::query_scalar(
+                "SELECT package_name FROM tracked_apps WHERE id = ? AND package_name != ''",
+            )
+            .bind(tid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten(),
+            None => None,
+        };
+        for package in [Some(package_name.as_str()), catalog_package.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|p| !p.is_empty())
+        {
+            if let Err(err) = sqlx::query(
+                "DELETE FROM device_pending_uninstalls WHERE device_id = ? AND package_name = ?",
+            )
+            .bind(id)
+            .bind(package)
+            .execute(&state.db)
+            .await
+            {
+                tracing::error!(device_id = id, package, %err, "can't cancel a queued uninstall");
+            }
         }
         if !package_name.is_empty()
             && let Err(err) = add_to_allowlist(&state, id, &package_name).await

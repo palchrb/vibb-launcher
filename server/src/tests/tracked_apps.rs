@@ -984,3 +984,70 @@ async fn a_refused_release_says_why_on_the_device_page() {
     let at = page.find(update).unwrap_or_else(|| panic!("{page}"));
     assert!(page[..at].ends_with("data-failed=\"true\">"));
 }
+
+/// Unticking an installed app queues its silent uninstall; ticking it again before the phone syncs
+/// must cancel that (the user's emulator: "Music was deleted by your administrator").
+#[tokio::test]
+async fn ticking_an_app_again_cancels_its_uninstall() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "NONE", "kiosk_engaged": true,
+                "installed_apps": [{"package_name": "me.vibb.music", "label": "Music", "preinstalled": false,
+                                    "installer": "me.vibb.launcher"}],
+            })),
+        )
+        .await;
+    assert!(res.status.is_success());
+    let toggle = |selected: bool| {
+        let mut fields = vec![("package_name", "me.vibb.music")];
+        if selected {
+            fields.push(("selected", "on"));
+        }
+        fields
+    };
+    for selected in [false, true] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{device}/apps/toggle"),
+                Some(&cookie),
+                &toggle(selected),
+            )
+            .await;
+        assert!(res.status.is_redirection(), "{}", res.status);
+    }
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(policy["packages_to_uninstall"], serde_json::json!([]));
+    assert!(
+        policy["allowlist"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("me.vibb.music"))
+    );
+    // Unticked and left: it is uninstalled.
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{device}/apps/toggle"),
+        Some(&cookie),
+        &toggle(false),
+    )
+    .await;
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(
+        policy["packages_to_uninstall"],
+        serde_json::json!(["me.vibb.music"])
+    );
+}
