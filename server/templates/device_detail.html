@@ -424,12 +424,12 @@
         <div class="error">{{ notice }}</div>
         {% endif %}
         {% if music.sonos.all && music.sonos.rows.is_empty() %}
-        <p class="subtitle">The phone hasn't seen any speakers yet. Once the music app has found Sonos speakers on the home Wi-Fi, they show up here and the phone can be limited to some of them. Until then every room is allowed.</p>
+        <p class="subtitle">The phone hasn't seen any speakers yet. Once the music app has found Sonos speakers on the home Wi-Fi, they show up here and the phone can be limited to some of them. Until then every room is allowed - on any Wi-Fi: at a friend's house the phone would list their Sonos speakers too and could play on them.</p>
         {% else %}
         <form method="post" action="/devices/{{ device.id }}/music/sonos-rooms">
             <label class="checkbox-row">
                 <input type="checkbox" name="all" value="on" {% if music.sonos.all %}checked{% endif %} onchange="this.form.submit()">
-                <span>All rooms: the music app may play on every Sonos speaker it finds. Off: only on the rooms ticked below. Speakers the phone finds later aren't allowed until you tick them, and a group of speakers plays only when every room in it is ticked.</span>
+                <span>All rooms: the music app may play on every Sonos speaker it finds, on any Wi-Fi - at a friend's house on theirs too. Off: only on the rooms ticked below. Speakers the phone finds later aren't allowed until you tick them, and a group of speakers plays only when every room in it is ticked.</span>
             </label>
             {% if music.sonos.all %}
             {% for room in music.sonos.rows %}
