@@ -337,6 +337,7 @@ latest`) would take no backup first. A new migration takes the next number after
 - `dns_filter_settings` (singleton), `dns_blocklists`, `dns_custom_domains` - the DNS/Filters feature's config; global, not per-device, see the DNS/Filters gotcha above
 - `contacts` (global address book, unique normalised `phone_number`, `photo_hash`), `device_contacts` (device_id, contact_id, `allow_inbound`/`allow_outbound`/`show_on_home`, `message_app`/`message_address`, `sort_order`), `call_settings` (singleton, `default_country_code`) - see "Calls & SMS" above; `device_policy.calls_managed`/`calls_enabled`/`sms_enabled`/`default_message_app` are the per-device switches; the hardening switches are `device_policy` columns too (see "Hardening")
 - `wallpapers` (built-ins + uploads, `image_hash`, `lock_screen`), `device_wallpapers` (which a phone may use) - see "Wallpapers" above
+- `device_lock_glance_apps` (the apps whose messages the PIN lock's first page shows) and `device_policy.lock_glance_text` - see "The lock's glance page"
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
@@ -634,6 +635,42 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Foreign access** (the fix round, QA High 1 (b)): status `foreign_access` `{admins, accessibility}` (apps outside the allowlist with a device admin or an accessibility service on; valid package names, at most 8 each, `sanitize_foreign_access`) -> `device_status.foreign_access_json` (in 0063). While the latest report has one, the phone refuses the parent PIN and the Status card shows a red warning with the steps (`foreign_note`: pause from here, deactivate and uninstall on the phone, lock again, change the parent PIN); `phone_foreign_access` in the security log when it appears, changes or goes.
 - **Unseen boots** (H4, `boot_witness`): status `unseen_boots` `{count, last_at_ms}` (read leniently) -> `device_status.unseen_boots_count`/`_last_at_ms`; `boot_unseen` in the security log when the count rose; the Status card warns for 30 days ("safe mode, or a start cut short"), advising "Block safe mode" or, with it on since before the boot was noticed (`device_policy.disallow_safe_boot_set_at_ms`, in 0064: set when the hardening card or the first kid PIN turns it on, cleared when off), "probably a start cut short" - otherwise both explanations. `disallow_safe_boot` by default (design 24b S4) waits for device check 6 on the Jelly Star.
 - Tests: `window_relock::tests`, `boot_witness::tests`, `src/tests/window_relock.rs`, `src/tests/hardening.rs` (`unseen_boots_*`).
+
+## The lock's glance page (design 25, `docs/design/25-lock-glance.md`, migration `0066_lock_glance.sql`)
+
+- **What it is**: the phone's PIN lock always comes up on a first page (clock, date, the music tile, up to three
+  notification rows, "Lås opp", "Nødsamtale"): missed calls always, and messages from the apps the parent ticks here,
+  sender only unless the text switch is on. A row's tap only reaches the keypad; nothing is answered, marked read or
+  dismissed from the lock. The phone reads the notifications in memory only - **no row, name, text or count ever
+  comes to this server** (only the capability `lock_glance_v1`).
+- **Data** (`src/lock_glance.rs`): `device_lock_glance_apps` (device_id, package_name; one row per tick, cascades with
+  the device - a table, like `device_tracked_apps`, so there is no corrupt state) and `device_policy.lock_glance_text`
+  (default 0). The migration ticks Element X for every existing device; new ones get it from the
+  `devices_get_lock_glance_default` trigger (as `devices_get_builtin_wallpapers`), so every path that creates a
+  device has the default.
+- **Wire**: `PolicyResponse.lock_glance = {apps, show_text}`, always sent; `apps` sorted, only valid package names
+  (`app_display::valid_package_name`, the launcher's grammar). Cosmetic like the wallpapers: a failing query sends
+  `apps: []` (missed calls only on the lock) and logs, never a 500. An older server's missing key reads as Element X,
+  sender only on the phone; an older launcher ignores it - deploy order is free.
+- **PWA** (`handlers::lock_glance`, full auth, CSRF as every form): the Apps card's `<h3 id="lock-screen">On the lock
+  screen</h3>` (after the allow list, before "Names and icons"): the explanation, Low 8's warning (names show to anyone
+  holding the phone even with the switch off, missed-call names included; with it on a ticked SMS app's login codes
+  show too), the notes (`lock_glance::notes`: no kid PIN, `notification_listener_enabled` false, a reporting launcher
+  without `lock_glance_v1`), the switch (`POST /devices/{id}/lock-screen`, checkbox `show_text`, form
+  `#lock-screen-text`) and one auto-saving tick per app (`POST /devices/{id}/lock-screen/apps`, `package_name` +
+  checkbox `on`, form `#lock-screen-app-<package>`). Listed: with an allowlist the allowed apps (the "Names and
+  icons" set), without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN has the lock
+  too), never Play core or the launcher; every ticked package outside that list is added - "not allowed - ticked"
+  when the allowlist lacks it, else "not on the phone - ticked" (`lock_glance::unlisted_note`) - so any tick can be
+  removed; an empty list says why (`empty_text`: no report yet, nothing allowed, nothing reported). 404 unknown device, 400 a package
+  that isn't a package name or is Play core, 500 on a DB error - nothing written; security events
+  `lock_screen_text_changed` / `lock_screen_app_changed` (`lock_glance::log_line`: "device 3: io.element.android.x on
+  the lock screen: on"); nudges; redirect to `/devices/{id}` without a fragment (scroll-restore keeps the place). The
+  Launcher card's listener warning and the Screen lock card's text name the lock's first page.
+- Tests: `lock_glance::tests`, `src/tests/lock_glance.rs` (the migration on an old database, the trigger, the
+  cascade, the policy incl. a dropped table, both routes, refusals, the page and its notes), `policy_json_keys_snapshot`
+  (`lock_glance` non-null, a fresh phone's `{"apps": ["io.element.android.x"], "show_text": false}`; the launcher's
+  `PolicyResponseCompatTest` decodes the same literal).
 
 ## Connectivity and exposure (design 22, `docs/design/22-connectivity-and-docker.md`, server 0.23.0)
 

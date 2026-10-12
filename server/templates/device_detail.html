@@ -331,6 +331,37 @@
             {% endfor %}
         </div>
         {% endif %}
+        <h3 id="lock-screen">On the lock screen</h3>
+        <p class="subtitle">When the phone is locked, the power button first shows the clock, what's playing and the newest notifications: missed calls always, and messages from the apps ticked here. Tapping one asks for the kid's PIN and then opens it. Nothing can be answered, marked as read or dismissed from the lock screen, and it can't be screenshotted. Each choice saves itself immediately.</p>
+        <p class="subtitle">Anyone holding the locked phone sees who wrote - also with the switch below off, and missed calls by their name in the phone book. With the switch on, a ticked SMS app's login codes show too.</p>
+        {% for note in lock_screen.notes %}
+        <div class="error">{{ note }}</div>
+        {% endfor %}
+        <form method="post" action="/devices/{{ device.id }}/lock-screen" id="lock-screen-text">
+            <label class="checkbox-row">
+                <input type="checkbox" name="show_text" value="on" {% if lock_screen.show_text %}checked{% endif %} onchange="this.form.submit()">
+                <span>Show the message text too, not just who it's from - anyone holding the locked phone can read it.</span>
+            </label>
+            <noscript><button type="submit" class="button-small">Save</button></noscript>
+        </form>
+        {% if lock_screen.unreadable %}
+        <div class="error">The apps shown on the lock screen couldn't be read - check the server log.</div>
+        {% else if lock_screen.apps.is_empty() %}
+        <p class="subtitle">{{ lock_screen.empty_text }}</p>
+        {% else %}
+        <div class="app-checkbox-list">
+            {% for app in lock_screen.apps %}
+            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps" id="lock-screen-app-{{ app.package_name }}">
+                <input type="hidden" name="package_name" value="{{ app.package_name }}">
+                <label class="checkbox-row">
+                    <input type="checkbox" name="on" value="on" {% if app.on %}checked{% endif %} onchange="this.form.submit()">
+                    <span>{{ app.label }}{% if let Some(note) = app.note %} <span class="app-status" style="white-space:normal;">{{ note }}</span>{% endif %}</span>
+                </label>
+                <noscript><button type="submit" class="button-small">Save</button></noscript>
+            </form>
+            {% endfor %}
+        </div>
+        {% endif %}
         {% if !display_forms.is_empty() %}
         <h3>Names and icons on the phone</h3>
         <p class="subtitle">Give an allowed app another name and one of the icons on this phone - "Chat" for Element X, for instance. An app's default from the <a href="/apps">Apps</a> catalog applies unless you choose here. The kid can rename only the apps you haven't named.</p>
@@ -431,7 +462,7 @@
         <h2>Launcher</h2>
         <p class="subtitle">The phone's home screen. Each choice saves itself immediately.</p>
         {% if badges_without_access %}
-        <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts, the notification filter is off, and Vibb music has no "Spilles nå" card on the home screen and no player on the lock screen. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build; a phone still on a launcher from before 2026-10-06 has <code>com.kidslauncher.mdm</code> there).</div>
+        <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts, the notification filter is off, the notifications on the lock screen are missed calls only, and Vibb music has no "Spilles nå" card on the home screen and no player on the lock screen. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build; a phone still on a launcher from before 2026-10-06 has <code>com.kidslauncher.mdm</code> there).</div>
         {% endif %}
         <label for="launcher_language">Language</label>
         <select id="launcher_language" name="language" onchange="this.form.submit()">
@@ -470,7 +501,7 @@
         {% if let Some((text, warning)) = lock_notice %}
         <div class="{% if warning %}error{% else %}success{% endif %}">{{ text }}</div>
         {% endif %}
-        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the parent PIN - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
+        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Its first page shows the clock, the music and new missed calls and messages (Apps -> On the lock screen); "Lås opp" leads to the PIN. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the parent PIN - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
         <p class="subtitle">It keeps people around him out, but the phone no longer has an Android code: its storage is encrypted with a key that doesn't depend on a code, so someone who steals it and has forensic tools may read photos and messages - the kid's PIN is not a secret against that, so don't reuse it anywhere else. Apps that require a screen lock (some bank/ID apps, Google Wallet, passkeys) may refuse to work. Fingerprint unlock isn't available. Safe mode starts the phone without the launcher and so skips the lock - keep "Block safe mode" on (Phone hardening). Lock and wipe on the Locate page still work.</p>
         {% for line in lock.lines %}
         <p>{{ line }}</p>

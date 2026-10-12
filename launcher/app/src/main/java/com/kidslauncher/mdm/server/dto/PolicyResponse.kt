@@ -107,6 +107,14 @@ data class PolicyResponse(
      * carries it, as raw JSON so nothing in it can fail the policy; the music sync (step 3) reads
      * it field by field. Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val music: kotlinx.serialization.json.JsonElement? = null,
+    /** The lock's glance page (design 25): `{apps: [package, ...], show_text: bool}` - the apps whose
+     * messages show on the PIN lock's first page, and whether with their text. Raw JSON read field
+     * by field by [com.kidslauncher.mdm.badges.lockGlancePolicy], so nothing in it can fail the
+     * policy (like [music] and `app_display`). Missing from a fresh response (an older server) =
+     * the server's own default (Element X, sender only); missing from the cache (written by a
+     * build before design 25) = unknown, missed calls only (QA Low 11). Not in
+     * [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val lockGlance: kotlinx.serialization.json.JsonElement? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

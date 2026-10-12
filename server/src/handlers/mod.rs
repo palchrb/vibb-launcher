@@ -7,6 +7,7 @@ pub mod devices;
 pub mod dns_filter;
 pub mod lifts;
 pub mod locate;
+pub mod lock_glance;
 pub mod music;
 pub mod music_api;
 pub mod music_import;

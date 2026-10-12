@@ -467,6 +467,8 @@ struct DeviceDetailTemplate {
     app_downloads_line: Option<String>,
     /// Apps card (design 14): "Name and icon" for every allowed app with a package name.
     display_forms: Vec<crate::app_display::AppDisplayForm>,
+    /// Apps card (design 25): "On the lock screen" - the text switch, notes and one tick per app.
+    lock_screen: crate::lock_glance::LockScreenCard,
     /// "Music" card (design 21, `#music`); `None` when it couldn't be read (the card says so).
     music: Option<crate::handlers::music::MusicCard>,
     /// When and how the phone last reached this server (design 22 §3.1, in memory).
@@ -560,6 +562,74 @@ async fn app_display_forms(
             form
         })
         .collect()
+}
+
+/// The "On the lock screen" subsection (design 25 §3.3): with an allowlist the allowed apps (the
+/// "Names and icons" set), without one every app the phone reports (QA Low 7: a calls-only phone
+/// with a kid PIN still has the lock), and always every ticked package outside that list, so any
+/// tick can be removed. Never Play core or the launcher itself.
+async fn lock_screen_card(
+    state: &AppState,
+    policy: &DevicePolicy,
+    latest_status: Option<&DeviceStatus>,
+    apps: &[UnifiedAppRow],
+    installed: &[InstalledApp],
+    allowed: &std::collections::HashSet<String>,
+) -> crate::lock_glance::LockScreenCard {
+    use crate::lock_glance::{self, LockScreenCard};
+    // The parsed allowlist, when the phone has one: a ticked package outside the list is "not
+    // allowed" only when it isn't in it (code QA Low 6).
+    let allowlist: Option<std::collections::BTreeSet<String>> = policy
+        .allowlist_json
+        .is_some()
+        .then(|| allowed.iter().cloned().collect());
+    let empty_text = lock_glance::empty_text(latest_status.is_some(), allowlist.is_some());
+    let launcher =
+        |package: &str| crate::handlers::device_api::installed_by_launcher(state, Some(package));
+    let capable = latest_status
+        .and_then(|s| s.capabilities_json.as_deref())
+        .is_some_and(|caps| caps.contains(&format!("\"{}\"", lock_glance::LOCK_GLANCE_CAPABILITY)));
+    let notes = lock_glance::notes(
+        crate::kid_lock::policy_kid_lock(policy).is_some(),
+        latest_status.is_some(),
+        capable,
+        latest_status.and_then(|s| s.notification_listener_enabled),
+    );
+    let ticked = match lock_glance::ticked(&state.db, policy.device_id).await {
+        Ok(ticked) => ticked.into_iter().collect(),
+        Err(err) => {
+            tracing::error!(device_id = policy.device_id, %err, "couldn't read the lock screen's apps");
+            return LockScreenCard {
+                show_text: policy.lock_glance_text,
+                notes,
+                apps: Vec::new(),
+                unreadable: true,
+                empty_text,
+            };
+        }
+    };
+    let apps = if policy.allowlist_json.is_some() {
+        let listed = apps
+            .iter()
+            .filter(|a| a.checked && !a.is_launcher && !launcher(&a.package_name))
+            .map(|a| (a.package_name.clone(), a.label.clone()));
+        lock_glance::card_apps(listed, &ticked, allowlist.as_ref())
+    } else {
+        let mut listed: Vec<(String, String)> = installed
+            .iter()
+            .filter(|a| !launcher(&a.package_name))
+            .map(|a| (a.package_name.clone(), a.label.clone()))
+            .collect();
+        listed.sort_by_key(|(_, label)| label.to_lowercase());
+        lock_glance::card_apps(listed, &ticked, None)
+    };
+    LockScreenCard {
+        show_text: policy.lock_glance_text,
+        notes,
+        apps,
+        unreadable: false,
+        empty_text,
+    }
 }
 
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
@@ -1278,6 +1348,15 @@ async fn render_device(
         .unwrap_or(false);
     let any_app_installing = apps.iter().any(|a| a.is_installing);
     let display_forms = app_display_forms(&state, id, &apps, entered.as_ref()).await;
+    let lock_screen = lock_screen_card(
+        &state,
+        &policy,
+        latest_status.as_ref(),
+        &apps,
+        &installed,
+        &allowed,
+    )
+    .await;
     let app_downloads_line = downloads
         .as_ref()
         .and_then(crate::app_downloads::network_line);
@@ -1456,6 +1535,7 @@ async fn render_device(
             app_updates_wifi_only: policy.app_updates_wifi_only,
             app_downloads_line,
             display_forms,
+            lock_screen,
             time,
             play,
             lock,

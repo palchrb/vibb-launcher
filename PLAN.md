@@ -182,6 +182,13 @@ enrollment codes, the Docker image), QA 22's fixes, and the server part of the s
 "Server security wave status" lists each finding). Before tagging it, the repo owner creates the release signing key
 (`server/DEPLOY.md`, "Release signing"): root on the Pi takes only signed releases from 0.24.0 on.
 
+**The lock's glance page (design 25, 2026-10-12, not device-tested yet)**: the PIN lock always comes up on a first
+page - clock, date, the music tile, the newest missed calls and messages (Element X ticked by default; the parent
+picks the apps and whether the text shows in the PWA's Apps card, "On the lock screen"), "Lås opp" and the emergency
+call. A row's tap asks for the code and then opens the conversation or the missed calls; under a time rule only what
+the rule leaves usable, over the time-rule screen. Read in memory only, never sent to the server; the lock's window
+is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the design's "Implementation status".
+
 ## Next features (agreed 2026-10-05)
 
 - **Launcher UI like Xplora One**: grid of round app icons and contacts with

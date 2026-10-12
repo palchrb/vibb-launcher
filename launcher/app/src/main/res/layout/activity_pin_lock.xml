@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- lock.PinLockActivity, handy's own PIN lock (design 10-lock-and-call-ui.md, mockup Lock.dc.html,
-     320x568 dp): clock, date, prompt, dots, keypad (keys sized to fit, 48-72 dp, lock.PinKeypadLayout),
-     Emergency call, and the Parent code link (decision after QA review: always there). Android
-     draws the status line above. Fits 320x569 dp with the status bar and a gesture bar or 3-button
-     navigation, keys >= 52 dp (emulator run 2026-10-06, qa-fixround-2026-10-06 #4;
-     PinLockLayoutTest checks the budget from this file - keep it in step). -->
+<!-- lock.PinLockActivity's keypad stage, handy's own PIN lock (design 10-lock-and-call-ui.md, mockup
+     Lock.dc.html, 320x568 dp; since design 25 mockup LockGlance.dc.html C): the back arrow to the glance
+     page by the prompt, the dots, the keypad (keys sized to fit, 48-72 dp, at the last resort down to
+     32 dp - lock.PinKeypadLayout), Emergency call, the Parent code link (decision after QA review:
+     always there) and, while a music session is live, the compact now-playing row. No clock or date -
+     the glance page (view_lock_glance.xml, over this stage) has them. Android draws the status line
+     above. Fits 320x569 dp with the status bar and a gesture bar or 3-button navigation, keys >= 52 dp
+     with and without the music row (PinLockLayoutTest checks the budget from this file - keep it in
+     step). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pin_root"
     android:layout_width="match_parent"
@@ -17,30 +20,8 @@
     android:paddingEnd="16dp"
     android:paddingBottom="4dp">
 
-    <TextClock
-        android:id="@+id/pin_clock"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="0dp"
-        android:fontFamily="@font/nunito_extrabold"
-        android:format12Hour="h:mm"
-        android:format24Hour="HH:mm"
-        android:includeFontPadding="false"
-        android:textColor="@color/kid_ink"
-        android:textSize="48sp" />
-
-    <TextClock
-        android:id="@+id/pin_date"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:alpha="0.75"
-        android:fontFamily="@font/nunito_bold"
-        android:textColor="@color/kid_ink"
-        android:textSize="15sp" />
-
-    <!-- The prompt, with the way back to the media view at its start while a music session is
-         live (design 21 step 4, Lock.dc.html's keypad stage; the clock and date give way then). -->
+    <!-- The prompt between the back arrow's columns (two lines at most, qa-21-step4-code L5 and
+         design 25 QA Low 5): the arrow always leads back to the glance page. -->
     <FrameLayout
         android:id="@+id/pin_prompt_row"
         android:layout_width="match_parent"
@@ -48,24 +29,27 @@
         android:layout_marginTop="4dp">
 
         <ImageButton
-            android:id="@+id/pin_media_back"
+            android:id="@+id/pin_back"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_gravity="start|center_vertical"
             android:background="@drawable/bg_lock_media_back"
             android:contentDescription="@string/lock_media_back"
             android:src="@drawable/ic_kid_back"
-            android:tint="@color/kid_core"
-            android:visibility="gone" />
+            android:tint="@color/kid_core" />
 
         <TextView
             android:id="@+id/pin_prompt"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
+            android:layout_marginStart="48dp"
+            android:layout_marginEnd="48dp"
             android:accessibilityLiveRegion="polite"
+            android:ellipsize="end"
             android:fontFamily="@font/nunito_bold"
             android:gravity="center"
+            android:maxLines="2"
             android:text="@string/pin_lock_prompt"
             android:textColor="@color/kid_ink"
             android:textSize="16sp" />
@@ -132,7 +116,7 @@
         android:textColor="@color/kid_ink"
         android:textSize="13sp" />
 
-    <!-- The compact now-playing row of the keypad stage (design 21 step 4). -->
+    <!-- The compact now-playing row of the keypad stage while a session is live (design 21 step 4). -->
     <include
         android:id="@+id/pin_media_row"
         layout="@layout/view_lock_media_row"

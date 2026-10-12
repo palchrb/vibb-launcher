@@ -15,6 +15,7 @@ mod handlers;
 mod kid_lock;
 mod kiosk_escapes;
 mod limits;
+mod lock_glance;
 mod models;
 mod music;
 mod music_icons;
@@ -870,6 +871,15 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/apps/display",
             post(handlers::devices::save_app_display),
+        )
+        // The lock's glance page (design 25): the text switch and the apps it shows.
+        .route(
+            "/devices/{id}/lock-screen",
+            post(handlers::lock_glance::save_text),
+        )
+        .route(
+            "/devices/{id}/lock-screen/apps",
+            post(handlers::lock_glance::save_app),
         )
         .route(
             "/apps/tracked/{id}/display",

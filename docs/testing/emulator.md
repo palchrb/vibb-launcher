@@ -269,7 +269,10 @@ adb shell dumpsys device_policy | grep -iE "keyguard|lockTask"
 ```
 
 Screen off/on: `adb shell input keyevent 26` (power). Each screen-off locks; the next
-screen-on must show the PIN lock straight away, never a frame of the app underneath.
+screen-on must show the PIN lock straight away, never a frame of the app underneath. Since design 25
+the lock comes up on its glance page (clock, date, the music tile, missed calls and messages):
+"Lås opp" (`<package>:id/lock_glance_unlock`) or a row leads to the keypad, which UI dumps don't show
+while the glance page covers it.
 
 1. **Lock appears**: in an allowed app, `input keyevent 26` twice -> PIN lock; the right PIN ->
    back in the same app with its state. Repeat 20x (kiosk on, then kiosk off: device page
@@ -303,8 +306,13 @@ screen-on must show the PIN lock straight away, never a frame of the app underne
    (onPasswordChanged), without a sync.
 9. **Crash guard** (debug only): three crashes of the lock screen within 2 minutes (`adb shell am
    crash $P` right after each screen-on) -> lock off, device page "crashed several times".
-10. Screenshots (320x568 dp and 411 dp, nb + en): `adb exec-out screencap -p > lock.png`;
-    `adb shell wm size 640x1136; adb shell wm density 320` for 320x568 dp, `wm size reset` after.
+10. Screenshots (320x568 dp and 411 dp, nb + en): the lock's window is `FLAG_SECURE` since design 25,
+    so `adb exec-out screencap` (and a screen recording) shows it black. Take them with the emulator
+    console instead - `adb emu screenrecord screenshot /path/on/the/emulator/host/lock.png` (the file is
+    written where the emulator runs; whether it captures secure windows is a device check of design
+    25) - and check the content with UI dumps (`adb exec-out uiautomator dump /dev/tty`: the rows are
+    accessibility-data-sensitive, which UiAutomation still reads). `adb shell wm size 640x1136; adb
+    shell wm density 320` for 320x568 dp, `wm size reset` after.
 
 ## 6d. Step 11: kiosk escapes - update fence, night update window, notifications
 

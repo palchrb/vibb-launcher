@@ -122,6 +122,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         LauncherLocales.remember(context, freshPolicy.launcherUi)
         // The parent's app names and icons (design 14): a change re-renders Home and the drawer.
         com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(context)
+        // The lock's glance page (design 25): which apps' messages it shows, and whether with text.
+        com.kidslauncher.mdm.badges.GlanceStore.refreshPolicy(freshPolicy.lockGlance, fresh = true)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.

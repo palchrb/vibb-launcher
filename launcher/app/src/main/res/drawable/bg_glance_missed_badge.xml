@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The red phone badge on a missed-call row's avatar (design 25, mockup LockGlance.dc.html): an 18 dp
+     red circle with a 2 dp ring in the row's colour. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@color/kid_emergency" />
+    <stroke android:width="2dp" android:color="@color/kid_music_tile" />
+</shape>

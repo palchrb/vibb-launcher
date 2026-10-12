@@ -1,8 +1,9 @@
 # 25 - The lock's glance page (buildable spec)
 
-Status: spec, architect 2026-10-11, on `main` at 17b89834 (music step 4 with its fix round and design 24b are in). Not
-built. Mockup: `docs/design/mockups/vibb-music/LockGlance.dc.html` (three 320x568 screens: A the glance page while
-music plays, B without music, C the keypad stage after a row tap - tap a row on A or B and C's prompt follows).
+Status: spec, architect 2026-10-11, on `main` at 17b89834 (music step 4 with its fix round and design 24b are in).
+Built 2026-10-12 (see "Implementation status" at the end); not device-tested. Mockup:
+`docs/design/mockups/vibb-music/LockGlance.dc.html` (three 320x568 screens: A the glance page while music plays, B
+without music, C the keypad stage after a row tap - tap a row on A or B and C's prompt follows).
 
 Sources: the request and decisions below, `lock/PinLockActivity.kt`, `PinLockRuntime.kt`, `PinLockState.kt`,
 `LockTaskRoot.kt`, `LockMedia.kt`, `music/MusicLockPanel.kt`, `badges/*`, `calls/MissedCall*.kt`, `lock/VoipCalls.kt`,
@@ -805,3 +806,180 @@ details, tests and device checks.
   and Back returns there. Apps the rule suspends still open nothing. A missed-call row opens the phone book when the
   rule allows calls. This replaces §6's "no row opens anything while a time rule locks the phone".
 - The other §6 defaults stand.
+
+## Implementation status (2026-10-12)
+
+Built on branch `lock-glance-25`, rebased onto `main` at 79465d85 (the launcher security wave). Commits:
+- fc377696 - step 1: the contract, both sides (migration, `lock_glance` in the policy, the PWA's "On the lock screen";
+  `PolicyResponse.lockGlance` and `lockGlancePolicy`).
+- fe7b97a0 - step 2: the data - `GlanceReader`, `GlanceStore`, `GlanceRows`, `MissedCallNotice.contacts`,
+  `MissedCallNotifier.current`.
+- b8d9ffa9 - step 3a: the page - stages, layouts, the fit, `FLAG_SECURE`, the smoke test. Nothing opens yet.
+- f9db15f8 - step 3b: the open - `GlanceOpener`, `VisibleSender`, the unlock path, the time-rule hand-over, the
+  capability `lock_glance_v1`.
+- e7721410 - step 4, the docs (both `CLAUDE.md`s, `PLAN.md`).
+- The code QA's fix round: 420b0e50 (Lows 1, 2, 7), f5dac12c (Lows 3, 4, 5), d9e50fd9 (Low 6), and the commit with
+  the report and this update.
+
+**Migration:** `0066_lock_glance.sql`, the next number after `main`'s 0065 (`0065_command_receipts.sql`, the
+launcher security wave).
+
+**Tests (on 79465d85, after the code QA's fix round):** launcher `./gradlew testDebugUnitTest assembleDebug
+assembleRelease -PwarningsAsErrors=true` with the stub `tsnet.aar` (dependency verification on): 983 unit tests, 0
+failures, both builds green. Server: `cargo test` 574 passed, `cargo fmt --check` clean, `cargo clippy --all-targets`
+12 warnings, all from before this branch (unused model fields, `dns_engine.rs`, an old `sort_by` in `devices.rs`),
+none new. The PWA's subsection checked headless at 360 px, light and dark, after the merge (no horizontal scroll).
+Each step was green on its own before the first rebase: the step-1 compatibility test and the full server suite on
+the server half; the full launcher suite after steps 2, 3a and 3b.
+
+**All 12 QA findings are built in:**
+- Medium 1: the reader takes the ranking of every post (`onNotificationPosted(sbn, rankingMap)`), every sweep
+  (`currentRanking`) and every ranking update; no ranking counts as suspended.
+- Medium 2: every glance entry point catches `Throwable` - the reader per notification, the store's and the
+  notifier's listeners, the icon job, the panel (render, stage, tap, fit, start/stop) and the opener. A panel
+  that can't be built leaves the plain keypad. The open table has the "no launch intent -> nothing" row.
+- Medium 3 / Q1 (decided): see the first deviation.
+- Low 4: rows have 8 dp vertical padding (56 dp in the model); the "more" line has `minHeight` 24 dp and nothing
+  above it; the fit uses the page's height after `KidInsets` and runs again on every height change, never before
+  the first layout. §1.2's expected fits hold exactly (445, 464, 394, 458, 460 and 493 dp).
+- Low 5: the prompt has `maxLines="2"` and `ellipsize="end"`; the label in the hint is cut to 20 characters.
+- Low 6: icons come from Home's `renderAppIcon`, drawn by one background job, with a placeholder circle until then;
+  the shape is Home's circle, and the mockup is updated.
+- Low 7: without an allowlist the PWA lists every app the phone reports, and every ticked package outside the
+  list is always shown, so any tick can be removed.
+- Low 8 (as decided): in sender-only mode a notification that isn't MessagingStyle shows the app name and count,
+  never its title. The PWA says names show to anyone holding the phone, and that with the switch on an SMS app's
+  login codes show too.
+- Low 9: `current` clears on a cancel, a swipe and when our listener sees id 1006 leave the shade;
+  `MissedCallNotice` and `MissedContact` print no names or numbers. Tapping any missed-call row clears every
+  missed-call row, as design 12's phone book does.
+- Low 10: only a content intent whose `creatorPackage` is the notification's app is sent; otherwise the launch
+  intent.
+- Low 11: a key missing from the cached policy means unknown (missed calls only); missing from a fresh policy means
+  the older server's default, kept in memory.
+- Low 12: the tests it names were moved or added (`LockGlanceLayoutTest` took over `LockMediaLayoutTest`'s widths,
+  `KidHeaderLayoutTest` checks `view_lock_glance`, and the old clock test is gone); step 3 is split into 3a and 3b;
+  `GlanceStore.refreshPolicy` posts to the main thread; the device checks are below.
+
+**Deviations, with reasons:**
+1. **The open has two callers** (Q1). Under a time rule the lock doesn't open anything. It hands the target to the
+   time-rule screen: `GlanceOpener.openHandedOver` runs from `LockActivity.onResume`, within 10 s of the unlock, and
+   checks the rule again. So the conversation opens over the time-rule screen, and Back returns there.
+   `LockGlanceGuardTest` pins both callers (`open` only in `PinLockActivity.go`, `openHandedOver` only in
+   `LockActivity.onResume`). A missed-call row's target is taken under a rule only when calls are managed and
+   allowed. That is the time-rule screen's own condition for its phone book.
+2. If the rule ends between the unlock and the time-rule screen, that screen doesn't come up. The hand-over then
+   expires: the kid lands on Home and nothing opens. This edge is accepted.
+3. **Server package check:** `apps` uses `app_display::valid_package_name` (the launcher's grammar) instead of the
+   looser `is_package_name`, so the server never sends a name the launcher would drop. Without an allowlist an
+   unlisted tick is labelled "not on the phone - ticked", since every app is allowed then.
+4. `PendingIntent.isActivity()` and `creatorPackage` are read at the open, not at each post. It is the same
+   information with fewer binder calls.
+5. A ranking update refreshes only the suspended flag. A channel's lock-screen visibility that the user changes
+   applies at the next post or sweep.
+6. At TEXT, a notification without a text shows the subtitle "Element X · N meldinger".
+7. **Smoke test:**
+   - The missed-call check finds the row by its description ("Tapt anrop fra ..."), because the script doesn't know
+     the contact's name.
+   - `shot` still uses `screencap`, which is black over the lock; a comment points to the emulator console.
+8. The "more" line shares a wrapper (`lock_glance_list`) with the rows. Its 14/22 dp top margin then also applies
+   when no row fits (candidate 7).
+9. `MissedCallNotifier.refreshAtStart` (§2.4; since the code QA `relearn`) never clears, it only re-learns what is
+  on screen. During a no-calls time rule the phone book's view has only emergency contacts. A process restart then,
+  such as the night's self-update during bedtime, would otherwise cancel a missed-call notification the kid hasn't
+  seen.
+
+**Fix round after the code QA (`qa-25-code.md`, 0 High, 0 Medium, 7 Low; all fixed):**
+1. The lock-task checks hold for the time-rule hand-over: `lockWasRoot` travels with the hand-over and refuses before
+   it, and with the kiosk on an open with no lock task running opens nothing ("lock task not running"), from either
+   place.
+2. A refused send: `PendingIntent.send` throws only for a negative result, its `OnFinished` reports 0 for an
+   activity, and the result-returning send is hidden. So the opener watches our own windows for 1.5 s after a
+   send (`glanceSendCheck`): Home or the time-rule screen back in front means the start was refused, and the app's
+   launch intent goes from that window. Otherwise the row is marked opened, but only when Home or the time-rule
+   screen was below (kiosk on, or the hand-over). With the kiosk off, nothing is concluded, and the app clears its
+   own notification when the room opens.
+3. `MissedCallNotifier.relearn` (the process start, every time-lock change, and ours posted again while `current`
+   is unknown - a snooze that ended) counts against the call rules without the time rule's block
+   (`noticeState`). A notification on screen during a no-calls rule was posted before it, so the glance knows it
+   again.
+4. The tests the QA named: `glanceSuspended` (no ranking = suspended) in both reader paths,
+   `glanceUsableUnderLock` (the budget's apps, a rule's exempt apps, a no-calls rule, unmanaged calls),
+   `nextGlancePolicy` (a fresh policy beats the start's cache), and guard checks for `removedFromShade` and the
+   re-learn wiring.
+5. `cleanGlanceText` collapses Unicode whitespace (line and paragraph separators, no-break spaces) and drops the
+   invisible marks (U+061C, U+200E/200F, U+2060-2064, U+FEFF). Joiners stay, since emoji need them. The test file's
+   bidi characters are now escapes instead of literal characters.
+6. PWA: an unlisted tick says "not allowed" only when the allowlist lacks it, else "not on the phone". An empty
+   list says why: no report yet, no allowed app, or none reported.
+7. The tile's progress ticks only while the glance page shows (`glanceTicks(tileShown, pageShown, session)`), not
+   behind the keypad.
+
+**Not run here:** no emulator or phone in this sandbox. Everything below is a device check.
+
+**Device checklist** (emulator at 320x569 dp, nb and en, then the Jelly Star; §9 plus QA Low 12):
+- [ ] The page in both kiosk modes, with gesture and 3-button navigation, with and without music, with 0, 1, 2, 3
+      and 5 rows:
+      - the fit picks §1.2's candidates;
+      - nothing is clipped or squeezed, and round buttons stay round;
+      - the same at 360 and 411 dp and at font scale 1.3;
+      - the keypad stage has no clock or date, and its keys are >= 52 dp.
+- [ ] Element X, a DM and a group from another account:
+      - sender only ("Pappa", "Element X · 2 meldinger");
+      - the switch on shows the newest text ("Pappa: ..." in the group);
+      - the switch off removes the texts at the next sync, without a restart;
+      - unticking Element X removes its rows, and ticking it brings them back;
+      - a DM read on another device removes its row.
+- [ ] A row's tap: the keypad says "Skriv koden for å åpne Element X", and the right code opens the room (kiosk on
+      and off; Back from it). Also check:
+      - the parent code instead of the kid's PIN;
+      - a wrong code (the keypad stays);
+      - the arrow back (the plain prompt);
+      - a screen-off on the keypad (the glance page again, the target gone);
+      - the row's notification removed before the code (the room still opens);
+      - Element X suspended meanwhile (nothing opens);
+      - a missed-call row opens the contact's sheet, and every missed-call row is gone afterwards.
+- [ ] Under the screen-time budget (Element X usable): a row's tap shows the hint, and after the code the time-rule
+      screen comes, then the room over it, and Back returns to the time-rule screen. Under bedtime with Element X
+      not exempt: no hint, and after the code the time-rule screen only. A missed-call row under a rule that
+      allows calls opens the phone book over the time-rule screen.
+- [ ] A message while Element X is suspended (bedtime) shows no row; it appears when the rule ends.
+- [ ] Missed calls:
+      - one call, then two from Pappa and one from Mamma (one row per contact, newest first);
+      - calling back removes the row;
+      - after a launcher force-stop the row is still there (`refreshAtStart`);
+      - calls unmanaged with our dialer role show the plain row;
+      - a missed-call notification snoozed from the shade (while unlocked) removes the row.
+- [ ] States:
+      - an incoming call and a VoIP ring over the glance page;
+      - "Nødsamtale" from it;
+      - an alarm;
+      - a reboot (rows appear when the listener binds);
+      - no listener access (missed calls only, and the PWA's notes);
+      - `ForeignAccess` ("Foreldrekode" refused as in 24b, the glance page unchanged).
+- [ ] TalkBack:
+      - the reading order;
+      - one node per row with its action label;
+      - the keypad unreachable while covered;
+      - a UI dump lists the rows.
+- [ ] `FLAG_SECURE`:
+      - `screencap`, power + volume-down and a screen recording show the lock black;
+      - whether `adb emu screenrecord screenshot` captures it.
+- [ ] Nothing runs from the lock:
+      - long-press, swipe and double-tap on rows do nothing;
+      - Element X's quick reply never appears;
+      - the notification stays unread in Element X until the room opens.
+- [ ] The kiosk-on root case: force the 1 s fallback. Nothing opens, and the kid lands on Home - also under the
+      screen-time budget with an Element X row (the hand-over refuses too, code QA Low 1).
+- [ ] A refused send (code QA Low 2): a ticked app whose content intent the platform refuses (the API 34/35 opt-in,
+      or a target lock task doesn't permit with "Block other apps" off) - within 1.5 s the app's launch intent
+      opens instead (kiosk on: from Home; under a rule: from the time-rule screen), and the row isn't hidden when
+      nothing opened. A Back within 1.5 s of a room that did open re-opens the app's main screen once (accepted).
+- [ ] Missed calls and the glance after the night's update during bedtime: the row is there in the morning (code QA
+      Low 3); a missed-call notification snoozed from the shade comes back as a row when the snooze ends.
+- [ ] A ticked app whose content intent goes into an app that isn't allowlisted: BlockedAppActivity with the kiosk
+      on, nothing with it off.
+- [ ] The open on an API 34 or 35 emulator (`MODE_BACKGROUND_ACTIVITY_START_ALLOWED`); the Jelly Star (16) covers
+      only `ALLOW_IF_VISIBLE`.
+- [ ] Whether the Jelly Star's notification assistant marks anything as sensitive (the redacted case).
+- [ ] The PWA on a phone: tick, untick and the switch keep the place (no jump), and the notes appear.
