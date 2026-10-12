@@ -15,8 +15,8 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 /**
  * Checks over the sources and resources: translations, the escape scan (design 21 §4.2: no
- * settings, links, share or web views), the debug feed kept out of everything but src/debug, and
- * the category glyphs against music_icons.json.
+ * settings, links, share or web views), the debug feed kept out of everything but src/debug, the
+ * category glyphs against music_icons.json, and Storytel's secrets (design 26b §0, §6.1, QA L9).
  */
 class SourceScanTest {
     private fun code(f: File) = f.readText()
@@ -121,5 +121,85 @@ class SourceScanTest {
             val hex = value.jsonPrimitive.content.removePrefix("#").toLong(16).toInt() or 0xFF000000.toInt()
             assertEquals(key, hex, MusicGlyphs.COLORS.getValue(key))
         }
+    }
+
+    // Storytel (design 26b §0, §3.5, §6.1; QA L9, M2).
+
+    @Test
+    fun `nb has Storytel's words`() {
+        val nb = strings("src/main/res/values-nb/strings.xml")
+        assertEquals("Lydbok", nb["kind_audiobook"])
+        assertEquals("%1\$s · del %2\$d av %3\$d", nb["hint_part"])
+        assertEquals("Del %1\$d av %2\$d", nb["part_of"])
+        assertEquals("Ny bok", nb["new_book"])
+    }
+
+    /** The body of `class|object <name>` in [text] (from its declaration to the matching brace). */
+    private fun body(text: String, declaration: Regex): String {
+        val start = declaration.find(text)?.range?.last ?: throw AssertionError("no ${declaration.pattern}")
+        val open = text.indexOf('{', start)
+        if (open < 0) return ""
+        var depth = 0
+        for (i in open until text.length) {
+            when (text[i]) {
+                '{' -> depth++
+                '}' -> if (--depth == 0) return text.substring(open, i + 1)
+            }
+        }
+        return text.substring(open)
+    }
+
+    @Test
+    fun `every type holding a Storytel secret prints it redacted`() {
+        val holders = mapOf(
+            "src/main/java/me/vibb/music/bridge/StorytelLogin.kt" to listOf("data class Login("),
+            "src/main/java/me/vibb/music/storytel/StorytelHttp.kt" to listOf("data class StorytelRequest(", "class StorytelResponse("),
+            "src/main/java/me/vibb/music/storytel/StorytelApi.kt" to listOf("class Url(", "private class Jwt("),
+        )
+        for ((path, classes) in holders) {
+            val text = code(moduleFile(path))
+            for (c in classes) {
+                val b = body(text, Regex(Regex.escape(c) + "[^{]*\\)\\s*(:[^{]*)?"))
+                assertTrue("$path: $c needs an explicit toString()", b.contains("override fun toString()"))
+            }
+        }
+    }
+
+    @Test
+    fun `the bearer header is set in StorytelApi only, and the Storytel client never follows the asset's redirect`() {
+        for (f in sources("src/main")) {
+            val text = code(f)
+            for (token in listOf("Authorization", "Bearer")) {
+                if (text.contains(token)) assertEquals("${f.path} names $token", "StorytelApi.kt", f.name)
+            }
+            assertFalse("${f.path}: positions live in Room, never a destructive migration", text.contains("fallbackToDestructiveMigration"))
+        }
+        val http = code(moduleFile("src/main/java/me/vibb/music/storytel/StorytelHttp.kt"))
+        assertTrue(http.contains(".followRedirects(request.follow)"))
+        assertTrue(http.contains(".followSslRedirects(request.follow)"))
+        assertFalse("never a logging interceptor", http.contains("Interceptor"))
+    }
+
+    @Test
+    fun `no log line in storytel or sync interpolates a secret`() {
+        val secret = Regex("\\$\\{?[^\"]*?(password|email|jwt|bearer|token|location|url|pwd)", RegexOption.IGNORE_CASE)
+        val files = sources("src/main/java/me/vibb/music/storytel") + sources("src/main/java/me/vibb/music/sync")
+        assertTrue(files.size >= 5)
+        for (f in files) {
+            for (line in code(f).lines().filter { it.contains("Log.") || it.contains("println(") }) {
+                assertFalse("${f.name}: $line", secret.containsMatchIn(line))
+            }
+        }
+        assertFalse("the Storytel client logs nothing", sources("src/main/java/me/vibb/music/storytel").any { code(it).contains("Log.") })
+    }
+
+    @Test
+    fun `the debug base is declared in main and read by nothing yet (step 3 gives it its four readers)`() {
+        for (f in sources("src/main")) {
+            if (code(f).contains("debugBase")) assertEquals(f.path, "StorytelEndpoints.kt", f.name)
+        }
+        val endpoints = code(moduleFile("src/main/java/me/vibb/music/storytel/StorytelEndpoints.kt"))
+        assertEquals("one declaration, null by default", 1, Regex("debugBase").findAll(endpoints).count())
+        assertTrue(endpoints.contains("var debugBase: String? = null"))
     }
 }

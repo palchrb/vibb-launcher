@@ -64,7 +64,7 @@ import me.vibb.music.sonos.RoomsView
 @Composable
 fun PlayerScreen(
     now: NowView,
-    /** The item's number in the list's order. */
+    /** The item's number in the list's order (a Storytel book's in the series, [playerNumber]). */
     number: Int,
     of: Int,
     positionMs: Long,
@@ -100,7 +100,12 @@ fun PlayerScreen(
         }
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Line(now.item.title, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
-            Line(stringResource(if (kindOf(now.entry) == Kind.OWN) R.string.track_of else R.string.episode_of, number, of), 13, 700, Palette.sub)
+            val numberText = when (kindOf(now.entry)) {
+                Kind.OWN -> R.string.track_of
+                Kind.AUDIOBOOK -> R.string.part_of
+                Kind.PODCAST -> R.string.episode_of
+            }
+            Line(stringResource(numberText, number, of), 13, 700, Palette.sub)
         }
         SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)
         // v12's sizes where they fit, v15's compact ones on a 320 dp phone: always round, play centred.

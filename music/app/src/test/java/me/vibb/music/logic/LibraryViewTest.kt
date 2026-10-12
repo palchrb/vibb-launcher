@@ -1,5 +1,6 @@
 package me.vibb.music.logic
 
+import me.vibb.music.Fixtures.done
 import me.vibb.music.Fixtures.entry
 import me.vibb.music.Fixtures.items
 import me.vibb.music.Fixtures.library
@@ -8,7 +9,9 @@ import me.vibb.music.data.NewsRow
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
 import me.vibb.music.sync.NewNotifier
+import me.vibb.music.ui.NowView
 import me.vibb.music.ui.entryUi
+import me.vibb.music.ui.playerNumber
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -89,5 +92,60 @@ class LibraryViewTest {
         assertEquals("Podkast", ui.category?.name)
         assertEquals(Kind.PODCAST, ui.kind)
         assertNull("not started: no progress line", ui.progress)
+    }
+
+    private val books = listOf("b1", "b2", "b3", "b4", "b5")
+    private fun storytel() = entry(7, Source.STORYTEL, target = "storytel:series:26175", cache = -1)
+
+    /** Books 1 and 3 of five on the phone. */
+    private fun partial(bookmark: Pair<String, Long>?) = storytel().let { e ->
+        snapshot(
+            library(listOf(e)),
+            items(e.id, books, gone = books.toSet()),
+            downloads = listOf(done(e.id, "b1", url = "storytel:book:b1"), done(e.id, "b3", url = "storytel:book:b3")),
+            bookmarks = bookmark?.let { mapOf(e.key to it) }.orEmpty(),
+        )
+    }
+
+    @Test
+    fun `a Storytel entry is an audiobook`() {
+        assertEquals(Kind.AUDIOBOOK, kindOf(storytel()))
+        assertEquals(Kind.PODCAST, kindOf(entry(1, Source.NRK)))
+        assertEquals(Kind.OWN, kindOf(entry(2, Source.OWN)))
+        assertEquals(Hint.Started(Kind.AUDIOBOOK, 3, 5), hint(storytel(), books, Bookmark("b3", 1)))
+        assertEquals(Hint.NotStarted(Kind.AUDIOBOOK), hint(storytel(), books, null))
+    }
+
+    @Test
+    fun `del N av M counts the whole series, not the books on the phone (M5)`() {
+        val e = storytel()
+        val snap = partial("b3" to 60_000L)
+        assertEquals(listOf("b1", "b3"), snap.order(e).map { it.key })
+        val ui = entryUi(snap, e)
+        assertEquals("book 3 of 5 with books 1 and 3 downloaded reads del 3 av 5", Hint.Started(Kind.AUDIOBOOK, 3, 5), ui.hint)
+        assertEquals((2 + 60_000f / 600_000) / 5, ui.progress!!, 0.001f)
+
+        val heardOnARoom = entryUi(partial("b4" to 1_000L), e)
+        assertEquals("a bookmark on a book not on the phone still counts as started", Hint.Started(Kind.AUDIOBOOK, 4, 5), heardOnARoom.hint)
+        assertTrue(heardOnARoom.progress != null)
+
+        val podcast = entry(1)
+        val p = snapshot(library(listOf(podcast)), items(1, listOf("x", "y", "z"), gone = setOf("x")), bookmarks = mapOf(podcast.key to ("y" to 10L)))
+        assertEquals("a podcast still counts what is visible", Hint.Started(Kind.PODCAST, 2, 2), entryUi(p, podcast).hint)
+    }
+
+    @Test
+    fun `the player's Del N av M counts the series too (M5)`() {
+        val e = storytel()
+        val snap = partial(null)
+        val queue = snap.order(e)
+        val now = NowView(e, null, queue, 1, live = false, playing = false, storedPosMs = 0, durationMs = null, shuffled = false)
+        assertEquals("b3", now.item.key)
+        assertEquals(3 to 5, playerNumber(snap, now))
+        val podcast = entry(1)
+        val p = snapshot(library(listOf(podcast)), items(1, listOf("x", "y", "z"), gone = setOf("x")))
+        val pq = p.order(podcast)
+        assertEquals(listOf("z", "y"), pq.map { it.key })
+        assertEquals(2 to 2, playerNumber(p, NowView(podcast, null, pq, 1, live = false, playing = false, storedPosMs = 0, durationMs = null, shuffled = false)))
     }
 }

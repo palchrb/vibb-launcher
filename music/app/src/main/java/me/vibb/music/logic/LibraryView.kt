@@ -15,17 +15,30 @@ import java.util.Locale
  * ui_carousel_slide.py).
  */
 
-/** What a cover says it is: NRK and RSS "Podkast", own files "Egne filer" (Storytel's "Lydbok" and
- * Spotify come with their phases). */
-enum class Kind { PODCAST, OWN }
+/** What a cover says it is: NRK and RSS "Podkast", own files "Egne filer", Storytel "Lydbok" (design
+ * 26b §3.5; Spotify comes with its phase). */
+enum class Kind { PODCAST, OWN, AUDIOBOOK }
 
-fun kindOf(entry: Entry): Kind = if (entry.source == Source.OWN) Kind.OWN else Kind.PODCAST
+fun kindOf(entry: Entry): Kind = when (entry.source) {
+    Source.OWN -> Kind.OWN
+    Source.STORYTEL -> Kind.AUDIOBOOK
+    Source.NRK, Source.RSS -> Kind.PODCAST
+}
+
+/**
+ * The keys "del N av M", `started` and the progress line count (design 26b §3.5, QA M5): for Storytel
+ * the series' reading order in play order ([listedInPlayOrder], every book, downloaded or not), so
+ * book 3 of 5 with books 1 and 3 on the phone reads "del 3 av 5" and a bookmark on a book heard on a
+ * room still counts; for every other entry the visible items ([visibleInPlayOrder]).
+ */
+fun countedOrder(entry: Entry, visibleInPlayOrder: List<String>, listedInPlayOrder: List<String>): List<String> =
+    if (entry.source == Source.STORYTEL) listedInPlayOrder else visibleInPlayOrder
 
 /** The hint under a cover. */
 sealed interface Hint {
     val kind: Kind
 
-    /** Resume on and started: "<kind> · episode|spor N av M". */
+    /** Resume on and started: "<kind> · episode|spor|del N av M". */
     data class Started(override val kind: Kind, val n: Int, val of: Int) : Hint
 
     /** Resume on, not started: "<kind> · fortsetter der du slapp". */

@@ -132,7 +132,12 @@ fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, o
                     ) {
                         Cover(row.item.artHash ?: row.entry.cover, row.category, 12.dp, 0.dp, Modifier.size(48.dp))
                         Column(Modifier.weight(1f)) {
-                            Line(stringResource(if (row.kind == Kind.OWN) R.string.new_track else R.string.new_episode), 12, 800, Palette.peach)
+                            val label = when (row.kind) {
+                                Kind.OWN -> R.string.new_track
+                                Kind.AUDIOBOOK -> R.string.new_book
+                                Kind.PODCAST -> R.string.new_episode
+                            }
+                            Line(stringResource(label), 12, 800, Palette.peach)
                             Line(row.item.title, 15, 800, Palette.white)
                             Line(row.entry.name, 12, 700, Palette.sub)
                         }

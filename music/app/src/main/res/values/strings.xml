@@ -18,8 +18,10 @@
     <string name="new_badge">NEW</string>
     <string name="kind_podcast">Podcast</string>
     <string name="kind_own">Own files</string>
+    <string name="kind_audiobook">Audiobook</string>
     <string name="hint_episode">%1$s · episode %2$d of %3$d</string>
     <string name="hint_track">%1$s · track %2$d of %3$d</string>
+    <string name="hint_part">%1$s · part %2$d of %3$d</string>
     <string name="hint_continues">%1$s · continues where you left off</string>
     <string name="hint_from_start">%1$s · starts from the beginning</string>
     <string name="cant_play">Can\'t play right now</string>
@@ -37,6 +39,7 @@
     <string name="next">Next</string>
     <string name="episode_of">Episode %1$d of %2$d</string>
     <string name="track_of">Track %1$d of %2$d</string>
+    <string name="part_of">Part %1$d of %2$d</string>
     <string name="list">List</string>
     <string name="sleep">Sleep</string>
     <string name="sleep_on">Sleep · %1$d min</string>
@@ -73,6 +76,7 @@
     <string name="clear_all">Clear all</string>
     <string name="new_episode">New episode</string>
     <string name="new_track">New track</string>
+    <string name="new_book">New book</string>
     <string name="nothing_new">Nothing new right now</string>
     <string name="channel_news">New in Music</string>
     <plurals name="news_notification">

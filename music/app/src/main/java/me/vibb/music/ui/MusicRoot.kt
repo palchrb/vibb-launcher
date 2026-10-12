@@ -71,9 +71,9 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
         when (screen) {
             Screen.LIBRARY -> Library(vm, s, now, actions, playEntry)
             Screen.PLAYER -> now?.let { n ->
-                val order = listOrder(s, n)
+                val (number, of) = playerNumber(s, n)
                 PlayerScreen(
-                    n, order.indexOfFirst { it.key == n.item.key } + 1, order.size, livePosition(n), hub.sleepMinutes, hub.output, hub.rendererState,
+                    n, number, of, livePosition(n), hub.sleepMinutes, hub.output, hub.rendererState,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,

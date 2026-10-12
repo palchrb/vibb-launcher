@@ -16,8 +16,10 @@
     <string name="new_badge">NY</string>
     <string name="kind_podcast">Podkast</string>
     <string name="kind_own">Egne filer</string>
+    <string name="kind_audiobook">Lydbok</string>
     <string name="hint_episode">%1$s · episode %2$d av %3$d</string>
     <string name="hint_track">%1$s · spor %2$d av %3$d</string>
+    <string name="hint_part">%1$s · del %2$d av %3$d</string>
     <string name="hint_continues">%1$s · fortsetter der du slapp</string>
     <string name="hint_from_start">%1$s · starter fra begynnelsen</string>
     <string name="cant_play">Kan ikke spilles nå</string>
@@ -35,6 +37,7 @@
     <string name="next">Neste</string>
     <string name="episode_of">Episode %1$d av %2$d</string>
     <string name="track_of">Spor %1$d av %2$d</string>
+    <string name="part_of">Del %1$d av %2$d</string>
     <string name="list">Liste</string>
     <string name="sleep">Sov</string>
     <string name="sleep_on">Sov · %1$d min</string>
@@ -71,6 +74,7 @@
     <string name="clear_all">Fjern alle</string>
     <string name="new_episode">Ny episode</string>
     <string name="new_track">Nytt spor</string>
+    <string name="new_book">Ny bok</string>
     <string name="nothing_new">Ingenting nytt akkurat nå</string>
     <string name="channel_news">Nytt i Musikk</string>
     <plurals name="news_notification">

@@ -68,13 +68,26 @@ import kotlin.math.abs
 import kotlin.math.sign
 
 @Composable
-fun kindText(kind: Kind): String = stringResource(if (kind == Kind.OWN) R.string.kind_own else R.string.kind_podcast)
+fun kindText(kind: Kind): String = stringResource(
+    when (kind) {
+        Kind.OWN -> R.string.kind_own
+        Kind.AUDIOBOOK -> R.string.kind_audiobook
+        Kind.PODCAST -> R.string.kind_podcast
+    },
+)
 
 @Composable
 fun hintText(hint: Hint): String {
     val kind = kindText(hint.kind)
     return when (hint) {
-        is Hint.Started -> stringResource(if (hint.kind == Kind.OWN) R.string.hint_track else R.string.hint_episode, kind, hint.n, hint.of)
+        is Hint.Started -> stringResource(
+            when (hint.kind) {
+                Kind.OWN -> R.string.hint_track
+                Kind.AUDIOBOOK -> R.string.hint_part
+                Kind.PODCAST -> R.string.hint_episode
+            },
+            kind, hint.n, hint.of,
+        )
         is Hint.NotStarted -> stringResource(R.string.hint_continues, kind)
         is Hint.FromStart -> stringResource(R.string.hint_from_start, kind)
     }
