@@ -1,5 +1,6 @@
 package me.vibb.music.logic
 
+import me.vibb.music.sonos.SonosTail
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -51,7 +52,9 @@ class SwitchTest {
         assertFalse(requestStands(tap, b1, 1_500, waiting = true))
         assertEquals(1_000 + SWITCH_HOLD_MS, holdEndsAt(tap, false))
         assertEquals(1_000 + SWITCH_WAIT_MAX_MS, holdEndsAt(tap, true))
-        assertTrue(SWITCH_WAIT_MAX_MS > 15_000) // the hand-off's own bound (PlaybackService.HANDOFF_MS)
+        assertTrue(SWITCH_WAIT_MAX_MS > 15_000) // a room switch's hand-off (PlaybackService.HANDOFF_MS)
+        // a fresh start: the destroyed service's tail, then the adopt's look (PlaybackService.ADOPT_MS, 4 s), then the load
+        assertTrue(SWITCH_WAIT_MAX_MS >= SonosTail.MAX_MS + 4_000 + 4_000)
     }
 
     @Test

@@ -330,6 +330,11 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 **Migration numbers 0058-0060 are skipped on `main`** (the wave took 0061/0062 while a branch held them). Never fill
 them: sqlx would apply them out of order on a 0.24 database, and `startup::pre_migration_backup` (`MAX(version) <
 latest`) would take no backup first. A new migration takes the next number after the highest one on `main`.
+**0070 is reserved** for design 27's episode art by the main session while `0071_music_sonos_rooms.sql` (design 26a)
+already sits above it (qa-26a-merge-code M1): the same hazard - if 0070 lands on a server that has run 0071, sqlx
+applies it out of order and `pre_migration_backup`, comparing only `MAX(version)`, takes no `pre-migrate-*.db`. So
+design 27's server ships before or together with 26a's, or the backup check compares the set of applied versions
+with the compiled ones (a change for the main session, not made yet).
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps

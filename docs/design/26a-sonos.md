@@ -1569,7 +1569,8 @@ the migration (`0118da2`), the emulator section (`f58703a`), the adaptation (`9f
 screening; the Gradle verification metadata and wrapper pins for `music/` with `BuildChainTest`, the wrapper validation
 in `launcher.yml`/`music.yml`); design 25 (the lock's glance page, `MusicLockPanel`, `lock/VisibleSender`) and 25f
 (the lock wallpaper), with migrations `0065_command_receipts.sql` to `0069_lock_wallpaper.sql`; design 27's spec
-(per-episode art and the Now Playing carousel - not built; it claims migration 0070 and Room version 2); and the
+(per-episode art and the Now Playing carousel - not built; the main session reserves migration 0070 for it - its spec
+still says "numbered after the final rebase" - and it plans Room version 2); and the
 music app's instant switch (`logic/Switch.kt`, `ui/SwitchViewTest`, `NowView.cover/itemTitle/ref`, `PrefetchCovers`,
 `coverShown`) and the always-light system bar icons. Main didn't touch `PlaybackService`, the AIDL,
 `bridge_contract.json` or the shared snapshots.
@@ -1590,7 +1591,7 @@ music app's instant switch (`logic/Switch.kt`, `ui/SwitchViewTest`, `NowView.cov
   holds as it is.
 
 **The migration is `0071_music_sonos_rooms.sql`** (was 0065, which main's `0065_command_receipts.sql` now has; 0070 is
-design 27's). Its content is unchanged but the header; `server/CLAUDE.md`, `music.rs`, PLAN.md and this design follow.
+reserved for design 27 by the main session - its spec still says "numbered after the final rebase"). Its content is unchanged but the header; `server/CLAUDE.md`, `music.rs`, PLAN.md and this design follow.
 
 **The adaptation (main's instant switch on the renderer axis).** Main shows a tap's item until the player is there, for
 at most 3 s (`SWITCH_HOLD_MS`). On a room the identity moves as fast as on the phone - `SonosController.load` and
@@ -1599,7 +1600,7 @@ at most 3 s (`SWITCH_HOLD_MS`). On a room the identity moves as fast as on the p
 (`HANDOFF_MS` 15 s), or `lookAgainBeforePlaying`. The hold then ran out into the old item. So:
 - `PlayerHub.State.waiting`: a `Commands.MOVES` command (`PLAY_ENTRY`, `PLAY_ITEM`, `RESTORE`) is accepted and hasn't
   run - counted in `onCustomCommand` before the coroutine, released in `invokeOnCompletion` (a cancel too).
-  `requestStands(..., waiting)` / `holdEndsAt` hold up to `SWITCH_WAIT_MAX_MS` (20 s) while it waits; once it ran, the
+  `requestStands(..., waiting)` / `holdEndsAt` hold up to `SWITCH_WAIT_MAX_MS` (25 s since the fix round below) while it waits; once it ran, the
   3 s hold again (a silent refusal shows the player within it; a refusal with a message clears the switch at once).
 - `playSwitch`/`skipSwitch(..., onRoom)` (the hub's output is a room): the room's queue holds only what a speaker can
   play, a start it can't play moves to the next it can at 0 (`PlayBodies.speakerPlan`'s rule), nothing playable is no
@@ -1633,6 +1634,33 @@ before; 404 with the merge alone, +6 for the adaptation), lint 0 errors and the 
 `checkReleaseHasTsnet`), which this sandbox can't build; CI builds the aar first. The AIDL copies, `bridge_contract.json` and the shared snapshots are byte-identical
 (`ContractFilesTest`, `BridgeTest`, `MusicPlanTest` green).
 
+### Fix round after QA's code review (qa-26a-merge-code, 2026-10-12)
+
+`docs/design/qa-26a-merge-code.md`: the merge is correct and can ship; 0 High, 1 Medium, 3 Low, all addressed.
+
+- **M1, the 0070 gap.** The number stays **0071**: the main session reserves 0070 for design 27, so this branch
+  doesn't take it. The wording is now accurate (design 27's spec claims no number itself - it still says "numbered
+  after the final rebase"; the reservation is the main session's) in the migration's header and above. The hazard QA
+  found is written down in the Release section and `server/CLAUDE.md`'s migrations paragraph:
+  `startup::pre_migration_backup` compares only `MAX(version)`, so a 0070 reaching a server that has already run 0071
+  is applied out of order by sqlx with no pre-migration backup. Design 27's server ships before or together with this
+  one, or the backup check compares the set of applied versions - a main-session change, only documented here.
+- **L1, the screens' wiring pinned.** `GuardsTest` ("the screens hold a tap's switch on the service's waiting and build
+  it for the room that plays"): `requestStands(..., hub.waiting)`, `hub.waiting` among the `LaunchedEffect` keys and in
+  `holdEndsAt`, `onRoom = hub.output.kind == OutputKind.SONOS`, and `onRoom` at all three switch call sites (exactly
+  three).
+- **L2, the bound.** `SWITCH_WAIT_MAX_MS` is **25 s**: at a fresh service start a tap waits for the destroyed service's
+  hand-off (`SonosTail.MAX_MS`, 16 s), the adopt's look (`ADOPT_MS`, 4 s) and the load; 20 s could end first. The KDoc
+  says so; `SwitchTest` checks it against `SonosTail.MAX_MS` + 4 s + 4 s.
+- **L3.** PLAN.md: phase 1 is released as `music-v0.0.2` (`music-v0.0.1` before it), its Jelly Star checks still to
+  come.
+
+Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **411 tests, 0 failures** (410
+before: +1 `GuardsTest`), lint 0 errors and the same 40 warnings;
+the launcher's tests read none of the changed files, not re-run; the server's change is a migration comment and docs
+(`cargo test` re-run: 594 passed, 0 failures; one earlier run had 1 failure that
+didn't reproduce in two re-runs - a time-dependent test, not this change).
+
 ## Release
 
 `music-v0.2.0-rc.1` is the user's tag, **on the merge commit on `main`** (`music.yml` refuses a tag whose commit isn't
@@ -1646,8 +1674,12 @@ Deploy order:
    `sonos_rooms`, the report's rooms, the event) rides in **0.24.0**: `server/Cargo.toml` says 0.24.0 on `main` and
    here (checked at the merge of main, 2026-10-12: the highest server tag is still `server-v0.19.0`), together with
    main's 0065-0069. If `server-v0.24.0` is tagged before this branch lands, bump `server/Cargo.toml` (and `Cargo.lock`)
-   to 0.25.0 on `main` for the next one. Not
-   required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an
+   to 0.25.0 on `main` for the next one. **The 0070 hazard** (qa-26a-merge-code M1): 0070 is reserved for design 27
+   and still empty. If it lands on a server that has already run 0071, sqlx applies it out of order and
+   `startup::pre_migration_backup` - which compares only `MAX(version)` with the highest compiled one - takes no
+   pre-migration backup (design 22 §6's "no migration without its backup" broken, silently). So design 27's server
+   ships before or together with this one, or the backup check compares the set of applied versions (a main-session
+   change; documented here and in `server/CLAUDE.md`, not made). Not required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an
    older server every room is allowed and the parent just has no card. Required before the parent can limit rooms,
    and the music catalog row (0.21.0+) before any **stable** `music-v*` (design 21 QA #11).
 2. **Launcher** (a `launcher-v*` on `main` after the merge), before or with the music RC: the `volume_cap_pct`

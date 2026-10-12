@@ -21,13 +21,15 @@ const val SWITCH_HOLD_MS = 3_000L
 
 /**
  * ... unless the player service still has the tap's command waiting (`PlayerHub.State.waiting`):
- * behind the renderer's settle at start (the look at a recorded Sonos room, up to 4 s), a room
- * switch's hand-off (the old room's bookmark and Stop, up to 15 s) or the look at a recorded room
- * before a play (design 26a §4.6-§4.7). A Sonos play takes seconds there, and the hold mustn't run
- * out into the old item meanwhile; once the command has run the plain hold applies again. Bounded,
- * so a service that never answers can't hold the screens.
+ * behind the renderer's settle at start, a room switch's hand-off (the old room's bookmark and Stop,
+ * `HANDOFF_MS` 15 s) or the look at a recorded room before a play (design 26a §4.6-§4.7). A Sonos
+ * play takes seconds there, and the hold mustn't run out into the old item meanwhile; once the
+ * command has run the plain hold applies again. The longest wait is at a fresh service start: the
+ * adopt waits for the destroyed service's hand-off (`SonosTail.MAX_MS`, 16 s), then looks at the room
+ * (`ADOPT_MS`, 4 s), then the play loads its queue - so 25 s (qa-26a-merge-code L2). Bounded, so a
+ * service that never answers can't hold the screens.
  */
-const val SWITCH_WAIT_MAX_MS = 20_000L
+const val SWITCH_WAIT_MAX_MS = 25_000L
 
 /** When a request held from [PlayRequest.atMs] stops standing by itself; [waiting]: [SWITCH_WAIT_MAX_MS]. */
 fun holdEndsAt(request: PlayRequest, waiting: Boolean): Long = request.atMs + if (waiting) SWITCH_WAIT_MAX_MS else SWITCH_HOLD_MS

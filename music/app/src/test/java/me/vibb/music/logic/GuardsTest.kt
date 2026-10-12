@@ -55,6 +55,20 @@ class GuardsTest {
     }
 
     @Test
+    fun `the screens hold a tap's switch on the service's waiting and build it for the room that plays`() {
+        // qa-26a-merge-code L1: without these the 3 s hold runs out into the old item on a room again.
+        val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
+        assertTrue(root.contains("requestStands(it.request, current?.ref, SystemClock.elapsedRealtime(), hub.waiting)"))
+        assertTrue(root.contains("LaunchedEffect(switching, held != null, hub.waiting) {"))
+        assertTrue(root.contains("delay(holdEndsAt(switching.request, hub.waiting) - SystemClock.elapsedRealtime())"))
+        assertTrue(root.contains("val onRoom = hub.output.kind == OutputKind.SONOS"))
+        assertTrue(root.contains("vm.switching = playSwitch(s, id, null, current, SystemClock.elapsedRealtime(), onRoom)"))
+        assertTrue(root.contains("vm.switching = playSwitch(s, id, key, current, SystemClock.elapsedRealtime(), onRoom)"))
+        assertTrue(root.contains("vm.switching = skipSwitch(s, n, forward, position, SystemClock.elapsedRealtime(), onRoom)"))
+        assertEquals("every switch is built for the renderer", 3, Regex("""(playSwitch|skipSwitch)\(""").findAll(root).count())
+    }
+
+    @Test
     fun `the renderer changes in one place, which hands the service's events to the new one only`() {
         // qa-26a-step2-code M1: the old renderer is saved and paused before it is detached.
         val attach = service.substringAfter("private fun attach(next: Renderer) {").substringBefore("\n    }\n")
