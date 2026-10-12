@@ -71,6 +71,13 @@ class AdminPoliciesTest {
                 mapOf("limit-password" to false, "force-lock" to true, "wipe-data" to null, "disable-keyguard-features" to false),
             ),
         )
+        // qa-25b-25f L5: from Android 15 the camera policy is checked by permission - no restart needed.
+        val cameraMissing = DECLARED_ADMIN_POLICIES.mapValues { (tag, _) -> tag != "disable-camera" }
+        assertEquals(listOf("disable-camera"), pendingAdminPolicies(cameraMissing, sdkInt = 34))
+        assertEquals(emptyList<String>(), pendingAdminPolicies(cameraMissing, sdkInt = 35))
+        assertEquals(emptyList<String>(), pendingAdminPolicies(cameraMissing, sdkInt = 36))
+        assertEquals("other tags stay pending on 16", listOf("force-lock"),
+            pendingAdminPolicies(DECLARED_ADMIN_POLICIES.mapValues { (tag, _) -> tag != "force-lock" }, sdkInt = 36))
         val report = ServerJson.parseToJsonElement(
             ServerJson.encodeToString(
                 com.kidslauncher.mdm.server.dto.StatusReportRequest.serializer(),
