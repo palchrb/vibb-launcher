@@ -14,7 +14,10 @@
 
 Every answer is built from the canned SOAP replies in music/app/src/test/resources/sonos/ - the same
 files the JVM tests parse (SonosFixturesTest) - with the scripted values put into their elements: the
-"two fakes" guard (neither fake can drift into agreeing with itself). It answers the actions of
+"two fakes" guard (neither fake can drift into agreeing with itself). Each situation answers from its
+own fixture: GetPositionInfo from position_{playing_ours,paused,transitioning,stopped_retained,
+stopped_empty,x_rincon}.xml, GetTransportInfo from transport_<state>.xml, a fault from its
+fault_<code>.xml (701's with the code when there is none), the topology in zgs_wrapped.xml's shape. It answers the actions of
 design 26a §2.2 (AVTransport, RenderingControl, ZoneGroupTopology), the device description and
 /status/accounts, and logs every SOAP call. No SSDP: the emulator's user-mode network carries no
 multicast and every host fake is 10.0.2.2, so the app's cache is seeded through the debug feed
@@ -61,6 +64,23 @@ SERVICES = {
 }
 LIVE = ("PLAYING", "PAUSED_PLAYBACK")
 T0 = time.monotonic()
+# The canned reply each situation is answered from: the fixture the JVM tests parse for that very case
+# (SonosFixturesTest), with the live values put into its elements.
+POSITION = {
+    "grouped": "position_x_rincon.xml",            # a member: x-rincon:<coordinator>
+    "stopped_empty": "position_stopped_empty.xml",  # the migration / lost-session signature
+    "STOPPED": "position_stopped_retained.xml",     # an episode's end, the uri kept
+    "PAUSED_PLAYBACK": "position_paused.xml",
+    "TRANSITIONING": "position_transitioning.xml",
+    "PLAYING": "position_playing_ours.xml",
+}
+TRANSPORT = {
+    "PLAYING": "transport_playing.xml",
+    "PAUSED_PLAYBACK": "transport_paused.xml",
+    "STOPPED": "transport_stopped.xml",
+    "TRANSITIONING": "transport_transitioning.xml",
+}
+POSITION_TAGS = ("Track", "TrackDuration", "TrackMetaData", "TrackURI", "RelTime")
 
 
 def log(msg):
@@ -236,17 +256,21 @@ class Household:
         return state, spk.uri, spk.position(), spk.duration, spk.meta
 
     def zone_group_state(self):
+        """The household as zgs_wrapped.xml's document: its wrapper, and each member shaped like its first
+        visible member (SoftwareVersion, SWGen, BootSeq, ...) with this speaker's uid, Location and name."""
+        root, member = zgs_template()
         groups = {}
         for s in self.speakers:
             groups.setdefault(s.coordinator if s.coordinator in self.by_uid else s.uid, []).append(s)
-        out = []
+        zone_groups = root.find("ZoneGroups")
         for coord, members in groups.items():
-            ms = "".join(
-                f'<ZoneGroupMember UUID="{m.uid}" Location="http://{self.advertise}:{m.port}/xml/device_description.xml" '
-                f'ZoneName="{escape(m.name, {chr(34): "&quot;"})}" SoftwareVersion="70.3-35220" SWGen="2" BootSeq="1"/>'
-                for m in members)
-            out.append(f'<ZoneGroup Coordinator="{coord}" ID="{coord}:1">{ms}</ZoneGroup>')
-        return f"<ZoneGroupState><ZoneGroups>{''.join(out)}</ZoneGroups><VanishedDevices></VanishedDevices></ZoneGroupState>"
+            g = ET.SubElement(zone_groups, "ZoneGroup", {"Coordinator": coord, "ID": f"{coord}:1"})
+            for m in members:
+                attrs = {"UUID": m.uid, "Location": f"http://{self.advertise}:{m.port}/xml/device_description.xml",
+                         "ZoneName": m.name}
+                attrs.update((k, v) for k, v in member.items() if k not in attrs)
+                ET.SubElement(g, "ZoneGroupMember", attrs)
+        return ET.tostring(root, encoding="unicode", short_empty_elements=False)
 
     # -- the actions --
 
@@ -270,15 +294,15 @@ class Household:
 
     def av(self, spk, action, args):
         if action == "GetPositionInfo":
-            _state, uri, rel, dur, meta = self.view(spk)
-            body = fixture("position_playing_ours.xml")
+            state, uri, rel, dur, meta = self.view(spk)
+            body = fixture(position_fixture(state, uri))
             for tag, value in (("Track", "1" if uri else "0"), ("TrackDuration", hms(dur)), ("TrackMetaData", meta),
                                ("TrackURI", uri), ("RelTime", hms(rel))):
                 body = put(body, tag, value)
             return body
         if action == "GetTransportInfo":
             state = self.view(spk)[0]
-            return put(fixture("transport_playing.xml"), "CurrentTransportState", state)
+            return put(fixture(TRANSPORT.get(state, "transport_playing.xml")), "CurrentTransportState", state)
         if action == "SetAVTransportURI":
             spk.coordinator = spk.uid  # a play on a member makes it standalone again
             spk.uri, spk.meta = args.get("CurrentURI", ""), args.get("CurrentURIMetaData", "")
@@ -318,7 +342,33 @@ def empty(service, action):
         "urn:schemas-upnp-org:service:AVTransport:1", service)
 
 
+def position_fixture(state, uri):
+    """GetPositionInfo's template for what the speaker's own transport reports."""
+    if uri.startswith("x-rincon:"):
+        return POSITION["grouped"]
+    if state == "STOPPED" and not uri:
+        return POSITION["stopped_empty"]
+    return POSITION.get(state, POSITION["PLAYING"])
+
+
+def zgs_template():
+    """(zgs_wrapped.xml's ZoneGroupState with its ZoneGroups emptied, its first visible member's attributes)."""
+    reply = ET.fromstring(fixture("zgs_wrapped.xml").encode("utf-8"))
+    inner = next(e for e in reply.iter() if e.tag.split("}", 1)[-1] == "ZoneGroupState")
+    root = ET.fromstring(inner.text)
+    member = next(m for m in root.iter("ZoneGroupMember") if m.get("Invisible") != "1")
+    template = {k: v for k, v in member.attrib.items() if k != "Invisible"}
+    zone_groups = root.find("ZoneGroups")
+    for g in list(zone_groups):
+        zone_groups.remove(g)
+    return root, template
+
+
 def fault(code):
+    """The fixture of that fault when there is one (fault_701/710/711/500.xml), else 701's with the code."""
+    name = f"fault_{code}.xml"
+    if os.path.exists(os.path.join(FIXTURES, name)):
+        return fixture(name)
     return put(fixture("fault_701.xml"), "errorCode", str(code))
 
 
@@ -441,13 +491,19 @@ def selftest():
     for name in names:
         if name.endswith(".xml"):
             ET.fromstring(fixture(name).encode("utf-8"))
-    for name, tags in (("position_playing_ours.xml", ("Track", "TrackDuration", "TrackMetaData", "TrackURI", "RelTime")),
-                       ("transport_playing.xml", ("CurrentTransportState",)), ("zgs_wrapped.xml", ("ZoneGroupState",)),
-                       ("get_volume.xml", ("CurrentVolume",)), ("get_mute.xml", ("CurrentMute",)),
-                       ("fault_701.xml", ("errorCode",)), ("device_description.xml", ("UDN", "roomName"))):
+    templates = [(n, POSITION_TAGS) for n in sorted(set(POSITION.values()))] + \
+        [(n, ("CurrentTransportState",)) for n in sorted(set(TRANSPORT.values()))] + [
+        ("zgs_wrapped.xml", ("ZoneGroupState",)), ("get_volume.xml", ("CurrentVolume",)), ("get_mute.xml", ("CurrentMute",)),
+        ("fault_701.xml", ("errorCode",)), ("device_description.xml", ("UDN", "roomName"))]
+    for name, tags in templates:
         for tag in tags:
             put(fixture(name), tag, "x")
-    print(f"1. {len(names)} fixtures parse; the templates carry every element the fake fills OK")
+    root, member = zgs_template()
+    assert root.tag == "ZoneGroupState" and root.find("ZoneGroups") is not None and len(root.find("ZoneGroups")) == 0
+    assert member.get("SoftwareVersion") and "UUID" in member, member
+    used = {n for n, _ in templates} | {"empty_response.xml", "accounts.xml"} | \
+        {n for n in names if re.fullmatch(r"fault_\d+\.xml", n)}
+    print(f"1. {len(names)} fixtures parse; {len(used)} of them answer, each template carries what the fake fills OK")
 
     ns = argparse.Namespace(speakers="Stua:0,Kjøkken:0", advertise="127.0.0.1", transition_s=0.3, duration=0.0,
                             group=None, script=None)
@@ -472,6 +528,7 @@ def selftest():
                 code, text = r.status, r.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             code, text = e.code, e.read().decode("utf-8")
+        replies.append(text)
         root = ET.fromstring(text.encode("utf-8"))
         first = list(root.find(f"{{{SOAP_NS}}}Body"))[0]
         if first.tag.endswith("Fault"):
@@ -479,6 +536,8 @@ def selftest():
             return code, {"fault": err.text}
         assert code == 200, code
         return code, {c.tag.split("}", 1)[-1]: (c.text or "") for c in first}
+
+    replies = []
 
     AV, RC, ZGT = ("/MediaRenderer/AVTransport/Control", "/MediaRenderer/RenderingControl/Control",
                    "/ZoneGroupTopology/Control")
@@ -490,7 +549,9 @@ def selftest():
         assert zgs.startswith("<ZoneGroupState><ZoneGroups>"), zgs[:60]
         assert f'Location="http://127.0.0.1:{kjokken.port}/xml/device_description.xml"' in zgs
         assert 'ZoneName="Kjøkken"' in zgs
-        print("2. device description, accounts, topology with each speaker's port OK")
+        assert 'SoftwareVersion="70.3-35220"' in zgs and 'ChannelMapSet=""' in zgs, "members shaped like the fixture's"
+        assert zgs.endswith("<VanishedDevices></VanishedDevices></ZoneGroupState>"), zgs[-60:]
+        print("2. device description, accounts, topology (the fixture's shape) with each speaker's port OK")
 
         # 3. a play: the DIDL arrives once-escaped and is echoed back, TRANSITIONING then PLAYING, seek
         uri = "https://podkast.example/ep12.mp3?a=1&b=2"
@@ -509,26 +570,36 @@ def selftest():
         soap(stua, AV, "Seek", (("Unit", "REL_TIME"), ("Target", "0:07:11")))
         assert soap(stua, AV, "GetPositionInfo")[1]["RelTime"] in ("0:07:11", "0:07:12")
         assert soap(stua, AV, "Seek", (("Unit", "REL_TIME"), ("Target", "9:00:00")))[1] == {"fault": "711"}
+        assert replies[-1] == fixture("fault_711.xml"), "a fault with a fixture is that fixture"
         soap(stua, AV, "Pause")
         assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "PAUSED_PLAYBACK"
+        assert replies[-1] == fixture("transport_paused.xml"), "PAUSED answers from transport_paused.xml"
         soap(stua, RC, "SetVolume", (("Channel", "Master"), ("DesiredVolume", "140")))
         assert soap(stua, RC, "GetVolume", (("Channel", "Master"),))[1]["CurrentVolume"] == "100"
         soap(stua, RC, "SetMute", (("Channel", "Master"), ("DesiredMute", "1")))
         assert soap(stua, RC, "GetMute", (("Channel", "Master"),))[1]["CurrentMute"] == "1"
         assert soap(stua, AV, "Next")[1] == {"fault": "401"}
+        assert replies[-1] == put(fixture("fault_701.xml"), "errorCode", "401"), "no fixture for 401: 701's with the code"
         print("3. play, DIDL echo, transitioning, seek (701 when stopped, 711 past the end), pause, volume OK")
 
         # 4. the script: grouped away, migration, unreachable
         soap(stua, AV, "Play", (("Speed", "1"),))
         house.load_script("t+0 x-rincon:%s\n" % kjokken.uid)
         house.run_due()
-        assert soap(stua, AV, "GetPositionInfo")[1]["TrackURI"] == f"x-rincon:{kjokken.uid}"
+        member = soap(stua, AV, "GetPositionInfo")[1]
+        assert member["TrackURI"] == f"x-rincon:{kjokken.uid}", member
+        expected = fixture("position_x_rincon.xml")
+        for tag in POSITION_TAGS:
+            expected = put(expected, tag, member[tag])
+        assert replies[-1] == expected, "a member answers from position_x_rincon.xml"
         zgs = soap(kjokken, ZGT, "GetZoneGroupState")[1]["ZoneGroupState"]
         assert zgs.count("<ZoneGroup ") == 1, "both in Kjøkken's group"
         house.load_script("t+0 PLAYING -\nt+0 move Kjøkken\n")
         house.run_due()
         own = soap(stua, AV, "GetPositionInfo")[1]
+        assert replies[-1] == fixture("position_stopped_empty.xml"), "the migration signature IS the fixture"
         assert own["TrackURI"] == "" and soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "STOPPED", own
+        assert replies[-1] == fixture("transport_stopped.xml")
         assert soap(kjokken, AV, "GetPositionInfo")[1]["TrackURI"] == uri
         house.load_script("t+0 drop\n")
         house.run_due()
