@@ -749,3 +749,60 @@ No other real user questions: M2, M3 and M6 are design fixes with obvious defaul
 - **Q1, decided from the user's own rule** ("no per-episode art looks as today"): the carousel shows when its pages show
   **at least two different pictures**, with the series cover counting as one. An album whose songs all carry the same
   cover looks as today. A podcast where a single episode has its own picture still gets the carousel, as decided.
+
+## Implementation status (2026-10-12)
+
+Built on branch `music-episode-art-27`, rebased onto `main` `e3b61813`. Not pushed, not merged. Nothing was run on a
+device or the emulator.
+
+**Commits:**
+- `3ac53f38` Step 1 (server and the listing contract). Migration `0070_music_episode_art.sql`. The listing
+  snapshot, the music app's copy, `Listing.kt`'s 64-hex filter, `ContractFilesTest` and the launcher's
+  `MusicPlanTest` version pin (`a8146790d70b89a3`, QA M4) are in this one commit.
+- `9c0d18ae` Server docs: `server/CLAUDE.md` ("Vibb music: episode art") and `server/DEPLOY.md` (`data/music_art` isn't
+  backed up, the Pi checks).
+- `9608c40c` The flaky `flags_are_kept_until_their_item_is_asked`: it flagged after a fixed 30 ms while a check ran,
+  so under load the flag landed before the check read its rows, or after it committed. It now waits for the check's
+  first request (`CannedFetch::in_flight()`).
+- `26d03e1f` Step 2 (the courier): `items.artHash` (Room 2, the `ReapplyListings` auto migration, QA H1), the want set
+  (`logic/EpisodeArt.kt`, `sync/ArtPlan.kt`), `wantArt` appended to the AIDL in both apps, `bridge_contract.json`'s
+  `want_art` caps, the launcher's `syncArt`/`artToFetch`/`artToDelete` and failure backoff (QA M6), the music app's
+  prune of covers and small copies (QA L3, L4).
+- `c117f3bc` The launcher nudges the music app once when a new want set names pictures it already holds.
+- `40713096` Step 3 (the player): `PlayerArt`/`EpisodeCarousel`, `SKIP_TO` and `THEN_SKIP_TO`, `Cover`'s fallback,
+  `Store.coversVersion` (QA M5), the lazy art map and `replaceMediaItem` (QA H2), the mockup's rule and saved place,
+  and this spec's body (QA M1).
+- `cd32ab3f` The server's art pass skips items without a source or picture URL (a Storytel part is `ok` with
+  `url` NULL), and the covers version moves atomically.
+
+**Deviations and choices:**
+- QA H1's migration test: the music app has no Room testing or Robolectric, and no dependency was added. The test runs
+  `ReapplyListings.onPostMigrate` against a recording `SupportSQLiteDatabase` proxy and checks the exported
+  `schemas/.../2.json` and `listingsWanted` with an empty version. KSP validates the auto migration at build time.
+- The want set: library covers are left out (they come their own way). The prune's universe is capped with the lists
+  (600) plus the 20 recent pictures. The recent set is the current item and its neighbours, noted on each item change
+  (`recent_art.txt`).
+- The launcher: a network error doesn't count toward a picture's backoff, only an HTTP error or a wrong hash does.
+  No network: nothing is fetchable, so `wantArt` starts no courier run. `now` goes on any network, roaming included
+  (about 60 KB a picture, QA L4).
+- The pager's "pending" hold is the `PlayRequest` (QA H3). For quick swipes, `PlayRequest.via` lets the player pass
+  through an earlier swipe's target without ending the later request. The pager also records the index shown when it
+  skipped, so it isn't pulled back before the request shows.
+- Decoding (QA L3): covers decode at the size the player's 224 dp cover needs (`inSampleSize`), and the bitmap cache
+  counts bytes (16 MiB).
+- `PlayerScreen` takes `numberOf(item)` in place of `number`, so "Episode N av M" follows the landing page.
+- Server-side choices are in the step 1 report: `art_fetched_at`, the reference-print columns, and the monthly backlog
+  retry (QA L1 e). The server version stays 0.24.0.
+
+**Tests and checks:**
+- Server: `cargo test` 611 passed. `cargo fmt --check` is clean. `cargo clippy --all-targets` gives 12 warnings, none
+  in the new code.
+- Launcher: `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` passed (1010 tests), release
+  built with the stub `tsnet.aar`.
+- Music app: `testDebugUnitTest assembleDebug assembleRelease lint -PwarningsAsErrors=true` passed (185 tests). Lint
+  has nothing new.
+- The PWA was checked headless at 360 px in light and dark: the count line is cut off with "…", and nothing scrolls
+  sideways.
+
+**Device checks still to do:** all of §6, plus QA H2's lock-tile check and L5's TalkBack and animations-off checks. On
+the Pi, the checks are in `server/DEPLOY.md`. Sonos (phase 1b-3) must route `SKIP_TO` as it routes next.
