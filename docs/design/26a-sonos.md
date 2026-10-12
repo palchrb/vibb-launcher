@@ -438,10 +438,20 @@ launcher change and a contract change: both `bridge_contract.json` copies, `Musi
 (QA H6). **At a session's start** (a room picked, a start, a restart - `PlayWhy.START`; corrected 2026-10-12 after the
 main session's review) the speaker's volume is read once (`GetVolume`) and, when above the cap in force, set to the cap
 **before Play, inside the hush** (`SonosTransport.capVolume`): our stream never starts louder than the parent allows,
-whatever the last listener left. No cap -> nothing is read. **During the session** a louder volume set from the Sonos
-app or the speaker's buttons is **not** pulled down (vibb never fights external changes, 995-998): a step, an advance,
-a poll and the adopt at start (zero transport commands) never touch it; only our own sets are clamped, the sleep
-ramp's leftover volume too. Best effort: a speaker that won't answer `GetVolume` still plays (logged).
+whatever the last listener left. **A group row caps every room in it** (qa-26a-corrections M2): RenderingControl is
+one speaker's volume, so each member of the row (`roomMembers`, the cache's ips) gets its own `GetVolume`/`SetVolume`
+in the same hush, best effort within 1.5 s each - an unknown or silent member never holds the play up. No cap ->
+nothing is read. **During the session** a louder volume set from the Sonos app or the speaker's buttons is **not**
+pulled down (vibb never fights external changes, 995-998): a step, an advance, a poll and the adopt at start (zero
+transport commands) never touch it; only our own sets are clamped, the sleep ramp's leftover volume too. **A cap that
+goes down during the session** (the override or the restrictions pause ending, a parent's change; the
+`ACTION_APPLICATION_RESTRICTIONS_CHANGED` broadcast -> `PlayerHub.capChanged` -> `SonosController.capChanged`) pulls
+**our own** last set (`volOpt`) down to it once - 70 from the keys under a lifted cap becomes 40 - as the phone's own
+`STREAM_MUSIC` follows the cap at once (`L/music/VolumeCap.kt`); a volume we didn't set (`volOpt` null) or one at or
+below the cap is left alone (qa-26a-corrections M1). `volOpt` is always what we last set on the speaker: the start's
+cap, a ramp's leftover put back after it, or a key press sent while the start was in flight, whichever went out last
+(L1). Best effort: a speaker that won't answer `GetVolume` still plays (logged). The keys and the slider still reach
+the coordinator only (vibb's model, a group's own volume is the Sonos app's).
 
 ### 5.4 No server change for playback
 NRK series items carry their program id as the item key (§2.5), so the listing contract stays. The server sees no
@@ -492,12 +502,15 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    (1.5 s budget, standalone when the service is gone, through the actor when it is up; the standalone look is
    **retried** while it got no answer - at most three looks, the later ones with everything left until 6.5 s into the
    receiver's 9 s, so a slow speaker still gets its Stop - and reads **no group and no volume**, whose time is the
-   Stop's; correction 2026-10-12); ours (normUri against the
-   stored uri) and PLAYING/PAUSED -> bookmark, `stop`, then `SetAVTransportURI("x-rincon-queue:<uid>#0", "")` so the
-   speaker's own Play button plays the (empty) queue, not the episode from 0:00 (after a Stop the speaker keeps its
-   AVTransportURI, `sonosd.py:894-896`); disarm; `renderer.json` -> local. `playAllowed(suspended)` gates every Sonos
-   play path as it gates the local ones (`GuardsTest`). **Limit, documented:** the household's own Sonos apps and
-   grouping from them are out of reach; a kid with the parent's Sonos app is a household matter, not the phone's.
+   Stop's; correction 2026-10-12. The Stop and the park then get what is left until 8.5 s, at least 0.5 s, as one
+   budget for both SOAPs (qa-26a-corrections L2), so the receiver finishes inside its 9 s even after a late answer; a
+   Stop that fails or runs out is NO_ANSWER - the room stays recorded and the next look parks it); ours (normUri
+   against the stored uri) and PLAYING/PAUSED -> bookmark, `stop`, then `SetAVTransportURI("x-rincon-queue:<uid>#0",
+   "")` so the speaker's own Play button plays the (empty) queue, not the episode from 0:00 (after a Stop the speaker
+   keeps its AVTransportURI, `sonosd.py:894-896`); disarm; `renderer.json` -> local. `playAllowed(suspended)` gates
+   every Sonos play path as it gates the local ones (`GuardsTest`). **Limit, documented:** the household's own Sonos
+   apps and grouping from them are out of reach; a kid with the parent's Sonos app is a household matter, not the
+   phone's.
 2. **Process death while Sonos plays** leaves the speaker playing until the next start adopts (§4.7) or the next
    suspension edge stops it (1 above, which works without the service). `onDestroy` (`onTaskRemoved` too) does the
    full stop path: live refresh, bookmark, ours-gate, `stop` (vibb `_sonos_on_term`, 5340-5364). A crash does not.
@@ -598,13 +611,16 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
   renderer, no-ops on same uid / other uid / stale / absent, a failed adopt changes nothing; a tick that throws never
   kills the poller; a headset event never touches the renderer; the state table of §3.2 (one failed poll stays
   BUFFERING, never IDLE); `availableCommands`; volume adjust from our own base and clamped to the cap, an external
-  higher volume left alone; the startup gate (RESUME before `rendererReady` waits; resumption on Sonos starts the
-  speaker, not Exo); suspension -> bookmark, stop, queue uri, disarm, also with no service.
+  higher volume left alone; the start cap (before Play, inside the hush, every room of a group, once per session, no
+  cap no read), a lowered cap pulling our own louder set down once, `volOpt` = what we last set; the startup gate (RESUME before `rendererReady` waits; resumption on Sonos starts the
+  speaker, not Exo); suspension -> bookmark, stop, queue uri, disarm, also with no service; the bedtime looks retried
+  in their budget without the aux reads, the Stop and park within what is left (`SonosLifecycleTest`).
 - `PlayBodyTest`: art only when http, NRK series -> `nrk_program` with `programId = item.key` and the slug from the
-  target, non-series `hls` filtered, a private-literal host of a `publicOnly` entry filtered, listing duration rides
-  along.
+  target, non-series `hls` filtered, a private-literal host of a `publicOnly` entry filtered, a tailnet-literal host of
+  a `lan` entry filtered, listing duration rides along.
 - Existing: `GuardsTest` pins updated (OUTPUT-to-Sonos in `PLAYS`, the receiver's path), `ReportTest` unchanged,
-  `FitTest` + the long labels, `SourceScanTest` (no `Uri.parse("http`, no screen wake lock), `ContractFilesTest`
+  `FitTest` + the long labels, `SourceScanTest` (no `Uri.parse("http`, no screen wake lock, no socket bound to a `Network`
+  in any built source set, §6.5), `ContractFilesTest`
   unchanged. Launcher: `MusicPlanTest`/`BridgeTest` for the new restriction, `MusicMediaPlanTest` for a remote session
   (position with update time, speed 1).
 
@@ -741,7 +757,8 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
 - Screen off 1 h in Doze while Sonos plays: poll timestamps in logcat every 15 s, the bookmark after a forced stop
   within 15 s of the truth, battery per hour; the sleep timer's fade and the volume restored after it.
 - Volume keys: ±3 per press, the slider, the cap holds; a speaker left louder than the cap starts at the cap (no loud
-  first second); a louder volume set from the Sonos app during the session is left alone.
+  first second), every room of a group row too; the override ending while the keys had the room above the cap pulls
+  it down; a louder volume set from the Sonos app during the session is left alone.
 - An incoming phone call and an Element X voice/video call during Sonos playback and during local playback: paused
   at the ring, played again after only when it was playing; the kid's own pause during the call stays.
 - VPN filter on (the launcher's always-on `KidVpnService`): discovery and control still work - the sheet fills by
@@ -1497,6 +1514,49 @@ meaning, not by state (above); (b) the start cap changes 26a's earlier "a speake
 down" to "not during a session", which is what the review asked - the user's 2026-10-11 answer ("the keys control the
 speaker, with the parent's cap") reads either way, so the stricter one wins for a kid's phone. Device checks added or
 sharpened: the VPN line (no `EPERM`), the start cap ("a speaker left louder than the cap starts at the cap").
+
+### Fix round after QA's code review (qa-26a-corrections-code, 2026-10-12)
+
+`docs/design/qa-26a-corrections-code.md`: 0 High, 3 Medium, 5 Low, every one fixed (its "not worth fixing" list
+skipped, as the main session decided); all five points and both notes above were accepted.
+
+- **M1, a cap lowered during a session.** The restrictions broadcast (`MusicApp.applyConfig`, on the main thread) calls
+  `PlayerHub.capChanged`, which the service points at the room renderer's `SonosController.capChanged`: our own last
+  set (`volOpt`) above the cap in force -> one `SetVolume(cap)` through the actor; `volOpt` null (a volume we didn't
+  set) or at/below the cap, no session, or no cap -> nothing. §5.3. Tests: keys to 70 under a lifted cap, cap 40 ->
+  one `volume 40`, not twice, nothing when the cap lifts; the Sonos app's 80, ours at the cap, a stopped session ->
+  nothing.
+- **M2, a group row's other rooms.** The start cap goes to every member of the row (`SonosController(members =
+  roomMembers(...))`, `SonosTransport.play(body, cap, members)`): each member's own `GetVolume`/`SetVolume`, after the
+  coordinator's, inside the same hush, within `MEMBER_CAP_BUDGET_MS` (1.5 s) each; an unknown uid or a silent member is
+  logged and skipped. Steps cap no one. §5.3, the device check. Test: four speakers in one shared call log - the
+  coordinator and Stua set to 40, Bad at 30 only read, a silent and an unknown member skipped, all between `mute true`
+  and `seturi`; a step afterwards reads no volume.
+- **M3, the committed bytecode.** `scripts/__pycache__/fake-sonos.cpython-313.pyc` untracked, `__pycache__/` in the root
+  `.gitignore` (`36227df`).
+- **L1, `volOpt` is what we last set.** A play's job reports the last volume it set (`PlayResult.volume`: the ramp's
+  leftover when it was put back after the cap, `restored`), and a play's result takes it only when no key press of
+  ours went out after the play was sent (`volSets`); a leftover that failed to go back is kept for the next play (it
+  was cleared before). Tests: base 30 / cap 50 / speaker 80 -> `volume 50, seturi, play, volume 30`, `volOpt` 30, the
+  next "down" 27; the slider at 20 while the start's cap is in flight -> `volOpt` 20.
+- **L2, the bedtime Stop's time.** `suspensionStop(stopMs)`: the park (Stop + the queue uri) runs on one speaker budget
+  of what is left until `stopMs` (`SonosSuspension`: 8.5 s after the path started), at least 0.5 s; a Stop that fails
+  or runs out is NO_ANSWER (the room stays recorded, the next look parks it) instead of an exception out of the
+  receiver. §6.1. Tests: the park's budget after a slow first look (6250 of 8000), the 0.5 s floor after a late
+  answer, a failing Stop -> NO_ANSWER with the bookmark written first.
+- **L3, stale text.** `Ssdp.kt` (the header, `DatagramSsdpIo`), `Topology.kt`'s `location` doc, `emulator.md` §6g (Wi-Fi
+  is a gate, the device check names the VPN and `EPERM`); §7 lists the start cap, the lowered cap, `volOpt`, the
+  bedtime looks and park budget, the tailnet filter and the bind ban; §6g gains the start-cap check (the fake's new
+  `--volume 90`: `GetVolume`, `SetVolume 40` before `SetAVTransportURI`, both rooms with `--group`) and the lowered-cap
+  one.
+- **L4.** `tailnetLiteral` and its KDoc moved above `privateLiteral`'s, which is back on its function.
+- **L5, the bind ban.** `SourceScanTest` scans every built source set (`src/main`, `src/debug`; asserted present) and
+  also bans the bare `bindSocket` (a `Network::bindSocket` reference), `SocketFactory()` and `etSocketFactory`
+  (`getSocketFactory()`).
+
+Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **385 tests, 0
+failures**, lint clean (378 before this round); `python3 -I -B scripts/fake-sonos.py --selftest` OK. Launcher and
+server untouched in this round.
 
 ## Release
 

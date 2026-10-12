@@ -10,6 +10,7 @@
     python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402 --advertise 10.0.2.2
     python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402 --group Stua+Kjøkken
     python3 scripts/fake-sonos.py --script migration.txt
+    python3 scripts/fake-sonos.py --volume 90          # every speaker starts loud (the start cap, 26a §5.3)
     python3 -I scripts/fake-sonos.py --selftest
 
 Every answer is built from the canned SOAP replies in music/app/src/test/resources/sonos/ - the same
@@ -457,6 +458,8 @@ def build(args):
         # selftest's) takes a number of its own
         speakers.append(Speaker(name, int(port), f"RINCON_FAKE{int(port) or 90001 + i:05d}01400"))
     house = Household(speakers, args.advertise, args.transition_s, args.duration)
+    for spk in speakers:
+        spk.volume = max(0, min(100, args.volume))
     if args.group:
         names = args.group.split("+")
         coord = house.speaker(names[0])
@@ -506,7 +509,7 @@ def selftest():
     print(f"1. {len(names)} fixtures parse; {len(used)} of them answer, each template carries what the fake fills OK")
 
     ns = argparse.Namespace(speakers="Stua:0,Kjøkken:0", advertise="127.0.0.1", transition_s=0.3, duration=0.0,
-                            group=None, script=None)
+                            group=None, script=None, volume=30)
     house = build(ns)
     servers = serve(house, "127.0.0.1")
     stua, kjokken = house.speakers
@@ -634,6 +637,7 @@ def main():
     p.add_argument("--duration", type=float, default=0.0,
                    help="track length in seconds when the DIDL has none (default: none, reads 0:00:00)")
     p.add_argument("--transition-s", type=float, default=0.5, help="TRANSITIONING after Play (default %(default)s)")
+    p.add_argument("--volume", type=int, default=30, help="every speaker's volume at the start (default %(default)s)")
     p.add_argument("--print-seed", action="store_true", help="print debug-feed/sonos.json for these speakers and exit")
     p.add_argument("--selftest", action="store_true", help="check the fixtures and the fake against itself, then exit")
     args = p.parse_args()

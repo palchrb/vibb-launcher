@@ -67,8 +67,8 @@ object Topology {
 
     /**
      * `http://<ip>:<port>/...` -> (ip, port); the port defaults to [SONOS_PORT]. An IP literal only
-     * (a speaker's Location always is one): a name would be resolved outside the Wi-Fi binding, and an
-     * odd host cached here would fail every later call (qa-26a-step1-code L1).
+     * (a speaker's Location always is one): a name would go to the phone's DNS (the launcher's filter),
+     * never the LAN's, and an odd host cached here would fail every later call (qa-26a-step1-code L1).
      */
     fun location(location: String): Pair<String, Int>? {
         val m = Regex("^https?://([0-9.]+|\\[[0-9A-Fa-f:.]+])(?::([0-9]{1,5}))?(/.*)?$").find(location.trim()) ?: return null

@@ -543,17 +543,20 @@ t+15 volume 60
   Stua -> Kjøkken -> phone (the fake's log shows one Stop per room left, a bookmark before it), the same tile, the
   grouped-away, taken-over and migration scripts, the sleep timer's 3-step ramp (three `SetVolume`, `Pause`, the volume
   back), the volume keys (`SetVolume` 0..100), an own-files entry ("Kan ikke spilles på Sonos", the phone stays) and a
-  failed start (the fake stopped, a stale row picked: "Kan ikke spilles på Sonos", back to the phone, paused). The
-  app binds every Sonos socket to the Wi-Fi network: use an image with the emulated Wi-Fi (`AndroidWifi`); without
-  it every room reads stale and nothing is tried. With step 3b: kill and restart the app while the fake plays (adopt:
-  only reads in the fake's log - no SetAVTransportURI, Play or Seek - the right item, Home's RESUME starts nothing
-  twice; a stopped or taken-over fake: the phone, paused), a Bluetooth play (`adb shell input keyevent MEDIA_PLAY`)
-  with a room and no queue (the speaker starts, Exo doesn't), a time rule's suspension with and without the service
-  (Stop, then `SetAVTransportURI x-rincon-queue:...`; `adb shell pm suspend` reaches `MY_PACKAGE_SUSPENDED` too), the
-  service going (the task swiped while paused: one Stop), the volume keys against the cap (set on the device page: no
-  `SetVolume` above it, the override lifts it at once; a `volume 90` script line is left alone), a call (`gsm call
-  <number>` in the emulator console: Pause, and Play after `gsm cancel` only when it played) and the locks (`adb shell
-  dumpsys power | grep vibb:sonos` while playing, gone 30 s after a pause). With step 3c (the parent's room scope):
+  failed start (the fake stopped, a stale row picked: "Kan ikke spilles på Sonos", back to the phone, paused). The app
+  talks to speakers only while a Wi-Fi network is up (a gate; no socket is bound to it, 26a §6.5): use an image with
+  the emulated Wi-Fi (`AndroidWifi`); without it every room reads stale and nothing is tried. With step 3b: kill and
+  restart the app while the fake plays (adopt: only reads in the fake's log - no SetAVTransportURI, Play or Seek - the
+  right item, Home's RESUME starts nothing twice; a stopped or taken-over fake: the phone, paused), a Bluetooth play
+  (`adb shell input keyevent MEDIA_PLAY`) with a room and no queue (the speaker starts, Exo doesn't), a time rule's
+  suspension with and without the service (Stop, then `SetAVTransportURI x-rincon-queue:...`; `adb shell pm suspend`
+  reaches `MY_PACKAGE_SUSPENDED` too), the service going (the task swiped while paused: one Stop), the volume keys
+  against the cap (set on the device page: no `SetVolume` above it, the override lifts it at once; a `volume 90`
+  script line is left alone; the override ending while the keys had the room above the cap: one `SetVolume` of the
+  cap), the start cap (the fake with `--volume 90`, a cap of 40: the fake's log shows `GetVolume`, `SetVolume 40`
+  before `SetAVTransportURI`; with `--group Stua+Kjøkken` both rooms get it), a call (`gsm call <number>` in the
+  emulator console: Pause, and Play after `gsm cancel` only when it played) and the locks (`adb shell dumpsys power |
+  grep vibb:sonos` while playing, gone 30 s after a pause). With step 3c (the parent's room scope):
   the device page's Music card shows "The phone hasn't seen any speakers yet" before the first report with rooms, then
   Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken unticked -> after the next sync the sheet lists only
   Stua, a session playing on Kjøkken got a bookmark and one Stop and came home paused ("Rommet er ikke lenger
@@ -562,7 +565,8 @@ t+15 volume 60
   session within a minute (the scope's topology read); with the
   sheet open while the sync lands, Kjøkken's row goes (the switch's own refusal - the message, nothing in the fake's
   log - is pinned in the JVM tests: the sheet no longer offers the room).
-- Real speakers stay a device check (design 26a, "Device checks"): SSDP, Wi-Fi binding, the NRK service, Doze.
+- Real speakers stay a device check (design 26a, "Device checks"): SSDP, discovery and control with the launcher's VPN
+  filter on (no `EPERM`), the NRK service, Doze.
 
 ## 6b. Step 7: Play (optional)
 

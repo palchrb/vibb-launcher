@@ -94,8 +94,16 @@ class SourceScanTest {
      */
     @Test
     fun `no socket is bound to a Network - the always-on VPN refuses it`() {
-        val banned = listOf("bindSocket(", "socketFactory(", ".socketFactory", "bindProcessToNetwork", "setProcessDefaultNetwork", ".openConnection(")
-        for (f in sources("src/main/java")) {
+        val banned = listOf(
+            "bindSocket", "socketFactory(", ".socketFactory", "SocketFactory()", "etSocketFactory", "bindProcessToNetwork",
+            "setProcessDefaultNetwork", ".openConnection(",
+        )
+        // every source set the app is built from (src/debug too: a debug-only helper ships in debug builds)
+        val sets = moduleFile("src").listFiles()!!.filter { it.isDirectory && it.name != "test" && !it.name.startsWith("androidTest") }
+        assertTrue(sets.any { it.name == "debug" })
+        val files = sets.flatMap { set -> set.walk().filter { it.isFile && it.extension in setOf("kt", "java") }.toList() }
+        assertTrue(files.size > 30)
+        for (f in files) {
             val text = code(f)
             for (token in banned) if (text.contains(token)) fail("${f.name} references $token")
         }

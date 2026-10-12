@@ -104,12 +104,6 @@ object PlayBodies {
     }
 
     /**
-     * [host] (`HttpUrl.host`) is an IP literal in a private range (21b §2.7); a name is never looked
-     * up. Numeric shorthand hosts (`10.1`, `167772161`) count as names here and pass (on the phone the
-     * connect-time guard would catch them; a speaker would fetch them): accepted, since the server
-     * checked the entry's hosts (21b §2.7) and the parent curates the library.
-     */
-    /**
      * [host] is a tailnet address literal: Tailscale's IPv4 range 100.64.0.0/10 (CGNAT) or its IPv6
      * ULA fd7a:115c:a1e0::/48. A name (`nas.tailnet.ts.net`) is never looked up and passes: the
      * speaker resolves it with the LAN's DNS, where it fails by itself.
@@ -127,6 +121,12 @@ object PlayBodies {
         return octets[0].toInt() == 100 && octets[1].toInt() in 64..127
     }
 
+    /**
+     * [host] (`HttpUrl.host`) is an IP literal in a private range (21b §2.7); a name is never looked
+     * up. Numeric shorthand hosts (`10.1`, `167772161`) count as names here and pass (on the phone the
+     * connect-time guard would catch them; a speaker would fetch them): accepted, since the server
+     * checked the entry's hosts (21b §2.7) and the parent curates the library.
+     */
     internal fun privateLiteral(host: String): Boolean {
         val bare = host.removePrefix("[").removeSuffix("]")
         if (':' in bare) {
