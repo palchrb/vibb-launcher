@@ -137,6 +137,7 @@ object GlanceReader {
             whenMs = n.`when`,
             postTimeMs = sbn.postTime,
             suspended = glanceSuspended(ranked, ranking.isSuspended),
+            missedCall = glanceMissedCall(n.category),
         )
         return notice to n.contentIntent
     }

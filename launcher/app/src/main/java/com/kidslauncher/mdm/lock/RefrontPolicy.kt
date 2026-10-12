@@ -25,6 +25,8 @@ data class RefrontInputs(
     /** An allowed app's VoIP call rings or is on ([VoipPhase] not NONE, design 17): its ring or
      * call screen may be in front. */
     val voipCall: Boolean = false,
+    /** Probably Emergency SOS (five power presses) is in front ([sosGestureLikely], bug 25b-H). */
+    val sosFlow: Boolean = false,
 )
 
 /** How long after "Emergency call" the lock stays out of the way even without a call. */
@@ -62,12 +64,26 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
     inputs.emergencyFlow -> RefrontAction.Yield("emergency")
+    inputs.sosFlow -> RefrontAction.Yield("sos")
     inputs.alarmRinging -> RefrontAction.Yield("alarm")
     // Last: a phone call, the emergency flow and the alarm always win over a VoIP call
     // (qa-16-17-code #1 - and the alarm's exemption ends only on a yield named "alarm").
     inputs.voipCall -> RefrontAction.Yield("voip")
     else -> RefrontAction.Refront(refrontDelayMs(attempt + 1))
 }
+
+/**
+ * The lock was only *paused* while LOCKED (bug 25b-A): Recents (the Overview button, a keyboard's
+ * Recents key) runs as a transient launch that pauses the lock without stopping it - its live tile
+ * keeps it visible - so the stop-only re-front never ran and the other apps' thumbnails stayed up.
+ * A pause schedules the same check after this short delay: a transient pause of our own (a new
+ * intent, the time-rule screen handing back) is over by then and the check stops; the exempt
+ * screens (a call, the emergency flow, an alarm, a VoIP ring) yield as always.
+ */
+const val PAUSE_REFRONT_MS = 200L
+
+/** Whether a pause of the lock starts the re-front check: only while LOCKED and not finishing. */
+fun pauseStartsRefront(locked: Boolean, finishing: Boolean): Boolean = locked && !finishing
 
 /** An `onStop` that isn't the lock losing the front: a configuration change (we are portrait
  * and handle the rest, but still), or finishing after the right PIN. */
@@ -142,3 +158,50 @@ fun guardRearm(guard: CrashGuard, nowMs: Long): CrashGuard {
     val tripped = guard.trippedAtMs ?: return guard
     return if (nowMs - tripped >= GUARD_REARM_MS || nowMs < tripped) CrashGuard() else guard
 }
+
+/**
+ * Bug 25b-H: Emergency SOS. Five quick power presses make SystemUI start the SOS activity (Personal
+ * Safety's countdown, AOSP's Emergency information) as a task of its own - pinned now - and the
+ * re-front would cover it within [PAUSE_REFRONT_MS]. No app can see which activity is in front
+ * (usage events need a permission a device owner can't grant itself), so the timing tells: AOSP
+ * 16's GestureLauncherService counts presses at most 500 ms apart and, once two came quickly,
+ * swallows the rest while the screen is on - the screen turns on at the first or second press and
+ * stays on, and the fifth comes at most about 2 s later. The lock leaving the front within
+ * [SOS_GESTURE_WINDOW_MS] of a screen-on, with an SOS app on the phone, yields as "sos" for
+ * [SOS_FLOW_MS] or until the lock is back in front (SOS cancelled or done); an emergency call
+ * it places yields as a system call. While LOCKED nothing else can come up in that window but a
+ * pinned package: Home and Recents are out of lock task, the camera is off by policy.
+ */
+const val SOS_GESTURE_WINDOW_MS = 3_000L
+
+/** How long a probable SOS is left alone without the lock coming back to the front. */
+const val SOS_FLOW_MS = 60_000L
+
+/**
+ * Only a *stop* marks a probable SOS (a full-screen task of its own covers the lock): Recents - the
+ * Overview button right after waking - only pauses it and is re-fronted as always. A pause inside
+ * the window waits [SOS_PAUSE_GRACE_MS] for that stop before its check, else [PAUSE_REFRONT_MS].
+ */
+const val SOS_PAUSE_GRACE_MS = 700L
+
+fun pauseRefrontDelayMs(lastScreenOnAtMs: Long?, pausedAtMs: Long): Long =
+    if (sosGestureLikely(lastScreenOnAtMs, pausedAtMs, sosAppPresent = true)) SOS_PAUSE_GRACE_MS else PAUSE_REFRONT_MS
+
+/** A probable SOS is left alone until [untilMs] - never while one of our own screens is in front. */
+fun sosFlowNow(untilMs: Long, nowMs: Long, ownScreenInFront: Boolean): Boolean = nowMs < untilMs && !ownScreenInFront
+
+/** The lock left the front [leftFrontAtMs] (elapsed) probably because of the SOS gesture. */
+fun sosGestureLikely(lastScreenOnAtMs: Long?, leftFrontAtMs: Long, sosAppPresent: Boolean): Boolean =
+    sosAppPresent && lastScreenOnAtMs != null && leftFrontAtMs - lastScreenOnAtMs in 0..SOS_GESTURE_WINDOW_MS
+
+/**
+ * Bug 25b-B: at a screen-off the lock is started first; the rest of the screen-off's work (the
+ * update fence and self-update wait, the cached policy's re-check, the status-bar heal) runs this
+ * much later, so the lock's creation and first frame - which wait for the main thread - come first
+ * and the lock is drawn before a quick screen-on.
+ */
+const val SCREEN_OFF_WORK_DELAY_MS = 400L
+
+/** The deferred screen-off work runs only while the screen is still off (a heal with the screen on
+ * would be visible, the self-update wait would start with the phone in use). */
+fun screenOffWorkDue(interactive: Boolean): Boolean = !interactive

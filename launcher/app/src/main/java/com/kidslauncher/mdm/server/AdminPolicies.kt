@@ -23,6 +23,7 @@ val DECLARED_ADMIN_POLICIES: Map<String, Int> = linkedMapOf(
     "limit-password" to 0, // USES_POLICY_LIMIT_PASSWORD
     "force-lock" to 3, // USES_POLICY_FORCE_LOCK
     "wipe-data" to 4, // USES_POLICY_WIPE_DATA
+    "disable-camera" to 8, // USES_POLICY_DISABLE_CAMERA
     "disable-keyguard-features" to 9, // USES_POLICY_DISABLE_KEYGUARD_FEATURES
 )
 

@@ -111,6 +111,10 @@ fun glanceCandidate(facts: GlanceCandidateFacts, ownPackage: String): Boolean =
  * ranking was found for it ([ranked] false: fail closed). */
 fun glanceSuspended(ranked: Boolean, isSuspended: Boolean): Boolean = !ranked || isSuspended
 
+/** `Notification.CATEGORY_MISSED_CALL`: a missed call in an app (Element X sets it on the room's
+ * notification when it holds an RTC notification event); its row is a missed-call row. */
+fun glanceMissedCall(category: String?): Boolean = category == "missed_call"
+
 /** How much of a notification is read (ordered: each level reads everything the one before does). */
 enum class GlanceLevel {
     /** Not ticked: never read past its package name. */
@@ -210,6 +214,9 @@ data class GlanceNotice(
     val whenMs: Long,
     val postTimeMs: Long,
     val suspended: Boolean,
+    /** `Notification.category` is `missed_call` (Element X's room notification with an RTC
+     * notification event - a missed Element Call; other apps' missed calls alike). */
+    val missedCall: Boolean = false,
 ) {
     override fun toString() = "GlanceNotice($packageName)"
 }
@@ -238,6 +245,8 @@ data class GlanceMessageRow(
     val count: Int,
     override val timeMs: Long,
     val postTimeMs: Long,
+    /** The newest notification is a missed call: the row says "Tapt anrop", not "N meldinger". */
+    val missedCall: Boolean = false,
 ) : GlanceRow {
     val packageName: String get() = conversation.packageName
 
@@ -285,6 +294,7 @@ fun glanceRows(
                 count = group.sumOf { it.count }.coerceAtLeast(1),
                 timeMs = newest.whenMs.takeIf { it > 0 } ?: newest.postTimeMs,
                 postTimeMs = newest.postTimeMs,
+                missedCall = newest.missedCall,
             )
         }
     val calls: List<GlanceRow> = when {

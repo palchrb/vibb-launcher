@@ -18,5 +18,9 @@
         <!-- setKeyguardDisabledFeatures (the lock-screen camera, step 9 B2): refused without it
              unless the keyguard coexistence flag is on - seen on an Android 16 emulator. -->
         <disable-keyguard-features />
+        <!-- setCameraDisabled (bug 25b): while the PIN lock is up, and while the power-button
+             gesture's camera is suspended, the cameras are off by policy - SystemUI's camera
+             gesture then starts nothing (it crashed on a suspended camera before). -->
+        <disable-camera />
     </uses-policies>
 </device-admin>

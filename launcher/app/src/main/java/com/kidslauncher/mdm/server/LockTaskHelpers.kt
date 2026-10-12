@@ -44,6 +44,29 @@ enum class HelperKind {
      * that package's stock home, settings or search explicitly - no kid-reachable path was found.
      */
     RECENTS,
+
+    /**
+     * Emergency SOS (bug 25b-H): the system activity for `com.android.systemui.action.LAUNCH_EMERGENCY`
+     * that SystemUI starts at five power presses (AOSP 16 EmergencyGestureModule: system apps only,
+     * `config_preferredEmergencySosPackage` first) - Personal Safety (`com.google.android.apps.safetyhub`)
+     * on Pixels, Emergency information (`com.android.emergency`) on AOSP images. Not pinned, the kiosk
+     * block turned the SOS countdown into "App is not available" over the lock.
+     */
+    EMERGENCY_SOS,
+}
+
+/** SystemUI's Emergency SOS intent action (`EmergencyGesture.ACTION_LAUNCH_EMERGENCY`). */
+const val ACTION_LAUNCH_EMERGENCY = "com.android.systemui.action.LAUNCH_EMERGENCY"
+
+/**
+ * Of the system handlers of [ACTION_LAUNCH_EMERGENCY] (already system-only, in the platform's
+ * order), the Emergency SOS package to pin and never restrict - SystemUI's choice: its [preferred]
+ * package (`config_preferredEmergencySosPackage`) when that is a handler, else the first. Never one
+ * that is [forbidden] (Settings, the camera) or Play core - then none.
+ */
+fun emergencySosHandler(systemHandlers: List<String>, forbidden: Set<String>, preferred: String? = null): String? {
+    val chosen = systemHandlers.firstOrNull { it == preferred } ?: systemHandlers.firstOrNull() ?: return null
+    return chosen.takeIf { it !in forbidden && it !in PLAY_CORE }
 }
 
 /** What an intent resolved to: the package and whether it is a system app (FLAG_SYSTEM). */
@@ -231,7 +254,8 @@ fun pinLockHelpers(
     alarmApp: ResolvedHelper?,
     forbidden: Set<String>,
     ourDialerHeld: Boolean = false,
-): Set<String> = listOfNotNull(emergencyDialer, telecom, systemDialer.takeIf { !ourDialerHeld }, alarmApp)
+    emergencySos: ResolvedHelper? = null,
+): Set<String> = listOfNotNull(emergencyDialer, telecom, systemDialer.takeIf { !ourDialerHeld }, alarmApp, emergencySos)
     .filter { it.system && it.packageName !in forbidden && it.packageName !in PLAY_CORE }
     .mapTo(mutableSetOf()) { it.packageName }
 

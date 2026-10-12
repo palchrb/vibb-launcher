@@ -55,20 +55,23 @@ The first page shows:
 - `GLANCE` -> `KEYPAD`: "Lås opp" (no target) or a row (with that row's target, §1.4).
 - `KEYPAD` -> `GLANCE`: the back arrow (drops the target). A lock-up drops it too.
 - The VoIP ring card stays on top of both stages (design 17, unchanged).
-- **The music tile** (pure `glanceTile(session, shown)`): it appears when the music app's session (`shownSession`,
-  step 4) is playing, stays while it is paused, and goes when the session ends; at the next lock-up a paused session
-  shows no tile. `session == null` (no listener access, the app suspended or gone) = no tile. Its controls are step
-  4's: play/pause, previous, next (the compact tile: play/pause only, §1.2). Nothing opens the player.
+- **The music tile** (pure `glanceTile(session)`; **user decision 2026-10-12**, bug 25b-G - was "appears while
+  playing, stays paused, none for a paused session at a lock-up"): it shows whenever the music app has a session
+  (`shownSession`, step 4), **playing or paused**, also at a lock-up, and goes when the session ends.
+  `session == null` (no listener access, the app suspended or gone) = no tile. Its controls are step 4's:
+  play/pause, previous, next. The full tile (with previous/next) is preferred; the compact one (play/pause only,
+  §1.2) only when the rows don't fit beside the full one (`glanceFit`'s order, unchanged). Nothing opens the player.
 - **The keypad stage** always has the back arrow (to the glance page), never the clock or the date (the glance page
-  has them; mockup C). The compact music row stays while a session is live (step 4). The prompt: the usual
+  has them; mockup C). **No music** (user decision 2026-10-12, 25b-G: "skal være kjedelig" - everything
+  interesting is on the glance page): step 4's compact row (`view_lock_media_row.xml`) is gone. The prompt: the usual
   wait/wrong/checking/unusable texts first; else with a target "Skriv koden for å åpne Element X" (app label,
   `AppDisplay.shownLabel`) or "Skriv koden for å se tapte anrop"; else "Skriv inn koden din". The prompt row already
   takes two lines between the arrow's columns (qa-21-step4-code L5), so the hint costs no height.
   - `pin_clock`/`pin_date` leave `activity_pin_lock.xml`; `PinKeypadLayout`'s date/clock compact steps go
     (`finalKeySizePx(.., compactExhausted = true)` always: keys shrink to the 32 dp floor rather than clip).
   - The arrow is always visible, so the prompt's side margins are static (`setMediaKeypad` goes).
-  - Budget (`PinLockLayoutTest`, 320x569 dp, status bar 48 dp, nav 24/48 dp): with the compact row the stage is
-    step 4's music stage today (keys >= 52 dp); without it the keys get more room.
+  - Budget (`PinLockLayoutTest`, 320x569 dp, status bar 48 dp, nav 24/48 dp): keys >= 56 dp (the compact row's
+    64 dp went with 25b-G).
 
 ### 1.2 The glance page (`view_lock_glance.xml`, replaces `view_lock_media.xml`; mockup A and B)
 
@@ -137,8 +140,8 @@ default [AOSP 16 `UiAutomation`], so UI dumps still see them).
   `GlanceStore` and `MissedCallNotifier` between the lock's onStart and onStop. Its render is wrapped: an exception
   hides the rows and logs the exception class only - a glance fault must never trip the lock's crash guard (3
   crashes switch the lock off).
-- `music/MusicLockPanel.kt`: binds the full and the compact tile and the keypad's compact row while a session is live;
-  no stage logic any more. `LockMediaGuardTest` keeps it opening nothing.
+- `music/MusicLockPanel.kt`: binds the full and the compact tile while a session is live (the keypad's compact row
+  went with 25b-G); no stage logic any more. `LockMediaGuardTest` keeps it opening nothing.
 - `PinLockActivity`: `glance` replaces `music`; `setMediaKeypad`/`mediaKeypad`/`compactStep` go; `FLAG_SECURE`; the
   unlock path of §1.4.
 
@@ -983,3 +986,45 @@ the server half; the full launcher suite after steps 2, 3a and 3b.
       only `ALLOW_IF_VISIBLE`.
 - [ ] Whether the Jelly Star's notification assistant marks anything as sensitive (the redacted case).
 - [ ] The PWA on a phone: tick, untick and the switch keep the place (no jump), and the notes appear.
+
+## Lock fix round 25b (2026-10-12)
+
+The user's Android 16 emulator run of 22a62658 and three logcats. Branch `lock-fixes-25b`, one commit per bug.
+Every root cause except G predates design 25.
+
+| Bug | Root cause | Fix |
+| --- | --- | --- |
+| A (High) Recents on the lock | Quickstep 16 refuses Overview only in screen pinning; in a DO's LOCKED lock task the button follows SystemUI's disable flags (desync). The lock re-fronted only on onStop, and Recents only *pauses* it | A pause while LOCKED re-fronts after 200 ms (`pauseStartsRefront`), a stop too (was 500 ms) |
+| A/C (High) camera double-press | GestureLauncherService -> SystemUI started the camera that CameraLock had suspended -> NPE in system_server -> **SystemUI crashed** (the "small restart"); whatever came up meanwhile (quickstep's RecentsActivity, its app list = the "Calendar", a plain background) showed over the lock | While LOCKED (and while a time rule suspends the gesture's camera) the DO disables the cameras by policy (`setCameraDisabled`, `<disable-camera />`, `cameraPolicyDisabled`); AOSP 16 `CameraGestureHelper.canCameraGestureBeLaunched` checks that first on both double-press paths, so the gesture starts nothing. The user's first choice; the camera never opens over the lock, so no gallery or picker either |
+| C (High) status line flicker | The lock-resumed status-bar heal (16d) flipped features 113 -> 112 -> 113 right after each power-on | The first lock resume after a screen-off heal skips its own heal |
+| B (High) Home before the glance | The lock is started at the screen-off as a new task; its open transition ran at the screen-on from Home's last frame; the glance page could draw before its fit | No transition (`FLAG_ACTIVITY_NO_ANIMATION`, `overrideActivityTransition`, no window animation); a fit that changes the page skips its frame |
+| B residual: a plain-colour flash | (1) the screen-off receiver kept the main thread (fence, self-update, policy re-check, heal) before the new lock could be created - meanwhile the system shows its starting window (`windowBackground`); (2) mashing = five presses = SOS -> BlockedAppActivity -> re-front (H) | (1) that work runs 400 ms later and only while the screen is still off (`SCREEN_OFF_WORK_DELAY_MS`, `screenOffWorkDue`); (2) H |
+| D (Medium) clock splash | No code path starts the clock app (it is only pinned as a helper). Gone after an emulator restart; the theory - a clock task started by a tap during boot staying behind the lock, its starting window shown at each lock-up - can't be checked from code | Device check |
+| E Element X calls | Element X posts a missed Element Call with `CATEGORY_MISSED_CALL` (its `NotificationCreator.kt`) | `glanceMissedCall`: "Tapt anrop · Element X" with the red phone badge |
+| G music tile on the wrong stage | Design 25 kept step 4's compact row on the keypad and showed no tile for a paused session at a lock-up | User decision 2026-10-12 (§1.1): tile for any session, playing or paused; the keypad stage has no music |
+| H SOS -> "Emergency information is not available" | SystemUI starts the `com.android.systemui.action.LAUNCH_EMERGENCY` activity (system handlers only, `config_preferredEmergencySosPackage` first) as a new task; its package wasn't pinned | `HelperKind.EMERGENCY_SOS` (`emergencySosHandler`): pinned with the kiosk on (with or without the block bit) and off, never hidden or suspended, never listed. The re-front yields as "sos" for 60 s (or until the lock is back) when the lock is *stopped* within 3 s of a screen-on (the gesture's presses come <= 500 ms apart and are swallowed while the screen is on) and none of our own screens is in front |
+
+**Deviations and limits**
+- **The SOS yield is a timing heuristic.** No app can see which activity is in front (usage events need a permission
+  a device owner can't grant itself). A stop of the lock within 3 s of a screen-on leaves whatever is in front for up to
+  60 s. While LOCKED only pinned packages can be there: Home and Recents are out of lock task, the camera is off by
+  policy, our own screens are excluded, Recents only pauses (re-fronted as always, within 700 ms in that window).
+- **A re-front still shows one plain frame.** Bringing the lock's task back is a task switch; the system's snapshot of
+  a `FLAG_SECURE` window is the theme background (`shouldUseAppThemeSnapshot`), shown until the lock draws.
+- The gesture keys (`camera_double_tap_power_gesture_disabled`; Android 16's `double_tap_power_button_gesture_enabled`,
+  read instead in 16's default multi-target mode) are in `docs/testing/emulator.md` §4 and `docs/setup/google-account.md`.
+  They aren't reported in the status report (both are readable; a later step could add them).
+- `disable-camera` is a new admin policy tag: an updated phone may need a restart before `setCameraDisabled` works,
+  shown in `admin_policies_pending` and on the device page.
+
+**Device checks**
+- [ ] Double press power on the lock, gesture keys on: no SystemUI crash, nothing opens, the lock stays.
+- [ ] The Overview button on the glance page: Recents doesn't stay (`adb shell dumpsys statusbar` disable flags).
+- [ ] Power on after unlock, and quick power mashing: no Home and no plain frame (screenrecord).
+- [ ] Five presses: the SOS countdown (Pixel: Personal Safety) or Emergency information shows and stays; its call
+      places; cancel brings the lock back. With the kiosk on and off.
+- [ ] Wake, then Overview within 3 s: Recents goes within a second.
+- [ ] The clock splash (D) after tapping during boot.
+- [ ] The per-frame "Out of order buffers" for PinLockActivity (likely the emulator's mirroring of a secure surface).
+- [ ] Element X: a missed Element Call shows as "Tapt anrop · Element X".
+- [ ] A paused session's tile at a lock-up; the keypad stage without music.

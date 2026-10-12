@@ -1061,10 +1061,14 @@ pub struct TrackedAppUpdate {
 
 /// The device-admin policies the launcher may report as not granted yet, with what the phone
 /// can't do until it restarts once (the wipe has its own line on the Locate page).
-const ADMIN_POLICY_EFFECTS: [(&str, &str); 3] = [
+const ADMIN_POLICY_EFFECTS: [(&str, &str); 4] = [
     (
         "disable-keyguard-features",
         "turn off the camera on the lock screen",
+    ),
+    (
+        "disable-camera",
+        "keep the power button's camera gesture from opening the camera over the lock",
     ),
     (
         "limit-password",

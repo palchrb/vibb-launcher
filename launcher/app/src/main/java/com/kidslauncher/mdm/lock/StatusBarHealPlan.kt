@@ -58,9 +58,15 @@ enum class HealTrigger(val label: String, val flipMs: Long = STATUS_BAR_HEAL_FLI
     LOCK_RESUMED("lock resumed"),
 }
 
-/** Whether the lock's resume heals now: never before, or the last one [STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS] ago. */
-fun lockResumedHealDue(lastHealElapsedMs: Long?, nowElapsedMs: Long): Boolean =
-    lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS
+/**
+ * Whether the lock's resume heals now: never before, or the last one [STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS]
+ * ago - and not on the first resume after a screen-off heal ([healedSinceScreenOff], bug 25b-C): that
+ * heal re-sent lock task's flags while the screen was dark, and a heal at the lock-up after power-on
+ * blanked the status line visibly at every power press (the launcher seemed to restart).
+ */
+fun lockResumedHealDue(lastHealElapsedMs: Long?, nowElapsedMs: Long, healedSinceScreenOff: Boolean = false): Boolean =
+    !healedSinceScreenOff &&
+        (lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS)
 
 /**
  * The lock-task features of a heal's first write: [setting]'s with SYSTEM_INFO flipped. `null` when

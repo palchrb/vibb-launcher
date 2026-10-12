@@ -155,6 +155,8 @@ class PinLockActivity : AppCompatActivity() {
         }
         // Design 25 §1.2: no screenshot, recording or cast of either stage - before any content.
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Bug 25b-B: no open transition - at a screen-on the lock is simply there.
+        overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
         binding = ActivityPinLockBinding.inflate(layoutInflater)
         // The VoIP ring screen (design 17) lies over the keypad while an allowed app's call rings.
         val frame = FrameLayout(this)
@@ -162,7 +164,7 @@ class PinLockActivity : AppCompatActivity() {
         // The glance page (design 25) between the keypad and the ring screen. Built defensively: a
         // fault here leaves the plain keypad, never a crash that trips the guard.
         glance = try {
-            GlancePanel(this, frame, binding.root, binding.pinMediaRow, ::render) { binding.pinEmergency.performClick() }
+            GlancePanel(this, frame, binding.root, ::render) { binding.pinEmergency.performClick() }
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "The glance page couldn't be built: ${e.javaClass.simpleName}")
             null
@@ -305,7 +307,7 @@ class PinLockActivity : AppCompatActivity() {
         handler.removeCallbacks(voipAnswerCheck)
         voipFsiPending = false
         PinLockRuntime.voipLockLeft(sendPending)
-        PinLockRuntime.onLockPaused()
+        PinLockRuntime.onLockPaused(isFinishing || finishingAfterUnlock)
         super.onPause()
     }
 

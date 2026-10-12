@@ -87,16 +87,15 @@ fun lockStageDue(interactive: Boolean, decidedAtScreenOffs: Int?, screenOffs: In
     interactive && decidedAtScreenOffs != screenOffs
 
 /**
- * The music tile (§1.1): it appears while the music app's session ([session], `shownSession` - `null`
- * without listener access, the app suspended or gone) plays, stays while it is paused ([shown]:
- * the tile is up now), and goes when the session ends; at a lock-up ([shown] false) a paused
- * session shows none.
+ * The music tile (§1.1, user decision 2026-10-12, bug 25b-G): it shows whenever the music app has a
+ * session ([session], `shownSession` - `null` without listener access, the app suspended or gone),
+ * playing or paused - also at a lock-up - and goes when the session ends.
  */
-fun glanceTile(session: MusicSession?, shown: Boolean): Boolean = session != null && (session.playing || shown)
+fun glanceTile(session: MusicSession?): Boolean = session != null
 
 /** The page's progress ticks once a second only while it shows a tile ([tileShown]) of a playing
- * session - and only while the page itself shows ([pageShown]: not behind the keypad stage, whose
- * compact row has no progress - code QA Low 7). */
+ * session - and only while the page itself shows ([pageShown]: not behind the keypad stage, which
+ * has no music - code QA Low 7, 25b-G). */
 fun glanceTicks(tileShown: Boolean, pageShown: Boolean, session: MusicSession?): Boolean =
     tileShown && pageShown && session?.playing == true
 

@@ -31,7 +31,6 @@ import com.kidslauncher.mdm.calls.RelativeDay
 import com.kidslauncher.mdm.calls.relativeDay
 import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
 import com.kidslauncher.mdm.databinding.ViewLockGlanceRowBinding
-import com.kidslauncher.mdm.databinding.ViewLockMediaRowBinding
 import com.kidslauncher.mdm.music.MusicLockPanel
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
@@ -68,13 +67,12 @@ class GlancePanel(
     frame: FrameLayout,
     /** The keypad stage under the page: hidden from accessibility while covered. */
     private val keypad: View,
-    row: ViewLockMediaRowBinding,
     /** The stage changed: the activity renders the keypad's prompt. */
     private val onStage: () -> Unit,
     private val onEmergency: () -> Unit,
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
-    private val music = MusicLockPanel(activity, glance, row) { render() }
+    private val music = MusicLockPanel(activity, glance) { render() }
     private var started = false
 
     /** The stage (memory only). */
@@ -93,6 +91,9 @@ class GlancePanel(
     private var tileUp = false
     private var rows: List<GlanceRow> = emptyList()
     private val rowViews = mutableListOf<ViewLockGlanceRowBinding>()
+
+    /** A fit changed the page in this traversal: its frame is skipped (the next one is fitted). */
+    private var refitPending = false
 
     /** The root height the current fit was made for (0 = a new fit is due). */
     private var fitFor = 0
@@ -117,6 +118,13 @@ class GlancePanel(
         // (gesture <-> 3-button navigation, QA Low 4).
         glance.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
             if (bottom - top > 0 && bottom - top != fitFor) guarded("fit") { fitNow() }
+        }
+        // Bug 25b-B/C: a fit that changed the page skips the frame it was made in - the first frame
+        // drawn is the fitted page, never the big clock and tile settling a moment later.
+        glance.root.viewTreeObserver.addOnPreDrawListener {
+            if (!refitPending) return@addOnPreDrawListener true
+            refitPending = false
+            false
         }
     }
 
@@ -218,7 +226,7 @@ class GlancePanel(
         glance.root.visibility = if (shown) View.VISIBLE else View.GONE
         keypad.importantForAccessibility =
             if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
-        tileUp = glanceTile(music.lookUp(), tileUp)
+        tileUp = glanceTile(music.lookUp())
         try {
             rows = GlanceStore.rows(MissedCallNotifier.current)
             bindRows()
@@ -274,7 +282,10 @@ class GlancePanel(
         val res = activity.resources
         val messages = res.getQuantityString(R.plurals.glance_messages, row.count, row.count)
         val title = row.title ?: label
+        val missed = activity.getString(R.string.glance_missed)
         val subtitle = when {
+            // A missed call in the app (Element Call, bug 25b-E): never "N meldinger".
+            row.missedCall -> "$missed · $label"
             row.level == GlanceLevel.APP_ONLY -> res.getQuantityString(R.plurals.glance_notices, row.count, row.count)
             row.level == GlanceLevel.TEXT && row.text != null -> row.text
             else -> "$label · $messages"
@@ -286,7 +297,8 @@ class GlancePanel(
         view.glanceRowSubtitle.visibility = View.VISIBLE
         view.glanceRowTime.text = time
         view.glanceRowInitial.visibility = View.GONE
-        view.glanceRowBadge.visibility = View.GONE
+        // The red phone badge on the app's icon for a missed call, as on a phone call's row.
+        view.glanceRowBadge.visibility = if (row.missedCall) View.VISIBLE else View.GONE
         val icon = appIcon(row.packageName)
         plainIcon(view)
         if (icon != null) {
@@ -297,11 +309,12 @@ class GlancePanel(
             view.glanceRowIcon.backgroundTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_music_control))
         }
         val count = if (row.level == GlanceLevel.APP_ONLY) subtitle else messages
-        describe(
-            view,
-            listOfNotNull(label, row.title, row.text.takeIf { row.level == GlanceLevel.TEXT }, count, time).distinct().joinToString(", "),
-            activity.getString(R.string.glance_open_action),
-        )
+        val spoken = when {
+            row.missedCall && row.title != null -> listOf(label, activity.getString(R.string.glance_missed_from, row.title), time)
+            row.missedCall -> listOf(label, missed, time)
+            else -> listOfNotNull(label, row.title, row.text.takeIf { row.level == GlanceLevel.TEXT }, count, time)
+        }
+        describe(view, spoken.distinct().joinToString(", "), activity.getString(R.string.glance_open_action))
     }
 
     private fun bindMissed(view: ViewLockGlanceRowBinding, row: GlanceMissedRow) {
@@ -471,7 +484,10 @@ class GlancePanel(
             more = measured(more, width),
         )
         val next = glanceFit(available, heights, tileUp, rows.size)
-        if (next != fit) Log.i(LOG_TAG, "Glance fit: candidate ${next.candidate}, ${next.rows} rows, ${next.more} more")
+        if (next != fit) {
+            Log.i(LOG_TAG, "Glance fit: candidate ${next.candidate}, ${next.rows} rows, ${next.more} more")
+            refitPending = true
+        }
         fit = next
         apply(next, shownRows)
     }
