@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Vibb Spotify engine spike. Copyright (C) 2026 palchrb. SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <!-- Spotify's Developer Policy VI: an app name must not begin with "Spot". -->
+    <string name="app_name">Vibb engine spike</string>
+    <string name="listener_label">Vibb engine spike: media probe</string>
+    <string name="intro">Throwaway test app for docs/testing/spotify-spike.md. Never on a phone a kid uses.</string>
+    <string name="label_client_id">Client ID (from Spotify\'s dashboard; never logged)</string>
+    <string name="redirect_fmt">Redirect URI (register exactly this): %1$s</string>
+    <string name="label_play_uri">Playlist/album URI (spotify:playlist:…)</string>
+    <string name="label_skip_index">Skip to index N (0 = first track)</string>
+    <string name="label_seek_ms">Seek to ms</string>
+    <string name="save">Save</string>
+    <string name="auto_reconnect">Auto-reconnect after a lost connection (showAuthView=false)</string>
+    <string name="keep_alive">Keep alive (foreground service, like Vibb\'s playback service)</string>
+    <string name="section_setup">Setup mode (may show Spotify: parent only)</string>
+    <string name="authorize">Setup: authorize (showAuthView=true)</string>
+    <string name="section_kid">Kid mode (must never show Spotify)</string>
+    <string name="connect">Connect</string>
+    <string name="reconnect">Reconnect after force-stop</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="play">Play URI</string>
+    <string name="skip">Skip to N</string>
+    <string name="seek">Seek</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+    <string name="capabilities">Capabilities</string>
+    <string name="resume_a">Resume A: play+skip+seek</string>
+    <string name="resume_b">Resume B: skip+seek</string>
+    <string name="section_probes">Probes</string>
+    <string name="spotify_state">Spotify package</string>
+    <string name="sessions">Media sessions</string>
+    <string name="pause_session">Pause Spotify\'s session</string>
+    <string name="web_probe">Web Playback probe</string>
+    <string name="section_state">Player state</string>
+    <string name="state_fmt">connected: %1$s%2$s\npaused: %3$s\nposition: %4$s\ntrack: %5$s\ncontext: %6$s\nlast update: %7$s (%8$s ago)</string>
+    <string name="state_busy">" (connecting…)"</string>
+    <string name="section_log">Log</string>
+    <string name="copy_log">Copy log</string>
+    <string name="log_copied">Log copied (lines: %1$d)</string>
+    <string name="saved">Saved</string>
+    <string name="keep_alive_channel">Spike keep-alive</string>
+    <string name="keep_alive_title">Engine spike is keeping its connection alive</string>
+
+    <string name="web_title">Web Playback probe</string>
+    <string name="web_intro">Spotify\'s Web Playback SDK in a WebView (item 10). Stay on this screen and press power for the screen-off run; Back unloads the player.</string>
+    <string name="label_token">Access token (scopes streaming user-read-email user-read-private user-modify-playback-state; never logged)</string>
+    <string name="desktop_ua">Desktop user agent (reload the player after changing)</string>
+    <string name="pkce">Get token (PKCE)</string>
+    <string name="load_player">Load player</string>
+    <string name="play_here">Play on this device</string>
+    <string name="toggle_play">Pause/resume</string>
+    <string name="web_state">State</string>
+    <string name="unload_player">Unload</string>
+    <string name="web_status_fmt">device id: %1$s\nuser agent: %2$s\nlast event: %3$s</string>
+</resources>

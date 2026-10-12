@@ -1,0 +1,76 @@
+<!doctype html>
+<!-- Vibb Spotify engine spike, item 10 (docs/testing/spotify-spike.md).
+     Copyright (C) 2026 palchrb. SPDX-License-Identifier: GPL-3.0-or-later
+     Loads Spotify's Web Playback SDK at run time from sdk.scdn.co; nothing of Spotify's is in this file.
+     The token comes from SpikeBridge.token() and is never logged. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engine spike: Web Playback</title>
+<style>body{font-family:sans-serif;font-size:13px;margin:6px}</style>
+</head>
+<body>
+<p id="s">loading...</p>
+<script>
+function log(m) {
+  try { SpikeBridge.log(String(m)); } catch (e) {}
+  document.getElementById('s').textContent = String(m);
+}
+function describe(s) {
+  if (!s) return 'null (not the active device)';
+  var t = s.track_window && s.track_window.current_track;
+  return 'paused=' + s.paused + ' pos=' + s.position + ' ms track=' + (t ? t.uri + " '" + t.name + "'" : 'none') +
+    ' context=' + (s.context && s.context.uri);
+}
+window.onerror = function (msg, src, line) { log('window.onerror: ' + msg + ' @' + src + ':' + line); };
+log('page loaded; secure context=' + window.isSecureContext + ', EME=' + (typeof navigator.requestMediaKeySystemAccess));
+
+// Widevine on its own, before the SDK: does this WebView offer the key system at all?
+if (navigator.requestMediaKeySystemAccess) {
+  var config = [{ initDataTypes: ['cenc'], audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }] }];
+  navigator.requestMediaKeySystemAccess('com.widevine.alpha', config).then(
+    function (a) { log('EME probe: com.widevine.alpha OK (' + a.keySystem + ')'); },
+    function (e) { log('EME probe: com.widevine.alpha FAILED ' + e.name + ': ' + e.message); });
+}
+
+var player = null;
+var poll = null;
+window.onSpotifyWebPlaybackSDKReady = function () {
+  log('SDK script ready; creating Spotify.Player');
+  player = new Spotify.Player({
+    name: 'Vibb engine spike',
+    getOAuthToken: function (cb) { cb(SpikeBridge.token()); },
+    volume: 0.8
+  });
+  player.addListener('ready', function (d) { SpikeBridge.ready(d.device_id); log('ready: device_id ' + d.device_id); });
+  player.addListener('not_ready', function (d) { log('not_ready: device_id ' + d.device_id); });
+  ['initialization_error', 'authentication_error', 'account_error', 'playback_error'].forEach(function (name) {
+    player.addListener(name, function (e) { log(name + ': ' + (e && e.message)); });
+  });
+  player.addListener('autoplay_failed', function () { log('autoplay_failed'); });
+  player.addListener('player_state_changed', function (s) { log('player_state_changed: ' + describe(s)); });
+  player.connect().then(function (ok) { log('player.connect() -> ' + ok); });
+  // A line a minute, so the screen-off run reads from the log.
+  poll = setInterval(function () {
+    player.getCurrentState().then(function (s) { log('poll: ' + describe(s)); });
+  }, 60000);
+};
+function spikeToggle() {
+  if (!player) { log('no player'); return; }
+  if (player.activateElement) player.activateElement();
+  player.togglePlay().then(function () { log('togglePlay() done'); });
+}
+function spikeState() {
+  if (!player) { log('no player'); return; }
+  player.getCurrentState().then(function (s) { log('getCurrentState: ' + describe(s)); });
+}
+function spikeDisconnect() {
+  if (poll) clearInterval(poll);
+  if (player) { player.disconnect(); log('player.disconnect()'); }
+  player = null;
+}
+</script>
+<script src="https://sdk.scdn.co/spotify-player.js" onerror="log('could not load https://sdk.scdn.co/spotify-player.js')"></script>
+</body>
+</html>

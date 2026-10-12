@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A plain test-tube glyph for the spike (own drawing, GPL-3.0-or-later like the project). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#FF2E7D32"
+        android:pathData="M4,4h40v40h-40z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M18,10h12v4h-2v18a4,4 0,0 1,-8 0v-18h-2z" />
+</vector>
