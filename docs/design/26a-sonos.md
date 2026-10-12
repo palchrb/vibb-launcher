@@ -308,8 +308,9 @@ all existing tests green.
 ### 4.2 Starting an entry on the speaker (`sonos_start_target`, 1511-1566; `_sonos_play_entry`, 1324-1417)
 - The plan is the same `coverTapPlan`/`pickPlan` the local path uses (`M/logic/Queue.kt`), then the **speaker-playable
   filter** (1535-1538): keep items with an http(s) `url` whose host is not a private literal when the entry is
-  `publicOnly` (QA M7: the speaker fetches by itself, so the address guard moves here; `lan` feeds on 100.64/10 are
-  unreachable from a speaker anyway), excluding `hls` items unless the entry is an NRK series (then `nrk_program`);
+  `publicOnly` (QA M7: the speaker fetches by itself, so the address guard moves here) and, for a `lan` entry, whose
+  host is not a tailnet literal (100.64.0.0/10, fd7a:115c:a1e0::/48: the phone and the server reach the tailnet, a
+  speaker on the LAN never does - "tailnet address"; correction 2026-10-12, before it the item went out and failed), excluding `hls` items unless the entry is an NRK series (then `nrk_program`);
   own files (`fileId`), withdrawn items (`url == null`) drop out with a log line. Nothing left ->
   `Message.CANT_PLAY_ON_SONOS` and the renderer stays where it was (`nothing-remote-playable`).
 - Index and position: an explicit item -> its index and its saved position; else the bookmark (`rotateToBookmark`, as
@@ -468,6 +469,13 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
 - An allowed room that the household has grouped with a forbidden one leaves the sheet until it is ungrouped (from
   the Sonos app): playing it alone would break the household's group, playing the group would sound in the forbidden
   room.
+- **A member the phone can't name counts as forbidden** (correction 2026-10-12): a group naming a uid with no player
+  row in the cache gives no group row (§2.1), and its known rooms show alone - but each row's members are the whole
+  group as the topology has it, unknown uids included, so under a limited scope such a room is neither listed nor
+  playable (the scope lists only uids the phone reported). With every room allowed nothing changes.
+- **Every room means every room on any Wi-Fi**: with the default, at a friend's house the phone lists and can play on
+  that household's Sonos speakers too (the cache merges, the sheet lists what answers). The PWA's Sonos card says so
+  next to "All rooms"; a parent who doesn't want it restricts the phone to the home's rooms.
 - The tap-vs-sync race (qa-26a-step3c-code L8): a pick checked against the old library just before the sync applies
   a narrower one starts on the speaker, and the sync's leave stops it moments later - a second or two of sound, then
   a bookmarked Stop and the phone, paused. Bounded by the switch lock (the leave waits for the pick, never the other

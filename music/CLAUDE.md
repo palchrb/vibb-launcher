@@ -126,14 +126,16 @@ feed seeds the cache).
   a system call on a room without the launcher's listener access.
 - **Room scope** (26a §5.5): the library's `sonos_rooms` (absent or null = every room; anything else not a list =
   none) limits the sheet, the pick (`ROOM_NOT_ALLOWED`), the controller's belt and a running session (bookmarked,
-  stopped, home paused). **A group needs every member allowed** (`groupAllowed`), so an allowed room grouped with a
-  forbidden one leaves the sheet; under a limited scope the groups are re-read every 60 s while a room plays (one
+  stopped, home paused). **A group needs every member allowed** (`groupAllowed`; a `Room`'s members are the whole
+  group, uids the cache can't name included, and those are never allowed), so an allowed room grouped with a
+  forbidden or unknown one leaves the sheet; under a limited scope the groups are re-read every 60 s while a room plays (one
   GetZoneGroupState, never discovery). The report's `sonos_rooms` (uids `RINCON_…`, names cut as the server cuts
   them, at most 32, never an ip) feeds the parent's card.
 - **Discovery never on a timer**: a cache miss, the sheet's "Se etter høyttalere" row or a failed play; opening the
   sheet is one topology refresh. Every URL is built with `HttpUrl.Builder` from an IP literal (no `Uri.parse("http`);
   SOAP is LAN control traffic and has no address guard, but the speaker-playable filter keeps a `publicOnly` entry's
-  private-literal audio, own files, withdrawn items and non-series HLS off the speaker.
+  private-literal audio, a `lan` entry's tailnet-literal audio (100.64/10, fd7a:115c:a1e0::/48: no speaker reaches
+  the tailnet), own files, withdrawn items and non-series HLS off the speaker.
 - Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
   control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
   widths, the category tiles, the carousel, the bar's room label (a three-member group) and the Sonos state lines.

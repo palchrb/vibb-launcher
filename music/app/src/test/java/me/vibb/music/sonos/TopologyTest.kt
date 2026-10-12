@@ -158,6 +158,8 @@ class TopologyTest {
         assertEquals(3, rows.size)
         assertTrue(rows.all { it.names.size == 1 })
         assertEquals("players by name", listOf("Bad", "Kjøkken", "Stua"), rows.map { it.label })
+        assertEquals("the unknown member still sounds with Kjøkken: the scope sees it", listOf("RINCON_B", "RINCON_GONE"), rows[1].members)
+        assertEquals(listOf("RINCON_A"), rows[2].members)
     }
 
     @Test
