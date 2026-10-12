@@ -83,7 +83,7 @@ class LockUpTest {
         assertFalse("no SOS app", sosGestureLikely(10_000L, 11_000L, false))
         assertFalse("no screen-on yet", sosGestureLikely(null, 11_000L, true))
         assertFalse("before the screen-on", sosGestureLikely(10_000L, 9_000L, true))
-        assertEquals(60_000L, SOS_FLOW_MS)
+        assertEquals("the countdown and the dial (qa-25b-25f H1)", 15_000L, SOS_FLOW_MS)
         val inputs = RefrontInputs(locked = true, lockResumed = false, interactive = true, ourCall = false,
             telecomInCall = false, emergencyFlow = false, alarmRinging = false, sosFlow = true)
         assertEquals(RefrontAction.Yield("sos"), refrontAction(inputs, 0))
@@ -114,7 +114,9 @@ class LockUpTest {
         assertTrue("the lock back in front ends it", body(runtime, "onLockResumed").contains("sosFlowUntilElapsed = 0L"))
         val note = body(runtime, "noteProbableSos")
         assertTrue(note.contains("!interactive(app)) return"))
-        assertTrue(note.contains("sosAppPresent = emergencySosPackage(app) != null"))
+        // qa-25b-25f L3: the cached package - no PackageManager work at a lock stop.
+        assertTrue(note.contains("sosAppPresent = sosPackage != null"))
+        assertFalse(note.contains("emergencySosPackage("))
         assertTrue(note.contains("sosFlowUntilElapsed = now + SOS_FLOW_MS"))
         assertTrue(runtime.contains("lastScreenOnElapsed = SystemClock.elapsedRealtime()"))
         assertTrue(body(runtime, "runRefrontCheck").contains("sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),"))

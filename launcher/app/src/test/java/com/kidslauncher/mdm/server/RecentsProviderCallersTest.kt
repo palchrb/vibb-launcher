@@ -47,7 +47,7 @@ class RecentsProviderCallersTest {
     /** Bug 25b-H: the Emergency SOS package (also a defaulted parameter) - plan, new packages, the lock's helpers, the list. */
     @Test
     fun `enforcement passes the Emergency SOS package`() {
-        assertPassed("server/AppEnforcer.kt", "computeEnforcementPlan", "emergencySos = emergencySosPackage(context)", 1)
+        assertPassed("server/AppEnforcer.kt", "computeEnforcementPlan", "emergencySos = sos", 1)
         assertPassed("server/AppEnforcer.kt", "shouldSuspendNewPackage", "emergencySos = emergencySosPackage(context)", 2)
         assertPassed("server/AppEnforcer.kt", "pinLockHelpers", "emergencySos = resolved[HelperKind.EMERGENCY_SOS]", 1)
         // Raw text: the comment stripper trips over the documents helper's "*/*".
