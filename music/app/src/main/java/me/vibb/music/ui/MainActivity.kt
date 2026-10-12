@@ -133,6 +133,16 @@ class MainActivity : ComponentActivity() {
         override fun next() = if (PlayerHub.state.value.live) withController { it.seekToNext() } else restoreThen(Commands.THEN_NEXT)
         override fun previous() = if (PlayerHub.state.value.live) withController { it.seekToPrevious() } else restoreThen(Commands.THEN_PREVIOUS)
         override fun seekTo(ms: Long) = if (PlayerHub.state.value.live) withController { it.seekTo(ms) } else restoreThen(Commands.THEN_SEEK, ms)
+        // A swipe (design 27): before play after a restart, the stored queue loads paused first and stays paused.
+        override fun skipTo(entryId: Long, key: String, forward: Boolean) {
+            val args = bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_KEY to key, Commands.ARG_FORWARD to forward)
+            if (PlayerHub.state.value.live) {
+                command(Commands.SKIP_TO, args)
+            } else {
+                args.putString(Commands.ARG_THEN, Commands.THEN_SKIP_TO)
+                command(Commands.RESTORE, args)
+            }
+        }
         override fun toggleShuffle() = if (PlayerHub.state.value.live) command(Commands.SHUFFLE) else restoreThen(Commands.THEN_SHUFFLE)
         override fun sleep(minutes: Int) = command(Commands.SLEEP, bundleOf(Commands.ARG_MINUTES to minutes))
         override fun output(id: Int) = command(Commands.OUTPUT, bundleOf(Commands.ARG_OUTPUT to id))
@@ -147,6 +157,9 @@ interface Actions {
     fun togglePlay()
     fun next()
     fun previous()
+
+    /** To item [key] of [entryId] (a swipe of the episode carousel): as next or previous by [forward], never a restart. */
+    fun skipTo(entryId: Long, key: String, forward: Boolean)
     fun seekTo(ms: Long)
     fun toggleShuffle()
     fun sleep(minutes: Int)

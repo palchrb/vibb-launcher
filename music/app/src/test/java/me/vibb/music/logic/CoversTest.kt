@@ -46,4 +46,16 @@ class CoversTest {
         assertNull(coverShown("hash-b", null, a))
         assertNull(coverShown("hash-b", null, null))
     }
+
+    @Test
+    fun `a picture that lands while its slot shows decodes once (QA M5)`() {
+        // No file yet at version 0: looked for once, then not again until a cover lands.
+        assertTrue(shouldDecode("hash-b", null, null, 0))
+        val missing = MissingCover("hash-b", 0)
+        assertFalse(shouldDecode("hash-b", null, missing, 0))
+        assertTrue("a cover landed", shouldDecode("hash-b", null, missing, 1))
+        assertFalse("decoded: never again", shouldDecode("hash-b", b, null, 2))
+        assertTrue("another hash in the slot", shouldDecode("hash-a", b, missing, 0))
+        assertFalse(shouldDecode(null, null, null, 0))
+    }
 }

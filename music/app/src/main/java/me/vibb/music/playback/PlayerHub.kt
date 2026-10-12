@@ -17,10 +17,16 @@ object Commands {
     const val SLEEP = "me.vibb.music.SLEEP"
     const val OUTPUT = "me.vibb.music.OUTPUT"
 
+    /** A swipe of the episode carousel (design 27): to [ARG_KEY] of [ARG_ENTRY] (ignored unless that
+     * entry is loaded), as next or previous by [ARG_FORWARD]. Like next it starts nothing - not in
+     * [PLAYS]; any other output (Sonos) routes it as it routes next (QA M7). */
+    const val SKIP_TO = "me.vibb.music.SKIP_TO"
+
     const val ARG_ENTRY = "entry"
     const val ARG_KEY = "key"
     const val ARG_MINUTES = "minutes"
     const val ARG_OUTPUT = "output"
+    const val ARG_FORWARD = "forward"
 
     /** [RESTORE]: the stored queue loaded paused, then this (one of the THEN_ values) - so the
      * player's controls work before play after a restart (qa-21-step2-code M6). */
@@ -31,7 +37,10 @@ object Commands {
     const val THEN_SEEK = "seek"
     const val THEN_SHUFFLE = "shuffle"
 
-    val ALL: List<SessionCommand> = listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT).map { SessionCommand(it, Bundle.EMPTY) }
+    /** [RESTORE] then [SKIP_TO] (with its [ARG_ENTRY], [ARG_KEY], [ARG_FORWARD]): a swipe on the restored queue stays paused. */
+    const val THEN_SKIP_TO = "skip_to"
+
+    val ALL: List<SessionCommand> = listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT, SKIP_TO).map { SessionCommand(it, Bundle.EMPTY) }
 
     /** The commands that start playing - refused while the app is suspended (`playAllowed`). */
     val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)

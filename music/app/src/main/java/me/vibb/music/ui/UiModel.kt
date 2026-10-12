@@ -15,8 +15,10 @@ import me.vibb.music.logic.overallProgress
 import me.vibb.music.logic.pickPlan
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.seekGate
+import me.vibb.music.logic.showsCarousel
 import me.vibb.music.logic.skipTarget
 import me.vibb.music.logic.started
+import me.vibb.music.logic.swipeVia
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -68,9 +70,17 @@ data class NowView(
     val canShuffle: Boolean get() = canShuffle(entry)
     val ref: ItemRef get() = ItemRef(entry.id, item.key)
 
-    /** The cover hash shown: the item's own art, else the entry's. */
+    /** The cover hash shown: the item's own art, else the entry's ([Cover] falls back to [fallback]
+     * while the item's picture isn't on the phone). */
     val cover: String? get() = if (itemKnown) item.artHash ?: entry.cover else entry.cover
+    val fallback: String? get() = entry.cover
     val itemTitle: String get() = if (itemKnown) item.title else ""
+
+    /** The Now Playing carousel (design 27 §3.1) in place of the single cover. */
+    val carousel: Boolean by lazy { itemKnown && showsCarousel(queue, entry.cover) }
+
+    /** The carousel's pager starts over when this changes: another entry or another key list (QA M7 b). */
+    val pagerKey: Pair<Long, List<String>> get() = entry.id to queue.map { it.key }
 }
 
 /** A tap the player hasn't shown yet ([requestStands]) and what the screens show meanwhile. */
@@ -102,10 +112,26 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
 /** Next ([forward]) or previous on [now], [posMs] into its item: the item it goes to, when the screens can know it. */
 fun skipSwitch(snap: Snapshot, now: NowView, forward: Boolean, posMs: Long, atMs: Long): Switch? {
     val target = skipTarget(forward, now.index, now.queue.size, posMs, now.durationMs) ?: return null
+    return toIndex(snap, now, target, PlayRequest(now.entry.id, now.queue[target].key, now.ref, atMs))
+}
+
+/**
+ * A swipe of the Now Playing carousel to queue index [target] of [now] (design 27 §3.2): the item
+ * shows at once with its saved place (title and seek bar follow the picture), until the player is
+ * there. [current]: what the player shows; [earlier]: a swipe's request that still stands (quick
+ * swipes: the player passes through its target first).
+ */
+fun swipeSwitch(snap: Snapshot, now: NowView, target: Int, current: ItemRef?, earlier: PlayRequest?, atMs: Long): Switch? {
+    val item = now.queue.getOrNull(target) ?: return null
+    if (target == now.index && now.itemKnown) return null
+    return toIndex(snap, now, target, PlayRequest(now.entry.id, item.key, current, atMs, swipeVia(earlier)))
+}
+
+private fun toIndex(snap: Snapshot, now: NowView, target: Int, request: PlayRequest): Switch {
     val item = now.queue[target]
     val pos = if (now.entry.resume) seekGate(resumeFrom(snap.positions[now.entry.key]?.get(item.key))) else 0
     val view = now.copy(index = target, live = false, storedPosMs = pos, durationMs = item.durationMs, itemKnown = true)
-    return Switch(PlayRequest(now.entry.id, item.key, now.ref, atMs), view)
+    return Switch(request, view)
 }
 
 /** The now-playing view from the player's state, else from the stored row; null when there is none. */

@@ -84,3 +84,38 @@ const val CAROUSEL_SPACING_DP = 8
  * edge (24 dp), so its near edge stays where the page starts - 46 dp on the Jelly Star.
  */
 fun carouselPeek(availableDp: Float): Float = availableDp - (carouselSide(availableDp) + CAROUSEL_COVER_DP + CAROUSEL_SPACING_DP)
+
+// The player's art (design 27 §3.3): today's single cover, or the episode carousel in its place.
+
+/** The player's cover: at most 224 dp, as big as its box allows. */
+const val PLAYER_ART_MAX_DP = 224
+
+/** The carousel's pages are this far apart, and each neighbour peeks at least this much. */
+const val PLAYER_PAGE_GAP_DP = 8
+const val PLAYER_PEEK_MIN_DP = 36
+
+/** Below this the carousel gives way to the single cover (a large font or display size, QA L2 b). */
+const val PLAYER_ART_MIN_DP = 96
+
+/** A neighbour's scale beside the centred page (the library carousel's). */
+const val NEIGHBOUR_SCALE = 0.733f
+
+/**
+ * The centred picture's side (dp) in a box [widthDp] wide (inside the screen's sides) and [roomDp]
+ * tall: min(224, the room) as today; with the [carousel] also no wider than leaves both neighbours
+ * their 8 dp gap and 36 dp peek.
+ */
+fun playerArt(widthDp: Float, roomDp: Float, carousel: Boolean): Float {
+    val single = minOf(PLAYER_ART_MAX_DP.toFloat(), roomDp)
+    return if (carousel) minOf(single, widthDp - 2 * (PLAYER_PAGE_GAP_DP + PLAYER_PEEK_MIN_DP)) else single
+}
+
+/** Does the carousel show in that box (it has to, and its picture isn't too small)? */
+fun playerCarousel(widthDp: Float, roomDp: Float, carousel: Boolean): Boolean =
+    carousel && playerArt(widthDp, roomDp, true) >= PLAYER_ART_MIN_DP
+
+/** How much of each neighbour shows beside the centred picture [artDp] (dp): the pager's content padding less the gap. */
+fun playerPeek(widthDp: Float, artDp: Float): Float = (widthDp - artDp) / 2 - PLAYER_PAGE_GAP_DP
+
+/** A neighbour scaled to [NEIGHBOUR_SCALE] is pulled in by what that took off its near edge, so its near edge stays put (QA L2 a). */
+fun playerPull(artDp: Float): Float = artDp * (1 - NEIGHBOUR_SCALE) / 2
