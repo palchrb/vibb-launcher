@@ -11,23 +11,6 @@ import kotlinx.serialization.Serializable
  * sent (the literal is pinned in PolicyResponseCompatTest and on the server). Also how
  * WindowRelock stores it.
  */
-/**
- * One entry of the status report's `relock_blocks` (fix of 2026-10-12): a package in
- * `relock_blocked` now - hidden whatever the allowlist until "Allow these apps" - with its signing
- * key now ([signer], SHA-256 lower-case hex, `null` = unreadable), why ([reason]: `outside_play |
- * other_key | catalog_key | unknown`), where it was set ([found]: `relock | install`) and when
- * ([atMs], `null` = unknown). Every key always sent; pinned in PolicyResponseCompatTest and on the
- * server.
- */
-@Serializable
-data class RelockBlockReport(
-    val packageName: String,
-    val signer: String?,
-    val reason: String,
-    val found: String,
-    val atMs: Long?,
-)
-
 @Serializable
 data class RelockReport(
     val atMs: Long,
@@ -48,4 +31,21 @@ data class RelockReport(
     val notificationListeners: List<String>,
     val ownNotificationsOff: Boolean,
     val failures: List<String>,
+)
+
+/**
+ * One entry of the status report's `relock_blocks` (fix of 2026-10-12): a package in
+ * `relock_blocked` now - hidden whatever the allowlist until "Allow these apps" - with its signing
+ * key now ([signer], SHA-256 lower-case hex, `null` = unreadable), why ([reason]: `outside_play |
+ * other_key | catalog_key | unknown`), where it was set ([found]: `relock | install`) and when
+ * ([atMs], `null` = unknown). Every key always sent; pinned in PolicyResponseCompatTest and on the
+ * server.
+ */
+@Serializable
+data class RelockBlockReport(
+    val packageName: String,
+    val signer: String?,
+    val reason: String,
+    val found: String,
+    val atMs: Long?,
 )
