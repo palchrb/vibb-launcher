@@ -69,7 +69,7 @@ object GlanceReader {
      * notification is read again. */
     fun rankingUpdate(rankingMap: NotificationListenerService.RankingMap?) = guarded(SWEEP) {
         val ranking = NotificationListenerService.Ranking()
-        GlanceStore.updateSuspended { key -> rankingMap?.getRanking(key, ranking) != true || ranking.isSuspended }
+        GlanceStore.updateSuspended { key -> glanceSuspended(rankingMap?.getRanking(key, ranking) == true, ranking.isSuspended) }
     }
 
     private fun sweep(service: NotificationListenerService) = guarded(SWEEP) {
@@ -136,7 +136,7 @@ object GlanceReader {
             count = glanceCount(messages.size, fromOthers.size, n.number),
             whenMs = n.`when`,
             postTimeMs = sbn.postTime,
-            suspended = !ranked || ranking.isSuspended,
+            suspended = glanceSuspended(ranked, ranking.isSuspended),
         )
         return notice to n.contentIntent
     }

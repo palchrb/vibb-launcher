@@ -82,12 +82,31 @@ object MissedCallNotifier {
     }
 
     /**
-     * A new process (design 25 §2.4): one recompute that never posts anew and never clears - a
-     * notification still on screen is re-posted silently ([noticeStep]: shown, nothing remembered)
-     * and so known again as [current]; one the current view wouldn't show (a no-calls time rule) is
-     * left as it is. From `Application.initRest`.
+     * A new process (design 25 §2.4): one re-learning recompute ([relearn]). From `Application.initRest`.
      */
-    fun refreshAtStart(context: Context) = recompute(context, mayPost = false, mayClear = false)
+    fun refreshAtStart(context: Context) = relearn(context)
+
+    /**
+     * A recompute that never posts anew and never clears (design 25): a notification still on screen
+     * is re-posted silently ([noticeStep]: shown, nothing remembered) and so known again as
+     * [current]. It counts against the call rules without a time rule's block ([noticeState]): a
+     * notification on screen during a no-calls rule was posted before it (code QA Low 3). Also when
+     * the time lock changes ([TimeRulesRuntime][com.kidslauncher.mdm.timerules.TimeRulesRuntime]) and
+     * when ours is posted again while [current] is unknown (a snooze that ended - [postedToShade]).
+     */
+    fun relearn(context: Context) = recompute(context, mayPost = false, mayClear = false)
+
+    /**
+     * Our notification was posted (our notification listener saw id [MISSED_CALL_NOTIFICATION_ID]):
+     * after anything queued, an unknown [current] is learned again - a snoozed notification coming
+     * back (code QA Low 3). Our own posts set [current] before this runs, so they cost nothing.
+     */
+    fun postedToShade(context: Context) {
+        val app = context.applicationContext
+        runThenDone(null) {
+            if (lastPosted == null) relearn(app)
+        }
+    }
 
     /**
      * Ours left the shade without our code knowing (QA Low 9: snoozed from the shade, cancelled by
@@ -216,7 +235,9 @@ object MissedCallNotifier {
         // The in-call service runs before the first unlock too: no call log, no CE prefs then.
         if (!CallPolicyStore.userUnlocked(context)) return
         CallPolicyStore.ensureLoaded(context)
-        val state = CallPolicyStore.effectiveState()
+        // A re-learning pass (mayClear false: every request of the run was one) counts against the
+        // rules without the time rule's block (code QA Low 3).
+        val state = noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear)
         val rules = (state as? CallPolicyState.Managed)?.rules
         // The bound first, then the log: every unread row up to it has been looked at.
         val unread = MissedCallsRepo.unreadMissed(context)

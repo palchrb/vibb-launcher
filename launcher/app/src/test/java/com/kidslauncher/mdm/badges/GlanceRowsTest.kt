@@ -47,6 +47,30 @@ class GlanceRowsTest {
         assertFalse(GlancePolicy.UNKNOWN.showText)
     }
 
+    @Test
+    fun `the policy's order - a fresh one wins, the start's cache never overwrites it (code QA Low 4)`() {
+        val fresh = GlancePolicy(setOf(element), showText = true)
+        val cached = GlancePolicy(setOf(school), showText = false)
+        // The cache first, then a sync: the sync wins.
+        val afterCache = nextGlancePolicy(GlancePolicyState.START, cached, fresh = false)
+        assertEquals(GlancePolicyState(cached, freshSeen = false), afterCache)
+        assertEquals(GlancePolicyState(fresh, freshSeen = true), nextGlancePolicy(afterCache, fresh, fresh = true))
+        // A sync first, then the slow cache read: the sync stays.
+        val afterSync = nextGlancePolicy(GlancePolicyState.START, fresh, fresh = true)
+        assertEquals(afterSync, nextGlancePolicy(afterSync, cached, fresh = false))
+        // Every later sync replaces it, an unknown one included.
+        assertEquals(GlancePolicyState(GlancePolicy.UNKNOWN, freshSeen = true), nextGlancePolicy(afterSync, GlancePolicy.UNKNOWN, fresh = true))
+        assertEquals(GlancePolicy.UNKNOWN, GlancePolicyState.START.policy)
+    }
+
+    @Test
+    fun `no ranking counts as suspended (QA Medium 1, code QA Low 4)`() {
+        assertTrue(glanceSuspended(ranked = false, isSuspended = false))
+        assertTrue(glanceSuspended(ranked = false, isSuspended = true))
+        assertTrue(glanceSuspended(ranked = true, isSuspended = true))
+        assertFalse(glanceSuspended(ranked = true, isSuspended = false))
+    }
+
     // ---- candidates -----------------------------------------------------------------------------
 
     private fun facts(
@@ -138,10 +162,18 @@ class GlanceRowsTest {
     @Test
     fun `cleaning - control and bidi characters out, whitespace collapsed, capped, empty is absent`() {
         assertEquals("Pappa", cleanGlanceText("  Pappa \n", GLANCE_TITLE_MAX))
-        assertEquals("evil txt.exe", cleanGlanceText("evil‮txt.exe", GLANCE_TITLE_MAX))
-        assertEquals("a b c d", cleanGlanceText("a⁦b⁩c‪d", GLANCE_TITLE_MAX))
+        assertEquals("evil txt.exe", cleanGlanceText("evil\u202Etxt.exe", GLANCE_TITLE_MAX))
+        assertEquals("a b c d", cleanGlanceText("a\u2066b\u2069c\u202Ad", GLANCE_TITLE_MAX))
         assertEquals("line one line two", cleanGlanceText("line one\r\n\tline\u0000two", GLANCE_TEXT_MAX))
-        assertNull(cleanGlanceText("  \n‮ ", GLANCE_TITLE_MAX))
+        assertNull(cleanGlanceText("  \n\u202E ", GLANCE_TITLE_MAX))
+        // Unicode's whitespace too: line and paragraph separators, no-break spaces (code QA Low 5).
+        assertEquals("Pappa Kommer kl 5", cleanGlanceText("Pappa\u2028Kommer\u2029kl\u00A05", GLANCE_TITLE_MAX))
+        assertEquals("a b", cleanGlanceText("a\u3000\u2003b", GLANCE_TITLE_MAX))
+        // Invisible marks are dropped (not spaced); joiners stay - an emoji family keeps them.
+        assertEquals("Pappa", cleanGlanceText("Pap\u200Epa\u200F\uFEFF\u2060\u061C", GLANCE_TITLE_MAX))
+        val family = "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67"
+        assertEquals(family, cleanGlanceText(family, GLANCE_TITLE_MAX))
+        assertNull(cleanGlanceText("\u2028\u00A0\uFEFF", GLANCE_TITLE_MAX))
         assertNull(cleanGlanceText(null, GLANCE_TITLE_MAX))
         val long = "x".repeat(100)
         assertEquals(60, cleanGlanceText(long, GLANCE_TITLE_MAX)!!.length)

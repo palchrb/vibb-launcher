@@ -57,7 +57,13 @@ class BadgeListenerService : NotificationListenerService() {
      * Medium 1). */
     override fun onNotificationPosted(sbn: StatusBarNotification?, rankingMap: RankingMap?) {
         super.onNotificationPosted(sbn, rankingMap)
-        sbn?.let { GlanceReader.posted(this, it, rankingMap) }
+        sbn?.let {
+            GlanceReader.posted(this, it, rankingMap)
+            // Ours back in the shade (a snooze ended): the glance page learns it again (design 25).
+            if (it.packageName == packageName && it.id == com.kidslauncher.mdm.MISSED_CALL_NOTIFICATION_ID) {
+                com.kidslauncher.mdm.calls.MissedCallNotifier.postedToShade(this)
+            }
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {

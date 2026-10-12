@@ -30,11 +30,9 @@ object GlanceStore {
     /** The parent's choice (`PolicyResponse.lock_glance`): unknown (missed calls only) until the
      * cache or a sync says otherwise. Written on the main thread. */
     @Volatile
-    var policy: GlancePolicy = GlancePolicy.UNKNOWN
-        private set
+    private var policyState = GlancePolicyState.START
 
-    /** A fresh policy came in this process: the cache read at start can't overwrite it. */
-    private var freshSeen = false
+    val policy: GlancePolicy get() = policyState.policy
 
     private val notices = LinkedHashMap<String, GlanceNotice>()
     private val intents = HashMap<String, PendingIntent>()
@@ -142,10 +140,9 @@ object GlanceStore {
         }
         main.post {
             try {
-                if (!fresh && freshSeen) return@post
-                if (fresh) freshSeen = true
-                if (next == policy) return@post
-                policy = next
+                val before = policyState.policy
+                policyState = nextGlancePolicy(policyState, next, fresh)
+                if (policyState.policy == before) return@post
                 Log.i(LOG_TAG, "Lock glance policy: ${next.apps.size} apps, text ${if (next.showText) "on" else "off"}")
                 notices.clear()
                 intents.clear()

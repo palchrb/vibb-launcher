@@ -56,6 +56,18 @@ fun lockGlancePolicy(element: JsonElement?, fresh: Boolean): GlancePolicy = when
     else -> GlancePolicy.UNKNOWN
 }
 
+/** The store's policy and whether a fresh one came in this process. */
+data class GlancePolicyState(val policy: GlancePolicy, val freshSeen: Boolean) {
+    companion object {
+        val START = GlancePolicyState(GlancePolicy.UNKNOWN, freshSeen = false)
+    }
+}
+
+/** The next policy (`GlanceStore.refreshPolicy`): a fresh one always wins; the cache read at process
+ * start never overwrites a fresh one that arrived first. */
+fun nextGlancePolicy(state: GlancePolicyState, incoming: GlancePolicy, fresh: Boolean): GlancePolicyState =
+    if (!fresh && state.freshSeen) state else GlancePolicyState(incoming, state.freshSeen || fresh)
+
 // ---- which notifications ----------------------------------------------------------------------
 
 /** `NotificationListenerService.Ranking.getImportance()`'s `IMPORTANCE_MIN` (NotificationManager). */
@@ -94,6 +106,10 @@ fun glanceCandidate(facts: GlanceCandidateFacts, ownPackage: String): Boolean =
         !facts.groupSummary && !facts.ongoing && facts.clearable && !facts.media &&
         (facts.importance == null || facts.importance > GLANCE_IMPORTANCE_MIN) &&
         facts.category !in GLANCE_SKIPPED_CATEGORIES
+
+/** Whether a notification counts as suspended (§2.2, QA Medium 1): its ranking says so - or no
+ * ranking was found for it ([ranked] false: fail closed). */
+fun glanceSuspended(ranked: Boolean, isSuspended: Boolean): Boolean = !ranked || isSuspended
 
 /** How much of a notification is read (ordered: each level reads everything the one before does). */
 enum class GlanceLevel {
@@ -144,22 +160,32 @@ fun glanceGroupText(group: Boolean, sender: String?, text: String?): String? = w
 fun glanceCount(messages: Int, fromOthers: Int, number: Int): Int =
     if (messages > 0) fromOthers else number.takeIf { it > 0 } ?: 1
 
+/** Every kind of whitespace, Unicode's included (Java's `\s` is ASCII only). */
+private val GLANCE_WHITESPACE = Regex("[\\s\\p{Z}]+")
+
 const val GLANCE_TITLE_MAX = 60
 const val GLANCE_TEXT_MAX = 200
 
 /**
- * Cleaning (§2.2): control characters and bidi overrides/isolates (U+202A-202E, U+2066-2069) out,
- * whitespace collapsed, capped at [max] characters (a cut ends in "…"), empty = absent (the row then
- * uses the app's label).
+ * Cleaning (§2.2): control characters and bidi overrides and isolates (U+202A-202E, U+2066-2069) out
+ * (a space each), the invisible marks around them (U+061C, U+200E/200F, U+2060-2064, U+FEFF - code QA
+ * Low 5) dropped (joiners stay: emoji need them), all whitespace collapsed - Unicode's too, line and
+ * paragraph separators and no-break spaces included -, capped at [max] characters (a cut ends in "…"),
+ * empty = absent (the row then uses the app's label).
  */
 fun cleanGlanceText(raw: CharSequence?, max: Int): String? {
     if (raw == null) return null
     val kept = StringBuilder(raw.length)
     for (c in raw) {
-        val bidi = c in '‪'..'‮' || c in '⁦'..'⁩'
-        kept.append(if (Character.isISOControl(c) || bidi) ' ' else c)
+        val bidi = c in '\u202A'..'\u202E' || c in '\u2066'..'\u2069'
+        val mark = c in '\u2060'..'\u2064' || c == '\u061C' || c == '\u200E' || c == '\u200F' || c == '\uFEFF'
+        when {
+            mark -> Unit
+            Character.isISOControl(c) || bidi -> kept.append(' ')
+            else -> kept.append(c)
+        }
     }
-    val text = kept.toString().replace(Regex("\\s+"), " ").trim()
+    val text = kept.toString().replace(GLANCE_WHITESPACE, " ").trim()
     if (text.isEmpty()) return null
     if (text.length <= max) return text
     var end = max - 1

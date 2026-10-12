@@ -73,6 +73,7 @@ class LockGlanceGuardTest {
         "GlanceCandidateFacts", "glanceCandidate", "groupSummary", "ongoing", "clearable", "media", "importance",
         "category", "glanceLevel", "ticked", "GlanceLevel", "TEXT", "glanceTitle", "conversationTitle", "newestSender",
         "cleanGlanceText", "GLANCE_TITLE_MAX", "GLANCE_TEXT_MAX", "glanceGroupText", "glanceCount", "isMediaNotification",
+        "glanceSuspended",
         "GlanceNotice", "key", "packageName", "conversationKey", "count", "whenMs", "postTimeMs", "suspended",
         // the platform: only these members
         "NotificationListenerService", "RankingMap", "Ranking", "getRanking", "isSuspended", "channel",
@@ -119,6 +120,14 @@ class LockGlanceGuardTest {
         assertEquals(1, Regex("""\.name\b""").findAll(code).count())
         // `.key` only of the StatusBarNotification (the notification key - never a Person's).
         assertTrue(Regex("""(\w+)\??\.key\b""").findAll(code).all { it.groupValues[1] == "sbn" })
+    }
+
+    /** QA Medium 1, code QA Low 4: both suspension reads go through the pure rule (GlanceRowsTest). */
+    @Test
+    fun `the reader's suspended flag is the pure rule's - no ranking counts as suspended`() {
+        assertTrue(reader.contains("suspended = glanceSuspended(ranked, ranking.isSuspended)"))
+        assertTrue(reader.contains("glanceSuspended(rankingMap?.getRanking(key, ranking) == true, ranking.isSuspended)"))
+        assertEquals(2, Regex("""\bisSuspended\b""").findAll(reader).count())
     }
 
     @Test
@@ -368,5 +377,24 @@ class LockGlanceGuardTest {
         val notifier = code("MissedCallNotifier.kt")
         assertTrue(body(notifier, "guarded").contains("catch (e: Throwable)"))
         assertTrue(notifier.contains("main.post { listeners.forEach { guarded(it) } }"))
+    }
+
+    /** Code QA Low 3/4: `current` follows our notification - a removal only clears it when ours is
+     * really gone (a removal can trail our own re-post), our own re-post or a time-lock change learns
+     * it again, and the re-learning pass never posts anew or clears. */
+    @Test
+    fun `the missed-call notifier's current follows the shade`() {
+        val notifier = code("MissedCallNotifier.kt")
+        val removed = body(notifier, "removedFromShade")
+        assertTrue(removed, removed.contains("runThenDone(null) {") && removed.contains("if (!shown(app)) lastPosted = null"))
+        val posted = body(notifier, "postedToShade")
+        assertTrue(posted, posted.contains("runThenDone(null) {") && posted.contains("if (lastPosted == null) relearn(app)"))
+        assertTrue(body(notifier, "relearn").contains("recompute(context, mayPost = false, mayClear = false)"))
+        assertTrue(body(notifier, "refreshAtStart").contains("relearn(context)"))
+        assertTrue(notifier.contains("noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear)"))
+        val listener = code("BadgeListenerService.kt")
+        assertTrue(listener.contains("MissedCallNotifier.removedFromShade(this)"))
+        assertTrue(listener.contains("MissedCallNotifier.postedToShade(this)"))
+        assertTrue(code("TimeRulesRuntime.kt").contains("if (changedTo != null) com.kidslauncher.mdm.calls.MissedCallNotifier.relearn(context)"))
     }
 }

@@ -231,6 +231,23 @@ class MissedCallNoticeTest {
         assertEquals(NoticeStep.Clear(9), step(null, mayPost = false, shown = true))
     }
 
+    /** Code QA Low 3: a re-learning pass counts against the rules without the time rule's block - a
+     * notification on screen during a no-calls rule was posted before it, so it is known again. */
+    @Test
+    fun `a re-learning pass during a no-calls rule knows what is on screen`() {
+        val log = arrayOf(missed("+4790000001", 100, id = 7))
+        val rules = managed()
+        val duringRule = withTimeRule(rules, callsBlocked = true)
+        val posted = notice(*log)!!
+        // The rule's own view has only emergency contacts: nothing to show.
+        assertNull(notice(*log, contacts = view(duringRule)))
+        assertEquals(duringRule, noticeState(rules, duringRule, relearnOnly = false))
+        // The re-learning pass uses the rules: the same notice, posted again silently.
+        val relearned = notice(*log, contacts = view(noticeState(rules, duringRule, relearnOnly = true)))
+        assertEquals(posted, relearned)
+        assertEquals(NoticeStep.Post(posted, alert = false), step(relearned, mayPost = false, shown = true, lastPosted = null, alertedUpTo = 7, mayClear = false))
+    }
+
     @Test
     fun `a cleared call log starts its ids again - alerts come back`() {
         assertEquals(NoticeStep.Post(one, alert = true), step(one, alertedUpTo = 500, newestLogged = 9))

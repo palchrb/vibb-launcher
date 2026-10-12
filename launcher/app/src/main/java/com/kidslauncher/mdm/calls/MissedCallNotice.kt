@@ -179,6 +179,16 @@ fun noticeStep(
 }
 
 /**
+ * The calls view a recompute counts against (design 25, code QA Low 3): [effective] (the rules with
+ * a time rule's call block) - except in a re-learning pass ([relearnOnly]: it never posts anew and
+ * never clears), which counts against the rules themselves ([rules]): a notification on screen during
+ * a no-calls rule can only have been posted before it, with that view - so it is known again after a
+ * restart in the night, and the glance page shows it.
+ */
+fun noticeState(rules: CallPolicyState, effective: CallPolicyState, relearnOnly: Boolean): CallPolicyState =
+    if (relearnOnly) rules else effective
+
+/**
  * Telecom's count 0 (qa-12-code #2): it answers each of our own `cancelMissedCallsNotification()`
  * calls, and its broadcasts reach us in send order - so an echo can trail the broadcast of a newer
  * call that we already posted. Ours is only cancelled when it shows nothing newer than the last
