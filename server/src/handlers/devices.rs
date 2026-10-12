@@ -1498,6 +1498,8 @@ async fn render_device(
         latest_status.as_ref(),
         notice,
         chrono::Utc::now().timestamp_millis(),
+        // Whether each blocked app is ticked under Apps (QA of cmd-expiry, Low 3).
+        (policy.allowlist_json.is_some() && !allowlist_corrupt).then_some(&allowed),
     )
     .await;
     // When "Block safe mode" went on, for the unseen-boots advice (QA 24b Low 12).

@@ -48,6 +48,7 @@ pub async fn card(
     latest: Option<&DeviceStatus>,
     notice: Option<&str>,
     now_ms: i64,
+    allowed: Option<&std::collections::HashSet<String>>,
 ) -> RelockCard {
     let capable = latest.is_some_and(|s| {
         s.capabilities_json
@@ -83,7 +84,7 @@ pub async fn card(
     };
     let blocks = blocks
         .map(|b| {
-            let mut note = window_relock::blocks_note(&b, &pins, now_ms);
+            let mut note = window_relock::blocks_note(&b, &pins, now_ms, allowed);
             note.more = window_relock::more_blocks_line(
                 b.len(),
                 latest.and_then(|s| s.relock_blocks_total),

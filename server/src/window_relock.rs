@@ -329,8 +329,8 @@ pub fn parse_relock_blocks(json: Option<&str>) -> Option<Vec<RelockBlock>> {
 pub struct BlocksNote {
     /// The heading, `None` without blocks.
     pub text: Option<String>,
-    /// One line per app: its key, why and when.
-    pub items: Vec<String>,
+    /// One line per app: its key, why and when, and whether it is ticked under Apps.
+    pub items: Vec<BlockItem>,
     /// "Allow these apps" lets at least one of them out (not one with another key than the
     /// catalog's pin).
     pub allow_button: bool,
@@ -340,12 +340,26 @@ pub struct BlocksNote {
     pub more: Option<String>,
 }
 
+/// One app of [BlocksNote::items].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockItem {
+    pub package_name: String,
+    /// Its key, why and when.
+    pub text: String,
+    /// Ticked under Apps - it shows after "Allow these apps" - or not, so it stays hidden until
+    /// it is ticked too (QA of cmd-expiry, Low 3). `None`: apps aren't managed, or it stays
+    /// blocked anyway (another key than the catalog's).
+    pub ticked: Option<bool>,
+}
+
 /// [pins]: the catalog's pinned signers (M10). An app whose key differs from its pin - by the
-/// server's pin or the phone's reason - stays blocked through "Allow these apps".
+/// server's pin or the phone's reason - stays blocked through "Allow these apps". [allowed]: the
+/// ticked apps, `None` when apps aren't managed.
 pub fn blocks_note(
     blocks: &[RelockBlock],
     pins: &std::collections::HashMap<String, String>,
     now_ms: i64,
+    allowed: Option<&std::collections::HashSet<String>>,
 ) -> BlocksNote {
     if blocks.is_empty() {
         return BlocksNote::default();
@@ -394,7 +408,13 @@ pub fn blocks_note(
                 ),
                 _ => String::new(),
             };
-            format!("{}{key}: {why}{when}.", b.package_name)
+            BlockItem {
+                package_name: b.package_name.clone(),
+                text: format!("{}{key}: {why}{when}.", b.package_name),
+                ticked: allowed
+                    .filter(|_| !not_catalogs(b))
+                    .map(|a| a.contains(&b.package_name)),
+            }
         })
         .collect();
     let allow: Vec<AllowedBlock> = blocks
@@ -1156,23 +1176,24 @@ mod tests {
     fn every_block_is_listed_with_its_key_and_why_and_a_catalog_imposter_stays() {
         let blocks: Vec<RelockBlock> =
             parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
-        let note = blocks_note(&blocks, &HashMap::new(), NOW);
+        let note = blocks_note(&blocks, &HashMap::new(), NOW, None);
         assert!(note.allow_button);
+        assert_eq!(note.items[0].ticked, None);
         assert_eq!(
-            note.items[0],
+            note.items[0].text,
             "me.vibb.music.debug (signing key 3f2a0000…0000c0de): installed from outside Play (a \
              download or adb) - noticed at its install, 2025-10-10 12:40 UTC (3 h ago)."
         );
         assert_eq!(
-            note.items[1],
+            note.items[1].text,
             "org.example.old: blocked when the phone locked again."
         );
         assert!(note.text.unwrap().contains("press \"Allow these apps\""));
         // The catalog pins another key: not the catalog's app - it stays, and alone it gets no button.
         let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
-        let note = blocks_note(&blocks[..1], &pins, NOW);
+        let note = blocks_note(&blocks[..1], &pins, NOW, None);
         assert!(!note.allow_button);
-        assert!(note.items[0].contains(
+        assert!(note.items[0].text.contains(
             "signed with another key than the catalog's (99999999…99999999), so it isn't the \
              catalog's app and stays blocked: uninstall it"
         ));
@@ -1180,12 +1201,19 @@ mod tests {
         // The phone's own reason says so too (its pin, kept from the app list).
         let mut imposter = blocks[0].clone();
         imposter.reason = "catalog_key".to_string();
-        assert!(!blocks_note(&[imposter], &HashMap::new(), NOW).allow_button);
+        assert!(!blocks_note(&[imposter.clone()], &HashMap::new(), NOW, None).allow_button);
         // None: nothing.
         assert_eq!(
-            blocks_note(&[], &HashMap::new(), NOW),
+            blocks_note(&[], &HashMap::new(), NOW, None),
             BlocksNote::default()
         );
+        // Ticked or not under Apps, each (QA of cmd-expiry, Low 3); an imposter stays anyway.
+        let ticked = std::collections::HashSet::from(["org.example.old".to_string()]);
+        let note = blocks_note(&blocks, &HashMap::new(), NOW, Some(&ticked));
+        assert_eq!(note.items[0].ticked, Some(false));
+        assert_eq!(note.items[1].ticked, Some(true));
+        let note = blocks_note(&[imposter], &HashMap::new(), NOW, Some(&ticked));
+        assert_eq!(note.items[0].ticked, None);
     }
 
     /// QA of cmd-expiry, Low 1: "Allow these apps" sends the listed apps it may let out, with the
@@ -1194,14 +1222,14 @@ mod tests {
     fn allow_sends_the_listed_apps_and_their_keys() {
         let blocks =
             parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
-        let note = blocks_note(&blocks, &HashMap::new(), NOW);
+        let note = blocks_note(&blocks, &HashMap::new(), NOW, None);
         let value = allow_form_value(&note.allow);
         let key = blocks[0].signer.clone().unwrap();
         assert_eq!(value, format!("me.vibb.music.debug:{key},org.example.old:"));
         assert_eq!(parse_allow_form(&value), note.allow);
         assert_eq!(note.allow[1].signer, None);
         let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
-        let note = blocks_note(&blocks, &pins, NOW);
+        let note = blocks_note(&blocks, &pins, NOW, None);
         assert_eq!(allow_form_value(&note.allow), "org.example.old:");
         // Junk, repeats and bad keys go; at most BLOCKS_MAX.
         assert_eq!(

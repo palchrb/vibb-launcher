@@ -428,6 +428,30 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         status_card(&html).contains("And 17 more - the phone lists at most 16."),
         "{html}"
     );
+    // Ticked under Apps or not, per app (QA of cmd-expiry, Low 3).
+    for (allowlist, says) in [
+        (
+            "[]",
+            "Not ticked under Apps: after \"Allow these apps\" it stays hidden until \
+             you <a href=\"#app-me.vibb.music.debug\">tick it</a> too.",
+        ),
+        (
+            "[\"me.vibb.music.debug\"]",
+            "Ticked under Apps: it shows again after \"Allow these apps\".",
+        ),
+    ] {
+        sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+            .bind(allowlist)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let html = app
+            .get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text();
+        assert!(status_card(&html).contains(says), "{html}");
+    }
     // Logged once.
     post_status(&app, &token, json!({ "relock_blocks": [music.clone()] })).await;
     let logged = events(&app, "phone_app_blocked").await;
