@@ -1453,8 +1453,18 @@ async fn episode_art_is_pruned_not_backed_up_and_fetched_again_after_a_restore()
 
     // A restore: the file isn't there and no zip has it - the rows forget it, the next check
     // fetches it again.
+    let version = listing(&app, id).await.version.unwrap();
     std::fs::remove_file(app.state.music_art_dir.join(format!("{hash}.jpg"))).unwrap();
     crate::photos::recover_missing(&app.state, backups.path()).await;
+    // The listing's version is stored again, from the rows the route serves (code QA L6).
+    let restamped = listing(&app, id).await.version.unwrap();
+    assert_ne!(restamped, version);
+    let (phone, token) = app.enrolled_device("Ella").await;
+    tick_on(&app, phone, id).await;
+    assert_eq!(
+        listing_doc(&app, &token, id).await["version"],
+        restamped.as_str()
+    );
     let item = &items(&app, id).await[0];
     assert_eq!(
         (item.art_hash.as_ref(), item.art_from.as_ref()),

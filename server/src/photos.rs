@@ -398,9 +398,16 @@ pub async fn recover_missing(state: &crate::AppState, backup_dir: &Path) {
     MUSIC_COVERS
         .recover_missing(&state.db, &state.music_cover_dir, backup_dir)
         .await;
-    MUSIC_ART
+    let forgotten = MUSIC_ART
         .recover_missing(&state.db, &state.music_art_dir, backup_dir)
         .await;
+    // Forgotten pictures change the listings the phones are served: store their versions again,
+    // so the library names what the route serves (design 27 code QA L6).
+    if !forgotten.is_empty()
+        && let Err(err) = crate::music_sweep::restamp_versions(&state.db).await
+    {
+        tracing::warn!(%err, "couldn't store the music listings' versions again");
+    }
 }
 
 /// Two pictures within this many bits of [print] are the same picture (design 27 §1.3): the
@@ -562,20 +569,21 @@ impl Store {
     /// Every referenced hash whose file is missing is looked up in the backup zips in
     /// `backup_dir` (newest first) and extracted if its bytes really hash to that name; whatever
     /// can't be found is forgotten (contact photo → NULL, wallpaper → deleted), so the phones
-    /// and the admin pages don't ask for a file that will never exist. Run at startup.
+    /// and the admin pages don't ask for a file that will never exist. Run at startup. Returns
+    /// the hashes it forgot.
     pub async fn recover_missing(
         &'static self,
         db: &sqlx::SqlitePool,
         dir: &Path,
         backup_dir: &Path,
-    ) {
+    ) -> Vec<String> {
         let _files = self.lock().await;
         let referenced: Vec<String> =
             match sqlx::query_scalar(self.referenced_sql).fetch_all(db).await {
                 Ok(hashes) => hashes,
                 Err(err) => {
                     tracing::warn!(%err, what = self.what, "couldn't list stored files to check");
-                    return;
+                    return Vec::new();
                 }
             };
         let dir = dir.to_path_buf();
@@ -584,7 +592,7 @@ impl Store {
             .filter(|h| path_for(&dir, h).is_some_and(|p| !p.exists()))
             .collect();
         if missing.is_empty() {
-            return;
+            return Vec::new();
         }
         let backup_dir = backup_dir.to_path_buf();
         let still_missing = tokio::task::spawn_blocking(move || {
@@ -592,18 +600,19 @@ impl Store {
         })
         .await
         .unwrap_or_default();
-        for hash in still_missing {
+        for hash in &still_missing {
             tracing::warn!(
                 hash,
                 what = self.what,
                 "stored file missing and in no backup - removing the reference"
             );
             for sql in self.forget_sql {
-                if let Err(err) = sqlx::query(sql).bind(&hash).execute(db).await {
+                if let Err(err) = sqlx::query(sql).bind(hash).execute(db).await {
                     tracing::warn!(%err, what = self.what, "couldn't forget a missing file");
                 }
             }
         }
+        still_missing
     }
 
     /// Returns the hashes it couldn't restore.

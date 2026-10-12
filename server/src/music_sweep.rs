@@ -908,6 +908,50 @@ pub async fn device_listing(
     ))
 }
 
+/// Stores every listed entry's version again from its rows, where they changed outside a check:
+/// `photos::MUSIC_ART.recover_missing` forgot pictures after a restore (design 27 code QA L6).
+/// The library then names the listing the route serves (the version moves the revision, so the
+/// phones fetch it). Returns how many changed.
+pub async fn restamp_versions(db: &sqlx::SqlitePool) -> Result<usize, sqlx::Error> {
+    let listed: Vec<i64> = sqlx::query_scalar(
+        "SELECT l.entry_id FROM music_listings l JOIN music_entries e ON e.id = l.entry_id \
+         WHERE l.version IS NOT NULL AND e.source IN ('nrk', 'rss')",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut changed = 0;
+    for entry_id in listed {
+        let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+        let row: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT version, keep_end FROM music_listings WHERE entry_id = ?")
+                .bind(entry_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some((Some(version), keep_end)) = row else {
+            continue;
+        };
+        let items = load_items(&mut tx, entry_id).await?;
+        if let Some(built) = build_listing(entry_id, &items, keep_end.as_deref() == Some("first"))
+            && built.version != version
+        {
+            sqlx::query(
+                "UPDATE music_listings SET version = ?, item_count = ?, bytes = ?, cut = ? \
+                 WHERE entry_id = ?",
+            )
+            .bind(&built.version)
+            .bind(built.count as i64)
+            .bind(built.json.len() as i64)
+            .bind(built.cut)
+            .bind(entry_id)
+            .execute(&mut *tx)
+            .await?;
+            changed += 1;
+        }
+        tx.commit().await?;
+    }
+    Ok(changed)
+}
+
 // ------------------------------------------------------------------------------------------------
 // Phone reports (§2.5)
 // ------------------------------------------------------------------------------------------------
