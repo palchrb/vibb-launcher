@@ -1005,10 +1005,18 @@ Every root cause except G predates design 25.
 | H SOS -> "Emergency information is not available" | SystemUI starts the `com.android.systemui.action.LAUNCH_EMERGENCY` activity (system handlers only, `config_preferredEmergencySosPackage` first) as a new task; its package wasn't pinned | `HelperKind.EMERGENCY_SOS` (`emergencySosHandler`): pinned with the kiosk on (with or without the block bit) and off, never hidden or suspended, never listed. The re-front yields as "sos" for 60 s (or until the lock is back) when the lock is *stopped* within 3 s of a screen-on (the gesture's presses come <= 500 ms apart and are swallowed while the screen is on) and none of our own screens is in front |
 
 **Deviations and limits**
-- **The SOS yield is a timing heuristic.** No app can see which activity is in front (usage events need a permission
-  a device owner can't grant itself). A stop of the lock within 3 s of a screen-on leaves whatever is in front for up to
-  60 s. While LOCKED only pinned packages can be there: Home and Recents are out of lock task, the camera is off by
-  policy, our own screens are excluded, Recents only pauses (re-fronted as always, within 700 ms in that window).
+- **The SOS yield is a timing heuristic, made safe by lock task** (rewritten after qa-25b-25f H1/L6).
+  - No app can see which activity is in front: usage events need a permission a device owner can't grant itself, SystemUI
+    sends no broadcast, and the gesture setting isn't readable.
+  - A *stop* of the lock within 3 s of a screen-on marks a probable SOS. With the kiosk on, every allowed app is in
+    lock task. So the mark alone would keep whatever the kid brought up in that window: Recents to a thumbnail (a stop,
+    not a pause), a call or an app's full-screen intent that woke the screen, quickstep after a SystemUI crash.
+  - So while the "sos" yield runs, the lock-task list is the kiosk-off one (our package, the lock's helpers, the SOS
+    app): Android removes every other locked task at once.
+  - The yield lasts at most 15 s (the countdown and the dial; a placed call is held as "system_call").
+  - It ends the moment the lock is in front again, the screen goes off, or anything else is yielded to. A woken alarm,
+    a call or a VoIP call come first and are never an SOS.
+  - The price: an allowed app's task in lock task is closed when the yield narrows the list (it starts afresh).
 - **A re-front still shows one plain frame.** Bringing the lock's task back is a task switch; the system's snapshot of
   a `FLAG_SECURE` window is the theme background (`shouldUseAppThemeSnapshot`), shown until the lock draws.
 - The gesture keys (`camera_double_tap_power_gesture_disabled`; Android 16's `double_tap_power_button_gesture_enabled`,
