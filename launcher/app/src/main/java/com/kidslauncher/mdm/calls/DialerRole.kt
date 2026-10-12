@@ -31,8 +31,9 @@ fun shouldPromptForRole(state: CallPolicyState, roleHeld: Boolean, nowMs: Long, 
  * `DISALLOW_CONFIG_DEFAULT_APPS` as soon as our dialer role is held while calls are managed, so
  * the kid (Settings, or another app's role request) can't take the phone app away from us (task
  * 14, QA step 2 #3). The call-redirection role is not waited for: it's granted with adb at
- * provisioning; whether the restriction also blocks the system's redirection prompt is a device
- * check. Cleared before the dialer role is taken or handed back.
+ * provisioning. On Android 14+ the restriction also refuses every exclusive role's prompt (AOSP's
+ * `Role.getRestrictionIntentAsUser`), so Home lifts it for its own prompt only
+ * ([promptNeedsDefaultAppsLift]). Cleared before the dialer role is taken or handed back.
  */
 fun lockDefaultApps(state: CallPolicyState, dialerRoleHeld: Boolean): Boolean = state.managed && dialerRoleHeld
 
@@ -62,6 +63,17 @@ fun rolePromptFor(
     !screeningHeld -> ROLE_CALL_SCREENING
     else -> null
 }
+
+/**
+ * Whether Home must lift `DISALLOW_CONFIG_DEFAULT_APPS` for the [role] prompt to show at all. On
+ * Android 14+ PermissionController's RequestRoleActivity refuses every request for an exclusive role
+ * while that restriction is set (`Role.getRestrictionIntentAsUser`: it opens "blocked by your
+ * admin" and finishes) - and we set it as soon as our dialer role is held ([lockDefaultApps]), so
+ * the redirection and screening prompts never appeared (the user's emulator, 2026-10-12). Home
+ * lifts it for the prompt only and puts it back when the prompt returns (or at the next apply).
+ */
+fun promptNeedsDefaultAppsLift(role: String, defaultAppsLocked: Boolean): Boolean =
+    defaultAppsLocked && role != ROLE_DIALER
 
 /** `RoleManager.ROLE_DIALER`, `ROLE_CALL_REDIRECTION`, `ROLE_CALL_SCREENING`. */
 const val ROLE_DIALER = "android.app.role.DIALER"

@@ -1205,6 +1205,29 @@ object AppEnforcer {
         return true
     }
 
+    /**
+     * `DISALLOW_CONFIG_DEFAULT_APPS` set ([locked]) or lifted outside [apply]: Home lifts it only
+     * for a role prompt the platform would otherwise refuse ([promptNeedsDefaultAppsLift]) and sets
+     * it back as the prompt returns; [apply] sets it as [lockDefaultApps] says either way. Device
+     * owner only; `false` when it couldn't.
+     */
+    fun setDefaultAppsLocked(context: Context, locked: Boolean): Boolean {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        if (!dpm.isDeviceOwnerApp(context.packageName)) return false
+        val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
+        return try {
+            if (locked) {
+                dpm.addUserRestriction(admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS)
+            } else {
+                dpm.clearUserRestriction(admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS)
+            }
+            true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't ${if (locked) "set" else "lift"} the default-apps lock", e)
+            false
+        }
+    }
+
     private fun setRestriction(
         dpm: DevicePolicyManager,
         admin: ComponentName,

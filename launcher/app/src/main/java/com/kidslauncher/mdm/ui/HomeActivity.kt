@@ -45,6 +45,11 @@ import com.kidslauncher.mdm.calls.MissedSummary
 import com.kidslauncher.mdm.calls.RuleContact
 import com.kidslauncher.mdm.calls.phoneBookView
 import com.kidslauncher.mdm.calls.rolePromptFor
+import androidx.activity.result.contract.ActivityResultContracts
+import com.kidslauncher.mdm.calls.lockDefaultApps
+import com.kidslauncher.mdm.calls.promptNeedsDefaultAppsLift
+import com.kidslauncher.mdm.server.AppEnforcer
+import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.calls.shouldPromptForRole
 import com.kidslauncher.mdm.databinding.ActivityHomeBinding
 import com.kidslauncher.mdm.server.CachedPolicy
@@ -486,9 +491,39 @@ class HomeActivity : UIObjectActivity() {
         CallPrefs.rolePromptLastMs(this, now)
         try {
             val roleManager = getSystemService(RoleManager::class.java) ?: return
-            startActivity(roleManager.createRequestRoleIntent(role))
+            // Android 14+ refuses an exclusive role's prompt while default apps are locked: lift
+            // the lock for the prompt only (put back in onRolePromptDone or by the next apply).
+            if (promptNeedsDefaultAppsLift(role, lockDefaultApps(state, roles.dialerHeld))) {
+                if (!AppEnforcer.setDefaultAppsLocked(this, false)) return
+                defaultAppsLiftedForPrompt = true
+            }
+            rolePrompt.launch(roleManager.createRequestRoleIntent(role))
         } catch (e: Exception) {
             android.util.Log.w("HomeActivity", "Couldn't show the $role prompt", e)
+            onRolePromptDone()
+        }
+    }
+
+    /** Whether [promptForCallRoleIfNeeded] lifted the default-apps lock for its prompt. */
+    private var defaultAppsLiftedForPrompt = false
+
+    private val rolePrompt = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        onRolePromptDone()
+    }
+
+    /** The role prompt returned (or never showed): the default-apps lock goes back on, off the main
+     * thread, and the roles as they are now reach the server with the next apply's role signal. */
+    private fun onRolePromptDone() {
+        if (!defaultAppsLiftedForPrompt) return
+        defaultAppsLiftedForPrompt = false
+        val app = applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                AppEnforcer.apply(app, currentPolicyDecision().policy)
+            } catch (e: Exception) {
+                android.util.Log.w("HomeActivity", "Couldn't put the default-apps lock back - setting it directly", e)
+                AppEnforcer.setDefaultAppsLocked(app, true)
+            }
         }
     }
 
