@@ -328,3 +328,102 @@ async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
         .text();
     assert!(page.contains("cancelled before it reached the phone"));
 }
+
+async fn press(app: &TestApp, cookie: &str, device: i64, path: &str) {
+    let fields: &[(&str, &str)] = if path == "wipe" {
+        &[("confirm_name", "phone")]
+    } else {
+        &[]
+    };
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{device}/command/{path}"),
+            Some(cookie),
+            fields,
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{path}: {}", res.status);
+}
+
+/// QA of cmd-expiry, Medium 1 (its probe): a wipe waiting for a lost phone survives a later "Update
+/// location now", Ring, Stop ringing and Lock - and still reaches the phone after the hour that
+/// expires the locate and the ring.
+#[tokio::test]
+async fn a_waiting_wipe_is_never_replaced() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    for path in ["wipe", "locate", "ring", "stop-ring", "lock"] {
+        press(&app, &cookie, device, path).await;
+    }
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT command, cancel_reason FROM device_commands WHERE device_id = ? ORDER BY id",
+    )
+    .bind(device)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let rows: Vec<(&str, Option<&str>)> = rows
+        .iter()
+        .map(|(c, r)| (c.as_str(), r.as_deref()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("wipe", None),
+            ("locate", None),
+            ("ring", Some("replaced")),
+            ("stop_ring", None),
+            ("lock", None),
+        ],
+        "only the ring was replaced, by its own kind; nothing deleted"
+    );
+    // 61 minutes later: the locate and the stop expired, the wipe and the lock still go.
+    sqlx::query("UPDATE device_commands SET requested_at = datetime('now', '-61 minutes')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        policy(&app, &token).await["pending_command"]["command"],
+        "wipe"
+    );
+    assert_eq!(
+        policy(&app, &token).await["pending_command"]["command"],
+        "lock"
+    );
+    assert!(policy(&app, &token).await["pending_command"].is_null());
+    let replaced: String = sqlx::query_scalar(
+        "SELECT detail FROM security_events WHERE event_type = 'device_command_replaced'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        replaced.starts_with("1 waiting ring/stop_ring replaced by a new stop_ring"),
+        "{replaced}"
+    );
+    let page = locate_page(&app, &cookie, device).await;
+    assert!(
+        row(&page, "ring").contains("Replaced "),
+        "{}",
+        row(&page, "ring")
+    );
+}
+
+/// A lock waits too: a later wipe or lock doesn't replace it.
+#[tokio::test]
+async fn a_waiting_lock_is_never_replaced() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    for path in ["lock", "lock", "wipe"] {
+        press(&app, &cookie, device, path).await;
+    }
+    for expected in ["lock", "lock", "wipe"] {
+        assert_eq!(
+            policy(&app, &token).await["pending_command"]["command"],
+            expected
+        );
+    }
+}

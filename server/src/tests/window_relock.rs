@@ -299,7 +299,8 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
         commands(&app, id).await,
         vec!["end_windows", "allow_blocked", "start_pause"]
     );
-    // A lock queued after them replaces an undelivered ring, but not them.
+    // A lock queued after them replaces nothing - not them, and not an undelivered ring (QA of
+    // cmd-expiry, Medium 1: only a command of the same kind replaces one).
     for path in ["ring", "lock"] {
         let res = app
             .request_form(
@@ -313,7 +314,13 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
     }
     assert_eq!(
         commands(&app, id).await,
-        vec!["end_windows", "allow_blocked", "start_pause", "lock"]
+        vec![
+            "end_windows",
+            "allow_blocked",
+            "start_pause",
+            "ring",
+            "lock"
+        ]
     );
     // And they delete nothing: an end_windows behind the lock keeps it.
     app.request_form(
@@ -329,6 +336,7 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
             "end_windows",
             "allow_blocked",
             "start_pause",
+            "ring",
             "lock",
             "end_windows"
         ]

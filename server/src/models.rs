@@ -617,6 +617,9 @@ impl DeviceCommand {
                 Some("enrolled") => format!(
                     "Cancelled {cancelled} - a new phone was enrolled on this page, so it was never sent"
                 ),
+                Some("replaced") => {
+                    format!("Replaced {cancelled} by a newer command of its kind - never sent")
+                }
                 _ => format!("Cancelled {cancelled} - never sent"),
             };
         }

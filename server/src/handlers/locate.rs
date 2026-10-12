@@ -327,43 +327,69 @@ pub async fn locations_json(
     Json(locations)
 }
 
-/// Deletes any not-yet-delivered command for this device (but design 24b's
-/// `end_windows`/`allow_blocked`/`start_pause`) before inserting the
-/// new one - "your last action wins", and doubles as a way to cancel a
-/// queued-but-not-yet-delivered wipe by queuing something else before it
-/// lands. A delivered one the phone didn't confirm is no longer offered again
-/// (security review L12: its row stays, as history). Broadcasts on `command_notify` afterwards so a connected device's SSE
-/// listener (see `device_api::commands_stream`) wakes it immediately instead
-/// of waiting for its next 2-minute poll - a `send` with no subscribers
-/// (device offline/asleep) is expected and harmless, it just falls back to
-/// that regular poll.
-async fn queue_command(state: &AppState, device_id: i64, command: &str) {
-    // Design 24b's `end_windows`/`allow_blocked`/`start_pause` have their own insert and stay (QA #8).
-    let [end_windows, allow_blocked, start_pause] = crate::window_relock::OWN_INSERT_COMMANDS;
-    sqlx::query(
-        "DELETE FROM device_commands WHERE device_id = ? AND delivered_at IS NULL \
-         AND command NOT IN (?, ?, ?)",
-    )
-    .bind(device_id)
-    .bind(end_windows)
-    .bind(allow_blocked)
-    .bind(start_pause)
-    .execute(&state.db)
-    .await
-    .ok();
-    sqlx::query(
-        "UPDATE device_commands SET deliveries = MAX(deliveries, ?) WHERE device_id = ? \
-         AND delivered_at IS NOT NULL AND received_at IS NULL AND acknowledged_at IS NULL \
-         AND command NOT IN (?, ?, ?)",
-    )
-    .bind(crate::models::MAX_COMMAND_DELIVERIES)
-    .bind(device_id)
-    .bind(end_windows)
-    .bind(allow_blocked)
-    .bind(start_pause)
-    .execute(&state.db)
-    .await
-    .ok();
+/// The commands a new one of [command] replaces while they wait (QA of cmd-expiry, Medium 1): only
+/// its own kind - a ring or "stop ringing" the earlier ring or stop, "Update location now" the earlier
+/// one. A wipe or a lock is never replaced (it waits for a lost phone however long it takes; the
+/// parent cancels it with Cancel), and nothing else replaces anything.
+fn replaced_kinds(command: &str) -> &'static [&'static str] {
+    match command {
+        "ring" | "stop_ring" => &["ring", "stop_ring"],
+        "locate" => &["locate"],
+        _ => &[],
+    }
+}
+
+/// Queues a Find My Device command. A waiting command of the same kind ([replaced_kinds]) is
+/// cancelled as "replaced" - kept as history, logged -, and one of that kind the phone fetched but
+/// didn't confirm is no longer offered again (security review L12). Broadcasts on `command_notify`
+/// afterwards so a connected device's SSE listener (see `device_api::commands_stream`) wakes it
+/// immediately; a `send` with no subscribers (device offline/asleep) is expected and harmless.
+async fn queue_command(state: &AppState, device_id: i64, command: &str, admin: &str) {
+    let kinds = replaced_kinds(command);
+    if !kinds.is_empty() {
+        let list = vec!["?"; kinds.len()].join(", ");
+        let replace_sql = format!(
+            "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'replaced' \
+             WHERE device_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL AND command IN ({list})"
+        );
+        let mut replace = sqlx::query(&replace_sql).bind(device_id);
+        for kind in kinds {
+            replace = replace.bind(*kind);
+        }
+        let replaced = replace
+            .execute(&state.db)
+            .await
+            .map(|done| done.rows_affected())
+            .unwrap_or_else(|err| {
+                tracing::error!(device_id, %err, "can't replace the waiting commands");
+                0
+            });
+        let used_up_sql = format!(
+            "UPDATE device_commands SET deliveries = MAX(deliveries, ?) WHERE device_id = ? \
+             AND delivered_at IS NOT NULL AND received_at IS NULL AND acknowledged_at IS NULL \
+             AND command IN ({list})"
+        );
+        let mut used_up = sqlx::query(&used_up_sql)
+            .bind(crate::models::MAX_COMMAND_DELIVERIES)
+            .bind(device_id);
+        for kind in kinds {
+            used_up = used_up.bind(*kind);
+        }
+        used_up.execute(&state.db).await.ok();
+        if replaced > 0 {
+            security::record_security_event(
+                &state.db,
+                "device_command_replaced",
+                Some(admin),
+                None,
+                Some(&format!(
+                    "{replaced} waiting {} replaced by a new {command}, device {device_id}",
+                    kinds.join("/")
+                )),
+            )
+            .await;
+        }
+    }
     sqlx::query("INSERT INTO device_commands (device_id, command) VALUES (?, ?)")
         .bind(device_id)
         .bind(command)
@@ -379,7 +405,7 @@ pub async fn ring(
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
-    queue_command(&state, id, "ring").await;
+    queue_command(&state, id, "ring", &admin.username).await;
     security::record_security_event(
         &state.db,
         "device_command_queued",
@@ -396,7 +422,7 @@ pub async fn stop_ring(
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
-    queue_command(&state, id, "stop_ring").await;
+    queue_command(&state, id, "stop_ring", &admin.username).await;
     security::record_security_event(
         &state.db,
         "device_command_queued",
@@ -413,7 +439,7 @@ pub async fn lock(
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
-    queue_command(&state, id, "lock").await;
+    queue_command(&state, id, "lock", &admin.username).await;
     security::record_security_event(
         &state.db,
         "device_command_queued",
@@ -432,7 +458,7 @@ pub async fn locate(
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
-    queue_command(&state, id, "locate").await;
+    queue_command(&state, id, "locate", &admin.username).await;
     security::record_security_event(
         &state.db,
         "device_command_queued",
@@ -601,7 +627,7 @@ pub async fn wipe(
         .into_response();
     }
 
-    queue_command(&state, id, "wipe").await;
+    queue_command(&state, id, "wipe", &admin.username).await;
     security::record_security_event(
         &state.db,
         "device_wipe_queued",

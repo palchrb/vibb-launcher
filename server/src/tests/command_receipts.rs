@@ -188,16 +188,17 @@ async fn a_new_command_stops_an_unconfirmed_one_coming_again() {
     let res = app
         .request_form(
             Method::POST,
-            &format!("/devices/{device}/command/lock"),
+            &format!("/devices/{device}/command/stop-ring"),
             Some(&cookie),
             &[],
         )
         .await;
     assert!(res.status.is_redirection(), "{}", res.status);
     age_delivery(&app, ring, 3).await;
+    // A command of the same kind replaces it (QA of cmd-expiry, Medium 1: only the same kind).
     assert_eq!(
         policy(&app, &token).await["pending_command"]["command"],
-        "lock"
+        "stop_ring"
     );
     age_delivery(&app, ring, 30).await;
     assert!(
