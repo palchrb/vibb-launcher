@@ -27,7 +27,7 @@ class DebugHookAbsentTest {
         val outside = sources("main") + sources("release")
         assertTrue(outside.size > 100)
         for (f in outside) {
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }

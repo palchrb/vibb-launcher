@@ -31,6 +31,7 @@ mod step9;
 mod time_rules;
 mod tracked_apps;
 mod wallpapers;
+mod window_relock;
 
 use axum::Router;
 use axum::body::Body;
@@ -149,6 +150,7 @@ impl TestApp {
             command_notify,
             config: std::sync::Arc::new(ForkConfig::for_tests()),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
+            dns_feed_dir: std::sync::Arc::new(dir.path().join("dns_feeds")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
             command_streams: Default::default(),
             app_syncs: Default::default(),

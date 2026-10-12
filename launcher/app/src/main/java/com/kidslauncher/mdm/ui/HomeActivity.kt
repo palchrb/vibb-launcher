@@ -277,6 +277,11 @@ class HomeActivity : UIObjectActivity() {
             ) { gridLayout.spanCount }
         )
         musicCard = com.kidslauncher.mdm.music.MusicHomeCard(this, binding.homeMusicCard)
+        // Design 24b §1.3: "Lock again" ends a parent-PIN window - no PIN, it only takes access away.
+        binding.homeWindowLockAgain.setOnClickListener {
+            binding.homeWindowBanner.visibility = View.GONE
+            com.kidslauncher.mdm.server.WindowRelock.lockAgainAsync(this, com.kidslauncher.mdm.server.RelockTrigger.LOCK_AGAIN)
+        }
         // Back to our call screen from the ongoing-call card.
         binding.homeCallCard.setOnClickListener {
             try {
@@ -382,6 +387,7 @@ class HomeActivity : UIObjectActivity() {
         ContactPhotos.addListener(photoListener)
         WallpaperStore.addListener(wallpaperListener)
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
+        com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
         started = true
         renderCallCard()
         renderMusicCard()
@@ -549,6 +555,7 @@ class HomeActivity : UIObjectActivity() {
         BadgeStore.removeListener(badgeListener)
         refreshHandler.removeCallbacks(badgeRender)
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
+        com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
@@ -582,9 +589,26 @@ class HomeActivity : UIObjectActivity() {
     /** Everything: the call parts now, the apps filtered again in the background. */
     private fun render() {
         if (!contentShown) return
+        renderWindowBanner()
         renderCallParts()
         refreshApps()
     }
+
+    /** Design 24b §1.3: "Open until 18:40 · Lock again" while a parent-PIN window is open. */
+    private fun renderWindowBanner() {
+        if (!contentShown) return
+        val until = try {
+            com.kidslauncher.mdm.server.WindowRelock.openUntilMs()
+        } catch (e: Exception) {
+            null
+        }
+        binding.homeWindowBanner.visibility = if (until == null) View.GONE else View.VISIBLE
+        if (until != null) {
+            binding.homeWindowText.text = getString(R.string.home_window_open, android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(until)))
+        }
+    }
+
+    private val windowListener: () -> Unit = { renderWindowBanner() }
 
     /** Contacts row and phone-book tile from the call rules, missed calls and photos (cheap). */
     private fun renderCallParts() {

@@ -90,7 +90,9 @@ class ParentPinStoreTest {
         saltHex: String = salt,
         window: WindowStart? = null,
     ): ParentPinResult = checkParentPin(
-        store, entry, typed, hashHex, saltHex, now,
+        store, entry, typed, parentPinFingerprint(hashHex, saltHex),
+        verify = { if (PinHash.verify(it, hashHex, saltHex)) PinVerdict.MATCH else PinVerdict.NO_MATCH },
+        now = now,
         newId = { "id${++ids}" },
         storageFull = { full },
         windowStart = { window },

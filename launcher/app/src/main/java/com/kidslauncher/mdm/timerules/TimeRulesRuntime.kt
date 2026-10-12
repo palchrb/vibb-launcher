@@ -14,7 +14,13 @@ import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.KidModeEnforcer
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.OfflineOverride
+import com.kidslauncher.mdm.server.OVERRIDE_DURATION_MS
+import com.kidslauncher.mdm.server.RESTRICTIONS_PAUSE_DURATION_MS
+import com.kidslauncher.mdm.server.RelockTrigger
 import com.kidslauncher.mdm.server.RestrictionsPause
+import com.kidslauncher.mdm.server.WindowRelock
+import com.kidslauncher.mdm.server.WindowStart
+import com.kidslauncher.mdm.server.windowEndMs
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -177,17 +183,28 @@ object TimeRulesRuntime {
     }
 
     /** When the lock may change next: rule boundaries, midnight with a budget, lift expiries,
-     * and the end of an active offline override or pause (the rules come back then). */
+     * and the end of an open offline override or pause - always, also without a time policy
+     * (design 24b S2: the window locks again then, one alarm for everything). */
     fun nextBoundary(context: Context): Instant? {
-        val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return null
         val clocks = clocks()
+        val windowEnds = windowEnds(clocks).map { Instant.ofEpochMilli(it) }
+        val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return windowEnds.minOrNull()
         val records = liftRecords(context, policy.lifts, clocks)
+        return nextBoundary(policy, Instant.ofEpochMilli(clocks.wallMs), zone(), liftExpiries(records, clocks) + windowEnds)
+    }
+
+    /** The open override's and pause's ends: the earlier of the wall end and now plus the elapsed
+     * time left ([windowEndMs]). */
+    private fun windowEnds(clocks: Clocks): List<Long> {
         val mdm = LauncherPreferences.mdm()
-        val overrideEnds = listOfNotNull(
-            mdm.offlineOverrideExpiresAt().takeIf { OfflineOverride.isActive() },
-            mdm.restrictionsPausedUntil().takeIf { RestrictionsPause.isActive() },
-        ).map { Instant.ofEpochMilli(it) }
-        return nextBoundary(policy, Instant.ofEpochMilli(clocks.wallMs), zone(), liftExpiries(records, clocks) + overrideEnds)
+        val override = WindowStart(mdm.offlineOverrideExpiresAt(), mdm.offlineOverrideElapsedStart(), mdm.offlineOverrideBoot())
+            .takeIf { mdm.offlineOverrideActive() }
+        val pause = WindowStart(mdm.restrictionsPausedUntil(), mdm.restrictionsPausedElapsedStart(), mdm.restrictionsPausedBoot())
+            .takeIf { mdm.restrictionsPaused() }
+        return listOfNotNull(
+            override?.let { windowEndMs(it, OVERRIDE_DURATION_MS, clocks.wallMs, clocks.elapsedMs, clocks.bootCount) },
+            pause?.let { windowEndMs(it, RESTRICTIONS_PAUSE_DURATION_MS, clocks.wallMs, clocks.elapsedMs, clocks.bootCount) },
+        )
     }
 
     /**
@@ -195,9 +212,10 @@ object TimeRulesRuntime {
      * changed, shows [LockActivity] when a lock begins (not over a call in progress - it shows when
      * the kid is back on Home), re-arms the boundary alarm and the screen-time timer. Called on the
      * boundary alarm, time/zone changes, boot, screen on / user present, the budget running out
-     * and every accepted policy. Main thread.
+     * and every accepted policy. Then a parent-PIN window that ended locks again ([WindowRelock],
+     * design 24b; [trigger] is the report's). Main thread.
      */
-    fun recheck(context: Context) {
+    fun recheck(context: Context, trigger: RelockTrigger = RelockTrigger.TIMER) {
         // First: fold the running screen-time stretch into the ledger, so the budget the lock
         // decision sees includes it (the budget timer lands here), and re-arm the timers.
         ScreenTimeTracker.update(context)
@@ -210,5 +228,11 @@ object TimeRulesRuntime {
             Log.w(LOG_TAG, "Lock re-check failed", e)
         }
         TimeRuleAlarm.schedule(context)
+        // Never blocks: hands off to the relock worker.
+        try {
+            WindowRelock.check(context, trigger)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Relock check failed", e)
+        }
     }
 }

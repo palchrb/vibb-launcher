@@ -707,6 +707,10 @@ struct SyncStatus {
     running_since: Option<String>,
     /// The last finished sync's failure, `None` after a success.
     last_error: Option<SyncFailure>,
+    /// The release (tag, asset id) the last sync refused for its package or key, and why: the
+    /// hourly sync doesn't download it again (QA of the security wave, Low 5 - a 326 MB APK every
+    /// hour); "Check now" and "Forget" do.
+    refused: Option<(String, i64, String)>,
 }
 
 #[derive(Clone)]
@@ -744,6 +748,16 @@ impl AppSyncs {
     fn status(&self, id: i64) -> SyncStatus {
         self.lock().get(&id).cloned().unwrap_or_default()
     }
+
+    fn refused(&self, id: i64) -> Option<(String, i64, String)> {
+        self.lock()
+            .get(&id)
+            .and_then(|status| status.refused.clone())
+    }
+
+    fn set_refused(&self, id: i64, refused: Option<(String, i64, String)>) {
+        self.lock().entry(id).or_default().refused = refused;
+    }
 }
 
 /// Held for one app's sync; dropping it (also when the sync's future is dropped) ends the sync.
@@ -775,12 +789,13 @@ enum SyncError {
     Failed(String),
 }
 
-/// Syncs app `id` unless a sync of it already runs, and records how it ended. See [sync_one_app].
-async fn sync_app(state: &AppState, id: i64) -> Result<(), SyncError> {
+/// Syncs app `id` unless a sync of it already runs, and records how it ended. See [sync_one_app];
+/// `forced` ("Check now") downloads a release the last sync refused again.
+async fn sync_app(state: &AppState, id: i64, forced: bool) -> Result<(), SyncError> {
     let Some(guard) = state.app_syncs.start(id) else {
         return Err(SyncError::AlreadyRunning);
     };
-    let result = sync_one_app(state, id).await;
+    let result = sync_one_app(state, id, forced).await;
     guard.finish(&result);
     result.map_err(SyncError::Failed)
 }
@@ -792,7 +807,7 @@ async fn sync_app(state: &AppState, id: i64) -> Result<(), SyncError> {
 /// Used by both the scheduled loop and the admin's manual "Check now"
 /// button, so they can never drift apart. Only through [sync_app], which holds the app's guard:
 /// the row is read here, under it, so the comparison is with what the last sync stored.
-async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
+async fn sync_one_app(state: &AppState, id: i64, forced: bool) -> Result<(), String> {
     let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
@@ -816,12 +831,34 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
         .execute(&state.db)
         .await
         .ok();
+    sync_release(state, &app, &release.tag_name, &asset, forced).await
+}
+
+/// Downloads `asset` of release `tag` for `app` and caches it, unless it is what's cached already,
+/// or the release the last sync refused (unless `forced`). A release refused for its package or
+/// key is remembered ([SyncStatus::refused]).
+async fn sync_release(
+    state: &AppState,
+    app: &TrackedApp,
+    tag: &str,
+    asset: &GithubAsset,
+    forced: bool,
+) -> Result<(), String> {
+    if !forced
+        && let Some((refused_tag, refused_asset, why)) = state.app_syncs.refused(app.id)
+        && refused_tag == tag
+        && refused_asset == asset.id
+    {
+        return Err(format!(
+            "{why} (not downloaded again until the release changes; \"Check now\" tries again)"
+        ));
+    }
 
     // Compared as a (tag, asset id) pair, not just the tag - a rolling tag
     // (e.g. this project's own "pre-release") never changes name between
     // pushes, but GitHub gives the replaced asset a new id every time, so
     // this still correctly detects a new build even when the tag doesn't.
-    if Some(&release.tag_name) == app.latest_release_tag.as_ref()
+    if app.latest_release_tag.as_deref() == Some(tag)
         && Some(asset.id) == app.latest_release_asset_id
     {
         return Ok(());
@@ -832,12 +869,12 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     let file_path = app_dir
-        .join(format!("{}-{}.apk", release.tag_name, asset.id))
+        .join(format!("{}-{}.apk", tag, asset.id))
         .to_string_lossy()
         .into_owned();
     // Streamed to disk, never held in memory: Element X's universal APK is 326 MB.
     let downloaded =
-        tokio::time::timeout(DOWNLOAD_TOTAL_TIMEOUT, download_asset(&asset, &file_path))
+        tokio::time::timeout(DOWNLOAD_TOTAL_TIMEOUT, download_asset(asset, &file_path))
             .await
             .map_err(|_| {
                 format!(
@@ -846,27 +883,32 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
                     DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
                 )
             })??;
-    let identity = match apk_identity(&file_path)
-        .await
-        .and_then(|identity| check_pins(&app, &identity).map(|()| identity))
-    {
+    let checked = match apk_identity(&file_path).await {
+        Ok(identity) => match check_pins(app, &identity) {
+            Ok(()) => check_new_package(state, app, &identity)
+                .await
+                .map(|()| identity),
+            Err(err) => Err(err),
+        },
+        Err(err) => Err(err),
+    };
+    let identity = match checked {
         Ok(identity) => identity,
         Err(err) => {
             tokio::fs::remove_file(&file_path).await.ok();
+            state
+                .app_syncs
+                .set_refused(app.id, Some((tag.to_string(), asset.id, err.clone())));
             return Err(err);
         }
     };
-    if let Err(err) = check_new_package(state, &app, &identity).await {
-        tokio::fs::remove_file(&file_path).await.ok();
-        return Err(err);
-    }
 
     let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = ?, \
          latest_release_file_path = ?, latest_release_asset_name = ?, \
          latest_release_asset_size = ?, latest_release_sha256 = ? WHERE id = ?",
     )
-    .bind(&release.tag_name)
+    .bind(tag)
     .bind(asset.id)
     .bind(&file_path)
     .bind(&asset.name)
@@ -886,7 +928,7 @@ async fn sync_one_app(state: &AppState, id: i64) -> Result<(), String> {
     if !stored {
         return Err("the app was removed during the download".to_string());
     }
-    store_pins(state, &app, &identity).await;
+    store_pins(state, app, &identity).await;
     Ok(())
 }
 
@@ -917,7 +959,7 @@ pub async fn run_scheduled_tracked_app_sync(state: AppState) {
             .unwrap_or_default();
 
         for app in apps {
-            match sync_app(&state, app.id).await {
+            match sync_app(&state, app.id, false).await {
                 Ok(()) => {}
                 Err(SyncError::AlreadyRunning) => {
                     tracing::info!("tracked app '{}' is already syncing, skipped", app.name);
@@ -1240,7 +1282,7 @@ pub async fn check_now(State(state): State<AppState>, Path(id): Path<i64>) -> Re
     // In its own task: a large download still finishes, and is cached, after this answers.
     let task_state = state.clone();
     let sync = tokio::spawn(async move {
-        if let Err(SyncError::Failed(e)) = sync_app(&task_state, id).await {
+        if let Err(SyncError::Failed(e)) = sync_app(&task_state, id, true).await {
             tracing::warn!("tracked app {id} check failed: {e}");
         }
     });
@@ -1689,6 +1731,8 @@ pub async fn forget_package_name(
         .execute(&state.db)
         .await
         .ok();
+    // A release refused for the old pins is downloaded again at the next sync.
+    state.app_syncs.set_refused(id, None);
 
     Redirect::to(&format!("/apps/tracked/{id}"))
 }
@@ -2216,5 +2260,76 @@ mod tests {
         std::fs::File::create(dir.path().join("newer.apk")).unwrap();
         replace_cached_file(false, &path("newer.apk"), Some(&path("new.apk"))).await;
         assert_eq!(files_in(dir.path()), ["new.apk"]);
+    }
+
+    /// QA of the security wave, Low 5: a release refused for its key isn't downloaded again every
+    /// hour - only when "Check now" asks, or after "Forget".
+    #[tokio::test]
+    async fn a_refused_release_is_not_downloaded_again_every_hour() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let app = crate::tests::TestApp::new().await;
+        let downloads = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = downloads.clone();
+        let apk = std::fs::read("testdata/apk/fixture-key2.apk").unwrap();
+        let size = apk.len() as u64;
+        let server = axum::Router::new().route(
+            "/app.apk",
+            axum::routing::get(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let apk = apk.clone();
+                async move { apk }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/app.apk", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, signer_sha256) VALUES \
+             ('Fixture', 'me.vibb.testfixture', 'o/r', \
+              '0796f1809e476a2ce724f1341bcb32d03185b7a202c3469787c5775d65ef4be3') RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let row = || async {
+            sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
+                .bind(id)
+                .fetch_one(&app.db)
+                .await
+                .unwrap()
+        };
+        let asset = GithubAsset {
+            id: 77,
+            name: "app.apk".to_string(),
+            browser_download_url: url,
+            size,
+        };
+
+        let first = sync_release(&app.state, &row().await, "v2", &asset, false).await;
+        assert!(first.unwrap_err().contains("different key"));
+        assert_eq!(downloads.load(Ordering::SeqCst), 1);
+        // The hourly sync: not downloaded again, the reason kept.
+        let hourly = sync_release(&app.state, &row().await, "v2", &asset, false).await;
+        assert!(hourly.unwrap_err().contains("not downloaded again"));
+        assert_eq!(downloads.load(Ordering::SeqCst), 1);
+        // "Check now": downloaded again (and refused again).
+        assert!(
+            sync_release(&app.state, &row().await, "v2", &asset, true)
+                .await
+                .is_err()
+        );
+        assert_eq!(downloads.load(Ordering::SeqCst), 2);
+        // "Forget": the next sync takes it, with the new key pinned.
+        app.state.app_syncs.set_refused(id, None);
+        sqlx::query("UPDATE tracked_apps SET package_name = '', signer_sha256 = NULL WHERE id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        sync_release(&app.state, &row().await, "v2", &asset, false)
+            .await
+            .unwrap();
+        assert_eq!(downloads.load(Ordering::SeqCst), 3);
+        assert_eq!(row().await.latest_release_tag.as_deref(), Some("v2"));
     }
 }

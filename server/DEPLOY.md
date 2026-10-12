@@ -14,7 +14,8 @@ sudo bash install.sh
 
 (Downloaded to a file rather than piped into `sudo bash`, so what runs as root is what you read, and a cut-off
 download never runs half a script. The server it installs is checked against the project's signing key - "Release
-signing" under "Updating".)
+signing" under "Updating".) **Until the first signed server release (0.24.0) is published, `install.sh` says so and
+installs nothing**: releases before it aren't signed, and it never installs an unsigned one.
 
 This downloads the newest server release (the newest `server-vX.Y.Z` release of the
 [`palchrb/vibb-launcher`](https://github.com/palchrb/vibb-launcher) monorepo), sets it up as a background service that starts on boot, and prints an admin username/password at the end — **save that password**, you'll need it to log in the first time (and you'll be asked to change it immediately after).
@@ -333,24 +334,32 @@ Root on the Pi installs and runs only release files signed with the project's [m
 key (security review M5): `install.sh` and `update.sh` check the tarball, and the root-side updater checks `update.sh`
 before it runs it. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
 trusted comment names the file and the release tag, so a signed file can't be passed off under another name or as
-another release. `server-release.yml` signs both with the `SERVER_MINISIGN_KEY` secret and refuses to publish without
-it, or when it doesn't match the pinned key.
+another release. `server-release.yml` signs both in its `server-release-sign` job, with the `SERVER_MINISIGN_KEY`
+secret of the protected `release` environment, before any image is pushed or tagged: without the secret, or when it
+doesn't match the pinned key, the run stops there and nothing is pushed or published.
 
 **One-time setup by the repo owner, before the first `server-v0.24.0` tag:**
 1. On your own computer (not the Pi, not CI), with minisign installed (`apt install minisign`, `brew install minisign`):
    `minisign -G -W -p handy-server.pub -s handy-server.key`. `-W` leaves the secret key without a password, since CI
    signs unattended; the GitHub secret is what protects it. Keep `handy-server.key` somewhere safe offline (a password
    manager) and never in the repo.
-2. GitHub > the repo > Settings > Secrets and variables > Actions > New repository secret: name
-   `SERVER_MINISIGN_KEY`, value the whole content of `handy-server.key` (both lines).
+2. GitHub > the repo > Settings > Environments > `release` (the environment the launcher and music releases already
+   sign in):
+   - **Environment secrets** > Add: name `SERVER_MINISIGN_KEY`, value the whole content of `handy-server.key` (both
+     lines). Not a repository secret: the release reads it only from this environment, so a workflow pushed to some
+     branch can't.
+   - **Deployment branches and tags**: add a tag rule `server-v*` next to `launcher-v*` and `music-v*`, or the release
+     job can't enter the environment.
 3. Pin the public key, the second line of `handy-server.pub` (it starts with `RW`), in both scripts (six places,
    actions.sh's copies included):
    `KEY='RW...'; sed -i "s|^SERVER_SIGNING_PUBKEY=.*|SERVER_SIGNING_PUBKEY=\"$KEY\"|" server/deploy/install.sh server/deploy/update.sh`,
    then `cargo test deploy_scripts` (from `server/`) and commit.
-4. Optional, as the review suggests: turn on immutable releases (Settings > General > Releases), and move the secret
-   into an environment with required reviewers.
+4. Optional, as the review suggests: turn on immutable releases (Settings > General > Releases). The `release`
+   environment's required reviewer, if it has one, then approves each server release too.
 
-Until the key is pinned, the scripts refuse every release ("No release signing key is pinned").
+Until the key is pinned, the scripts refuse every release ("No release signing key is pinned"). A `server-v*` tag
+pushed before steps 2-3 stops at the signing job, with nothing pushed or published: delete the tag, finish the setup,
+and tag again.
 
 - **The way in**: a Pi on 0.23 or older updates to 0.24.0 the old way (its `actions.sh` takes `update.sh` from the
   tag), but 0.24.0's `update.sh` already checks the tarball's signature, installs `minisign`, and rewrites
@@ -530,12 +539,14 @@ audio from the source.
 
 ## Server 0.24.0 (security review, server part)
 
-- **Everyone is signed out once**: sessions from before the update are ended, since older backups hold their ids (M2).
+- **Everyone is signed out once**, the parent who pressed "Update now" too: sessions from before the update are ended,
+  since older backups hold their ids (M2).
 - `data/` and everything in it become readable by the service user only; the service runs with `UMask=0077` (the
   update adds it as a drop-in). A restore signs everyone out.
-- The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, and until a feed has
-  loaded once after a start (no internet at boot), phones that use it keep the list they have. The DNS/Filters page
-  shows each feed's state.
+- The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, also across a restart
+  without internet (the server keeps each feed's last good copy in `data/dns_feeds/`). A feed that has never loaded
+  (a mistyped URL) is left out until it does, the rest still reaches the phones. The DNS/Filters page shows each
+  feed's state. Feeds may also be `127.0.0.1` hosts files or adblock `||domain^` lists.
 - **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
   (releases already cached are pinned at the first start): a later release of another package or signed with another
   key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone
@@ -563,8 +574,9 @@ Built in - see the **Backups** page under Settings in the admin UI. Create a bac
   everything: every location, the PIN hashes, the password hash - and the 2FA secret, which is kept unsealed on
   purpose: sealing it would tie every sign-in to the key file in `data/keys/`, and losing that file would lock you out
   of the admin (design 22).
-- Since 0.24.0 a backup (and the live mirror, and the pre-migration copy) holds **no admin sessions**, so a stolen copy
-  signs no one in, and a restore signs everyone out. Everything in `data/` is readable by the service user only, and the
+- Since 0.24.0 a backup (and the live mirror, and the pre-migration copy) holds **no admin sessions** and **no
+  Tailscale key for the phones**, so a stolen copy signs no one in and joins nothing to the tailnet; a restore signs
+  everyone out, and the next phone's setup needs a new key in Settings > Provisioning (it is one-time anyway). Everything in `data/` is readable by the service user only, and the
   copies on the external drive by root only. The drive itself isn't encrypted: keep it at home, or use an encrypted
   one.
 - Restoring a backup on the Pi keeps the database it replaces in `/var/backups/kid-phone-server-prerestore/<time>/`

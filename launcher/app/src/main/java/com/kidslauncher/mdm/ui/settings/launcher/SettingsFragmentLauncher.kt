@@ -28,7 +28,9 @@ import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.batteryRowState
 import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.server.RelockTrigger
 import com.kidslauncher.mdm.server.RestrictionsPause
+import com.kidslauncher.mdm.server.WindowRelock
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.server.applyProvisioningExtras
@@ -200,8 +202,8 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 ) { restrictionsPaused.isChecked = true }
                 false
             } else {
-                RestrictionsPause.clear()
-                RestrictionsPause.reapply(context)
+                // Design 24b: ending the pause here locks the phone again (and ends an override).
+                WindowRelock.lockAgainAsync(context, RelockTrigger.SETTINGS)
                 true
             }
         }

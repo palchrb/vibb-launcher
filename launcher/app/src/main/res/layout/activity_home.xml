@@ -18,6 +18,49 @@
     android:paddingEnd="16dp"
     tools:context=".ui.HomeActivity">
 
+    <!-- Design 24b §1.3: while a parent-PIN window is open, "Open until 18:40 · Lock again" - our
+         own UI, so it can't be dismissed or switched off like the notification. -->
+    <LinearLayout
+        android:id="@+id/home_window_banner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:background="@drawable/bg_home_window_banner"
+        android:gravity="center_vertical"
+        android:minHeight="52dp"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="6dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/home_window_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="@font/nunito_extrabold"
+            android:maxLines="2"
+            android:textColor="@color/kid_sheet_ink"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/home_window_lock_again"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_home_window_lock_again"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:minHeight="40dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:text="@string/window_lock_again"
+            android:textColor="@color/kid_core"
+            android:textSize="15sp" />
+    </LinearLayout>
+
     <!-- While a call exists the contacts row gives way to this card (user request after the
          emulator run): avatar, "Call with <name> · mm:ss", "Tap to go back" - a tap brings our
          call screen back. -->

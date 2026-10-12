@@ -24,6 +24,14 @@ async fn a_snapshot_holds_no_session_and_still_the_rest() {
         .unwrap();
     assert_eq!(in_store, 1, "the probe looks for the id the store keeps");
 
+    // The phones' Tailscale key isn't in a copy either (QA of the security wave, a note on M2).
+    let tailscale_key = ["tskey", "auth", "TESTONLY", "kCopyProbe"].join("-");
+    sqlx::query("UPDATE provisioning_settings SET tailscale_auth_key = ? WHERE id = 1")
+        .bind(&tailscale_key)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
     let dir = tempfile::tempdir().unwrap();
     let scratch = dir.path().join("scratch.db");
     let target = dir.path().join("snapshot.db");
@@ -35,6 +43,10 @@ async fn a_snapshot_holds_no_session_and_still_the_rest() {
     assert!(
         !contains(&bytes, &session_id),
         "the session id is in the file"
+    );
+    assert!(
+        !contains(&bytes, &tailscale_key),
+        "the Tailscale key is in the file"
     );
 
     let copy = sqlx::SqlitePool::connect(&format!("sqlite://{}", target.display()))
@@ -95,4 +107,42 @@ async fn sessions_from_before_the_update_are_ended() {
     sqlx::raw_sql(&sql).execute(&app.db).await.unwrap();
     let page = app.get_page("/devices", &cookie).await;
     assert_eq!(page.location(), Some("/login"));
+}
+
+#[tokio::test]
+async fn the_live_database_keeps_the_tailscale_key() {
+    let app = TestApp::new().await;
+    let key = ["tskey", "auth", "TESTONLY", "kLive"].join("-");
+    sqlx::query("UPDATE provisioning_settings SET tailscale_auth_key = ? WHERE id = 1")
+        .bind(&key)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    crate::handlers::backups::snapshot(
+        &app.db,
+        &dir.path().join("scratch.db"),
+        &dir.path().join("copy.db"),
+    )
+    .await
+    .unwrap();
+    let live: String =
+        sqlx::query_scalar("SELECT tailscale_auth_key FROM provisioning_settings WHERE id = 1")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(live, key);
+    let copy = sqlx::SqlitePool::connect(&format!(
+        "sqlite://{}",
+        dir.path().join("copy.db").display()
+    ))
+    .await
+    .unwrap();
+    let copied: String =
+        sqlx::query_scalar("SELECT tailscale_auth_key FROM provisioning_settings WHERE id = 1")
+            .fetch_one(&copy)
+            .await
+            .unwrap();
+    assert_eq!(copied, "");
+    copy.close().await;
 }

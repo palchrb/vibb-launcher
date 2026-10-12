@@ -242,7 +242,7 @@ pub(crate) fn build_backup_zip(
 
 /// A consistent copy of the live database (`VACUUM INTO`) at `target`, with no admin sessions in
 /// it (security review M2): a backup zip, the live mirror and a pre-migration copy must never sign
-/// anyone in. The copy is made at `scratch` (in `data/`, which `backup_sync.sh` never copies off the
+/// anyone in - nor carry the phones' Tailscale key ([strip_secrets_in]). The copy is made at `scratch` (in `data/`, which `backup_sync.sh` never copies off the
 /// box), the sessions are deleted with `secure_delete` (their bytes zeroed, not left in free pages),
 /// and only then is it renamed to `target`. The file is 0600 by the process umask (`main`).
 pub(crate) async fn snapshot(
@@ -258,7 +258,7 @@ pub(crate) async fn snapshot(
             .execute(db)
             .await
             .map_err(|err| format!("the snapshot failed: {err}"))?;
-        forget_sessions_in(scratch).await?;
+        strip_secrets_in(scratch).await?;
         tokio::fs::rename(scratch, target)
             .await
             .map_err(|err| format!("couldn't move the snapshot to {}: {err}", target.display()))
@@ -270,29 +270,39 @@ pub(crate) async fn snapshot(
     result
 }
 
-/// Deletes every row of `tower_sessions` in the database file at `path` (if it has the table), in
-/// rollback-journal mode with the journal in memory, so the copy stays a single file.
-async fn forget_sessions_in(path: &std::path::Path) -> Result<(), String> {
+/// Clears, in the database file at `path`, what no copy of it may carry: every admin session
+/// (`tower_sessions`) and the Tailscale auth key for the phones (QA of the security wave, a note
+/// on M2: a backup was a way onto the tailnet). The key is write-only in the PWA and one-time, so
+/// after a restore the parent enters a new one before the next phone's setup. In rollback-journal
+/// mode with the journal in memory, so the copy stays a single file; `secure_delete` zeroes the old
+/// bytes.
+async fn strip_secrets_in(path: &std::path::Path) -> Result<(), String> {
     use sqlx::Connection;
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(path)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Memory)
         .pragma("secure_delete", "on");
-    let fail = |err: sqlx::Error| format!("couldn't clear the sessions in the snapshot: {err}");
+    let fail = |err: sqlx::Error| format!("couldn't clear the secrets in the snapshot: {err}");
     let mut conn = sqlx::SqliteConnection::connect_with(&options)
         .await
         .map_err(fail)?;
-    let has_sessions: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tower_sessions')",
-    )
-    .fetch_one(&mut conn)
-    .await
-    .map_err(fail)?;
-    if has_sessions {
-        sqlx::query("DELETE FROM tower_sessions")
-            .execute(&mut conn)
-            .await
-            .map_err(fail)?;
+    for (table, clear) in [
+        ("tower_sessions", "DELETE FROM tower_sessions"),
+        (
+            "provisioning_settings",
+            "UPDATE provisioning_settings SET tailscale_auth_key = '' WHERE tailscale_auth_key != ''",
+        ),
+    ] {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
+        )
+        .bind(table)
+        .fetch_one(&mut conn)
+        .await
+        .map_err(fail)?;
+        if exists {
+            sqlx::query(clear).execute(&mut conn).await.map_err(fail)?;
+        }
     }
     conn.close().await.map_err(fail)
 }

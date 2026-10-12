@@ -420,3 +420,24 @@ Counts: 0 High, 3 Medium, 8 Low.
   - The launcher DTO `signerSha256` maps to `signer_sha256`, and the compat test decodes both shapes.
   - `phone_vectors.json` and the music snapshots are untouched.
   - `policy_json_keys_snapshot` doesn't cover `/api/devices/apps`, and needs no change.
+
+## Fixes (2026-10-11)
+
+All 3 Medium and 8 Low are fixed, and so is the clippy warning; `docs/review/security-review-2026-10-10.md`,
+"Server security wave status", has the full list.
+
+| Finding | Commit | Note |
+|---|---|---|
+| Medium 1 | `419fc712` | Only regular files at the top of `backups/`, `cp -a --remove-destination`, non-regular entries on the drive deleted first. A test runs the script with a link, a FIFO, a directory and the link-then-file sequence. |
+| Medium 2 | `68b72dba` | A release allows nothing; a phone allows a checked app once the launcher installed its pinned package there. A first package that is `android`/`com.android.*`/Play core, or on a phone as a system app or from another installer, is refused. The Firefox probe is a test. |
+| Medium 3 | `90a60759` | A new phone also allows its system dialer and default SMS app (as its `call_state` names them) and Google's and AOSP's phone and Messages apps; the device page warns when they aren't allowed. |
+| Low 1 | `b5b07a18` | Regular flag only, bounded reads in `data/`, `TimeoutStartSec` on the three helpers (a drop-in on update). |
+| Low 2 | `1f6e15a6` | `write_data_file` runs as the service user; `update.sh` copies only plain DB files. |
+| Low 3 | `530f7a96` | A fix more than 5 min ahead is dropped; stored ones are pruned. |
+| Low 4 | `68b72dba` | The guess is gone: the app's page lists what the launcher installed on its phones, and the parent confirms one. |
+| Low 5 | `bc7ba750` | The refused `(tag, asset id)` is remembered; "Check now" and "Forget" retry. |
+| Low 6 | `9324d728` | A `server-release-sign` job in the `release` environment signs before the image job; DEPLOY's steps updated. |
+| Low 7 | `e1aa281e` | Without a pinned key the scripts stop right after the root check and say why; a release without `.minisig` is named as unsigned. |
+| Low 8 (+ `for_kv_map`) | `680680c7` | Feeds keep their last good domains on disk; a feed never loaded on this server is left out instead of a 503; 127.0.0.1 hosts files and adblock `||domain^` lines parse. |
+| Notes | `c32e2467`, `713b6569` | No Tailscale key in any copy; the migration gap documented; the sign-out note; the launcher hand-offs listed in the review. |
+| Missing tests | `dbe4e219` | `scheduler.sh` run with injected values. Not added: `verify_signed` and the restore under bash need `minisign`/`unzip` on CI (both were exercised by hand). |

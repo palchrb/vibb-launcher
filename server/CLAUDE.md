@@ -90,7 +90,9 @@ No prior programming experience - build features directly rather than explaining
   that a catalog app can never be (`never_a_catalog_package`: `android`, `com.android.*`, Play core) or that a phone
   has as a system app or from another installer (`foreign_on_a_phone`) is refused (QA of the security wave,
   Medium 2); a manifest that can't be read is refused once a package is pinned, like the signer. `backfill_pins`
-  (after the hash backfill at startup) pins releases cached before, with the same checks. **A release never allows
+  (after the hash backfill at startup) pins releases cached before, with the same checks. A refused `(tag, asset id)`
+  is remembered in `AppSyncs` (`SyncStatus::refused`): the hourly sync doesn't download it again, "Check now"
+  (`sync_app(.., forced)`) and "Forget" do (QA Low 5). **A release never allows
   anything by itself**: `device_api::allow_installed_catalog_apps` (every status report) allows, on that phone only,
   a checked catalog app's pinned package once the phone reports it installed by the launcher, and nudges it; checking
   the app with a known package (`toggle_app`) allows it as before. "Forget the package and key" on the app's page clears both. `TrackedAppUpdate` carries
@@ -174,11 +176,14 @@ No prior programming experience - build features directly rather than explaining
 - **DNS**: `dns_blocklist` never delivers the exact FCM hosts (for other apps' FCM - Element X - since design 19) (mtalk*, alt*-mtalk, fcm/fcmtoken/fcmregistrations/firebaseinstallations/android.googleapis.com, android.apis.google.com, android.clients.google.com) as blocked (`play::is_fcm_protected`, QA 07 #10). Parents (`google.com`, `googleapis.com`) **are** delivered as set - dropping them opened all of `*.google.com` (fix round #1); the launcher exempts the exact FCM hosts before its suffix walk. Every DNS write (upstream, blocklist create/toggle/delete, custom domain, device override) nudges the affected devices; the hourly blocklist refresh and new catalog releases don't - phones get those with the 30-min backstop.
 - **The DNS blocklist fails closed, per feed (security review M6).** `compile_blocklist`: a feed whose download fails
   (an error, a non-2xx, over `MAX_FEED_BYTES` = 32 MB decompressed, or nothing that `parse_feed` takes for a domain
-  - a captive portal's page) keeps its previous domains (`CompiledList.last_error`); one that never loaded since the
-  start stays `loaded: false`; a DB error keeps the whole compiled list. `device_api::dns_blocklist` answers 503 while
-  a feed the phone uses isn't loaded and 500 on a DB error - never a shorter list; the launcher keeps its own list on
-  any non-2xx and asks again at the next sync. The DNS page shows each feed's state; the refresh retries a failing
-  feed after 5 minutes instead of an hour.
+  - a captive portal's page) keeps its previous domains (`CompiledList.last_error`): in memory, else its last good
+  copy in `data/dns_feeds/<id>.txt` (`save_feed` after each changed download, `source_hash`; a deleted feed's copy
+  goes), so a restart without internet keeps them. One that never loaded on this server stays `loaded: false`, empty,
+  and is left out - no phone got it from here (QA of the security wave, Low 8: a 503 for it froze every phone's list,
+  custom blocks included). A DB error keeps the whole compiled list, and `device_api::dns_blocklist` answers 500 -
+  never a shorter list; the launcher keeps its own list on any non-2xx and asks again at the next sync. `parse_feed`
+  takes `0.0.0.0`/`127.0.0.1` hosts lines, bare domains and adblock's `||domain^`. The DNS page shows each feed's
+  state; the refresh retries a failing feed after 5 minutes instead of an hour.
 - **Fix round (qa-step7-code.md)** (the FCM parts gone with design 19): migration `0027`: `device_push.rejected_token_hash` - a token FCM rejected is ignored when the phone re-reports it until it renews (no re-store, test nudge or security event per report); a unique partial index on `fcm_token` + `record_report` clears a newly stored token from every other row (re-enrolled phone); health ticks and `Lagged` fan-out only use rows of devices with a bearer token. `SSE_KEEPALIVE_SECS` is capped at 240 (`MAX_SSE_KEEPALIVE_SECS`, 60 s under the launcher's 300 s read timeout); other values fall back to the default with a log line (240 since design 19, 120 before).
 
 ## Wallpapers (handy step 8, design `docs/design/08-ui-polish.md`, at the monorepo root)
@@ -281,9 +286,9 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   install.sh, update.sh and both copies of actions.sh, with the pinned `SERVER_SIGNING_PUBKEY`) needs `FILE.minisig`
   to verify with minisign and its trusted comment to be `NAME TAG`; `download_release` checks the tarball before
   unpacking it, and `action_app_update` takes `update.sh` + `.minisig` from the release assets (never
-  raw.githubusercontent) and checks it before running it. `server-release.yml`'s publish job signs both with the
-  `SERVER_MINISIGN_KEY` secret and checks them against the key pinned in `deploy/update.sh` - no secret or no pinned
-  key, no release. `"not-set"` (the state until the owner pins a key) refuses everything. `tests::deploy_scripts`
+  raw.githubusercontent) and checks it before running it. `server-release.yml`'s `server-release-sign` job (the
+  `release` environment, before the image job) signs both with that environment's `SERVER_MINISIGN_KEY` and checks
+  them against the key pinned in `deploy/update.sh` - no secret or no pinned key, nothing is pushed or published. `"not-set"` (the state until the owner pins a key) refuses everything. `tests::deploy_scripts`
   keeps the six key lines and the four `verify_signed` equal.
 - **Root scripts never read `data/` as code (security review H1).** `data/` belongs to the service user, so
   `scheduler.sh` reads `schedule.conf` key by key with `grep` and checks each value against a pattern (a bad one
@@ -301,7 +306,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `tests::deploy_scripts::run_root_script` runs a root heredoc under bash in a sandbox, with stubs.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
   `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, which
-  `backup_sync.sh` copies to the drive), `DELETE FROM tower_sessions` with `secure_delete` and the journal in memory,
+  `backup_sync.sh` copies to the drive), `DELETE FROM tower_sessions` and a blanked
+  `provisioning_settings.tailscale_auth_key` (`strip_secrets_in`) with `secure_delete` and the journal in memory,
   then a rename - backup zips, the live mirror and `pre-migrate-*.db`. A restore forgets every session at the next
   start (the container's `apply_restore_request`, or `data/restore_applied` that `actions.sh` leaves,
   `startup::take_restore_applied`, logged `backup_restored`); migration 0061 bumped every `session_epoch` once, for the
@@ -312,11 +318,15 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 
 ## Data model (SQLite, see `migrations/`)
 
+**Migration numbers 0058-0060 are skipped on `main`** (the wave took 0061/0062 while a branch held them). Never fill
+them: sqlx would apply them out of order on a 0.24 database, and `startup::pre_migration_backup` (`MAX(version) <
+latest`) would take no backup first. A new migration takes the next number after the highest one on `main`.
+
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
 - `device_policy` - one row per device: allowlist JSON, `custom_schedule_enabled` (own time rules + `daily_budget_json` instead of the global ones), `location_mode`/`location_interval_minutes`, the frozen pre-step-6 schedule columns, `kiosk_desired` (always `1` now), `lock_task_features` (bitmask), `override_pin_hash`/`override_pin_salt`, `kid_pin_hash`/`kid_pin_salt`/`kid_pin_length` (step 10)
 - `global_schedule` - singleton (`id = 1`): the global `daily_budget_json` and the frozen pre-step-6 schedule; `time_rules` (device_id NULL = global) and `time_lifts` - see "Time rules" above
-- `device_status` - append-only heartbeat log (pruned after 30 days, the newest report per phone kept): lock reason, kiosk-engaged, installed-app snapshot, app version, timestamp, `offline_override_used`, `policy_state`, `restrictions_paused`, `capabilities_json`, `call_state_json`, `time_state_json`, `lock_state_json`, `update_fence_json`, `notification_cancels_json`, `backup_service_enabled`
+- `device_status` - append-only heartbeat log (pruned after 30 days, the newest report per phone kept): lock reason, kiosk-engaged, installed-app snapshot, app version, timestamp, `offline_override_used`, `policy_state`, `restrictions_paused`, `capabilities_json`, `call_state_json`, `time_state_json`, `lock_state_json`, `update_fence_json`, `notification_cancels_json`, `backup_service_enabled`, `relock_json`, `unseen_boots_count`/`_last_at_ms`, `foreign_access_json` (design 24b)
 - `security_events` / `banned_ips` - admin login audit trail and lockout tracking
 - `tracked_apps` - one row per app in the global catalog (including the launcher itself, `is_launcher`), GitHub-sourced or manually-uploaded - see the "Apps tab"/"global catalog" bullets above
 - `device_tracked_apps` - per-device opt-in join table (device_id, tracked_app_id) scoping which catalog apps actually get pushed to which device - see the "global catalog" bullet above
@@ -329,7 +339,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep"
-- `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (`requested_at`/`delivered_at`/`acknowledged_at`/`result`), see the Find My Device architecture bullet above
+- `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (and design 24b's `end_windows`/`allow_blocked`/`start_pause`) (`requested_at`/`delivered_at`/`acknowledged_at`/`result`), see the Find My Device architecture bullet above
 
 ## Device-facing API (plain JSON, no envelope)
 
@@ -339,7 +349,7 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 - `POST /api/devices/enroll` - `{enrollment_code}` → `{device_id, device_token}`
 - `GET /api/devices/policy` (bearer) → allowlist, `time_policy` (effective rules + budget, global or the device's own, and active lifts) and `location_policy` (always), the frozen legacy schedule fields, `kiosk_desired`, `lock_task_features`, `override_pin_hash`/`override_pin_salt`, `pending_command`, `call_policy` (always, explicit `managed`; contacts carry `photo`), `hardening` (always, every switch explicit), `launcher_ui` (always), `block_activity_start` (always; never inside `lock_task_features`), `kid_lock` (always, null = no lock), `screen_timeout_seconds`, `update_fence`, `notification_auto_cancel` (always), `music` (always the key; `null` when unreadable)
 - `POST /api/devices/command-result` (bearer) - `{command_id, success, message}` → 204, never sent for a `wipe` command
-- `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused, capabilities, call_state, notification_listener_enabled, time_state, install_mode, play_window_active, play_store_suspendable, lock_state, screen_timeout_seconds, update_fence, notification_cancels, backup_service_enabled, battery_optimization_exempt}` (installed apps may carry `installer`) → 204
+- `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused, capabilities, call_state, notification_listener_enabled, time_state, install_mode, play_window_active, play_store_suspendable, lock_state, screen_timeout_seconds, update_fence, notification_cancels, backup_service_enabled, battery_optimization_exempt, relock, unseen_boots}` (installed apps may carry `installer`) → 204
 - `GET /api/devices/contact-photos/{hash}` (bearer) - a contact photo, only for this device's contacts
 - `GET /api/devices/wallpapers/{hash}` (bearer) - a wallpaper image, only when ticked for this device
 - `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204
@@ -614,6 +624,15 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **The phone's events** (`POST /api/devices/pin-events`, `handlers::parent_pin::pin_events`): read leniently field by field (`parent_pin::clean_event`) - a bad id (not 32 hex) or an unknown `kind`/`entry` is skipped and logged; a time outside 2020..now + 1 day is kept with the received time and `clock_off = 1`; an implausible `until_ms`/`failures`/`level` becomes null. `INSERT OR IGNORE` on `(device_id, event_id)`; only a newly stored `unlocked`/`lockout` also writes `parent_pin_used`/`parent_pin_lockout` to the security log, in the same transaction, its detail built only from the checked enums and numbers and saying when it happened on the phone (`parent_pin::log_line`: `device 3, 2026-10-09 14:02 UTC: ...`, the window's end dated) - the row's own time is its arrival. Wrong tries stay on the device page. **No `command_notify`**: a sync would end the override. Retention: 90 days by `received_at` (`retention::prune`).
 - **Device page**: the card lists the last 10 events ("2026-10-09 14:02 UTC (3 h ago): ..."), or says the launcher doesn't report yet (no `parent_pin_events_v1`). The Status card shows at most two notices from the last 24 h and since the PIN was last saved here (`device_policy.override_pin_set_at_ms`, so a new PIN ends them; `parent_pin::notices`): the latest use (with "Typed where your child could see?" for the time lock and the PIN lock), then a lockout (error) or else the count of wrong tries. The old `offline_override_used` banner shows only without the capability.
 - Tests: `parent_pin::tests` (every easy rule, the full 6-digit loop against the candidates, `clean_event`, every line and notice), `src/tests/parent_pin.rs`.
+
+## Windows that lock again, unseen boots (design 24b, `docs/design/24b-override-relock.md`, migrations `0063_window_relock.sql`, `0064_unseen_boots.sql`)
+
+- **The phone's parent-PIN windows** (an override, a pause) lock down again by themselves; the launcher's `relock` report (status, capability `window_relock_v1`) says what it reset and what it couldn't undo. Stored re-serialized through the known fields only (`window_relock::sanitize_relock`: known trigger/windows/step names, valid package names, at most 8 per list, counts 0..1000) in `device_status.relock_json`. The Status card warns for 7 days after a relock that found something (`window_relock::relock_notes`): what it removed (Wi-Fi proxies, certificates, an Android screen lock), "Blocked: ..." (apps installed or re-signed from outside Play while it was open, each with its signing key from `blocked_signers`; one with another key than the catalog's pin - `tracked_apps.signer_sha256` - "stays blocked: uninstall it") with "Allow these apps" for the others until the phone answered one pressed after the relock, "Still on: ..." (accessibility services, notification access, device admins, a proxy on a network, a screen lock it couldn't remove), system apps turned off, the launcher's notifications off, failed steps. A new `at_ms` with findings writes `phone_relock_findings` (`window_relock::log_line`, the phone's time in the detail).
+- **Commands** (`handlers::window_relock`, full auth, plain forms): `POST /devices/{id}/end-windows` ("Lock the phone again now": shown in the Status card while the latest report has a pause or an install mode still running and the capability; the pause line then names it), `POST /devices/{id}/allow-blocked` and `POST /devices/{id}/start-pause` ("Pause restrictions for 2 hours", the phone's own pause without the PIN on it; shown while no pause is reported). The newest of each shows for a week with the phone's answer or "no answer from the phone yet" (`window_relock::answer_line`). Their own insert into `device_commands` - `locate::queue_command`'s "replace the undelivered one" skips them (`window_relock::OWN_INSERT_COMMANDS`) and they delete nothing (QA #8); the phone syncs once more after each. Security event `device_command_queued`; redirect to `/devices/{id}?notice=...` without a fragment, the notice in the Status card.
+- **Do Not Disturb** at the last sync is a warning (the sound line in error style).
+- **Foreign access** (the fix round, QA High 1 (b)): status `foreign_access` `{admins, accessibility}` (apps outside the allowlist with a device admin or an accessibility service on; valid package names, at most 8 each, `sanitize_foreign_access`) -> `device_status.foreign_access_json` (in 0063). While the latest report has one, the phone refuses the parent PIN and the Status card shows a red warning with the steps (`foreign_note`: pause from here, deactivate and uninstall on the phone, lock again, change the parent PIN); `phone_foreign_access` in the security log when it appears, changes or goes.
+- **Unseen boots** (H4, `boot_witness`): status `unseen_boots` `{count, last_at_ms}` (read leniently) -> `device_status.unseen_boots_count`/`_last_at_ms`; `boot_unseen` in the security log when the count rose; the Status card warns for 30 days ("safe mode, or a start cut short"), advising "Block safe mode" or, with it on since before the boot was noticed (`device_policy.disallow_safe_boot_set_at_ms`, in 0064: set when the hardening card or the first kid PIN turns it on, cleared when off), "probably a start cut short" - otherwise both explanations. `disallow_safe_boot` by default (design 24b S4) waits for device check 6 on the Jelly Star.
+- Tests: `window_relock::tests`, `boot_witness::tests`, `src/tests/window_relock.rs`, `src/tests/hardening.rs` (`unseen_boots_*`).
 
 ## Connectivity and exposure (design 22, `docs/design/22-connectivity-and-docker.md`, server 0.23.0)
 

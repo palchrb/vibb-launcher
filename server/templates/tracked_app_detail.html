@@ -51,7 +51,7 @@
 
     <div class="card">
         <h2>Show on the kid's phones as</h2>
-        <p class="subtitle">A name and icon for every phone that has this app{% if app.package_name.is_empty() %} - it applies once the app's Android package is known (detected the first time a phone installs it){% endif %}. A phone's own choice (its page, Apps card) replaces this one.</p>
+        <p class="subtitle">A name and icon for every phone that has this app{% if app.package_name.is_empty() %} - it applies once the app's Android package is known (read from its release's APK, or confirmed below){% endif %}. A phone's own choice (its page, Apps card) replaces this one.</p>
         {% include "partials/app_display_form.html" %}
         <script src="/static/app-display.js?v=2" defer></script>
     </div>

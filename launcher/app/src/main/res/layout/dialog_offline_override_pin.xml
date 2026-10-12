@@ -1,25 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The parent-PIN dialog of the time lock, the Settings gate, the pause and install mode (design
      24 §2.4): every result shows in the error line, never as a toast (toasts don't show while a
-     screen-time budget sets DISALLOW_CREATE_WINDOWS). -->
+     screen-time budget sets DISALLOW_CREATE_WINDOWS). The PIN is typed on our own keypad (design
+     24b §1.8), never through a keyboard. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     style="@style/AlertDialogCustom"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <EditText
-        android:id="@+id/dialog_offline_override_pin_input"
+    <include
+        android:id="@+id/dialog_offline_override_pin_keypad"
+        layout="@layout/include_parent_pin_keypad"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="10dp"
-        android:importantForAutofill="no"
-        android:inputType="numberPassword"
-        android:maxLength="10"
-        android:textColor="#000000"
-        android:textColorHint="#80000000"
-        tools:ignore="LabelFor" />
+        android:layout_margin="10dp" />
 
     <TextView
         android:id="@+id/dialog_offline_override_pin_error"

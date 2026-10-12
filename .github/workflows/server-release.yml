@@ -3,15 +3,18 @@ name: Server release
 # For a tag server-vX.Y.Z on a commit that is on master/main:
 # 1. server-release-build: fmt + tests, then static musl binaries for aarch64 (the Pi Zero 2 W
 #    tarball, as before) and x86_64 (the image).
-# 2. server-release-image (design 22 §6): a multi-arch image ghcr.io/<owner>/handy-server, pushed
+# 2. server-release-sign, in the protected "release" environment (its deployment rule must allow
+#    server-v* tags; the SERVER_MINISIGN_KEY secret lives there, not in the repo): signs the tarball
+#    and update.sh with minisign (security review M5; the trusted comment is "<file> <tag>") and
+#    checks the signatures against the public key pinned in server/deploy/update.sh. No secret, or
+#    no pinned key: the run stops here, before any image is pushed or tagged (server/DEPLOY.md,
+#    "Release signing").
+# 3. server-release-image (design 22 §6): a multi-arch image ghcr.io/<owner>/handy-server, pushed
 #    by digest only, smoke-tested on amd64 natively and on arm64 under QEMU
 #    (server/deploy/image-smoke.sh), only then tagged X.Y.Z (and latest, if X.Y.Z is the highest
 #    server-v* tag - a patch on an older line doesn't take it), with a build provenance attestation.
-# 3. server-release-publish, last: signs the tarball and update.sh with the minisign key in the
-#    SERVER_MINISIGN_KEY secret (security review M5; the trusted comment is "<file> <tag>"), checks
-#    the signatures against the public key pinned in server/deploy/update.sh, and publishes the
-#    GitHub release with the tarball, update.sh and their signatures. No secret, or no pinned key:
-#    no release (server/DEPLOY.md, "Release signing"). server/deploy/install.sh
+# 4. server-release-publish, last: the GitHub release with the tarball, update.sh and their
+#    signatures, as signed in step 2. server/deploy/install.sh
 #    and update.sh (and the in-app update check) look up the newest server-v* release through the
 #    GitHub API - never releases/latest, which in this monorepo belongs to the launcher: a server
 #    release is published with makeLatest false. Publishing last means the update check can't
@@ -158,8 +161,68 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  server-release-image:
+  # Root on every Pi installs and runs only what this key signed (install.sh, update.sh and
+  # actions.sh check it). Nothing from the checkout is executed here; only this job sees the key.
+  server-release-sign:
     needs: server-release-build
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download tarball
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: server-release
+          path: signed
+
+      - name: Sign the tarball and update.sh
+        env:
+          SIGNING_KEY: ${{ secrets.SERVER_MINISIGN_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "The SERVER_MINISIGN_KEY secret is missing from the 'release' environment: no server release goes out unsigned (server/DEPLOY.md, Release signing)." >&2
+            exit 1
+          fi
+          pubkey="$(sed -n 's/^SERVER_SIGNING_PUBKEY="\(.*\)"$/\1/p' server/deploy/update.sh | head -n 1)"
+          if [ -z "$pubkey" ] || [ "$pubkey" = "not-set" ]; then
+            echo "No public key is pinned in server/deploy/update.sh (SERVER_SIGNING_PUBKEY)." >&2
+            exit 1
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          umask 077
+          key="$RUNNER_TEMP/server-minisign.key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          cp server/deploy/update.sh signed/update.sh
+          cd signed
+          for file in kid-phone-server-aarch64-unknown-linux-musl.tar.gz update.sh; do
+            minisign -S -s "$key" -m "$file" -t "$file $TAG"
+            # The secret must match the pinned key, or every Pi would refuse the release.
+            comment="$(minisign -V -Q -P "$pubkey" -m "$file")"
+            [ "$comment" = "$file $TAG" ] || { echo "$file: the signature doesn't verify with the pinned key" >&2; exit 1; }
+          done
+          rm -f "$key"
+
+      - name: Upload the signed release files
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: server-release-signed
+          path: signed
+          if-no-files-found: error
+          retention-days: 7
+
+  server-release-image:
+    needs: [ server-release-build, server-release-sign ]
+    # A release only once its files are signed; a workflow_dispatch (no signing) is the dry run.
+    if: ${{ !cancelled() && needs.server-release-build.result == 'success' && (needs.server-release-sign.result == 'success' || github.event_name != 'push') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -267,51 +330,16 @@ jobs:
           push-to-registry: true
 
   server-release-publish:
-    needs: [ server-release-build, server-release-image ]
+    needs: [ server-release-build, server-release-sign, server-release-image ]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-
-      - name: Download tarball
+      - name: Download the signed release files
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: server-release
-
-      # Root on every Pi installs and runs only what this key signed (install.sh, update.sh,
-      # actions.sh check it). Nothing from the checkout is executed here.
-      - name: Sign the tarball and update.sh
-        env:
-          SIGNING_KEY: ${{ secrets.SERVER_MINISIGN_KEY }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if [ -z "$SIGNING_KEY" ]; then
-            echo "The SERVER_MINISIGN_KEY secret is not set: no server release goes out unsigned (server/DEPLOY.md, Release signing)." >&2
-            exit 1
-          fi
-          pubkey="$(sed -n 's/^SERVER_SIGNING_PUBKEY="\(.*\)"$/\1/p' server/deploy/update.sh | head -n 1)"
-          if [ -z "$pubkey" ] || [ "$pubkey" = "not-set" ]; then
-            echo "No public key is pinned in server/deploy/update.sh (SERVER_SIGNING_PUBKEY)." >&2
-            exit 1
-          fi
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq minisign
-          umask 077
-          key="$RUNNER_TEMP/server-minisign.key"
-          printf '%s\n' "$SIGNING_KEY" > "$key"
-          cp server/deploy/update.sh update.sh
-          for file in kid-phone-server-aarch64-unknown-linux-musl.tar.gz update.sh; do
-            minisign -S -s "$key" -m "$file" -t "$file $TAG"
-            # The secret must match the pinned key, or every Pi would refuse the release.
-            comment="$(minisign -V -Q -P "$pubkey" -m "$file")"
-            [ "$comment" = "$file $TAG" ] || { echo "$file: the signature doesn't verify with the pinned key" >&2; exit 1; }
-          done
-          rm -f "$key"
+          name: server-release-signed
 
       - name: Create GitHub Release
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0

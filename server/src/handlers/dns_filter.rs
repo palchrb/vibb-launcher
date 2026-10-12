@@ -48,7 +48,8 @@ fn feed_status(compiled: &dns_engine::CompiledBlocklist, id: i64) -> (String, bo
         ),
         (Some(err), false) => (
             format!(
-                "Not loaded yet ({err}). Phones that use it keep their current list until it loads."
+                "Not loaded yet ({err}). Phones get the other lists and your own domains without it \
+                 until it loads; it is tried again every 5 minutes."
             ),
             true,
         ),

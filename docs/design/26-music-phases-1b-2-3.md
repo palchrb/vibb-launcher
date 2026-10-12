@@ -13,9 +13,15 @@ can't see elsewhere, in particular the working rules the main session keeps in i
 - **Read first:** root `CLAUDE.md`, `music/CLAUDE.md`, `docs/design/20-vibb-music.md` (its decision sections win over
   its §1-§5), `21-vibb-music-phase1.md`, `21b-music-server-sweep.md`, `vibb-spotify-options.md`, the mockup
   `docs/design/mockups/vibb-music/` (v15, published at https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY).
-- **The reference implementation** is the Pi player, github `palchrb/vibb` (`pi/sonosd.py`, `pi/daemon.py`,
-  `pi/vibb/{library,content,storytel,bookmarks}.py`, `tests/`). MIT: behaviour is reimplemented in Kotlin and credited
+- **The reference implementation** is the Pi player, github `palchrb/vibb`, **branch `pipewire`** (user, 2026-10-11:
+  that is vibb's head; GitHub's default `main` is 101 commits behind, with an older `sonosd.py`, `daemon.py` and
+  `library.py`, and without `tests/sonos_hold_scan.py`). Files: `pi/sonosd.py`, `pi/daemon.py`,
+  `pi/vibb/{library,content,storytel,bookmarks}.py`, `tests/`. MIT: behaviour is reimplemented in Kotlin and credited
   in NOTICE.md and each ported file's header.
+- **Phase 1 was ported from vibb `main`.** `library.py`'s only behaviour change since (the `cache` default) applies to
+  Spotify under soloist, which the import skips. `daemon.py` changed by ~400 lines (mostly the Pi's audio, idle and
+  soloist handling). The main session checks pipewire's play rules (shortcuts, resume, queue, sleep) against phase 1
+  and fixes phase 1 itself; the 1b session needn't.
 - **Sonos and Storytel are ports, not new designs** (user, 2026-10-11: the Pi's logic there is worked through). The
   architect maps every behaviour of the vibb code below to its Kotlin home and ports vibb's tests as Kotlin tests. A
   deviation is allowed only where the phone forces it (no server on the phone, the kiosk, Doze, the launcher as
@@ -27,7 +33,7 @@ can't see elsewhere, in particular the working rules the main session keeps in i
 ### 1b - Sonos (start here)
 - **Source of truth:** vibb `pi/sonosd.py` and its tests `tests/sonos_contract.py`, `sonos_renderer.py`,
   `sonos_groups.py`, `sonos_grouped.py`, `sonos_migrate.py`, `sonos_migrate_probe.py`, `sonos_same_tile.py`,
-  `sonos_hush.py` (`sonos_spotify_queue.py` belongs to phase 3).
+  `sonos_hush.py`, `sonos_hold_scan.py` (`sonos_spotify_queue.py` belongs to phase 3).
 - Design 20 "Outputs": the "Spill av på" picker gains Sonos rooms. The phone is a UPnP **controller**, never a server.
 - Port `sonosd.py`: the uid -> ip cache, discovery only on a cache miss, a rescan or a failed play; content kinds `url`
   (the speaker fetches from the origin: NRK/RSS enclosures, later Storytel's signed CDN URL) and `nrk_program` (the NRK

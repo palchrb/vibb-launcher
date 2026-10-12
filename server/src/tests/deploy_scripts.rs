@@ -467,3 +467,121 @@ fn root_never_creates_files_in_data() {
         "if [ -f \"$INSTALL_DIR/data/$f\" ] && [ ! -L \"$INSTALL_DIR/data/$f\" ]; then\n        cp -P -p"
     ));
 }
+
+/// QA of the security wave, Low 6: the release is signed - with the key only the protected
+/// `release` environment holds - before any image is pushed or tagged, and published from the
+/// signed files.
+#[test]
+fn the_release_signs_first_and_in_the_release_environment() {
+    let release = include_str!("../../../.github/workflows/server-release.yml");
+    let job = |name: &str| {
+        let start = release
+            .find(&format!("\n  {name}:\n"))
+            .unwrap_or_else(|| panic!("no job {name}"));
+        let rest = &release[start + 1..];
+        let end = rest[2..]
+            .find("\n  server-release-")
+            .map_or(rest.len(), |at| at + 2);
+        &rest[..end]
+    };
+    let sign = job("server-release-sign");
+    assert!(sign.contains("    environment: release\n"), "{sign}");
+    assert!(sign.contains("secrets.SERVER_MINISIGN_KEY"));
+    assert_eq!(release.matches("secrets.SERVER_MINISIGN_KEY").count(), 1);
+    let image = job("server-release-image");
+    assert!(image.contains("needs: [ server-release-build, server-release-sign ]"));
+    assert!(
+        image.contains(
+            "needs.server-release-sign.result == 'success' || github.event_name != 'push'"
+        )
+    );
+    let publish = job("server-release-publish");
+    assert!(publish.contains("name: server-release-signed"));
+    assert!(publish.contains("server-release-sign, server-release-image"));
+}
+
+/// QA of the security wave, Low 7: without a pinned key the scripts say so before doing
+/// anything, and a release without a signature is named as such - never installed.
+#[test]
+fn an_unsigned_install_fails_early_and_clearly() {
+    for script in [INSTALL, UPDATE] {
+        let early = script
+            .find("if [ \"$SERVER_SIGNING_PUBKEY\" = \"not-set\" ]; then\n    echo \"No release signing key is pinned in this script")
+            .expect("the early check");
+        let first_change = ["apt-get", "useradd", "mkdir -p", "systemctl stop"]
+            .iter()
+            .filter_map(|command| script.find(&format!("\n{command}")))
+            .min()
+            .unwrap();
+        assert!(early < first_change);
+        let download = block(script, "download_release() {", "}");
+        assert!(download.contains("aren't signed, and"), "{download}");
+    }
+}
+
+/// Security review H1, run for real (QA of the security wave, missing tests): values injected
+/// into schedule.conf run nothing as root, and an invalid one falls back to its default.
+#[test]
+fn the_scheduler_never_runs_what_schedule_conf_says() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let log = root.join("actions.log");
+    std::fs::write(
+        root.join("actions.sh"),
+        format!(
+            "action_os_check() {{ echo os_check >> {log}; }}\n\
+             action_os_upgrade() {{ echo os_upgrade >> {log}; }}\n\
+             action_tailscale_update() {{ echo tailscale_update >> {log}; }}\n\
+             action_reboot() {{ echo reboot >> {log}; }}\n",
+            log = log.display()
+        ),
+    )
+    .unwrap();
+    let now = std::process::Command::new("date")
+        .arg("+%H:%M")
+        .output()
+        .unwrap();
+    let now = String::from_utf8(now.stdout).unwrap().trim().to_string();
+    let pwned = root.join("pwned");
+    std::fs::write(
+        root.join("schedule.conf"),
+        format!(
+            "FREQUENCY=daily\nCHECK_TIME={now}\n\
+             AUTO_APPLY_OS=true$(touch {p}1)\nAUTO_APPLY_TAILSCALE=true\n\
+             AUTO_REBOOT=`touch {p}2`\nDAY_OF_WEEK=0; touch {p}3\n",
+            p = pwned.display()
+        ),
+    )
+    .unwrap();
+    let status = run_root_script(
+        "SCHEDULER_EOF",
+        &[
+            (
+                "source /opt/kid-phone-server-updater/actions.sh",
+                &format!("source {}", root.join("actions.sh").display()),
+            ),
+            (
+                "/opt/kid-phone-server/data/schedule.conf",
+                root.join("schedule.conf").to_str().unwrap(),
+            ),
+            (
+                "/opt/kid-phone-server-updater/last_run_date",
+                root.join("last_run_date").to_str().unwrap(),
+            ),
+        ],
+        &[],
+        root,
+    );
+    assert!(status.success(), "{status:?}");
+    for n in 1..=3 {
+        assert!(
+            !root.join(format!("pwned{n}")).exists(),
+            "injection {n} ran"
+        );
+    }
+    // The time matched (it was valid); the injected AUTO_APPLY_OS fell back to false.
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "os_check\ntailscale_update\n"
+    );
+}

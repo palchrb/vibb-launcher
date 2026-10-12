@@ -117,6 +117,93 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `relock is reported under the server's keys - design 24b's literal`() {
+        val relock = com.kidslauncher.mdm.server.dto.RelockReport(
+            atMs = 1_760_100_000_000, trigger = "timer", windows = listOf("override"),
+            proxiesCleared = 1, proxyLeft = false, caCertsRemoved = 0,
+            credentialRemoved = false, credentialLeft = false,
+            blocked = listOf("com.example.app"),
+            blockedSigners = mapOf("com.example.app" to "3f2a" + "0".repeat(56) + "c0de"),
+            accessibilityEnabled = emptyList(), adminsEnabled = emptyList(),
+            appsDisabled = emptyList(), notificationListeners = emptyList(), ownNotificationsOff = false,
+            failures = emptyList(),
+        )
+        val literal = """{ "at_ms": 1760100000000, "trigger": "timer", "windows": ["override"],
+              "proxies_cleared": 1, "proxy_left": false, "ca_certs_removed": 0,
+              "credential_removed": false, "credential_left": false,
+              "blocked": ["com.example.app"],
+              "blocked_signers": {"com.example.app": "3f2a00000000000000000000000000000000000000000000000000000000c0de"},
+              "accessibility_enabled": [], "admins_enabled": [],
+              "apps_disabled": [], "notification_listeners": [], "own_notifications_off": false,
+              "failures": [] }"""
+        val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relock = relock)
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(ServerJson.parseToJsonElement(literal), json["relock"])
+        // Before the first relock: absent, like an older launcher's report.
+        val none = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("relock" !in none)
+        assertEquals("window_relock_v1", WINDOW_RELOCK_CAPABILITY)
+        assertTrue(WINDOW_RELOCK_CAPABILITY in STATUS_CAPABILITIES)
+    }
+
+    @Test
+    fun `a cache with a redacted override_pin_hash keeps the parent PIN configured (24b S2)`() {
+        val cached = decodeCached(serverResponse.replace(Regex("\"override_pin_hash\": \"[0-9a-f]+\""), "\"override_pin_hash\": \"\""))
+        assertTrue(cached is CachedPolicy.Ok)
+        val policy = (cached as CachedPolicy.Ok).policy
+        assertEquals("", policy.overridePinHash)
+        assertEquals("a3c1f0e2d4b6a8c0e2f4a6b8c0d2e4f6", policy.overridePinSalt)
+        // The cache round trip keeps it redacted, and the vault keeps its tag for it.
+        val encoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertTrue(encoded.contains("\"override_pin_hash\":\"\""))
+        assertEquals(policy, (decodeCached(encoded) as CachedPolicy.Ok).policy)
+    }
+
+    @Test
+    fun `unseen_boots is reported under the server's keys (24b S3)`() {
+        val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, unseenBoots = com.kidslauncher.mdm.server.dto.UnseenBootsReport(1, 1_760_100_000_000))
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(ServerJson.parseToJsonElement("""{"count": 1, "last_at_ms": 1760100000000}"""), json["unseen_boots"])
+        // A first boot of the witness's build: 0 and no time, both keys sent.
+        val first = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, unseenBoots = com.kidslauncher.mdm.server.dto.UnseenBootsReport(0, null))
+        val firstJson = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), first)).jsonObject
+        assertEquals(ServerJson.parseToJsonElement("""{"count": 0, "last_at_ms": null}"""), firstJson["unseen_boots"])
+        val none = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("unseen_boots" !in none)
+    }
+
+    @Test
+    fun `foreign_access is reported under the server's keys, left out when nothing is found (24b fix round)`() {
+        val report = StatusReportRequest(
+            lockReason = "NONE",
+            kioskEngaged = true,
+            foreignAccess = com.kidslauncher.mdm.server.dto.ForeignAccessReport(listOf("com.example.admin"), emptyList()),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(ServerJson.parseToJsonElement("""{"admins": ["com.example.admin"], "accessibility": []}"""), json["foreign_access"])
+        val none = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("foreign_access" !in none)
+    }
+
+    @Test
+    fun `the relock commands decode, and their answers`() {
+        for (command in listOf("end_windows", "allow_blocked", "start_pause")) {
+            val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "$command"}}""")
+            assertEquals(command, policy.pendingCommand?.command)
+            assertEquals(7L, policy.pendingCommand?.id)
+        }
+        assertEquals("ended: pause, install mode", endWindowsResult(setOf(WindowKind.PAUSE), installMode = true))
+        assertEquals("ended: override, pause", endWindowsResult(setOf(WindowKind.PAUSE, WindowKind.OVERRIDE), installMode = false))
+        assertEquals("nothing was open", endWindowsResult(emptySet(), installMode = false))
+    }
+
+    @Test
     fun `battery_optimization_exempt is reported under the server's key and left out when unknown (19b)`() {
         for (exempt in listOf(true, false)) {
             val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, batteryOptimizationExempt = exempt)

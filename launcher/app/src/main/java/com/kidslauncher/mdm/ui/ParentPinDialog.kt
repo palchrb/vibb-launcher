@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.ui
 
 import android.content.Context
 import android.view.View
-import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
@@ -20,7 +19,9 @@ import kotlinx.coroutines.withContext
  * §2.4; the PIN lock's "Parent code" has its own layout and uses [resultText]). Every result shows
  * in the dialog's error line - never a toast, which doesn't show while a screen-time budget sets
  * `DISALLOW_CREATE_WINDOWS`. A refusal before any try (no PIN, a running lockout) opens the dialog
- * in that state with OK disabled; after a lockout OK stays disabled - Cancel and reopen.
+ * in that state with OK disabled; after a lockout OK stays disabled - Cancel and reopen. The PIN is
+ * typed on our own keypad ([ParentPinKeypad], design 24b §1.8), never through a keyboard, and the
+ * dialog is kept out of screenshots.
  */
 object ParentPinDialog {
 
@@ -46,9 +47,10 @@ object ParentPinDialog {
             .setNegativeButton(android.R.string.cancel) { _, _ -> onCancel() }
             .setPositiveButton(android.R.string.ok, null)
             .create()
+        ParentPinKeypad.secure(dialog)
         dialog.show()
         val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-        val input = dialog.findViewById<EditText>(R.id.dialog_offline_override_pin_input)
+        val keypad = dialog.findViewById<View>(R.id.dialog_offline_override_pin_keypad)?.let { ParentPinKeypad.bind(it) }
         val error = dialog.findViewById<TextView>(R.id.dialog_offline_override_pin_error)
         fun showError(text: String?) {
             error?.text = text
@@ -57,10 +59,11 @@ object ParentPinDialog {
         opening(context, notConfigured, R.string.lock_unlock_code_locked_out).let {
             showError(it.text)
             ok.isEnabled = it.okEnabled
+            keypad?.setEnabled(it.okEnabled)
         }
         // Set after show() so a wrong PIN keeps the dialog open.
         ok.setOnClickListener {
-            val pin = input?.text?.toString().orEmpty()
+            val pin = keypad?.pin.orEmpty()
             ok.isEnabled = false
             scope.launch {
                 val result = withContext(Dispatchers.Default) { ParentPin.check(context, entry, pin) }
@@ -69,9 +72,10 @@ object ParentPinDialog {
                     onOk()
                     return@launch
                 }
-                if (result is ParentPinResult.Wrong || result is ParentPinResult.LockedOut) input?.text?.clear()
+                if (result is ParentPinResult.Wrong || result is ParentPinResult.LockedOut) keypad?.clear()
                 showError(resultText(context, result, R.string.lock_unlock_code_wrong, notConfigured, R.string.lock_unlock_code_locked_out))
                 ok.isEnabled = okAfter(result)
+                keypad?.setEnabled(okAfter(result))
             }
         }
         return dialog
@@ -81,8 +85,9 @@ object ParentPinDialog {
     data class Opening(val text: String?, val okEnabled: Boolean)
 
     /**
-     * The dialog's state before any try ([ParentPin.status]): no PIN or a running lockout - the
-     * refusal, OK disabled; one try left (4 wrong ones earlier, anywhere) - the warning with the
+     * The dialog's state before any try ([ParentPin.status]): no PIN, an app that could read the
+     * PIN ([com.kidslauncher.mdm.server.ForeignAccess]) or a running lockout - the refusal, OK and
+     * the keypad disabled; one try left (4 wrong ones earlier, anywhere) - the warning with the
      * next lockout's length, OK enabled (qa-24-code Low 1). Main thread: no hashing, but it may
      * wait for a running check.
      */
@@ -90,6 +95,8 @@ object ParentPinDialog {
         val status = ParentPin.status(context)
         return when {
             !status.configured -> Opening(context.getString(notConfigured), okEnabled = false)
+            status.foreignAccess -> Opening(context.getString(R.string.parent_pin_foreign_access), okEnabled = false)
+            status.untilSync -> Opening(context.getString(R.string.parent_pin_until_sync), okEnabled = false)
             status.lockoutMs > 0L -> Opening(lockedOutText(context, lockedOut, status.lockoutMs), okEnabled = false)
             status.triesLeft == 1 ->
                 Opening(context.getString(R.string.parent_pin_one_try_left, duration(context, status.nextLockoutMs)), okEnabled = true)
@@ -109,8 +116,14 @@ object ParentPinDialog {
             is ParentPinResult.LockedOut -> lockedOutText(context, lockedOut, result.remainingMs)
             ParentPinResult.TooShort -> context.getString(R.string.parent_pin_too_short)
             ParentPinResult.NotConfigured -> context.getString(notConfigured)
-            is ParentPinResult.Unavailable ->
-                context.getString(if (result.storageFull) R.string.parent_pin_storage_full else R.string.parent_pin_unavailable)
+            ParentPinResult.ForeignAccessOn -> context.getString(R.string.parent_pin_foreign_access)
+            is ParentPinResult.Unavailable -> context.getString(
+                when {
+                    result.untilSync -> R.string.parent_pin_until_sync
+                    result.storageFull -> R.string.parent_pin_storage_full
+                    else -> R.string.parent_pin_unavailable
+                },
+            )
         }
 
     /** OK stays usable after a wrong, too-short or uncounted try - not after a lockout or with no PIN. */

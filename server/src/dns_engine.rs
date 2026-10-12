@@ -29,10 +29,13 @@ pub struct CompiledList {
     pub blocklist_id: i64,
     pub category: String,
     pub domains: HashSet<String>,
-    /// A download of this feed has worked since the server started (security review M6): until
-    /// then `device_api::dns_blocklist` answers 503 to a phone that uses it, which keeps its own
-    /// list.
+    /// A download of this feed has worked on this server, now or before a restart (its last good
+    /// domains are kept in `AppState::dns_feed_dir` - QA of the security wave, Low 8). One that
+    /// never has is empty: no phone got its domains from here, so leaving it out shrinks nothing.
     pub loaded: bool,
+    /// SHA-256 of the feed's domains as downloaded (before the custom allow list), so an unchanged
+    /// download isn't written to disk again.
+    pub source_hash: String,
     /// Why the last download failed (its previous domains are kept); `None` after a good one.
     pub last_error: Option<String>,
 }
@@ -83,8 +86,10 @@ pub fn empty_compiled_blocklist() -> SharedCompiledBlocklist {
 ///
 /// Fails closed per feed (security review M6): a feed whose download fails (an error, a non-2xx
 /// status, a body over [MAX_FEED_BYTES], or nothing in it that looks like a domain - a captive
-/// portal's page) keeps the domains it had, and one that never loaded stays `loaded: false`. A
-/// database error keeps the whole compiled list.
+/// portal's page) keeps the domains it had - in memory, else its last good copy on disk (written
+/// after each changed download), so a restart without internet keeps them too. One that never
+/// loaded on this server stays `loaded: false` and empty. A database error keeps the whole
+/// compiled list.
 pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklist) {
     let feeds = sqlx::query_as::<_, DnsBlocklist>("SELECT * FROM dns_blocklists")
         .fetch_all(&state.db)
@@ -123,6 +128,7 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
         .expect("reqwest client always builds");
 
     let mut lists = Vec::new();
+    let feed_dir = state.dns_feed_dir.as_path();
 
     for list in &blocklists {
         let fetched = fetch_feed(&client, &list.url).await.and_then(|text| {
@@ -135,12 +141,20 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
         });
         let compiled = match fetched {
             Ok(mut domains) => {
+                let source_hash = domains_hash(&domains);
+                let unchanged = shared.read().await.lists.iter().any(|old| {
+                    old.blocklist_id == list.id && old.loaded && old.source_hash == source_hash
+                });
+                if !unchanged {
+                    save_feed(feed_dir, list.id, &domains).await;
+                }
                 domains.retain(|domain| !global_custom_allow.contains(domain));
                 CompiledList {
                     blocklist_id: list.id,
                     category: list.name.clone(),
                     domains,
                     loaded: true,
+                    source_hash,
                     last_error: None,
                 }
             }
@@ -149,18 +163,30 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
                     "DNS blocklist '{}': {err} - keeping its previous domains",
                     list.name
                 );
-                let previous = shared.read().await;
-                let before = previous
-                    .lists
-                    .iter()
-                    .find(|old| old.blocklist_id == list.id);
-                let mut domains = before.map(|old| old.domains.clone()).unwrap_or_default();
+                let in_memory = {
+                    let previous = shared.read().await;
+                    previous
+                        .lists
+                        .iter()
+                        .find(|old| old.blocklist_id == list.id && old.loaded)
+                        .map(|old| (old.domains.clone(), old.source_hash.clone()))
+                };
+                let kept = match in_memory {
+                    Some(kept) => Some(kept),
+                    None => load_feed(feed_dir, list.id).await.map(|domains| {
+                        let hash = domains_hash(&domains);
+                        (domains, hash)
+                    }),
+                };
+                let loaded = kept.is_some();
+                let (mut domains, source_hash) = kept.unwrap_or_default();
                 domains.retain(|domain| !global_custom_allow.contains(domain));
                 CompiledList {
                     blocklist_id: list.id,
                     category: list.name.clone(),
                     domains,
-                    loaded: before.is_some_and(|old| old.loaded),
+                    loaded,
+                    source_hash,
                     last_error: Some(err),
                 }
             }
@@ -191,6 +217,8 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
         }
         hex::encode(hasher.finalize())
     };
+
+    forget_removed_feeds(feed_dir, &blocklists).await;
 
     *shared.write().await = CompiledBlocklist {
         lists,
@@ -242,9 +270,13 @@ pub(crate) fn parse_feed(text: &str) -> HashSet<String> {
             continue;
         }
         let domain = match entry.split_once(char::is_whitespace) {
-            Some(("0.0.0.0", domain)) => domain.trim(),
+            Some(("0.0.0.0" | "127.0.0.1", domain)) => domain.trim(),
             Some(_) => continue,
-            None => entry,
+            // Adblock syntax for a whole domain (`||example.com^`); any other rule is skipped.
+            None => entry
+                .strip_prefix("||")
+                .and_then(|rule| rule.strip_suffix('^'))
+                .unwrap_or(entry),
         };
         let domain = domain.trim_end_matches('.').to_lowercase();
         if looks_like_a_domain(&domain) {
@@ -264,4 +296,73 @@ fn looks_like_a_domain(name: &str) -> bool {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         })
+}
+
+/// SHA-256 (hex) of a feed's domains, in sorted order.
+fn domains_hash(domains: &HashSet<String>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut sorted: Vec<&String> = domains.iter().collect();
+    sorted.sort();
+    let mut hasher = Sha256::new();
+    for domain in sorted {
+        hasher.update(domain.as_bytes());
+        hasher.update(b"\n");
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn feed_file(dir: &std::path::Path, id: i64) -> std::path::PathBuf {
+    dir.join(format!("{id}.txt"))
+}
+
+/// Writes a feed's domains (one per line) to `<dir>/<id>.txt`, by a temp file and a rename.
+/// Best-effort: a failure only means a restart without internet has to do without them.
+async fn save_feed(dir: &std::path::Path, id: i64, domains: &HashSet<String>) {
+    let mut sorted: Vec<&String> = domains.iter().collect();
+    sorted.sort();
+    let mut text = String::with_capacity(sorted.iter().map(|d| d.len() + 1).sum());
+    for domain in sorted {
+        text.push_str(domain);
+        text.push('\n');
+    }
+    let path = feed_file(dir, id);
+    let temp = dir.join(format!("{id}.txt.tmp"));
+    let written = async {
+        tokio::fs::create_dir_all(dir).await?;
+        tokio::fs::write(&temp, text).await?;
+        tokio::fs::rename(&temp, &path).await
+    }
+    .await;
+    if let Err(err) = written {
+        tracing::warn!("DNS blocklist {id}: couldn't keep its domains on disk: {err}");
+    }
+}
+
+/// A feed's last good domains from disk, if there are any.
+async fn load_feed(dir: &std::path::Path, id: i64) -> Option<HashSet<String>> {
+    let text = tokio::fs::read_to_string(feed_file(dir, id)).await.ok()?;
+    if text.len() > MAX_FEED_BYTES {
+        return None;
+    }
+    let domains = parse_feed(&text);
+    (!domains.is_empty()).then_some(domains)
+}
+
+/// Deletes the saved domains of feeds that no longer exist.
+async fn forget_removed_feeds(dir: &std::path::Path, feeds: &[DnsBlocklist]) {
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(id) = name
+            .strip_suffix(".txt")
+            .and_then(|id| id.parse::<i64>().ok())
+        else {
+            continue;
+        };
+        if !feeds.iter().any(|feed| feed.id == id) {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
+    }
 }

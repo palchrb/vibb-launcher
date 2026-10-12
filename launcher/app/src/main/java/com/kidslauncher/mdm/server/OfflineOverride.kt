@@ -56,10 +56,13 @@ object OfflineOverride {
      * after a correct PIN and its committed `unlocked` event (design 24 §2). Any thread. */
     fun activate(context: Context, start: WindowStart) {
         val mdm = LauncherPreferences.mdm()
-        mdm.offlineOverrideExpiresAt(start.untilWallMs)
-        mdm.offlineOverrideElapsedStart(start.elapsedStartMs)
-        mdm.offlineOverrideBoot(start.bootCount)
-        mdm.offlineOverrideActive(true)
+        // Design 24b: the relock marker first - the window locks again by itself when it ends.
+        WindowRelock.opened(context, WindowKind.OVERRIDE, start) {
+            mdm.offlineOverrideExpiresAt(start.untilWallMs)
+            mdm.offlineOverrideElapsedStart(start.elapsedStartMs)
+            mdm.offlineOverrideBoot(start.bootCount)
+            mdm.offlineOverrideActive(true)
+        }
         mdm.offlineOverrideUsedPendingReport(true)
         // The enforced policy, not `null`: the override releases the app restrictions and the
         // schedule by itself, while the call rules and the hardening switches stay as the policy

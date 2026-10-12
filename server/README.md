@@ -30,6 +30,9 @@ less install.sh        # it runs as root: read it first
 sudo bash install.sh
 ```
 
+It installs only server releases signed with the project's key: until the first signed one (0.24.0) is published, it
+says so and installs nothing.
+
 This installs a systemd service listening on `127.0.0.1:3100` only - put it behind [Tailscale](https://tailscale.com/) (or your own reverse proxy/VPN) to reach it remotely. It prints a one-time admin password on first install; you'll be forced to change it and set up two-factor login before anything else works.
 
 ## Development
