@@ -308,6 +308,37 @@ class StorytelDownloadTest {
     }
 
     @Test
+    fun `a host that drips a few KB and resets keeps backing off - growth counts from 1 MiB or 1 percent`() {
+        // qa-26b-merge-code Low 2: any growth reset the count, so a trickle kept a book (and its mint) at 2 min.
+        val e = series()
+        val io = Io(fetches = mutableMapOf("111" to ArrayDeque(List(6) { "network" })))
+        io.cached["e7:111"] = 40_000_000L
+        io.run(wanted(keys = listOf("111")))
+        for (step in 1..3) {
+            io.cached["e7:111"] = 40_000_000L + step * 10_000L
+            io.run(wanted(keys = listOf("111")))
+        }
+        var row = io.rows.getValue(7L to "111")
+        assertEquals("three 10 KB drips: counted up", 4, row.attempts)
+        assertEquals(now + 8 * RETRY_FIRST_MS, downloadPlan(snapshot(library(listOf(e)), listed(e)), io.rows.values.toList(), now).nextRetryAt)
+        // a real resume (past 1 MiB, and past 1 % of the 40 MB partial) starts the count again
+        io.cached["e7:111"] = 40_030_000L + 400_001L
+        io.run(wanted(keys = listOf("111")))
+        assertEquals("400 KB on 40 MB is under 1 MiB", 5, io.rows.getValue(7L to "111").attempts)
+        io.cached["e7:111"] = 40_430_001L + (1L shl 20)
+        io.run(wanted(keys = listOf("111")))
+        row = io.rows.getValue(7L to "111")
+        assertEquals(1, row.attempts)
+        assertEquals(now + RETRY_FIRST_MS, downloadPlan(snapshot(library(listOf(e)), listed(e)), io.rows.values.toList(), now).nextRetryAt)
+        // the floor itself: 1 MiB, or 1 % of a big partial
+        assertFalse(grewEnough(0, 10_000))
+        assertTrue(grewEnough(0, 1L shl 20))
+        assertFalse("2 MB on a 300 MB partial is under 1 %", grewEnough(300_000_000L, 302_000_000L))
+        assertTrue(grewEnough(300_000_000L, 303_000_000L))
+        assertFalse("a dropped partial (smaller) never counts as growth", grewEnough(90_000_000L, 0))
+    }
+
+    @Test
     fun `NRK and RSS keep phase 1's rules - a partial from another url is dropped, the 416 refetches from the same url`() {
         val rss = entry(1)
         val item = PlayItem(1, "k1", "Episode", "https://cdn.example.org/new.mp3", false, 600_000)

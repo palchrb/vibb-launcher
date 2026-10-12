@@ -31,10 +31,12 @@ class StorytelAccount private constructor(private val api: StorytelApi) {
      * IO: the login lock can block a thread up to the deadline. [timeoutMs] bounds the asset call,
      * [deadlineMs] (SystemClock.elapsedRealtime) the whole mint - downloads `(15 s, now + 60 s)`, the
      * Sonos path `(6 s, now + 10 s)`. Interruptible (the main session's review of step 3, Low 2): a
-     * cancelled caller - a download job WorkManager stops, step 4b's superseded Sonos play - interrupts
-     * the blocked thread, so the wait for the login lock ends at once and an OkHttp call at its next read
-     * or write (Okio checks the flag), instead of the caller hanging on the call up to its deadline; the
-     * caller gets its CancellationException, never the mint's answer.
+     * cancelled caller - a download job WorkManager stops - interrupts the blocked thread, so the wait for
+     * the login lock ends at once and an OkHttp call at its next read or write (Okio checks the flag),
+     * instead of the caller hanging on the call up to its deadline; the caller gets its
+     * CancellationException, never the mint's answer. A room's actor never cancels a job: step 4b's
+     * superseded play is dropped by its token, and a mint already running finishes (qa-26b-merge-code
+     * Low 1); cancelling a job there would let the CancellationException end `SonosActor.run`'s loop.
      */
     suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =
         runInterruptible(Dispatchers.IO) { api.assetUrl(cid, timeoutMs, deadlineMs) }

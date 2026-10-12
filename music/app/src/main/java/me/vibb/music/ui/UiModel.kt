@@ -82,8 +82,7 @@ data class Switch(val request: PlayRequest, val view: NowView)
 /**
  * A tap on [entryId] (a cover, or [itemKey] from Nytt, search or the list) while [current] shows: what it starts.
  * [onRoom]: a Sonos room renders (design 26a §4.2): its queue holds only what a speaker can play
- * ([speakerPlayable], `PlayBodies.speakerPlayable`) and a start the speaker can't play moves on to the next it can,
- * from 0 (`PlayBodies.speakerPlan`, as the service builds it); nothing a speaker can play is no switch (the
+ * (`PlayBodies.speakerPlayable`) and a start the speaker can't play moves on to the next it can, from 0 (`PlayBodies.speakerPlan`, as the service builds it); nothing a speaker can play is no switch (the
  * service says "Kan ikke spilles på Sonos").
  * The entry and its order are read in the renderer's view, `snap.forRenderer(onRoom)` (design 26b §3.2, §5.6): on a
  * room every Storytel book (the speaker fetches it from the CDN), on the phone only the books with a copy - what the
@@ -91,19 +90,11 @@ data class Switch(val request: PlayRequest, val view: NowView)
  * Storytel tap on a room is no switch, as the service's "Kan ikke spilles på Sonos"; 4b's filter lets them through
  * and the view then counts the whole series, as the room's queue does.
  */
-fun playSwitch(
-    snap: Snapshot,
-    entryId: Long,
-    itemKey: String?,
-    current: NowView?,
-    atMs: Long,
-    onRoom: Boolean = false,
-    speakerPlayable: (Entry, PlayItem) -> Boolean = PlayBodies::speakerPlayable,
-): Switch? {
+fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView?, atMs: Long, onRoom: Boolean = false): Switch? {
     val shown = snap.forRenderer(onRoom)
     val entry = shown.entries.firstOrNull { it.id == entryId } ?: return null
     val all = shown.order(entry)
-    val order = if (onRoom) all.filter { speakerPlayable(entry, it) } else all
+    val order = if (onRoom) all.filter { PlayBodies.speakerPlayable(entry, it) } else all
     if (order.isEmpty()) return null
     val keys = order.map { it.key }
     val shuffle = canShuffle(entry) && entry.key in snap.shuffle

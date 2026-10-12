@@ -67,10 +67,12 @@ interface DownloadIo {
  *    re-mint and the next attempt resumes with Range from the cached bytes against the new token;
  * 4. `http_416` drops the partial and fetches once from 0 with a freshly minted URL (L7).
  * A failure is stored on the row (source id, code, time, attempts in a row) for `mayRetry`; a not-done
- * row's `bytes` hold the partial copy's size at its last failure, and a failure after the copy grew
- * counts as the first again (main session's review of step 3, Low 1: a slow but progressing download - a
- * 300 MB book over a weak Wi-Fi, a job stopped at its 10-minute limit - must not back off towards 6 h
- * while it keeps getting further; only failures that get nowhere double the wait).
+ * row's `bytes` hold the partial copy's size at its last failure, and a failure after the copy grew by
+ * at least [GROWTH_FLOOR_BYTES] or 1 % ([grewEnough]) counts as the first again (main session's review of step 3,
+ * Low 1: a slow but progressing download - a 300 MB book over a weak Wi-Fi - must not back off towards 6 h
+ * while it keeps getting further; only failures that get nowhere double the wait). The floor keeps a host
+ * that drips a few KB and resets from holding an item - and for Storytel a mint - at the 2-minute wait
+ * (qa-26b-merge-code Low 2).
  */
 class DownloadRun(private val io: DownloadIo) {
     /** Set once Storytel books stopped for this run; the run's other items go on. */
@@ -167,8 +169,14 @@ class DownloadRun(private val io: DownloadIo) {
         val row = io.row(w.entry.id, w.item.key)
             ?: DownloadRow(w.entry.id, w.item.key, itemCacheKey(w.entry.key, w.item.key), source, w.item.hls, false, 0, null, null)
         val cached = io.cachedBytes(row.cacheKey, row.hls)
-        val grew = cached > row.bytes
+        val grew = grewEnough(row.bytes, cached)
         val attempts = if (row.failedUrl == source && row.failedCode == code && !grew) row.attempts + 1 else 1
         io.saveRow(row.copy(bytes = cached, failedUrl = source, failedCode = code, failedAt = io.nowMs(), attempts = attempts))
     }
 }
+
+/** The least a partial must grow between two failures to start their count again: 1 MiB or 1 % of it. */
+const val GROWTH_FLOOR_BYTES = 1L shl 20
+
+/** Did a partial copy of [before] bytes at the last failure grow enough by [now] ([GROWTH_FLOOR_BYTES], or 1 %)? */
+fun grewEnough(before: Long, now: Long): Boolean = now - before >= maxOf(GROWTH_FLOOR_BYTES, before / 100)

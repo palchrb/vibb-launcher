@@ -381,7 +381,10 @@ pruned (qa-21-step2-code H1). `publicOnly(entry)` is true (Storytel's API and CD
   new url" and never discards a partial copy (§4.3).
 - **Retry** (QA M7): a Storytel `no_audio` is permanent (a day, `permanentFailure`); a Storytel `http_<code>` - from the
   asset call (401 after the re-login, 408, 429, 5xx) or from the CDN (any status) - is transient (2 min doubling, at
-  most 6 h): every attempt mints a fresh URL, so a 403 from an expired token heals on the next attempt.
+  most 6 h): every attempt mints a fresh URL, so a 403 from an expired token heals on the next attempt. A failure after
+  the partial copy grew by at least max(1 MiB, 1 %) since the last one counts as the first again (`grewEnough`; the
+  main session's review of step 3, Low 1, with qa-26b-merge-code Low 2's floor), for every source: a slow but
+  progressing download stays at 2 min, a host that drips a few KB and resets still backs off.
 - **Room**: `STORYTEL_FREE_FLOOR` = 1.5 GB (vibb `DISK_FLOOR`, which is Storytel's own: `storytel.py:701, 789-791`): no
   Storytel book starts below it (the Storytel books of the run stop, `waiting: storage`); NRK/RSS downloads keep
   phase 1's rule (storage-not-low).
@@ -473,8 +476,10 @@ login), a `CooldownStore` in `noBackupFilesDir/storytel_refused.json` (`{generat
 holds no lock); its wait counts against the caller's deadline (a download's login may hold it up to 20 s; a Sonos mint
 then fails at its 10 s, QA L6). **Two conditions for step 3** (qa-26b-step1-code): `StorytelAccount` holds **exactly
 one `StorytelApi` for the process** (the lock and the JWT live in the instance; one per worker run, or per read of
-`debugBase`, would lose both and log in every run), and `mint` is `withContext(Dispatchers.IO) { api.assetUrl(...) }`
-(the lock blocks a thread for up to the deadline). The one signature, reached through `StorytelAccount.get(context)` (the process's
+`debugBase`, would lose both and log in every run), and `mint` is `runInterruptible(Dispatchers.IO) {
+api.assetUrl(...) }` (the lock blocks a thread for up to the deadline; interruptible since the main session's review of
+step 3, Low 2: a download job WorkManager stops ends its lock wait or request at once. A room's actor never cancels a
+job - a superseded Sonos play is dropped by its token and a running mint finishes, qa-26b-merge-code Low 1). The one signature, reached through `StorytelAccount.get(context)` (the process's
 instance): `suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint` (IO) - downloads `(15 s, now + 60 s)`, the Sonos path `(6 s, now + 10 s)`. `fun state():
 String` delegates to `StorytelApi.state()` (off main: it opens the sealed login) = `none` (no login stored) /
 `refused` (the cooldown runs for the stored generation) / `ok`. A new generation from the bridge needs no call: the JWT and the
@@ -653,7 +658,7 @@ downloaded puts all five on the room, at the current book and place.
 
 ### 5.7 Logs
 Every Sonos log line that prints a uri goes through `redactUri` (scheme, host and path; the query - the token - cut):
-the session's "not-ours?" line today (`SonosSession.kt:327`).
+the "not-ours?" line in `SonosSession.classify` today.
 
 ## 6. Phone-specific rules
 
@@ -1703,6 +1708,15 @@ its emulator section as §6h. No AIDL, `bridge_contract.json` or shared snapshot
   `PlaybackService.kt`, `MusicViewModel.kt`, `LibraryScreen.kt`, `DebugFeedReceiver.kt`, `SourceScanTest`,
   `GuardsTest`, `server/src/{main,music}.rs`, `device_detail.html`, PLAN.md, design 26.
 
+**`git bisect skip 49770d8`**: the merge commit alone has two 0066 migrations (main's `0066_lock_glance.sql` and ours)
+and fails `cargo test` (`UNIQUE constraint failed: _sqlx_migrations.version`); `e14bf36` fixes it, and CI only ever
+built the head (qa-26b-merge-code Low 3).
+
+**A dev database from before the merge won't open**: a `server/data/kidphone.db` that ran either music branch's server
+before 2026-10-12 holds their old 65/66 with other checksums, so the merged server stops at `VersionMismatch(65)`;
+delete it or restore a backup taken on `main` (`docs/testing/emulator.md` §2; qa-26b-merge-code Low 4). No deployed
+server ran either branch.
+
 **The migration is `0072_music_storytel.sql`** (was 0066, which main's `0066_lock_glance.sql` now has; main holds
 0065-0069, 0070 is reserved for design 27, 1b holds 0071). Content unchanged but the header (the 0072 wording, the
 renumbering and the backup hazard); §2.8's block is the file byte for byte. `server/CLAUDE.md` (the Storytel section's
@@ -1724,7 +1738,8 @@ from the renderer's view, then on a room the speaker filter. Today `PlayBodies.s
 book ("withdrawn": no url), so a Storytel tap on a room is no switch - and the service says "Kan ikke spilles på
 Sonos" for the same reason: they agree. With 4b's filter (§5.1: a Storytel book is speaker-playable, downloaded or
 not) the view queues the whole series, starts a cover tap at a bookmark that isn't on the phone, at its place, and
-numbers it in the series. The filter is a parameter (default `PlayBodies::speakerPlayable`) so that seam is tested now.
+numbers it in the series. (The filter was a parameter here so that seam could be tested now; the fix round below
+dropped it - 4b adds those assertions with the real filter.)
 `skipSwitch` counts in the hub's queue (the service's `Active.items`): unchanged, right for both renderers.
 `playerNumber` is renderer-independent for Storytel (`snap.listed`) and the same on both views for every other
 source. Checked and left: `PlayBody`'s tailnet filter (a minted CDN URL is public, never a tailnet literal; the fake's
@@ -1738,9 +1753,12 @@ grouped-away hidden position and `storedUri`/`consumableIdOf` (unwired until 4b;
    nowhere double. A not-done row's `bytes` hold the partial's size at its last failure (carried across an attempt's
    row write, 0 when the partial is dropped); `DownloadIo.cachedBytes` reads `MediaCache.cachedBytes`. No Room schema
    change (the column exists; its KDoc says both meanings). NRK/RSS get the same rule (their partials resume from the
-   same url too). `StorytelDownloadTest` +1; dropping the growth check turns it red (checked).
+   same url too). `StorytelDownloadTest` +1; dropping the growth check turns it red (checked). (The fix round below
+   adds a floor: growth counts from max(1 MiB, 1 %).)
 2. `StorytelAccount.mint` is `runInterruptible(Dispatchers.IO) { api.assetUrl(...) }`: a cancelled caller (a download
-   job WorkManager stops, 4b's superseded play) interrupts the blocked thread - the login lock's `tryLock` wait ends at
+   job WorkManager stops - **not** 4b's superseded play: a room's actor never cancels a job, a superseded play is
+   dropped by its generation and token and a mint already running finishes; corrected in the fix round below)
+   interrupts the blocked thread - the login lock's `tryLock` wait ends at
    once, an OkHttp call at its next read or write (Okio checks the flag; a socket read blocked mid-packet still ends
    only at its timeout) - and gets its `CancellationException`, never the mint's answer. `lockWithin` already keeps the
    interrupt; an interrupted login is a `LoginFailed` inside, never a refusal (no cooldown). `StorytelApiTest` +1 (a
@@ -1771,6 +1789,27 @@ grouped-away hidden position and `storedUri`/`consumableIdOf` (unwired until 4b;
   screens' order) show undownloaded books.
 - **The start cap on a Storytel play**: a mint of up to 10 s delays the cap and Play; the switch's hold isn't affected
   (the controller moves the index on main before the job; `PlayerHub.State.waiting` counts the command, not the job).
+- **The serial actor behind a mint** (qa-26b-merge-code Low 1, Low 6): the room's `SonosActor` runs one job at a time,
+  so every job behind a mint - polls, pause, the volume keys, a room switch's hand-off - waits up to its 10 s, and
+  nothing interrupts it: `runInterruptible` helps only a cancelled caller, and the actor never cancels a job. Decide
+  whether that is acceptable or the mint moves before `submit` with the token checks around it. **Trap**: don't add
+  per-job cancellation (a child `Job` cancelled on supersede) as is - the mint's `CancellationException` would come out
+  of `job()`, `SonosActor.run` rethrows it and the consumer loop ends silently (later `submit`s queue forever, `call`
+  never completes, the poller hangs: a dead room with no log line). If a job must be cancellable, run it in its own
+  child and turn its cancellation into a `Result.failure` inside the job while the consumer is active, with a
+  `SonosActorTest` row ("a job cancelled from outside, the next job still runs").
+- **`SWITCH_WAIT_MAX_MS`** (25 s, `logic/Switch.kt`) is sized for `HANDOFF_MS` 15 s (main's switch came in with this
+  merge, after §5.1 raised `HANDOFF_MS` to 25 s for the mint): raise it with `HANDOFF_MS` and update `SwitchTest`'s
+  `SWITCH_WAIT_MAX_MS > 15_000` (it names `HANDOFF_MS`), or a tap during a room switch can run out into the old item.
+- **`SonosSuspension.kt`** (`entryMatcher` and `bookmark`, the standalone bedtime path) still read `store.snapshot()`,
+  the phone's view; §5.6's table says `forRenderer(true)` there.
+- **The minted URL's address checks go in the actor job**, after the mint: `speakerDropReason` runs when the queue is
+  built, before any URL exists, so its Storytel branch can't check one. The private-literal check (unless
+  `privateMintAllowed()`) and the tailnet check of the minted URL share one helper with `speakerDropReason`'s literal
+  checks.
+- **`SwitchViewTest`**: when `speakerDropReason` lets Storytel through, its room case gains the whole series (every
+  book in the queue, a cover tap at the bookmark's book not on the phone at its place, "Del 2 av 5", an entry with
+  nothing on the phone switching on a room) with the real filter.
 
 **Tests after the merge** (local Rust 1.97, the sandbox's JDK 21): server `cargo test` **628 passed, 0 failures**,
 `cargo fmt --check` clean, `cargo clippy --all-targets` the same 12 warnings (`models.rs`, `dns_engine.rs`,
@@ -1782,3 +1821,33 @@ lintDebug -PwarningsAsErrors=true` **499 JVM tests, 0 failures** (446 at step 3'
 `app/libs/tsnet.aar` (`checkReleaseHasTsnet`), which CI builds and this sandbox can't: not run. The AIDL copies,
 `bridge_contract.json` and the shared snapshots are byte-identical (`ContractFilesTest`, `BridgeTest`, `MusicPlanTest`
 green).
+
+### Fix round after QA's code review (qa-26b-merge-code, 2026-10-12)
+
+`docs/design/qa-26b-merge-code.md`: the merge is clean; 0 High, 0 Medium, 6 Low, all fixed (its "not worth fixing"
+list left as QA judged it). `music/` and docs only; no server or launcher change.
+- **L1, `runInterruptible` and the actor.** `StorytelAccount.mint`'s KDoc and this section's Lows item 2 no longer
+  claim it covers 4b's superseded play: it helps a download job WorkManager stops; a room's actor never cancels a job
+  (a superseded play is dropped by its generation and token, a running mint finishes). The trap (per-job cancellation
+  would end `SonosActor.run`'s loop silently) and the serial-actor cost are in the 4b list above; §4.2 says it too.
+- **L2, a growth floor.** `DownloadRun.fail()` resets the count only when the partial grew by at least
+  max(1 MiB, 1 %) since the last failure (`grewEnough`, `GROWTH_FLOOR_BYTES`): a host that drips a few KB and resets
+  backs off as before, a real resume starts at 2 min again. `StorytelDownloadTest` +1 (three 10 KB drips count up to
+  4 and the plan waits 16 min; 400 KB on 40 MB counts up; 1 MiB past it resets; the floor's edges, 1 % of 300 MB, a
+  dropped partial).
+- **L3**: the `git bisect skip 49770d8` note above.
+- **L4**: the dev-database line above and in `docs/testing/emulator.md` §2.
+- **L5, the spec text.** §4.2 (`mint` is `runInterruptible`, and what it does and doesn't cover), §3.3 (the growth
+  reset with its floor, for every source), §5.7 (the not-ours line named by function, `SonosSession.classify`, not by
+  line number).
+- **L6.** `playSwitch` lost its test-only `speakerPlayable` parameter (back to 1b's signature; the filter is
+  `PlayBodies.speakerPlayable`, as the service's). `SwitchViewTest`'s room case now tests the real filter (no switch on
+  a room today, with or without books on the phone; the phone's view whatever the snapshot; next on a playing room from
+  0 with "Del 2 av 5" -> "Del 3 av 5"); the whole-series assertions wait for 4b (its list says so). `GuardsTest` still
+  pins the switch's `forRenderer(onRoom)`. The 4b list gains the serial actor, `SWITCH_WAIT_MAX_MS` with `HANDOFF_MS`
+  and `SwitchTest`'s 15 s assumption, `SonosSuspension`'s phone view, and the minted-URL checks in the actor job.
+
+Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **500 JVM tests, 0
+failures** (499 before: +1 `StorytelDownloadTest`), lint 0 errors and the same 40 warnings;
+`python3 -I -B scripts/fake-sonos.py --selftest` and `python3 -I -B scripts/fake-storytel.py --selftest` OK. Server and
+launcher untouched in this round (no file their tests read changed).
