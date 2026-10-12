@@ -63,8 +63,8 @@ class Application : android.app.Application() {
                     try {
                         // Design 24b (fix round QA Low 3): a block set or cleared by this install
                         // first - enforceOnNewPackage reads it.
-                        com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)
-                        val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName)
+                        val relockBlock = com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)
+                        val blocked = AppEnforcer.enforceOnNewPackage(this@Application, packageName) || relockBlock
                         // A new app the parent hasn't allowed (e.g. from Play): report it now, so
                         // the device page lists it for allowlisting (handy step 7). The music app
                         // gets its managed config and library at once (design 21 §3).
@@ -86,6 +86,8 @@ class Application : android.app.Application() {
                     try {
                         if (com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)) {
                             AppEnforcer.apply(this@Application, com.kidslauncher.mdm.server.currentPolicyDecision().policy)
+                            // The block set or cleared reaches the device page now (relock_blocks).
+                            com.kidslauncher.mdm.push.SyncRunner.request(this@Application, "relock_block")
                         }
                     } catch (e: Exception) {
                         android.util.Log.w("Application", "Install check failed for $packageName", e)

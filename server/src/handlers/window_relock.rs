@@ -12,7 +12,7 @@ use crate::AppState;
 use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::window_relock::{
-    self, ALLOW_BLOCKED, END_WINDOWS, ForeignNote, RelockNotes, START_PAUSE,
+    self, ALLOW_BLOCKED, BlocksNote, END_WINDOWS, ForeignNote, RelockNotes, START_PAUSE,
     WINDOW_RELOCK_CAPABILITY,
 };
 
@@ -32,6 +32,11 @@ pub struct RelockCard {
     pub foreign: Option<ForeignNote>,
     /// The last answer to each command, under a week old ([window_relock::answer_line]).
     pub answers: Vec<String>,
+    /// What the phone blocks now ([window_relock::blocks_note]; fix of 2026-10-12).
+    pub blocks: BlocksNote,
+    /// "Allow these apps": a current block it lets out, or - from an older launcher - the last
+    /// relock's.
+    pub allow_button: bool,
 }
 
 pub async fn card(
@@ -50,18 +55,32 @@ pub async fn card(
         s.restrictions_paused || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
     });
     let answers = last_answers(db, device_id).await;
+    let pins = catalog_pins(db).await;
+    // The phone's current blocks (`relock_blocks`, fix of 2026-10-12): the install check's too.
+    let blocks =
+        window_relock::parse_relock_blocks(latest.and_then(|s| s.relock_blocks_json.as_deref()));
     let notes = match window_relock::parse_relock(latest.and_then(|s| s.relock_json.as_deref())) {
         Some(r) => {
-            let mut notes = window_relock::relock_notes(&r, now_ms, &catalog_pins(db).await);
-            // Pressed after this relock and answered: the blocks it lists are gone (QA Low 10).
-            let allowed = answers.iter().find(|a| a.command == ALLOW_BLOCKED);
-            if window_relock::allowed_since_relock(allowed, r.at_ms) {
+            let mut notes = window_relock::relock_notes(&r, now_ms, &pins);
+            if blocks.is_some() {
+                // Listed - all of them, as they are now - with the button below.
+                notes.lines.retain(|line| !line.starts_with("Blocked: "));
                 notes.allow_button = false;
+            } else {
+                // An older launcher: pressed after this relock and answered, the blocks it lists
+                // are gone (QA Low 10).
+                let allowed = answers.iter().find(|a| a.command == ALLOW_BLOCKED);
+                if window_relock::allowed_since_relock(allowed, r.at_ms) {
+                    notes.allow_button = false;
+                }
             }
             notes
         }
         None => RelockNotes::default(),
     };
+    let blocks = blocks
+        .map(|b| window_relock::blocks_note(&b, &pins, now_ms))
+        .unwrap_or_default();
     let foreign =
         window_relock::parse_foreign_access(latest.and_then(|s| s.foreign_access_json.as_deref()))
             .map(|f| {
@@ -71,6 +90,8 @@ pub async fn card(
         capable,
         lock_again: capable && open,
         notice: notice.and_then(window_relock::flash_text),
+        allow_button: notes.allow_button || blocks.allow_button,
+        blocks,
         notes,
         pause_button: capable && !latest.is_some_and(|s| s.restrictions_paused),
         foreign,
@@ -222,6 +243,39 @@ pub async fn start_pause(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     queue(&state, id, &admin.username, START_PAUSE, "start_pause_sent").await
+}
+
+/// The latest report's `relock_blocks`, read before a new report is stored.
+pub async fn previous_relock_blocks(db: &sqlx::SqlitePool, device_id: i64) -> Option<String> {
+    let json: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT relock_blocks_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id, %err, "can't read the previous blocks");
+        None
+    });
+    json.flatten()
+}
+
+/// `phone_app_blocked` for each app the phone newly reports as blocked - an install-time block
+/// reaches the security log here, a relock's also through `phone_relock_findings`.
+pub async fn log_relock_blocks(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    previous: Option<&str>,
+    now: Option<&str>,
+) {
+    let Some(blocks) = window_relock::parse_relock_blocks(now) else {
+        return;
+    };
+    let before = window_relock::parse_relock_blocks(previous);
+    if let Some(line) = window_relock::blocks_log_line(device_id, before.as_deref(), &blocks) {
+        security::record_security_event(db, "phone_app_blocked", None, None, Some(&line)).await;
+    }
 }
 
 /// The latest report's `foreign_access`, read before a new report is stored.

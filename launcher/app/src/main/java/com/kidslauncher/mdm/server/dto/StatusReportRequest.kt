@@ -79,6 +79,10 @@ data class StatusReportRequest(
      * versions a policy an update added counts only after the phone restarts once. Empty = all
      * granted; `null` = not device owner or unreadable (left out). */
     val adminPoliciesPending: List<String>? = null,
+    /** Design 24b (fix of 2026-10-12): every block in `relock_blocked` now, from a relock or the
+     * install check outside windows - see [RelockBlockReport]; an empty list = none; `null` = not
+     * device owner (left out). */
+    val relockBlocks: List<RelockBlockReport>? = null,
 )
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the

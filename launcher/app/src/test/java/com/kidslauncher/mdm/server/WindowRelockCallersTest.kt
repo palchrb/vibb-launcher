@@ -61,6 +61,17 @@ class WindowRelockCallersTest {
     }
 
     @Test
+    fun `a static shared library's install is skipped quietly, and every block reaches the report (fix 2026-10-12)`() {
+        val install = body("server/WindowRelock.kt", "fun onPackageInstalled(")
+        // Chrome's trichromelibrary_<version>: no package of that name - no warning with a stack trace.
+        assertBefore(install, "catch (e: PackageManager.NameNotFoundException)", "catch (e: Exception)")
+        val quiet = install.substringAfter("catch (e: PackageManager.NameNotFoundException)").substringBefore("catch (e: Exception)")
+        assertTrue("Log.w" !in quiet && ", e)" !in quiet)
+        // The status report carries every current block, not only the last relock's.
+        assertTrue("relockBlocks = WindowRelock.reportBlocks(context)" in sources.getValue("server/MdmSyncWorker.kt"))
+    }
+
+    @Test
     fun `both starters record the window before they lift anything`() {
         val activate = body("server/OfflineOverride.kt", "fun activate(")
         for (lift in listOf("offlineOverrideActive(true)", "offlineOverrideExpiresAt(", "AppEnforcer.apply(")) {

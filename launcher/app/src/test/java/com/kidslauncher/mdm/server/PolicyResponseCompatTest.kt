@@ -178,6 +178,35 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `relock_blocks is reported under the server's keys, every key sent (fix 2026-10-12)`() {
+        val key = "3f2a" + "0".repeat(56) + "c0de"
+        val report = StatusReportRequest(
+            lockReason = "NONE",
+            kioskEngaged = true,
+            relockBlocks = listOf(
+                com.kidslauncher.mdm.server.dto.RelockBlockReport("me.vibb.music.debug", key, "outside_play", "install", 1_760_100_000_000),
+                com.kidslauncher.mdm.server.dto.RelockBlockReport("org.example.old", null, "unknown", "relock", null),
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(
+            ServerJson.parseToJsonElement(
+                """[{"package_name": "me.vibb.music.debug", "signer": "3f2a00000000000000000000000000000000000000000000000000000000c0de",
+                     "reason": "outside_play", "found": "install", "at_ms": 1760100000000},
+                    {"package_name": "org.example.old", "signer": null, "reason": "unknown", "found": "relock", "at_ms": null}]""",
+            ),
+            json["relock_blocks"],
+        )
+        // None: an empty list, sent; not device owner: left out.
+        val empty = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relockBlocks = emptyList())
+        assertEquals(ServerJson.parseToJsonElement("[]"), ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), empty)).jsonObject["relock_blocks"])
+        val none = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("relock_blocks" !in none)
+    }
+
+    @Test
     fun `foreign_access is reported under the server's keys, left out when nothing is found (24b fix round)`() {
         val report = StatusReportRequest(
             lockReason = "NONE",

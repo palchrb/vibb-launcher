@@ -210,6 +210,177 @@ pub fn parse_foreign_access(json: Option<&str>) -> Option<ForeignAccess> {
     json.and_then(|j| serde_json::from_str(j).ok())
 }
 
+/// One entry of `StatusReportRequest.relock_blocks` (fix of 2026-10-12), as stored
+/// (`device_status.relock_blocks_json`): an app the phone keeps hidden whatever its tick under Apps
+/// until "Allow these apps" - set by a relock, or by the install check outside windows.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct RelockBlock {
+    pub package_name: String,
+    /// Its signing key now (SHA-256, lower-case hex); `None` = unknown.
+    pub signer: Option<String>,
+    /// `outside_play | other_key | catalog_key | unknown`.
+    pub reason: String,
+    /// `relock | install`.
+    pub found: String,
+    /// When it was blocked (the phone's clock); `None` = unknown.
+    pub at_ms: Option<i64>,
+}
+
+/// At most this many blocks are kept (the launcher's `RELOCK_BLOCKS_MAX`).
+pub const BLOCKS_MAX: usize = 16;
+const BLOCK_REASONS: [&str; 4] = ["outside_play", "other_key", "catalog_key", "unknown"];
+const BLOCK_FOUND: [&str; 2] = ["relock", "install"];
+
+/// The phone's `relock_blocks`: entries with a valid package name (each once), a valid key or none,
+/// a known reason and place (else `unknown` / `relock`), a time in range; at most [BLOCKS_MAX].
+/// `Some("[]")` for an empty list - the phone reports its blocks, and has none; `None` for anything
+/// that isn't a list.
+pub fn sanitize_relock_blocks(value: &Value) -> Option<String> {
+    let items = value.as_array()?;
+    let mut blocks: Vec<RelockBlock> = Vec::new();
+    for item in items {
+        let Some(name) = item.get("package_name").and_then(Value::as_str) else {
+            continue;
+        };
+        if !crate::time_rules::valid_package_name(name)
+            || blocks.iter().any(|b| b.package_name == name)
+        {
+            continue;
+        }
+        let pick = |key: &str, known: &[&str], default: &str| {
+            item.get(key)
+                .and_then(Value::as_str)
+                .filter(|v| known.contains(v))
+                .unwrap_or(default)
+                .to_string()
+        };
+        blocks.push(RelockBlock {
+            package_name: name.to_string(),
+            signer: item
+                .get("signer")
+                .and_then(Value::as_str)
+                .filter(|k| valid_signer(k))
+                .map(str::to_string),
+            reason: pick("reason", &BLOCK_REASONS, "unknown"),
+            found: pick("found", &BLOCK_FOUND, "relock"),
+            at_ms: item
+                .get("at_ms")
+                .and_then(Value::as_i64)
+                .map(|ms| ms.clamp(0, MAX_MS)),
+        });
+        if blocks.len() == BLOCKS_MAX {
+            break;
+        }
+    }
+    serde_json::to_string(&blocks).ok()
+}
+
+pub fn parse_relock_blocks(json: Option<&str>) -> Option<Vec<RelockBlock>> {
+    json.and_then(|j| serde_json::from_str(j).ok())
+}
+
+/// The Status card's list of what the phone blocks now ([blocks_note]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BlocksNote {
+    /// The heading, `None` without blocks.
+    pub text: Option<String>,
+    /// One line per app: its key, why and when.
+    pub items: Vec<String>,
+    /// "Allow these apps" lets at least one of them out (not one with another key than the
+    /// catalog's pin).
+    pub allow_button: bool,
+}
+
+/// [pins]: the catalog's pinned signers (M10). An app whose key differs from its pin - by the
+/// server's pin or the phone's reason - stays blocked through "Allow these apps".
+pub fn blocks_note(
+    blocks: &[RelockBlock],
+    pins: &std::collections::HashMap<String, String>,
+    now_ms: i64,
+) -> BlocksNote {
+    if blocks.is_empty() {
+        return BlocksNote::default();
+    }
+    let not_catalogs = |b: &RelockBlock| {
+        b.reason == "catalog_key"
+            || matches!((pins.get(&b.package_name), &b.signer), (Some(pin), Some(key)) if pin != key)
+    };
+    let items = blocks
+        .iter()
+        .map(|b| {
+            let key = b
+                .signer
+                .as_deref()
+                .map(|k| format!(" (signing key {})", short_key(k)))
+                .unwrap_or_default();
+            let why = if not_catalogs(b) {
+                match pins.get(&b.package_name) {
+                    Some(pin) => format!(
+                        "signed with another key than the catalog's ({}), so it isn't the \
+                         catalog's app and stays blocked: uninstall it",
+                        short_key(pin)
+                    ),
+                    None => "signed with another key than the catalog's, so it isn't the \
+                             catalog's app and stays blocked: uninstall it"
+                        .to_string(),
+                }
+            } else {
+                match b.reason.as_str() {
+                    "outside_play" => "installed from outside Play (a download or adb)".to_string(),
+                    "other_key" => {
+                        "replaced by an app signed with another key while the phone was open"
+                            .to_string()
+                    }
+                    _ => "blocked when the phone locked again".to_string(),
+                }
+            };
+            let when = match (b.found.as_str(), b.at_ms) {
+                ("install", Some(at)) => format!(
+                    " - noticed at its install, {}",
+                    crate::parent_pin::when_text(at, now_ms)
+                ),
+                (_, Some(at)) => format!(
+                    " - when the phone locked again, {}",
+                    crate::parent_pin::when_text(at, now_ms)
+                ),
+                _ => String::new(),
+            };
+            format!("{}{key}: {why}{when}.", b.package_name)
+        })
+        .collect();
+    let allow_button = blocks.iter().any(|b| !not_catalogs(b));
+    let mut text = "Blocked on the phone - hidden whatever its tick under Apps:".to_string();
+    if allow_button {
+        text =
+            "Blocked on the phone - hidden whatever its tick under Apps. If one is yours and its \
+                key is the one you expect, press \"Allow these apps\" (a ticked app shows again):"
+                .to_string();
+    }
+    BlocksNote {
+        text: Some(text),
+        items,
+        allow_button,
+    }
+}
+
+/// The security log's line for apps the phone newly reports as blocked (`phone_app_blocked`):
+/// `None` when none is new since [previous].
+pub fn blocks_log_line(
+    device_id: i64,
+    previous: Option<&[RelockBlock]>,
+    now: &[RelockBlock],
+) -> Option<String> {
+    let new: Vec<String> = now
+        .iter()
+        .filter(|b| !previous.is_some_and(|p| p.iter().any(|q| q.package_name == b.package_name)))
+        .map(|b| {
+            let key = b.signer.as_deref().map(short_key).unwrap_or_default();
+            format!("{} ({}, {}, key {key})", b.package_name, b.reason, b.found)
+        })
+        .collect();
+    (!new.is_empty()).then(|| format!("device {device_id}: blocked {}", new.join("; ")))
+}
+
 /// The Status card's red warning: what was found, then the steps (the template adds the last
 /// one, "Change the parent PIN", with its link).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -799,6 +970,105 @@ mod tests {
         };
         assert!(!allowed_since_relock(Some(&unanswered), 0));
         assert!(!allowed_since_relock(None, 0));
+    }
+
+    /// The launcher's `relock_blocks` literal (PolicyResponseCompatTest).
+    fn blocks_literal() -> Value {
+        json!([
+            { "package_name": "me.vibb.music.debug",
+              "signer": "3f2a00000000000000000000000000000000000000000000000000000000c0de",
+              "reason": "outside_play", "found": "install", "at_ms": 1760100000000_i64 },
+            { "package_name": "org.example.old", "signer": null, "reason": "unknown",
+              "found": "relock", "at_ms": null }
+        ])
+    }
+
+    #[test]
+    fn relock_blocks_are_kept_through_the_known_fields() {
+        let stored = sanitize_relock_blocks(&blocks_literal()).unwrap();
+        let back: Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(back, blocks_literal());
+        // Junk: names, keys, reasons and places that aren't known go or fall back.
+        let junk = json!([
+            { "package_name": "not a package" },
+            { "package_name": "org.example.app", "signer": "XYZ", "reason": "because",
+              "found": "somewhere", "at_ms": -5 },
+            { "package_name": "org.example.app", "reason": "other_key" },
+            "x"
+        ]);
+        let blocks = parse_relock_blocks(sanitize_relock_blocks(&junk).as_deref()).unwrap();
+        assert_eq!(
+            blocks,
+            vec![RelockBlock {
+                package_name: "org.example.app".to_string(),
+                signer: None,
+                reason: "unknown".to_string(),
+                found: "relock".to_string(),
+                at_ms: Some(0),
+            }]
+        );
+        // An empty list is a phone with no blocks; anything but a list is nothing.
+        assert_eq!(sanitize_relock_blocks(&json!([])).as_deref(), Some("[]"));
+        assert_eq!(sanitize_relock_blocks(&json!({})), None);
+        let many: Vec<Value> = (0..30)
+            .map(|i| json!({ "package_name": format!("org.example.app{i}"), "reason": "outside_play", "found": "install" }))
+            .collect();
+        assert_eq!(
+            parse_relock_blocks(sanitize_relock_blocks(&Value::Array(many)).as_deref())
+                .unwrap()
+                .len(),
+            BLOCKS_MAX
+        );
+    }
+
+    #[test]
+    fn every_block_is_listed_with_its_key_and_why_and_a_catalog_imposter_stays() {
+        let blocks: Vec<RelockBlock> =
+            parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
+        let note = blocks_note(&blocks, &HashMap::new(), NOW);
+        assert!(note.allow_button);
+        assert_eq!(
+            note.items[0],
+            "me.vibb.music.debug (signing key 3f2a0000…0000c0de): installed from outside Play (a \
+             download or adb) - noticed at its install, 2025-10-10 12:40 UTC (3 h ago)."
+        );
+        assert_eq!(
+            note.items[1],
+            "org.example.old: blocked when the phone locked again."
+        );
+        assert!(note.text.unwrap().contains("press \"Allow these apps\""));
+        // The catalog pins another key: not the catalog's app - it stays, and alone it gets no button.
+        let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
+        let note = blocks_note(&blocks[..1], &pins, NOW);
+        assert!(!note.allow_button);
+        assert!(note.items[0].contains(
+            "signed with another key than the catalog's (99999999…99999999), so it isn't the \
+             catalog's app and stays blocked: uninstall it"
+        ));
+        assert!(!note.text.unwrap().contains("Allow these apps"));
+        // The phone's own reason says so too (its pin, kept from the app list).
+        let mut imposter = blocks[0].clone();
+        imposter.reason = "catalog_key".to_string();
+        assert!(!blocks_note(&[imposter], &HashMap::new(), NOW).allow_button);
+        // None: nothing.
+        assert_eq!(
+            blocks_note(&[], &HashMap::new(), NOW),
+            BlocksNote::default()
+        );
+    }
+
+    #[test]
+    fn a_new_block_is_logged_once() {
+        let blocks =
+            parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
+        assert_eq!(
+            blocks_log_line(5, Some(&blocks[1..]), &blocks).as_deref(),
+            Some(
+                "device 5: blocked me.vibb.music.debug (outside_play, install, key 3f2a0000…0000c0de)"
+            )
+        );
+        assert_eq!(blocks_log_line(5, Some(&blocks), &blocks), None);
+        assert_eq!(blocks_log_line(5, None, &[]), None);
     }
 
     #[test]

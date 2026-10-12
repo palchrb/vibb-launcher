@@ -37,6 +37,7 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
         private const val START_MS = "start_ms"
         private const val CATALOG_PINS = "catalog_pins"
         private const val ALLOWED = "allowed"
+        private const val BLOCK_NOTES = "block_notes"
         private const val CA_AT_START = "ca_at_start"
         private const val PROXIES_AT_START = "proxies_at_start"
         private const val FOREIGN_ACCESS = "foreign_access"
@@ -46,6 +47,7 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
         private val BLOCKED_SERIALIZER = MapSerializer(String.serializer(), SetSerializer(String.serializer()).nullable)
         private val PINS_SERIALIZER = MapSerializer(String.serializer(), String.serializer())
         private val ALLOWED_SERIALIZER = MapSerializer(String.serializer(), Long.serializer())
+        private val NOTES_SERIALIZER = MapSerializer(String.serializer(), BlockNote.serializer())
     }
 
     fun marker(): RelockMarker = RelockMarker(
@@ -105,15 +107,25 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
     /** `relock_blocked` (§1.6): package -> the expected signers (`null` = none known). */
     fun blocked(): Map<String, Set<String>?> = decode(BLOCKED) { ServerJson.decodeFromString(BLOCKED_SERIALIZER, it) }.orEmpty()
 
-    fun saveBlocked(blocked: Map<String, Set<String>?>): Boolean =
-        prefs.edit().putString(BLOCKED, ServerJson.encodeToString(BLOCKED_SERIALIZER, blocked)).commit()
+    /** `relock_blocked` and, for each new block in it, its [BlockNote] ([notes]) - in one commit;
+     * the notes of blocks that went go with them. */
+    fun saveBlocked(blocked: Map<String, Set<String>?>, notes: Map<String, BlockNote> = emptyMap()): Boolean = prefs.edit()
+        .putString(BLOCKED, ServerJson.encodeToString(BLOCKED_SERIALIZER, blocked))
+        .putString(BLOCK_NOTES, ServerJson.encodeToString(NOTES_SERIALIZER, (blockNotes() + notes).filterKeys { it in blocked }))
+        .commit()
+
+    /** Why, where and when each block was set (the status report's `relock_blocks`); a block from
+     * before the notes were kept has none. */
+    fun blockNotes(): Map<String, BlockNote> = decode(BLOCK_NOTES) { ServerJson.decodeFromString(NOTES_SERIALIZER, it) }.orEmpty()
 
     /** What "Allow these apps" let out last: package -> its update time then. */
     fun allowed(): Map<String, Long> = decode(ALLOWED) { ServerJson.decodeFromString(ALLOWED_SERIALIZER, it) }.orEmpty()
 
-    /** `allow_blocked`'s result in one commit: the remaining blocks and what was let out. */
+    /** `allow_blocked`'s result in one commit: the remaining blocks (and their notes) and what was
+     * let out. */
     fun saveAllowed(blocked: Map<String, Set<String>?>, allowed: Map<String, Long>): Boolean = prefs.edit()
         .putString(BLOCKED, ServerJson.encodeToString(BLOCKED_SERIALIZER, blocked))
+        .putString(BLOCK_NOTES, ServerJson.encodeToString(NOTES_SERIALIZER, blockNotes().filterKeys { it in blocked }))
         .putString(ALLOWED, ServerJson.encodeToString(ALLOWED_SERIALIZER, allowed))
         .commit()
 
@@ -289,7 +301,8 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
                 platform.installedPackages(), store.snapshot(), platform.allowlist(), store.blocked(),
                 platform.trustedInstallers(), platform.lockedSigners(), store.startMs(),
             )
-            if (!store.saveBlocked(check.blocked)) throw IllegalStateException("relock_blocked not saved")
+            val notes = check.reasons.mapValues { BlockNote(it.value, BlockFound.RELOCK, platform.now()) }
+            if (!store.saveBlocked(check.blocked, notes)) throw IllegalStateException("relock_blocked not saved")
             report = withResets(report, 0, 0, false, check.reported, check.signers)
         } catch (e: Exception) {
             signerFailed = true

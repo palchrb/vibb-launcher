@@ -334,6 +334,9 @@ pub struct DeviceStatus {
     /// The launcher's declared device-admin policies Android hasn't granted yet (JSON list, see
     /// [admin_policy_notice]; migration 0065). `None` from older launchers.
     pub admin_policies_pending_json: Option<String>,
+    /// Every app the phone has blocked now (design 24b, fix of 2026-10-12, migration 0067), see
+    /// `window_relock::RelockBlock`. `None` from older launchers.
+    pub relock_blocks_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -913,6 +916,11 @@ pub struct StatusReportRequest {
     /// (`window_relock::sanitize_foreign_access`). Absent = nothing found.
     #[serde(default)]
     pub foreign_access: Option<serde_json::Value>,
+    /// Design 24b (fix of 2026-10-12): every app blocked now - a relock's or the install check's -
+    /// `[{package_name, signer, reason, found, at_ms}]`, stored through the known fields only
+    /// (`window_relock::sanitize_relock_blocks`). Absent = an older launcher, or not device owner.
+    #[serde(default)]
+    pub relock_blocks: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.
