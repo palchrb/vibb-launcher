@@ -361,6 +361,9 @@ is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the desi
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with
   nb/en and a per-admin language setting.
+- **Idea, long list (user, 2026-10-12): a widget on the lock's glance page**, e.g. a Fossify widget
+  (calendar, clock, weather). Not designed yet. Open: privacy on a locked phone (a widget shows its app's
+  data to whoever holds it), `AppWidgetHost` in the lock activity, and which widgets the parent may allow.
 
 ## Phases
 
