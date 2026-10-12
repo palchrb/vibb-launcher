@@ -809,23 +809,28 @@ details, tests and device checks.
 
 ## Implementation status (2026-10-12)
 
-Built on branch `lock-glance-25`, rebased onto `main` at c9462785. Commits:
-- 6cee3af2 - step 1: the contract, both sides (migration, `lock_glance` in the policy, the PWA's "On the lock screen";
+Built on branch `lock-glance-25`, rebased onto `main` at 79465d85 (the launcher security wave). Commits:
+- fc377696 - step 1: the contract, both sides (migration, `lock_glance` in the policy, the PWA's "On the lock screen";
   `PolicyResponse.lockGlance` and `lockGlancePolicy`).
-- 0b6f7731 - step 2: the data - `GlanceReader`, `GlanceStore`, `GlanceRows`, `MissedCallNotice.contacts`,
+- fe7b97a0 - step 2: the data - `GlanceReader`, `GlanceStore`, `GlanceRows`, `MissedCallNotice.contacts`,
   `MissedCallNotifier.current`.
-- bc4bac58 - step 3a: the page - stages, layouts, the fit, `FLAG_SECURE`, the smoke test. Nothing opens yet.
-- 760c9736 - step 3b: the open - `GlanceOpener`, `VisibleSender`, the unlock path, the time-rule hand-over, the
+- b8d9ffa9 - step 3a: the page - stages, layouts, the fit, `FLAG_SECURE`, the smoke test. Nothing opens yet.
+- f9db15f8 - step 3b: the open - `GlanceOpener`, `VisibleSender`, the unlock path, the time-rule hand-over, the
   capability `lock_glance_v1`.
-- The commit with this section: step 4, the docs (both `CLAUDE.md`s, `PLAN.md`).
+- e7721410 - step 4, the docs (both `CLAUDE.md`s, `PLAN.md`).
+- The code QA's fix round: 420b0e50 (Lows 1, 2, 7), f5dac12c (Lows 3, 4, 5), d9e50fd9 (Low 6), and the commit with
+  the report and this update.
 
-**Migration:** `0066_lock_glance.sql`, the next number after `main`'s 0065 (`0065_command_receipts.sql`, the launcher security wave).
+**Migration:** `0066_lock_glance.sql`, the next number after `main`'s 0065 (`0065_command_receipts.sql`, the
+launcher security wave).
 
-**Tests (after the rebase):** launcher `./gradlew testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true`:
-939 unit tests, 0 failures, both builds green. Server: `cargo test` 553 passed, `cargo fmt --check` clean,
-`cargo clippy --all-targets` 12 warnings, all from before this branch (unused model fields, `dns_engine.rs`, an old
-`sort_by` in `devices.rs`), none new. Each step was green on its own before the rebase: the step-1 compatibility test
-and the full server suite on the server half; the full launcher suite after steps 2, 3a and 3b.
+**Tests (on 79465d85, after the code QA's fix round):** launcher `./gradlew testDebugUnitTest assembleDebug
+assembleRelease -PwarningsAsErrors=true` with the stub `tsnet.aar` (dependency verification on): 983 unit tests, 0
+failures, both builds green. Server: `cargo test` 574 passed, `cargo fmt --check` clean, `cargo clippy --all-targets`
+12 warnings, all from before this branch (unused model fields, `dns_engine.rs`, an old `sort_by` in `devices.rs`),
+none new. The PWA's subsection checked headless at 360 px, light and dark, after the merge (no horizontal scroll).
+Each step was green on its own before the first rebase: the step-1 compatibility test and the full server suite on
+the server half; the full launcher suite after steps 2, 3a and 3b.
 
 **All 12 QA findings are built in:**
 - Medium 1: the reader takes the ranking of every post (`onNotificationPosted(sbn, rankingMap)`), every sweep
@@ -879,9 +884,36 @@ and the full server suite on the server half; the full launcher suite after step
    - `shot` still uses `screencap`, which is black over the lock; a comment points to the emulator console.
 8. The "more" line shares a wrapper (`lock_glance_list`) with the rows. Its 14/22 dp top margin then also applies
    when no row fits (candidate 7).
-9. `MissedCallNotifier.refreshAtStart` (§2.4) never clears, it only re-learns what is on screen. During a no-calls
-   time rule the phone book's view has only emergency contacts. A process restart then, such as the night's
-   self-update during bedtime, would otherwise cancel a missed-call notification the kid hasn't seen.
+9. `MissedCallNotifier.refreshAtStart` (§2.4; since the code QA `relearn`) never clears, it only re-learns what is
+  on screen. During a no-calls time rule the phone book's view has only emergency contacts. A process restart then,
+  such as the night's self-update during bedtime, would otherwise cancel a missed-call notification the kid hasn't
+  seen.
+
+**Fix round after the code QA (`qa-25-code.md`, 0 High, 0 Medium, 7 Low; all fixed):**
+1. The lock-task checks hold for the time-rule hand-over: `lockWasRoot` travels with the hand-over and refuses before
+   it, and with the kiosk on an open with no lock task running opens nothing ("lock task not running"), from either
+   place.
+2. A refused send: `PendingIntent.send` throws only for a negative result, its `OnFinished` reports 0 for an
+   activity, and the result-returning send is hidden. So the opener watches our own windows for 1.5 s after a
+   send (`glanceSendCheck`): Home or the time-rule screen back in front means the start was refused, and the app's
+   launch intent goes from that window. Otherwise the row is marked opened, but only when Home or the time-rule
+   screen was below (kiosk on, or the hand-over). With the kiosk off, nothing is concluded, and the app clears its
+   own notification when the room opens.
+3. `MissedCallNotifier.relearn` (the process start, every time-lock change, and ours posted again while `current`
+   is unknown - a snooze that ended) counts against the call rules without the time rule's block
+   (`noticeState`). A notification on screen during a no-calls rule was posted before it, so the glance knows it
+   again.
+4. The tests the QA named: `glanceSuspended` (no ranking = suspended) in both reader paths,
+   `glanceUsableUnderLock` (the budget's apps, a rule's exempt apps, a no-calls rule, unmanaged calls),
+   `nextGlancePolicy` (a fresh policy beats the start's cache), and guard checks for `removedFromShade` and the
+   re-learn wiring.
+5. `cleanGlanceText` collapses Unicode whitespace (line and paragraph separators, no-break spaces) and drops the
+   invisible marks (U+061C, U+200E/200F, U+2060-2064, U+FEFF). Joiners stay, since emoji need them. The test file's
+   bidi characters are now escapes instead of literal characters.
+6. PWA: an unlisted tick says "not allowed" only when the allowlist lacks it, else "not on the phone". An empty
+   list says why: no report yet, no allowed app, or none reported.
+7. The tile's progress ticks only while the glance page shows (`glanceTicks(tileShown, pageShown, session)`), not
+   behind the keypad.
 
 **Not run here:** no emulator or phone in this sandbox. Everything below is a device check.
 
@@ -937,7 +969,14 @@ and the full server suite on the server half; the full launcher suite after step
       - long-press, swipe and double-tap on rows do nothing;
       - Element X's quick reply never appears;
       - the notification stays unread in Element X until the room opens.
-- [ ] The kiosk-on root case: force the 1 s fallback. Nothing opens, and the kid lands on Home.
+- [ ] The kiosk-on root case: force the 1 s fallback. Nothing opens, and the kid lands on Home - also under the
+      screen-time budget with an Element X row (the hand-over refuses too, code QA Low 1).
+- [ ] A refused send (code QA Low 2): a ticked app whose content intent the platform refuses (the API 34/35 opt-in,
+      or a target lock task doesn't permit with "Block other apps" off) - within 1.5 s the app's launch intent
+      opens instead (kiosk on: from Home; under a rule: from the time-rule screen), and the row isn't hidden when
+      nothing opened. A Back within 1.5 s of a room that did open re-opens the app's main screen once (accepted).
+- [ ] Missed calls and the glance after the night's update during bedtime: the row is there in the morning (code QA
+      Low 3); a missed-call notification snoozed from the shade comes back as a row when the snooze ends.
 - [ ] A ticked app whose content intent goes into an app that isn't allowlisted: BlockedAppActivity with the kiosk
       on, nothing with it off.
 - [ ] The open on an API 34 or 35 emulator (`MODE_BACKGROUND_ACTIVITY_START_ALLOWED`); the Jelly Star (16) covers

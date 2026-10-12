@@ -660,8 +660,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `#lock-screen-text`) and one auto-saving tick per app (`POST /devices/{id}/lock-screen/apps`, `package_name` +
   checkbox `on`, form `#lock-screen-app-<package>`). Listed: with an allowlist the allowed apps (the "Names and
   icons" set), without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN has the lock
-  too), never Play core or the launcher; every ticked package outside that list is added with "not allowed - ticked"
-  ("not on the phone - ticked" without an allowlist), so any tick can be removed. 404 unknown device, 400 a package
+  too), never Play core or the launcher; every ticked package outside that list is added - "not allowed - ticked"
+  when the allowlist lacks it, else "not on the phone - ticked" (`lock_glance::unlisted_note`) - so any tick can be
+  removed; an empty list says why (`empty_text`: no report yet, nothing allowed, nothing reported). 404 unknown device, 400 a package
   that isn't a package name or is Play core, 500 on a DB error - nothing written; security events
   `lock_screen_text_changed` / `lock_screen_app_changed` (`lock_glance::log_line`: "device 3: io.element.android.x on
   the lock screen: on"); nudges; redirect to `/devices/{id}` without a fragment (scroll-restore keeps the place). The
