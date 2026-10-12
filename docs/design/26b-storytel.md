@@ -990,9 +990,12 @@ commit), 3 (the phone's download path), 4a (one column), 4b (the Sonos wiring) -
   set of applied versions (a main-session change; documented here and in `server/CLAUDE.md`, not made). Deploy the
   server first: an older server sends no Storytel entries, so an older or newer music app simply has none.
 - **Launcher**: no code change; nothing to release for phase 2.
-- **Music**: `music-v0.3.0-rc.1` on the merge commit on `main`, after 1b's `music-v0.2.0` line (26a "Release"); the
-  stable `music-v0.3.0` after the emulator checks (§6i, §6h with Storytel) and the device checks above. An older music
-  app on a phase-2 server hides Storytel entries and prunes nothing (§3.1).
+- **Music**: `music-v0.3.0-rc.1` on the merge commit on `main`, after 1b's `music-v0.2.0` line (26a "Release"):
+  versionName `0.3.0-rc.1`, versionCode **2999** (`0*1_000_000 + 3*1_000 + 0`, an RC minus 1), above 1b's
+  `music-v0.2.0-rc.1` (1999) and the released `music-v0.0.1`/`music-v0.0.2` (1 and 2; checked 2026-10-12 at the merge
+  of music-1b-sonos), so it installs over all of them through the catalog. A prerelease, never "latest". The stable
+  `music-v0.3.0` after the emulator checks (`docs/testing/emulator.md` §6i, and §6h with Storytel) and the device
+  checks above. An older music app on a phase-2 server hides Storytel entries and prunes nothing (§3.1).
 
 ## 12. QA review (2026-10-12, design QA)
 
@@ -1670,3 +1673,112 @@ in the touched files; `python3 -I scripts/fake-storytel.py --selftest` OK.
   check).
 
 Owed: unchanged from the status above (the §6i emulator checks, now with the job-limit line, and the device checks).
+
+## Merge of music-1b-sonos and main (2026-10-12)
+
+`origin/music-1b-sonos` at `39b59dd` (which holds `origin/main` at `444ca58`) merged into `music-2-storytel` at
+`7d93478` (`49770d8`, one merge commit, no rebase), then four commits: the migration (`e14bf36`), the emulator
+section (`24ce749`), the adaptation (`6566d8b`), the two Lows (`d5da1c2`), and this section. Written here at the end,
+after step 3's status, because this design's "Release" sits before §12 rather than last.
+
+**What came in:** 1b's correction round after the main session's review and its fix round (26a: no socket bound to
+the Wi-Fi `Network`, the volume cap at a session's start and on a lowered cap, the bedtime stop's looks and park
+budget, the hidden position while grouped away, `PlayBody`'s tailnet filter, a `Room`'s members with unknown uids,
+the fake speaker's fixture answers and `--volume`), and 1b's merge of main: the launcher security wave, designs 25
+and 25f with migrations 0065-0069, design 27's spec (0070 reserved for it), the music app's instant switch adapted to
+the renderer axis (`PlayerHub.State.waiting`, `SWITCH_WAIT_MAX_MS` 25 s, `playSwitch`/`skipSwitch` with `onRoom`,
+`playerNumber`), the Gradle verification metadata (1b and this branch add no dependency), 1b's migration as 0071 and
+its emulator section as §6h. No AIDL, `bridge_contract.json` or shared snapshot changed on the way in.
+
+**Conflicts and how they were resolved:**
+- `ui/UiModel.kt`: both branches add `playerNumber(snap, now)` in the same place. Storytel's body is kept (a Storytel
+  entry counts the series' reading order through `countedOrder`, §3.5 and §13 M5; every other entry the list order,
+  which is 1b's body), with 1b's note that it serves the player and a tap's switch alike, on the phone or a room; both
+  imports (`countedOrder`, main's `coverTapStart`).
+- `ui/MusicRoot.kt`: the `PlayerScreen` call takes main's `position`/`skip` and 1b's `onRoom` and `hub.waiting` code;
+  the `playerNumber` call is the same on both sides.
+- `ui/PlayerScreen.kt`: Storytel's "Del/Spor/Episode N av M" line with main's `now.itemTitle`.
+- Merged by themselves and read through: `docs/testing/emulator.md` (three sections after §6f now), `music.yml` (both
+  fakes' selftests and path filters beside main's wrapper validation), root and music `CLAUDE.md`, `server/CLAUDE.md`,
+  `PlaybackService.kt`, `MusicViewModel.kt`, `LibraryScreen.kt`, `DebugFeedReceiver.kt`, `SourceScanTest`,
+  `GuardsTest`, `server/src/{main,music}.rs`, `device_detail.html`, PLAN.md, design 26.
+
+**The migration is `0072_music_storytel.sql`** (was 0066, which main's `0066_lock_glance.sql` now has; main holds
+0065-0069, 0070 is reserved for design 27, 1b holds 0071). Content unchanged but the header (the 0072 wording, the
+renumbering and the backup hazard); §2.8's block is the file byte for byte. `server/CLAUDE.md` (the Storytel section's
+title and the Data model's hazard paragraph), the comments in `music.rs`, `music_sweep.rs` and the Storytel server
+test, this design's steps and the 2a/2b statuses, PLAN.md and design 26 follow. The hazard is 26a's: a lower number
+(0070, or 0071 were 1b's server not deployed first) reaching a server that has run 0072 is applied out of order with
+no pre-migration backup (`pre_migration_backup` compares only `MAX(version)`); "Release" says so.
+
+**The emulator section is §6i** (`docs/testing/emulator.md`: main's §6g security checks, 1b's §6h fake speaker, ours
+§6i fake Storytel). This design's references follow (its §6h -> §6i, its mentions of the Sonos section §6g -> §6h),
+`music.yml`'s selftest comment, `fake-storytel.py`'s header (it gains the reference), `DebugStorytel.kt` and
+`DebugFeedReceiver.kt`. QA review records keep the numbers they were written against. `music/CLAUDE.md` and root
+`CLAUDE.md` don't name the Storytel section yet (step 5's docs).
+
+**The adaptation (`6566d8b`).** A tap's switch on a room counted the screens' snapshot, which is the phone's
+(`forRenderer(false)`) until step 4b; the room's queue after 4b holds every book (`forRenderer(true)`, §5.6).
+`playSwitch` now reads `snap.forRenderer(onRoom)` itself: the entry, its order and the cover tap's or pick's start come
+from the renderer's view, then on a room the speaker filter. Today `PlayBodies.speakerDropReason` drops every Storytel
+book ("withdrawn": no url), so a Storytel tap on a room is no switch - and the service says "Kan ikke spilles på
+Sonos" for the same reason: they agree. With 4b's filter (§5.1: a Storytel book is speaker-playable, downloaded or
+not) the view queues the whole series, starts a cover tap at a bookmark that isn't on the phone, at its place, and
+numbers it in the series. The filter is a parameter (default `PlayBodies::speakerPlayable`) so that seam is tested now.
+`skipSwitch` counts in the hub's queue (the service's `Active.items`): unchanged, right for both renderers.
+`playerNumber` is renderer-independent for Storytel (`snap.listed`) and the same on both views for every other
+source. Checked and left: `PlayBody`'s tailnet filter (a minted CDN URL is public, never a tailnet literal; the fake's
+10.0.2.2 is a private literal, §5.1's `privateMintAllowed()` covers it), the start cap (nothing to do before 4b), the
+grouped-away hidden position and `storedUri`/`consumableIdOf` (unwired until 4b; notes below). Tests: `SwitchViewTest`
++2, a `GuardsTest` pin.
+
+**The two Lows from the main session's review of step 3 (`d5da1c2`):**
+1. `DownloadRun.fail()`: a failure after the partial copy grew counts as the first again (attempts 1, the 2-minute
+   wait), so a slow but progressing download never backs off towards 6 h while it gets further; only failures that get
+   nowhere double. A not-done row's `bytes` hold the partial's size at its last failure (carried across an attempt's
+   row write, 0 when the partial is dropped); `DownloadIo.cachedBytes` reads `MediaCache.cachedBytes`. No Room schema
+   change (the column exists; its KDoc says both meanings). NRK/RSS get the same rule (their partials resume from the
+   same url too). `StorytelDownloadTest` +1; dropping the growth check turns it red (checked).
+2. `StorytelAccount.mint` is `runInterruptible(Dispatchers.IO) { api.assetUrl(...) }`: a cancelled caller (a download
+   job WorkManager stops, 4b's superseded play) interrupts the blocked thread - the login lock's `tryLock` wait ends at
+   once, an OkHttp call at its next read or write (Okio checks the flag; a socket read blocked mid-packet still ends
+   only at its timeout) - and gets its `CancellationException`, never the mint's answer. `lockWithin` already keeps the
+   interrupt; an interrupted login is a `LoginFailed` inside, never a refusal (no cooldown). `StorytelApiTest` +1 (a
+   waiter on another's login and that login's own blocked request each end within a second when cancelled, no cooldown
+   stamp, the next mint logs in); `GuardsTest`'s pin follows.
+
+**For step 4b** (what 1b's changes since `9ecdad8` mean for it):
+- **The late mint inside the room's actor**: the body is built on main (`PlayBodies.build`) before `work.submit`;
+  Storytel's goes inside the job (IO) - the token check (M6), the mint, the token check again, then `transport.play`.
+  The start cap and the hush are inside `transport.play` (after the mute, before `SetAVTransportURI`), so a failed
+  mint sends nothing and touches no volume; nothing to change for the cap. The superseded branch (`g != gen`) keeps
+  `Playing(..., res.uri)`: in memory only - any write of it goes through `storedUri`. The mint's HTTP uses
+  MediaCache's guarded client, never a socket bound to a `Network` (1b's correction 1 holds for it).
+- **Adopt by `consumableId`**: `SonosSession.classify` (`ours = normUri(trackUri) == normUri(uri)`),
+  `SonosLifecycle` (`ours` against the stored uri, and the built-uri match) and the standalone bedtime path's new
+  looks (`adoptLive(..., aux = false)` with its `keep`) compare normalised uris. With `renderer.json` holding
+  `storytel:book:<cid>` (`storedUri`), each must use `sameStream` for a Storytel entry, and the adopted session's uri
+  must be the live signed one (§5.3), or every adopted book reads as not ours. **The stakes rose**: since 1b's
+  "grouped 2" a fresh, reachable, not-ours snapshot shows position 0 with no duration (`hidesPosition`) and is never
+  bookmarked - a wrong comparison now shows 0:00 at once instead of the last position.
+- **The migration probe** ("migrate 1"): an adopt goes out with the hint's uri when it differs from the session's -
+  exactly a re-signed Storytel URL; its write to `renderer.json` goes through `storedUri` like `host.played` and
+  `lookAtRoom`'s (§5.3's list gains it), and `volOpt` resets (1b's rule).
+- **`speakerDropReason`**: Storytel needs its branch before `item.url ?: return "withdrawn"` (§5.1); the minted URL then
+  gets the private-literal check unless `privateMintAllowed()`, and the tailnet check like any url.
+- **The screens**: the switch reads the room's view now (above); 4b gives `MusicViewModel` the renderer's snapshot
+  (§3.2), so the carousel, the list and a stored queue on a room (`nowView` from the stored row filters by the
+  screens' order) show undownloaded books.
+- **The start cap on a Storytel play**: a mint of up to 10 s delays the cap and Play; the switch's hold isn't affected
+  (the controller moves the index on main before the job; `PlayerHub.State.waiting` counts the command, not the job).
+
+**Tests after the merge** (local Rust 1.97, the sandbox's JDK 21): server `cargo test` **628 passed, 0 failures**,
+`cargo fmt --check` clean, `cargo clippy --all-targets` the same 12 warnings (`models.rs`, `dns_engine.rs`,
+`handlers/devices.rs`; none in Storytel or Sonos code); music `assembleDebug assembleRelease testDebugUnitTest
+lintDebug -PwarningsAsErrors=true` **499 JVM tests, 0 failures** (446 at step 3's fix round; 495 with the merge alone,
++2 for the adaptation, +2 for the Lows), lint 0 errors and the same 40 warnings as 1b's merge;
+`python3 -I -B scripts/fake-sonos.py --selftest` and `python3 -I -B scripts/fake-storytel.py --selftest` OK; launcher
+`assembleDebug testDebugUnitTest` (the tsnet stub) **1012 tests, 0 failures** - its `assembleRelease` needs
+`app/libs/tsnet.aar` (`checkReleaseHasTsnet`), which CI builds and this sandbox can't: not run. The AIDL copies,
+`bridge_contract.json` and the shared snapshots are byte-identical (`ContractFilesTest`, `BridgeTest`, `MusicPlanTest`
+green).
