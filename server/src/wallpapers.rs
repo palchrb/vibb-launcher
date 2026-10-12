@@ -109,6 +109,18 @@ pub async fn policy_wallpapers(
         .collect())
 }
 
+/// The lock's own wallpaper for a device (design 25, "Lock background"), `None` = Home's. Always
+/// one the device may use (the table's composite key).
+pub async fn lock_wallpaper(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar("SELECT wallpaper_id FROM device_lock_wallpaper WHERE device_id = ?")
+        .bind(device_id)
+        .fetch_optional(db)
+        .await
+}
+
 /// The devices that have a wallpaper (to nudge them after a change).
 pub async fn devices_with(
     db: &sqlx::SqlitePool,

@@ -724,7 +724,7 @@ class PolicyResponseCompatTest {
             "launcher_ui": {"language": "en", "home_columns": 3, "wallpapers": [
               {"id": 1, "kind": "color", "colors": ["#14213D"], "image": null, "label": "Navy", "builtin_key": "navy", "lock_screen": false},
               {"id": 7, "kind": "image", "colors": [], "image": "$photo", "label": "Hytta", "builtin_key": null, "lock_screen": true}
-            ]},
+            ], "lock_wallpaper": 7},
             "packages_to_uninstall"
             """.trimIndent()
         )
@@ -734,6 +734,10 @@ class PolicyResponseCompatTest {
         assertEquals(photo, walls[1].image)
         assertTrue(walls[1].lockScreen)
         assertEquals(emptyList<Any>(), policy.launcherUi!!.wallpapers)
+        // Design 25, "Lock background": the id, or null/missing (an older server) = Home's.
+        assertEquals(7L, (decodeCached(withWallpapers) as CachedPolicy.Ok).policy.launcherUi!!.lockWallpaper)
+        assertNull(policy.launcherUi!!.lockWallpaper)
+        assertNull((decodeCached(withWallpapers.replace("\"lock_wallpaper\": 7", "\"lock_wallpaper\": null")) as CachedPolicy.Ok).policy.launcherUi!!.lockWallpaper)
 
         val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, notificationListenerEnabled = false)
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject

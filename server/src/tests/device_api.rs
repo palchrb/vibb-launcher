@@ -386,8 +386,16 @@ async fn policy_json_keys_snapshot() {
     ui_keys.sort_unstable();
     assert_eq!(
         ui_keys,
-        ["app_display", "home_columns", "language", "wallpapers"]
+        [
+            "app_display",
+            "home_columns",
+            "language",
+            "lock_wallpaper",
+            "wallpapers"
+        ]
     );
+    // Design 25, "Lock background": always sent, null = the lock shows Home's wallpaper.
+    assert_eq!(launcher_ui["lock_wallpaper"], serde_json::json!(null));
     // Design 14 (QA #1): always a list, even when nothing is named.
     assert_eq!(launcher_ui["app_display"], serde_json::json!([]));
     assert!(

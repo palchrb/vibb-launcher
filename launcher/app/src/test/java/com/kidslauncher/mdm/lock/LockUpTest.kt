@@ -155,4 +155,22 @@ class LockUpTest {
         val fit = body(panel, "fitNow")
         assertTrue(fit.contains("refitPending = true"))
     }
+
+    /** Design 25, "Lock background": drawn by the lock on both stages, its window opaque. */
+    @Test
+    fun `the lock draws its own background behind both stages - the window stays opaque`() {
+        val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
+        val ground = body(activity, "applyLockGround")
+        assertTrue(ground.contains("if (!state.lockReady) return"))
+        assertTrue(ground.contains("binding.root.background = lockGround(state)"))
+        assertTrue(ground.contains("glance?.ground(lockGround(state))"))
+        assertTrue(ground.contains("catch (e: Throwable)"))
+        assertTrue(body(activity, "onStart").contains("WallpaperStore.addListener(wallpaperListener)"))
+        assertTrue(body(activity, "onStop").contains("WallpaperStore.removeListener(wallpaperListener)"))
+        assertTrue(activity.contains("GroundDrawable(state.lock.fill, state.lockBitmap, state.lockScrimArgb)"))
+        val styles = file("res/values/styles.xml").readText()
+        val theme = styles.substringAfter("<style name=\"PinLockTheme\"").substringBefore("</style>")
+        assertFalse(theme.contains("windowShowWallpaper"))
+        assertFalse(theme.contains("windowIsTranslucent"))
+    }
 }

@@ -495,7 +495,8 @@
         <noscript><button type="submit">Save</button></noscript>
     </form>
 
-    <form method="post" action="/devices/{{ device.id }}/wallpapers" class="card">
+    <div class="card" id="wallpapers">
+    <form method="post" action="/devices/{{ device.id }}/wallpapers">
         <h2>Wallpapers</h2>
         <p class="subtitle">The backgrounds the child may choose from on this phone. Each choice saves itself immediately; unticking the one in use replaces it on the phone at once. Add your own photos on the <a href="/wallpapers">Wallpapers</a> page.</p>
         <div class="wallpaper-choices" style="display:flex;flex-wrap:wrap;gap:10px;">
@@ -512,6 +513,19 @@
         </div>
         <noscript><button type="submit">Save</button></noscript>
     </form>
+    <form method="post" action="/devices/{{ device.id }}/lock-wallpaper" id="lock-wallpaper">
+        <h3>Lock screen background</h3>
+        <p class="subtitle">By default the lock shows the same wallpaper as the home screen - a photo included, so anyone holding the locked phone sees it. Choose another one of the ticked wallpapers to give the lock its own.</p>
+        <label for="lock-wallpaper-select">Lock screen</label>
+        <select id="lock-wallpaper-select" name="wallpaper" onchange="this.form.submit()">
+            <option value="" {% if lock_same_as_home %}selected{% endif %}>Same as Home</option>
+            {% for w in wallpapers %}{% if w.checked %}
+            <option value="{{ w.id }}" {% if w.lock %}selected{% endif %}>{{ w.label }}</option>
+            {% endif %}{% endfor %}
+        </select>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+    </div>
 
     <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card" id="screen-lock">
         <h2>Screen lock</h2>

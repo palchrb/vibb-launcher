@@ -1069,7 +1069,8 @@ because anyone holding the locked phone sees it.
 - **Veto if wrong:** "Same as Home" could skip photos without the tick (navy instead).
 
 ### Data, policy, PWA
-- **Migration `00NN_lock_wallpaper.sql`** (number: the next free one at merge time), a new table:
+- **Migration `0070_lock_wallpaper.sql`** (0068 and 0069 are taken by other branches; renumber at merge if needed),
+  a new table:
   - `device_lock_wallpaper (device_id INTEGER PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, wallpaper_id INTEGER NOT NULL, FOREIGN KEY (device_id, wallpaper_id) REFERENCES device_wallpapers(device_id, wallpaper_id) ON DELETE CASCADE)`.
   - No row means "Same as Home".
   - The composite key makes untick and delete fall back by themselves.
@@ -1081,8 +1082,8 @@ because anyone holding the locked phone sees it.
   - "Same as Home", then every ticked wallpaper;
   - `POST /devices/{id}/lock-wallpaper` with `wallpaper` = `""` or an id;
   - an id that isn't ticked for this phone is a 400 and nothing changes;
-  - it nudges the phone, redirects to `/devices/{id}#wallpapers` (scroll kept), and is a security event
-    `lock_wallpaper_changed`.
+  - it nudges the phone, redirects to `/devices/{id}` without a fragment (`scroll-restore.js` keeps the place, as the
+    lock-screen ticks do), and is a security event `lock_wallpaper_changed`.
 - **Launcher:**
   - Pure `lockWallpaper(allowed, lockId, home, cached)`: the chosen one if it is allowed and usable, else `home`.
   - `WallpaperStore.State` gains `lock` (the wallpaper) and `lockBitmap` (Home's bitmap when it is the same photo,

@@ -97,6 +97,32 @@ fun inkForFill(fill: WallpaperFill): InkChoice? = when (fill) {
     is WallpaperFill.Image -> null // needs the pixels: inkForImage
 }
 
+/**
+ * The PIN lock keeps its light ink on every background (design 25, "Lock background"): its cards
+ * and keys are dark and opaque, only the clock, the date and a few links sit on the wallpaper.
+ * So only a black scrim: the lightest (at least [minScrim]) that gives white 4.5:1 against the
+ * background's lightest part, at most [LOCK_MAX_SCRIM] - which reaches 4.5:1 even on white.
+ */
+const val LOCK_MAX_SCRIM = 0.6
+
+fun lockScrim(lightestLum: Double, minScrim: Double = 0.0): Double {
+    var alpha = minScrim
+    while (alpha < LOCK_MAX_SCRIM) {
+        if (contrastRatio(1.0, underScrim(lightestLum, alpha, towardsWhite = false)) >= LABEL_CONTRAST) return alpha
+        alpha += 0.01
+    }
+    return LOCK_MAX_SCRIM
+}
+
+/** [lockScrim] for a colour or gradient (its lightest stop). */
+fun lockScrimForColours(colours: List<Int>): Double = lockScrim(colours.maxOfOrNull(::relativeLuminance) ?: 0.0)
+
+/** [lockScrim] for a photo: its light side (mean + one standard deviation), at least [MIN_IMAGE_SCRIM]. */
+fun lockScrimForImage(stats: LuminanceStats): Double = lockScrim(min(1.0, stats.mean + stats.sd), MIN_IMAGE_SCRIM)
+
+/** A black scrim of [alpha] as ARGB. */
+fun blackScrimArgb(alpha: Double): Int = ((alpha * 255).toInt().coerceIn(0, 255)) shl 24
+
 /** Mean and standard deviation of the pixels' luminance, averaged in linear light. */
 data class LuminanceStats(val mean: Double, val sd: Double)
 

@@ -7,13 +7,14 @@
 use std::collections::HashSet;
 
 use askama::Template;
-use axum::Form;
 use axum::extract::{Multipart, Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::{Extension, Form};
 
 use crate::AppState;
 use crate::photos::{self, PhotoError, Shape, WALLPAPERS};
+use crate::security::{self, CurrentAdmin};
 use crate::wallpapers::{self as store, WallpaperRow};
 
 /// Longest label kept (the phone reads it out with TalkBack).
@@ -283,6 +284,8 @@ pub struct DeviceWallpaperChoice {
     pub background: String,
     pub image: Option<String>,
     pub checked: bool,
+    /// The lock's own background (design 25, "Lock background") - at most one, always ticked.
+    pub lock: bool,
 }
 
 /// The device page's card: every wallpaper, ticked when this phone may use it.
@@ -295,6 +298,7 @@ pub async fn device_choices(
         .iter()
         .map(|w| w.id)
         .collect();
+    let lock = store::lock_wallpaper(&state.db, device_id).await?;
     Ok(store::all(&state.db)
         .await?
         .into_iter()
@@ -302,6 +306,7 @@ pub async fn device_choices(
             id: w.id,
             background: w.css_background(),
             checked: allowed.contains(&w.id),
+            lock: lock == Some(w.id),
             label: w.label,
             image: w.image_hash,
         })
@@ -310,6 +315,8 @@ pub async fn device_choices(
 
 /// Saves which wallpapers a phone may use (`wallpaper=<id>`, repeated). An unknown id is a 400
 /// and nothing changes; the phone is nudged and, if its current one was unticked, replaces it.
+/// Only the unticked rows are deleted: the lock's own wallpaper (`device_lock_wallpaper`, keyed on
+/// these rows) stays unless it was unticked - then the lock falls back to Home's.
 pub async fn save_device_wallpapers(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -334,10 +341,6 @@ pub async fn save_device_wallpapers(
         if !exists {
             return Ok(Err(StatusCode::NOT_FOUND));
         }
-        sqlx::query("DELETE FROM device_wallpapers WHERE device_id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
         for wallpaper_id in &chosen {
             let known: bool =
                 sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM wallpapers WHERE id = ?)")
@@ -355,6 +358,15 @@ pub async fn save_device_wallpapers(
             .execute(&mut *tx)
             .await?;
         }
+        let kept = serde_json::to_string(&chosen).unwrap_or_else(|_| "[]".to_string());
+        sqlx::query(
+            "DELETE FROM device_wallpapers WHERE device_id = ? \
+             AND wallpaper_id NOT IN (SELECT value FROM json_each(?))",
+        )
+        .bind(id)
+        .bind(kept)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok::<_, sqlx::Error>(Ok(()))
     }
@@ -369,5 +381,97 @@ pub async fn save_device_wallpapers(
         }
         Ok(Err(status)) => (status, "Unknown wallpaper").into_response(),
         Err(err) => db_error(err),
+    }
+}
+
+/// `POST /devices/{id}/lock-wallpaper` (design 25, "Lock background"): `wallpaper` = `""` (the
+/// lock shows Home's wallpaper) or the id of a wallpaper ticked for this phone (else 400, nothing
+/// changes). 404 for an unknown device. Logged, nudges the phone, back to `/devices/{id}` without
+/// a fragment (`scroll-restore.js` keeps the parent's place).
+pub async fn save_lock_wallpaper(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let choice = match form.get("wallpaper").map(|v| v.trim()).unwrap_or_default() {
+        "" => None,
+        v => match v.parse::<i64>() {
+            Ok(v) => Some(v),
+            Err(_) => return (StatusCode::BAD_REQUEST, "Unknown wallpaper").into_response(),
+        },
+    };
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM devices WHERE id = ?)")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !exists {
+            return Ok(Err(StatusCode::NOT_FOUND));
+        }
+        match choice {
+            None => {
+                sqlx::query("DELETE FROM device_lock_wallpaper WHERE device_id = ?")
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            Some(wallpaper_id) => {
+                let ticked: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM device_wallpapers \
+                     WHERE device_id = ? AND wallpaper_id = ?)",
+                )
+                .bind(id)
+                .bind(wallpaper_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !ticked {
+                    return Ok(Err(StatusCode::BAD_REQUEST));
+                }
+                sqlx::query(
+                    "INSERT INTO device_lock_wallpaper (device_id, wallpaper_id) VALUES (?, ?) \
+                     ON CONFLICT(device_id) DO UPDATE SET wallpaper_id = excluded.wallpaper_id",
+                )
+                .bind(id)
+                .bind(wallpaper_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>(Ok(()))
+    }
+    .await;
+    match result {
+        Ok(Ok(())) => {
+            security::record_security_event(
+                &state.db,
+                "lock_wallpaper_changed",
+                Some(&admin.username),
+                None,
+                Some(&lock_wallpaper_log_line(id, choice)),
+            )
+            .await;
+            nudge(&state, &[id]);
+            Redirect::to(&format!("/devices/{id}")).into_response()
+        }
+        Ok(Err(StatusCode::NOT_FOUND)) => {
+            (StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(Err(status)) => (
+            status,
+            "That wallpaper isn't ticked for this phone - tick it first.",
+        )
+            .into_response(),
+        Err(err) => db_error(err),
+    }
+}
+
+/// The security log's detail for a lock-wallpaper change.
+pub fn lock_wallpaper_log_line(device_id: i64, choice: Option<i64>) -> String {
+    match choice {
+        Some(w) => format!("device {device_id}: lock screen background: wallpaper {w}"),
+        None => format!("device {device_id}: lock screen background: same as Home"),
     }
 }

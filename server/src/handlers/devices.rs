@@ -432,6 +432,8 @@ struct DeviceDetailTemplate {
     home_columns: i64,
     /// The wallpaper card: every wallpaper, ticked when this phone may use it.
     wallpapers: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
+    /// The lock shows Home's wallpaper (no lock wallpaper chosen, design 25 "Lock background").
+    lock_same_as_home: bool,
     /// The last status report says the launcher's notification listener has no access, so the
     /// home screen shows no unread badges on apps.
     badges_without_access: bool,
@@ -1520,6 +1522,7 @@ async fn render_device(
             tracing::error!(device_id = id, %err, "couldn't load the wallpaper card");
             Vec::new()
         });
+    let lock_same_as_home = !wallpapers.iter().any(|w| w.lock);
 
     let crashes = crate::crashes::latest(&state.db, id).await;
     let music = crate::handlers::music::device_card(
@@ -1581,6 +1584,7 @@ async fn render_device(
             launcher_language: policy.launcher_language.clone(),
             home_columns: policy.home_columns,
             wallpapers,
+            lock_same_as_home,
             badges_without_access: latest_status
                 .as_ref()
                 .is_some_and(|s| s.notification_listener_enabled == Some(false)),

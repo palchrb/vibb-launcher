@@ -156,6 +156,9 @@ pub struct LauncherUi {
     /// The wallpapers this phone may use, in the parent's order (design 08-ui-polish.md); the kid
     /// picks one on the phone. Always sent, possibly empty (the launcher then uses navy).
     pub wallpapers: Vec<PolicyWallpaper>,
+    /// The lock's own background (design 25, "Lock background"): one of [`Self::wallpapers`] by
+    /// id, or null - the lock shows Home's wallpaper. Always sent.
+    pub lock_wallpaper: Option<i64>,
     /// How apps show on this phone (design 14): the catalog defaults resolved against the phone's
     /// own choices (`app_display::policy_app_display`). Always sent, possibly empty.
     pub app_display: Vec<crate::app_display::PolicyAppDisplay>,

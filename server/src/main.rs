@@ -780,6 +780,10 @@ pub fn build_admin_router(
             post(handlers::wallpapers::save_device_wallpapers),
         )
         .route(
+            "/devices/{id}/lock-wallpaper",
+            post(handlers::wallpapers::save_lock_wallpaper),
+        )
+        .route(
             "/wallpapers",
             get(handlers::wallpapers::show)
                 .post(handlers::wallpapers::upload)
