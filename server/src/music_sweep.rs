@@ -27,12 +27,15 @@
 //!   one `ok` item per book in reading order, key = the consumable id, no URL (the phone mints it),
 //!   the shelf's duration and the book's cover; a book that leaves the shelf leaves the list; not
 //!   on the shelf fails the check (`not_on_shelf`) and keeps the last good list. Inside the
-//!   refused-login cooldown the check fails `login_refused` without a request.
+//!   refused-login cooldown the check fails `login_refused` without a request; a refused login or
+//!   an outage fails the check with its code (the sweep's read never falls back to a kept shelf).
+//!   Saving the login makes the entries that failed for want of one due at once.
 //!
 //! Ported in behaviour from palchrb/vibb `pi/vibb/content.py` (`_catalog`, `_new_episodes`,
-//! `_psapi_episodes`, `_manifest_url`, `_series`, `sync_feed`) and `pi/vibb/library.py`
-//! (`_cache_sweeper`, `SYNC_INTERVAL_S`, `SYNC_STAGGER_S`, `SYNC_DELAY_S`; MIT, Copyright (c)
-//! palchrb), reimplemented in Rust under GPL-3.0 with 21b's changes (see NOTICE.md).
+//! `_psapi_episodes`, `_manifest_url`, `_series`, `sync_feed`), `pi/vibb/storytel.py` (`sync`
+//! minus the downloads, `write_shelf`) and `pi/vibb/library.py` (`_cache_sweeper`,
+//! `SYNC_INTERVAL_S`, `SYNC_STAGGER_S`, `SYNC_DELAY_S`; MIT, Copyright (c) palchrb), reimplemented
+//! in Rust under GPL-3.0 with 21b's and 26b's changes (see NOTICE.md).
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -321,7 +324,15 @@ struct ScheduleRow {
     capped: bool,
     flagged: bool,
     untried: bool,
+    error: Option<String>,
+    error_at: Option<String>,
+    /// When the Storytel login was last saved (NULL without one).
+    storytel_saved_at: Option<String>,
 }
+
+/// The check errors a saved login can cure: a Storytel entry failing with one of them since before
+/// the last save is due at once (QA L1 of 2b).
+const LOGIN_ERRORS: [&str; 4] = ["storytel_off", "login_refused", "storytel_key", "no_jwt"];
 
 /// How often a listed entry is checked (§2.2's table).
 pub fn interval(source: &str, ticked: bool, setting_hours: i64) -> TimeDelta {
@@ -422,6 +433,27 @@ fn schedule_one(
             (-created.timestamp(), String::new(), row.sort),
         );
     }
+    let login_saved_since = row.source == "storytel"
+        && row.failures > 0
+        && row
+            .error
+            .as_deref()
+            .is_some_and(|code| LOGIN_ERRORS.contains(&code))
+        && match (
+            row.error_at.as_deref().and_then(parse_stamp),
+            row.storytel_saved_at.as_deref().and_then(parse_stamp),
+        ) {
+            (Some(failed), Some(saved)) => failed < saved,
+            _ => false,
+        };
+    if login_saved_since {
+        return make(
+            Why::Rework,
+            now,
+            false,
+            (row.sort, String::new(), row.entry_id),
+        );
+    }
     if row.failures == 0 && (row.untried || refill) {
         return make(
             Why::Rework,
@@ -474,7 +506,9 @@ pub async fn schedule(
            EXISTS(SELECT 1 FROM music_items i WHERE i.entry_id = e.id AND i.recheck = 1) \
              AS flagged, \
            EXISTS(SELECT 1 FROM music_items i WHERE i.entry_id = e.id AND i.state = 'pending' \
-             AND i.attempts = 0) AS untried \
+             AND i.attempts = 0) AS untried, l.error, l.error_at, \
+           (SELECT s.saved_at FROM music_storytel s WHERE s.id = 1 AND s.ciphertext IS NOT NULL) \
+             AS storytel_saved_at \
          FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
          WHERE e.source IN ('nrk', 'rss', 'storytel') AND e.target IS NOT NULL",
     )
@@ -1977,10 +2011,10 @@ async fn merge_feed(
 // Storytel (design 26b §2.4)
 // ------------------------------------------------------------------------------------------------
 
-/// A Storytel entry's check (vibb `storytel.py` `sync` minus the downloads): the refused-login
-/// cooldown read from the row first (no request inside it - `Account::shelf` would fall back to the
-/// last good shelf on a refusal), then the shelf (5 minutes old at most; fresh for Check now) and
-/// the group whose target is the entry's. The list is the group as it is now: one `ok` item per
+/// A Storytel entry's check (vibb `storytel.py` `sync` minus the downloads, `write_shelf`): the
+/// refused-login cooldown read from the row first (no request inside it), then the shelf (5
+/// minutes old at most; fresh for Check now; a failed read is the check's error, never the kept
+/// shelf - QA M1 of 2b: the card must say why) and the group whose target is the entry's. The list is the group as it is now: one `ok` item per
 /// book in reading order, key = the consumable id, `url` NULL, the shelf's duration, the book's
 /// cover as art; every book is listed, locked and geo-flagged ones too (the phone tries each).
 async fn storytel_check(

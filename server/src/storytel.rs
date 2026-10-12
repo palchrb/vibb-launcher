@@ -125,8 +125,10 @@ pub enum TargetKind {
     Book,
 }
 
+/// A target's or a consumable's id: 1 to 64 of `[A-Za-z0-9_-]` (the shelf never has longer ones;
+/// the bound keeps an imported target small, QA L4 of 2b).
 fn id_ok(id: &str) -> bool {
-    !id.is_empty()
+    (1..=64).contains(&id.len())
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
@@ -134,10 +136,11 @@ fn id_ok(id: &str) -> bool {
 
 /// A consumable id usable as an item key (21b's keys: `[A-Za-z0-9_-]{1,64}`).
 pub fn consumable_id_ok(id: &str) -> bool {
-    id.len() <= 64 && id_ok(id)
+    id_ok(id)
 }
 
-/// `storytel:(series|book):<id>`, the id `[A-Za-z0-9_-]+`, nothing else (vibb `TARGET_RE`).
+/// `storytel:(series|book):<id>`, the id `[A-Za-z0-9_-]{1,64}`, nothing else (vibb `TARGET_RE`,
+/// bounded).
 pub fn parse_target(target: &str) -> Option<(TargetKind, String)> {
     let rest = target.strip_prefix("storytel:")?;
     let (kind, id) = rest.split_once(':')?;
@@ -983,11 +986,14 @@ impl Account {
         state: &AppState,
         max_age: Duration,
     ) -> Result<Arc<Vec<Group>>, StorytelError> {
-        self.shelf_counted(state, max_age).await.0
+        let mut session = self.session.lock().await;
+        self.read_shelf(state, &mut session, max_age, true).await
     }
 
-    /// [Account::shelf], with how many requests it sent (the sweep counts them against its check's
-    /// budget, design 26b §2.4).
+    /// The sweep's read (design 26b §2.4): the kept shelf while younger than `max_age`, else a
+    /// fetch - and a failed fetch is the error, **never** the last good shelf (the sweep keeps its
+    /// own last good list, and the card must say why the check failed: QA M1 of 2b). With how many
+    /// requests it sent, which the check counts against its budget.
     pub async fn shelf_counted(
         &self,
         state: &AppState,
@@ -995,15 +1001,18 @@ impl Account {
     ) -> (Result<Arc<Vec<Group>>, StorytelError>, u32) {
         let mut session = self.session.lock().await;
         let before = session.sent;
-        let result = self.read_shelf(state, &mut session, max_age).await;
+        let result = self.read_shelf(state, &mut session, max_age, false).await;
         (result, session.sent.wrapping_sub(before))
     }
 
+    /// `stale_ok`: a failed fetch falls back to the last good shelf (the picker's Add, vibb
+    /// `bookshelf_cached`); the sweep passes `false`.
     async fn read_shelf(
         &self,
         state: &AppState,
         session: &mut Session,
         max_age: Duration,
+        stale_ok: bool,
     ) -> Result<Arc<Vec<Group>>, StorytelError> {
         let credentials = credentials(state).await?;
         let kept = session
@@ -1027,7 +1036,7 @@ impl Account {
                 });
                 Ok(groups)
             }
-            Err(err) => match kept {
+            Err(err) => match kept.filter(|_| stale_ok) {
                 Some((groups, _)) => {
                     tracing::info!(code = %err.code(), "storytel: using the last good shelf");
                     Ok(groups)
@@ -1218,6 +1227,17 @@ mod tests {
         ] {
             assert_eq!(parse_target(junk), None, "{junk:?}");
         }
+        // At most 64 characters, like the shelf's ids (QA L4 of 2b).
+        let longest = "9".repeat(64);
+        assert_eq!(
+            parse_target(&format!("storytel:series:{longest}")),
+            Some((TargetKind::Series, longest.clone()))
+        );
+        assert_eq!(parse_target(&format!("storytel:series:{longest}9")), None);
+        assert_eq!(
+            parse_target(&format!("storytel:book:{}", "a".repeat(100_000))),
+            None
+        );
         assert_eq!(series_target("26175"), "storytel:series:26175");
         assert_eq!(book_target("160661"), "storytel:book:160661");
         assert_eq!(cache_value(0), -1);

@@ -545,6 +545,7 @@ mod tests {
             {"name": "Rar", "target": "storytel:author:1"},
             {"name": "Rar 2", "target": "storytel:series:a b"},
             {"name": "Rar 3", "target": "Storytel:series:9"},
+            {"name": "For lang", "target": format!("storytel:series:{}", "9".repeat(65))},
         ]}]});
         let sections = parse(file.to_string().as_bytes()).unwrap();
         let rows = &sections[0].rows;

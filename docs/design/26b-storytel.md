@@ -176,7 +176,9 @@ Option A splits vibb's one process in two (design 26 review item 4):
     `Status(code)`; truncated -> `TooBig`; then `normalize_shelf`. Stored in the shelf cache.
   - `shelf(state, max_age)`: the cache when younger than `max_age` (300 s for a routine sweep check, **0 for Check now**
     so a book added in Storytel's app a minute ago shows, QA L5), else `bookshelf`; a failed fetch returns the last good
-    shelf whatever its age (vibb "stale beats dead"), else the error. The cache's age and the JWT's expiry run on
+    shelf whatever its age (vibb "stale beats dead"), else the error - **for the picker's Add only**: the sweep reads
+    through `shelf_counted`, which never falls back (a failed read is the check's error; the sweep keeps its own last
+    good list, 21b §2.4; qa-26b-step2b-code M1). The cache's age and the JWT's expiry run on
     `tokio::time::Instant` plus a per-account offset the tests move (`Account::advance`; a paused runtime would
     auto-advance while sqlx waits on its worker thread); only the DB stamps use `Sweep::now()`.
   - `forget()`: drops the JWT and the shelf (save and clear call it; the generation check covers a race).
@@ -240,7 +242,9 @@ Option A splits vibb's one process in two (design 26 review item 4):
   a pasted link stays `parse_link`'s (refused as today); the add form gets a hint "Storytel: pick from the shelf".
 - **The library card** (`partials/music_card.html`): `kind_label` "Storytel series" / "Storytel book"; "N books"; the
   sweep's error texts (§2.4); per-phone lines from `music_state.downloads` ("3 of 5 books on the phone · waiting for
-  Wi-Fi"). **The device card** (`#music`): with ticked Storytel entries and the phone's Storytel switch off, "Storytel
+  Wi-Fi"); a ticked phone the gate (§2.7) excludes reads "Ella: not sent - Storytel is off on this phone" / "... - no
+  Storytel login is saved" and isn't counted in "on N phones"; without a login a failed check says "The phones don't
+  get it until a login is saved." instead of "The phones keep the list" (qa-26b-step2b-code L2). **The device card** (`#music`): with ticked Storytel entries and the phone's Storytel switch off, "Storytel
   is off on this phone: its N Storytel entries aren't sent"; with the switch on and no login, "No Storytel login is
   saved"; the phone's `music_state.storytel` as words (`none` "no login on the phone", `refused` "Storytel refused the
   phone's login - it waits an hour; saving the password again retries at once"). The mobile-data switch's help text
@@ -270,7 +274,12 @@ Option A splits vibb's one process in two (design 26 review item 4):
   2a): `Account::shelf` falls back to the last good shelf of this generation on *every* fetch error, `Refused` and
   `Cooldown` included (vibb `bookshelf_cached` too), so the Storytel check reads the row's cooldown
   (`storytel::credentials(..).cooldown_until(now)`) before calling `shelf` and fails `login_refused` without a request
-  while it is active; otherwise a kept shelf would hide the refusal until a restart or a save.
+  while it is active; otherwise a kept shelf would hide the refusal until a restart or a save. **The sweep's read never
+  falls back to the kept shelf** (`Account::shelf_counted`; code QA of 2b, M1): a refused login after the cooldown, an
+  outage or a bad answer fails the check with its code (`login_refused`, `network`, `http_<code>`, ...) and the last
+  good list stays (`finish`), so the card never says "Checked" over a refusal. Saving the login makes due at once
+  every Storytel entry failing `storytel_off`/`login_refused`/`storytel_key`/`no_jwt` since before the save, and
+  wakes the sweep (L1).
 - Cadence: `interval()` already gives a non-NRK entry the setting `I` (vibb sweeps Storytel with everything else);
   Check now works as for NRK/RSS. A login failure fails the check (`login_refused`, `storytel_off`) and backs off;
   inside the cooldown it costs no request.
@@ -1413,3 +1422,43 @@ Owed [device check] (§8 2b): the sweep lists a real series (Check now on its ca
 series' cover), a book added to the series in Storytel's app shows on the next Check now; plus the PWA at 360 px with
 Storytel cards (the "N books" line, the offline select, the per-phone lines) and the device card's Storytel notes - no
 browser in the sandbox.
+
+### Fix round after QA's code review (qa-26b-step2b-code, 2026-10-12)
+
+All seven findings fixed. The status above lists **7** choices (the handback said 8: it counted `shelf_counted`
+separately; it is choice 1). `cargo test` 574 of 574 (571 before, +3 tests; the `parent_pin` test passed),
+`cargo fmt --check` clean, `cargo clippy --all-targets` the 12 pre-existing warnings. Each new or extended test was run
+red with its rule removed (M1's `stale_ok`, L1's due rule, L2's gate in the lines, L3's wording, L4's bound, L5's
+duration rule, the gate in `cover_in_library`'s first branch, the login counter).
+- **M1** (the sweep's read fell back to the kept shelf, so a refused login or an outage showed "Checked"):
+  `Account::read_shelf` takes `stale_ok`; `shelf` (the picker's Add) passes `true` (vibb's "stale beats dead"),
+  `shelf_counted` (the sweep) `false`, so `storytel_check` fails with the read's code. The cooldown-first rule stays
+  (inside the hour no request). `the_sweeps_read_never_falls_back_to_a_kept_shelf`: six hours on (JWT, shelf and any
+  cooldown over) a refused login fails the check `login_refused` with one login request and the list kept, the card
+  says "Storytel refused the login. The phones keep the list"; after a new save, Check now with the shelf unreachable
+  fails `network` ("Storytel couldn't be reached"); Add's read still falls back.
+- **L1** (a save didn't wake the entries waiting for a login): `schedule_one` makes a Storytel entry due (`Rework`,
+  `shelf(300 s)` = the probe's kept shelf) when its last error is `storytel_off`/`login_refused`/`storytel_key`/`no_jwt`
+  stamped before `music_storytel.saved_at` of a stored login; the save writes `saved_at` with the sweep's clock
+  (`Sweep::now()`, as every other Storytel stamp; it was `datetime('now')`) and wakes the sweep.
+  `saving_a_login_lists_the_entries_waiting_for_one`: an entry failing `storytel_off`, the save, the wake, the entry
+  due, the next pass lists it without a Storytel request.
+- **L2** (the library card didn't know the gate): `SweepView` loads whether a login is stored and the phones whose
+  switch is off; `phone_lines` gives a gated phone "<name>: not sent - Storytel is off on this phone" / "... - no
+  Storytel login is saved", "on N phones" counts only the phones that get the entry (`SweepView::phone_count`; the
+  page's own tick count query is gone), and a listed Storytel entry's failed check without a login says "The phones
+  don't get it until a login is saved." (`storytel_key` keeps "The phones keep the list": the login is stored, the gate
+  is open). Asserted in `library_gates_storytel` (before and after the clear).
+- **L3**: the per-phone failing item goes through `sweep_error_text` ("2 failing (Storytel answered 403)";
+  `the_cards_show_the_phones_storytel` puts the `http_403` first).
+- **L4**: `storytel::id_ok` takes 1 to 64 characters (targets and consumable ids alike); `targets` asserts 64 kept, 65
+  and 100 000 refused, the import test a 65-character series as `BadLink`.
+- **L5**: `a_book_without_a_duration_is_listed_without_one` (a fourth book with `durationInMilliseconds: 0` is served
+  with `duration_ms: null`); `library_gates_storytel` puts the listing's cover on the entry as the parent's own
+  (`cover_in_library`'s first branch: 200 for the phone with the switch on, 404 for the other); `report.requests` is 2
+  after the hour in `a_refused_login_fails_the_check_without_a_request`, and `one_shelf_serves_a_pass` checks that the
+  checks' counted requests add up to every request of the pass (the login included); `sweep_error_text`'s `network`,
+  `timeout`, `http_503` (and the feed's `http_503`, `no_audio`) in `storytel_entries_have_their_own_link_and_label`.
+- **L6**: `music_sweep.rs`'s credit names `pi/vibb/storytel.py` (`sync` minus the downloads, `write_shelf`).
+- **Spec text**: §2.1 (the fallback is the picker's only), §2.3 (the per-phone line for a gated phone, the failed
+  check's text without a login), §2.4 (the sweep's read never falls back; a save makes the waiting entries due).

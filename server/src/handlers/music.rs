@@ -9,7 +9,7 @@
 //! which is `autofocus`ed. Every change nudges the phones it reaches (SSE) and is in the security
 //! log (`music_*`, `storytel_login_saved/cleared`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path as FsPath, PathBuf};
 
 use askama::Template;
@@ -345,13 +345,6 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
     )
     .fetch_all(&state.db)
     .await?;
-    let phones: HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
-        "SELECT entry_id, COUNT(*) FROM device_music_entries GROUP BY entry_id",
-    )
-    .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .collect();
     let files: HashMap<i64, (i64, i64)> = sqlx::query_as::<_, (i64, i64, i64)>(
         "SELECT entry_id, COUNT(*), SUM(missing) FROM music_files GROUP BY entry_id",
     )
@@ -389,7 +382,7 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
                     .map(|c| c.icon.clone())
                     .filter(|i| music::icon_known(i))
                     .unwrap_or_else(|| "music_note".to_string()),
-                phones: phones.get(&e.id).copied().unwrap_or(0),
+                phones: view.phone_count(e),
                 files: file_count,
                 missing,
                 // The parent's cover, else the source's (design 21b §3), else the category tile.
@@ -1187,13 +1180,15 @@ pub async fn save_storytel(
     let (ciphertext, nonce) = key.seal(plain.as_bytes());
     let saved: Result<i64, sqlx::Error> = sqlx::query_scalar(
         "UPDATE music_storytel SET ciphertext = ?, nonce = ?, key_fingerprint = ?, \
-         saved_at = datetime('now'), generation = generation + 1, login_refused_at = NULL, \
+         saved_at = ?, generation = generation + 1, login_refused_at = NULL, \
          login_refused_generation = NULL, login_ok_at = ?, login_error = ?, login_error_at = ? \
          WHERE id = 1 RETURNING generation",
     )
     .bind(&ciphertext)
     .bind(&nonce)
     .bind(&key.fingerprint)
+    // The sweep's clock (QA L1 of 2b): the schedule compares it with its checks' stamps.
+    .bind(&now)
     .bind(ok_at)
     .bind(error_code)
     .bind(error_at)
@@ -1205,6 +1200,9 @@ pub async fn save_storytel(
     };
     state.storytel.keep(generation, jwt, shelf);
     nudge(&state, &storytel_phones(&state.db).await);
+    // The Storytel entries that failed for want of a (good) login are due now (QA L1 of 2b,
+    // `music_sweep::schedule`); the probe's shelf serves them.
+    state.music_sweep.wake();
     log_event(
         &state,
         &admin,
@@ -2676,6 +2674,10 @@ struct SweepView {
     reports: HashMap<i64, (music::MusicState, Option<DateTime<Utc>>)>,
     /// Check now is blocked for every entry until then (the hourly and daily limits).
     check_block: Option<DateTime<Utc>>,
+    /// A Storytel login is stored, and the phones whose Storytel switch is off: the library's gate
+    /// (design 26b §2.7) for the per-phone lines and the phone count (QA L2 of 2b).
+    storytel_stored: bool,
+    storytel_off: HashSet<i64>,
 }
 
 impl SweepView {
@@ -2739,6 +2741,17 @@ impl SweepView {
             Some((device, (report, at.as_deref().and_then(parse_stamp))))
         })
         .collect();
+        let storytel_stored: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM music_storytel WHERE id = 1 AND ciphertext IS NOT NULL)",
+        )
+        .fetch_one(&state.db)
+        .await?;
+        let storytel_off: HashSet<i64> =
+            sqlx::query_scalar("SELECT device_id FROM device_policy WHERE music_storytel = 0")
+                .fetch_all(&state.db)
+                .await?
+                .into_iter()
+                .collect();
         Ok(SweepView {
             now,
             setting: sweep::sweep_hours(&state.db).await?,
@@ -2749,6 +2762,31 @@ impl SweepView {
             phones,
             reports,
             check_block: sweep::check_now_blocked_until(&state.db, -1, now).await?,
+            storytel_stored,
+            storytel_off,
+        })
+    }
+
+    /// Why the library's gate keeps `entry` from `device` (design 26b §2.7); `None` = it is sent.
+    fn gated(&self, entry: &MusicEntry, device: i64) -> Option<&'static str> {
+        if entry.source != "storytel" {
+            return None;
+        }
+        if !self.storytel_stored {
+            return Some("no Storytel login is saved");
+        }
+        self.storytel_off
+            .contains(&device)
+            .then_some("Storytel is off on this phone")
+    }
+
+    /// The phones that get `entry` ("on N phones"): its ticks the gate lets through.
+    fn phone_count(&self, entry: &MusicEntry) -> i64 {
+        self.phones.get(&entry.id).map_or(0, |phones| {
+            phones
+                .iter()
+                .filter(|(device, _)| self.gated(entry, *device).is_none())
+                .count() as i64
         })
     }
 
@@ -2804,7 +2842,20 @@ impl SweepView {
             let next = next_try
                 .map(|t| format!(" Next try {t}."))
                 .unwrap_or_default();
+            // Without a login the phones have dropped the entry (the gate), they keep nothing.
+            let gated = entry.source == "storytel" && !self.storytel_stored;
             let text = match (listed, listing.listed_at.as_deref().and_then(parse_stamp)) {
+                (Some(_), _) if gated => format!(
+                    "Last check failed {}: {}. The phones don't get it until a login is \
+                     saved.{next}",
+                    listing
+                        .error_at
+                        .as_deref()
+                        .and_then(parse_stamp)
+                        .map(|t| utc_time(t, now))
+                        .unwrap_or_default(),
+                    music::sweep_error_text(&entry.source, &code),
+                ),
                 (Some(_), listed_at) => format!(
                     "Last check failed {}: {}. The phones keep the list{}.{next}",
                     listing
@@ -2951,6 +3002,9 @@ impl SweepView {
         phones
             .iter()
             .map(|(device, name)| {
+                if let Some(why) = self.gated(entry, *device) {
+                    return format!("{name}: not sent - {why}");
+                }
                 let Some((report, at)) = self.reports.get(device) else {
                     return format!("{name}: not reported yet");
                 };
@@ -2994,7 +3048,7 @@ impl SweepView {
                     parts.push(format!(
                         "{} failing ({})",
                         failing.len(),
-                        music::entry_error_text(&first.error)
+                        music::sweep_error_text(&entry.source, &first.error)
                     ));
                 }
                 let mut line = format!("{name}: {}", parts.join(" · "));

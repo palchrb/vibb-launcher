@@ -2084,6 +2084,26 @@ mod tests {
             "the Storytel shelf is too big"
         );
         assert_eq!(
+            sweep_error_text("storytel", "network"),
+            "Storytel couldn't be reached"
+        );
+        assert_eq!(
+            sweep_error_text("storytel", "timeout"),
+            "Storytel didn't answer in time"
+        );
+        assert_eq!(
+            sweep_error_text("storytel", "http_503"),
+            "Storytel answered 503"
+        );
+        assert_eq!(
+            sweep_error_text("rss", "http_503"),
+            "the source answered 503"
+        );
+        assert_eq!(
+            sweep_error_text("storytel", "no_audio"),
+            "Storytel gave no audio for this book"
+        );
+        assert_eq!(
             CheckError::Storytel("not_on_shelf".into()).code(),
             "not_on_shelf"
         );
