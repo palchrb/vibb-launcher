@@ -2006,3 +2006,83 @@ series' want set), lint 0 errors and the same 40 warnings; `python3 -I -B script
 `python3 -I -B scripts/fake-storytel.py --selftest` OK; launcher `assembleDebug testDebugUnitTest` (the tsnet stub)
 **1035 tests, 0 failures** (1012 before; 1b's count) - its `assembleRelease` needs `app/libs/tsnet.aar`, which CI
 builds: not run.
+
+## Step 4a implementation status (2026-10-12)
+
+Built on `music-2-storytel-4a` from `c431b61`; the code in `acaf179`, this section in the next commit. Server only: no
+migration (0070-0072 untouched), no contract file, no music or launcher code.
+
+**What was built** (§5.5, §8 step 4a, with qa-26b-merge27-code's M1 and L1-L4 folded in):
+- `music_sweep::art_candidate(item, link)`: an `ok` item with an `art_url` that is playable from the list - an NRK/RSS
+  item with its `url`, or any item of a `Link::Storytel` entry (`url` NULL by design). The entry's link decides, not
+  `url` being NULL (an NRK/RSS item without a URL stays out and takes no place in `ART_WINDOW`).
+- `art_pass`'s order: `auto` is now per link - Storytel from book 1 (the phone's `naturallyNewestFirst(STORYTEL) =
+  false`), an NRK series as before (oldest first unless it keeps the newest), a podcast or feed newest first; an
+  explicit `newest_first`/`oldest_first` applies to every source, as on the phone (§3.2).
+- `storytel_check`: a book already listed starts from its old row (`plan.items[at].clone()`, as `merge_feed` keeps a
+  feed's known item) with the shelf's fields set over it (`state`, `title`, `url` NULL, `hls`, `duration_ms`,
+  `art_url`, `attempts` 0); a new book from `Item::new`. So every `art_*` field - `art_fetched_at`, `art_fails` and
+  `art_tone` included - and the first sighting survive a check. A changed cover URL is the pass's, by design 27's
+  rule: the same path under a new query is adopted with no request; another path is fetched again once its judged
+  result is a week old (`ART_MOVED_RETRY_DAYS`); a cover that leaves the shelf makes the book untried (no hash).
+- `music::art_in_library`: `source IN ('nrk', 'rss', 'storytel')` plus `storytel_gate!()` (the phone's switch and a
+  stored login), so the cover route serves a book's cover only to a phone that gets the entry.
+- `music_sweep::restamp_versions`: Storytel listings too (L1), so after a restore forgets a book's cover the library
+  names the listing the route serves.
+- Docs: `server/CLAUDE.md`'s episode-art section (the Storytel paragraph, the test file); §8 step 4a's test and
+  emulator text, the "Per-book covers" device check, the merge section's `VersionMismatch(71)` note (L4).
+
+**Design 27's machinery for a book cover** - all applies unchanged; nothing needed a Storytel branch beyond the above:
+- The judging: the series' cover is the first-seen book's (`normalize_shelf`), so that book's `art_url` equals the
+  listing's `cover_url` and is `same` at step 1 (no request, no hash, the phone shows the entry cover); a re-encoded
+  copy under another URL is `same` by print. Every other book with a cover is `own`.
+- The budgets (`ART_PER_CHECK` 20, `ART_PER_DAY` 400, shared with NRK/RSS) and `ART_WINDOW`: a 40-book series fills
+  over two checks, in reading order.
+- The 16:9 reference fetch: makes no sense for a book (it is NRK's root `image`); a Storytel check never sets
+  `alt_candidate`, so the pass reads no 16:9 picture and sends no request for one. Nothing to do.
+- The twin merge: right for books - series covers are often one template with another title, and `twins` (2 bits, the
+  same tone, not `low_detail`) is exactly design 27's guard against merging "titles on one background".
+- The backlog: rarely trips (books seldom share the series picture), comes back monthly as for feeds.
+- The restamp: a new hash changes `build_listing`'s version, so the check reports `changed` and nudges the phones; a
+  forgotten one restamps through `restamp_versions`.
+- Not done: the PWA card's "· N with episode art" stays off Storytel cards ("N books" only); a one-line follow-up if
+  wanted.
+
+**Tests**: server `cargo test` **660 passed, 0 failed** (655 before; +5: `music_storytel.rs`
+`a_check_keeps_a_books_cover_and_a_moved_cover_is_fetched_again`, `the_art_pass_reads_a_series_in_reading_order` (the
+restamp and the nudge when a cover arrives, the library naming the new version), `a_books_cover_is_served_only_behind_the_gate`
+(ticked + switch on 200; unticked, switch off, login cleared 404), `a_lost_books_cover_restamps_the_listing_and_is_fetched_again`,
+`a_failed_books_cover_waits_a_day_like_a_feeds` (M1's pin: a 404 cover, a routine check and Check now the same day
+send no image request, `art_fails` stays 1, the row unchanged; a day later the second try); `music_art.rs`'s
+`items_without_a_source_url_or_a_picture_url_are_skipped` rewritten for the link argument (a Storytel book is a
+candidate, an NRK/RSS item without a URL isn't); `the_sweep_lists_a_series_like_a_feed`: two requests (the series
+cover, book 1's), `items[0]`'s `art` the hash and served by the cover route byte for byte, `items[1]` null (`same`),
+`items[2]` null (no cover). The time-dependent `parent_pin` passed this run. `cargo fmt --check` clean, `cargo clippy
+--all-targets` the same 12 warnings (`models.rs`, `dns_engine.rs`, `handlers/devices.rs`). Mutations (reverted):
+rebuilding a kept book from `Item::new` turns 4 `music_storytel` tests red (the failed-cover and keep tests among them);
+`auto` newest first for Storytel turns the reading-order test red; `art_in_library` without the gate turns the gate test
+red.
+
+**Deviations, with reasons**:
+- The reading-order case lives in `music_storytel.rs`, not `music_art.rs` (it needs the Storytel login and shelf
+  helpers); `music_art.rs` holds the candidate rule. `music_art.rs`'s `picture`/`png` are `pub(super)` for it.
+- No listing snapshot change: `music_listing.json`'s fixture stays NRK/RSS (its own-art hash already pins `art`), the
+  Storytel cases have their own tests - so no music or launcher run was needed and none was done.
+- The test shelf with changed covers is edited as text (`shelf_covers`): re-serialising it through `serde_json::Value`
+  sorts the keys in this build, which makes book 1 the first-seen book and its cover the series' - the existing
+  `shelf_with`/`shelf_without` helpers have that property too, harmless for their tests.
+
+**Where the plan was wrong**: as qa-26b-merge27-code found - (1) "a second check fetches nothing" doesn't pin the
+carry-over (`known_art` restores an own/same hash from the old row with no request); the failed-cover test does; (2)
+`restamp_versions` was a second `IN ('nrk', 'rss')`; (3) in `the_sweep_lists_a_series_like_a_feed` it is `items[0]`
+that gains the hash, `items[1]` stays null; (4) the emulator can't show a book's own cover (the server's shelf URL is a
+constant and its art pass refuses a private host). Also: "the `auto` arm treats non-series links as newest first" made
+a Storytel entry `auto` newest first - fixed per link, not by treating Storytel "like an NRK series" (the same result
+today, since its `keep_end` is `first`, but not tied to that column).
+
+**Owed**: emulator §6i - an upgrade from a step-3 build (Room 1 -> main's 2) keeps every position and bookmark
+(`ReapplyListings` re-applies the listings, with the hashes at the next sync). Device check "Per-book covers" (the
+real server and shelf: each book's cover in the carousel, Nytt and the lock's tile; the series' book shows the series
+cover). Chosen over a `fake-storytel.py --art` option because the fake's listing never passes through the server's
+art pass, so it would test the phone's design-27 path (already covered by design 27's carousel check) rather than this
+step.
