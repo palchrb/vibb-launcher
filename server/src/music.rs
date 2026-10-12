@@ -615,6 +615,7 @@ struct LibraryBody<'a> {
     entries: &'a [LibEntry],
     files: &'a [LibFile],
     covers: &'a [String],
+    sonos_rooms: Option<&'a [String]>,
 }
 
 /// What is served (`server/testdata/music_library.json` pins the shape).
@@ -626,6 +627,8 @@ struct LibraryDocument<'a> {
     entries: &'a [LibEntry],
     files: &'a [LibFile],
     covers: &'a [String],
+    /// The Sonos rooms (speaker uids) this phone may play on; `null` = every room (design 26a §5.5).
+    sonos_rooms: Option<&'a [String]>,
 }
 
 pub const LIBRARY_FORMAT: u32 = 1;
@@ -641,10 +644,12 @@ pub struct Library {
 }
 
 impl Library {
+    /// `sonos_rooms`: the phone's room scope ([sonos_rooms_allowed]), `None` = every room.
     pub fn build(
         categories: Vec<LibCategory>,
         entries: Vec<LibEntry>,
         files: Vec<LibFile>,
+        sonos_rooms: Option<Vec<String>>,
     ) -> Library {
         let category_ids = categories.iter().map(|c| c.id).collect();
         let mut covers: Vec<String> = entries
@@ -660,6 +665,7 @@ impl Library {
             entries: &entries,
             files: &files,
             covers: &covers,
+            sonos_rooms: sonos_rooms.as_deref(),
         })
         .expect("the library always serializes");
         let version = hex::encode(Sha256::digest(&body))[..16].to_string();
@@ -670,6 +676,7 @@ impl Library {
             entries: &entries,
             files: &files,
             covers: &covers,
+            sonos_rooms: sonos_rooms.as_deref(),
         })
         .expect("the library always serializes");
         Library {
@@ -810,7 +817,20 @@ pub async fn library_for(
             }
         })
         .collect();
-    Ok(Some(Library::build(categories, entries, files)))
+    // The parent's Sonos room scope (design 26a §5.5): in the library, so a change moves its
+    // version (migration 0065's trigger moves the revision).
+    let rooms_json: Option<Option<String>> =
+        sqlx::query_scalar("SELECT music_sonos_rooms_json FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&mut *db)
+            .await?;
+    let sonos_rooms = sonos_rooms_allowed(device_id, rooms_json.flatten().as_deref());
+    Ok(Some(Library::build(
+        categories,
+        entries,
+        files,
+        sonos_rooms,
+    )))
 }
 
 #[cfg(test)]
@@ -873,6 +893,41 @@ pub async fn cached_library(
     tx.commit().await?;
     cache.put(device_id, revision, library.clone());
     Ok(library)
+}
+
+/// At most this many Sonos rooms are kept from a phone's report, and allowed on a phone (design
+/// 26a §5.5).
+pub const MAX_SONOS_ROOMS: usize = 32;
+/// A reported room's name is cut to this many characters.
+pub const MAX_SONOS_ROOM_NAME_CHARS: usize = 40;
+
+/// A Sonos speaker's uid as the phone reports it: `RINCON_` and 12 to 20 of `[A-Z0-9]`.
+pub fn is_sonos_uid(uid: &str) -> bool {
+    uid.strip_prefix("RINCON_").is_some_and(|rest| {
+        (12..=20).contains(&rest.len())
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    })
+}
+
+/// `device_policy.music_sonos_rooms_json` (migration 0065): `None` (NULL) = every room, the
+/// default; else the uids the phone may play on. The server is its only writer; anything
+/// unreadable is no room at all (fail closed), logged.
+pub fn sonos_rooms_allowed(device_id: i64, json: Option<&str>) -> Option<Vec<String>> {
+    let json = json?;
+    match serde_json::from_str::<Vec<String>>(json) {
+        Ok(uids) => Some(
+            uids.into_iter()
+                .filter(|uid| is_sonos_uid(uid))
+                .take(MAX_SONOS_ROOMS)
+                .collect(),
+        ),
+        Err(err) => {
+            tracing::warn!(%err, device_id, "unreadable music_sonos_rooms_json - no Sonos room allowed");
+            Some(Vec::new())
+        }
+    }
 }
 
 /// `device_id`'s library as it is now ([library_for]), built fresh.
@@ -1262,6 +1317,17 @@ pub struct MusicState {
     pub storytel: Option<String>,
     pub item_errors: Vec<ItemError>,
     pub downloads: Vec<Download>,
+    /// The Sonos rooms the music app knows (its speaker cache; design 26a §5.5): what the parent
+    /// can scope the phone to. At most [MAX_SONOS_ROOMS].
+    pub sonos_rooms: Vec<SonosRoom>,
+}
+
+/// One Sonos room the music app knows: the speaker's uid and its room name.
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct SonosRoom {
+    pub uid: String,
+    pub name: String,
 }
 
 fn word(value: Option<String>) -> Option<String> {
@@ -1295,6 +1361,7 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
     let entry_rows = rows("entry_errors");
     let item_rows = rows("item_errors");
     let download_rows = rows("downloads");
+    let room_rows = rows("sonos_rooms");
     fn parsed<T: serde::de::DeserializeOwned>(rows: Vec<serde_json::Value>) -> Vec<T> {
         rows.into_iter()
             .filter_map(|row| serde_json::from_value(row).ok())
@@ -1304,6 +1371,8 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
     state.entry_errors = parsed(entry_rows);
     state.item_errors = parsed(item_rows);
     state.downloads = parsed(download_rows);
+    state.sonos_rooms = parsed(room_rows);
+    let mut uids = std::collections::HashSet::new();
     let clean = MusicState {
         package: state
             .package
@@ -1353,6 +1422,17 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
                 version: d.version,
             })
             .take(MAX_DOWNLOAD_ROWS)
+            .collect(),
+        // Sonos-shaped uids only, once each, names cut (design 26a §5.5).
+        sonos_rooms: state
+            .sonos_rooms
+            .into_iter()
+            .filter(|room| is_sonos_uid(&room.uid) && uids.insert(room.uid.clone()))
+            .map(|room| SonosRoom {
+                name: cut_title(&room.name, MAX_SONOS_ROOM_NAME_CHARS).unwrap_or_default(),
+                uid: room.uid,
+            })
+            .take(MAX_SONOS_ROOMS)
             .collect(),
     };
     serde_json::to_string(&clean).ok()
@@ -1591,8 +1671,8 @@ mod tests {
             lan: false,
             sort: 10,
         };
-        let a = Library::build(vec![category.clone()], vec![entry.clone()], vec![]);
-        let b = Library::build(vec![category.clone()], vec![entry.clone()], vec![]);
+        let a = Library::build(vec![category.clone()], vec![entry.clone()], vec![], None);
+        let b = Library::build(vec![category.clone()], vec![entry.clone()], vec![], None);
         assert_eq!(a.version, b.version);
         assert_eq!(a.version.len(), 16);
         let body = serde_json::to_vec(&LibraryBody {
@@ -1601,17 +1681,104 @@ mod tests {
             entries: std::slice::from_ref(&entry),
             files: &[],
             covers: &[],
+            sonos_rooms: None,
         })
         .unwrap();
         assert_eq!(a.version, hex::encode(Sha256::digest(&body))[..16]);
         let renamed = LibEntry {
             name: "Abels tårn!".into(),
-            ..entry
+            ..entry.clone()
         };
         assert_ne!(
-            Library::build(vec![category], vec![renamed], vec![]).version,
+            Library::build(vec![category.clone()], vec![renamed], vec![], None).version,
             a.version
         );
+        // The room scope is hashed like every other field (design 26a §5.5): all, none, one.
+        let scoped = |rooms: Option<Vec<String>>| {
+            Library::build(vec![category.clone()], vec![entry.clone()], vec![], rooms)
+        };
+        let none = scoped(Some(vec![]));
+        let one = scoped(Some(vec!["RINCON_000E58A0B1C201400".into()]));
+        assert_ne!(none.version, a.version);
+        assert_ne!(one.version, none.version);
+        let served: serde_json::Value = serde_json::from_slice(&a.json).unwrap();
+        assert_eq!(served["sonos_rooms"], serde_json::Value::Null);
+        let served: serde_json::Value = serde_json::from_slice(&one.json).unwrap();
+        assert_eq!(
+            served["sonos_rooms"],
+            serde_json::json!(["RINCON_000E58A0B1C201400"])
+        );
+    }
+
+    /// Design 26a §5.5: the stored room scope - NULL is every room, a list is those, anything
+    /// unreadable none (fail closed); uids that aren't Sonos-shaped never reach a phone.
+    #[test]
+    fn the_room_scope_reads_fail_closed() {
+        assert_eq!(sonos_rooms_allowed(1, None), None);
+        assert_eq!(sonos_rooms_allowed(1, Some("[]")), Some(vec![]));
+        assert_eq!(
+            sonos_rooms_allowed(
+                1,
+                Some(r#"["RINCON_000E58A0B1C201400", "x", "RINCON_short"]"#)
+            ),
+            Some(vec!["RINCON_000E58A0B1C201400".to_string()])
+        );
+        assert_eq!(sonos_rooms_allowed(1, Some("{\"a\": 1}")), Some(vec![]));
+        assert_eq!(sonos_rooms_allowed(1, Some("not json")), Some(vec![]));
+        assert!(is_sonos_uid("RINCON_000E58A0B1C201400"));
+        assert!(is_sonos_uid("RINCON_FAKE0140101400"));
+        assert!(is_sonos_uid(&format!("RINCON_{}", "A".repeat(12))));
+        assert!(is_sonos_uid(&format!("RINCON_{}", "9".repeat(20))));
+        assert!(!is_sonos_uid(&format!("RINCON_{}", "A".repeat(11))));
+        assert!(!is_sonos_uid(&format!("RINCON_{}", "A".repeat(21))));
+        assert!(!is_sonos_uid("RINCON_000e58a0b1c201400"));
+        assert!(!is_sonos_uid("rincon_000E58A0B1C201400"));
+        assert!(!is_sonos_uid("RINCON_000E58A0B1C2014<0"));
+    }
+
+    /// Design 26a §5.5: the reported rooms - Sonos-shaped uids only, once each, at most 32, names
+    /// cut to 40 characters (control characters out); one bad row drops that row only.
+    #[test]
+    fn music_state_keeps_sonos_rooms_checked() {
+        let raw = serde_json::json!({
+            "storytel": "ok",
+            "sonos_rooms": [
+                {"uid": "RINCON_000E58A0B1C201400", "name": "Stua"},
+                {"uid": "RINCON_000E58A0B1C201400", "name": "Stua again"},
+                {"uid": "RINCON_bad", "name": "Bad"},
+                {"uid": "192.168.1.20", "name": "An ip"},
+                {"uid": "RINCON_000E58A0B1C301400", "name": format!("  Kjøkken\u{7}  {}", "ø".repeat(60))},
+                {"uid": "RINCON_000E58A0B1C401400", "name": 5},
+                {"uid": "RINCON_000E58A0B1C501400"},
+                "not a row"
+            ]
+        });
+        let state = parse_music_state(sanitize_music_state(&raw).as_deref()).unwrap();
+        assert_eq!(state.storytel.as_deref(), Some("ok"));
+        let rooms: Vec<(&str, &str)> = state
+            .sonos_rooms
+            .iter()
+            .map(|r| (r.uid.as_str(), r.name.as_str()))
+            .collect();
+        let kitchen = format!("Kjøkken {}", "ø".repeat(32));
+        assert_eq!(
+            rooms,
+            [
+                ("RINCON_000E58A0B1C201400", "Stua"),
+                ("RINCON_000E58A0B1C301400", kitchen.as_str()),
+                ("RINCON_000E58A0B1C501400", ""),
+            ]
+        );
+        assert_eq!(kitchen.chars().count(), MAX_SONOS_ROOM_NAME_CHARS);
+        let many = serde_json::json!({"sonos_rooms": (0..50).map(|i| serde_json::json!(
+            {"uid": format!("RINCON_000E58A0B1C2{i:02}400"), "name": format!("Rom {i}")})).collect::<Vec<_>>()});
+        let state = parse_music_state(sanitize_music_state(&many).as_deref()).unwrap();
+        assert_eq!(state.sonos_rooms.len(), MAX_SONOS_ROOMS);
+        assert_eq!(state.sonos_rooms[0].name, "Rom 0");
+        // An older music app sends none: an empty list.
+        let old =
+            parse_music_state(sanitize_music_state(&serde_json::json!({})).as_deref()).unwrap();
+        assert!(old.sonos_rooms.is_empty());
     }
 
     /// `testdata/music_state.json` is every field the launcher and the music app send (both apps'

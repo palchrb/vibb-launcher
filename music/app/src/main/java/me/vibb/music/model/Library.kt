@@ -5,7 +5,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -17,7 +19,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * `auto`, a bad cover none), an entry or file that still can't be used is hidden - but its id stays
  * in [Library.entryIds]/[Library.fileIds], so nothing of it is deleted (qa-21-step2-code H1: a newer
  * server must never make an older app prune a kid's place or copies). A document that isn't
- * `v: 1` with its three arrays is refused (the old library stays).
+ * `v: 1` with its three arrays is refused (the old library stays). `sonos_rooms` (design 26a §5.5)
+ * absent or null is every room; a list is those rooms; anything else is no room (fail closed).
  */
 
 val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -83,6 +86,11 @@ data class Library(
     val entryIds: Set<Long> = entries.map { it.id }.toSet(),
     /** Every own-file id the document names, usable or not. */
     val fileIds: Set<Long> = files.map { it.id }.toSet(),
+    /**
+     * The Sonos rooms (speaker uids) the parent allows on this phone (design 26a §5.5); null = every
+     * room, the default. A group is allowed by its coordinator.
+     */
+    val sonosRooms: List<String>? = null,
 ) {
     fun entry(id: Long): Entry? = entries.firstOrNull { it.id == id }
     fun filesOf(entryId: Long): List<OwnFile> = files.filter { it.entry == entryId }.sortedWith(compareBy({ it.sort }, { it.id }))
@@ -146,7 +154,14 @@ object LibraryParser {
             .distinctBy { it.id }
         val covers = elements(root["covers"]).mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
             .filter { HASH.matches(it) }.toSet()
-        return Library(version, categories, entries, files, covers, rawIds(rawEntries), rawIds(rawFiles))
+        return Library(version, categories, entries, files, covers, rawIds(rawEntries), rawIds(rawFiles), sonosRooms(root["sonos_rooms"]))
+    }
+
+    /** `sonos_rooms`: absent or null = every room (an older server), a list = those uids, anything else none. */
+    private fun sonosRooms(e: JsonElement?): List<String>? = when (e) {
+        null, JsonNull -> null
+        is JsonArray -> e.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.distinct()
+        else -> emptyList()
     }
 
     /** The numeric `id` of every object in [array], whatever else it holds. */

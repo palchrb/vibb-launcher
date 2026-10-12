@@ -15,6 +15,34 @@ const val ITEM_ERRORS_MAX = 50
 const val ENTRY_ERRORS_MAX = 50
 const val DOWNLOADS_MAX = 200
 
+/** At most this many Sonos rooms are reported, their names cut to [SONOS_ROOM_NAME_MAX] (design 26a §5.5). */
+const val SONOS_ROOMS_MAX = 32
+const val SONOS_ROOM_NAME_MAX = 40
+
+/** A Sonos speaker's uid as the server accepts it (design 26a §5.5). */
+private val SONOS_UID = Regex("RINCON_[A-Z0-9]{12,20}")
+private val SPACES = Regex("(?U)\\s+")
+
+/** One Sonos room the speaker cache knows: what the parent can scope the phone to (design 26a §5.5). */
+data class ReportedRoom(val uid: String, val name: String)
+
+/**
+ * `music_state.sonos_rooms` from the speaker cache's players (uid -> name): Sonos-shaped uids only,
+ * names as the server keeps them (whitespace collapsed, control characters out, at most
+ * [SONOS_ROOM_NAME_MAX] characters), by name, at most [SONOS_ROOMS_MAX]. Never an ip.
+ */
+fun reportedRooms(players: Map<String, String?>): List<ReportedRoom> =
+    players.filterKeys { SONOS_UID.matches(it) }
+        .map { (uid, name) -> ReportedRoom(uid, roomName(name)) }
+        .sortedWith(compareBy({ it.name.lowercase() }, { it.uid }))
+        .take(SONOS_ROOMS_MAX)
+
+private fun roomName(name: String?): String {
+    val clean = name.orEmpty().trim().split(SPACES).joinToString(" ").filterNot { Character.isISOControl(it) }
+    val points = clean.codePoints().limit(SONOS_ROOM_NAME_MAX.toLong()).toArray()
+    return String(points, 0, points.size)
+}
+
 /** A failed download or stream of a listed url (21b §4.3). */
 data class ItemError(val entry: Long, val version: String, val item: String, val error: String)
 
@@ -45,6 +73,8 @@ fun stateReport(
     downloads: List<DownloadState>,
     /** The Storytel login on the phone: "ok" or "none". */
     storytel: String? = null,
+    /** The rooms the speaker cache knows ([reportedRooms]). */
+    sonosRooms: List<ReportedRoom> = emptyList(),
 ): JsonObject = buildJsonObject {
     put("version_code", versionCode)
     put("library_version", libraryVersion)
@@ -66,5 +96,8 @@ fun stateReport(
                 put("waiting", d.waiting?.wire)
             })
         }
+    })
+    put("sonos_rooms", buildJsonArray {
+        for (r in sonosRooms.take(SONOS_ROOMS_MAX)) add(buildJsonObject { put("uid", r.uid); put("name", r.name) })
     })
 }

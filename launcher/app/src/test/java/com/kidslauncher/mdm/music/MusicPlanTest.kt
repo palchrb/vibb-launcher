@@ -4,6 +4,7 @@ import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -211,10 +212,15 @@ class MusicPlanTest {
         val now = 1_800_000_000_000L
         val report = buildJsonObject {
             put("library_version", "0123456789abcdef"); put("cache_bytes", 5); put("position_ms", 999); put("storytel", "ok")
+            put("sonos_rooms", buildJsonArray {
+                add(buildJsonObject { put("uid", "RINCON_000E58A0B1C201400"); put("name", "Stua") })
+            })
+            put("now_playing", "secret")
         }
         val state = musicState("me.vibb.music", 1000000, report, now - 60_000, now)!!
         assertEquals("bound", state["bridge"]!!.let { (it as JsonPrimitive).content })
-        assertEquals(setOf("package", "version_code", "bridge", "library_version", "cache_bytes", "storytel"), state.keys)
+        assertEquals(setOf("package", "version_code", "bridge", "library_version", "cache_bytes", "storytel", "sonos_rooms"), state.keys)
+        assertEquals("the rooms the music app knows pass as they are (design 26a §5.5)", report["sonos_rooms"], state["sonos_rooms"])
         assertEquals("unbound", (musicState("me.vibb.music", 1, null, null, now)!!["bridge"] as JsonPrimitive).content)
         assertEquals("unbound", (musicState("me.vibb.music", 1, report, now - REPORT_STALE_MS, now)!!["bridge"] as JsonPrimitive).content)
         assertNull("no music app", musicState(null, null, report, now, now))

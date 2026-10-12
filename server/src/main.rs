@@ -947,6 +947,10 @@ pub fn build_admin_router(
             "/devices/{id}/music/entries/{entry_id}",
             post(handlers::music::set_device_entry),
         )
+        .route(
+            "/devices/{id}/music/sonos-rooms",
+            post(handlers::music::save_device_sonos_rooms),
+        )
         .route("/dns", get(handlers::dns_filter::show_dns_filter))
         .route("/dns/upstream", post(handlers::dns_filter::set_upstream))
         .route(

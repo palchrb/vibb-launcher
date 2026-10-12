@@ -32,7 +32,8 @@ class ContractFilesTest {
     @Test
     fun `the library snapshot parses`() {
         val lib = LibraryParser.parse(Fixtures.resource("music_library.json"))!!
-        assertEquals("cd0b77ca352b1fd4", lib.version)
+        assertEquals("94fa6771e4c4befd", lib.version)
+        assertEquals("the parent's room scope (design 26a §5.5)", listOf("RINCON_000E58A0B1C201400"), lib.sonosRooms)
         assertTrue("the snapshot's feeds are public", lib.entries.none { it.lan })
         assertEquals(listOf(1L, 4L), lib.categories.map { it.id })
         assertEquals(listOf("music_note", "mic"), lib.categories.map { it.icon })
@@ -162,6 +163,23 @@ class ContractFilesTest {
         assertEquals(listOf(false, true, false), lan.entries.map { it.lan })
         val old = LibraryParser.parse(base.replace(",\n      \"lan\": false", ""))!!
         assertTrue(old.entries.none { it.lan })
+    }
+
+    @Test
+    fun `sonos_rooms - absent or null is every room, a list those, anything else none (26a §5_5)`() {
+        val base = Fixtures.resource("music_library.json")
+        val list = "\"sonos_rooms\": [\n    \"RINCON_000E58A0B1C201400\"\n  ]"
+        assertTrue(base.contains(list))
+        val absent = LibraryParser.parse(base.replace(",\n  $list", ""))!!
+        assertNull("an older server: every room", absent.sonosRooms)
+        assertNull(LibraryParser.parse(base.replace(list, "\"sonos_rooms\": null"))!!.sonosRooms)
+        assertEquals(emptyList<String>(), LibraryParser.parse(base.replace(list, "\"sonos_rooms\": []"))!!.sonosRooms)
+        val two = LibraryParser.parse(base.replace(list, "\"sonos_rooms\": [\"RINCON_A\", 5, null, {}, \"RINCON_B\", \"RINCON_A\"]"))!!
+        assertEquals("strings only, once each", listOf("RINCON_A", "RINCON_B"), two.sonosRooms)
+        for (odd in listOf("\"RINCON_A\"", "{}", "true", "7")) {
+            assertEquals("fail closed: $odd", emptyList<String>(), LibraryParser.parse(base.replace(list, "\"sonos_rooms\": $odd"))!!.sonosRooms)
+        }
+        assertEquals("the rest of the library unchanged", 3, absent.entries.size)
     }
 
     @Test

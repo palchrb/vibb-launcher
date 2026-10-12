@@ -490,7 +490,7 @@ pub async fn confirm(
                 )
             })
             .collect();
-        let empty = music::Library::build(Vec::new(), Vec::new(), Vec::new())
+        let empty = music::Library::build(Vec::new(), Vec::new(), Vec::new(), None)
             .json
             .len();
         let mut ticked_phones = Vec::new();

@@ -28,5 +28,15 @@
       "want": 3,
       "waiting": "wifi"
     }
+  ],
+  "sonos_rooms": [
+    {
+      "uid": "RINCON_000E58A0B1C201400",
+      "name": "Stua"
+    },
+    {
+      "uid": "RINCON_000E58A0B1C301400",
+      "name": "Kjøkken"
+    }
   ]
 }

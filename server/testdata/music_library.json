@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "version": "cd0b77ca352b1fd4",
+  "version": "94fa6771e4c4befd",
   "categories": [
     {
       "id": 1,
@@ -96,5 +96,8 @@
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  ],
+  "sonos_rooms": [
+    "RINCON_000E58A0B1C201400"
   ]
 }

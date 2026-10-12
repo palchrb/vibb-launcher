@@ -80,11 +80,16 @@ class ReportTest {
             itemErrors = listOf(ItemError(2, "0123456789abcdef", "k1", "http_404")),
             downloads = listOf(DownloadState(2, "0123456789abcdef", 1, 3, Waiting.WIFI), DownloadState(1, "v", 2, 2, null)),
             storytel = "ok",
+            sonosRooms = listOf(ReportedRoom("RINCON_000E58A0B1C201400", "Stua")),
         )
         assertEquals(
-            setOf("version_code", "library_version", "cache_bytes", "downloads_waiting", "entry_errors", "item_errors", "downloads", "storytel"),
+            setOf("version_code", "library_version", "cache_bytes", "downloads_waiting", "entry_errors", "item_errors", "downloads", "storytel", "sonos_rooms"),
             report.keys,
         )
+        val room = (report["sonos_rooms"] as JsonArray).single().jsonObject
+        assertEquals("uid and name only - never an ip", setOf("uid", "name"), room.keys)
+        assertEquals("Stua", room["name"]!!.jsonPrimitive.content)
+        assertEquals(JsonArray(emptyList()), stateReport(1, null, 0, emptyList(), emptyList(), emptyList())["sonos_rooms"])
         assertEquals("ok", report["storytel"]!!.jsonPrimitive.content)
         assertEquals(2, report["downloads_waiting"]!!.jsonPrimitive.int)
         val error = (report["item_errors"] as JsonArray).single().jsonObject
@@ -94,5 +99,31 @@ class ReportTest {
         assertEquals("wifi", downloads[0].jsonObject["waiting"]!!.jsonPrimitive.content)
         assertEquals(JsonNull, downloads[1].jsonObject["waiting"])
         assertTrue(report.keys.none { it.contains("position") || it.contains("playing") })
+    }
+
+    /** Design 26a §5.5: the rooms the speaker cache knows, as the server keeps them. */
+    @Test
+    fun `the reported rooms - Sonos uids only, names cut to 40, by name, at most 32`() {
+        val rooms = reportedRooms(
+            mapOf(
+                "RINCON_000E58A0B1C301400" to "  Kjøkken\u0007  " + "ø".repeat(60),
+                "RINCON_000E58A0B1C201400" to "Bad",
+                "RINCON_bad" to "Lowercase",
+                "192.168.1.20" to "An ip",
+                "RINCON_STUA01400" to "Too short",
+                "RINCON_000E58A0B1C401400" to null,
+            ),
+        )
+        assertEquals(listOf("RINCON_000E58A0B1C401400", "RINCON_000E58A0B1C201400", "RINCON_000E58A0B1C301400"), rooms.map { it.uid })
+        assertEquals("", rooms[0].name)
+        assertEquals("Kjøkken " + "ø".repeat(32), rooms[2].name)
+        assertEquals(SONOS_ROOM_NAME_MAX, rooms[2].name.codePointCount(0, rooms[2].name.length))
+        // cut by characters, never inside one (a supplementary character counts once, as on the server)
+        val emoji = reportedRooms(mapOf("RINCON_000E58A0B1C201400" to "\uD83D\uDD0A".repeat(45))).single().name
+        assertEquals(SONOS_ROOM_NAME_MAX, emoji.codePointCount(0, emoji.length))
+        val many = reportedRooms((0 until 50).associate { "RINCON_000E58A0B1C2%02d400".format(it) to "Rom %02d".format(it) })
+        assertEquals(SONOS_ROOMS_MAX, many.size)
+        assertEquals("Rom 00", many.first().name)
+        assertEquals("Rom 31", many.last().name)
     }
 }

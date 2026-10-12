@@ -62,6 +62,8 @@ internal class SonosRenderer(
     name: String?,
     /** Hold the wake lock and the Wi-Fi lock while true ([SonosController.armedPlaying], design 26a §6.3). */
     private val onArmedPlaying: (Boolean) -> Unit = {},
+    /** The parent's room scope (design 26a §5.5): may a play go to this room's uid? */
+    private val roomAllowed: (String) -> Boolean = { true },
 ) : Renderer {
     private val handler = Handler(Looper.getMainLooper())
     private val actorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -102,8 +104,10 @@ internal class SonosRenderer(
     val controller: SonosController = SonosController(
         transport, actor, sonosStore, clock, uid, name, host, sleep = { delay(it) },
         restoreVolume = home.choice().takeIf { it.volumeUid == uid }?.volume,
-        // every play the controller sends asks first, as KidPlayer and the play commands do (H1)
-        mayPlay = { playAllowed(suspendedNow()) },
+        // every play the controller sends asks first, as KidPlayer and the play commands do (H1);
+        // and never to a room outside the parent's scope (design 26a §5.5, a belt: the service refuses
+        // the switch and leaves a room the scope dropped)
+        mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid) },
         // the parent's cap in force, read live from the managed config like mobile_data (§5.3)
         cap = { Bridge.config(context).volumeCapPct },
     )

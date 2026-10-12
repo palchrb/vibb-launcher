@@ -974,6 +974,15 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .execute(&app.db)
     .await
     .unwrap();
+    // The parent limited the phone to one Sonos room (design 26a §5.5; NULL = every room).
+    sqlx::query(
+        "UPDATE device_policy SET music_sonos_rooms_json = '[\"RINCON_000E58A0B1C201400\"]' \
+         WHERE device_id = ?",
+    )
+    .bind(device)
+    .execute(&app.db)
+    .await
+    .unwrap();
 }
 
 /// Compact JSON indented by two spaces, keys in the order they were sent (serde_json's `Value`
@@ -1063,8 +1072,17 @@ async fn music_library_snapshot() {
     keys.sort_unstable();
     assert_eq!(
         keys,
-        ["categories", "covers", "entries", "files", "v", "version"]
+        [
+            "categories",
+            "covers",
+            "entries",
+            "files",
+            "sonos_rooms",
+            "v",
+            "version"
+        ]
     );
+    assert_eq!(served["sonos_rooms"], json!(["RINCON_000E58A0B1C201400"]));
     assert_eq!(served["v"], json!(1));
     // The served bytes are in the documented order, with the version second.
     assert!(res.text().starts_with("{\"v\":1,\"version\":\""));
@@ -2273,6 +2291,197 @@ async fn the_device_card_ticks_entries_and_switches_the_app() {
         vec![
             format!("device {device}: Abels tårn on"),
             format!("device {device}: Abels tårn off")
+        ]
+    );
+}
+
+/// A status report from `token`'s phone whose music app knows `rooms` (uid, name).
+async fn report_rooms(app: &TestApp, token: &str, rooms: &[(&str, &str)]) {
+    let rooms: Vec<Value> = rooms
+        .iter()
+        .map(|(uid, name)| json!({"uid": uid, "name": name}))
+        .collect();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(token),
+            Some(json!({
+                "lock_reason": "NONE",
+                "kiosk_engaged": true,
+                "capabilities": ["music_v1"],
+                "music_state": {"package": "me.vibb.music", "bridge": "bound", "sonos_rooms": rooms}
+            })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}
+
+async fn save_rooms(
+    app: &TestApp,
+    cookie: &str,
+    device: i64,
+    fields: &[(&str, &str)],
+) -> TestResponse {
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{device}/music/sonos-rooms"),
+        Some(cookie),
+        fields,
+    )
+    .await
+}
+
+async fn stored_rooms(app: &TestApp, device: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT music_sonos_rooms_json FROM device_policy WHERE device_id = ?")
+        .bind(device)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// Design 26a §5.5: the Music card's Sonos rooms - nothing to limit before the phone has seen a
+/// speaker; the reported rooms with "All rooms" on (every room, NULL); off, one tick per room;
+/// each save stored, in the phone's library (and its version), the phone nudged, logged, and back
+/// at `#music-sonos`.
+#[tokio::test]
+async fn the_device_card_scopes_sonos_rooms() {
+    const STUA: &str = "RINCON_000E58A0B1C201400";
+    const KJOKKEN: &str = "RINCON_000E58A0B1C301400";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let entry = add_nrk(&app, &cookie, "abels_taarn", "Abels tårn").await;
+    tick(&app, &cookie, device, entry, true).await;
+    let card = |page: String| page.split("id=\"music\"").nth(1).unwrap().to_string();
+    let library = || async {
+        device_get(&app, "/api/devices/music/library", &token, &[])
+            .await
+            .json()
+    };
+
+    // No report yet: nothing to limit, every room allowed.
+    let page = card(
+        app.get_page(&format!("/devices/{device}"), &cookie)
+            .await
+            .text(),
+    );
+    assert!(page.contains("id=\"music-sonos\""));
+    assert!(page.contains("The phone hasn't seen any speakers yet."));
+    assert!(!page.contains("/music/sonos-rooms"));
+    let all = library().await;
+    assert_eq!(all["sonos_rooms"], Value::Null);
+
+    // The phone reports two rooms: the switch, on, with every room as a hidden field.
+    report_rooms(&app, &token, &[(STUA, "Stua"), (KJOKKEN, "Kjøkken <b>")]).await;
+    let page = card(
+        app.get_page(&format!("/devices/{device}"), &cookie)
+            .await
+            .text(),
+    );
+    assert!(!page.contains("hasn't seen any speakers"));
+    assert!(page.contains(&format!("action=\"/devices/{device}/music/sonos-rooms\"")));
+    assert!(page.contains("name=\"all\" value=\"on\" checked onchange"));
+    assert!(page.contains(&format!(
+        "<input type=\"hidden\" name=\"room\" value=\"{STUA}\">"
+    )));
+    assert!(page.contains(&format!(
+        "<input type=\"hidden\" name=\"room\" value=\"{KJOKKEN}\">"
+    )));
+
+    // The switch off: the form sends every room, so they all stay allowed until one is unticked.
+    let mut rx = app.state.command_notify.subscribe();
+    let res = save_rooms(&app, &cookie, device, &[("room", STUA), ("room", KJOKKEN)]).await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{device}#music-sonos").as_str())
+    );
+    assert_eq!(nudged(&mut rx), vec![device]);
+    assert_eq!(
+        stored_rooms(&app, device).await.as_deref(),
+        Some(format!("[\"{STUA}\",\"{KJOKKEN}\"]").as_str())
+    );
+    let both = library().await;
+    assert_eq!(both["sonos_rooms"], json!([STUA, KJOKKEN]));
+    assert_ne!(
+        both["version"], all["version"],
+        "hashed into library_version"
+    );
+    assert_eq!(
+        music_policy(&app, &token).await["library_version"],
+        both["version"]
+    );
+
+    // One room unticked: only the other. The card ticks per room, names escaped.
+    save_rooms(&app, &cookie, device, &[("room", STUA)]).await;
+    assert_eq!(library().await["sonos_rooms"], json!([STUA]));
+    let page = card(
+        app.get_page(&format!("/devices/{device}"), &cookie)
+            .await
+            .text(),
+    );
+    assert!(page.contains("name=\"all\" value=\"on\"  onchange"));
+    assert!(page.contains(&format!("name=\"room\" value=\"{STUA}\" checked onchange")));
+    assert!(page.contains(&format!("name=\"room\" value=\"{KJOKKEN}\"  onchange")));
+    assert!(page.contains("Kjøkken &#60;b&#62;") || page.contains("Kjøkken &lt;b&gt;"));
+    assert!(!page.contains("Kjøkken <b>"));
+    assert!(!page.contains("No room ticked"));
+
+    // A room the phone no longer reports stays listed while it is in the scope.
+    report_rooms(&app, &token, &[(KJOKKEN, "Kjøkken")]).await;
+    let page = card(
+        app.get_page(&format!("/devices/{device}"), &cookie)
+            .await
+            .text(),
+    );
+    assert!(page.contains(&format!(
+        "{STUA} <span class=\"subtitle\">- not seen by the phone lately"
+    )));
+
+    // None ticked: none allowed.
+    save_rooms(&app, &cookie, device, &[]).await;
+    assert_eq!(stored_rooms(&app, device).await.as_deref(), Some("[]"));
+    assert_eq!(library().await["sonos_rooms"], json!([]));
+    let page = card(
+        app.get_page(&format!("/devices/{device}"), &cookie)
+            .await
+            .text(),
+    );
+    assert!(page.contains("No room ticked"));
+
+    // All rooms again: NULL, and the library as it was.
+    save_rooms(&app, &cookie, device, &[("all", "on"), ("room", KJOKKEN)]).await;
+    assert_eq!(stored_rooms(&app, device).await, None);
+    let again = library().await;
+    assert_eq!(again["sonos_rooms"], Value::Null);
+    assert_eq!(again["version"], all["version"]);
+
+    // Refused: a uid that isn't a speaker's, too many, an unknown phone. Nothing changes.
+    let res = save_rooms(&app, &cookie, device, &[("room", "192.168.1.20")]).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let many: Vec<String> = (0..33)
+        .map(|i| format!("RINCON_000E58A0B1C2{i:02}400"))
+        .collect();
+    let fields: Vec<(&str, &str)> = many.iter().map(|uid| ("room", uid.as_str())).collect();
+    assert_eq!(
+        save_rooms(&app, &cookie, device, &fields).await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(stored_rooms(&app, device).await, None);
+    assert_eq!(
+        save_rooms(&app, &cookie, 999, &[("all", "on")])
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+
+    assert_eq!(
+        events(&app, "music_sonos_rooms_changed").await,
+        vec![
+            format!("device {device}: only Stua, Kjøkken <b>"),
+            format!("device {device}: only Stua"),
+            format!("device {device}: no room"),
+            format!("device {device}: all rooms"),
         ]
     );
 }

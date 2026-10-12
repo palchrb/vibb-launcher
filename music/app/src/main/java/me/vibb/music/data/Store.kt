@@ -67,12 +67,15 @@ class Store private constructor(context: Context) {
     /** Own files with a copy on the phone. */
     fun ownCopies(): Set<Long> = ownDir.listFiles().orEmpty().mapNotNull { it.name.toLongOrNull() }.toSet()
 
+    /** The library, live (read from its file on first collection - collect off the main thread). */
+    fun libraries(): Flow<Library?> = flow {
+        library()
+        emitAll(libraryState)
+    }
+
     /** Everything the screens and the player read, live, built off the main thread. */
     fun snapshots(): Flow<Snapshot> = combine(
-        flow {
-            library()
-            emitAll(libraryState)
-        },
+        libraries(),
         combine(db.allItemsFlow(), db.downloadsFlow(), db.listingsFlow()) { items, downloads, listings -> Triple(items, downloads, listings) },
         combine(db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(), db.shuffleFlow()) { p, b, n, s -> Rows(p, b, n, s) },
     ) { lib, (items, downloads, listings), rows -> snapshot(lib, items, downloads, listings, rows) }.flowOn(Dispatchers.Default)

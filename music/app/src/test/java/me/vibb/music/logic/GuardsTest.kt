@@ -190,14 +190,14 @@ class GuardsTest {
         assertTrue(service.contains("Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)"))
         // coming home plays on only when the speaker was PLAYING and nothing forbids it; a failed start never plays
         assertTrue(service.contains("comeHome(sonos, (resume ?: wasPlaying) && playAllowed(suspendedNow()))"))
-        assertEquals(4, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
-        assertEquals("lost, nothing playable, the suspension", 3, Regex("""comeHome\((old|sonos), play = false\)""").findAll(service).count())
+        assertEquals(5, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
+        assertEquals("lost, nothing playable, the suspension, the room scope", 4, Regex("""comeHome\((old|sonos), play = false\)""").findAll(service).count())
         // the renderer changes only in attach: the phone at start, an adopted room, a picked room, the phone again
         assertEquals("attach: defined once, four callers", 5, Regex("""\battach\(""").findAll(service).count())
         assertTrue(service.contains("attach(sonosRenderer(uid, name))"))
         assertTrue(service.contains("attach(sonos)\n        active = a"))
         assertEquals("every room's renderer holds the locks", 1, Regex("""SonosRenderer\(""").findAll(service).count())
-        assertTrue(service.contains("SonosRenderer(this, home, store, scope, writer, { active }, uid, name, onArmedPlaying = { locks.hold(owner, it) })"))
+        assertTrue(service.contains("onArmedPlaying = { locks.hold(owner, it) },\n            roomAllowed = { roomAllowed(roomScope, it) },"))
         assertTrue(service.substringAfter("private suspend fun comeHome(").substringBefore("sonos.release()\n        active = null").contains("if (renderer !== sonos) return\n        attach(local)"))
         // a headset arriving or leaving touches the output choice only, never the renderer (sonos_renderer.py 5)
         val devices = service.substringAfter("private val deviceCallback").substringBefore("private val saveTick")
@@ -242,7 +242,7 @@ class GuardsTest {
         assertTrue("before anything is sent", play.indexOf("if (!mayPlay()) {") < play.indexOf("work.submit("))
         assertTrue(sonos.substringAfter("private fun resume(").substringBefore("\n    }\n").contains("if (!mayPlay()) return"))
         val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
-        assertTrue(renderer.contains("mayPlay = { playAllowed(suspendedNow()) },"))
+        assertTrue(renderer.contains("mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid) },"))
         // M2: the command coroutine and resumption hold the switch lock; lost() takes it too
         val command = service.substringAfter("override fun onCustomCommand(").substringAfter("rendererReady.await()").substringBefore("return Futures")
         assertTrue(command.trimStart().startsWith("switching.withLock {\n"))
@@ -256,6 +256,37 @@ class GuardsTest {
         val release = renderer.substringAfter("override fun release() {").substringBefore("\n    }\n")
         assertTrue(release.contains("actor.close()"))
         assertFalse("never cancelled before the queued Stop", release.contains("cancel()"))
+    }
+
+    @Test
+    fun `the parent's room scope - the sheet, the switch refused, a dropped room left at the sync and after adopt`() {
+        // design 26a §5.5: the sheet lists only allowed rooms (a group by its coordinator, RoomScopeTest)
+        val publish = service.substringAfter("private fun publish() {").substringBefore("\n    }\n")
+        assertTrue(publish.contains("rooms = allowedRooms(home.rooms.state.value, roomScope),"))
+        assertEquals("the sheet's rows come from publish only", 1, Regex("""home\.rooms\.state\.value""").findAll(service).count())
+        // OUTPUT to a room outside the scope: refused with the message before anything moves
+        val toRoom = service.substringAfter("private suspend fun toRoom(uid: String) {").substringBefore("\n    }\n")
+        val refusal = toRoom.substringBefore("val old = renderer")
+        assertTrue(refusal.contains("if (!roomAllowed(allowedRoomsNow(), uid)) {"))
+        assertTrue(refusal.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)"))
+        assertTrue(refusal.contains("return"))
+        for (move in listOf("handOff(", "saveNow(", "home.write(", "attach(", "start(", ".play()")) assertFalse(move, refusal.contains(move))
+        // a session on a dropped room: the bookmark and the ours-gated Stop (the hand-off) before the phone, paused
+        val leave = service.substringAfter("private suspend fun leaveDisallowedRoom() {").substringBefore("\n    }\n")
+        assertTrue(leave.contains("if (!mustLeaveRoom(sonos.uid, allowedRoomsNow())) return"))
+        assertTrue(leave.indexOf("handOff(sonos)") in 0 until leave.indexOf("comeHome(sonos, play = false)"))
+        // ... at the next sync (the library's scope changed), under the switch lock once the renderer is settled
+        val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
+        val sync = onCreate.substringAfter("store.libraries().map { it?.sonosRooms }.distinctUntilChanged()")
+        assertTrue(sync.contains("roomScope = rooms\n                publish()\n                rendererReady.await()\n                switching.withLock { leaveDisallowedRoom() }"))
+        // ... and after an adopt of our stream on such a room (the look holds the switch lock)
+        val look = service.substringAfter("private suspend fun lookAtRoom(choice: RendererChoice) {").substringBefore("\n    }\n")
+        assertTrue(look.trimEnd().endsWith("leaveDisallowedRoom()"))
+        assertTrue(look.indexOf("sonos.adopt(") in 0 until look.indexOf("leaveDisallowedRoom()"))
+        assertEquals("defined once; the sync and the look", 3, Regex("""\bleaveDisallowedRoom\(""").findAll(service).count())
+        // the belt: every play the room's controller sends asks the scope too
+        val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
+        assertTrue(renderer.contains("&& roomAllowed(this@SonosRenderer.uid) },"))
     }
 
     @Test

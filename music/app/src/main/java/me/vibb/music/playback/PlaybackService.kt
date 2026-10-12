@@ -36,6 +36,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -98,6 +101,9 @@ import me.vibb.music.sonos.SonosSuspension
 import me.vibb.music.sonos.SonosTail
 import me.vibb.music.sonos.adoptIndex
 import me.vibb.music.sonos.adoptPlan
+import me.vibb.music.sonos.allowedRooms
+import me.vibb.music.sonos.mustLeaveRoom
+import me.vibb.music.sonos.roomAllowed
 import me.vibb.music.sonos.ourLiveSession
 import me.vibb.music.sonos.roomVerdict
 import me.vibb.music.sync.ItemErrors
@@ -190,6 +196,13 @@ class PlaybackService : MediaSessionService() {
     /** An [Output.key]; null = the system's routing. */
     private var chosenOutput: String? = null
 
+    /**
+     * The parent's room scope as the library last said (design 26a §5.5; null = every room): the
+     * sheet's rows and the renderer's belt read it. The decisions (the switch, the leave) read the
+     * library itself.
+     */
+    @Volatile private var roomScope: List<String>? = null
+
     override fun onCreate() {
         super.onCreate()
         store = Store.get(this)
@@ -218,6 +231,16 @@ class PlaybackService : MediaSessionService() {
             }
         }
         scope.launch { home.rooms.state.collect { publish() } }
+        // Design 26a §5.5: a new room scope (the sync applied a library) narrows the sheet, and a
+        // session on a room it dropped is stopped - bookmark first - and comes home paused.
+        scope.launch {
+            store.libraries().map { it?.sonosRooms }.distinctUntilChanged().flowOn(Dispatchers.IO).collect { rooms ->
+                roomScope = rooms
+                publish()
+                rendererReady.await()
+                switching.withLock { leaveDisallowedRoom() }
+            }
+        }
         publish()
     }
 
@@ -1101,7 +1124,8 @@ class PlaybackService : MediaSessionService() {
             outputs = outputs,
             output = output,
             rendererState = renderer.rendererState,
-            rooms = home.rooms.state.value,
+            // only the rooms the parent allows (design 26a §5.5): a group by its coordinator
+            rooms = allowedRooms(home.rooms.state.value, roomScope),
         )
     }
 
@@ -1110,7 +1134,11 @@ class PlaybackService : MediaSessionService() {
     /** A room's renderer; its holds on the service's locks are its own (qa-26a-step3b-code L4). */
     private fun sonosRenderer(uid: String, name: String?): SonosRenderer {
         val owner = Any()
-        return SonosRenderer(this, home, store, scope, writer, { active }, uid, name, onArmedPlaying = { locks.hold(owner, it) })
+        return SonosRenderer(
+            this, home, store, scope, writer, { active }, uid, name,
+            onArmedPlaying = { locks.hold(owner, it) },
+            roomAllowed = { roomAllowed(roomScope, it) },
+        )
     }
 
     /** When the stored room was last looked at (elapsed; [lookAtRoom]). */
@@ -1168,6 +1196,26 @@ class PlaybackService : MediaSessionService() {
         lastIndex = index
         sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live)
         publish()
+        // a room the parent's scope no longer allows: adopted only to be bookmarked and stopped (§5.5)
+        leaveDisallowedRoom()
+    }
+
+    /** The parent's room scope now, from the library (design 26a §5.5; null = every room). */
+    private suspend fun allowedRoomsNow(): List<String>? = withContext(Dispatchers.IO) { store.library() }?.sonosRooms
+
+    /**
+     * Design 26a §5.5: a session on a room the parent's scope doesn't allow (the sync applied a
+     * library that dropped it, or adopt found our stream there) leaves it - the hand-off (the live
+     * classify, the bookmark at that second, the ours-gated Stop) - and the phone takes the queue,
+     * paused, as when a start fails. Nothing starts. Called under the switch lock.
+     */
+    private suspend fun leaveDisallowedRoom() {
+        val sonos = renderer as? SonosRenderer ?: return
+        if (!mustLeaveRoom(sonos.uid, allowedRoomsNow())) return
+        SonosHome.log("sonos: ${sonos.uid} isn't allowed on this phone any more - bookmark, stop, the phone (paused)")
+        PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+        handOff(sonos)
+        comeHome(sonos, play = false)
     }
 
     /** The stored entry's queue on a room ([adoptPlan]) and the index of [uri] in it; null when it can't be rebuilt. */
@@ -1231,6 +1279,13 @@ class PlaybackService : MediaSessionService() {
      * back first, as RESUME does (QA ambiguity 4). The room we're on is the same-tile rule.
      */
     private suspend fun toRoom(uid: String) {
+        // The parent's room scope (design 26a §5.5): a room outside it is refused before anything moves.
+        if (!roomAllowed(allowedRoomsNow(), uid)) {
+            SonosHome.log("sonos: $uid isn't allowed on this phone - refused")
+            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+            publish()
+            return
+        }
         val old = renderer
         if (old is SonosRenderer && old.uid == uid) {
             old.play()

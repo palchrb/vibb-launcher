@@ -2618,6 +2618,62 @@ pub struct MusicAppSwitch {
     pub status: String,
 }
 
+/// One Sonos room on the Music card (design 26a §5.5).
+pub struct SonosRoomRow {
+    pub uid: String,
+    /// The room's name as the phone reported it, else its uid.
+    pub label: String,
+    pub allowed: bool,
+    /// In the phone's latest report; a room only in the stored scope says it isn't seen lately.
+    pub reported: bool,
+}
+
+/// The Music card's Sonos rooms (`#music-sonos`, design 26a §5.5): the "All rooms" switch and,
+/// when it is off, one tick per room the phone reported (and any still in the stored scope).
+pub struct SonosRoomsCard {
+    pub all: bool,
+    pub rows: Vec<SonosRoomRow>,
+}
+
+impl SonosRoomsCard {
+    /// `stored`: `device_policy.music_sonos_rooms_json`; `reported`: the latest `music_state`'s rooms.
+    pub fn build(device_id: i64, stored: Option<&str>, reported: &[music::SonosRoom]) -> Self {
+        let scope = music::sonos_rooms_allowed(device_id, stored);
+        let mut rows: Vec<SonosRoomRow> = reported
+            .iter()
+            .map(|room| SonosRoomRow {
+                uid: room.uid.clone(),
+                label: if room.name.is_empty() {
+                    room.uid.clone()
+                } else {
+                    room.name.clone()
+                },
+                allowed: scope.as_ref().is_none_or(|uids| uids.contains(&room.uid)),
+                reported: true,
+            })
+            .collect();
+        for uid in scope.iter().flatten() {
+            if !rows.iter().any(|row| &row.uid == uid) {
+                rows.push(SonosRoomRow {
+                    uid: uid.clone(),
+                    label: uid.clone(),
+                    allowed: true,
+                    reported: false,
+                });
+            }
+        }
+        SonosRoomsCard {
+            all: scope.is_none(),
+            rows,
+        }
+    }
+
+    /// No room ticked: the music app plays on no speaker.
+    pub fn none_allowed(&self) -> bool {
+        !self.all && !self.rows.iter().any(|row| row.allowed)
+    }
+}
+
 /// The device page's "Music" card (`#music`).
 pub struct MusicCard {
     pub app: Option<MusicAppSwitch>,
@@ -2634,6 +2690,7 @@ pub struct MusicCard {
     pub warnings: Vec<String>,
     /// One-shot message after a refused tick (`?music_notice=`).
     pub notice: Option<&'static str>,
+    pub sonos: SonosRoomsCard,
 }
 
 /// `?music_notice=` codes.
@@ -2743,6 +2800,19 @@ pub(crate) async fn device_card(
         .is_some_and(|caps| caps.iter().any(|c| c == "music_v1"));
     let state_report =
         music::parse_music_state(latest_status.and_then(|s| s.music_state_json.as_deref()));
+    let stored_rooms: Option<String> =
+        sqlx::query_scalar("SELECT music_sonos_rooms_json FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+    let sonos = SonosRoomsCard::build(
+        device_id,
+        stored_rooms.as_deref(),
+        state_report
+            .as_ref()
+            .map_or(&[][..], |report| &report.sonos_rooms),
+    );
     match &state_report {
         Some(report) => {
             if let Some(package) = &report.package {
@@ -2838,6 +2908,7 @@ pub(crate) async fn device_card(
         lines,
         warnings,
         notice,
+        sonos,
     })
 }
 
@@ -2970,6 +3041,84 @@ pub async fn save_device_settings(
     )
     .await;
     Redirect::to(&format!("/devices/{id}#music-settings")).into_response()
+}
+
+/// `POST /devices/{id}/music/sonos-rooms` (design 26a §5.5): the "All rooms" switch (`all`) or the
+/// ticked rooms (`room`, repeated: speaker uids). With the switch on the stored scope is NULL (every
+/// room); off, it is the ticked rooms - none ticked is none allowed. While the switch is on the card
+/// sends every room as a hidden field, so turning it off keeps them all ticked until the parent
+/// unticks one. One auto-saving form; back to `#music-sonos`.
+pub async fn save_device_sonos_rooms(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Response {
+    let all = form.iter().any(|(key, _)| key == "all");
+    let mut rooms: Vec<String> = Vec::new();
+    for (key, value) in &form {
+        if key != "room" {
+            continue;
+        }
+        if !music::is_sonos_uid(value) {
+            return (StatusCode::BAD_REQUEST, "Unknown speaker").into_response();
+        }
+        if !rooms.contains(value) {
+            rooms.push(value.clone());
+        }
+    }
+    if rooms.len() > music::MAX_SONOS_ROOMS {
+        return (StatusCode::BAD_REQUEST, "Too many speakers").into_response();
+    }
+    let stored = (!all).then(|| serde_json::to_string(&rooms).expect("a list of strings"));
+    let saved: Result<Option<Option<String>>, sqlx::Error> = async {
+        let updated = sqlx::query(
+            "UPDATE device_policy SET music_sonos_rooms_json = ?, updated_at = datetime('now') \
+             WHERE device_id = ?",
+        )
+        .bind(&stored)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+        if updated.rows_affected() == 0 {
+            return Ok(None);
+        }
+        // The room names for the log, from the phone's latest report.
+        sqlx::query_scalar(
+            "SELECT music_state_json FROM device_status WHERE device_id = ? \
+             ORDER BY reported_at DESC, id DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map(|report: Option<Option<String>>| Some(report.flatten()))
+    }
+    .await;
+    let report = match saved {
+        Ok(Some(report)) => music::parse_music_state(report.as_deref()),
+        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Err(err) => return server_error(err, "couldn't save a phone's Sonos rooms"),
+    };
+    nudge(&state, &[id]);
+    let names: Vec<String> = rooms
+        .iter()
+        .map(|uid| {
+            report
+                .as_ref()
+                .and_then(|r| r.sonos_rooms.iter().find(|room| &room.uid == uid))
+                .filter(|room| !room.name.is_empty())
+                .map_or_else(|| uid.clone(), |room| room.name.clone())
+        })
+        .collect();
+    let detail = if all {
+        format!("device {id}: all rooms")
+    } else if names.is_empty() {
+        format!("device {id}: no room")
+    } else {
+        format!("device {id}: only {}", names.join(", "))
+    };
+    log_event(&state, &admin, "music_sonos_rooms_changed", &detail).await;
+    Redirect::to(&format!("/devices/{id}#music-sonos")).into_response()
 }
 
 #[cfg(test)]

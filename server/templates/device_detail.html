@@ -370,6 +370,36 @@
             </label>
             <noscript><button type="submit">Save</button></noscript>
         </form>
+
+        <h3 id="music-sonos">Sonos speakers</h3>
+        {% if music.sonos.all && music.sonos.rows.is_empty() %}
+        <p class="subtitle">The phone hasn't seen any speakers yet. Once the music app has found Sonos speakers on the home Wi-Fi, they show up here and the phone can be limited to some of them. Until then every room is allowed.</p>
+        {% else %}
+        <form method="post" action="/devices/{{ device.id }}/music/sonos-rooms">
+            <label class="checkbox-row">
+                <input type="checkbox" name="all" value="on" {% if music.sonos.all %}checked{% endif %} onchange="this.form.submit()">
+                <span>All rooms: the music app may play on every Sonos speaker it finds. Off: only on the rooms ticked below.</span>
+            </label>
+            {% if music.sonos.all %}
+            {% for room in music.sonos.rows %}
+            <input type="hidden" name="room" value="{{ room.uid }}">
+            {% endfor %}
+            {% else %}
+            <div class="app-checkbox-list">
+                {% for room in music.sonos.rows %}
+                <label class="checkbox-row">
+                    <input type="checkbox" name="room" value="{{ room.uid }}" {% if room.allowed %}checked{% endif %} onchange="this.form.submit()">
+                    <span>{{ room.label }}{% if !room.reported %} <span class="subtitle">- not seen by the phone lately</span>{% endif %}</span>
+                </label>
+                {% endfor %}
+            </div>
+            {% if music.sonos.none_allowed() %}
+            <p class="subtitle">No room ticked: the music plays only on the phone and headphones.</p>
+            {% endif %}
+            {% endif %}
+            <noscript><button type="submit">Save</button></noscript>
+        </form>
+        {% endif %}
         {% for line in music.lines %}
         <p class="subtitle">{{ line }}</p>
         {% endfor %}

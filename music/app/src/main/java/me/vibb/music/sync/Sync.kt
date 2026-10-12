@@ -34,6 +34,7 @@ import me.vibb.music.logic.addToTray
 import me.vibb.music.logic.downloadWaiting
 import me.vibb.music.logic.markNewSeen
 import me.vibb.music.logic.pruneTray
+import me.vibb.music.logic.reportedRooms
 import me.vibb.music.logic.stateReport
 import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Entry
@@ -41,6 +42,8 @@ import me.vibb.music.model.JSON
 import me.vibb.music.model.Listing
 import me.vibb.music.model.ListingParser
 import me.vibb.music.model.Source
+import me.vibb.music.sonos.SonosFiles
+import me.vibb.music.sonos.SpeakerCache
 import java.util.concurrent.TimeUnit
 
 /*
@@ -211,6 +214,8 @@ object Sync {
             errors,
             states,
             if (StorytelLogin.has(context)) "ok" else "none",
+            // the rooms the speaker cache knows, for the parent's room scope (design 26a §5.5)
+            reportedRooms(SpeakerCache(SonosFiles.cache(context)).load().players.mapValues { it.value.name }),
         )
         val text = report.toString()
         reportLock.withLock { Store.writeAtomic(store.reportFile, text.toByteArray()) }
