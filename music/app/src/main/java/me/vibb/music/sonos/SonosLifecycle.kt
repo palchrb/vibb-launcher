@@ -108,7 +108,11 @@ private const val NO_SEEK = Long.MIN_VALUE / 2
  * ([queueUri]) so its Play button plays the empty queue, not the episode from 0:00; our uri on a
  * stopped speaker: the park alone (the same Play button). Anything else is left alone. The session is
  * disarmed either way. The verdict goes back: renderer.json returns to the phone on any definite
- * answer, and stays on the room after none (the caller's; qa-26a-step3b-code M1).
+ * answer, and stays on the room after none (the caller's; qa-26a-step3b-code M1). [stopMs]: the
+ * Stop and the park end within this long after the call started (the receiver's budget,
+ * qa-26a-corrections L2; at least [BEDTIME_MIN_LOOK_MS] after a late answer); null: the client's
+ * timeouts. A Stop that fails or runs out of time is NO_ANSWER - the room stays recorded and the
+ * next look parks it.
  */
 suspend fun suspensionStop(
     transport: SonosTransport,
@@ -117,6 +121,7 @@ suspend fun suspensionStop(
     ofEntry: (String) -> Boolean = { false },
     lookMs: Long = budgetMs,
     clock: SonosClock = SonosClock({ System.nanoTime() / 1_000_000 }),
+    stopMs: Long? = null,
     bookmark: suspend (Fields) -> Unit,
 ): RoomVerdict {
     val uid = choice.uid ?: return RoomVerdict.NOT_OURS
@@ -142,7 +147,14 @@ suspend fun suspensionStop(
             // the Stop matters more than the place: never left playing over a failed write
         }
     }
-    if (verdict == RoomVerdict.OURS_LIVE || verdict == RoomVerdict.OURS_STOPPED) transport.park(uid)
+    if (verdict == RoomVerdict.OURS_LIVE || verdict == RoomVerdict.OURS_STOPPED) {
+        val left = stopMs?.let { (it - (clock.elapsedMs() - start)).coerceAtLeast(BEDTIME_MIN_LOOK_MS) }
+        try {
+            transport.park(uid, left)
+        } catch (e: SonosException) {
+            return RoomVerdict.NO_ANSWER
+        }
+    }
     return verdict
 }
 

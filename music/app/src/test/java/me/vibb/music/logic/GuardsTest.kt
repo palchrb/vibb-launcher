@@ -124,7 +124,7 @@ class GuardsTest {
         val seq = lifecycle.substringAfter("suspend fun suspensionStop(").substringBefore("\n}\n")
         assertTrue(seq.contains("live = transport.adoptLive(uid, kindOfUri(uri), uri, budget, aux = false) { null }"))
         assertTrue(seq.contains("verdict = roomVerdict(choice, live, ofEntry)"))
-        assertTrue(seq.indexOf("bookmark(live!!.copy(ours = true))") < seq.indexOf("transport.park(uid)"))
+        assertTrue(seq.indexOf("bookmark(live!!.copy(ours = true))") < seq.indexOf("transport.park(uid, left)"))
         val standalone = code("src/main/java/me/vibb/music/sonos/SonosSuspension.kt")
         assertTrue("a tail first (L2)", standalone.indexOf("SonosTail.join(TAIL_WAIT_MS)") < standalone.indexOf("val home = SonosHome(app)"))
         assertTrue("the phone only on a definite answer (M1)", standalone.contains("if (verdict != RoomVerdict.NO_ANSWER) home.write(RendererChoice.local(choice))"))

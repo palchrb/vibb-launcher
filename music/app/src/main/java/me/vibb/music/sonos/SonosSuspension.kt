@@ -31,6 +31,13 @@ object SonosSuspension {
      */
     private const val LOOKS_UNTIL_MS = 6_500L
 
+    /**
+     * The Stop and the park end this long after the path started (qa-26a-corrections L2): after a
+     * late answer to the second look they get what is left, at least half a second, so the receiver
+     * finishes inside its 9 s (the renderer.json write after them is a small file).
+     */
+    private const val STOP_UNTIL_MS = 8_500L
+
     suspend fun standalone(context: Context) = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         val t0 = SystemClock.elapsedRealtime()
@@ -45,8 +52,10 @@ object SonosSuspension {
                 val clock: () -> Long = SystemClock::elapsedRealtime
                 val transport = SonosTransport(SonosSession(clock, SonosHome::log), home.speakers, home.nrk, SonosClock(clock), log = SonosHome::log)
                 val ofEntry = entryMatcher(store, choice)
-                val lookMs = maxOf(SonosController.LIVE_BUDGET_MS, LOOKS_UNTIL_MS - (clock() - t0))
-                suspensionStop(transport, choice, SonosController.LIVE_BUDGET_MS, ofEntry, lookMs, SonosClock(clock)) { live -> bookmark(app, store, choice, live) }
+                val since = clock() - t0
+                val lookMs = maxOf(SonosController.LIVE_BUDGET_MS, LOOKS_UNTIL_MS - since)
+                val stopMs = STOP_UNTIL_MS - since
+                suspensionStop(transport, choice, SonosController.LIVE_BUDGET_MS, ofEntry, lookMs, SonosClock(clock), stopMs) { live -> bookmark(app, store, choice, live) }
             } else {
                 RoomVerdict.NO_ANSWER
             }

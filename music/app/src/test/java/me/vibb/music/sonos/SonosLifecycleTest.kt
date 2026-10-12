@@ -185,15 +185,15 @@ class SonosLifecycleTest {
             clock.clock,
         )
 
-        fun stop(bookmark: suspend (Fields) -> Unit = {}): RoomVerdict =
-            runBlocking { suspensionStop(transport, choice, 1_500, lookMs = 6_000, clock = clock.clock, bookmark = bookmark) }
+        fun stop(stopMs: Long? = null, bookmark: suspend (Fields) -> Unit = {}): RoomVerdict =
+            runBlocking { suspensionStop(transport, choice, 1_500, lookMs = 6_000, clock = clock.clock, stopMs = stopMs, bookmark = bookmark) }
     }
 
     @Test
     fun `bedtime - a slow speaker's first look is retried within the budget, and it still gets its Stop`() {
         val l = Looks(slow = 1)
         var bookmarked: Fields? = null
-        assertEquals(RoomVerdict.OURS_LIVE, l.stop { bookmarked = it })
+        assertEquals(RoomVerdict.OURS_LIVE, l.stop(bookmark = { bookmarked = it }))
         assertEquals("the first look 1.5 s, the next everything left", listOf<Long?>(1_500, 6_000 - 1_500 - 250), l.budgets.take(2))
         assertEquals(431.0, bookmarked!!.relS!!, 0.0)
         assertEquals(listOf("stop", "seturi"), l.spk.commands)
@@ -219,6 +219,26 @@ class SonosLifecycleTest {
         assertEquals(RoomVerdict.NO_ANSWER, refused.stop())
         assertEquals("at most three looks", 3, refused.budgets.size)
         assertEquals(listOf(250L, 250L), refused.clock.sleeps)
+    }
+
+    @Test
+    fun `bedtime - the Stop and the park get what is left of their time, at least half a second (qa L2)`() {
+        val l = Looks(slow = 1)
+        assertEquals(RoomVerdict.OURS_LIVE, l.stop(stopMs = 8_000))
+        assertEquals("1.5 s spent, 0.25 s paused: the park's budget is the rest of 8 s", listOf<Long?>(1_500, 4_250, 6_250), l.budgets)
+        val late = Looks(slow = 1)
+        assertEquals(RoomVerdict.OURS_LIVE, late.stop(stopMs = 1_000))
+        assertEquals("a late answer still gets its Stop a chance", 500L, late.budgets.last())
+        assertEquals(listOf("stop", "seturi"), late.spk.commands)
+    }
+
+    @Test
+    fun `bedtime - a Stop that fails keeps the room recorded for the next look`() {
+        val l = Looks(slow = 0)
+        l.spk.failOn = mapOf("stop" to { SpeakerUnreachable("time budget spent") })
+        var bookmarked = false
+        assertEquals(RoomVerdict.NO_ANSWER, l.stop(stopMs = 8_000) { bookmarked = true })
+        assertTrue("the place was written first", bookmarked)
     }
 
     @Test
