@@ -12,6 +12,9 @@ ALTER TABLE music_items ADD COLUMN art_hash TEXT;
 ALTER TABLE music_items ADD COLUMN art_from TEXT;
 ALTER TABLE music_items ADD COLUMN art_state TEXT CHECK (art_state IN ('own', 'same', 'failed'));
 ALTER TABLE music_items ADD COLUMN art_print INTEGER;
+-- Its coarse colour (photos::tone_image): two own pictures are one only when the colours match too
+-- (code QA L4).
+ALTER TABLE music_items ADD COLUMN art_tone INTEGER;
 ALTER TABLE music_items ADD COLUMN art_at TEXT;
 ALTER TABLE music_items ADD COLUMN art_fetched_at TEXT;
 ALTER TABLE music_items ADD COLUMN art_fails INTEGER NOT NULL DEFAULT 0;

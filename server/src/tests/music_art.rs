@@ -506,6 +506,65 @@ async fn one_picture_under_many_urls_is_one_hash() {
     );
 }
 
+/// Code QA L4: the twin merge needs the same colours and a picture with structure. Episode
+/// pictures that are one background with a small title each, or one design in other colours,
+/// stay separate pictures (a wrong merge would show another episode's picture).
+#[tokio::test]
+async fn titles_on_one_background_and_recoloured_pictures_are_not_merged() {
+    let app = TestApp::new().await;
+    let feed = "https://example.org/titles.rss";
+    let id = rss_entry(&app, feed).await;
+    let titled = |x: u32, colour: [u8; 3]| {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(512, 512, |px, py| {
+            if (x..x + 90).contains(&px) && (400..416).contains(&py) {
+                image::Rgb([10, 10, 10])
+            } else {
+                image::Rgb(colour)
+            }
+        }));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let recoloured = |seed: u8| {
+        let image = picture(seed, 400, 400).to_rgb8();
+        let swapped = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(400, 400, |x, y| {
+            let [r, g, b] = image.get_pixel(x, y).0;
+            image::Rgb([b, r, g])
+        }));
+        let mut out = std::io::Cursor::new(Vec::new());
+        swapped.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let pictures: Vec<(String, Vec<u8>)> = vec![
+        ("t1".into(), titled(60, [40, 90, 160])),
+        ("t2".into(), titled(300, [40, 90, 160])),
+        ("c1".into(), png(0b1001_0110, 400, 400)),
+        ("c2".into(), recoloured(0b1001_0110)),
+        // The same picture again under another URL and size: one picture.
+        ("c3".into(), png(0b1001_0110, 500, 500)),
+    ];
+    let urls: Vec<String> = pictures
+        .iter()
+        .map(|(g, _)| format!("https://example.org/{g}.png"))
+        .collect();
+    let feed_items: Vec<(&str, Option<&str>)> = pictures
+        .iter()
+        .zip(&urls)
+        .map(|((g, _), u)| (g.as_str(), Some(u.as_str())))
+        .collect();
+    app.fetch.answer(feed, 200, art_feed(None, &feed_items));
+    for ((_, bytes), url) in pictures.iter().zip(&urls) {
+        app.fetch.answer(url, 200, bytes.clone());
+    }
+    check(&app, id, t0()).await;
+    let list = items(&app, id).await;
+    let hash = |n: usize| list[n].art_hash.clone().unwrap();
+    assert_ne!(hash(0), hash(1), "two titles on one background");
+    assert_ne!(hash(2), hash(3), "one design in other colours");
+    assert_eq!(hash(2), hash(4), "the same picture is still one");
+}
+
 // ------------------------------------------------------------------------------------------------
 // Failures
 // ------------------------------------------------------------------------------------------------
@@ -1480,6 +1539,7 @@ fn items_without_a_source_url_or_a_picture_url_are_skipped() {
         art_from: None,
         art_state: None,
         art_print: None,
+        art_tone: None,
         art_at: None,
         art_fetched_at: None,
         art_fails: 0,

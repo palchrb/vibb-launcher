@@ -605,6 +605,8 @@ pub struct Item {
     /// `own`, `same` (the series picture) or `failed`.
     pub art_state: Option<String>,
     pub art_print: Option<i64>,
+    /// The picture's coarse colour (`photos::tone_image`), for the twin merge (code QA L4).
+    pub art_tone: Option<i64>,
     pub art_at: Option<String>,
     /// The last attempt that sent a request (the day's budget).
     pub art_fetched_at: Option<String>,
@@ -632,6 +634,7 @@ impl Item {
             art_from: None,
             art_state: None,
             art_print: None,
+            art_tone: None,
             art_at: None,
             art_fetched_at: None,
             art_fails: 0,
@@ -656,9 +659,9 @@ impl Item {
 
 const ITEM_COLUMNS: &str = "key, state, title, url, hls, duration_ms, art_url, published_at, \
      available_until, first_seen_at, attempts, reported_at, rechecked_at, recheck, art_hash, \
-     art_from, art_state, art_print, art_at, art_fetched_at, art_fails";
+     art_from, art_state, art_print, art_tone, art_at, art_fetched_at, art_fails";
 /// How many columns [ITEM_COLUMNS] names.
-const ITEM_COLUMN_COUNT: usize = 21;
+const ITEM_COLUMN_COUNT: usize = 22;
 
 pub async fn load_items(
     db: &mut sqlx::SqliteConnection,
@@ -2453,6 +2456,7 @@ fn art_untried(item: &mut Item) {
     item.art_state = None;
     item.art_hash = None;
     item.art_print = None;
+    item.art_tone = None;
 }
 
 fn art_same(item: &mut Item, url: String, print: Option<i64>, now: DateTime<Utc>) {
@@ -2460,6 +2464,7 @@ fn art_same(item: &mut Item, url: String, print: Option<i64>, now: DateTime<Utc>
     item.art_state = Some("same".to_string());
     item.art_hash = None;
     item.art_print = print;
+    item.art_tone = None;
     item.art_at = Some(stamp(now));
     item.art_fails = 0;
 }
@@ -2469,18 +2474,36 @@ fn art_failed(item: &mut Item, url: String, now: DateTime<Utc>) {
     item.art_state = Some("failed".to_string());
     item.art_hash = None;
     item.art_print = None;
+    item.art_tone = None;
     item.art_at = Some(stamp(now));
     item.art_fails += 1;
 }
 
-/// The item's own picture. A picture the entry already has under another hash (within the print
-/// line) reuses that hash, so the phone sees one picture as one (QA M2).
+/// Two own pictures of an entry this close in print are one picture (QA M2's merge), when their
+/// colours match too and the print has structure enough to tell (code QA L4): a tighter line
+/// than the series picture's, since a wrong merge shows another episode's picture.
+pub const TWIN_BITS: u32 = 2;
+
+/// Whether two own pictures are one (the twin merge, [TWIN_BITS]).
+pub fn twins(a: (i64, Option<i64>), b: (i64, Option<i64>)) -> bool {
+    let (Some(tone_a), Some(tone_b)) = (a.1, b.1) else {
+        return false;
+    };
+    crate::photos::print_distance(a.0, b.0) <= TWIN_BITS
+        && !crate::photos::low_detail(a.0)
+        && crate::photos::same_tone(tone_a, tone_b)
+}
+
+/// The item's own picture. A picture the entry already has under another hash ([twins]) reuses
+/// that hash, so the phone sees one picture as one (QA M2).
+#[allow(clippy::too_many_arguments)]
 fn art_own(
     plan: &mut Plan,
     index: usize,
     url: String,
     hash: String,
     print: i64,
+    tone: Option<i64>,
     file: Option<crate::photos::ProcessedPhoto>,
     now: DateTime<Utc>,
 ) {
@@ -2490,10 +2513,8 @@ fn art_own(
         .enumerate()
         .filter(|(at, other)| *at != index && other.art_state.as_deref() == Some("own"))
         .find_map(|(_, other)| {
-            other
-                .art_print
-                .filter(|p| crate::photos::same_picture(*p, print))
-                .and(other.art_hash.clone())
+            let print_b = other.art_print?;
+            twins((print, tone), (print_b, other.art_tone)).then(|| other.art_hash.clone())?
         });
     let hash = match twin {
         Some(twin) => twin,
@@ -2515,6 +2536,7 @@ fn art_own(
     item.art_state = Some("own".to_string());
     item.art_hash = Some(hash);
     item.art_print = Some(print);
+    item.art_tone = tone;
     item.art_at = Some(stamp(now));
     item.art_fails = 0;
     plan.art.own += 1;
@@ -2523,28 +2545,34 @@ fn art_own(
     plan.art.same_run = 0;
 }
 
+/// What step 2 found: the stored picture (if any), its print and tone.
+type KnownArt = (Option<String>, i64, Option<i64>);
+
 /// Step 2: a result another item already has for this URL - this entry's first, else any entry's
-/// (one with a stored picture first). `(art_hash, art_print)`.
+/// (one with a stored picture first). `(art_hash, art_print, art_tone)`.
 async fn known_art(
     db: &sqlx::SqlitePool,
     plan: &Plan,
     index: usize,
     url: &str,
-) -> Result<Option<(Option<String>, i64)>, sqlx::Error> {
+) -> Result<Option<KnownArt>, sqlx::Error> {
     let judged = |item: &Item| matches!(item.art_state.as_deref(), Some("own" | "same"));
-    let mut own_entry: Vec<(Option<String>, i64)> = plan
+    let mut own_entry: Vec<KnownArt> = plan
         .items
         .iter()
         .enumerate()
         .filter(|(at, item)| *at != index && item.art_from.as_deref() == Some(url) && judged(item))
-        .filter_map(|(_, item)| item.art_print.map(|p| (item.art_hash.clone(), p)))
+        .filter_map(|(_, item)| {
+            item.art_print
+                .map(|p| (item.art_hash.clone(), p, item.art_tone))
+        })
         .collect();
-    own_entry.sort_by_key(|(hash, _)| hash.is_none());
+    own_entry.sort_by_key(|(hash, _, _)| hash.is_none());
     if let Some(found) = own_entry.into_iter().next() {
         return Ok(Some(found));
     }
     sqlx::query_as(
-        "SELECT art_hash, art_print FROM music_items \
+        "SELECT art_hash, art_print, art_tone FROM music_items \
          WHERE art_from = ? AND art_print IS NOT NULL AND art_state IN ('own', 'same') \
          ORDER BY art_hash IS NULL LIMIT 1",
     )
@@ -2689,14 +2717,14 @@ async fn art_pass(
         }
         // 2. A URL another item has a result for: judged for this entry, no request (a `same`
         // elsewhere stored no file, so this entry's `own` needs the request, QA L1 c).
-        if let Some((hash, print)) = known_art(db, plan, index, &url).await? {
+        if let Some((hash, print, tone)) = known_art(db, plan, index, &url).await? {
             if series_picture(print, &refs) {
                 art_same(&mut plan.items[index], url, Some(print), now);
                 plan.art.same += 1;
                 continue;
             }
             if let Some(hash) = hash {
-                art_own(plan, index, url, hash, print, None, now);
+                art_own(plan, index, url, hash, print, tone, None, now);
                 continue;
             }
         }
@@ -2750,13 +2778,13 @@ async fn art_pass(
             _ => None,
         };
         let printed = match photo {
-            Some(photo) => crate::photos::print_limited(photo.jpeg.clone())
+            Some(photo) => crate::photos::fingerprint_limited(photo.jpeg.clone())
                 .await
                 .map(|print| (photo, print)),
             None => None,
         };
         // 5. A failure never fails the check; the item shows the series cover.
-        let Some((photo, print)) = printed else {
+        let Some((photo, (print, tone))) = printed else {
             art_failed(&mut plan.items[index], url, now);
             continue;
         };
@@ -2767,7 +2795,7 @@ async fn art_pass(
             plan.art.same_run += 1;
         } else {
             let hash = photo.hash.clone();
-            art_own(plan, index, url, hash, print, Some(photo), now);
+            art_own(plan, index, url, hash, print, Some(tone), Some(photo), now);
         }
     }
     // An entry whose pictures are all the series picture: only new items from now on (§1.4).
@@ -2972,6 +3000,7 @@ async fn finish(
             .bind(&item.art_from)
             .bind(&item.art_state)
             .bind(item.art_print)
+            .bind(item.art_tone)
             .bind(&item.art_at)
             .bind(&item.art_fetched_at)
             .bind(item.art_fails)

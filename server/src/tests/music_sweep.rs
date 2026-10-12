@@ -2339,6 +2339,7 @@ fn a_listing_past_1_mb_is_cut_from_the_end_opposite_its_anchor() {
         art_from: None,
         art_state: None,
         art_print: None,
+        art_tone: None,
         art_at: None,
         art_fetched_at: None,
         art_fails: 0,

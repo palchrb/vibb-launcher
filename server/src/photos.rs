@@ -116,7 +116,7 @@ pub static MUSIC_ART: Store = Store {
     referenced_sql: "SELECT DISTINCT art_hash FROM music_items WHERE art_hash IS NOT NULL",
     forget_sql: &[
         "UPDATE music_items SET art_hash = NULL, art_state = NULL, art_from = NULL, \
-         art_print = NULL WHERE art_hash = ?",
+         art_print = NULL, art_tone = NULL WHERE art_hash = ?",
     ],
     // Never written (`backups.rs` doesn't add this store): a restore finds nothing under it.
     zip_prefix: "music_art",
@@ -442,6 +442,54 @@ pub async fn print_limited(bytes: Vec<u8>) -> Option<i64> {
         .flatten()
 }
 
+/// Two pictures whose coarse colours ([tone_image]) differ by more than this many steps (of 32) in any
+/// quarter and channel are different pictures (design 27 code QA L4: dHash is grey only).
+pub const SAME_TONE_STEPS: i64 = 3;
+/// A print with at most this many bits set, or at least 64 minus it, has too little structure
+/// to tell pictures apart by (a flat field, small text on one background, a smooth gradient).
+pub const LOW_DETAIL_BITS: u32 = 8;
+
+/// A picture's coarse colour: the mean RGB of its four quarters, 5 bits each (60 bits).
+pub fn tone_image(image: &DynamicImage) -> i64 {
+    let small = imageops::resize(&image.to_rgb8(), 2, 2, imageops::FilterType::Triangle);
+    let mut bits: u64 = 0;
+    for pixel in small.pixels() {
+        for channel in pixel.0 {
+            bits = (bits << 5) | u64::from(channel >> 3);
+        }
+    }
+    bits as i64
+}
+
+/// Whether two [tone_image]s are the same colours, quarter by quarter.
+pub fn same_tone(a: i64, b: i64) -> bool {
+    (0..12).all(|n| {
+        let channel = |tone: i64| (tone >> (n * 5)) & 31;
+        (channel(a) - channel(b)).abs() <= SAME_TONE_STEPS
+    })
+}
+
+/// Whether a print has too little structure to tell pictures apart by.
+pub fn low_detail(print: i64) -> bool {
+    let ones = print.count_ones();
+    ones <= LOW_DETAIL_BITS || ones >= 64 - LOW_DETAIL_BITS
+}
+
+/// [print] and [tone_image] of the same bytes, on a blocking thread.
+pub async fn fingerprint_limited(bytes: Vec<u8>) -> Option<(i64, i64)> {
+    tokio::task::spawn_blocking(move || {
+        let image = ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .ok()?
+            .decode()
+            .ok()?;
+        Some((print_image(&image), tone_image(&image)))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// How many bits two prints differ in.
 pub fn print_distance(a: i64, b: i64) -> u32 {
     (a ^ b).count_ones()
@@ -738,6 +786,40 @@ mod tests {
         .unwrap();
         assert!(!same_picture(original, print(&other.jpeg).unwrap()));
         assert_eq!(print(b"not an image"), None);
+    }
+
+    /// A flat field with a small dark "title" at `x`: little structure for a dHash.
+    fn titled(x: u32, colour: [u8; 3]) -> DynamicImage {
+        DynamicImage::ImageRgb8(image::RgbImage::from_fn(512, 512, |px, py| {
+            if (x..x + 90).contains(&px) && (400..416).contains(&py) {
+                image::Rgb([10, 10, 10])
+            } else {
+                image::Rgb(colour)
+            }
+        }))
+    }
+
+    #[test]
+    fn tones_tell_colours_apart_and_flat_pictures_are_low_detail() {
+        let a = picture(3, 600, 600);
+        let stored = process(&encode(&a, ImageFormat::Png), Shape::Square).unwrap();
+        let decoded = image::load_from_memory(&stored.jpeg).unwrap();
+        assert!(
+            same_tone(tone_image(&a), tone_image(&decoded)),
+            "re-encoded"
+        );
+        // The same structure in other colours: the same print, another tone.
+        let recoloured = DynamicImage::ImageRgb8(image::RgbImage::from_fn(600, 600, |x, y| {
+            let [r, g, b] = a.to_rgb8().get_pixel(x, y).0;
+            image::Rgb([b, r, g])
+        }));
+        assert!(!same_tone(tone_image(&a), tone_image(&recoloured)));
+        assert!(!low_detail(print_image(&a)));
+        // Two titles on one background print alike, and are low-detail.
+        let one = print_image(&titled(60, [40, 90, 160]));
+        let two = print_image(&titled(300, [40, 90, 160]));
+        assert!(low_detail(one) && low_detail(two), "{one:b} {two:b}");
+        assert!(low_detail(print_image(&DynamicImage::new_rgb8(64, 64))));
     }
 
     #[test]
