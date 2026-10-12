@@ -407,11 +407,11 @@ class SonosLifecycleTest {
     }
 
     @Test
-    fun `volume cap - a louder speaker set from elsewhere is left alone, an up press never pulls it down`() {
+    fun `volume cap - a louder speaker set from elsewhere during the session is left alone, an up press never pulls it down`() {
         val r = ControllerRig(uid)
         r.capPct = 60
-        r.spk.vol = 90 // from the Sonos app
-        r.start()
+        r.start() // 30: under the cap, the start sets nothing (the start's own clamp: SonosControllerTest)
+        r.spk.vol = 90 // from the Sonos app, once our session plays
         r.speaker("0:07:11")
         r.poll()
         r.advance(15_000)

@@ -571,6 +571,80 @@ class SonosControllerTest {
         assertEquals(0, r.c.deviceVolume())
     }
 
+    // -- the cap at a session's start (§5.3, correction 2026-10-12) --
+
+    @Test
+    fun `a start brings a louder speaker down to the cap once, before Play`() {
+        r.capPct = 40
+        r.spk.vol = 70 // left loud by the last listener
+        r.start()
+        assertEquals(listOf("volume 40", "seturi", "play"), r.spk.commands)
+        assertTrue("read before it was set", r.spk.log.indexOf("getvolume") < r.spk.log.indexOf("volume 40"))
+        assertEquals("the base of the next press", 40, r.c.volOpt)
+        assertEquals(40, r.c.deviceVolume())
+        assertEquals(40, r.session.snapshot.volume)
+        r.c.adjustVolume(-3)
+        r.work.drain()
+        assertEquals("volume 37", r.spk.commands.last())
+    }
+
+    @Test
+    fun `a start from a bookmark caps inside the hush`() {
+        r.capPct = 40
+        r.spk.vol = 70
+        r.start(startMs = 720_000)
+        assertEquals(listOf("mute true", "volume 40", "seturi", "play", "seek 0:12:00", "mute false"), r.spk.commands)
+    }
+
+    @Test
+    fun `no cap, or a speaker at or below it - the start reads and sets nothing more`() {
+        r.spk.vol = 90
+        r.start()
+        assertEquals("no cap: not even read", listOf("clearqueue", "seturi", "play"), r.spk.log)
+        assertNull(r.c.volOpt)
+        val q = ControllerRig()
+        q.capPct = 40
+        q.spk.vol = 40
+        q.start()
+        assertEquals(listOf("getvolume", "clearqueue", "seturi", "play"), q.spk.log)
+        assertNull(q.c.volOpt)
+    }
+
+    @Test
+    fun `the start cap is once per session - a step or an advance never pulls a louder speaker down`() {
+        r.capPct = 40
+        r.start()
+        r.spk.vol = 80 // from the Sonos app while ours plays
+        r.speaker("0:07:11")
+        r.poll()
+        assertEquals("the louder volume shows", 80, r.c.deviceVolume())
+        val reads = r.spk.log.count { it == "getvolume" }
+        r.c.stepTo(1, 0)
+        r.work.drain()
+        assertEquals("the step's play went out", 2, r.spk.commands.count { it == "play" })
+        assertEquals("the step reads no volume", reads, r.spk.log.count { it == "getvolume" })
+        assertFalse(r.spk.commands.any { it.startsWith("volume") })
+    }
+
+    @Test
+    fun `a speaker that won't say its volume still plays`() {
+        r.capPct = 40
+        r.spk.failOn = mapOf("getvolume" to { SpeakerUnreachable("slow") })
+        r.start()
+        assertEquals(listOf("seturi", "play"), r.spk.commands)
+        assertTrue(r.c.showsPlaying(r.now))
+    }
+
+    @Test
+    fun `a ramp's leftover volume is put back no louder than the cap`() {
+        val f = ControllerRig()
+        val c = SonosController(f.transport, f.work, f.store, { f.clock.now }, f.uid, "Barnerom", f.host, sleep = f.clock.clock.sleep, restoreVolume = 70, cap = { 50 })
+        c.load(f.entry, f.items, 0, 0)
+        c.playTile()
+        f.work.drain()
+        assertEquals(listOf("seturi", "play", "volume 50"), f.spk.commands)
+    }
+
     @Test
     fun `the sleep ramp - three steps 1 s apart, pause, the volume back`() {
         playing()

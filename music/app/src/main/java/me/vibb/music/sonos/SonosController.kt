@@ -716,12 +716,17 @@ class SonosController(
         bmHold = null
         endsNear = 0
         val volume = restoreVolume
+        // a session's start brings a louder speaker down to the parent's cap before Play (§5.3); a
+        // step or an advance inside the session never does (a louder volume set elsewhere stays)
+        val startCap = if (why == PlayWhy.START) cap()?.takeIf { it in 1..99 } else null
+        // the ramp's leftover is our own set: never above the cap either
+        val restore = volume?.let { volumeTarget(it, startCap ?: cap()) }
         val target = uid
         work.submit({
-            val result = transport.play(body)
-            if (volume != null) {
+            val result = transport.play(body, startCap)
+            if (restore != null) {
                 try {
-                    transport.volume(volume, target)
+                    transport.volume(restore, target)
                 } catch (_: SonosException) {
                     // best effort: the next play tries again
                 }
@@ -736,6 +741,7 @@ class SonosController(
                     r.onSuccess { res ->
                         playing = Playing(entryId, if (entry?.id == entryId) items.indexOfFirst { it.key == item.key } else -1, item.key, res.uri)
                         ownsSpeaker = true
+                        res.volume?.let { volOpt = it }
                         restoredBy(volume)
                     }
                     r.onFailure { host.log("sonos: a superseded play failed (${it.javaClass.simpleName})") }
@@ -761,6 +767,8 @@ class SonosController(
     private fun played(idx: Int, item: PlayItem, res: PlayResult, startS: Double, restored: Int?) {
         val now = elapsedMs()
         restoredBy(restored)
+        // brought down to the cap before Play: the base of the next key press
+        res.volume?.let { volOpt = it }
         index = idx // the current generation: nothing newer was pressed
         ownsSpeaker = true
         playing = Playing(entry?.id, idx, item.key, res.uri)
@@ -771,7 +779,7 @@ class SonosController(
         snap = Fields(
             armed = true, uid = res.uid, kind = transport.session.kind, seq = -1, measuredAt = now,
             reachable = true, transport = TransportState.PLAYING, relS = startS, durS = listed, uri = res.uri, ours = true,
-            volume = snap?.volume,
+            volume = res.volume ?: snap?.volume,
         )
         durFromListing = listed != null
         seeded = true
@@ -1090,8 +1098,9 @@ class SonosController(
     /**
      * `SetVolume` of our own (the slider, a key press): clamped 0..100 and to the parent's cap in
      * force ([volumeTarget]); the base of the next press. A volume set from elsewhere (the Sonos
-     * app, the speaker's buttons) is never pulled down: only what we send is clamped (vibb never
-     * fights an external change).
+     * app, the speaker's buttons) during a session is never pulled down: only what we send is clamped
+     * (vibb never fights an external change). A session's start is the one exception: a louder
+     * speaker is set to the cap once, before Play ([SonosTransport.capVolume], §5.3).
      */
     fun setVolume(volume: Int) {
         if (closed) return

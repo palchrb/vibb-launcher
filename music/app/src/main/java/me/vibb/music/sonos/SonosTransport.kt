@@ -43,8 +43,11 @@ interface SpeakerControl : SpeakerIo {
 /** Elapsed time (SystemClock.elapsedRealtime on the phone: it counts deep sleep) and the waits. */
 class SonosClock(val elapsedMs: () -> Long, val sleep: suspend (Long) -> Unit = { delay(it) })
 
-/** `/play`'s answer: [uri] is the BUILT one (what renderer.json stores and adopt compares). */
-data class PlayResult(val uid: String, val uri: String, val sought: Boolean, val didl: String)
+/**
+ * `/play`'s answer: [uri] is the BUILT one (what renderer.json stores and adopt compares); [volume]
+ * the cap the speaker was brought down to before Play ([SonosTransport.capVolume]), else null.
+ */
+data class PlayResult(val uid: String, val uri: String, val sought: Boolean, val didl: String, val volume: Int? = null)
 
 class SonosTransport(
     val session: SonosSession,
@@ -61,15 +64,18 @@ class SonosTransport(
      * `play`: uid and kind before the SOAP, the uri only after it succeeded; [hush] across the
      * Play -> Seek window; `url` clears the queue (cosmetic, errors ignored), sets the uri with its
      * DIDL and plays; `nrk_program` builds the service uri and DIDL. Then armed, and a start of 5 s
-     * or more seeks once the transport plays ([seekSettled]; false = playing from the top). Throws
-     * [UnknownUid], [UpnpFault] or [SpeakerUnreachable] - the failed-play path is the caller's.
+     * or more seeks once the transport plays ([seekSettled]; false = playing from the top). With a
+     * [cap] (a session's start, design 26a §5.3) the speaker's volume is brought down to it first,
+     * inside the hush ([capVolume]). Throws [UnknownUid], [UpnpFault] or [SpeakerUnreachable] - the
+     * failed-play path is the caller's.
      */
-    suspend fun play(body: PlayBody): PlayResult = mutex.withLock {
+    suspend fun play(body: PlayBody, cap: Int? = null): PlayResult = mutex.withLock {
         session.beginPlay(body.uid, body.kind)
         val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
         val start = body.startS
         val unhush = hush(spk, start)
         val result = try {
+            val capped = capVolume(spk, cap)
             val (uri, built) = when (body.kind) {
                 Kind.URL -> {
                     try {
@@ -97,8 +103,9 @@ class SonosTransport(
                 }
             }
             session.played(uri)
+            if (capped != null) session.ownVolume(capped)
             val sought = if (start >= 5) seekSettled(spk, start) else true
-            PlayResult(body.uid, uri, sought, built)
+            PlayResult(body.uid, uri, sought, built, capped)
         } finally {
             unhush()
         }
@@ -125,6 +132,32 @@ class SonosTransport(
                 spk.setMute(was)
             } catch (_: Exception) {
             }
+        }
+    }
+
+    /**
+     * The parent's cap at a session's start (design 26a §5.3): a speaker left louder than [cap]
+     * (1..99 %; anything else is no cap) - by the last listener, by the Sonos app - is set to the cap
+     * once, before Play, so our stream never starts above it; inside the hush when there is one, so
+     * the step isn't heard on what was playing. A speaker at or below the cap is left alone, and
+     * during the session a louder volume set elsewhere is never pulled down (vibb never fights an
+     * external change). Best effort: a speaker that won't say or set its volume still plays (logged).
+     * Returns the volume set, or null.
+     */
+    internal fun capVolume(spk: SpeakerControl, cap: Int?): Int? {
+        if (cap == null || cap !in 1..99) return null
+        return try {
+            val was = spk.volume()
+            if (was <= cap) {
+                null
+            } else {
+                spk.setVolume(cap)
+                log("volume $was above the cap - set to $cap before Play")
+                cap
+            }
+        } catch (e: Exception) {
+            log("volume cap not checked (${e.javaClass.simpleName}) - playing anyway")
+            null
         }
     }
 

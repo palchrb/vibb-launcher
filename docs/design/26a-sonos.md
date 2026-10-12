@@ -430,8 +430,13 @@ existed because bursts computed from a stale base did nothing, daemon.py:1001-10
 config today** (`RestrictionKeys`, `M/bridge/BridgeConfig.kt:33-41`): the launcher publishes it as a new restriction
 `volume_cap_pct` (0 = none), re-pushed at every `AppEnforcer.apply` edge, read live like `mobile_data`. That is a
 launcher change and a contract change: both `bridge_contract.json` copies, `MusicPlanTest`/`BridgeTest`, one commit
-(QA H6). The speaker already above the cap is **not** pulled down (vibb never fights external changes, 995-998); only
-our own sets are clamped.
+(QA H6). **At a session's start** (a room picked, a start, a restart - `PlayWhy.START`; corrected 2026-10-12 after the
+main session's review) the speaker's volume is read once (`GetVolume`) and, when above the cap in force, set to the cap
+**before Play, inside the hush** (`SonosTransport.capVolume`): our stream never starts louder than the parent allows,
+whatever the last listener left. No cap -> nothing is read. **During the session** a louder volume set from the Sonos
+app or the speaker's buttons is **not** pulled down (vibb never fights external changes, 995-998): a step, an advance,
+a poll and the adopt at start (zero transport commands) never touch it; only our own sets are clamped, the sleep
+ramp's leftover volume too. Best effort: a speaker that won't answer `GetVolume` still plays (logged).
 
 ### 5.4 No server change for playback
 NRK series items carry their program id as the item key (§2.5), so the listing contract stays. The server sees no
@@ -720,7 +725,8 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
   nothing; the lock's media view and Home card went away.
 - Screen off 1 h in Doze while Sonos plays: poll timestamps in logcat every 15 s, the bookmark after a forced stop
   within 15 s of the truth, battery per hour; the sleep timer's fade and the volume restored after it.
-- Volume keys: ±3 per press, the slider, the cap holds, a louder speaker set from the Sonos app is left alone.
+- Volume keys: ±3 per press, the slider, the cap holds; a speaker left louder than the cap starts at the cap (no loud
+  first second); a louder volume set from the Sonos app during the session is left alone.
 - An incoming phone call and an Element X voice/video call during Sonos playback and during local playback: paused
   at the ring, played again after only when it was playing; the kid's own pause during the call stays.
 - VPN filter on (the launcher's always-on `KidVpnService`): discovery and control still work - the sheet fills by

@@ -115,8 +115,10 @@ feed seeds the cache).
   `SonosLocks` holds a partial wake lock (timed, renewed) and a Wi-Fi lock while a room is armed and playing or a
   verb is settling; never a screen wake lock (`SourceScanTest`).
 - **Volume on a room** (26a §5.3): the keys and slider reach the speaker (remote `DeviceInfo`, ±3 from our own last
-  set); every set of ours is clamped to `volume_cap_pct`, read live from the managed config; a louder speaker set
-  from the Sonos app is never pulled down. No audio focus while a room renders (`LocalRenderer.standDown()`).
+  set); every set of ours is clamped to `volume_cap_pct`, read live from the managed config; a session's start (a
+  pick, a start, a restart) brings a speaker louder than the cap down to it once, before Play, inside the hush
+  (`SonosTransport.capVolume`); during the session a louder volume set from the Sonos app is never pulled down. No
+  audio focus while a room renders (`LocalRenderer.standDown()`).
 - **Calls** (26a §6.7): the launcher sends `CALL_HOLD` / `CALL_RELEASE` (session custom actions, granted only to a
   launcher signed like this app, names in `bridge_contract.json`); `logic/CallPause.kt` decides: our own pause (the
   sleep timer runs on), played again only what we paused, never after the kid's own play, a timer that ended or
