@@ -75,6 +75,10 @@ data class StatusReportRequest(
      * on Android 14 the admin's new `<wipe-data />` policy counts only after the phone restarts
      * once. `null` = not device owner or unreadable (left out). */
     val remoteWipeReady: Boolean? = null,
+    /** The device admin's declared policies Android hasn't granted yet ([AdminPolicies]): on some
+     * versions a policy an update added counts only after the phone restarts once. Empty = all
+     * granted; `null` = not device owner or unreadable (left out). */
+    val adminPoliciesPending: List<String>? = null,
 )
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the

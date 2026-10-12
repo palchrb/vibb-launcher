@@ -508,6 +508,12 @@ Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - 
    owner and enroll, update it in place to this build *without a reboot*: the Locate page says "Remote wipe works after
    the phone restarts once" (the report's `remote_wipe_ready` is false) and a Wipe comes back "Failed ...
    SecurityException"; after one restart the warning is gone and the wipe works.
+   **Admin policies after an update** (the keyguard camera switch on an Android 16 emulator): with the build before
+   this fix as device owner, update in place to this one without a reboot. `adb logcat -s AppEnforcer` may still show
+   "Failed to set the keyguard camera feature" (on versions that check the admin's declared policy), and the device
+   page's "Play and kiosk" card says "Restart the phone once: ..." (the report's `admin_policies_pending`). Restart:
+   the log line is gone, the warning goes with the next report, and `adb shell dumpsys device_policy | grep -i
+   keyguard` shows the camera feature disabled. A fresh install with this build has nothing pending.
 2. **Command receipts (L12)**: Locate page -> Lock. The Recent commands row goes "Delivered ..., not confirmed yet" ->
    "Done ... (locked ...)" within seconds; `adb logcat -s CommandAnswers MdmSyncWorker` shows no "Couldn't send". A
    wipe (snapshot!) reads "Received ... - the phone is wiping now" before the emulator reboots. A lost answer: on the

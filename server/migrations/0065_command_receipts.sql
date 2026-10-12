@@ -18,3 +18,7 @@ UPDATE device_commands SET received_at = acknowledged_at WHERE acknowledged_at I
 -- 14 the device owner's new `<wipe-data />` policy only counts after the phone restarts once. NULL
 -- from older launchers and when the phone couldn't tell.
 ALTER TABLE device_status ADD COLUMN remote_wipe_ready INTEGER;
+-- The device admin's declared policies Android hasn't granted yet (JSON list of tags, e.g.
+-- ["disable-keyguard-features"]): a policy a launcher update added may only count after the phone
+-- restarts once. NULL from older launchers.
+ALTER TABLE device_status ADD COLUMN admin_policies_pending_json TEXT;

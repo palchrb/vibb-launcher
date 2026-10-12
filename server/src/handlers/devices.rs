@@ -812,6 +812,11 @@ pub(crate) async fn play_card(
             .ok()
             .flatten()
             .unwrap_or(true);
+    if let Some(notice) = crate::models::admin_policy_notice(
+        latest.and_then(|s| s.admin_policies_pending_json.as_deref()),
+    ) {
+        warnings.push(notice);
+    }
     if latest.and_then(|s| s.play_store_suspendable) == Some(false) {
         warnings.push(if block_activity_start {
             "Play can't be suspended on this phone - Play is blocked only while kiosk is on."

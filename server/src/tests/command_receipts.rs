@@ -644,3 +644,52 @@ async fn the_locate_page_says_when_a_wipe_would_be_refused() {
         assert_eq!(page.contains(warning), shown, "{ready:?}");
     }
 }
+
+/// A device-admin policy a launcher update added may only count after the phone restarts once; the
+/// phone lists those not granted yet, and the device page asks for a restart (the lock-screen camera
+/// switch was refused that way on an Android 16 emulator).
+#[tokio::test]
+async fn the_device_page_asks_for_a_restart_while_admin_policies_are_pending() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let notice = "Restart the phone once";
+    for (pending, shown) in [
+        (
+            json!(["disable-keyguard-features", "limit-password", "made-up"]),
+            true,
+        ),
+        (json!(["wipe-data"]), false),
+        (json!([]), false),
+    ] {
+        let res = app
+            .request(
+                Method::POST,
+                "/api/devices/status",
+                Some(&token),
+                Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true, "admin_policies_pending": pending })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT);
+        let page = app
+            .get_page(&format!("/devices/{device}"), &cookie)
+            .await
+            .text();
+        assert_eq!(page.contains(notice), shown, "{pending}");
+        if shown {
+            assert!(page.contains("turn off the camera on the lock screen, and to notice at once"));
+        }
+    }
+    let stored: Option<String> = sqlx::query_scalar(
+        "SELECT admin_policies_pending_json FROM device_status WHERE device_id = ? ORDER BY id LIMIT 1",
+    )
+    .bind(device)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored.as_deref(),
+        Some(r#"["disable-keyguard-features","limit-password"]"#),
+        "known tags only"
+    );
+}

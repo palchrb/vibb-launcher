@@ -785,6 +785,8 @@ object AppEnforcer {
             val wanted = keyguardDisabledFeatures(current, managed)
             if (wanted != current) dpm.setKeyguardDisabledFeatures(admin, wanted)
         } catch (e: Exception) {
+            // Without the disable-keyguard-features policy granted (an update that added it, before
+            // the phone restarted - AdminPolicies): retried at every apply, and reported.
             Log.w(LOG_TAG, "Failed to set the keyguard camera feature", e)
         }
     }

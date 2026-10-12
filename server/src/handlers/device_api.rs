@@ -1034,8 +1034,8 @@ pub async fn status(
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
-          foreign_access_json, remote_wipe_ready) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          foreign_access_json, remote_wipe_ready, admin_policies_pending_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1074,6 +1074,9 @@ pub async fn status(
     .bind(unseen_boots.and_then(|(_, at)| at))
     .bind(&foreign_access_json)
     .bind(report.remote_wipe_ready)
+    .bind(crate::models::admin_policies_json(
+        report.admin_policies_pending.as_ref(),
+    ))
     .execute(&state.db)
     .await
     .ok();

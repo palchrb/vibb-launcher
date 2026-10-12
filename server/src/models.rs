@@ -329,6 +329,9 @@ pub struct DeviceStatus {
     /// The launcher can wipe the phone remotely now (QA of the launcher wave, Low 4; migration
     /// 0065). `None` from older launchers or when the phone couldn't tell.
     pub remote_wipe_ready: Option<bool>,
+    /// The launcher's declared device-admin policies Android hasn't granted yet (JSON list, see
+    /// [admin_policy_notice]; migration 0065). `None` from older launchers.
+    pub admin_policies_pending_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_warnings.
 }
@@ -885,6 +888,11 @@ pub struct StatusReportRequest {
     /// Absent from older launchers and when the phone couldn't tell.
     #[serde(default)]
     pub remote_wipe_ready: Option<bool>,
+    /// The launcher's declared device-admin policies Android hasn't granted yet - a policy a
+    /// launcher update added may count only after the phone restarts once. Stored through the
+    /// known tags only ([admin_policies_json]).
+    #[serde(default)]
+    pub admin_policies_pending: Option<Vec<String>>,
     /// Design 24b: the last relock of a parent-PIN window - opaque, stored through the known
     /// fields only (`window_relock::sanitize_relock`).
     #[serde(default)]
@@ -1034,4 +1042,50 @@ pub struct TrackedAppUpdate {
     /// the APK when the catalog didn't have it), what the phone checks the APK against before it
     /// installs it (the launcher's side comes with its security wave).
     pub signer_sha256: Option<String>,
+}
+
+/// The device-admin policies the launcher may report as not granted yet, with what the phone
+/// can't do until it restarts once (the wipe has its own line on the Locate page).
+const ADMIN_POLICY_EFFECTS: [(&str, &str); 3] = [
+    (
+        "disable-keyguard-features",
+        "turn off the camera on the lock screen",
+    ),
+    (
+        "limit-password",
+        "notice at once when an Android screen lock is removed",
+    ),
+    ("force-lock", "lock the screen from the Locate page"),
+];
+
+/// `StatusReportRequest.admin_policies_pending` as stored: the known tags only (the wipe's too),
+/// `None` when the phone sent none.
+pub fn admin_policies_json(pending: Option<&Vec<String>>) -> Option<String> {
+    let pending = pending?;
+    let known: Vec<&str> = ADMIN_POLICY_EFFECTS
+        .iter()
+        .map(|(tag, _)| *tag)
+        .chain(["wipe-data"])
+        .filter(|tag| pending.iter().any(|p| p == tag))
+        .collect();
+    serde_json::to_string(&known).ok()
+}
+
+/// The device page's warning while the launcher's admin lacks policies Android grants at the next
+/// restart (an Android 16 emulator refused the lock-screen camera switch that way).
+pub fn admin_policy_notice(json: Option<&str>) -> Option<String> {
+    let pending: Vec<String> = serde_json::from_str(json?).ok()?;
+    let effects: Vec<&str> = ADMIN_POLICY_EFFECTS
+        .iter()
+        .filter(|(tag, _)| pending.iter().any(|p| p == tag))
+        .map(|(_, effect)| *effect)
+        .collect();
+    if effects.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Restart the phone once: after a launcher update Android hasn't yet given the launcher what it \
+         needs to {}.",
+        effects.join(", and to ")
+    ))
 }
