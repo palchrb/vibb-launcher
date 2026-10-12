@@ -1423,7 +1423,7 @@ async fn library_gates_storytel() {
         .await
         .text()
         .replace("&#39;", "'");
-    assert!(page.contains("Storytel is off on this phone: its 1 Storytel entry aren't sent."));
+    assert!(page.contains("Storytel is off on this phone: its Storytel entry isn't sent."));
     assert!(page.contains("This includes Storytel books, often several hundred MB each."));
     // The switch on: in.
     let before = revision(&app).await;
@@ -1453,9 +1453,7 @@ async fn library_gates_storytel() {
         .await
         .text()
         .replace("&#39;", "'");
-    assert!(
-        page.contains("No Storytel login is saved: this phone's 1 Storytel entry aren't sent.")
-    );
+    assert!(page.contains("No Storytel login is saved: its Storytel entry isn't sent."));
 }
 
 /// The phone's report on the cards (§2.3, §2.5): books on the phone with the `login` wait, a

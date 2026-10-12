@@ -3537,17 +3537,17 @@ pub(crate) async fn device_card(
             .collect(),
         storytel: policy.music_storytel,
         storytel_stored,
-        storytel_note: match (storytel_ticked, policy.music_storytel, storytel_stored) {
-            (0, _, _) => None,
-            (n, false, _) => Some(format!(
-                "Storytel is off on this phone: its {n} Storytel entr{} aren't sent.",
-                if n == 1 { "y" } else { "ies" }
-            )),
-            (n, true, false) => Some(format!(
-                "No Storytel login is saved: this phone's {n} Storytel entr{} aren't sent.",
-                if n == 1 { "y" } else { "ies" }
-            )),
-            _ => None,
+        storytel_note: {
+            let entries = |n: usize| match n {
+                1 => "its Storytel entry isn't sent".to_string(),
+                n => format!("its {n} Storytel entries aren't sent"),
+            };
+            match (storytel_ticked, policy.music_storytel, storytel_stored) {
+                (0, _, _) => None,
+                (n, false, _) => Some(format!("Storytel is off on this phone: {}.", entries(n))),
+                (n, true, false) => Some(format!("No Storytel login is saved: {}.", entries(n))),
+                _ => None,
+            }
         },
         library: library.map(|l| {
             format!(
