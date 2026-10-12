@@ -2840,6 +2840,8 @@ async fn a_listed_entry_whose_every_item_is_withdrawn_lists_them_gone() {
 #[tokio::test]
 async fn two_reports_an_hour_apart_re_resolve_the_whole_entry() {
     let app = TestApp::new().await;
+    // Episode art has its own tests (music_art.rs): these count psapi's requests.
+    app.state.music_sweep.set_art_per_check(0);
     let (phone, _) = app.enrolled_device("Ella").await;
     let id = entry(
         &app,

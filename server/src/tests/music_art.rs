@@ -537,7 +537,8 @@ async fn a_failed_picture_is_retried_daily_three_times_and_a_new_url_resets() {
     check(&app, id, t0() + TimeDelta::hours(6)).await;
     assert_eq!(calls_to(&app, bad), 1, "not within a day");
     check(&app, id, t0() + TimeDelta::hours(25)).await;
-    app.fetch.fail(bad, crate::music_net::FetchError::Timeout);
+    // An undecodable picture counts like a 4xx.
+    app.fetch.answer(bad, 200, "not a picture");
     check(&app, id, t0() + TimeDelta::hours(50)).await;
     assert_eq!(calls_to(&app, bad), 3);
     assert_eq!(items(&app, id).await[0].art_fails, 3);
@@ -598,14 +599,13 @@ async fn twenty_a_check_and_400_a_day_in_play_order() {
         "10-19, not 1"
     );
 
-    // The day: 395 requests elsewhere leave room for 5.
+    // The day counts requests (code QA M1): 20 so far.
+    assert_eq!(sweep::art_requests_today(&app.db, t0()).await.unwrap(), 20);
+    // 375 more elsewhere leave room for 5.
     sqlx::query(
         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 375) \
-         INSERT INTO music_items (entry_id, key, seq, state, first_seen_at, art_fetched_at) \
-         SELECT ?, 'x' || i, 1000 + i, 'gone', ?, ? FROM n",
+         INSERT INTO music_art_requests (at) SELECT ? FROM n",
     )
-    .bind(id)
-    .bind(stamp(t0()))
     .bind(stamp(t0() + TimeDelta::minutes(30)))
     .execute(&app.db)
     .await
@@ -620,6 +620,135 @@ async fn twenty_a_check_and_400_a_day_in_play_order() {
         .filter(|i| i.art_url.is_some() && i.art_from.is_none())
         .count();
     assert_eq!(untried, 5, "the rest stays untried");
+    assert_eq!(
+        sweep::art_requests_today(&app.db, t0() + TimeDelta::hours(1))
+            .await
+            .unwrap(),
+        400
+    );
+    // A day later the earlier ones no longer count.
+    assert_eq!(
+        sweep::art_requests_today(&app.db, t0() + TimeDelta::minutes(24 * 60 + 30))
+            .await
+            .unwrap(),
+        5
+    );
+}
+
+/// Code QA M1: a feed whose picture URLs change at every fetch (`?t=<n>`, a signed or
+/// cache-busting query) costs its requests once; the same picture under a new query keeps its
+/// result with no request. A picture moved to another path is fetched again at most weekly.
+#[tokio::test]
+async fn churning_picture_urls_are_not_fetched_again() {
+    let app = TestApp::new().await;
+    let feed = "https://example.org/churn.rss";
+    let id = rss_entry(&app, feed).await;
+    let answer = |app: &TestApp, n: u32, b_path: &str| {
+        let a = format!("https://img.example.org/a.jpg?t={n}");
+        let b = format!("https://img.example.org/{b_path}?t={n}");
+        app.fetch.answer(
+            feed,
+            200,
+            art_feed(None, &[("a", Some(a.as_str())), ("b", Some(b.as_str()))]),
+        );
+        app.fetch.answer(&a, 200, png(0b0011_0011, 300, 300));
+        app.fetch.answer(&b, 200, png(0b1100_1100, 300, 300));
+    };
+    answer(&app, 1, "b.jpg");
+    check(&app, id, t0()).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/"), 2);
+    let before = items(&app, id).await;
+    for n in 2..6 {
+        answer(&app, n, "b.jpg");
+        check(&app, id, t0() + TimeDelta::hours(4 * i64::from(n))).await;
+    }
+    assert_eq!(
+        calls_starting(&app, "https://img.example.org/"),
+        2,
+        "no image request after the first check"
+    );
+    let after = items(&app, id).await;
+    assert_eq!(after[0].art_hash, before[0].art_hash);
+    assert_eq!(
+        after[0].art_from.as_deref(),
+        Some("https://img.example.org/a.jpg?t=5")
+    );
+    assert_eq!(
+        sweep::art_requests_today(&app.db, t0() + TimeDelta::hours(23))
+            .await
+            .unwrap(),
+        2,
+        "the day counts requests"
+    );
+    // b moves to another path: not within a week of its result, then once.
+    answer(&app, 6, "b2.jpg");
+    check(&app, id, t0() + TimeDelta::days(3)).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/b2.jpg"), 0);
+    check(&app, id, t0() + TimeDelta::days(8)).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/b2.jpg"), 1);
+    check(&app, id, t0() + TimeDelta::days(8) + TimeDelta::hours(6)).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/b2.jpg"), 1);
+}
+
+/// Code QA M2: an image host that is down ends the art pass after 3 network errors (or 5xx) in a
+/// row, and doesn't use up the pictures' tries; a 4xx does.
+#[tokio::test]
+async fn a_dead_image_host_ends_the_pass_and_costs_no_tries() {
+    let app = TestApp::new().await;
+    let feed = "https://example.org/dead.rss";
+    let id = rss_entry(&app, feed).await;
+    let urls: Vec<String> = (0..8)
+        .map(|n| format!("https://cdn.example.org/{n}.jpg"))
+        .collect();
+    let guids: Vec<String> = (0..8).map(|n| format!("d{n}")).collect();
+    let feed_items: Vec<(&str, Option<&str>)> = guids
+        .iter()
+        .zip(&urls)
+        .map(|(g, u)| (g.as_str(), Some(u.as_str())))
+        .collect();
+    app.fetch.answer(feed, 200, art_feed(None, &feed_items));
+    for url in &urls {
+        app.fetch.fail(
+            url,
+            crate::music_net::FetchError::Network("down".to_string()),
+        );
+    }
+    let report = check(&app, id, t0()).await;
+    assert_eq!(report.error, None);
+    assert_eq!(
+        calls_starting(&app, "https://cdn.example.org/"),
+        3,
+        "stops after 3"
+    );
+    let no_tries = |list: &[sweep::Item]| {
+        list.iter()
+            .all(|i| i.art_fails == 0 && i.art_state.is_none() && i.art_hash.is_none())
+    };
+    let list = items(&app, id).await;
+    assert!(no_tries(&list), "no tries used");
+    let waiting = list.iter().filter(|i| i.art_from.is_some()).count();
+    assert_eq!(waiting, 3, "the three asked wait a day");
+    // A 503 is the host's trouble too; the next three are asked.
+    for url in &urls {
+        app.fetch.answer(url, 503, "");
+    }
+    app.fetch.clear_calls();
+    check(&app, id, t0() + TimeDelta::hours(6)).await;
+    assert_eq!(calls_starting(&app, "https://cdn.example.org/"), 3);
+    assert!(no_tries(&items(&app, id).await));
+    // Back a day after the last try, but one picture is gone (404): that one counts, the others are fetched.
+    for url in &urls {
+        app.fetch.answer(url, 200, png(0b0101_0011, 300, 300));
+    }
+    app.fetch.answer(&urls[7], 404, "");
+    check(&app, id, t0() + TimeDelta::hours(31)).await;
+    let list = items(&app, id).await;
+    assert_eq!(list[7].art_fails, 1);
+    assert!(
+        list[..7]
+            .iter()
+            .all(|i| i.art_state.as_deref() == Some("own"))
+    );
 }
 
 /// Only the first 200 `ok` items in play order get pictures (`ART_WINDOW`); a `gone` item keeps
@@ -639,6 +768,9 @@ async fn the_window_is_200_in_play_order_and_gone_items_get_nothing_new() {
         .zip(&urls)
         .map(|(g, u)| (g.as_str(), Some(u.as_str())))
         .collect();
+    for url in &urls {
+        app.fetch.answer(url, 404, "");
+    }
     app.fetch.answer(feed, 200, art_feed(None, &feed_items));
     let list = items(&app, id).await;
     assert!(list.is_empty());

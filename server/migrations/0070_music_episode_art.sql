@@ -7,7 +7,7 @@
 -- 'failed' (the fetch or decode failed; retried a day later, at most 3 times per URL).
 -- `art_print`: the picture's 64-bit dHash (photos::print), kept for 'own' and 'same', so a new
 -- series cover re-judges without a request. `art_at`: the last attempt; `art_fetched_at`: the last
--- one that sent a request (the 400-a-day budget counts only those, QA L1 a).
+-- one that sent a request.
 ALTER TABLE music_items ADD COLUMN art_hash TEXT;
 ALTER TABLE music_items ADD COLUMN art_from TEXT;
 ALTER TABLE music_items ADD COLUMN art_state TEXT CHECK (art_state IN ('own', 'same', 'failed'));
@@ -16,9 +16,13 @@ ALTER TABLE music_items ADD COLUMN art_at TEXT;
 ALTER TABLE music_items ADD COLUMN art_fetched_at TEXT;
 ALTER TABLE music_items ADD COLUMN art_fails INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX music_items_art_hash ON music_items(art_hash) WHERE art_hash IS NOT NULL;
--- Step 2's lookup across entries (QA L1 d) and the day's count.
+-- Step 2's lookup across entries (QA L1 d).
 CREATE INDEX music_items_art_from ON music_items(art_from) WHERE art_from IS NOT NULL;
-CREATE INDEX music_items_art_fetched ON music_items(art_fetched_at) WHERE art_fetched_at IS NOT NULL;
+
+-- One row per image request the art pass sends (design 27 code QA M1): the 400-a-day budget counts
+-- requests, not items, so pictures fetched again can't slip past it. Rows older than a day go.
+CREATE TABLE music_art_requests (at TEXT NOT NULL);
+CREATE INDEX music_art_requests_at ON music_art_requests(at);
 
 -- The reference prints a picture is judged against (QA M2): the source cover's (`cover_print`,
 -- made when it is stored or read from the stored file), NRK's 16:9 series image centre-cropped

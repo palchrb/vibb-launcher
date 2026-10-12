@@ -102,6 +102,13 @@ pub const ART_MAX_FAILS: i64 = 3;
 pub const ART_BACKLOG_SAME: i64 = 5;
 /// ... until this many days later (QA L1 e: a carousel the entry would have isn't hidden for good).
 pub const ART_BACKLOG_RETRY_DAYS: i64 = 30;
+/// Network errors in a row (or 5xx answers) from image hosts that end a check's art pass (code QA
+/// M2, like [MANIFEST_NETWORK_FAILURES]): a dead host costs 3 requests, not the check's 10 minutes.
+pub const ART_NETWORK_FAILURES: u32 = 3;
+/// A judged picture whose URL moved to another path is fetched again at most this often (code QA
+/// M1: a feed that renames its pictures at every fetch). A change in the query alone keeps the
+/// result with no request.
+pub const ART_MOVED_RETRY_DAYS: i64 = 7;
 /// Earlier covers kept as reference prints (QA M2 c).
 const OLD_PRINTS: usize = 3;
 
@@ -1359,8 +1366,8 @@ async fn run_check(
             let found = cover(&mut job, &mut plan, link).await;
             if !mode.recheck_only {
                 // Episode art (design 27 §1.4): after the listing, the manifests and the cover.
-                reference_prints(state, &mut job, &mut plan, old, &found).await;
-                let room = (ART_PER_DAY - art_fetched_today(&state.db, now).await?).max(0);
+                reference_prints(state, &mut job, &mut plan, old, &found).await?;
+                let room = (ART_PER_DAY - art_requests_today(&state.db, now).await?).max(0);
                 let gets = (state.music_sweep.art_per_check() as i64).min(room) as u32;
                 art_pass(&state.db, &mut job, &mut plan, link, play_order, gets).await?;
             }
@@ -2273,24 +2280,57 @@ async fn cover(job: &mut Job<'_>, plan: &mut Plan, link: &Link) -> CoverResult {
 // Episode art (design 27 §1.3-§1.4, with its QA M2, M3 and L1)
 // ------------------------------------------------------------------------------------------------
 
-/// Image requests the art pass sent in the last 24 h, server-wide (QA L1 a: steps 1, 2 and 6 cost
-/// none and don't count).
-async fn art_fetched_today(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM music_items WHERE art_fetched_at > ?")
-        .bind(stamp(now - hours(24)))
+/// Image requests the art pass sent in the last 24 h, server-wide, from `music_art_requests` (code
+/// QA M1: every request counts, a picture fetched twice twice; steps 1, 2 and 6 send none). Older
+/// rows are deleted on the way.
+pub async fn art_requests_today(
+    db: &sqlx::SqlitePool,
+    now: DateTime<Utc>,
+) -> Result<i64, sqlx::Error> {
+    let day_ago = stamp(now - hours(24));
+    sqlx::query("DELETE FROM music_art_requests WHERE at <= ?")
+        .bind(&day_ago)
+        .execute(db)
+        .await?;
+    sqlx::query_scalar("SELECT COUNT(*) FROM music_art_requests WHERE at > ?")
+        .bind(&day_ago)
         .fetch_one(db)
         .await
 }
 
+/// Counts one image request against the day ([art_requests_today]).
+async fn count_art_request(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO music_art_requests (at) VALUES (?)")
+        .bind(stamp(now))
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// The same picture's URL with another query (a signed or cache-busting URL, `?t=<n>`): the same
+/// scheme, host, port and path (code QA M1).
+fn same_resource(a: &str, b: &str) -> bool {
+    match (reqwest::Url::parse(a), reqwest::Url::parse(b)) {
+        (Ok(a), Ok(b)) => {
+            a.scheme() == b.scheme()
+                && a.host_str() == b.host_str()
+                && a.port_or_known_default() == b.port_or_known_default()
+                && a.path() == b.path()
+        }
+        _ => false,
+    }
+}
+
 /// The series pictures' prints (QA M2): a cover fetched now, else the stored cover's file (read
-/// once, no request); NRK's 16:9 image, fetched once when its URL changes (at most once a day).
+/// once, no request); NRK's 16:9 image, fetched once when its URL changes (at most once a day,
+/// counted against the day's requests).
 async fn reference_prints(
     state: &AppState,
     job: &mut Job<'_>,
     plan: &mut Plan,
     old: &Listing,
     found: &CoverResult,
-) {
+) -> Result<(), sqlx::Error> {
     let now = job.now;
     plan.art.cover_url = match &found.0 {
         Some((url, _)) => Some(url.clone()),
@@ -2310,12 +2350,14 @@ async fn reference_prints(
         plan.art.cover_print = crate::photos::print_limited(bytes).await;
     }
     let Some(candidate) = plan.art.alt_candidate.take() else {
-        return;
+        return Ok(());
     };
     let Some(url) = candidate else {
+        // Looked: the root has no 16:9 picture besides its cover (`cover_alt_at` set, code QA L1).
         plan.art.alt_url = None;
         plan.art.alt_print = None;
-        return;
+        plan.art.alt_at = Some(stamp(now));
+        return Ok(());
     };
     let changed = plan.art.alt_url.as_deref() != Some(url.as_str()) || plan.art.alt_print.is_none();
     let tried_recently = plan
@@ -2325,29 +2367,33 @@ async fn reference_prints(
         .and_then(parse_stamp)
         .is_some_and(|at| at > now - hours(24));
     if !changed || tried_recently {
-        return;
+        return Ok(());
     }
     plan.art.alt_at = Some(stamp(now));
     if !music_net::media_url_ok(&url) || !job.public_media(&url).await {
-        return;
+        return Ok(());
     }
-    let answer = match job
+    let got = job
         .get(SourceRequest::new(url.clone(), Kind::Image, Reach::Public))
-        .await
-    {
+        .await;
+    if !matches!(got, Got::Skipped) {
+        count_art_request(&state.db, now).await?;
+    }
+    let answer = match got {
         Got::Answer(answer) if answer.status == 200 && !answer.truncated => answer,
-        _ => return,
+        _ => return Ok(()),
     };
     // Centre-cropped like an episode's 16:9 picture would be.
     let Ok(photo) =
         crate::photos::process_limited(answer.body.into(), crate::photos::Shape::Square).await
     else {
-        return;
+        return Ok(());
     };
     if let Some(print) = crate::photos::print_limited(photo.jpeg).await {
         plan.art.alt_url = Some(url);
         plan.art.alt_print = Some(print);
     }
+    Ok(())
 }
 
 /// Whether a print is one of the series pictures.
@@ -2364,21 +2410,38 @@ pub fn art_candidate(item: &Item) -> bool {
 }
 
 /// Whether an item's picture is to be tried now (§1.3): a URL not tried yet, or a failure a day
-/// old with tries left.
+/// old with tries left; a judged picture's moved URL at most weekly.
 fn art_due(item: &Item, now: DateTime<Utc>) -> bool {
     let Some(url) = item.art_url.as_deref() else {
         return false;
     };
-    if item.art_from.as_deref() != Some(url) {
-        return true;
-    }
-    item.art_state.as_deref() == Some("failed")
-        && item.art_fails < ART_MAX_FAILS
-        && item
+    if let Some(from) = item.art_from.as_deref()
+        && from != url
+    {
+        // A judged picture whose URL moved to another path (a query change is adopted before
+        // this, with no request): fetched again at most weekly (code QA M1).
+        let judged = matches!(item.art_state.as_deref(), Some("own" | "same"));
+        let recent = item
             .art_at
             .as_deref()
             .and_then(parse_stamp)
-            .is_none_or(|at| at <= now - hours(24))
+            .is_some_and(|at| at > now - TimeDelta::days(ART_MOVED_RETRY_DAYS));
+        return !(judged && recent);
+    }
+    if item.art_from.is_none() {
+        return true;
+    }
+    let day_old = item
+        .art_at
+        .as_deref()
+        .and_then(parse_stamp)
+        .is_none_or(|at| at <= now - hours(24));
+    match item.art_state.as_deref() {
+        Some("failed") => item.art_fails < ART_MAX_FAILS && day_old,
+        // Its host was down at the last try (code QA M2): a day later, no try used.
+        None => day_old,
+        _ => false,
+    }
 }
 
 fn art_untried(item: &mut Item) {
@@ -2528,6 +2591,17 @@ async fn art_pass(
             item.art_fails = 0;
         }
     }
+    // The same picture under a new query (signed or cache-busting URLs): the result stays, no
+    // request (code QA M1; vibb keys its picture by episode, not URL).
+    for item in plan.items.iter_mut() {
+        if let (Some(from), Some(url)) = (item.art_from.as_deref(), item.art_url.as_deref())
+            && from != url
+            && item.art_state.is_some()
+            && same_resource(from, url)
+        {
+            item.art_from = Some(url.to_string());
+        }
+    }
     let refs_key = refs
         .iter()
         .map(i64::to_string)
@@ -2575,6 +2649,8 @@ async fn art_pass(
         .collect();
     let lan = plan.lan == Some(true) && matches!(link, Link::Rss { .. });
     let reach = if lan { Reach::Any } else { Reach::Public };
+    // Network errors (and 5xx answers) in a row: an image host that is down (code QA M2).
+    let mut unreachable = 0;
     for index in candidates {
         let Some(url) = plan.items[index].art_url.clone() else {
             continue;
@@ -2626,7 +2702,29 @@ async fn art_pass(
             break;
         }
         gets -= 1;
+        count_art_request(db, now).await?;
         plan.items[index].art_fetched_at = Some(stamp(now));
+        // A network error, a timeout or a 5xx is the host's trouble, not the picture's: it
+        // doesn't use up one of the picture's tries (a result it has stays; it waits a day), and
+        // a few in a row end the pass (code QA M2).
+        let host_trouble = match &got {
+            Got::Failed(_) => true,
+            Got::Answer(answer) => answer.status >= 500,
+            Got::Skipped => false,
+        };
+        if host_trouble {
+            let item = &mut plan.items[index];
+            item.art_at = Some(stamp(now));
+            if item.art_state.is_none() {
+                item.art_from = Some(url);
+            }
+            unreachable += 1;
+            if unreachable >= ART_NETWORK_FAILURES {
+                break;
+            }
+            continue;
+        }
+        unreachable = 0;
         let photo = match got {
             Got::Answer(answer) if answer.status == 200 && !answer.truncated => {
                 crate::photos::process_limited(answer.body.into(), crate::photos::Shape::Square)
