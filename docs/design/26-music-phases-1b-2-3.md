@@ -15,12 +15,17 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   scoping, the docs), each with QA's code review and its fix round; main merged in. **Not done yet:** the emulator
   checks (`docs/testing/emulator.md` §6h) and the device checks on the Jelly Star with real speakers (26a "Device
   checks" and each step's owed list); the merge to `main` is the user's; `music-v0.2.0-rc.1` is tagged on the merge
-  commit after it (26a "Release").
-- **Phase 2 (Storytel) is being built on `music-2-storytel`** (status 2026-10-12; spec and every step's status in
-  `26b-storytel.md`): steps 1, 2a, 2b and 3 done, each with QA's code review and its fix round; music-1b-sonos (with
-  main) merged in on 2026-10-12, its server migration renumbered **0072** (`0072_music_storytel.sql`). **Not done
-  yet:** steps 4a, 4b and 5, the emulator checks (`docs/testing/emulator.md` §6i) and the device checks with the
-  family's account (26b "Device checks"); `music-v0.3.0-rc.1` after the user's merge (26b "Release").
+  commit after it (26a "Release") - unless `music-2-storytel`, which contains it, merges instead: then one
+  `music-v0.3.0-rc.1` (26b "Release").
+- **Phase 2 (Storytel) is built on `music-2-storytel`** (status 2026-10-12; spec and every step's status in
+  `26b-storytel.md`): steps 1-5 done (the phone's client, the server's client, picker and listing, downloads and the
+  fake, a book's own cover through design 27's art pass, Storytel on a Sonos room, the docs), each code step with QA's
+  code review and its fix round; music-1b-sonos merged in twice on 2026-10-12 (with main, then with design 27), its
+  server migration renumbered **0072** (`0072_music_storytel.sql`, after 0070 and 0071). **Not done yet:** the
+  emulator checks (`docs/testing/emulator.md` §6i with §6h) and the device checks with the family's account and the
+  real speakers (26b "Device checks", and 26a's); the merge to `main` is the user's - merging `music-2-storytel` brings
+  1b with it - then the server bump, and `music-v0.3.0-rc.1` on the merge commit (26b "Release", which also lists the
+  open points for the user).
 - **Read first:** root `CLAUDE.md`, `music/CLAUDE.md`, `docs/design/20-vibb-music.md` (its decision sections win over
   its §1-§5), `21-vibb-music-phase1.md`, `21b-music-server-sweep.md`, `vibb-spotify-options.md`, the mockup
   `docs/design/mockups/vibb-music/` (v15, published at https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY).

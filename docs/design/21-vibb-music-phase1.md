@@ -4,7 +4,9 @@ Architect, 2026-10-09. Sources: design 20's decision sections (they win over its
 `docs/design/mockups/vibb-music/` (v12), palchrb/vibb `main` (`pi/vibb/{library,content,bookmarks,storytel}.py`,
 `pi/sonosd.py`; MIT: behaviour reimplemented in Kotlin, credited in NOTICE.md and each ported file's header), the
 CLAUDE.md files. **In**: server library + PWA; the music app with NRK, RSS and own files; Storytel login plumbing;
-speaker + Bluetooth; launcher integration. **Out**: Storytel playback (2), Spotify (3), NRK live, position mirroring.
+speaker + Bluetooth; launcher integration. **Out**: Storytel playback (2: **now design 26b**, `26b-storytel.md`, the
+buildable spec and each step's status; built on branch `music-2-storytel`, to be released as `music-v0.3.0`), Spotify
+(3), NRK live, position mirroring.
 **Sonos is 1b**, after phase 1's device checks: `sonosd.py` (uid -> ip cache, discovery only on a miss, `url`/
 `nrk_program` sid 277, stall and group-migration handling) needs a Kotlin UPnP/SSDP client, SSDP through
 `KidVpnService` and a LAN URL for own files (question 3). **Now design 26a** (`26a-sonos.md`, the buildable spec

@@ -108,11 +108,15 @@ to the rooms); owed: the emulator checks against
 `scripts/fake-sonos.py` and the device checks with real speakers. Release after the user's merge: server (migration
 0071, in 0.24.0 unless that is tagged first), a launcher release, then `music-v0.2.0-rc.1` on the merge commit
 (26a "Release"). **Phase 2, Storytel** (design 26b: the server reads the shelf and lists it, the phone logs in,
-mints and downloads, Storytel on Sonos) is being built on branch `music-2-storytel` (steps 1-3 done and QA'd;
-music-1b-sonos with main merged in 2026-10-12, again with design 27 the same day - step 4a rebuilt on 27's episode art
-as server work: a book's cover as the item's `art` hash); its server migration is **0072** (`0072_music_storytel.sql`,
-above design 27's 0070 and 1b's 0071, which ship first or with it - 26b "Release"); then `music-v0.3.0-rc.1`. Phase 3
-(Spotify) follows design 26.
+mints and downloads, a book's own cover through design 27's art pass, Storytel on Sonos) is built and QA'd on branch
+`music-2-storytel` (steps 1-5 done, 2026-10-12; music-1b-sonos with main and design 27 merged in, so merging
+`music-2-storytel` brings 1b too); owed: the emulator checks against `scripts/fake-storytel.py` (with the fake
+speakers) and the device checks with the family's Storytel account. Its server migration is **0072**
+(`0072_music_storytel.sql`, after design 27's 0070 and 1b's 0071, applied in that order). Release after the user's
+merge (26b "Release"): the server (a version bump past 0.24.0 if that is tagged first), the launcher, then
+`music-v0.3.0-rc.1` (versionCode 2999) on the merge commit - instead of 1b's `music-v0.2.0-rc.1` when both land
+together. Phase 3 (Spotify) follows design 26; its first step, the engine spike, is on branch `spotify-spike`
+(`docs/testing/spotify-spike.md` there).
 
 ## Repos
 

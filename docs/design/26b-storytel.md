@@ -1035,26 +1035,127 @@ commit), 3 (the phone's download path), 4a (the server's art pass for books), 4b
 
 ## Release
 
-- **Server**: phase 2's server part (migration **0072**, the client, the picker, the listing) needs a version after
-  whatever `main` has tagged when this merges: today (checked 2026-10-12 at the merge of music-1b-sonos with design
-  27) `server/Cargo.toml` is 0.24.0 untagged (the highest server tag is `server-v0.19.0`) and main's 0065-0070 (0070 is
-  design 27's episode art) and 1b's 0071 ride in it; if 0.24.0 is tagged first, bump `server/Cargo.toml` and
-  `Cargo.lock` to the next minor. Step 4a (a book's cover as its `art` hash) adds no migration: it uses 0070's columns.
-  **The backup hazard** (as 26a's Release section, qa-26a-merge-code M1): `startup::pre_migration_backup` compares
-  only `MAX(version)` with the highest compiled one, so a lower-numbered migration reaching a server that has already
-  run 0072 is applied out of order by sqlx with no pre-migration backup (design 22 §6's "no migration without its
-  backup" broken, silently). Every build of this branch since the merge of 2026-10-12 carries 0070-0072 and applies
-  them in order; never deploy one from before it (0071/0072 without 0070). 1b's and design 27's servers ship before or
-  together with this one, or the backup check compares the set of applied versions (a main-session change;
-  documented here and in `server/CLAUDE.md`, not made). Deploy the
-  server first: an older server sends no Storytel entries, so an older or newer music app simply has none.
-- **Launcher**: no code change; nothing to release for phase 2.
-- **Music**: `music-v0.3.0-rc.1` on the merge commit on `main`, after 1b's `music-v0.2.0` line (26a "Release"):
-  versionName `0.3.0-rc.1`, versionCode **2999** (`0*1_000_000 + 3*1_000 + 0`, an RC minus 1), above 1b's
-  `music-v0.2.0-rc.1` (1999) and the released `music-v0.0.1`/`music-v0.0.2` (1 and 2; checked 2026-10-12 at the merge
-  of music-1b-sonos), so it installs over all of them through the catalog. A prerelease, never "latest". The stable
-  `music-v0.3.0` after the emulator checks (`docs/testing/emulator.md` §6i, and §6h with Storytel) and the device
-  checks above. An older music app on a phase-2 server hides Storytel entries and prunes nothing (§3.1).
+Final (step 5, 2026-10-12; it replaces the drafts written at the merges). **The branch**: `music-2-storytel` holds
+phase 2's steps 1-5 with every QA fix round, and through its two merges all of `music-1b-sonos` (26a's steps 1-4, its
+correction round and both merges of main; `origin/music-1b-sonos` is `50958b0`, an ancestor) and `main` at `620e578`
+(design 27; an ancestor too: nothing on `main` or `music-1b-sonos` is missing here). Last full runs: server `cargo
+test` 661 passed (step 4a's fix round), `cargo fmt --check` clean, clippy's 12 old warnings; music `assembleDebug
+assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` 574 JVM tests (step 4b's fix round); both fakes'
+selftests OK; launcher `assembleDebug testDebugUnitTest` 1035 (the merge with design 27; its `assembleRelease` needs
+`app/libs/tsnet.aar`, which only CI builds). Step 5 changed docs and one license file only.
+
+**The merge** (the user's): merge `music-2-storytel` into `main` - **it brings 1b with it**, so `music-1b-sonos` needs
+no merge of its own (merging it first changes nothing: it is already contained). `main` is an ancestor, so git would
+fast-forward; `git merge --no-ff music-2-storytel` gives the one merge commit the tags below name, like main's earlier
+design merges. CI on that commit: all three build jobs run (each directory changed).
+
+**Tags and versions:**
+- **Server**: `server/Cargo.toml` and `Cargo.lock` say **0.24.0** here and on `main` (untagged: the highest server tag
+  is `server-v0.19.0`), and main's 0.24.0 carries 0065-0070 only; this branch adds **0071** (26a's Sonos rooms) and
+  **0072** (Storytel) without a bump. **Bump to 0.25.0 before tagging** (one commit on `main` after the merge:
+  `server/Cargo.toml`'s `version` and the `kid_phone_server` entry in `Cargo.lock`), then `server-v0.25.0` on that
+  commit. Why not tag 0.24.0 on the merge: a server running a `main` build already reports 0.24.0, and the update check
+  (`handlers::system_update`, `is_newer(latest, APP_VERSION)`) would never offer it the release with 0071/0072; one
+  version, one migration set. (If `server-v0.24.0` gets tagged on `main` before the merge, 0.25.0 is needed anyway.)
+- **Launcher**: a `launcher-v*` on `main` after the merge (no phase 2 code; it carries 1b's calls `CALL_HOLD` /
+  `CALL_RELEASE`, the `volume_cap_pct` push on a change of the cap in force and `sonos_rooms` in `music_state`, and
+  main's art courier `wantArt`/`syncArt` from design 27, none of which is in `launcher-v0.2.7`). Its number is an
+  open point below.
+- **Music**: **`music-v0.3.0-rc.1` on the merge commit** (or the bump commit - both are on `main`, `music.yml` refuses
+  a tag whose commit isn't; the music app is the same): versionName `0.3.0-rc.1`, versionCode **2999**
+  (`0*1_000_000 + 3*1_000 + 0`, an RC minus 1), a prerelease, never "latest". 1b's planned `music-v0.2.0-rc.1` (1999)
+  is moot when both phases land in this one merge - don't tag it; were it tagged, 2999 is still above it and above the
+  released `music-v0.0.1`/`music-v0.0.2` (1 and 2), so the RC installs over all of them through the catalog. The
+  stable `music-v0.3.0` after the owed checks below.
+- **The `release` environment**: its deployment rule allows `music-v*` - proven by `music-v0.0.1`/`music-v0.0.2`
+  (signed with the launcher's key, the `RELEASE_CERT_SHA256` check). `server-v*` must be allowed there too, with the
+  `SERVER_MINISIGN_KEY` secret (`server-release-sign`, since 0.24.0; "no secret, no release"): no `server-v*` tag has
+  run since 0.19.0, so that rule and secret are unproven - check them before tagging `server-v0.25.0`.
+
+**Deploy order:**
+1. **Server 0.25.0** first (`update.sh` or the image; a backup first as always). It applies **0070 -> 0071 -> 0072** in
+   one start, in order, with `startup::pre_migration_backup` taken (the database's `MAX(version)` is below 72). **The
+   backup hazard**: `pre_migration_backup` compares only `MAX(version)`, so a lower-numbered migration reaching a
+   server that has run a higher one is applied out of order by sqlx with no backup. Never deploy a build of
+   `music-1b-sonos` or this branch from before their merges of design 27 (0071/0072 without 0070); no deployed server
+   ran either branch. A dev database that ran either branch needs a fresh `server/data/` ("Merge of music-1b-sonos and
+   main", `VersionMismatch`). An older server sends no Storytel entries and no `sonos_rooms`, so the apps run on it
+   with neither; the music catalog row (0.21.0+, design 21 QA #11) is there on any 0.24 server.
+2. **Launcher** next (or with the music RC): without it a Sonos room has no volume cap (no `volume_cap_pct`), a VoIP
+   call doesn't pause a room (only the music app's audio-mode backstop for system calls), the parent's room card
+   stays empty, and episode pictures and book covers never reach the phone (no `syncArt`). Nothing breaks; those are
+   missing.
+3. **Music** `music-v0.3.0-rc.1`, through the catalog. An older music app on the new server hides Storytel entries and
+   prunes nothing (§3.1).
+
+**Owed before the stable tag** (none can run in the sandbox: no emulator, no phone, no account):
+- Emulator, `docs/testing/emulator.md`:
+  - §6h (1b): 3a's, 3b's and 3c's lists (the sheet, switches with one Stop each, the hush, grouped away / taken over /
+    migration / unreachable, adopt after a kill, the bedtime stop, the volume cap, the room scope), and §6f's smoke for
+    the local sleep fade (26a "Release").
+  - §6i (Storytel, step 3): reading order with one mint per book, the bookmark's book first, the resume after the
+    token expired (`--drop-at 40 --token-ttl 30`: `206 Range` with a new token), `--locked` (`no_audio`), `--refuse`
+    (`refused`, `waiting: login`, one login an hour), offline, the 10-minute job limit, copy only, the secrets grep.
+  - §6i "On a Sonos room" (step 4b, with §6h's fake speakers): a book not downloaded on Stua (one mint, the DIDL's
+    length, no art), next/previous mint and pause/resume don't, a mashed step during `--slow-mint 5` (one
+    `SetAVTransportURI`), a suspension during the mint, a stopped Stua, phone -> Stua queues all five, kill and adopt
+    (no Stop, no mint), Stua -> phone on a book not on the phone and M1's phone paths ("Ikke lastet ned"), a failed
+    mint on a room, `renderer.json`'s marker.
+  - Step 4a: an upgrade from a step-3 build (Room 1 -> main's 2) keeps every position and bookmark (`ReapplyListings`
+    re-applies the listings with their hashes at the next sync).
+- Device (the Jelly Star; 26b's with the family's Storytel account, 26a's with the real speakers):
+  - **The two logins**: the server's picker (its JWT), then the phone's downloads (its own login), the picker again,
+    a Save (the server logs in again), the phone mints again - all keep working, and the family's own Storytel app
+    stays logged in; the login lines (accepted, a wrong password refused with the old login kept, the phone's
+    `storytel` word, a password changed at Storytel refused once on each side, then an hour of quiet, a Save retrying
+    at once); the picker on the real shelf (kids' filter, locked and geo lines); the PWA pages at 360 px.
+  - **Downloads**: a series on Wi-Fi in reading order with the card's "N of M books"; waiting without mobile data;
+    **the 300 MB book with Wi-Fi off for more than an hour** resuming from its partial with a fresh mint; airplane
+    mode; a refused book's `no_audio`; the real CDN answers the minted URL **without a redirect** (a redirect would
+    show `http_302` for every book); a new book in a series (NY, "Ny bok"); "Lydbok · del 2 av 3" and resume after a
+    reboot; the switch off and on; the DNS filter on.
+  - **Downloads under Doze**: a 5-book series overnight, on and off the charger, with the standby bucket and
+    `dumpsys jobscheduler` (the expected outcome and the decision if it stalls are in "Device checks").
+  - **Per-book covers**: each book's own cover in the carousel, Nytt and the lock's tile, the first book's included,
+    and a series with templated covers (each book its own picture); the server's `, art N (N own, 0 same)`.
+  - **No secrets**: logcat and `journalctl` (with `RUST_LOG=debug` too) hold no `pwd=`, `eyJ`, `Bearer `, `token=` or
+    the e-mail after a day; nor does `music_state`.
+  - **Storytel on Sonos**: a book not downloaded in a room (title and progress in the Sonos app, no cover),
+    next/previous, two hours paused then play (one more tap starts from the bookmark if the speaker failed), the app
+    killed and reopened (adopted, the right book and place), `consumableId` in the real Location, room -> phone with
+    the book downloaded (continues) and not (paused, "Ikke lastet ned").
+  - **26a's Sonos items** ("Device checks" there): the picker and DHCP healing, play at 0 and from a bookmark (no
+    audible second from 0:00), the verbs from the phone, the Sonos app and the speaker, the switches, grouped away /
+    taken over / migration / power pulled, kill and adopt, a bedtime edge with and without the app, screen off 1 h in
+    Doze, the volume keys and the cap, a phone call and an Element X call, the VPN filter on (no `EPERM`), the room
+    scope; plus 3b's FGS check (a paused session keeps its notification for 10 minutes) and 3c's fix round's group
+    and regroup checks.
+  - Phase 1's own Jelly Star checks (design 21's step lists, PLAN.md) are still open too; they test what all of this
+    stands on.
+
+**Open points for the user:**
+1. **Storytel Family** (a login per phone): not now (§10). §6.6 designs it - one server step and one migration - for
+   when two kids listen at the same time; the phone, the launcher and the AIDL already take one login per phone.
+2. **The flaky `parent_pin` test** on `main`: `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list` is
+   time-dependent and failed in some runs, also on `main`'s `685a6ae` without any Storytel code (steps 2a-4a's
+   statuses). `server-v*` runs the tests before it builds, so a red run stops the release: fix it on `main` (its
+   owner's) or re-run the job.
+3. **`launcher-v0.2.7`'s numbering**: versionCode 2007 (2026-10-12, `22a6265`) is below `launcher-v0.25.0-rc.1`
+   (24999, 2026-10-07). Android never installs a lower versionCode over a higher one, so a phone that ever had the RC
+   takes neither 0.2.7 nor any later 0.2.x, while GitHub's "latest" (the provisioning QR's APK) is 0.2.7. Decide the
+   next launcher tag: above 25000 (e.g. `launcher-v0.26.0`, 26000, and every tag after it above) if any phone has had
+   the RC (`adb shell dumpsys package me.vibb.launcher | grep versionCode`), else the 0.2.x line may go on.
+4. **The art-to-speaker path** (26a §9): a Sonos room shows no album art for any source - a listing's `art` is a hash
+   the server serves only to the phone's bearer. The cheapest later path is a frozen `art_src` (the source's own
+   picture URL) beside the hash; Storytel's public cover URL fits it unchanged. A decision, not a bug.
+5. Standing from 1b (26a "Release"): 3a (a) steps on a room start at 0 (vibb) while the phone's resume an item's
+   place; 3a (b) picking the room already playing is the same-tile rule; 3b (a) Media3 ending a service paused for 10
+   minutes stops the paused speaker (vibb's TERM rule).
+6. For the main session: `pre_migration_backup` comparing the set of applied versions (not `MAX(version)`) would
+   close the out-of-order hazard above for good.
+7. Conditional: if "Downloads under Doze" stalls - downloads only while charging, or design 19b's battery exemption
+   for the music app; if the real CDN redirects - the thin `DataSource` whose `getUri()` returns the requested URI
+   (§9), never following blindly.
 
 ## 12. QA review (2026-10-12, design QA)
 
@@ -2323,3 +2424,61 @@ tests** (568 before, +6), 0 failures; lint 0 errors and the same 40 warnings; bo
 
 Owed: the emulator checks now listed in `docs/testing/emulator.md` §6i "On a Sonos room" (with §6h), and the Sonos
 device checks.
+
+## Step 5 implementation status (2026-10-12)
+
+Docs and one license file, on `music-2-storytel` from `f65559a`; no product code, no contract file (the AIDL,
+`bridge_contract.json`, the snapshots and `music_state.json` untouched), no migration. Every ported file's header
+already credits vibb (checked: `music/.../storytel/*.kt`, `logic/Storytel.kt`, `sync/DownloadRun.kt`,
+`data/Snapshot.kt`, the ported Sonos files 4b touched - `PlayBody`, `SonosController`, `SonosLifecycle`,
+`SonosSession`, `SonosTransport`, `RendererChoice`; its glue, `SonosRenderer`, `SonosSuspension`, `SonosTail`, is
+written here, as NOTICE.md says -, `server/src/storytel.rs`, `music_sweep.rs`, `music_import.rs`,
+`scripts/fake-storytel.py`; `storytel.rs`, `StorytelApi.kt` and `StorytelEndpoints.kt` also name storytel-player), so
+no code comment changed and no suite needed a run.
+- **`music/CLAUDE.md`**: the intro names 26b; the layout gains `storytel/` (the four files and what each holds),
+  `Snapshot.forRenderer`, `DownloadRun`/`ArtPlan` in `sync/`, and `DebugStorytel.kt` in `src/debug/`; "Build and test"
+  gains the Storytel fixtures shared with `scripts/fake-storytel.py`, its selftest and its options. New rules beside
+  4b's "Storytel on a room" (not repeated): download-only (`copyOnly`, the source id as uri, visibility per renderer,
+  the series' reading order through `countedOrder`/`countedKeys`); the account and the mint (one `StorytelApi` for the
+  process, the cooldown `0 <=`, the JWT per generation, `runInterruptible` and what it does and doesn't cover, no
+  followed 302, a URL per attempt and per play); downloads (the keep set and order, the 1.5 GB floor, `sourceId`, no
+  CDN redirect, the `Mint` classes, the growth floor, **mobile data with the parent's switch**, the report's words);
+  the secrets rule (password, `pwd=`, e-mail, JWT, minted URLs - never in a log, Room, `renderer.json`, `music_state`,
+  the report or a `toString`); the debug switch (`debugBase`, its four readers, 10.0.2.2/loopback only,
+  `DebugStartup`); the episode-pictures rule gains a series' want set (`storytelKeepSet` + `storytelWanted`) and the
+  book's own `artHash`.
+- **`server/CLAUDE.md`**: the Storytel section rewritten as steps 2a, 2b and 4a in one voice (it still said 2a left
+  the library and the sweep out): the client (document order, `id_ok`, the falsy rules, the offset clock), the
+  cooldown's `0 <=`, the probe and the picker (`PROBE_BUDGET`/`READ_BUDGET` 45 s, `try_lock`, the `Vec` form and its
+  200 cap, a target off the shelf refusing the form, Add's stale-beats-dead read as the only fallback), the listing
+  (cooldown first, `shelf_counted` never stale, `keep_end = 'first'`, `not_on_shelf`/`login_refused`/`storytel_off`, a
+  save making waiting entries due, `sweep_error_text`), the gate (`storytel_gate!()` in the library, listing, covers and
+  art), the cards, the import, a pointer to the book covers, migration 0072 (frozen, after 0070 and 0071), the secrets
+  (`Credentials` added to the no-`Debug` list), the `reqwest` floor, the tests. Elsewhere: `music_entries` takes
+  `storytel`, the import's "Skips: ... Storytel" corrected, the sweep's "What" line, and the episode-art section's
+  Storytel bullet (the budgets, `restamp_versions`).
+- **`launcher/CLAUDE.md`**: one bullet - Storytel listings ride the courier unchanged, book covers through the same
+  `syncArt`, the login through phase 1's `getStorytelLogin`, the server's gate decides.
+- **Root `CLAUDE.md`**: `scripts/fake-storytel.py` in the scripts list; `music.yml`'s paths (`bridge_contract.json`,
+  both fakes) and both selftests. Nothing about the spike (it lives on `spotify-spike`, whose root `CLAUDE.md` adds the
+  `spike/` line; leaving it out here avoids a second edit of those lines). The root names no migration numbers.
+- **`NOTICE.md`**: a Storytel paragraph - the ports of `storytel.py` (server and phone), the Storytel parts of
+  `library.py`, `content.py` and `daemon.py` (`_sonos_body`'s late mint, the duration lookup, adopt by
+  `consumableId`), the ported tests and the fake; vibb (MIT, palchrb) and its upstream storytel-player 1.3.0
+  (debba/storytel-player, MIT, Copyright (c) 2025 Andrea Debernardi). **New file**
+  `music/app/src/main/assets/licenses/MIT-storytel-player.txt`: storytel-player's `LICENSE` at tag `v1.3.0`
+  (`fbd24a3`, "1.3.0"; vibb's header says "tag 1.3.0") byte for byte, beside `MIT-vibb.txt` and shipped in the APK
+  like it. vibb itself carries no copy of that notice; it was read from the upstream repository.
+- **Design 21**: "Out: Storytel playback (2)" points to 26b. **Design 26**: the phase 2 line (steps 1-5 done, the owed
+  checks, the merge that brings 1b, the RC), and 1b's line notes that its RC is moot when this branch merges.
+  **`PLAN.md`**: phase 2's status and the release path; phase 3's line points to the spike on `spotify-spike`.
+- **This design**: "Release" rewritten as the final one (the branch's state, the merge with `--no-ff`, the server's
+  bump to 0.25.0 and why, the launcher, `music-v0.3.0-rc.1` = 2999, the `release` environment for `music-v*` and
+  `server-v*`, the deploy order with the backup hazard, the owed checks in one list, seven open points).
+
+Found while writing: the Release draft said "1b's `music-v0.2.0` line" comes first; with one merge it doesn't exist.
+`launcher-v0.2.7` (2007) sits below `launcher-v0.25.0-rc.1` (24999) - an open point now. `server-v*` hasn't run since
+0.19.0, so 0.24.0's signing job (`SERVER_MINISIGN_KEY` in the `release` environment) is unproven. 4a's emulator
+upgrade check isn't in `docs/testing/emulator.md` §6i (it is in "Release"'s list).
+
+Owed: the checks in "Release"; the merge, the server bump and the tags are the user's.
