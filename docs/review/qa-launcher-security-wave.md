@@ -358,3 +358,34 @@ Counts: 1 High, 1 Medium, 6 Low.
   - The `pending_command` shape is unchanged.
   - `screening_role_held` is on both sides (`PolicyResponseCompatTest`).
   - Policy keys are unchanged, so `policy_json_keys_snapshot` needs nothing.
+
+## Fixes (2026-10-12)
+
+All 1 High, 1 Medium and 6 Low are fixed, plus two issues the user hit on the emulator during the round.
+
+| Finding | Commit | Note |
+|---|---|---|
+| High 1 | `0d217fcb` | 0065 (changed in place, not on `main` yet) marks every row delivered before it as used up (`deliveries = 3`). Re-delivery only within **15 minutes of the first delivery** (`first_delivered_at`, `REDELIVER_WINDOW_MINUTES`): the phone confirms within seconds of a fetch; the server now nudges it over its stream 2 minutes after each delivery while it stays unconfirmed; a phone whose stream is down syncs at least every 15 minutes. So the three deliveries fit whenever the phone is reachable, and a ring, lock or pause later than that is no longer what the parent asked for. Tests: the migration (run from 0064), an old wipe/`start_pause` and a command first delivered 20 minutes ago never replay, a fresh one is re-sent inside the window and not past it, the nudge. |
+| Medium 1 | `856887d1` | `pending_command` carries `requested_at`; the phone keys run-once on `(id, requested_at)` (`commandKey`) and sends it back with its receipt and result, which then count only for that command. A new enrollment empties `command_answers` (both enroll paths). Tests: the restore (row and counter go back, the next command gets the same id) on the server; `CommandAnswerPlanTest` on the phone. The `sqlite_sequence` bump on restore was not done: `requested_at` covers it. |
+| Low 1 | `2f264d38` | When the pop hands out a command, every older unconfirmed one of that phone is used up: nothing runs out of order. Test: a lost pause never runs after a later "Lock again". |
+| Low 2 | `d094ce3b` | `enroll` deletes the row's undelivered commands and uses up the unconfirmed ones (`end_pending_commands`); the `device_enrolled` event says how many. |
+| Low 3 | `bc012f06` | A wipe call that returns is "wipe failed, the phone keeps its data: the wipe call returned - Android didn't start the reset", `success=false`; only a system server dying under the call reads "wiping". |
+| Low 4 | `74ce2667`, `7165350f` | Status `remote_wipe_ready` (API 35+: true; 34: `hasGrantedPolicy(WIPE_DATA)`), stored in `device_status` (0065); the Locate page says "Remote wipe works after the phone restarts once" while false. emulator.md §6g has the API 34 update-in-place check. Headless-checked at 360 px. |
+| Low 5 | `376d508c` | `connectFromPreferences` is `@Synchronized`. |
+| Low 6 | `0340400d` | `launcher.yml`'s filter has `music/gradle/` and `music.yml`; `BuildChainTest` checks the filter covers what it reads. |
+| Notes | `711b0083` | The L7 warning says withheld numbers *may* ring through (§6g asks for one withheld call); DEPLOY no longer says a removed tailnet node can't come back with a new key. |
+| Emulator: keyguard camera | `8baadeb2` | `setKeyguardDisabledFeatures` threw "did not specify uses-policy for: disable-keyguard-features" on an Android 16 emulator. Every DPM call and receiver callback audited against AOSP 14/16: `device_admin.xml` now declares exactly `limit-password` (AOSP sends ACTION_PASSWORD_CHANGED only to it - `watch-login`, which the file claimed did it, never brought `onPasswordChanged`; it's gone, nothing uses its callbacks), `force-lock`, `wipe-data`, `disable-keyguard-features`. `AdminPoliciesTest` pins the XML against the calls. A policy an update adds may count only after a restart: the calls retry by themselves, and the report's `admin_policies_pending` makes the "Play and kiosk" card say "Restart the phone once". Device check in §6g. |
+| Emulator: re-tick | `efdeca12` | `toggle_app`'s checked branch deletes the `device_pending_uninstalls` row (the form's package and the catalog app's own), so untick-then-tick no longer uninstalls. The Apps card says re-checking cancels the uninstall; the Music card's switch says unticking uninstalls. |
+
+Not changed, a user decision (asked in the fix round): **an age limit at first delivery.** Today a command queued while
+the phone is offline is delivered whenever it comes back - the page says "Waiting for the phone to check in" meanwhile,
+and the only way to cancel is to queue another command. For a wipe or lock that is the point: a lost phone that comes
+online after three weeks should still be wiped or locked. Recommended rule: keep `wipe` and `lock` without an age
+limit, but expire `start_pause`, `ring`, `stop_ring` and `locate` that weren't delivered within an hour ("Expired - the
+phone didn't check in within an hour"), since a pause or a ring hours late is not what the parent asked for; and give
+undelivered commands an explicit "Cancel" button with the time they were asked for.
+
+Tests at the end: launcher `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true` (930 tests; the
+release with a throwaway stub `tsnet.aar`, removed afterwards); server `cargo test` (556), `cargo fmt --check` clean,
+`cargo clippy --all-targets` the same 12 warnings as `main`. Music was not touched in the round. The Locate and device
+pages were checked headless at 360 px, light and dark.
