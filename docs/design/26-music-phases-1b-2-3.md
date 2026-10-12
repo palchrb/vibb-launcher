@@ -160,6 +160,18 @@ both, so phase 2's inventory can cite either. The `storytel` branch is older tha
    UPPERCASE hex) with `tests/storytel_api.py`'s vector ported as is, and `storytel_subprocess.py` is a deviation. The 302
    from `assets/v2/consumables/<id>/abook` is captured with `followRedirects=false`, as vibb does, never left to OkHttp's
    header stripping.
+   **Accounts and sessions (the 1b session, 2026-10-12, after the user asked whether one login on the server and several
+   phones is wise):** `login.action` carries no deviceId and returns a JWT with no refresh token; the deviceId exists only
+   in the bookmark POST, which phase 2 doesn't make. So the server and every phone hold independent JWTs from one login,
+   as the Pi has done next to the family's Storytel app since 2026-08 without one logging the other out. Phase 2 ports
+   vibb's two guards against a future single-session policy (the JWT cached for its TTL, the refused-login cooldown) and
+   its step 1 lists, as a user check (the sandbox has no account), that two logins in a row leave both JWTs valid for
+   `bookshelf`. The server
+   keeps one login (the `music_storytel` singleton) with the per-phone switch: one account is right for one kid's phone.
+   Storytel's terms allow one listening at a time per account, so two phones listening at once need Storytel Family with a
+   login per kid, which means a login per phone (or per named account) server-side - a schema change the phase 2
+   architect scopes as an optional later step, not built now. A Storytel-only password is advised: each phone needs the
+   plaintext to log in again.
 5. **Sequencing.** Design 21 put 1b after phase 1's device checks; the brief says start 1b now. Both hold: the checks are
    the user's on the Jelly Star, 1b is built in the sandbox meanwhile. But tag `music-v0.1.0` first so the checks test a
    fixed build, and 1b becomes 0.2.0. The risk is the checks forcing `PlaybackService` changes while 1b rewrites it, so
