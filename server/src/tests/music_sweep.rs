@@ -2898,11 +2898,21 @@ async fn flags_are_kept_until_their_item_is_asked() {
     episodes.insert(0, "f_4".to_string());
     answer_pages(&app, "podcast", "f", &episodes);
     answer_manifests(&app, "podcast", &episodes[..1]);
-    app.fetch.delay(60);
+    // The flag must land after the check read the rows and before it commits: wait until its
+    // first request is in flight (a fixed sleep raced the check under load), and hold each
+    // answer long enough for the flag's two statements.
+    app.fetch.delay(300);
     let state = app.state.clone();
     let start = t0() + TimeDelta::hours(12);
     let task = tokio::spawn(async move { sweep::check_entry(&state, id, start).await.unwrap() });
-    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    let waited = tokio::time::Instant::now();
+    while app.fetch.in_flight() == 0 {
+        assert!(
+            waited.elapsed() < std::time::Duration::from_secs(30),
+            "the check never sent a request"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
     assert_eq!(
         flag(&app, phone, id, "f_1", start + TimeDelta::seconds(1)).await,
         1

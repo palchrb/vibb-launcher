@@ -86,6 +86,11 @@ impl CannedFetch {
         self.calls.lock().unwrap().len()
     }
 
+    /// Requests being answered right now (the tests that act during a check wait for one).
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn clear_calls(&self) {
         self.calls.lock().unwrap().clear();
         self.conditional.lock().unwrap().clear();
