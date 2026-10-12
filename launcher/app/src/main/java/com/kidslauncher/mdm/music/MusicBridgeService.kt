@@ -149,8 +149,20 @@ class MusicBridgeService : Service() {
      */
     private fun wantArtChanged(app: Context, want: WantArt) {
         MusicStore.setWantArt(app, want)
+        // Pictures of the now window the launcher already holds (fetched for an earlier want set): the
+        // music app's sync copies them - nudged once per such set, never in a loop.
+        val held = want.now.filter { MusicStore.coverFile(app, it).isFile }.toSet()
+        if (held.isNotEmpty() && held != lastHeldNudge) {
+            lastHeldNudge = held
+            MusicSync.nudge(app)
+        }
         val music = musicPolicy(currentPolicyDecision().policy?.music) ?: return
         if (MusicCourier.artFetchable(app, want, music).isNotEmpty()) MusicCourier.request(app, music)
+    }
+
+    private companion object {
+        @Volatile
+        var lastHeldNudge: Set<String> = emptySet()
     }
 
     /**

@@ -298,6 +298,12 @@ The launcher is the music app's (`me.vibb.music[.debug]`, `music/` in the monore
 - **Updates**: a music app APK waits while the last `setNowPlaying` says "playing" (`MusicNowPlaying.deferInstall`, `AppDownloads`' `DEFER` outcome skips only that record for the run; "playing" is refreshed by every report, dropped when the player's process dies and ignored after 6 h without one); a pause asks for a download run when an install waits.
 - **Status**: `music_state` = the music app's last report (known keys) + package, version code and `bridge` ("bound"/"unbound"); capability `music_v1`. `setNowPlaying` (CE prefs + art file, Home's snapshot) and `setForeground` (`MusicForeground`) are read by step 4 below.
 
+## Vibb music: episode pictures (design 27, `docs/design/27-music-episode-art.md`, at the monorepo root)
+
+- **`wantArt(now, later)`** (appended to `IMusicBridge.aidl`, oneway; an older launcher ignores it): the music app's want set - `now` (the now-playing window, at most 5) and `later` (kept episodes' and Nytt's pictures), 64-hex only, at most 600 in all (`wantArtLists`; caps in `bridge_contract.json` `want_art`). `MusicBridgeService` stores both lists at once in `filesDir/music/want_art.json` (`MusicStore.setWantArt`) and runs the courier only when something is fetchable now (`MusicCourier.artFetchable`, QA M6).
+- **`MusicCourier.syncArt`** after `syncCovers`: through the cover route (`server.cover`, at most 1 MB, hash-checked), at most `ART_PER_RUN` (50) a run, `now` first; `now` on any network (roaming too), `later` only on an unmetered network or with the policy's `mobile_data` and not roaming - the audio's gate (`artToFetch`). An HTTP error or a wrong hash counts (`art_failures.json`; two wait a day), a network error doesn't. New art nudges (`BRIDGE_CHANGED`). Covers dir: `artToDelete` keeps the library's `covers` and the want set, so the launcher holds a picture only until the music app copied it. No library: the want set goes too (`clearWantArt`).
+- Tests: `MusicPlanTest` (lists and caps, `artToFetch`, `artToDelete`, the keep rule in `syncCovers`, 12 bridge methods).
+
 ## Vibb music: media surfaces and time (design 21 step 4, `docs/design/21-vibb-music-phase1.md` §3, at the monorepo root)
 
 Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `ui/home/MusicCard.kt` (`MusicCardTest`) and `lock/LockMedia.kt` (`LockMediaTest`, `LockMediaGuardTest`, `LockMediaLayoutTest`); the glue is in `music/`.
