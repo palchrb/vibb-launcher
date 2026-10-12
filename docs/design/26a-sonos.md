@@ -678,6 +678,7 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
 | process death keeps polling (sidecar) | the speaker plays on until the next start adopts or a suspension edge stops it | no sidecar (§6.2) |
 | no phone, no calls | pause on a call, resume only if we paused (§6.7, pending the user) | the phone rings |
 | the bookmark adds the sidecar's `stale_s` (a poll's measurement lag, <= 5 s) | the one age term from `measuredAt`, capped at 5 s (`BOOKMARK_AGE_MAX_MS`) | qa-26a-step3a-code L4: at a 15 s cruise the uncapped age reached 25 s at a save tick, pause or hand-off; a speaker paused from the Sonos app would get a bookmark that far ahead |
+| the item's http art as `upnp:albumArtURI` (`_sonos_body`, 1270-1322; §2.3, §2.5) | no art in the DIDL, for every source | step 3 had no art URL to pass (`ItemRow` kept none); since design 27 the listing carries a hash the server serves only to the phone's bearer (design 27 §1.5), and the phone's copy is a file - nothing a speaker can fetch. The cheapest later path (qa-26a-merge27-code L3): an optional per-item `art_src` in the listing, set only with `art_hash` and frozen with it, and the entry's `cover_src` from `music_listings.cover_url`; the phone stores them at the next Room bump and `PlayBodies.build` takes `artSrc ?: coverSrc` through the audio's filter (§4.2). A signed LAN picture URL only together with own files on Sonos. "Merge of main with design 27" |
 
 ## 10. User answers and open questions
 
@@ -1766,6 +1767,38 @@ column.
   landing page), both over `listOrder`; the Storytel branch's `countedOrder` replaces the order behind both.
 - **Sonos:** a book on a room gets no art in the DIDL either (above); `SKIP_TO` on a Storytel queue on a room goes
   through the same `goTo` -> `renderer.seekTo`.
+- **The numbering at that merge (qa-26a-merge27-code, "The Storytel seam"):** Storytel's `countedOrder` wins inside,
+  this branch's two-function shape outside. One private `countedKeys(snap, now)` = `countedOrder(now.entry,
+  listOrder(snap, now).map { it.key }, snap.listed[now.entry.id].orEmpty().map { it.key })`; `playerNumberOf(snap,
+  now, item) = countedKeys(snap, now).indexOf(item.key) + 1`; `playerNumber(snap, now) = playerNumberOf(snap, now,
+  now.item) to countedKeys(snap, now).size`. `MusicRoot` keeps this branch's call (`{ item -> playerNumberOf(s, n,
+  item) }, of`), not Storytel's `number, of` (`PlayerScreen` takes `numberOf`). Add a Storytel case to
+  `SwitchViewTest`: books 1 and 3 of 5 on the phone, a swipe to book 3 says "3 av 5" on the landing page and after
+  arrival. If only `playerNumber` gets `countedOrder`, the carousel says "2 av 5" while the player says "3 av 5".
+
+### Fix round after QA's code review (qa-26a-merge27-code, 2026-10-12)
+
+`docs/design/qa-26a-merge27-code.md`: the merge is correct and can ship; 0 High, 0 Medium, 4 Low, all addressed.
+
+- **L1, a room switch by key.** `toRoom` captured the playing `PlayItem` and, after the hand-off, looked it up with
+  `indexOf` (data-class equality, `artHash` included). `refreshArt` isn't under `switching` and may replace
+  `Active.items` with copies meanwhile (`withItemArt`, a late picture), so the lookup missed: item 0 would start from
+  the other item's place and be bookmarked with it. Now `a0.items.indexOfFirst { it.key == item.key }` (keys are
+  unique in a queue, as `comeHome`/`homePlan` look them up). `GuardsTest` +1: `withItemArt`'s copy defeats
+  `indexOf` and not the key, and `toRoom` has no `indexOf(item)` (the service isn't reachable from a JVM test).
+- **L2, 0071 frozen.** sqlx checksums the whole file, comments included, so a database that ran an earlier 0071 text
+  refuses to start (`VersionMismatch(71)`). No released server has it; the file is not touched again, and
+  `server/CLAUDE.md`'s migrations paragraph says a migration file is frozen from its first commit on a pushed branch,
+  and a dev database that ran an earlier text needs a fresh `data/` (or its `_sqlx_migrations` checksum set).
+- **L3, the speaker's missing art in §9:** a row with the reason and the cheapest later path (`art_src` frozen with
+  `art_hash`, `cover_src` from `music_listings.cover_url`, stored at the next Room bump, filtered like the audio; a
+  signed LAN URL only with own files on Sonos).
+- **L4:** `refreshArt`'s KDoc and `music/CLAUDE.md`'s design 27 bullet say `Renderer.replaceItem` (on the phone
+  `replaceMediaItem`, on a room the session player's item only, no SOAP).
+- QA's instruction for the Storytel merge's numbering is recorded above ("For the Storytel branch").
+
+Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **451 tests, 0 failures** (450 before: +1 `GuardsTest`), lint 0 errors and the same 40 warnings;
+the launcher's tests read none of the changed files, not re-run; the server's change is `server/CLAUDE.md` only.
 
 ## Release
 

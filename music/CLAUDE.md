@@ -157,7 +157,8 @@ fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: th
   on its pages, the entry's cover counting as one), `swipeSkip`, `pagerFollow`, `swipeTarget`. A swipe is a
   `PlayRequest` (`swipeSwitch`) and the `SKIP_TO` command (not in `PLAYS`; via `RESTORE` + `THEN_SKIP_TO` before play).
   `Store.coversVersion` moves when a cover lands or goes: slots retry, the player swaps the current item's artwork
-  in place (`replaceMediaItem`).
+  in place (`Renderer.replaceItem`: on the phone `replaceMediaItem`, the same source so playback goes on; on a Sonos
+  room only the session player's item, no SOAP).
 - Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
   control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
   widths, the category tiles, the carousel, the bar's room label (a three-member group) and the Sonos state lines.

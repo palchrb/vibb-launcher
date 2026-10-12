@@ -224,6 +224,20 @@ class GuardsTest {
     }
 
     @Test
+    fun `a room switch finds the playing item by key - a late picture's copies can't make it start item 0`() {
+        // qa-26a-merge27-code L1: refreshArt (not under `switching`) may replace Active.items with copies
+        // (withItemArt) while toRoom waits for a hand-off; an object lookup then misses the item.
+        val queue = listOf("k1", "k2", "k3").map { me.vibb.music.model.PlayItem(5, it, "Title $it", "https://cdn.example.org/$it.mp3", false, 600_000) }
+        val captured = queue[1]
+        val swapped = withItemArt(queue, "k2", "a".repeat(64))
+        assertEquals("the object is gone", -1, swapped.indexOf(captured))
+        assertEquals("the key still finds it", 1, swapped.indexOfFirst { it.key == captured.key })
+        val toRoom = service.substringAfter("private suspend fun toRoom(uid: String) {").substringBefore("\n    }\n")
+        assertTrue(toRoom.contains("a0.items.indexOfFirst { it.key == item.key }"))
+        assertFalse(toRoom.contains("indexOf(item)"))
+    }
+
+    @Test
     fun `the Home card's resume is honoured once, never from Recents or a restored instance`() {
         assertTrue(resumeRequested(extra = true, flags = Intent.FLAG_ACTIVITY_NEW_TASK, restored = false))
         assertFalse("from Recents, also after a reboot", resumeRequested(true, Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY, false))

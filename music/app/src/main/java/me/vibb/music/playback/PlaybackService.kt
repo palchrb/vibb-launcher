@@ -721,7 +721,8 @@ class PlaybackService : MediaSessionService() {
     /**
      * The current item's picture landed after its queue was built (design 27, QA H2): its small copy
      * is made off the main thread, then the item's metadata is swapped in place
-     * (`replaceMediaItem`: the same source, so playback goes on) - the notification, the lock's tile
+     * (`Renderer.replaceItem`: on the phone `replaceMediaItem`, the same source so playback goes on;
+     * on a Sonos room only the session player's item, no SOAP) - the notification, the lock's tile
      * and Home's card show it - and the launcher's snapshot gets it too.
      */
     private fun refreshArt() {
@@ -1454,7 +1455,9 @@ class PlaybackService : MediaSessionService() {
         if (renderer !== old) return // changed under us (the switch lock makes this a belt)
         val place = if (current != null) {
             val (a0, item) = current
-            a0.entry to QueuePlan(a0.items.map { it.key }, a0.items.indexOf(item), resumeFrom(a0.positions[item.key]))
+            // by key: refreshArt may have replaced the items with copies meanwhile (a late picture,
+            // `withItemArt`), and an object lookup would start item 0 (qa-26a-merge27-code L1)
+            a0.entry to QueuePlan(a0.items.map { it.key }, a0.items.indexOfFirst { it.key == item.key }, resumeFrom(a0.positions[item.key]))
         } else {
             withContext(Dispatchers.IO) { store.db.nowPlaying() }?.let { row ->
                 val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return@let null

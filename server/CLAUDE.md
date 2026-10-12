@@ -336,6 +336,9 @@ above it (qa-26a-merge-code M1): both deploy in order, 0070 before 0071 - the na
 merged design 27): sqlx would apply 0070 out of order and `pre_migration_backup`, comparing only `MAX(version)`,
 would take no `pre-migrate-*.db`. Never deploy such a build; or the backup check compares the set of applied
 versions with the compiled ones (a change for the main session, not made yet).
+**A migration file is frozen from its first commit on a pushed branch, comments included**: sqlx stores a checksum of
+the whole file and refuses to start (`VersionMismatch`) when an applied migration's text changed. Later notes go into
+this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
