@@ -1013,6 +1013,13 @@ pub async fn status(
         .and_then(crate::window_relock::sanitize_foreign_access);
     let previous_foreign =
         crate::handlers::window_relock::previous_foreign_access(&state.db, device.id).await;
+    // Every app blocked now, an install-time block too (fix of 2026-10-12), and the previous list.
+    let relock_blocks_json = report
+        .relock_blocks
+        .as_ref()
+        .and_then(crate::window_relock::sanitize_relock_blocks);
+    let previous_blocks =
+        crate::handlers::window_relock::previous_relock_blocks(&state.db, device.id).await;
     // Design 24b §3: boots the launcher didn't see, and the previous count for the security log.
     let unseen_boots = report
         .unseen_boots
@@ -1052,8 +1059,8 @@ pub async fn status(
           notification_cancels_json, \
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
-          foreign_access_json, remote_wipe_ready, admin_policies_pending_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1095,6 +1102,7 @@ pub async fn status(
     .bind(crate::models::admin_policies_json(
         report.admin_policies_pending.as_ref(),
     ))
+    .bind(&relock_blocks_json)
     .execute(&state.db)
     .await
     .ok();
@@ -1118,6 +1126,13 @@ pub async fn status(
         device.id,
         previous_foreign.as_deref(),
         foreign_access_json.as_deref(),
+    )
+    .await;
+    crate::handlers::window_relock::log_relock_blocks(
+        &state.db,
+        device.id,
+        previous_blocks.as_deref(),
+        relock_blocks_json.as_deref(),
     )
     .await;
 

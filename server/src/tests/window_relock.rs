@@ -355,6 +355,106 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
+/// Fix of 2026-10-12: a block the install check set outside any window (no relock report carries
+/// it) reaches the page with its key and why, "Allow these apps" lets it out, and the next report
+/// clears it; a catalog imposter stays, with no button for it.
+#[tokio::test]
+async fn an_install_time_block_is_listed_allowed_and_cleared() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let key = format!("d3b0{}6a6e", "0".repeat(56));
+    let music = json!({ "package_name": "me.vibb.music.debug", "signer": key,
+                        "reason": "outside_play", "found": "install", "at_ms": now_ms() - 60_000 });
+    post_status(&app, &token, json!({ "relock_blocks": [music.clone()] })).await;
+    let button = format!("action=\"/devices/{id}/allow-blocked\"");
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(
+        card.contains(
+            "me.vibb.music.debug (signing key d3b00000…00006a6e): installed from outside Play \
+             (a download or adb) - noticed at its install"
+        ),
+        "{card}"
+    );
+    assert!(card.contains(&button), "{card}");
+    // Logged once.
+    post_status(&app, &token, json!({ "relock_blocks": [music.clone()] })).await;
+    let logged = events(&app, "phone_app_blocked").await;
+    assert_eq!(logged.len(), 1);
+    assert!(
+        logged[0].contains("me.vibb.music.debug (outside_play, install"),
+        "{logged:?}"
+    );
+
+    // The parent allows it; the phone takes the command, answers, and reports no block.
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/allow-blocked"),
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    let res = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await;
+    assert_eq!(res.json()["pending_command"]["command"], "allow_blocked");
+    let command_id = res.json()["pending_command"]["id"].as_i64().unwrap();
+    app.request(
+        Method::POST,
+        "/api/devices/command-result",
+        Some(&token),
+        Some(json!({ "command_id": command_id, "success": true, "message": "allowed: 1 apps" })),
+    )
+    .await;
+    post_status(&app, &token, json!({ "relock_blocks": [] })).await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(!card.contains("me.vibb.music.debug"), "{card}");
+    assert!(!card.contains(&button), "{card}");
+    assert!(
+        card.contains("the phone answered &#34;allowed: 1 apps&#34;."),
+        "{card}"
+    );
+
+    // An imposter of a catalog app: listed, why it stays, and no button for it alone.
+    sqlx::query(
+        "INSERT INTO tracked_apps (name, source_type, github_repo, package_name, signer_sha256) \
+         VALUES ('Chat', 'manual', '', 'org.example.chat', ?)",
+    )
+    .bind("9".repeat(64))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let imposter = json!({ "package_name": "org.example.chat", "signer": key,
+                           "reason": "outside_play", "found": "install", "at_ms": now_ms() });
+    // With a relock report from the same time: its "Blocked:" line gives way to the list.
+    post_status(
+        &app,
+        &token,
+        json!({ "relock_blocks": [imposter], "relock": literal(now_ms() - 60_000) }),
+    )
+    .await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(
+        card.contains("so it isn&#39;t the catalog&#39;s app and stays blocked: uninstall it"),
+        "{card}"
+    );
+    assert!(!card.contains(&button), "{card}");
+    assert!(!card.contains("Blocked: com.example.app"), "{card}");
+    assert!(card.contains("it removed 1 Wi-Fi proxy."), "{card}");
+}
+
 /// QA Low 10: "Allow these apps" goes once the phone answered one pressed after the relock, and
 /// each command's answer - or that there is none - shows on the Status card.
 #[tokio::test]

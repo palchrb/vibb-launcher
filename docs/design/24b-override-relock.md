@@ -202,6 +202,10 @@ Sideloading stays allowed in windows. The relock closes the "same name, differen
   - **Outside windows** (Low 3), an install or update re-checks the one package: a block clears once it is back to
     its expected signer (or came from Play or us), and one installed just now from elsewhere or with another key than
     its pin is blocked. An app "Allow these apps" let out stays out.
+  - **Every block reaches the PWA** (fix of 2026-10-12): each status report carries `relock_blocks`, every current
+    block - a relock's or the install check's - with its app's signing key now, why (`outside_play`, `other_key`,
+    `catalog_key`, or `unknown` for one from before) and where and when it was set. The Status card lists them and
+    shows "Allow these apps" while one can be let out.
 - **M10's server rule** (learning a catalog name from "the one new package") must ignore packages the phone reports
   as `blocked`. That's noted for M10's server part.
 - **Limits:**
@@ -905,6 +909,12 @@ Every finding of `docs/design/qa-24b-code.md` is fixed, rebased onto main (after
   `device_policy.disallow_safe_boot_set_at_ms` (in 0064) for the unseen-boots advice.
 - **Device checks added to §7:** the foreign-admin backstop end to end, an accessibility service refused in a window,
   certificates and proxies from before a window kept, a crash restart relocking as `timer`.
+- **Follow-up (2026-10-12, found on the Android 16 emulator):** the debug music app, installed with adb outside any
+  window, was blocked by the install check and stayed hidden although ticked, and the PWA showed nothing: only the
+  last relock's report reached the server, and a block kept from an earlier relock was never reported again. Fixed:
+  the status field `relock_blocks` (above, `device_status.relock_blocks_json`, migration 0067), the Status card's
+  list with "Allow these apps", `phone_app_blocked` in the security log. The install check also skips a static
+  shared library's versioned name (Chrome's `trichromelibrary_<version>`) without a warning.
 - **Green on main `7e930b24`:** launcher `testDebugUnitTest assembleDebug assembleRelease -PwarningsAsErrors=true`
   (893 tests), server `cargo test` (537; 538 with S4), `fmt --check`, `clippy --all-targets` with no new warnings,
   the same on `relock-24b-s4`. The PWA in headless Chromium at 360 px, light and dark: no horizontal scroll, the red

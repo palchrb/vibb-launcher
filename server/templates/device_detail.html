@@ -70,10 +70,20 @@
         {% for line in relock.notes.lines %}
         <div class="error">{{ line }}</div>
         {% endfor %}
+        {% if let Some(text) = relock.blocks.text %}
+        <div class="error">
+            <p style="margin:0 0 8px;">{{ text }}</p>
+            <ul style="margin:0; padding-left:20px;">
+                {% for item in relock.blocks.items %}
+                <li>{{ item }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
         {% if let Some(text) = relock.notice %}
         <div class="success">{{ text }}</div>
         {% endif %}
-        {% if relock.notes.allow_button %}
+        {% if relock.allow_button %}
         <form method="post" action="/devices/{{ device.id }}/allow-blocked">
             <button type="submit" class="button-small button-secondary">Allow these apps</button>
         </form>

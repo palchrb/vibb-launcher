@@ -147,7 +147,72 @@ data class SignerCheck(
     val newlyBlocked: Set<String>,
     val reported: Set<String>,
     val signers: Map<String, String> = emptyMap(),
+    /** Why each new block ([BlockReason]), kept with it for the status report's `relock_blocks`. */
+    val reasons: Map<String, String> = emptyMap(),
 )
+
+/** Why a package is in `relock_blocked` - the status report's `relock_blocks[].reason`. */
+object BlockReason {
+    /** Installed or replaced from an installer that isn't Play or us, with no signer known. */
+    const val OUTSIDE_PLAY = "outside_play"
+
+    /** Signed with another key than it had at the window's start. */
+    const val OTHER_KEY = "other_key"
+
+    /** Signed with another key than the catalog's pin (M10): not the catalog's app - it stays
+     * blocked through "Allow these apps". */
+    const val CATALOG_KEY = "catalog_key"
+
+    /** A block from before the reasons were kept. */
+    const val UNKNOWN = "unknown"
+}
+
+/** Where a block was set - `relock_blocks[].found`: the relock after a window, or the install
+ * check outside windows. */
+object BlockFound {
+    const val RELOCK = "relock"
+    const val INSTALL = "install"
+}
+
+/** [BlockReason] for a package being blocked: the catalog's pin first, then the window start's
+ * signer, else it came from outside Play. */
+fun blockReason(pkg: InstalledPackage, pin: Set<String>?, expected: Set<String>?): String = when {
+    pin != null && !sameSigner(pin, pkg.signers) -> BlockReason.CATALOG_KEY
+    expected != null && !sameSigner(expected, pkg.signers) -> BlockReason.OTHER_KEY
+    else -> BlockReason.OUTSIDE_PLAY
+}
+
+/** What is kept with a block for the report: why, where and when it was set. */
+@kotlinx.serialization.Serializable
+data class BlockNote(val reason: String, val found: String, val atMs: Long)
+
+/** At most this many blocks in the status report's `relock_blocks` (the server keeps the same). */
+const val RELOCK_BLOCKS_MAX = 16
+
+/**
+ * The status report's `relock_blocks`: every current block - from a relock or the install check -
+ * with its app's signing key now ([installedSigners]; a blocked package that isn't installed any
+ * more is left out), why and when (fix of 2026-10-12: an install-time block never reached the
+ * PWA, so the parent couldn't let it out). Sorted, valid package names, at most [RELOCK_BLOCKS_MAX].
+ */
+fun currentBlocks(
+    blocked: Map<String, Set<String>?>,
+    notes: Map<String, BlockNote>,
+    installedSigners: Map<String, Set<String>>,
+): List<com.kidslauncher.mdm.server.dto.RelockBlockReport> = blocked.keys
+    .filter { it in installedSigners && reportPackages(listOf(it)).isNotEmpty() }
+    .sorted()
+    .take(RELOCK_BLOCKS_MAX)
+    .map { name ->
+        val note = notes[name]
+        com.kidslauncher.mdm.server.dto.RelockBlockReport(
+            packageName = name,
+            signer = shownSigner(installedSigners.getValue(name))?.takeIf(::isSignerHex),
+            reason = note?.reason ?: BlockReason.UNKNOWN,
+            found = note?.found ?: BlockFound.RELOCK,
+            atMs = note?.atMs,
+        )
+    }
 
 enum class RelockBlock {
     /** Nothing to do (a new app from Play or us that isn't allowlisted is hidden by `apply()`). */
@@ -223,11 +288,13 @@ fun signerCheck(
     val newly = mutableSetOf<String>()
     val reported = mutableSetOf<String>()
     val signers = mutableMapOf<String, String>()
-    fun block(pkg: InstalledPackage, expected: Set<String>?) {
+    val reasons = mutableMapOf<String, String>()
+    fun block(pkg: InstalledPackage, expected: Set<String>?, pin: Set<String>?) {
         blocked[pkg.name] = expected
         newly += pkg.name
         reported += pkg.name
         shownSigner(pkg.signers)?.let { signers[pkg.name] = it }
+        reasons[pkg.name] = blockReason(pkg, pin, expected)
     }
     for (pkg in installed) {
         val locked = lockedSigners[pkg.name]?.takeIf { it.isNotEmpty() }
@@ -240,16 +307,16 @@ fun signerCheck(
         if (snapshot == null) {
             val since = windowStartMs ?: continue
             if (pkg.updatedAt >= since && (if (locked != null) !sameSigner(locked, pkg.signers) else pkg.installer !in trustedInstallers)) {
-                block(pkg, locked)
+                block(pkg, locked, locked)
             }
             continue
         }
         val atStart = snapshot[pkg.name]
         val expected = locked ?: atStart?.signers?.takeIf { it.isNotEmpty() }
-        if (relockBlockDecision(pkg, atStart, expected, trustedInstallers) == RelockBlock.BLOCK) block(pkg, expected)
+        if (relockBlockDecision(pkg, atStart, expected, trustedInstallers) == RelockBlock.BLOCK) block(pkg, expected, locked)
     }
     // Uninstalled packages leave the set: only the installed ones were carried over.
-    return SignerCheck(blocked, newly, reported, signers)
+    return SignerCheck(blocked, newly, reported, signers, reasons)
 }
 
 /**

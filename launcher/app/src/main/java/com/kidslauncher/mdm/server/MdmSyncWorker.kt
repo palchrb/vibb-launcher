@@ -244,6 +244,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 relock = WindowRelock.lastReport(context),
                 unseenBoots = BootWitness.report(context),
                 foreignAccess = ForeignAccess.report(context),
+                relockBlocks = WindowRelock.reportBlocks(context),
                 remoteWipeReady = LocateCommands.remoteWipeReady(context),
                 adminPoliciesPending = AdminPolicies.pending(context),
             )
