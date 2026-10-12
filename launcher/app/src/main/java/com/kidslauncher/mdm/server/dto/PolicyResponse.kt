@@ -107,6 +107,14 @@ data class PolicyResponse(
      * carries it, as raw JSON so nothing in it can fail the policy; the music sync (step 3) reads
      * it field by field. Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val music: kotlinx.serialization.json.JsonElement? = null,
+    /** The lock's glance page (design 25): `{apps: [package, ...], show_text: bool}` - the apps whose
+     * messages show on the PIN lock's first page, and whether with their text. Raw JSON read field
+     * by field by [com.kidslauncher.mdm.badges.lockGlancePolicy], so nothing in it can fail the
+     * policy (like [music] and `app_display`). Missing from a fresh response (an older server) =
+     * the server's own default (Element X, sender only); missing from the cache (written by a
+     * build before design 25) = unknown, missed calls only (QA Low 11). Not in
+     * [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val lockGlance: kotlinx.serialization.json.JsonElement? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see
@@ -137,6 +145,9 @@ data class LauncherUi(
      * missing from an older server = only the built-in navy
      * ([com.kidslauncher.mdm.ui.wallpaper.effectiveWallpaper]). */
     val wallpapers: List<PolicyWallpaper> = emptyList(),
+    /** The lock's own background (design 25, "Lock background"): the id of one of [wallpapers], or
+     * null/missing - the lock shows Home's ([com.kidslauncher.mdm.ui.wallpaper.lockWallpaper]). */
+    val lockWallpaper: Long? = null,
     /** How apps show on this phone (design 14): `[{package_name, label, icon, color}]`, the
      * catalog default resolved against the phone's own choice by the server. Kept as raw JSON and
      * read field by field ([com.kidslauncher.mdm.appdisplay.appDisplayMap], QA #1): nothing in it - a

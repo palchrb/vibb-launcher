@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import com.kidslauncher.mdm.server.dto.CommandReceiptRequest
 import com.kidslauncher.mdm.server.dto.CommandResultRequest
 import com.kidslauncher.mdm.server.dto.CrashReportBatch
 import com.kidslauncher.mdm.server.dto.DnsBlocklistCategory
@@ -29,7 +30,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Device-facing kid-phone-server REST endpoints. Enrollment is unauthenticated (the enrollment
  * code itself is the one-shot credential); policy/status require the bearer token issued at
- * enrollment, attached by [createMdmApi] via a header rather than threaded through every call.
+ * enrollment, attached by [createMdmApi] via a header rather than threaded through every call -
+ * only to the server's own origin ([bearerInterceptor], security review L8).
  */
 interface MdmApi {
 
@@ -46,6 +48,10 @@ interface MdmApi {
 
     @POST("api/devices/command-result")
     suspend fun sendCommandResult(@Body request: CommandResultRequest): Response<Unit>
+
+    /** The explicit receipt (security review L12), before the command runs - see [CommandAnswers]. */
+    @POST("api/devices/command-receipt")
+    suspend fun sendCommandReceipt(@Body request: CommandReceiptRequest): Response<Unit>
 
     @GET("api/devices/apps")
     suspend fun getTrackedAppUpdates(): Response<List<TrackedAppUpdate>>
@@ -114,17 +120,10 @@ fun createMdmApi(baseUrl: String, token: String? = null): MdmApi {
 
     TsnetClient.proxy()?.let { clientBuilder.proxy(it) }
 
-    if (token != null) {
-        clientBuilder.addInterceptor { chain ->
-            chain.proceed(
-                chain.request().newBuilder()
-                    .header("Authorization", "Bearer $token")
-                    .build()
-            )
-        }
-    }
-
     val normalizedBaseUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+
+    // Only to the server's own host (security review L8), never to an absolute URL elsewhere.
+    if (token != null) clientBuilder.addInterceptor(bearerInterceptor(normalizedBaseUrl, token))
 
     return Retrofit.Builder()
         .baseUrl(normalizedBaseUrl)

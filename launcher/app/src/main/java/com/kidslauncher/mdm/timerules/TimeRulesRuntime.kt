@@ -224,6 +224,9 @@ object TimeRulesRuntime {
             if (changedTo != null && changedTo != LockReason.NONE && !OngoingCalls.hasLiveCall) {
                 LockActivity.start(context)
             }
+            // The lock's glance page shows what our missed-call notification shows: a rule's start or
+            // end re-learns it (design 25, code QA Low 3; never posts anew, never clears).
+            if (changedTo != null) com.kidslauncher.mdm.calls.MissedCallNotifier.relearn(context)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Lock re-check failed", e)
         }

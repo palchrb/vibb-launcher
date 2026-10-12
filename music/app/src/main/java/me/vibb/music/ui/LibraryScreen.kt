@@ -317,9 +317,9 @@ fun NowPlayingBar(now: NowView, onOpen: () -> Unit, onTogglePlay: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Cover(now.item.artHash ?: now.entry.cover, now.category, 10.dp, 0.dp, Modifier.size(36.dp))
+            Cover(now.cover, now.category, 10.dp, 0.dp, Modifier.size(36.dp))
             Column(Modifier.weight(1f)) {
-                Line(now.item.title, 13, 800, Palette.white)
+                Line(now.itemTitle, 13, 800, Palette.white)
                 Line(now.entry.name, 11, 700, Palette.sub)
             }
         }

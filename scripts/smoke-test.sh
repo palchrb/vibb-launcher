@@ -13,7 +13,8 @@
 # from an allowed contact (rings, answerable over the lock) vs an unknown number (screened out by
 # our screening service: Telecom's FILTERING_COMPLETED or our log, after the step started); a
 # missed call from the contact (rings, the caller hangs up) posts our notification (id 1006) and no
-# Telecom TelecomMissedCalls notification (design 12);
+# Telecom TelecomMissedCalls notification (design 12), and shows as a row on the lock's glance page
+# (design 25; the PIN is typed after "Lås opp" there);
 # outgoing calls to an unknown number (cancelled - Telecom's "Canceled from Call Redirection
 # Service" or our log line) vs the contact typed in national form (redirected - our log line - and
 # dialled); one call at a time (our "second call" log line, during the answered incoming call); the
@@ -114,6 +115,8 @@ abort() {
 adb_() { "${ADB_CMD[@]}" "$@"; }
 sh_() { adb_ shell "$@" 2>/dev/null | tr -d '\r'; }
 
+# The PIN lock's window is FLAG_SECURE (design 25): screencap shows it black - the checks use UI
+# dumps; for a picture of the lock use the emulator console (docs/testing/emulator.md §6c).
 shot() {
     SHOT=$((SHOT + 1))
     local file
@@ -392,14 +395,29 @@ taskbar_unused() {
     if [ "$(taskbar_field mNavigationMode "$1")" = "-1" ]; then echo "TaskbarDelegate never initialised (mNavigationMode=-1)"; fi
 }
 
+# Design 25: the lock comes up on its glance page; "Lås opp" leads to the keypad, which UI dumps
+# don't show while the glance page covers it (no-hide-descendants).
+GLANCE_UNLOCK_NODE='resource-id="[^"]*:id/lock_glance_unlock"'
 enter_pin() {
     local digit i
     ui_dump
+    if tap_node "$GLANCE_UNLOCK_NODE"; then
+        sleep 0.5
+        ui_dump
+    fi
     for ((i = 0; i < ${#1}; i++)); do
         digit="${1:i:1}"
         tap_node "(text|content-desc)=\"$digit\"" || return 1
         sleep 0.2
     done
+}
+
+# glance_missed_row: the glance page has a missed-call row (its description, nb or en); the row's
+# contact name is printed as GLANCE_ROW.
+glance_missed_row() {
+    ui_dump
+    GLANCE_ROW="$(grep -o -E 'content-desc="(Tapt anrop fra|Missed call from|[0-9]+ tapte anrop fra|[0-9]+ missed calls from) [^",]*' <<<"$UI_XML" | head -1 | cut -d'"' -f2)"
+    [ -n "$GLANCE_ROW" ]
 }
 
 answer() {
@@ -807,6 +825,18 @@ else
     shot missed-call
     # The call ended with the screen on: the lock comes back before the unlock step.
     if [ "$locked" -eq 1 ]; then wait_for 6 top_is "$LOCK_ACTIVITY" || true; fi
+    # Design 25: the lock's glance page shows what our notification shows - a row per contact, one
+    # TalkBack node "Tapt anrop fra <name>, <time>" (the dump sees data-sensitive views: UiAutomation
+    # is an accessibility tool). The lock's window is FLAG_SECURE: screencap shows it black.
+    if [ "$locked" -eq 1 ] && top_is "$LOCK_ACTIVITY"; then
+        if wait_for 6 glance_missed_row; then
+            pass "the missed call shows on the lock's glance page (${GLANCE_ROW:-a row})"
+        else
+            fail "the missed call shows on the lock's glance page" "no missed-call row in the UI dump; top: $(top_activity)"
+        fi
+    else
+        skip "the missed call shows on the lock's glance page" "the lock isn't in front"
+    fi
 fi
 
 step "Unlock"

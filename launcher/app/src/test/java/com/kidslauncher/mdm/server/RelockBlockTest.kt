@@ -199,6 +199,99 @@ class RelockBlockTest {
         assertFalse(shouldSuspendNewPackage(CHAT, decision, overrideActive = true, ownPackage = OWN, systemDialer = null, relockBlocked = setOf(CHAT)))
     }
 
+    @Test
+    fun `an install-time block reaches the report with its key and why, and Allow these apps lets it out (fix 2026-10-12)`() {
+        val store = WindowRelockStore(ParentPinStoreTest.FakePrefs())
+        val now = 1_760_100_000_000L
+        val music = "me.vibb.music.debug"
+        val debugKey = "d3b0" + "0".repeat(56) + "6a6e"
+        val fakeKey = "e5e5" + "0".repeat(56) + "e5e5"
+        val pinKey = "a1a1" + "0".repeat(56) + "a1a1"
+        // adb install outside a window: no Play, no pin - blocked, with its note.
+        val installed = pkg(name = music, signers = setOf(debugKey), updatedAt = now - 2_000, installer = null)
+        val after = blockAfterInstall(installed, store.blocked(), emptyMap(), trusted, now)!!
+        assertEquals(BlockReason.OUTSIDE_PLAY, blockReason(installed, null, null))
+        store.saveBlocked(after, mapOf(music to BlockNote(BlockReason.OUTSIDE_PLAY, BlockFound.INSTALL, now)))
+        // An imposter of a catalog app, set by a relock: another key than the pin.
+        val imposter = pkg(signers = setOf(fakeKey), updatedAt = now - 1_000, installer = SIDELOAD)
+        val check = signerCheck(listOf(installed, imposter), emptyMap(), listOf(CHAT), store.blocked(), trusted, mapOf(CHAT to setOf(pinKey)))
+        assertEquals(mapOf(CHAT to BlockReason.CATALOG_KEY), check.reasons)
+        // The relock carries the install-time block over (it isn't this run's, so not in `reported`)...
+        assertEquals(setOf(music, CHAT), check.blocked.keys)
+        assertEquals(setOf(CHAT), check.reported)
+        store.saveBlocked(check.blocked, check.reasons.mapValues { BlockNote(it.value, BlockFound.RELOCK, now) })
+        // ...and the status report has both, each with its key and why - also a block from before the notes.
+        store.saveBlocked(store.blocked() + ("org.example.old" to null))
+        val signers = mapOf(music to setOf(debugKey), CHAT to setOf(fakeKey), "org.example.old" to setOf("short"))
+        val report = currentBlocks(store.blocked(), store.blockNotes(), signers)
+        assertEquals(
+            listOf(
+                com.kidslauncher.mdm.server.dto.RelockBlockReport(music, debugKey, BlockReason.OUTSIDE_PLAY, BlockFound.INSTALL, now),
+                com.kidslauncher.mdm.server.dto.RelockBlockReport(CHAT, fakeKey, BlockReason.CATALOG_KEY, BlockFound.RELOCK, now),
+                com.kidslauncher.mdm.server.dto.RelockBlockReport("org.example.old", null, BlockReason.UNKNOWN, BlockFound.RELOCK, null),
+            ).sortedBy { it.packageName },
+            report,
+        )
+        // A blocked package that is gone isn't reported.
+        assertEquals(2, currentBlocks(store.blocked(), store.blockNotes(), signers - "org.example.old").size)
+        assertEquals(3, currentBlocksTotal(store.blocked(), signers))
+        assertEquals(2, currentBlocksTotal(store.blocked(), signers - "org.example.old"))
+        // Past the cap the list stops, the total doesn't (QA of cmd-expiry, Low 2).
+        val many = (0 until RELOCK_BLOCKS_MAX + 3).associate { "org.example.app$it" to null as Set<String>? }
+        val manySigners = many.keys.associateWith { setOf(debugKey) }
+        assertEquals(RELOCK_BLOCKS_MAX, currentBlocks(many, emptyMap(), manySigners).size)
+        assertEquals(RELOCK_BLOCKS_MAX + 3, currentBlocksTotal(many, manySigners))
+
+        // "Allow these apps": the debug build goes (with its note), the imposter stays.
+        val left = allowBlocked(store.blocked(), signers, mapOf(CHAT to setOf(pinKey)))
+        assertTrue(store.saveAllowed(left, mapOf(music to installed.updatedAt, "org.example.old" to 1L)))
+        assertEquals(setOf(CHAT), store.blocked().keys)
+        assertEquals(setOf(CHAT), store.blockNotes().keys)
+        assertEquals(listOf(CHAT), currentBlocks(store.blocked(), store.blockNotes(), signers).map { it.packageName })
+        // Unhiding it sends a package-added: the allowed install isn't blocked again.
+        assertNull(blockAfterInstall(installed, store.blocked(), emptyMap(), trusted, now + 1_000, store.allowed()))
+    }
+
+    @Test
+    fun `Allow these apps lets out only the listed blocks whose key is still the one shown (QA of cmd-expiry, Low 1)`() {
+        val keyA = "a1" + "0".repeat(60) + "a1"
+        val keyB = "b2" + "0".repeat(60) + "b2"
+        val other = "c3" + "0".repeat(60) + "c3"
+        val blocked = mapOf("org.example.a" to null, "org.example.b" to null, "org.example.late" to null, "org.example.old" to null)
+        val installed = mapOf(
+            "org.example.a" to setOf(keyA),
+            // Replaced since the parent looked: another key now.
+            "org.example.b" to setOf(other),
+            // Blocked after the parent looked: not listed.
+            "org.example.late" to setOf(keyB),
+            // Its key unreadable then and now.
+            "org.example.old" to setOf("short"),
+        )
+        val listed = mapOf("org.example.a" to keyA, "org.example.b" to keyB, "org.example.old" to null)
+        assertEquals(
+            setOf("org.example.b", "org.example.late"),
+            allowBlocked(blocked, installed, emptyMap(), listed).keys,
+        )
+        // An empty list lets out nothing; a gone package leaves anyway.
+        assertEquals(blocked.keys - "org.example.a", allowBlocked(blocked, installed - "org.example.a", emptyMap(), emptyMap()).keys)
+        // A listed catalog imposter stays.
+        assertEquals(setOf("org.example.a"), allowBlocked(mapOf("org.example.a" to null), installed, mapOf("org.example.a" to setOf(other)), listed).keys)
+        // An older server: every block but the imposter goes.
+        assertTrue(allowBlocked(blocked, installed, emptyMap(), null).isEmpty())
+    }
+
+    @Test
+    fun `the reasons follow the pin, then the window start's key, then the installer`() {
+        val evil = pkg(signers = setOf(EVIL))
+        assertEquals(BlockReason.CATALOG_KEY, blockReason(evil, setOf(REAL), setOf(EVIL)))
+        assertEquals(BlockReason.OTHER_KEY, blockReason(evil, null, setOf(REAL)))
+        assertEquals(BlockReason.OUTSIDE_PLAY, blockReason(evil, null, null))
+        assertEquals(BlockReason.OUTSIDE_PLAY, blockReason(evil, setOf(EVIL), null))
+        // A relock's re-signed app: its window-start key.
+        val check = signerCheck(listOf(pkg(signers = setOf(EVIL), updatedAt = 2L)), mapOf(CHAT to PackageState(setOf(REAL), 1L)), listOf(CHAT), emptyMap(), trusted)
+        assertEquals(mapOf(CHAT to BlockReason.OTHER_KEY), check.reasons)
+    }
+
     private companion object {
         const val CHAT = "org.example.chat"
         const val PLAY = "com.android.vending"

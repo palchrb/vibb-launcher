@@ -1,6 +1,5 @@
 package com.kidslauncher.mdm.music
 
-import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -14,13 +13,12 @@ import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
-import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.badges.BadgeListenerService
+import com.kidslauncher.mdm.lock.VisibleSender
 
 private const val LOG_TAG = "MusicSessions"
 
@@ -208,7 +206,7 @@ object MusicSessions {
     fun openSessionActivity(context: Context, controller: MediaController?): Boolean {
         val intent = controller?.sessionActivity ?: return false
         return try {
-            intent.send(context, 0, null, null, null, null, visibleSenderOptions())
+            intent.send(context, 0, null, null, null, null, VisibleSender.options())
             true
         } catch (e: PendingIntent.CanceledException) {
             false
@@ -246,22 +244,6 @@ object MusicSessions {
         val bitmap = if (stamp == -1L) null else runCatching { BitmapFactory.decodeFile(file.path) }.getOrNull()
         artCache = stamp to bitmap
         return bitmap
-    }
-
-    private fun visibleSenderOptions(): Bundle {
-        val options = ActivityOptions.makeBasic()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-            options.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE)
-        } else {
-            allowLegacy(options)
-        }
-        return options.toBundle()
-    }
-
-    /** API 34/35 have no ALLOW_IF_VISIBLE; ALLOWED is the same opt-in there (deprecated in 36). */
-    @Suppress("DEPRECATION")
-    private fun allowLegacy(options: ActivityOptions) {
-        options.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
     }
 }
 

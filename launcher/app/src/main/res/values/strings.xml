@@ -201,6 +201,7 @@
     <string name="settings_mdm_server_url">Server URL</string>
     <string name="settings_mdm_tailscale_auth_key">Tailscale auth key</string>
     <string name="settings_mdm_not_set">Not set</string>
+    <string name="settings_mdm_tailscale_joined">On the tailnet - the key was deleted after the first connection</string>
     <string name="settings_mdm_scan_setup_qr">Scan setup QR</string>
     <string name="settings_mdm_scan_setup_qr_summary">Applies server URL, Tailscale key, and enrollment code from the admin site\'s per-device QR code in one scan</string>
     <string name="settings_mdm_scan_setup_qr_prompt">Point the camera at the setup QR code on the admin site</string>
@@ -303,6 +304,9 @@
     <string name="play_link_blocked_text">Ask a parent if you want a new app.</string>
     <!-- Handy's own PIN lock and the call screens (step 10, design 10-lock-and-call-ui.md). -->
     <string name="pin_lock_prompt">Enter your code</string>
+    <!-- Design 25: after a glance row was tapped (%1$s = the app's name, at most 20 characters). -->
+    <string name="pin_lock_prompt_open">Enter your code to open %1$s</string>
+    <string name="pin_lock_prompt_missed">Enter your code to see missed calls</string>
     <string name="pin_lock_wrong">Wrong code</string>
     <string name="pin_lock_wait">Try again in %1$s</string>
     <string name="pin_lock_checking">Checking…</string>
@@ -336,7 +340,29 @@
     <string name="music_previous">Previous</string>
     <string name="music_next">Next</string>
     <string name="lock_media_unlock">Unlock</string>
-    <string name="lock_media_back">Back to playback</string>
+    <string name="lock_media_back">Back</string>
+    <!-- Design 25: the lock's glance page - its notification rows and the "more" line. -->
+    <plurals name="glance_messages">
+        <item quantity="one">%1$d message</item>
+        <item quantity="other">%1$d messages</item>
+    </plurals>
+    <plurals name="glance_notices">
+        <item quantity="one">%1$d new notification</item>
+        <item quantity="other">%1$d new notifications</item>
+    </plurals>
+    <string name="glance_missed">Missed call</string>
+    <plurals name="glance_missed_many">
+        <item quantity="one">%1$d missed call</item>
+        <item quantity="other">%1$d missed calls</item>
+    </plurals>
+    <plurals name="glance_more">
+        <item quantity="one">+ %1$d more</item>
+        <item quantity="other">+ %1$d more</item>
+    </plurals>
+    <string name="glance_yesterday">yesterday</string>
+    <string name="glance_open_action">Unlock and open</string>
+    <string name="glance_missed_action">Unlock and see missed calls</string>
+    <string name="glance_missed_from">Missed call from %1$s</string>
     <!-- Design 24b: a parent-PIN window that locks again by itself (notification, Home banner). -->
     <string name="notification_channel_window">Opened with the parent code</string>
     <string name="window_override_open">Open with the parent code until %1$s</string>

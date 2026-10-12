@@ -125,6 +125,11 @@ class SonosController(
      * null: our own `SetVolume`s never go above it (design 26a §5.3).
      */
     private val cap: () -> Int? = { null },
+    /**
+     * The uids that sound when [uid] plays (its row's members, the coordinator first; [uid] alone for a
+     * room on its own): a start caps them all (design 26a §5.3, qa-26a-corrections M2).
+     */
+    private val members: (String) -> List<String> = { listOf(it) },
 ) {
     /** The room: the uid we command (a group by its coordinator), and its label. Migration follow moves them. */
     var uid: String = uid
@@ -207,6 +212,9 @@ class SonosController(
     var volOpt: Int? = null
         private set
 
+    /** Bumped by every volume set of our own: a play's result never overwrites a newer one (L1). */
+    private var volSets = 0
+
     /** The last playWhenReady the player showed: held through a transient (§3.2). */
     private var heldPwr = false
     private var autoFlag = false
@@ -274,8 +282,10 @@ class SonosController(
     /**
      * `_sonos_position` (§4.3): a held seek target wins while <= 12 s old and on the same uri, then the
      * pause freeze; otherwise the measured position of OUR stream - plus the one age term while it
-     * plays - clamped to the duration. Not ours: the last ours position (a grouped-away member reports
-     * the parent's RelTime, never shown). Before a start: where it will start.
+     * plays - clamped to the duration. A fresh snapshot of a stream that isn't ours (grouped away,
+     * taken over, lost) shows no position and no duration ([hidesPosition], vibb `status`'s
+     * ours-gated position, `sonos_grouped.py` check 2: a member's RelTime is the coordinator's); a
+     * stale one keeps the last ours values. Before a start: where it will start.
      */
     fun spec(now: Long): SonosSpec {
         val idx = index
@@ -287,8 +297,9 @@ class SonosController(
         }
         val s = snap
         val tr = effectiveTransport(now)
-        val dur = if (startPending) listed else currentDurS()?.let { (it * 1000).toLong() } ?: listed
-        val (pos, anchor, moving) = position(now)
+        val hidden = hidesPosition(now)
+        val dur = if (hidden) null else if (startPending) listed else currentDurS()?.let { (it * 1000).toLong() } ?: listed
+        val (pos, anchor, moving) = if (hidden) Triple(0L, now, false) else position(now)
         fun spec(phase: PlayPhase, pwr: Boolean) = SonosSpec(phase, pwr, idx, pos, anchor, moving && pwr, dur)
         val p = pending
         return when {
@@ -303,6 +314,15 @@ class SonosController(
             tr == TransportState.PLAYING -> spec(PlayPhase.READY, true)
             else -> spec(PlayPhase.READY, false)
         }
+    }
+
+    /**
+     * The speaker answers, just now, with a stream that isn't ours (and no play of ours is settling):
+     * its position belongs to someone else's stream - never painted under our title (vibb `status`).
+     */
+    fun hidesPosition(now: Long): Boolean {
+        val s = snap ?: return false
+        return session && !startPending && pending == null && !seeded && s.reachable && s.fresh(now) && !s.ours
     }
 
     /** Called by the renderer after each refresh: the playWhenReady it showed (held through transients). */
@@ -716,12 +736,21 @@ class SonosController(
         bmHold = null
         endsNear = 0
         val volume = restoreVolume
+        // a session's start brings a louder speaker down to the parent's cap before Play (§5.3); a
+        // step or an advance inside the session never does (a louder volume set elsewhere stays)
+        val startCap = if (why == PlayWhy.START) cap()?.takeIf { it in 1..99 } else null
+        // the ramp's leftover is our own set: never above the cap either
+        val restore = volume?.let { volumeTarget(it, startCap ?: cap()) }
         val target = uid
+        val room = if (startCap != null) members(target) else emptyList()
+        val volSet = volSets
         work.submit({
-            val result = transport.play(body)
-            if (volume != null) {
+            var result = transport.play(body, startCap, room)
+            if (restore != null) {
                 try {
-                    transport.volume(volume, target)
+                    transport.volume(restore, target)
+                    // what the speaker holds now (below the cap it may have been brought to, L1)
+                    result = result.copy(volume = restore, restored = true)
                 } catch (_: SonosException) {
                     // best effort: the next play tries again
                 }
@@ -736,11 +765,12 @@ class SonosController(
                     r.onSuccess { res ->
                         playing = Playing(entryId, if (entry?.id == entryId) items.indexOfFirst { it.key == item.key } else -1, item.key, res.uri)
                         ownsSpeaker = true
-                        restoredBy(volume)
+                        tookVolume(res, volSet)
+                        if (res.restored) restoredBy(volume)
                     }
                     r.onFailure { host.log("sonos: a superseded play failed (${it.javaClass.simpleName})") }
                 } else {
-                    r.fold({ played(idx, item, it, startS, volume) }, { failed(why, it) })
+                    r.fold({ played(idx, item, it, startS, volume, volSet) }, { failed(why, it) })
                 }
             } catch (t: Exception) {
                 host.log("sonos: play result failed (${t.javaClass.simpleName})")
@@ -758,9 +788,20 @@ class SonosController(
         }
     }
 
-    private fun played(idx: Int, item: PlayItem, res: PlayResult, startS: Double, restored: Int?) {
+    /**
+     * A play's own volume sets (the start cap, a ramp's leftover put back): the base of the next key
+     * press is what the speaker holds now - unless a press of ours went out after the play was sent
+     * ([volSet] behind [volSets]): its set ran later in the actor and stands.
+     */
+    private fun tookVolume(res: PlayResult, volSet: Int) {
+        if (volSet == volSets) res.volume?.let { volOpt = it }
+    }
+
+    private fun played(idx: Int, item: PlayItem, res: PlayResult, startS: Double, restored: Int?, volSet: Int) {
         val now = elapsedMs()
-        restoredBy(restored)
+        if (res.restored) restoredBy(restored)
+        // brought down to the cap before Play, or the ramp's leftover put back: the base of the next key press
+        tookVolume(res, volSet)
         index = idx // the current generation: nothing newer was pressed
         ownsSpeaker = true
         playing = Playing(entry?.id, idx, item.key, res.uri)
@@ -771,7 +812,7 @@ class SonosController(
         snap = Fields(
             armed = true, uid = res.uid, kind = transport.session.kind, seq = -1, measuredAt = now,
             reachable = true, transport = TransportState.PLAYING, relS = startS, durS = listed, uri = res.uri, ours = true,
-            volume = snap?.volume,
+            volume = res.volume ?: snap?.volume,
         )
         durFromListing = listed != null
         seeded = true
@@ -1090,13 +1131,15 @@ class SonosController(
     /**
      * `SetVolume` of our own (the slider, a key press): clamped 0..100 and to the parent's cap in
      * force ([volumeTarget]); the base of the next press. A volume set from elsewhere (the Sonos
-     * app, the speaker's buttons) is never pulled down: only what we send is clamped (vibb never
-     * fights an external change).
+     * app, the speaker's buttons) during a session is never pulled down: only what we send is clamped
+     * (vibb never fights an external change). A session's start is the one exception: a louder
+     * speaker is set to the cap once, before Play ([SonosTransport.capVolume], §5.3).
      */
     fun setVolume(volume: Int) {
         if (closed) return
         val v = volumeTarget(volume, cap())
         volOpt = v
+        volSets++
         val target = uid
         work.submit({ transport.volume(v, target) }) { r ->
             r.exceptionOrNull()?.let { host.log("sonos: volume failed (${it.javaClass.simpleName})") }
@@ -1116,6 +1159,21 @@ class SonosController(
         val c = cap()?.takeIf { it in 1..99 }
         if (delta > 0 && c != null && base >= c) return host.log("sonos: volume at the cap ($c) - up ignored")
         setVolume(base + delta)
+    }
+
+    /**
+     * The managed config changed (the restrictions broadcast; design 26a §5.3, qa-26a-corrections M1):
+     * the cap in force went below our own last set (the override or the pause ended after the keys
+     * turned the room up) - one `SetVolume` of the cap. A volume nobody of ours set (the Sonos app's,
+     * [volOpt] null) or one at or below the cap is left alone: vibb never fights an external change.
+     */
+    fun capChanged() {
+        if (closed || !session) return
+        val c = cap()?.takeIf { it in 1..99 } ?: return
+        val v = volOpt ?: return
+        if (v <= c) return
+        host.log("sonos: the cap went down to $c - our own $v follows it")
+        setVolume(c)
     }
 
     // -- the sleep timer's end (§5.2) --

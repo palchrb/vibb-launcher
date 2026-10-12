@@ -9,8 +9,8 @@ import java.net.SocketTimeoutException
 /*
  * SSDP discovery, as palchrb/vibb `pi/sonosd.py` `rescan()` gets it from SoCo's `discover` (MIT
  * License, Copyright (c) 2026 palchrb), reimplemented in Kotlin under the GPL-3.0 (or later) - see
- * NOTICE.md. Design 26a §2.1. Android-free; SsdpTest. SsdpScanner.kt adds the Wi-Fi binding and the
- * MulticastLock.
+ * NOTICE.md. Design 26a §2.1. Android-free; SsdpTest. SsdpScanner.kt adds the MulticastLock (and runs
+ * only on Wi-Fi; its socket is bound to no network, §6.5).
  *
  * SSDP only finds speakers (one is enough): the uids, names and groups come from that speaker's
  * GetZoneGroupState afterwards (SpeakerCache.kt), as SoCo does under the hood.
@@ -76,7 +76,7 @@ interface SsdpIo : Closeable {
     fun receive(timeoutMs: Long): String?
 }
 
-/** [SsdpIo] over a UDP socket (bound to the Wi-Fi network by the caller). */
+/** [SsdpIo] over a UDP socket (bound to no network: the launcher's always-on VPN refuses that, §6.5). */
 class DatagramSsdpIo(private val socket: DatagramSocket) : SsdpIo {
     private val group = InetSocketAddress(Ssdp.GROUP, Ssdp.PORT)
     private val buffer = ByteArray(2048)

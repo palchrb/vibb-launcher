@@ -54,8 +54,10 @@ data class SpeakerDoc(
 
 /**
  * One picker row (`_sonos_choices`): [uid] is what a tap targets (a group's coordinator); [members]
- * are the uids that sound when it plays, coordinator first ([uid] alone for a solo room) - the
- * parent's room scope allows a row only when it allows every one of them (design 26a §5.5).
+ * are the uids grouped with it as the household's topology says, coordinator first - unknown ones
+ * (no player row in the cache) included - and [uid] alone for a room on its own. The parent's room
+ * scope allows a row only when it allows every one of them (design 26a §5.5): a member the phone
+ * can't name is not allowed by any list of rooms.
  */
 data class Room(val label: String, val uid: String, val names: List<String>, val members: List<String> = listOf(uid))
 
@@ -114,20 +116,25 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
          * `_sonos_choices`: a group of two or more known rooms is ONE row, "Kjøkken + Stua",
          * coordinator first, and selecting it targets the coordinator; its members don't repeat as
          * solo rows; a group left with fewer than two known rooms, or whose coordinator is unknown,
-         * gives no row.
+         * gives no group row (its known rooms show alone). Every row's [Room.members] is the whole
+         * group, unknown uids included, so the room scope sees them (§5.5; correction 2026-10-12).
          */
         fun rooms(doc: SpeakerDoc): List<Room> {
             val players = doc.players.entries.sortedBy { it.value.name.orEmpty() }
             val names = players.associate { it.key to (it.value.name.takeUnless { n -> n.isNullOrEmpty() } ?: "?") }
             val rows = mutableListOf<Room>()
             val absorbed = mutableSetOf<String>()
+            val groupOf = mutableMapOf<String, List<String>>()
             for (g in doc.groups.filter { it.members.size > 1 }) {
+                g.members.forEach { groupOf[it] = g.members }
                 val members = g.members.filter { it in names }
                 if (members.size < 2 || g.coordinator !in names) continue
-                rows.add(Room(members.joinToString(" + ") { names.getValue(it) }, g.coordinator, members.map { names.getValue(it) }, members))
+                rows.add(Room(members.joinToString(" + ") { names.getValue(it) }, g.coordinator, members.map { names.getValue(it) }, g.members))
                 absorbed.addAll(members)
             }
-            for ((uid, _) in players) if (uid !in absorbed) rows.add(Room(names.getValue(uid), uid, listOf(names.getValue(uid))))
+            for ((uid, _) in players) {
+                if (uid !in absorbed) rows.add(Room(names.getValue(uid), uid, listOf(names.getValue(uid)), groupOf[uid] ?: listOf(uid)))
+            }
             return rows
         }
     }

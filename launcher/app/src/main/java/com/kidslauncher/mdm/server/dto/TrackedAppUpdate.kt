@@ -27,7 +27,7 @@ data class TrackedAppUpdate(
     val sha256: String? = null,
     /** SHA-256 (lower-case hex) of the app's signing certificate, pinned by the server from its
      * first release (security review M10), with [packageName] (also from the APK). `null` = not
-     * pinned (an older server, or no release yet). Not checked here yet: the check before
-     * installing comes with the launcher's security wave. */
+     * pinned (an older server, or no release yet): such a catalog app isn't downloaded. Checked
+     * against the APK before installing ([catalogApkCheck]). */
     val signerSha256: String? = null,
 )

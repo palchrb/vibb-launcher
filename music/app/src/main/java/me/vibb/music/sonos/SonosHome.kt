@@ -17,10 +17,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 
 /*
- * The household as the player service sees it (design 26a §2.1, §6.4, QA M7): the Wi-Fi network
- * (tracked with a NetworkCallback; every SOAP and SSDP socket is bound to it, and without it nothing
- * is tried), the one Soap client, the uid -> ip cache, the picker's rooms, the speakers by uid, the
- * NRK service serial and the migration probe, and renderer.json. One per PlaybackService.
+ * The household as the player service sees it (design 26a §2.1, §6.4, §6.5): the Wi-Fi network
+ * (tracked with a NetworkCallback; a gate only - without Wi-Fi nothing is tried - never a socket
+ * binding: the launcher's always-on VPN allows no bypass, so Android refuses `bindSocket` to another
+ * network with EPERM, and unbound sockets reach the LAN anyway because the VPN routes only
+ * 192.0.2.2/32), the one Soap client, the uid -> ip cache, the picker's rooms, the speakers by uid,
+ * the NRK service serial and the migration probe, and renderer.json. One per PlaybackService.
  */
 class SonosHome(context: Context) {
     private val app = context.applicationContext
@@ -59,12 +61,16 @@ class SonosHome(context: Context) {
     suspend fun awaitWifi(timeoutMs: Long): Boolean =
         wifi != null || withTimeoutOrNull(timeoutMs) { wifiNet.first { it != null } } != null
 
-    /** The client bound to the current Wi-Fi network; none (no Wi-Fi) is [SpeakerUnreachable]. */
+    /**
+     * The client while Wi-Fi is up (none is [SpeakerUnreachable]): unbound sockets on the default
+     * route (§6.5), a fresh pool for each Wi-Fi network so no connection outlives the one it was
+     * made on.
+     */
     @Synchronized
     private fun client(): OkHttpClient {
         val network = wifi ?: throw SpeakerUnreachable("no Wi-Fi")
         client?.takeIf { it.first == network }?.let { return it.second }
-        return Soap.client(network.socketFactory).also { client = network to it }
+        return Soap.client().also { client = network to it }
     }
 
     val soap = Soap { client() }
@@ -75,7 +81,7 @@ class SonosHome(context: Context) {
         zoneGroupState = { ip, port, timeoutMs ->
             soap.call(ip, port, SonosService.ZONE_GROUP_TOPOLOGY, "GetZoneGroupState", emptyList(), timeoutMs)["ZoneGroupState"].orEmpty()
         },
-        ssdp = { wifi?.let { SsdpScanner(app).scan(it) }.orEmpty() },
+        ssdp = { if (wifi != null) SsdpScanner(app).scan() else emptyList() },
         onWifi = { wifi != null },
         scope = scope,
         elapsedMs = SystemClock::elapsedRealtime,

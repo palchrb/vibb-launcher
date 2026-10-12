@@ -1,5 +1,6 @@
 package me.vibb.music.ui
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -31,11 +32,14 @@ import me.vibb.music.data.Snapshot
 import me.vibb.music.logic.SearchHit
 import me.vibb.music.logic.categoryTiles
 import me.vibb.music.logic.effectiveCategory
+import me.vibb.music.logic.holdEndsAt
 import me.vibb.music.logic.kindOf
 import me.vibb.music.logic.listRows
 import me.vibb.music.logic.offlineSummary
+import me.vibb.music.logic.requestStands
 import me.vibb.music.logic.search
 import me.vibb.music.logic.shownEntries
+import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sync.NewNotifier
 
@@ -48,6 +52,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
     var message by remember { mutableStateOf<PlayerHub.Message?>(null) }
     LaunchedEffect(Unit) {
         PlayerHub.messages.collect {
+            vm.switching = null // the player refused or skipped: show what it has
             message = it
             delay(3_000)
             message = null
@@ -55,7 +60,19 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
     }
     Box(Modifier.fillMaxSize().background(Palette.bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
         val s = snap ?: return@Box
-        val now = nowView(s, hub, row)
+        // What the player has, else - for a moment after a tap - what the kid asked for (logic/Switch.kt).
+        val current = nowView(s, hub, row)
+        val switching = vm.switching
+        // While the service still has the tap's command waiting (a room switch, the look at a room) the hold is longer.
+        val held = switching?.takeIf { requestStands(it.request, current?.ref, SystemClock.elapsedRealtime(), hub.waiting) }
+        val now = held?.view ?: current
+        LaunchedEffect(switching, held != null, hub.waiting) {
+            if (switching == null) return@LaunchedEffect
+            if (held != null) delay(holdEndsAt(switching.request, hub.waiting) - SystemClock.elapsedRealtime())
+            vm.switching = null
+        }
+        // A Sonos room renders: its queue and its steps (design 26a §4.2, §4.5).
+        val onRoom = hub.output.kind == OutputKind.SONOS
         val screen = if (now == null && vm.screen in setOf(Screen.PLAYER, Screen.LIST)) Screen.LIBRARY else vm.screen
         val backToLibrary = { vm.backToLibrary(s, now?.entry?.id) }
         BackHandler(enabled = vm.sheet != null || screen != Screen.LIBRARY) {
@@ -66,20 +83,34 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 else -> vm.screen = Screen.LIBRARY
             }
         }
-        val playEntry = { id: Long -> actions.playEntry(id); vm.screen = Screen.PLAYER }
-        val playItem = { id: Long, key: String -> actions.playItem(id, key); vm.screen = Screen.PLAYER }
+        val playEntry = { id: Long ->
+            vm.switching = playSwitch(s, id, null, current, SystemClock.elapsedRealtime(), onRoom)
+            actions.playEntry(id)
+            vm.screen = Screen.PLAYER
+        }
+        val playItem = { id: Long, key: String ->
+            vm.switching = playSwitch(s, id, key, current, SystemClock.elapsedRealtime(), onRoom)
+            actions.playItem(id, key)
+            vm.screen = Screen.PLAYER
+        }
         when (screen) {
             Screen.LIBRARY -> Library(vm, s, now, actions, playEntry)
             Screen.PLAYER -> now?.let { n ->
                 val (number, of) = playerNumber(s, n)
+                val position = livePosition(n)
+                val skip = { forward: Boolean ->
+                    // The item next/previous goes to shows at once (not during another switch: the player isn't there yet).
+                    if (held == null) vm.switching = skipSwitch(s, n, forward, position, SystemClock.elapsedRealtime(), onRoom)
+                    if (forward) actions.next() else actions.previous()
+                }
                 PlayerScreen(
-                    n, number, of, livePosition(n), hub.sleepMinutes, hub.output, hub.rendererState,
+                    n, number, of, position, hub.sleepMinutes, hub.output, hub.rendererState,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,
-                    onPrevious = actions::previous,
+                    onPrevious = { skip(false) },
                     onTogglePlay = actions::togglePlay,
-                    onNext = actions::next,
+                    onNext = { skip(true) },
                     onList = { vm.screen = Screen.LIST },
                     onSleep = { vm.sheet = SheetKind.SLEEP },
                     onOutput = { vm.sheet = SheetKind.OUTPUT },

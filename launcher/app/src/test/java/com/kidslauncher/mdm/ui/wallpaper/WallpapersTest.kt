@@ -94,4 +94,18 @@ class WallpapersTest {
         assertEquals(1, wallpaperSampleSize(1080, 2400, 720, 1600))
         assertEquals(16, wallpaperSampleSize(1080, 2400, 64, 64))
     }
+
+    /** Design 25, "Lock background": Home's by default, the parent's choice when it can be shown. */
+    @Test
+    fun `the lock shows Home's wallpaper unless the parent chose one the phone can show`() {
+        val cached = setOf(photo)
+        assertEquals(hytta, lockWallpaper(allowed, lockId = null, home = hytta, cachedHashes = cached))
+        assertEquals(sky, lockWallpaper(allowed, lockId = 5, home = hytta, cachedHashes = cached))
+        assertEquals("a photo with no 'also on the lock screen' tick is still Home's", hytta,
+            lockWallpaper(allowed, null, hytta, cached))
+        assertEquals("not downloaded yet: Home's", navy, lockWallpaper(allowed, 8, navy, cached))
+        assertEquals(sjo, lockWallpaper(allowed, 8, navy, cached + other))
+        assertEquals("unticked (not in the list): Home's", sky, lockWallpaper(allowed, 99, sky, cached))
+        assertEquals(navy, lockWallpaper(emptyList(), 5, navy, cached))
+    }
 }

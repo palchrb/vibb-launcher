@@ -14,8 +14,9 @@ import me.vibb.music.playback.writePlace
  * launcher suspended the app (a time rule) while a Sonos room may still play for us and nothing
  * drives it - the process died or never started the player, or the service runs on the phone with
  * the room still recorded (an unanswered look at start). A small standalone path over SonosHome and
- * SonosTransport: a destroyed service's stop finished first ([SonosTail]), the one live classify,
- * the bookmark from it, Stop and the park ([suspensionStop]); renderer.json back to the phone only on
+ * SonosTransport: a destroyed service's stop finished first ([SonosTail]), the live classify
+ * (retried while the looks' budget lasts, no group or volume read), the bookmark from it, Stop and
+ * the park ([suspensionStop]); renderer.json back to the phone only on
  * a definite answer - after none the room stays recorded for the next look (qa-26a-step3b-code M1).
  * The receiver runs it on IO within its broadcast budget.
  */
@@ -23,8 +24,23 @@ object SonosSuspension {
     /** How long the receiver waits for a destroyed service's tail (its budget is ~9 s). */
     private const val TAIL_WAIT_MS = 5_000L
 
+    /**
+     * The looks end this long after the path started (the receiver's budget is 9 s): what is left
+     * then is the Stop's and the park's (correction 2026-10-12: a slow speaker's first look is
+     * retried inside it). After a long tail wait the one look still gets its 1.5 s.
+     */
+    private const val LOOKS_UNTIL_MS = 6_500L
+
+    /**
+     * The Stop and the park end this long after the path started (qa-26a-corrections L2): after a
+     * late answer to the second look they get what is left, at least half a second, so the receiver
+     * finishes inside its 9 s (the renderer.json write after them is a small file).
+     */
+    private const val STOP_UNTIL_MS = 8_500L
+
     suspend fun standalone(context: Context) = withContext(Dispatchers.IO) {
         val app = context.applicationContext
+        val t0 = SystemClock.elapsedRealtime()
         // the tail's own Stop leaves our uri on a stopped speaker: the look below parks it (OURS_STOPPED)
         SonosTail.join(TAIL_WAIT_MS)
         val home = SonosHome(app)
@@ -36,7 +52,10 @@ object SonosSuspension {
                 val clock: () -> Long = SystemClock::elapsedRealtime
                 val transport = SonosTransport(SonosSession(clock, SonosHome::log), home.speakers, home.nrk, SonosClock(clock), log = SonosHome::log)
                 val ofEntry = entryMatcher(store, choice)
-                suspensionStop(transport, choice, SonosController.LIVE_BUDGET_MS, ofEntry) { live -> bookmark(app, store, choice, live) }
+                val since = clock() - t0
+                val lookMs = maxOf(SonosController.LIVE_BUDGET_MS, LOOKS_UNTIL_MS - since)
+                val stopMs = STOP_UNTIL_MS - since
+                suspensionStop(transport, choice, SonosController.LIVE_BUDGET_MS, ofEntry, lookMs, SonosClock(clock), stopMs) { live -> bookmark(app, store, choice, live) }
             } else {
                 RoomVerdict.NO_ANSWER
             }

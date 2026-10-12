@@ -78,6 +78,12 @@ jobs:
         working-directory: music
     steps:
     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+    - name: Validate the Gradle wrappers
+      # Security review L9: every gradle-wrapper.jar in the checkout (launcher/ and music/) must be
+      # one Gradle published; the wrapper itself checks the distribution (distributionSha256Sum).
+      uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      with:
+        min-wrapper-count: 2
     - name: set up JDK 17
       uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
       with:
@@ -93,7 +99,7 @@ jobs:
       run: ./gradlew build -PwarningsAsErrors=true
     - name: Fake Sonos speaker selftest
       # The emulator's fake speaker answers from the same canned SOAP replies the unit tests parse
-      # (design 26a §7, docs/testing/emulator.md §6g): it must still read every one. Stdlib only.
+      # (design 26a §7, docs/testing/emulator.md §6h): it must still read every one. Stdlib only.
       run: python3 -I ../scripts/fake-sonos.py --selftest
     - name: Fake Storytel selftest
       # The emulator's fake Storytel answers from the same fixtures StorytelApiTest reads (design 26b
@@ -136,6 +142,12 @@ jobs:
     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       with:
         fetch-depth: 0
+    - name: Validate the Gradle wrappers
+      # Security review L9: every gradle-wrapper.jar in the checkout (launcher/ and music/) must be
+      # one Gradle published; the wrapper itself checks the distribution (distributionSha256Sum).
+      uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      with:
+        min-wrapper-count: 2
     - name: Refuse tags whose commit is not on master/main
       run: |
         for b in main master; do

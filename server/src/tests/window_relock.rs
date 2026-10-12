@@ -271,17 +271,36 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
     let (id, _token) = app.enrolled_device("phone").await;
     let mut nudges = app.state.command_notify.subscribe();
 
-    for (path, command, notice) in [
-        ("end-windows", "end_windows", "end_windows_sent"),
-        ("allow-blocked", "allow_blocked", "allow_blocked_sent"),
-        ("start-pause", "start_pause", "start_pause_sent"),
+    let allow = [("blocks", "org.example.app:")];
+    for (path, command, notice, fields, logged_as) in [
+        (
+            "end-windows",
+            "end_windows",
+            "end_windows_sent",
+            &[][..],
+            "end_windows",
+        ),
+        (
+            "allow-blocked",
+            "allow_blocked",
+            "allow_blocked_sent",
+            &allow[..],
+            "allow_blocked: org.example.app",
+        ),
+        (
+            "start-pause",
+            "start_pause",
+            "start_pause_sent",
+            &[][..],
+            "start_pause",
+        ),
     ] {
         let res = app
             .request_form(
                 Method::POST,
                 &format!("/devices/{id}/{path}"),
                 Some(&cookie),
-                &[],
+                fields,
             )
             .await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
@@ -292,14 +311,19 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
         );
         assert_eq!(nudges.try_recv().ok(), Some(id));
         let logged = events(&app, "device_command_queued").await;
-        assert_eq!(logged.last().map(String::as_str), Some(command));
+        assert_eq!(
+            logged.last().map(String::as_str),
+            Some(logged_as),
+            "{command}"
+        );
     }
     // None deleted another.
     assert_eq!(
         commands(&app, id).await,
         vec!["end_windows", "allow_blocked", "start_pause"]
     );
-    // A lock queued after them replaces an undelivered ring, but not them.
+    // A lock queued after them replaces nothing - not them, and not an undelivered ring (QA of
+    // cmd-expiry, Medium 1: only a command of the same kind replaces one).
     for path in ["ring", "lock"] {
         let res = app
             .request_form(
@@ -313,7 +337,13 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
     }
     assert_eq!(
         commands(&app, id).await,
-        vec!["end_windows", "allow_blocked", "start_pause", "lock"]
+        vec![
+            "end_windows",
+            "allow_blocked",
+            "start_pause",
+            "ring",
+            "lock"
+        ]
     );
     // And they delete nothing: an end_windows behind the lock keeps it.
     app.request_form(
@@ -329,6 +359,7 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
             "end_windows",
             "allow_blocked",
             "start_pause",
+            "ring",
             "lock",
             "end_windows"
         ]
@@ -353,6 +384,180 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+/// Fix of 2026-10-12: a block the install check set outside any window (no relock report carries
+/// it) reaches the page with its key and why, "Allow these apps" lets it out, and the next report
+/// clears it; a catalog imposter stays, with no button for it.
+#[tokio::test]
+async fn an_install_time_block_is_listed_allowed_and_cleared() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let key = format!("d3b0{}6a6e", "0".repeat(56));
+    let music = json!({ "package_name": "me.vibb.music.debug", "signer": key,
+                        "reason": "outside_play", "found": "install", "at_ms": now_ms() - 60_000 });
+    post_status(&app, &token, json!({ "relock_blocks": [music.clone()] })).await;
+    let button = format!("action=\"/devices/{id}/allow-blocked\"");
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(
+        card.contains(
+            "me.vibb.music.debug (signing key d3b00000…00006a6e): installed from outside Play \
+             (a download or adb) - noticed at its install"
+        ),
+        "{card}"
+    );
+    assert!(card.contains(&button), "{card}");
+    assert!(!card.contains("more - the phone lists at most"), "{card}");
+    // More than the phone lists (QA of cmd-expiry, Low 2): said under the list.
+    post_status(
+        &app,
+        &token,
+        json!({ "relock_blocks": [music.clone()], "relock_blocks_total": 18 }),
+    )
+    .await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        status_card(&html).contains("And 17 more - the phone lists at most 16."),
+        "{html}"
+    );
+    // Ticked under Apps or not, per app (QA of cmd-expiry, Low 3).
+    for (allowlist, says) in [
+        (
+            "[]",
+            "Not ticked under Apps: after \"Allow these apps\" it stays hidden until \
+             you <a href=\"#app-me.vibb.music.debug\">tick it</a> too.",
+        ),
+        (
+            "[\"me.vibb.music.debug\"]",
+            "Ticked under Apps: it shows again after \"Allow these apps\".",
+        ),
+    ] {
+        sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+            .bind(allowlist)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let html = app
+            .get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text();
+        assert!(status_card(&html).contains(says), "{html}");
+    }
+    // Logged once.
+    post_status(&app, &token, json!({ "relock_blocks": [music.clone()] })).await;
+    let logged = events(&app, "phone_app_blocked").await;
+    assert_eq!(logged.len(), 1);
+    assert!(
+        logged[0].contains("me.vibb.music.debug (outside_play, install"),
+        "{logged:?}"
+    );
+
+    // The button sends what the card listed, with the key it showed (QA of cmd-expiry, Low 1).
+    let listed = format!("me.vibb.music.debug:{key}");
+    assert!(
+        card.contains(&format!("name=\"blocks\" value=\"{listed}\"")),
+        "{card}"
+    );
+    // Nothing listed (a stale or hand-made form): nothing is queued.
+    for blocks in ["", "not a package:", "org.example.app:XYZ"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/allow-blocked"),
+                Some(&cookie),
+                &[("blocks", blocks)],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{blocks}");
+    }
+    assert!(commands(&app, id).await.is_empty());
+
+    // The parent allows it; the phone takes the command - with the list -, answers, and reports
+    // no block.
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/allow-blocked"),
+        Some(&cookie),
+        &[("blocks", &listed)],
+    )
+    .await;
+    let res = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await;
+    assert_eq!(res.json()["pending_command"]["command"], "allow_blocked");
+    assert_eq!(
+        res.json()["pending_command"]["allow"],
+        json!([{ "package_name": "me.vibb.music.debug", "signer": key }])
+    );
+    let command_id = res.json()["pending_command"]["id"].as_i64().unwrap();
+    app.request(
+        Method::POST,
+        "/api/devices/command-result",
+        Some(&token),
+        Some(json!({ "command_id": command_id, "success": true, "message": "allowed: 1 apps" })),
+    )
+    .await;
+    post_status(&app, &token, json!({ "relock_blocks": [] })).await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(!card.contains("me.vibb.music.debug"), "{card}");
+    assert!(!card.contains(&button), "{card}");
+    assert!(
+        card.contains("the phone answered &#34;allowed: 1 apps&#34;."),
+        "{card}"
+    );
+
+    // An imposter of a catalog app: listed, why it stays, and no button for it alone.
+    sqlx::query(
+        "INSERT INTO tracked_apps (name, source_type, github_repo, package_name, signer_sha256) \
+         VALUES ('Chat', 'manual', '', 'org.example.chat', ?)",
+    )
+    .bind("9".repeat(64))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let imposter = json!({ "package_name": "org.example.chat", "signer": key,
+                           "reason": "outside_play", "found": "install", "at_ms": now_ms() });
+    // With a relock report from the same time: its "Blocked:" line gives way to the list.
+    post_status(
+        &app,
+        &token,
+        json!({ "relock_blocks": [imposter], "relock": literal(now_ms() - 60_000) }),
+    )
+    .await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let card = status_card(&html);
+    assert!(
+        card.contains("so it isn&#39;t the catalog&#39;s app and stays blocked: uninstall it"),
+        "{card}"
+    );
+    assert!(!card.contains(&button), "{card}");
+    assert!(!card.contains("Blocked: com.example.app"), "{card}");
+    assert!(card.contains("it removed 1 Wi-Fi proxy."), "{card}");
+    // A total without the list is dropped.
+    post_status(&app, &token, json!({ "relock_blocks_total": 18 })).await;
+    let stored: Option<i64> = sqlx::query_scalar(
+        "SELECT relock_blocks_total FROM device_status ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, None);
 }
 
 /// QA Low 10: "Allow these apps" goes once the phone answered one pressed after the relock, and
@@ -380,7 +585,7 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         Method::POST,
         &format!("/devices/{id}/allow-blocked"),
         Some(&cookie),
-        &[],
+        &[("blocks", "com.example.app:")],
     )
     .await;
     // Sent, not answered: the button stays, and the card says so.

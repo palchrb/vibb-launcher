@@ -46,6 +46,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var query by mutableStateOf("")
 
+    /** A tap the player hasn't shown yet, shown meanwhile (logic/Switch.kt). */
+    var switching by mutableStateOf<Switch?>(null)
+
     /** A category tile: single choice, a re-tap or Alle shows all; the carousel starts at index 0. */
     fun pickCategory(tapped: Long?) {
         category = tapCategory(category, tapped)

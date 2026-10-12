@@ -115,6 +115,8 @@ internal class SonosRenderer(
         mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid) },
         // the parent's cap in force, read live from the managed config like mobile_data (§5.3)
         cap = { Bridge.config(context).volumeCapPct },
+        // a start caps every room of the group it plays in (§5.3, qa-26a-corrections M2)
+        members = { roomMembers(home.rooms.state.value.rooms, it) },
     )
 
     private fun suspendedNow(): Boolean = try {
@@ -220,7 +222,7 @@ internal class SonosRenderer(
     suspend fun probe(uri: String, keep: (Fields) -> String?): Fields? {
         if (!home.awaitWifi(WIFI_WAIT_MS)) return null
         val target = uid
-        return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, keep) }) { }.getOrNull()
+        return actor.call({ transport.adoptLive(target, kindOfUri(uri), uri, SonosController.LIVE_BUDGET_MS, keep = keep) }) { }.getOrNull()
     }
 
     /**

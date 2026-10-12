@@ -40,7 +40,7 @@ class PolicyResponseCompatTest {
           "override_pin_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
           "override_pin_salt": "a3c1f0e2d4b6a8c0e2f4a6b8c0d2e4f6",
           "quick_controls_mask": 3,
-          "pending_command": {"id": 12, "command": "ring"},
+          "pending_command": {"id": 12, "command": "ring", "requested_at": "2026-10-11 18:00:00"},
           "vpn_filter_enabled": true,
           "dns_filter_version": "5d41402abc4b2a76b9719d911017c592",
           "dns_upstream_provider": "quad9",
@@ -59,6 +59,7 @@ class PolicyResponseCompatTest {
         assertEquals(63L, policy.lockTaskFeatures)
         assertEquals(3L, policy.quickControlsMask)
         assertEquals("ring", policy.pendingCommand?.command)
+        assertEquals("2026-10-11 18:00:00", policy.pendingCommand?.requestedAt)
         assertEquals("quad9", policy.dnsUpstreamProvider)
         assertEquals(listOf("org.example.old"), policy.packagesToUninstall)
         assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
@@ -177,6 +178,42 @@ class PolicyResponseCompatTest {
     }
 
     @Test
+    fun `relock_blocks is reported under the server's keys, every key sent (fix 2026-10-12)`() {
+        val key = "3f2a" + "0".repeat(56) + "c0de"
+        val report = StatusReportRequest(
+            lockReason = "NONE",
+            kioskEngaged = true,
+            relockBlocks = listOf(
+                com.kidslauncher.mdm.server.dto.RelockBlockReport("me.vibb.music.debug", key, "outside_play", "install", 1_760_100_000_000),
+                com.kidslauncher.mdm.server.dto.RelockBlockReport("org.example.old", null, "unknown", "relock", null),
+            ),
+        )
+        val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+        assertEquals(
+            ServerJson.parseToJsonElement(
+                """[{"package_name": "me.vibb.music.debug", "signer": "3f2a00000000000000000000000000000000000000000000000000000000c0de",
+                     "reason": "outside_play", "found": "install", "at_ms": 1760100000000},
+                    {"package_name": "org.example.old", "signer": null, "reason": "unknown", "found": "relock", "at_ms": null}]""",
+            ),
+            json["relock_blocks"],
+        )
+        // How many in all (QA of cmd-expiry, Low 2): `relock_blocks_total`, left out unknown.
+        val counted = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relockBlocks = emptyList(), relockBlocksTotal = 18)
+        assertEquals(
+            ServerJson.parseToJsonElement("18"),
+            ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), counted)).jsonObject["relock_blocks_total"],
+        )
+        assertTrue("relock_blocks_total" !in json)
+        // None: an empty list, sent; not device owner: left out.
+        val empty = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, relockBlocks = emptyList())
+        assertEquals(ServerJson.parseToJsonElement("[]"), ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), empty)).jsonObject["relock_blocks"])
+        val none = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("relock_blocks" !in none)
+    }
+
+    @Test
     fun `foreign_access is reported under the server's keys, left out when nothing is found (24b fix round)`() {
         val report = StatusReportRequest(
             lockReason = "NONE",
@@ -198,6 +235,22 @@ class PolicyResponseCompatTest {
             assertEquals(command, policy.pendingCommand?.command)
             assertEquals(7L, policy.pendingCommand?.id)
         }
+        // "Allow these apps" carries the apps the PWA listed (QA of cmd-expiry, Low 1); the server's
+        // an_install_time_block_is_listed_allowed_and_cleared pins this shape (its first entry).
+        val key = "d3b0" + "0".repeat(56) + "6a6e"
+        val allow = ServerJson.decodeFromString(
+            PolicyResponse.serializer(),
+            """{"pending_command": {"id": 8, "command": "allow_blocked", "requested_at": "2026-10-12 10:00:00",
+                "allow": [{"package_name": "me.vibb.music.debug", "signer": "$key"}, {"package_name": "org.example.old", "signer": null}]}}""",
+        )
+        assertEquals(
+            listOf(
+                com.kidslauncher.mdm.server.dto.AllowedBlock("me.vibb.music.debug", key),
+                com.kidslauncher.mdm.server.dto.AllowedBlock("org.example.old", null),
+            ),
+            allow.pendingCommand?.allow,
+        )
+        assertEquals(null, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "ring"}}""").pendingCommand?.allow)
         assertEquals("ended: pause, install mode", endWindowsResult(setOf(WindowKind.PAUSE), installMode = true))
         assertEquals("ended: override, pause", endWindowsResult(setOf(WindowKind.PAUSE, WindowKind.OVERRIDE), installMode = false))
         assertEquals("nothing was open", endWindowsResult(emptySet(), installMode = false))
@@ -378,6 +431,56 @@ class PolicyResponseCompatTest {
         // An older server: no key, nothing to carry. The rest of the policy is the same either way.
         assertNull((decodeCached(serverResponse) as CachedPolicy.Ok).policy.music)
         assertEquals((decodeCached(serverResponse) as CachedPolicy.Ok).policy, policy.copy(music = null))
+    }
+
+    /** Design 25: `lock_glance` - the server's literal, a missing key, `null`, an array, a bad `apps`
+     * entry: the policy always decodes and the cache round trip keeps it. A missing key (or `null`)
+     * means the server's own default in a fresh response, and unknown (missed calls only) in the
+     * cache - a cache an older build wrote never has the key (QA Low 11). */
+    @Test
+    fun `lock_glance never fails the policy, and missing means default fresh, unknown cached (25)`() {
+        fun withGlance(glance: String) = serverResponse.replaceFirst("{", "{\"lock_glance\": $glance,")
+        // The server's literal for a fresh device (policy_json_keys_snapshot).
+        val today = withGlance("""{"apps": ["io.element.android.x"], "show_text": false}""")
+        val policy = (decodeCached(today) as CachedPolicy.Ok).policy
+        assertEquals(setOf("apps", "show_text"), policy.lockGlance!!.jsonObject.keys)
+        val expected = com.kidslauncher.mdm.badges.GlancePolicy(setOf("io.element.android.x"), showText = false)
+        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = false))
+        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = true))
+        assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        val withText = (decodeCached(withGlance("""{"apps": ["org.example.chat", "io.element.android.x"], "show_text": true}""")) as CachedPolicy.Ok).policy
+        assertEquals(
+            com.kidslauncher.mdm.badges.GlancePolicy(setOf("io.element.android.x", "org.example.chat"), showText = true),
+            com.kidslauncher.mdm.badges.lockGlancePolicy(withText.lockGlance, fresh = true),
+        )
+        // Nothing in it fails the policy; what can't be used is dropped.
+        for (odd in listOf(
+            "null", "[]", "5", "\"x\"", "{}", """{"apps": null, "show_text": null}""", """{"apps": "io.element.android.x"}""",
+            """{"apps": [5, null, "not a package", "io.element.android.x", {"a": 1}], "show_text": "true"}""",
+        )) {
+            assertTrue(odd, decodeCached(withGlance(odd)) is CachedPolicy.Ok)
+            assertTrue(odd, decodeFresh(withGlance(odd)) is FreshDecode.Ok)
+        }
+        val bad = (decodeFresh(withGlance("""{"apps": [5, null, "not a package", "io.element.android.x"], "show_text": "true"}""")) as FreshDecode.Ok).policy
+        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(bad.lockGlance, fresh = true))
+        val array = (decodeFresh(withGlance("""["io.element.android.x"]""")) as FreshDecode.Ok).policy
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(array.lockGlance, fresh = true))
+        // An older server: no key. Fresh = its default (Element X, sender only); cached = unknown.
+        // The status report's capability the server's notes look for.
+        assertEquals("lock_glance_v1", com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY)
+        assertTrue(com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY in STATUS_CAPABILITIES)
+        val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
+        assertNull(older.lockGlance)
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = true))
+        assertEquals(setOf("io.element.android.x"), com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.apps)
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = false))
+        val explicitNull = (decodeFresh(withGlance("null")) as FreshDecode.Ok).policy
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(explicitNull.lockGlance, fresh = true))
+        assertTrue(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN.apps.isEmpty())
+        // The rest of the policy is the same either way, and the fallback never carries it.
+        assertEquals(older, policy.copy(lockGlance = null))
+        assertNull(LastEnforcedPlan.of(policy).toPolicy().lockGlance)
     }
 
     /** Design 13: "App updates only on Wi-Fi". Missing (an older server) or `null` = off, as
@@ -568,7 +671,7 @@ class PolicyResponseCompatTest {
         val report = StatusReportRequest(
             lockReason = "NONE", kioskEngaged = true, capabilities = listOf("call_policy_v1"),
             callState = CallState(
-                state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false,
+                state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false, screeningRoleHeld = true,
                 defaultDialer = "x", systemDialer = "y", smsRestricted = true, outgoingRestricted = false,
                 defaultSmsPackage = null, lastError = null, lastEmergencyCallAt = null, callbackWindowUntil = null,
                 callLogReadable = false, bootPolicy = "ok",
@@ -579,7 +682,7 @@ class PolicyResponseCompatTest {
         val callState = json["call_state"]!!.jsonObject
         assertEquals(
             setOf(
-                "state", "dialer_role_held", "redirection_role_held", "default_dialer", "system_dialer",
+                "state", "dialer_role_held", "redirection_role_held", "screening_role_held", "default_dialer", "system_dialer",
                 "sms_restricted", "outgoing_restricted", "default_sms_package", "last_error",
                 "last_emergency_call_at", "callback_window_until", "call_log_readable", "boot_policy",
             ),
@@ -621,7 +724,7 @@ class PolicyResponseCompatTest {
             "launcher_ui": {"language": "en", "home_columns": 3, "wallpapers": [
               {"id": 1, "kind": "color", "colors": ["#14213D"], "image": null, "label": "Navy", "builtin_key": "navy", "lock_screen": false},
               {"id": 7, "kind": "image", "colors": [], "image": "$photo", "label": "Hytta", "builtin_key": null, "lock_screen": true}
-            ]},
+            ], "lock_wallpaper": 7},
             "packages_to_uninstall"
             """.trimIndent()
         )
@@ -631,6 +734,10 @@ class PolicyResponseCompatTest {
         assertEquals(photo, walls[1].image)
         assertTrue(walls[1].lockScreen)
         assertEquals(emptyList<Any>(), policy.launcherUi!!.wallpapers)
+        // Design 25, "Lock background": the id, or null/missing (an older server) = Home's.
+        assertEquals(7L, (decodeCached(withWallpapers) as CachedPolicy.Ok).policy.launcherUi!!.lockWallpaper)
+        assertNull(policy.launcherUi!!.lockWallpaper)
+        assertNull((decodeCached(withWallpapers.replace("\"lock_wallpaper\": 7", "\"lock_wallpaper\": null")) as CachedPolicy.Ok).policy.launcherUi!!.lockWallpaper)
 
         val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, notificationListenerEnabled = false)
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
@@ -664,7 +771,7 @@ class PolicyResponseCompatTest {
         )
         assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
         val failed = CallState(
-            state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, defaultDialer = null, systemDialer = null,
+            state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, screeningRoleHeld = false, defaultDialer = null, systemDialer = null,
             smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,
             lastEmergencyCallAt = null, callbackWindowUntil = null, callLogReadable = true, bootPolicy = "ok",
             inCallUiFailedAt = "2026-10-05T08:00:00Z",

@@ -75,6 +75,21 @@ class RoomScopeTest {
     }
 
     @Test
+    fun `a member the phone can't name never passes as allowed (correction 2026-10-12)`() {
+        val gone = "RINCON_000E58A0B1C901400" // in the household's group, no player row in the cache
+        val rooms = SpeakerCache.rooms(SpeakerDoc(players, listOf(CachedGroup(stua, listOf(stua, gone)), CachedGroup(kjokken, listOf(kjokken, bad, gone)))))
+        assertEquals("Stua's group has one known room: no group row, Stua alone", listOf("Kjøkken + Bad", "Loft", "Stua"), rooms.map { it.label })
+        // Stua alone on the sheet, but it sounds with the unknown room
+        assertEquals(listOf(stua, gone), roomMembers(rooms, stua))
+        assertFalse(groupAllowed(listOf(stua, kjokken, bad, loft), rooms, stua))
+        assertFalse(groupAllowed(listOf(stua, kjokken, bad, loft), rooms, kjokken))
+        assertEquals(listOf("Loft"), allowedRooms(view(rooms), listOf(stua, kjokken, bad, loft)).rooms.map { it.label })
+        assertTrue(mustLeaveRoom(stua, rooms, listOf(stua)))
+        assertTrue("every room (the default) still plays it", groupAllowed(null, rooms, stua))
+        assertEquals(3, allowedRooms(view(rooms), null).rooms.size)
+    }
+
+    @Test
     fun `a session leaves a room the scope or the household's grouping no longer allows`() {
         assertFalse("the phone renders", mustLeaveRoom(null, kjokkenLeads, emptyList()))
         assertFalse("every room", mustLeaveRoom(stua, stuaLeads, null))

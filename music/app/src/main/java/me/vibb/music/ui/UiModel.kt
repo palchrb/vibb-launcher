@@ -3,18 +3,26 @@ package me.vibb.music.ui
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.logic.Hint
+import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.Kind
+import me.vibb.music.logic.PlayRequest
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.countedOrder
+import me.vibb.music.logic.coverTapStart
 import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
 import me.vibb.music.logic.kindOf
 import me.vibb.music.logic.overallProgress
+import me.vibb.music.logic.pickPlan
+import me.vibb.music.logic.resumeFrom
+import me.vibb.music.logic.seekGate
+import me.vibb.music.logic.skipTarget
 import me.vibb.music.logic.started
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.PlayerHub
+import me.vibb.music.sonos.PlayBodies
 
 /** A carousel cover. */
 data class EntryUi(
@@ -56,9 +64,71 @@ data class NowView(
     val storedPosMs: Long,
     val durationMs: Long?,
     val shuffled: Boolean,
+    /** False while a tap's item isn't known yet (shuffle picks it): the entry's cover, no item title. */
+    val itemKnown: Boolean = true,
 ) {
     val item: PlayItem get() = queue[index]
     val canShuffle: Boolean get() = canShuffle(entry)
+    val ref: ItemRef get() = ItemRef(entry.id, item.key)
+
+    /** The cover hash shown: the item's own art, else the entry's. */
+    val cover: String? get() = if (itemKnown) item.artHash ?: entry.cover else entry.cover
+    val itemTitle: String get() = if (itemKnown) item.title else ""
+}
+
+/** A tap the player hasn't shown yet ([requestStands]) and what the screens show meanwhile. */
+data class Switch(val request: PlayRequest, val view: NowView)
+
+/**
+ * A tap on [entryId] (a cover, or [itemKey] from Nytt, search or the list) while [current] shows: what it starts.
+ * [onRoom]: a Sonos room renders (design 26a §4.2): its queue holds only what a speaker can play
+ * (`PlayBodies.speakerPlayable`) and a start the speaker can't play moves on to the next it can, from 0
+ * (`PlayBodies.speakerPlan`, as the service builds it); nothing a speaker can play is no switch (the
+ * service says "Kan ikke spilles på Sonos").
+ */
+fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView?, atMs: Long, onRoom: Boolean = false): Switch? {
+    val entry = snap.entries.firstOrNull { it.id == entryId } ?: return null
+    val all = snap.order(entry)
+    val order = if (onRoom) all.filter { PlayBodies.speakerPlayable(entry, it) } else all
+    if (order.isEmpty()) return null
+    val keys = order.map { it.key }
+    val shuffle = canShuffle(entry) && entry.key in snap.shuffle
+    var (key, pos) = if (itemKey != null) {
+        val allKeys = all.map { it.key }
+        val plan = pickPlan(allKeys, itemKey, entry.resume, snap.positions[entry.key]?.get(itemKey), null) ?: return null
+        itemKey to plan.startPosMs
+    } else {
+        coverTapStart(all.map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return null
+    }
+    if (key != null && key !in keys) {
+        // On a room: the next item after it (in play order, wrapping) a speaker can play, from 0.
+        val from = all.indexOfFirst { it.key == key }
+        key = (1..all.size).map { all[(from + it) % all.size].key }.first { it in keys }
+        pos = 0
+    }
+    // Shuffled, the picked item starts a new queue; else the play order, at the item.
+    val queue = if (shuffle && key != null) order.filter { it.key == key } + order.filter { it.key != key } else order
+    val index = if (key == null) 0 else queue.indexOfFirst { it.key == key }
+    val view = NowView(
+        entry, category(snap, entry), queue, index, live = false, playing = true, storedPosMs = pos,
+        durationMs = if (key == null) null else queue[index].durationMs, shuffled = shuffle, itemKnown = key != null,
+    )
+    return Switch(PlayRequest(entryId, itemKey?.let { key }, current?.ref, atMs), view)
+}
+
+/**
+ * Next ([forward]) or previous on [now], [posMs] into its item: the item it goes to, when the screens can know it.
+ * The target is counted in [now]'s queue - the renderer's (a room's holds only what a speaker can play), the
+ * service's `skipNext`/`skipPrevious` count the same. [onRoom]: a step on a playing room starts the item from 0
+ * (`SonosController.stepTo`, vibb's `sonos_step`; design 26a 3a open question (a)); paused it starts where the
+ * phone would.
+ */
+fun skipSwitch(snap: Snapshot, now: NowView, forward: Boolean, posMs: Long, atMs: Long, onRoom: Boolean = false): Switch? {
+    val target = skipTarget(forward, now.index, now.queue.size, posMs, now.durationMs) ?: return null
+    val item = now.queue[target]
+    val pos = if (onRoom && now.playing) 0 else if (now.entry.resume) seekGate(resumeFrom(snap.positions[now.entry.key]?.get(item.key))) else 0
+    val view = now.copy(index = target, live = false, storedPosMs = pos, durationMs = item.durationMs, itemKnown = true)
+    return Switch(PlayRequest(now.entry.id, item.key, now.ref, atMs), view)
 }
 
 /** The now-playing view from the player's state, else from the stored row; null when there is none. */
@@ -88,7 +158,9 @@ fun listOrder(snap: Snapshot, now: NowView): List<PlayItem> = if (now.shuffled) 
 
 /**
  * The player's "N av M" (1-based N, M): the item in the list's order, or for Storytel in the series'
- * reading order ("Del 3 av 5" with only books 1 and 3 on the phone, design 26b §3.5, QA M5).
+ * reading order ("Del 3 av 5" with only books 1 and 3 on the phone, design 26b §3.5, QA M5) - the same
+ * for what the player holds and for a tap's switch ([playSwitch], [skipSwitch]), on the phone or a room
+ * (a room's queue leaves out what a speaker can't play, the play order doesn't).
  */
 fun playerNumber(snap: Snapshot, now: NowView): Pair<Int, Int> {
     val order = countedOrder(

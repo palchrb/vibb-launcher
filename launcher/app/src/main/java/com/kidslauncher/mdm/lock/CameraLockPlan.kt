@@ -112,3 +112,15 @@ fun applyAfterRelease(stillSuspended: Set<String>, enforcementSuspends: Set<Stri
  * string set is there under [CameraLockKeys.SUSPENDED] (always released when not LOCKED). */
 fun decodeCameraLockRecord(values: Map<String, *>): Set<String> =
     (values[CameraLockKeys.SUSPENDED] as? Set<*>)?.filterIsInstance<String>()?.toSet().orEmpty()
+
+/**
+ * Whether the device owner disables the cameras by policy now (bug 25b, the camera gesture): while
+ * the PIN lock is LOCKED ([locked]), and whenever the camera the power-button gesture would start is
+ * suspended by us ([gestureCameraSuspended]: the camera lock, a time rule). SystemUI's
+ * `CameraGestureHelper.canCameraGestureBeLaunched` returns false first thing for a policy-disabled
+ * camera (AOSP 16, also the double-press "camera or wallet" path), so the gesture starts nothing -
+ * before, it started the suspended camera, system_server's ActivityRecord threw (a null
+ * applicationInfo), SystemUI crashed and restarted, and whatever came up meanwhile (quickstep's
+ * Recents or app list) showed over the lock.
+ */
+fun cameraPolicyDisabled(locked: Boolean, gestureCameraSuspended: Boolean): Boolean = locked || gestureCameraSuspended

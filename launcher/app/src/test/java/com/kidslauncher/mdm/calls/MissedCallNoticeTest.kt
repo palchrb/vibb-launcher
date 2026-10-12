@@ -35,14 +35,14 @@ class MissedCallNoticeTest {
     @Test
     fun `one call from one contact`() {
         val result = notice(missed("90000002", 100, id = 7))
-        assertEquals(MissedCallNotice(1, listOf("Pappa"), "+4790000002", 100, 7), result)
+        assertEquals(MissedCallNotice(1, listOf(MissedContact("+4790000002", "Pappa", 1, 100)), "+4790000002", 100, 7), result)
         assertEquals(NoticeText(NoticeTitle.ONE_CALL_FROM, 1, "Pappa", null), noticeText(result!!))
     }
 
     @Test
     fun `two calls from one contact`() {
         val result = notice(missed("+4790000002", 100, id = 7), missed("+47 900 00 002", 300, id = 9))!!
-        assertEquals(MissedCallNotice(2, listOf("Pappa"), "+4790000002", 300, 9), result)
+        assertEquals(MissedCallNotice(2, listOf(MissedContact("+4790000002", "Pappa", 2, 300)), "+4790000002", 300, 9), result)
         assertEquals(NoticeText(NoticeTitle.CALLS_FROM, 2, "Pappa", null), noticeText(result))
     }
 
@@ -53,7 +53,11 @@ class MissedCallNoticeTest {
             missed("+4790000001", 200, id = 8),
             missed("+4790000002", 100, id = 7),
         )!!
-        assertEquals(MissedCallNotice(3, listOf("Pappa", "Mamma"), null, 300, 9), result)
+        assertEquals(
+            MissedCallNotice(3, listOf(MissedContact("+4790000002", "Pappa", 2, 300), MissedContact("+4790000001", "Mamma", 1, 200)), null, 300, 9),
+            result,
+        )
+        assertEquals(listOf("Pappa", "Mamma"), result.names)
         assertEquals(NoticeText(NoticeTitle.CALLS, 3, null, "Pappa, Mamma"), noticeText(result))
     }
 
@@ -76,7 +80,7 @@ class MissedCallNoticeTest {
         assertNull(notice(missed("+4790000002", 100, id = 7, unread = false)))
         assertNull(notice(missed("+4790000002", 100, id = 0)))
         val result = notice(missed("+4790000002", 100, id = 7), missed("+4790000001", 200, id = 8), upTo = 7)!!
-        assertEquals(MissedCallNotice(1, listOf("Pappa"), "+4790000002", 100, 7), result)
+        assertEquals(MissedCallNotice(1, listOf(MissedContact("+4790000002", "Pappa", 1, 100)), "+4790000002", 100, 7), result)
     }
 
     @Test
@@ -90,7 +94,38 @@ class MissedCallNoticeTest {
     @Test
     fun `a contact without a name shows its number`() {
         val nameless = RuleContact(id = 4, name = " ", number = "+4790000004", outbound = true)
-        assertEquals(listOf("+4790000004"), notice(missed("+4790000004", 100, id = 7), contacts = listOf(nameless))!!.names)
+        val result = notice(missed("+4790000004", 100, id = 7), contacts = listOf(nameless))!!
+        assertEquals(listOf("+4790000004"), result.names)
+        assertEquals(listOf(MissedContact("+4790000004", null, 1, 100)), result.contacts)
+        assertEquals("+4790000004", result.contacts.single().shown)
+    }
+
+    /** Design 25 §2.4: the lock's glance page shows one row per contact - from the same rows the
+     * notification counts, newest first, each with its own count and newest call. */
+    @Test
+    fun `per-contact rows - counts and the newest call each, newest contact first`() {
+        val result = notice(
+            missed("+4790000002", 100, id = 7),
+            missed("+4790000001", 250, id = 8),
+            missed("+4790000002", 300, id = 9),
+            missed("+4790000002", 50, id = 6, unread = false),
+        )!!
+        assertEquals(
+            listOf(MissedContact("+4790000002", "Pappa", 2, 300), MissedContact("+4790000001", "Mamma", 1, 250)),
+            result.contacts,
+        )
+        assertEquals(result.count, result.contacts.sumOf { it.count })
+        // The plain notice has no contacts: one "N tapte anrop" row.
+        assertTrue(plainMissedCallNotice(UnreadMissed(3, 12, 500))!!.contacts.isEmpty())
+    }
+
+    /** Design 25 QA Low 9: the lock's panel holds these - their toString() carries no name or number. */
+    @Test
+    fun `toString is redacted`() {
+        val result = notice(missed("+4790000002", 100, id = 7))!!
+        for (printed in listOf(result.toString(), result.contacts.single().toString(), NoticeStep.Post(result, alert = true).toString())) {
+            assertFalse(printed, printed.contains("Pappa") || printed.contains("4790000002"))
+        }
     }
 
     @Test
@@ -100,8 +135,8 @@ class MissedCallNoticeTest {
         assertEquals(1, missedCallNotice(log, view(), "47", emptyMap(), 8)!!.count)
     }
 
-    private val one = MissedCallNotice(1, listOf("Pappa"), "+4790000002", 100, 7)
-    private val two = MissedCallNotice(2, listOf("Pappa"), "+4790000002", 200, 9)
+    private val one = MissedCallNotice(1, listOf(MissedContact("+4790000002", "Pappa", 1, 100)), "+4790000002", 100, 7)
+    private val two = MissedCallNotice(2, listOf(MissedContact("+4790000002", "Pappa", 2, 200)), "+4790000002", 200, 9)
 
     private fun step(
         notice: MissedCallNotice?,
@@ -112,7 +147,8 @@ class MissedCallNoticeTest {
         unreadUpTo: Long = 9,
         alertedUpTo: Long = 0,
         newestLogged: Long = 9,
-    ) = noticeStep(notice, mayMarkRead, mayPost, shown, lastPosted, unreadUpTo, alertedUpTo, newestLogged)
+        mayClear: Boolean = true,
+    ) = noticeStep(notice, mayMarkRead, mayPost, shown, lastPosted, unreadUpTo, alertedUpTo, newestLogged, mayClear)
 
     @Test
     fun `nothing to show clears ours and marks the log read (QA 1, 2)`() {
@@ -180,6 +216,36 @@ class MissedCallNoticeTest {
         assertEquals(NoticeStep.Keep, step(one, mayPost = false))
         assertEquals(NoticeStep.Post(one, alert = false), step(one, mayPost = false, shown = true, lastPosted = two, alertedUpTo = 9))
         assertEquals(NoticeStep.Keep, step(two, mayPost = false, shown = true, lastPosted = two, alertedUpTo = 9))
+    }
+
+    /** Design 25 §2.4: a new process's pass re-learns what is on screen (a silent re-post) and never
+     * clears - during a no-calls time rule the view has only emergency contacts, and the night's
+     * update must not drop a notification the kid hasn't seen. */
+    @Test
+    fun `the process start's pass re-posts what is shown silently and never clears`() {
+        assertEquals(NoticeStep.Post(one, alert = false), step(one, mayPost = false, shown = true, lastPosted = null, alertedUpTo = 7, mayClear = false))
+        assertEquals(NoticeStep.Keep, step(one, mayPost = false, shown = false, alertedUpTo = 7, mayClear = false))
+        assertEquals(NoticeStep.Keep, step(null, mayPost = false, shown = true, mayClear = false))
+        assertEquals(NoticeStep.Keep, step(null, mayPost = false, shown = false, mayClear = false))
+        // Every other pass clears as before.
+        assertEquals(NoticeStep.Clear(9), step(null, mayPost = false, shown = true))
+    }
+
+    /** Code QA Low 3: a re-learning pass counts against the rules without the time rule's block - a
+     * notification on screen during a no-calls rule was posted before it, so it is known again. */
+    @Test
+    fun `a re-learning pass during a no-calls rule knows what is on screen`() {
+        val log = arrayOf(missed("+4790000001", 100, id = 7))
+        val rules = managed()
+        val duringRule = withTimeRule(rules, callsBlocked = true)
+        val posted = notice(*log)!!
+        // The rule's own view has only emergency contacts: nothing to show.
+        assertNull(notice(*log, contacts = view(duringRule)))
+        assertEquals(duringRule, noticeState(rules, duringRule, relearnOnly = false))
+        // The re-learning pass uses the rules: the same notice, posted again silently.
+        val relearned = notice(*log, contacts = view(noticeState(rules, duringRule, relearnOnly = true)))
+        assertEquals(posted, relearned)
+        assertEquals(NoticeStep.Post(posted, alert = false), step(relearned, mayPost = false, shown = true, lastPosted = null, alertedUpTo = 7, mayClear = false))
     }
 
     @Test

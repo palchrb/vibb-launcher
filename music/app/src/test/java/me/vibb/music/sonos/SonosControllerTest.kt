@@ -115,7 +115,8 @@ class SonosControllerTest {
         r.poll()
         assertEquals(RendererState.TAKEN_OVER, r.c.rendererState(r.now))
         assertFalse(r.c.showsPlaying(r.now))
-        assertEquals("the last OURS position", 431_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals("someone else's position is never shown", 0L, r.c.spec(r.now).positionAt(r.now))
+        assertNull("nor its duration", r.c.spec(r.now).durationMs)
         assertEquals(before, r.store.writes.size)
         val commands = r.spk.commands.size
         r.c.pause()
@@ -124,13 +125,26 @@ class SonosControllerTest {
     }
 
     @Test
-    fun `grouped away is not shadowed by taken over`() {
+    fun `grouped 2 - grouped away is not shadowed by taken over, and the parent's position is never painted`() {
         playing()
         r.advance(5_000)
-        r.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400")
+        r.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400", dur = "1:06:40")
         r.poll()
         assertEquals(RendererState.GROUPED_AWAY, r.c.rendererState(r.now))
+        assertFalse(r.c.showsPlaying(r.now))
+        val spec = r.c.spec(r.now)
+        assertEquals("the member's RelTime is the PARENT's (vibb: position None)", 0L, spec.positionAt(r.now))
+        assertFalse(spec.moving)
+        assertNull("nor the parent's duration", spec.durationMs)
+        assertEquals(PlayPhase.READY, spec.phase)
+        assertFalse(spec.playWhenReady)
+        r.advance(60_000) // no poll since: stale - the last ours values, never zeroed (§3.3)
+        assertEquals(RendererState.UNREACHABLE, r.c.rendererState(r.now))
         assertEquals(431_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals(1_453_000L, r.c.spec(r.now).durationMs)
+        r.speaker("0:07:30") // ours again (the household ungrouped it)
+        r.poll()
+        assertEquals(450_000L, r.c.spec(r.now).positionAt(r.now))
     }
 
     @Test
@@ -206,27 +220,95 @@ class SonosControllerTest {
         assertTrue("the flip is held", r.c.showsPlaying(r.now))
     }
 
-    @Test
-    fun `same tile - a press in flight, a stale snapshot or grouped away is a full start to OUR uid`() {
+    /**
+     * vibb's `steady()`: our stream measured just now, nothing settling, the press would be trusted -
+     * then each check below breaks exactly one thing, so its guard is the only reason for the full start.
+     */
+    private fun steady(transport: String = "PLAYING") {
         r.start()
-        r.speaker("0:00:01")
-        r.c.playTile() // the play is still settling (pending/optTr): yesterday's truth, a full start
+        r.advance(9_000) // past our own play's 8 s hold
+        r.speaker("0:07:20", transport)
+        r.poll()
+        assertEquals(listOf("seturi", "play"), r.spk.commands)
+        assertTrue("steady: fresh and ours", r.c.snap!!.fresh(r.now) && r.c.snap!!.ours)
+    }
+
+    private fun seturis() = r.spk.commands.count { it == "seturi" }
+
+    @Test
+    fun `same tile 3b - the shown item isn't the speaker's (a skip while paused) - the full start is the heal`() {
+        steady("PAUSED_PLAYBACK")
+        r.c.stepTo(1, 0)
         r.work.drain()
-        assertEquals(2, r.spk.commands.count { it == "seturi" })
-        r.advance(60_000)
+        assertEquals("the skip only moved where the next play starts", 1, seturis())
         r.c.playTile()
         r.work.drain()
-        assertEquals("stale", 3, r.spk.commands.count { it == "seturi" })
+        assertEquals("a full start of the shown item, not a resume of the old one", 2, seturis())
+        assertEquals(r.url(1), r.spk.lastUri)
+    }
+
+    @Test
+    fun `same tile 4 - a press while our own play or verb settles falls through to the full start`() {
+        steady("PAUSED_PLAYBACK")
+        r.c.playPause() // our resume: optTr PLAYING, held against the next polls
+        r.work.drain()
+        r.advance(2_000)
+        r.poll() // the speaker still says PAUSED: our own guess, not its truth
+        r.c.playTile()
+        r.work.drain()
+        assertEquals("the optimistic hold is no steady state", 2, seturis())
+        val q = ControllerRig()
+        q.start()
+        q.advance(9_000)
+        q.speaker("0:07:20")
+        q.poll()
+        q.c.stepTo(1, 0) // a step's play in flight (pending)
+        q.c.playTile()
+        q.work.drain()
+        assertEquals("mid-jump the snapshot may describe the OLD track", 3, q.spk.commands.count { it == "seturi" })
+    }
+
+    @Test
+    fun `same tile 5 - a stale snapshot falls through to the full start`() {
+        steady()
+        r.c.playTile()
+        r.work.drain()
+        assertEquals("steady PLAYING: nothing", 1, seturis())
+        r.advance(60_000) // no poll since: stale
+        r.c.playTile()
+        r.work.drain()
+        assertEquals("stale 'playing' may be long over", 2, seturis())
+    }
+
+    @Test
+    fun `same tile 6 - an explicit pick or a start from the top always starts`() {
+        steady()
+        r.c.load(r.entry, r.items, 2, 0) // a tap on an episode in the list
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(2, seturis())
+        assertEquals(r.url(2), r.spk.lastUri)
         r.advance(9_000)
-        r.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400")
+        r.speaker("0:03:00", uri = r.url(2))
         r.poll()
-        r.advance(9_000)
+        r.c.load(r.entry, r.items, 2, 0) // "from the start" on the episode that plays
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(3, seturis())
+    }
+
+    @Test
+    fun `same tile 7 - grouped away, the press reclaims OUR uid, never the coordinator`() {
+        steady()
+        r.advance(5_000)
+        r.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400")
         r.poll()
         r.resolvedUids.clear()
         r.c.playTile()
         r.work.drain()
-        assertEquals("the reclaim", 4, r.spk.commands.count { it == "seturi" })
+        assertEquals("the reclaim", 2, seturis())
         assertEquals(r.uid, r.resolvedUids.first())
+        assertTrue(r.resolvedUids.none { it == "RINCON_PARENT01400" })
     }
 
     // -- playpause (§4.5) --
@@ -493,22 +575,33 @@ class SonosControllerTest {
 
     // -- migration follow (sonos_migrate.py, §4.8) --
 
-    private fun hinted(uid: String = "RINCON_KITCHEN01400", snapUid: String = r.uid, measuredAt: Long = r.now): Fields =
+    private fun hinted(uid: String = "RINCON_KITCHEN01400", snapUid: String = r.uid, measuredAt: Long = r.now, uri: String = r.url(0)): Fields =
         r.session.snapshot.copy(
             uid = snapUid, transport = TransportState.STOPPED, uri = "", ours = false, measuredAt = measuredAt,
-            streamMoved = Moved(uid, "Kjøkken", r.url(0)),
+            streamMoved = Moved(uid, "Kjøkken", uri),
         )
 
     @Test
-    fun `migration follow - adopt first, then renderer json, later verbs to the new uid`() {
+    fun `migration follow - adopt first with the hint's uri, then renderer json, the volume base reset, later verbs to the new uid`() {
         playing()
-        r.host.onFollowed = { assertEquals("adopted before the identity write", "RINCON_KITCHEN01400", r.session.uid) }
-        r.c.onPoll(Tick.Next(5_000), hinted())
+        r.c.setVolume(40)
+        r.work.drain()
+        assertEquals(40, r.c.volOpt)
+        // vibb's HINT: the uri the other coordinator plays, not necessarily the one we set (a signed CDN url)
+        val hintUri = "https://cdn.example/signed/ep1.mp3?tok=abc"
+        assertTrue(hintUri != r.session.uri)
+        r.host.onFollowed = {
+            assertEquals("adopted before the identity write", "RINCON_KITCHEN01400", r.session.uid)
+            assertEquals("adopted with the hint's uri", hintUri, r.session.uri)
+        }
+        r.c.onPoll(Tick.Next(5_000), hinted(uri = hintUri))
         r.work.drain()
         assertEquals(listOf("RINCON_KITCHEN01400" to "Kjøkken"), r.host.followed)
         assertEquals("RINCON_KITCHEN01400", r.c.uid)
-        assertEquals("zero transport commands", listOf("seturi", "play"), r.spk.commands)
-        r.c.onPoll(Tick.Next(5_000), r.session.snapshot.copy(uid = "RINCON_KITCHEN01400", ours = true, transport = TransportState.PLAYING, uri = r.url(0), measuredAt = r.now, relS = 50.0))
+        assertNull("new speaker, new volume world", r.c.volOpt)
+        assertEquals("zero transport commands", listOf("seturi", "play", "volume 40"), r.spk.commands)
+        r.c.onPoll(Tick.Next(5_000), r.session.snapshot.copy(uid = "RINCON_KITCHEN01400", ours = true, transport = TransportState.PLAYING, uri = hintUri, measuredAt = r.now, relS = 450.0))
+        assertEquals("the bookmark follows the hint's uri", 450_000L, r.store.writes.last().posMs)
         r.resolvedUids.clear()
         r.c.pause()
         r.work.drain()
@@ -571,6 +664,188 @@ class SonosControllerTest {
         assertEquals(0, r.c.deviceVolume())
     }
 
+    // -- the cap at a session's start (§5.3, correction 2026-10-12) --
+
+    @Test
+    fun `a start brings a louder speaker down to the cap once, before Play`() {
+        r.capPct = 40
+        r.spk.vol = 70 // left loud by the last listener
+        r.start()
+        assertEquals(listOf("volume 40", "seturi", "play"), r.spk.commands)
+        assertTrue("read before it was set", r.spk.log.indexOf("getvolume") < r.spk.log.indexOf("volume 40"))
+        assertEquals("the base of the next press", 40, r.c.volOpt)
+        assertEquals(40, r.c.deviceVolume())
+        assertEquals(40, r.session.snapshot.volume)
+        r.c.adjustVolume(-3)
+        r.work.drain()
+        assertEquals("volume 37", r.spk.commands.last())
+    }
+
+    @Test
+    fun `a start from a bookmark caps inside the hush`() {
+        r.capPct = 40
+        r.spk.vol = 70
+        r.start(startMs = 720_000)
+        assertEquals(listOf("mute true", "volume 40", "seturi", "play", "seek 0:12:00", "mute false"), r.spk.commands)
+    }
+
+    @Test
+    fun `no cap, or a speaker at or below it - the start reads and sets nothing more`() {
+        r.spk.vol = 90
+        r.start()
+        assertEquals("no cap: not even read", listOf("clearqueue", "seturi", "play"), r.spk.log)
+        assertNull(r.c.volOpt)
+        val q = ControllerRig()
+        q.capPct = 40
+        q.spk.vol = 40
+        q.start()
+        assertEquals(listOf("getvolume", "clearqueue", "seturi", "play"), q.spk.log)
+        assertNull(q.c.volOpt)
+    }
+
+    @Test
+    fun `the start cap is once per session - a step or an advance never pulls a louder speaker down`() {
+        r.capPct = 40
+        r.start()
+        r.spk.vol = 80 // from the Sonos app while ours plays
+        r.speaker("0:07:11")
+        r.poll()
+        assertEquals("the louder volume shows", 80, r.c.deviceVolume())
+        val reads = r.spk.log.count { it == "getvolume" }
+        r.c.stepTo(1, 0)
+        r.work.drain()
+        assertEquals("the step's play went out", 2, r.spk.commands.count { it == "play" })
+        assertEquals("the step reads no volume", reads, r.spk.log.count { it == "getvolume" })
+        assertFalse(r.spk.commands.any { it.startsWith("volume") })
+    }
+
+    @Test
+    fun `a speaker that won't say its volume still plays`() {
+        r.capPct = 40
+        r.spk.failOn = mapOf("getvolume" to { SpeakerUnreachable("slow") })
+        r.start()
+        assertEquals(listOf("seturi", "play"), r.spk.commands)
+        assertTrue(r.c.showsPlaying(r.now))
+    }
+
+    @Test
+    fun `M1 - a cap lowered during the session pulls our own louder set down once`() {
+        r.start()
+        r.speaker("0:07:11")
+        r.poll()
+        r.c.setVolume(70) // no cap in force (the override): our own set
+        r.work.drain()
+        r.capPct = 40 // the override ended: the restrictions broadcast
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("volume 40", r.spk.commands.last())
+        assertEquals(40, r.c.volOpt)
+        val sent = r.spk.commands.size
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("once", sent, r.spk.commands.size)
+        r.capPct = null
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("a lifted cap sends nothing", sent, r.spk.commands.size)
+    }
+
+    @Test
+    fun `M1 - a louder volume from the Sonos app, ours at or below the cap, or no session - the cap edge sends nothing`() {
+        r.start()
+        r.spk.vol = 80 // from the Sonos app
+        r.speaker("0:07:11")
+        r.poll()
+        r.capPct = 40
+        r.c.capChanged()
+        r.work.drain()
+        assertFalse("vibb never fights an external change", r.spk.commands.any { it.startsWith("volume") })
+        r.c.setVolume(30)
+        r.work.drain()
+        r.capPct = 35
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals(1, r.spk.commands.count { it.startsWith("volume") })
+        r.c.setVolume(35)
+        r.c.stop()
+        r.work.drain()
+        r.capPct = 20
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("no session: nothing", "stop", r.spk.commands.last())
+    }
+
+    @Test
+    fun `M2 - a start caps every room of the group, inside the hush, an unknown or silent member never blocks it`() {
+        val shared = mutableListOf<String>()
+        val coord = FakeSpeaker("RINCON_KJOKKEN01400").apply { vol = 70; this.shared = shared }
+        val stua = FakeSpeaker("RINCON_STUA01400").apply { vol = 80; this.shared = shared }
+        val bad = FakeSpeaker("RINCON_BAD01400").apply { vol = 30; this.shared = shared }
+        val sleepy = FakeSpeaker("RINCON_SLEEPY01400").apply { failOn = mapOf("getvolume" to { SpeakerUnreachable("slow") }); this.shared = shared }
+        val byUid = listOf(coord, stua, bad, sleepy).associateBy { it.uid }
+        val clock = FakeClock()
+        val session = SonosSession({ clock.now })
+        val transport = SonosTransport(session, { u, _, _ -> byUid[u] ?: throw UnknownUid(u) }, NrkService({ _, _ -> SonosFakes.fixture("accounts.xml") }), clock.clock)
+        val work = FakeWork()
+        val members = listOf(coord.uid, stua.uid, "RINCON_GONE01400", bad.uid, sleepy.uid)
+        val c = SonosController(transport, work, FakeStore(coord), { clock.now }, coord.uid, "Kjøkken + Stua", FakeHost(), sleep = clock.clock.sleep, cap = { 40 }, members = { members })
+        c.load(r.entry, r.items, 0, 720_000)
+        c.playTile()
+        work.drain()
+        assertEquals(
+            listOf(
+                "${coord.uid} getmute", "${coord.uid} mute true", "${coord.uid} getvolume", "${coord.uid} volume 40",
+                "${stua.uid} getvolume", "${stua.uid} volume 40", "${bad.uid} getvolume", "${coord.uid} clearqueue", "${coord.uid} seturi",
+                "${coord.uid} play", "${coord.uid} gettransport", "${coord.uid} mute false",
+            ),
+            shared,
+        )
+        assertEquals("the coordinator's is the base of the next press", 40, c.volOpt)
+        // a step inside the session caps no one
+        shared.clear()
+        c.stepTo(1, 0)
+        work.drain()
+        assertTrue(shared.none { it.endsWith("getvolume") || it.contains(" volume ") })
+    }
+
+    @Test
+    fun `L1 - a ramp's leftover put back below the cap is the base of the next press`() {
+        val f = ControllerRig()
+        f.spk.vol = 80
+        val c = SonosController(f.transport, f.work, f.store, { f.clock.now }, f.uid, "Barnerom", f.host, sleep = f.clock.clock.sleep, restoreVolume = 30, cap = { 50 })
+        c.load(f.entry, f.items, 0, 0)
+        c.playTile()
+        f.work.drain()
+        assertEquals(listOf("volume 50", "seturi", "play", "volume 30"), f.spk.commands)
+        assertEquals("what the speaker holds", 30, c.volOpt)
+        assertEquals(30, c.deviceVolume())
+        c.adjustVolume(-3)
+        f.work.drain()
+        assertEquals("volume 27", f.spk.commands.last())
+    }
+
+    @Test
+    fun `L1 - a key press while the start is in flight stands over the start's cap`() {
+        r.capPct = 40
+        r.spk.vol = 70
+        r.c.load(r.entry, r.items, 0, 0)
+        r.c.playTile()
+        r.c.setVolume(20) // the slider, before the play's result came back
+        r.work.drain()
+        assertEquals(listOf("volume 40", "seturi", "play", "volume 20"), r.spk.commands)
+        assertEquals(20, r.c.volOpt)
+    }
+
+    @Test
+    fun `a ramp's leftover volume is put back no louder than the cap`() {
+        val f = ControllerRig()
+        val c = SonosController(f.transport, f.work, f.store, { f.clock.now }, f.uid, "Barnerom", f.host, sleep = f.clock.clock.sleep, restoreVolume = 70, cap = { 50 })
+        c.load(f.entry, f.items, 0, 0)
+        c.playTile()
+        f.work.drain()
+        assertEquals(listOf("seturi", "play", "volume 50"), f.spk.commands)
+    }
+
     @Test
     fun `the sleep ramp - three steps 1 s apart, pause, the volume back`() {
         playing()
@@ -610,6 +885,22 @@ class SonosControllerTest {
             assertTrue("$c", c in commands)
         }
         assertFalse("no playlist edits from outside", androidx.media3.common.Player.COMMAND_SET_MEDIA_ITEM in commands)
+    }
+
+    // -- the instant switch (logic/Switch.kt, the merge of main 2026-10-12) --
+
+    @Test
+    fun `a step on a playing room shows the target at once, from 0 - the screens' skip switch counts on both`() {
+        playing()
+        val changes = r.host.changes
+        r.c.stepTo(1, 42_000) // the phone's resume place for ep2
+        // before the speaker has answered anything: the index the service publishes is the target
+        assertEquals(1, r.c.index)
+        assertTrue("the service is told at once", r.host.changes > changes)
+        r.work.drain()
+        assertEquals(r.url(1), r.spk.lastUri)
+        assertFalse("a step on a playing room starts from 0, not the resume place", r.spk.commands.any { it.startsWith("seek") })
+        assertEquals(0L, r.c.spec(r.now).positionAt(r.now))
     }
 
     // -- the fix round (qa-26a-step3a-code) --

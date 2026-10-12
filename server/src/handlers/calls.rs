@@ -92,6 +92,8 @@ struct DeviceCallsTemplate {
     contacts: Vec<ContactView>,
     default_country_code: String,
     warnings: Vec<String>,
+    /// Good to know, nothing wrong (plain lines).
+    hints: Vec<String>,
     /// Reload every 5 s: waiting for the phone to confirm a role change.
     auto_refresh: bool,
     error: Option<String>,
@@ -175,6 +177,7 @@ async fn load_page(
         contacts,
         default_country_code,
         warnings: report.warnings,
+        hints: report.hints,
         // Never on an error render: a reload would lose the message and the typed contact
         // (qa-09-code #9).
         auto_refresh: report.auto_refresh && error.is_none(),
@@ -188,6 +191,8 @@ async fn load_page(
 /// What the calls page and the device page show about a phone's calls.
 pub(crate) struct CallReport {
     pub warnings: Vec<String>,
+    /// Good to know, nothing wrong (shown as a plain line, not an error).
+    pub hints: Vec<String>,
     /// Waiting for the phone to confirm a role change (reload the page).
     pub auto_refresh: bool,
 }
@@ -227,17 +232,19 @@ fn parse_sqlite_time(value: &str) -> Option<chrono::NaiveDateTime> {
     chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").ok()
 }
 
-/// `call_report`'s warnings only (the device page).
+/// `call_report`'s warnings and hints (the device page).
 pub(crate) async fn call_warnings(
     state: &AppState,
     policy: &DevicePolicy,
-) -> Result<Vec<String>, sqlx::Error> {
-    Ok(call_report(state, policy).await?.warnings)
+) -> Result<(Vec<String>, Vec<String>), sqlx::Error> {
+    let report = call_report(state, policy).await?;
+    Ok((report.warnings, report.hints))
 }
 
 /// What the parent should know about this phone's calls, from its latest status report: the
-/// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer or
-/// call-redirection role isn't ours, an error, the fail-closed state, an allowlisted Messages app
+/// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer,
+/// call-redirection or call-screening role isn't ours (security review L7: without the dialer and
+/// the screening role nothing filters incoming calls), an error, the fail-closed state, an allowlisted Messages app
 /// while SMS is off (QA #8), an unreadable call log (QA step 2 #7), and recent emergency calls /
 /// an open callback window (QA #2). Right after the parent changed `calls_managed`, a report from
 /// before the change shows "waiting" instead of the role warnings - for at most 5 minutes; after
@@ -250,6 +257,7 @@ pub(crate) async fn call_report(
 ) -> Result<CallReport, sqlx::Error> {
     let mut report = CallReport {
         warnings: Vec::new(),
+        hints: Vec::new(),
         auto_refresh: false,
     };
     let latest: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
@@ -400,11 +408,35 @@ pub(crate) async fn call_report(
                 .to_string(),
         );
     }
+    // Security review L7: Telecom binds one screening service besides the carrier's - the
+    // call-screening role's holder, else the default phone app's (CallsManager
+    // .setUpCallFilterGraph). Without either role nothing screens incoming calls; with another app
+    // holding the screening role, that app screens them instead of the launcher. A launcher from
+    // before the wave doesn't report the screening role (`None`).
+    let screening = flag("screening_role_held");
     if flag("dialer_role_held") == Some(false) {
-        warnings.push(
-            "Phone app role not active: the launcher isn't the phone's default phone app, so \
-             calls are not screened and the phone can only call emergency numbers. Open the \
+        warnings.push(if screening == Some(true) {
+            "Phone app role not active: the launcher isn't the phone's default phone app, so the \
+             phone can only call emergency numbers. Incoming calls are still filtered (it holds \
+             the call-screening role), though calls from withheld numbers may ring through. Open the \
              launcher's home screen on the phone and accept the \"default phone app\" prompt."
+                .to_string()
+        } else {
+            "Phone app role not active: the launcher isn't the phone's default phone app, so \
+             incoming calls are not filtered - anyone can call this phone - and it can only call \
+             emergency numbers. Open the launcher's home screen on the phone and accept the \
+             \"default phone app\" prompt."
+                .to_string()
+        });
+    } else if screening == Some(false) {
+        // A hint, not an error (the user's emulator, 2026-10-12), and nothing it can't know (QA of
+        // cmd-expiry, Medium 3): the phone can't read who else holds the role (RoleManager
+        // .getRoleHolders is a system API), and another holder screens instead of the launcher.
+        report.hints.push(
+            "The launcher is the phone app and hangs up calls that aren't allowed. Another app \
+             could screen incoming calls first unless the launcher holds the call-screening role: \
+             grant it with `adb shell cmd role add-role-holder android.app.role.CALL_SCREENING \
+             <launcher package>`."
                 .to_string(),
         );
     }
@@ -412,8 +444,7 @@ pub(crate) async fn call_report(
         warnings.push(
             "Call-redirection role not active: calls to numbers that aren't allowed are only hung \
              up after they start, so the other phone may ring briefly. Run `adb shell cmd role \
-             add-role-holder android.app.role.CALL_REDIRECTION <launcher package>` or accept the \
-             prompt on the phone."
+             add-role-holder android.app.role.CALL_REDIRECTION <launcher package>`."
                 .to_string(),
         );
     }

@@ -8,12 +8,12 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.text.format.DateFormat
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -29,10 +29,10 @@ import com.kidslauncher.mdm.databinding.ActivityPinLockBinding
 import com.kidslauncher.mdm.databinding.ViewVoipRingBinding
 import com.kidslauncher.mdm.server.ParentPinResult
 import com.kidslauncher.mdm.ui.ParentPinDialog
+import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 private const val LOG_TAG = "PinLockActivity"
 private const val STATE_ENTERED = "entered"
@@ -47,9 +47,12 @@ private const val STATE_ENTERED = "entered"
  * helpers are pinned for it) and stops it on unlock. Back does nothing; leaving the front any other way brings it back (re-front, never
  * giving up, except for our call screen, the system dialer/Telecom and the alarm).
  *
- * Only the keypad, Emergency call and the Parent code link are reachable. The PIN is checked off
- * the main thread (PBKDF2), the failure counted first ([PinLockRuntime.checkPin]). Not
- * direct-boot-aware (it can't be: the kid PIN lives in CE storage).
+ * It always comes up on its glance page (design 25, [GlancePanel]): the clock, the music tile, the
+ * newest missed calls and messages, "Lås opp" and Emergency call; "Lås opp" or a row leads to the
+ * keypad stage - the keypad, Emergency call and the Parent code link. The PIN is checked off the
+ * main thread (PBKDF2), the failure counted first ([PinLockRuntime.checkPin]). The window is
+ * `FLAG_SECURE` on both stages: names, texts and the keys' ripples never reach a screenshot, a
+ * recording or a cast. Not direct-boot-aware (it can't be: the kid PIN lives in CE storage).
  */
 class PinLockActivity : AppCompatActivity() {
 
@@ -63,13 +66,14 @@ class PinLockActivity : AppCompatActivity() {
     private var startedLockTask = false
     private var resumed = false
     private val keys = mutableListOf<View>()
-    /** [PinKeypadLayout.COMPACT_STEPS]: how much of the clock/date gave way to the keypad. */
-    private var compactStep = 0
 
-    /** Vibb music's media view over the keypad, and the keypad's back arrow and compact row (design 21 step 4). */
-    private var music: com.kidslauncher.mdm.music.MusicLockPanel? = null
-    /** The keypad stage with a live music session: the clock and date give way to the arrow and the row. */
-    private var mediaKeypad = false
+    /** The glance page over the keypad (design 25); `null` only if it couldn't be built - the plain
+     * keypad then, as before step 4. */
+    private var glance: GlancePanel? = null
+
+    /** A glance row's target to open after the right code (design 25 §1.4): set only in [unlock],
+     * used and cleared only in [go]. */
+    private var pendingOpen: PendingOpen? = null
 
     private val modeListener: () -> Unit = {
         if (PinLockRuntime.mode != LockMode.LOCKED && !isFinishing) leave()
@@ -150,14 +154,24 @@ class PinLockActivity : AppCompatActivity() {
             finish()
             return
         }
+        // Design 25 §1.2: no screenshot, recording or cast of either stage - before any content.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Bug 25b-B: no open transition - at a screen-on the lock is simply there.
+        overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
         binding = ActivityPinLockBinding.inflate(layoutInflater)
         // The VoIP ring screen (design 17) lies over the keypad while an allowed app's call rings.
         val frame = FrameLayout(this)
         frame.addView(binding.root)
-        // The media view (design 21 step 4) between the keypad and the ring screen.
-        music = com.kidslauncher.mdm.music.MusicLockPanel(
-            this, frame, binding.root, binding.pinMediaBack, binding.pinMediaRow, ::setMediaKeypad,
-        ) { binding.pinEmergency.performClick() }
+        // The glance page (design 25) between the keypad and the ring screen. Built defensively: a
+        // fault here leaves the plain keypad, never a crash that trips the guard.
+        glance = try {
+            GlancePanel(this, frame, binding.root, ::render) { binding.pinEmergency.performClick() }
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "The glance page couldn't be built: ${e.javaClass.simpleName}")
+            null
+        }
+        binding.pinBack.visibility = if (glance != null) View.VISIBLE else View.GONE
+        binding.pinBack.setOnClickListener { glance?.back() }
         voipRing = ViewVoipRingBinding.inflate(layoutInflater, frame, true)
         setContentView(frame)
         // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
@@ -175,10 +189,6 @@ class PinLockActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {}
         })
-        val locale = resources.configuration.locales[0] ?: Locale.getDefault()
-        val datePattern = DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM")
-        binding.pinDate.format12Hour = datePattern
-        binding.pinDate.format24Hour = datePattern
 
         buildKeypad()
         binding.pinKeypad.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ -> sizeKeys(bottom - top) }
@@ -190,6 +200,25 @@ class PinLockActivity : AppCompatActivity() {
         PinLockRuntime.addChromeListener(chromeListener)
         VoipCalls.addListener(voipListener)
         render()
+        // Design 25, "Lock background": Home's wallpaper (or the parent's lock picture) behind
+        // both stages once the store has worked it out; the plain ground until then.
+        WallpaperStore.ensureLoaded(this)
+        applyLockGround()
+    }
+
+    private val wallpaperListener: () -> Unit = { applyLockGround() }
+
+    /** The lock's background on the keypad stage and the glance page ([lockGround]). A fault keeps
+     * the plain ground - never a crash that trips the guard. */
+    private fun applyLockGround() {
+        try {
+            val state = WallpaperStore.state
+            if (!state.lockReady) return
+            binding.root.background = lockGround(state)
+            glance?.ground(lockGround(state))
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "The lock's background couldn't be set: ${e.javaClass.simpleName}")
+        }
     }
 
     private val voipListener: () -> Unit = {
@@ -263,7 +292,9 @@ class PinLockActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        music?.start()
+        glance?.start()
+        WallpaperStore.addListener(wallpaperListener)
+        applyLockGround()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -279,7 +310,7 @@ class PinLockActivity : AppCompatActivity() {
             return
         }
         PinLockRuntime.onLockResumed(this)
-        music?.resume()
+        glance?.resume()
         ensureLockTask(fallbackDue = false)
         renderVoip()
         // Step 11: the lock in front ends the update fence in the new build (lock task not required).
@@ -298,18 +329,19 @@ class PinLockActivity : AppCompatActivity() {
         handler.removeCallbacks(voipAnswerCheck)
         voipFsiPending = false
         PinLockRuntime.voipLockLeft(sendPending)
-        PinLockRuntime.onLockPaused()
+        PinLockRuntime.onLockPaused(isFinishing || finishingAfterUnlock)
         super.onPause()
     }
 
     override fun onStop() {
-        music?.stop()
+        WallpaperStore.removeListener(wallpaperListener)
+        glance?.stop()
         PinLockRuntime.onLockStopped(isChangingConfigurations, isFinishing || finishingAfterUnlock)
         super.onStop()
     }
 
     override fun onDestroy() {
-        music?.stop()
+        glance?.stop()
         PinLockRuntime.removeModeListener(modeListener)
         PinLockRuntime.removeChromeListener(chromeListener)
         VoipCalls.removeListener(voipListener)
@@ -407,23 +439,16 @@ class PinLockActivity : AppCompatActivity() {
     }
 
     /**
-     * Keys sized to the keypad's measured height ([PinKeypadLayout]): 48-72 dp. Below 48 dp the
-     * date, then the clock's size, then the clock give way (one step per layout pass); after
-     * that the keys shrink rather than clip ([PinKeypadLayout.finalKeySizePx]). The new
-     * params are set with [View.setLayoutParams] - mutating them in place left the measure cache
-     * of the rows untouched, so the first 2026-10-06 build kept 72 dp keys and clipped 7-8-9 and 0.
+     * Keys sized to the keypad's measured height ([PinKeypadLayout]): 48-72 dp; with no room for
+     * 48 dp the keys shrink rather than clip ([PinKeypadLayout.finalKeySizePx]) - the keypad stage
+     * has no clock or date to give way since design 25. The new params are set with
+     * [View.setLayoutParams] - mutating them in place left the measure cache of the rows untouched,
+     * so the first 2026-10-06 build kept 72 dp keys and clipped 7-8-9 and 0.
      */
     private fun sizeKeys(keypadHeight: Int) {
         if (keypadHeight <= 0) return
         val density = resources.displayMetrics.density
-        var size = PinKeypadLayout.keySizePx(keypadHeight, binding.pinKeypad.width, density)
-        // With the media keypad the clock and date are already gone: no step frees more room.
-        if (!PinKeypadLayout.fits(size, density) && compactStep < PinKeypadLayout.COMPACT_STEPS && !mediaKeypad) {
-            compactStep++
-            applyCompactStep()
-            return
-        }
-        size = PinKeypadLayout.finalKeySizePx(size, density, compactStep >= PinKeypadLayout.COMPACT_STEPS || mediaKeypad)
+        val size = PinKeypadLayout.finalKeySizePx(PinKeypadLayout.keySizePx(keypadHeight, binding.pinKeypad.width, density), density)
         val changed = keys.filter { it.layoutParams.width != size }
         if (changed.isEmpty()) return
         binding.pinKeypad.post {
@@ -433,28 +458,6 @@ class PinLockActivity : AppCompatActivity() {
                     height = size
                 }
             }
-        }
-    }
-
-    /** The keypad stage with a live music session (design 21 step 4): no clock or date (Lock.dc.html),
-     * and the prompt keeps clear of the back arrow on both sides - a long one wraps between them
-     * (qa-21-step4-code L5). */
-    private fun setMediaKeypad(on: Boolean) {
-        mediaKeypad = on
-        binding.pinClock.visibility = if (on || compactStep >= 3) View.GONE else View.VISIBLE
-        binding.pinDate.visibility = if (on || compactStep >= 1) View.GONE else View.VISIBLE
-        val side = if (on) binding.pinMediaBack.layoutParams.width else 0
-        binding.pinPrompt.layoutParams = (binding.pinPrompt.layoutParams as android.view.ViewGroup.MarginLayoutParams).apply {
-            marginStart = side
-            marginEnd = side
-        }
-    }
-
-    private fun applyCompactStep() {
-        binding.pinKeypad.post {
-            if (compactStep >= 1) binding.pinDate.visibility = View.GONE
-            if (compactStep >= 2) binding.pinClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, PinKeypadLayout.CLOCK_SMALL_SP)
-            if (compactStep >= 3) binding.pinClock.visibility = View.GONE
         }
     }
 
@@ -515,12 +518,15 @@ class PinLockActivity : AppCompatActivity() {
     private fun render() {
         if (!::binding.isInitialized) return
         val length = PinLockRuntime.pinLength
-        binding.pinPrompt.text = when {
-            !PinLockRuntime.pinUsable -> getString(R.string.pin_lock_unusable)
-            waitMs > 0L -> getString(R.string.pin_lock_wait, backoffText(waitMs))
-            checking -> getString(R.string.pin_lock_checking)
-            wrongShown -> getString(R.string.pin_lock_wrong)
-            else -> getString(R.string.pin_lock_prompt)
+        // The usual texts first; else a glance row's hint (design 25 §1.1); else the plain prompt.
+        binding.pinPrompt.text = when (glancePrompt(PinLockRuntime.pinUsable, waitMs > 0L, checking, wrongShown, glance?.state?.target)) {
+            GlancePrompt.UNUSABLE -> getString(R.string.pin_lock_unusable)
+            GlancePrompt.WAIT -> getString(R.string.pin_lock_wait, backoffText(waitMs))
+            GlancePrompt.CHECKING -> getString(R.string.pin_lock_checking)
+            GlancePrompt.WRONG -> getString(R.string.pin_lock_wrong)
+            GlancePrompt.OPEN_APP -> getString(R.string.pin_lock_prompt_open, glance?.promptLabel.orEmpty())
+            GlancePrompt.SEE_MISSED -> getString(R.string.pin_lock_prompt_missed)
+            GlancePrompt.PLAIN -> getString(R.string.pin_lock_prompt)
         }
         val dots = binding.pinDots
         if (dots.childCount != length) {
@@ -602,6 +608,9 @@ class PinLockActivity : AppCompatActivity() {
      * runtime's state machine. */
     private fun unlock(checkedAt: Int) {
         finishingAfterUnlock = true
+        // Design 25 §1.4: the glance row's target (null after "Lås opp"), with whether the lock is
+        // the kiosk's lock-task root - read before the lock task stops.
+        pendingOpen = glance?.takeTarget(lockWasRoot = LockTaskChrome.kioskOn && startedLockTask)
         // The lock task first: with the kiosk off the chrome change that follows unpins our
         // package, which would otherwise tear this task down under us.
         stopOwnLockTask()
@@ -629,9 +638,18 @@ class PinLockActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * The glance row's target opens here (design 25 §1.4): after Home is in front (kiosk on - the
+     * lock leaves through Home, design 16) and before the lock finishes, while its window is still
+     * visible - a PendingIntent's sender may start an activity only then. Only when the runtime
+     * really unlocked (a refused unlock, the switch-off, the crash guard and onResume's leave have
+     * no target, or the mode isn't UNLOCKED). [GlanceOpener] never throws.
+     */
     private fun go(plan: LockLeave) {
         if (plan.stopLockTaskFirst) stopLockTaskQuietly()
         if (plan.homeFirst) HomeFront.bring(this, "the lock left")
+        pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it) }
+        pendingOpen = null
         if (!isFinishing) finishAndRemoveTask()
     }
 
@@ -661,3 +679,8 @@ class PinLockActivity : AppCompatActivity() {
         private var homeAskedAtElapsed = 0L
     }
 }
+
+/** The lock's background (design 25, "Lock background"): its wallpaper under its black scrim -
+ * drawn by us, the window stays opaque (never Android's wallpaper showing through). */
+internal fun lockGround(state: WallpaperStore.State): android.graphics.drawable.Drawable =
+    com.kidslauncher.mdm.ui.wallpaper.WallpaperRender.GroundDrawable(state.lock.fill, state.lockBitmap, state.lockScrimArgb)

@@ -61,7 +61,10 @@ object PlayBodies {
      * The speaker-playable filter (`sonos_start_target`, 26a §4.2): why [item] can't go to a speaker,
      * or null when it can. Own files and withdrawn items (no URL) can't; an HLS item only as an NRK
      * series program; a public entry's item never from a private address literal (the speaker
-     * fetches by itself, so the phone's address guard moves here, QA M7). Names aren't resolved.
+     * fetches by itself, so the phone's address guard moves here, QA M7); a `lan` entry's item never
+     * from a tailnet literal (100.64.0.0/10, fd7a:115c:a1e0::/48: the phone reaches the tailnet, a
+     * speaker on the LAN never does - 21b §2.7's `lan` covers both; correction 2026-10-12). Names
+     * aren't resolved.
      * The URL is read as OkHttp and ExoPlayer read it (`toHttpUrlOrNull`: an enclosure with an
      * unencoded space or `|` plays on the phone, so it goes to the speaker too; qa-26a-step1-code L6).
      * An NRK series item without a key (its program id) has nothing to hand the service and drops out
@@ -75,6 +78,7 @@ object PlayBodies {
         if (nrkSeries && item.key.isEmpty()) return "no program id"
         if (item.hls && !nrkSeries) return "hls"
         if (publicOnly(entry) && privateLiteral(http.host)) return "private address"
+        if (tailnetLiteral(http.host)) return "tailnet address"
         return null
     }
 
@@ -97,6 +101,24 @@ object PlayBodies {
             if (kept(key)) return QueuePlan(keys, keys.indexOf(key), if (step == 0) plan.startPosMs else 0)
         }
         return null
+    }
+
+    /**
+     * [host] is a tailnet address literal: Tailscale's IPv4 range 100.64.0.0/10 (CGNAT) or its IPv6
+     * ULA fd7a:115c:a1e0::/48. A name (`nas.tailnet.ts.net`) is never looked up and passes: the
+     * speaker resolves it with the LAN's DNS, where it fails by itself.
+     */
+    internal fun tailnetLiteral(host: String): Boolean {
+        val bare = host.removePrefix("[").removeSuffix("]")
+        if (':' in bare) {
+            val b = runCatching { InetAddress.getByName(bare) }.getOrNull()?.address ?: return false
+            return b.size == 16 && (b[0].toInt() and 0xFF) == 0xFD && (b[1].toInt() and 0xFF) == 0x7A &&
+                (b[2].toInt() and 0xFF) == 0x11 && (b[3].toInt() and 0xFF) == 0x5C &&
+                (b[4].toInt() and 0xFF) == 0xA1 && (b[5].toInt() and 0xFF) == 0xE0
+        }
+        val octets = bare.split('.')
+        if (octets.size != 4 || octets.any { !Regex("[0-9]{1,3}").matches(it) || it.toInt() > 255 }) return false
+        return octets[0].toInt() == 100 && octets[1].toInt() in 64..127
     }
 
     /**

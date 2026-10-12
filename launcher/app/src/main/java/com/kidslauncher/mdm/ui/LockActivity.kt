@@ -97,6 +97,14 @@ class LockActivity : UIObjectActivity() {
         render()
     }
 
+    /** Design 25 (QA Q1): a glance row the kid tapped on the PIN lock under this rule, handed over
+     * by the unlock - its conversation (or the phone book) opens over this screen if the rule
+     * leaves it usable, so Back returns here. */
+    override fun onResume() {
+        super.onResume()
+        com.kidslauncher.mdm.lock.GlanceOpener.openHandedOver(this)
+    }
+
     override fun onStop() {
         LauncherPreferences.getSharedPreferences()
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)

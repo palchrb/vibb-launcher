@@ -37,7 +37,37 @@ fun shouldPromptForRole(state: CallPolicyState, roleHeld: Boolean, nowMs: Long, 
 fun lockDefaultApps(state: CallPolicyState, dialerRoleHeld: Boolean): Boolean = state.managed && dialerRoleHeld
 
 /** The call roles as the server last heard about them (or as a sync was last asked to report). */
-data class RoleSnapshot(val dialerHeld: Boolean, val redirectionHeld: Boolean)
+data class RoleSnapshot(val dialerHeld: Boolean, val redirectionHeld: Boolean, val screeningHeld: Boolean = false)
+
+/**
+ * The system role prompt Home may show (at most once a day, [shouldPromptForRole]), `null` = none -
+ * [ROLE_DIALER]/[ROLE_CALL_REDIRECTION]/[ROLE_CALL_SCREENING] (the RoleManager names, literal to
+ * stay Android-free). The dialer role when the device-owner call couldn't take it ([dialerError]);
+ * else, while we aren't the phone app, call screening (security review L7: it filters incoming calls
+ * then). Never while we hold the dialer role: then [lockDefaultApps] sets DISALLOW_CONFIG_DEFAULT_APPS,
+ * and on Android 14+ PermissionController refuses every exclusive role's request under it (AOSP
+ * `Role.getRestrictionIntentAsUser` opens "blocked by your admin") - the restriction stays on (QA of
+ * cmd-expiry, Medium 2: lifting it for a prompt let the kid change default apps), so call
+ * redirection and call screening are granted with adb at provisioning. Only while calls are managed.
+ */
+fun rolePromptFor(
+    state: CallPolicyState,
+    dialerHeld: Boolean,
+    dialerError: Boolean,
+    redirectionHeld: Boolean,
+    screeningHeld: Boolean,
+): String? = when {
+    !state.managed -> null
+    dialerHeld -> null
+    dialerError -> ROLE_DIALER
+    !screeningHeld -> ROLE_CALL_SCREENING
+    else -> null
+}
+
+/** `RoleManager.ROLE_DIALER`, `ROLE_CALL_REDIRECTION`, `ROLE_CALL_SCREENING`. */
+const val ROLE_DIALER = "android.app.role.DIALER"
+const val ROLE_CALL_REDIRECTION = "android.app.role.CALL_REDIRECTION"
+const val ROLE_CALL_SCREENING = "android.app.role.CALL_SCREENING"
 
 /**
  * Whether a role changed since the server was last told (B1): `apply()` also runs outside a sync

@@ -99,12 +99,13 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
 - includes it in schedules (e.g. allowed at bedtime for audiobooks).
 
 **Status (2026-10-12)**: the player is the Vibb music app in this repo (`music/`, designs 20/21/21b, ported from
-vibb). Phase 1 (NRK, RSS, own files, the launcher bridge, Home card, lock view, volume cap) is on `main`, its Jelly
-Star checks and `music-v0.1.0` still to come. **Phase 1b, Sonos** (design 26a: rooms in "Spill av på", the phone as
+vibb). Phase 1 (NRK, RSS, own files, the launcher bridge, Home card, lock view, volume cap) is on `main`, released as
+`music-v0.0.2` (`music-v0.0.1` before it); its Jelly Star checks still to come. **Phase 1b, Sonos** (design 26a: rooms in "Spill av på", the phone as
 UPnP controller, adopt after a restart, bedtime stops the speaker, calls pause it, the parent's volume cap and room
-scope) is built and QA'd on branch `music-1b-sonos`, main merged in; owed: the emulator checks against
+scope) is built and QA'd on branch `music-1b-sonos`, main merged in (last 2026-10-12, `444ca58`: main's instant
+switch adapted to the rooms); owed: the emulator checks against
 `scripts/fake-sonos.py` and the device checks with real speakers. Release after the user's merge: server (migration
-0065, in 0.24.0 unless that is tagged first), a launcher release, then `music-v0.2.0-rc.1` on the merge commit
+0071, in 0.24.0 unless that is tagged first), a launcher release, then `music-v0.2.0-rc.1` on the merge commit
 (26a "Release"). Phases 2 (Storytel) and 3 (Spotify) follow design 26.
 
 ## Repos
@@ -190,6 +191,13 @@ launchable.
 enrollment codes, the Docker image), QA 22's fixes, and the server part of the security review 2026-10-10 (its
 "Server security wave status" lists each finding). Before tagging it, the repo owner creates the release signing key
 (`server/DEPLOY.md`, "Release signing"): root on the Pi takes only signed releases from 0.24.0 on.
+
+**The lock's glance page (design 25, 2026-10-12, not device-tested yet)**: the PIN lock always comes up on a first
+page - clock, date, the music tile, the newest missed calls and messages (Element X ticked by default; the parent
+picks the apps and whether the text shows in the PWA's Apps card, "On the lock screen"), "Lås opp" and the emergency
+call. A row's tap asks for the code and then opens the conversation or the missed calls; under a time rule only what
+the rule leaves usable, over the time-rule screen. Read in memory only, never sent to the server; the lock's window
+is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the design's "Implementation status". **Lock fix round 25b** (2026-10-12): the camera gesture no longer crashes SystemUI on the lock (cameras off by policy while LOCKED), the lock re-fronts after a pause too (Recents), no transition or status-bar flicker at power-on, Emergency SOS works on the lock, Element X missed calls as missed-call rows, the music tile for any session on the glance page only (user decision); device checks in design 25.
 
 ## Next features (agreed 2026-10-05)
 
@@ -363,6 +371,9 @@ enrollment codes, the Docker image), QA 22's fixes, and the server part of the s
   resources with `values-nb`, per-app language (generateLocaleConfig is already
   on), language chosen per device by the parent. Server PWA: string catalog with
   nb/en and a per-admin language setting.
+- **Idea, long list (user, 2026-10-12): a widget on the lock's glance page**, e.g. a Fossify widget
+  (calendar, clock, weather). Not designed yet. Open: privacy on a locked phone (a widget shows its app's
+  data to whoever holds it), `AppWidgetHost` in the lock activity, and which widgets the parent may allow.
 
 ## Phases
 

@@ -70,11 +70,25 @@
         {% for line in relock.notes.lines %}
         <div class="error">{{ line }}</div>
         {% endfor %}
+        {% if let Some(text) = relock.blocks.text %}
+        <div class="error">
+            <p style="margin:0 0 8px;">{{ text }}</p>
+            <ul style="margin:0; padding-left:20px;">
+                {% for item in relock.blocks.items %}
+                <li>{{ item.text }}{% if let Some(ticked) = item.ticked %}{% if ticked %} Ticked under Apps: it shows again after "Allow these apps".{% else %} Not ticked under Apps: after "Allow these apps" it stays hidden until you <a href="#app-{{ item.package_name }}">tick it</a> too.{% endif %}{% endif %}</li>
+                {% endfor %}
+            </ul>
+            {% if let Some(more) = relock.blocks.more %}
+            <p style="margin:8px 0 0;">{{ more }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
         {% if let Some(text) = relock.notice %}
         <div class="success">{{ text }}</div>
         {% endif %}
-        {% if relock.notes.allow_button %}
+        {% if relock.allow_button %}
         <form method="post" action="/devices/{{ device.id }}/allow-blocked">
+            <input type="hidden" name="blocks" value="{{ relock.allow_value }}">
             <button type="submit" class="button-small button-secondary">Allow these apps</button>
         </form>
         {% endif %}
@@ -283,6 +297,9 @@
         {% for warning in call_warnings %}
         <div class="error">{{ warning }}</div>
         {% endfor %}
+        {% for hint in call_hints %}
+        <p class="subtitle">{{ hint }}</p>
+        {% endfor %}
         <a href="/devices/{{ device.id }}/calls" class="button-small">Calls, contacts and SMS</a>
     </div>
 
@@ -291,7 +308,7 @@
         {% if allowlist_corrupt %}
         <div class="error">The stored app list for this device can't be read, so the phone gets an error instead of its policy and keeps enforcing the last one it had. The checkboxes below don't show what the phone allows, and changing them fails. Check this server's log ("failed to build device policy"), or restore a backup.</div>
         {% endif %}
-        <p class="subtitle">Every app currently on this device, plus anything from the <a href="/apps">Apps</a> catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; checking one that isn't installed installs and allows it. Unchecking disallows it - and uninstalls it too, unless it's preinstalled and can't be removed. Each checkbox saves itself immediately - no separate Save button. A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed - never Settings, a browser or a file manager.</p>
+        <p class="subtitle">Every app currently on this device, plus anything from the <a href="/apps">Apps</a> catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; checking one that isn't installed installs and allows it. Unchecking disallows it - and uninstalls it too, unless it's preinstalled and can't be removed; checking it again before the phone syncs cancels the uninstall. Each checkbox saves itself immediately - no separate Save button. A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed - never Settings, a browser or a file manager.</p>
         <p class="subtitle">Only a checked app's keyboard and accessibility service can be turned on in the phone's Settings - an accessibility service not even during a pause, since it could read the parent PIN. Check the app first.</p>
         <form method="post" action="/devices/{{ device.id }}/app-updates">
             <label class="checkbox-row">
@@ -315,7 +332,7 @@
                 <span class="app-status">{{ app.status_label }}</span>
             </label>
             {% else %}
-            <form method="post" action="/devices/{{ device.id }}/apps/toggle">
+            <form method="post" action="/devices/{{ device.id }}/apps/toggle" id="app-{{ app.package_name }}">
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
                 {% if let Some(tracked_app_id) = app.tracked_app_id %}
                 <input type="hidden" name="tracked_app_id" value="{{ tracked_app_id }}">
@@ -328,6 +345,37 @@
                 </label>
             </form>
             {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+        <h3 id="lock-screen">On the lock screen</h3>
+        <p class="subtitle">When the phone is locked, the power button first shows the clock, what's playing and the newest notifications: missed calls always, and messages from the apps ticked here. Tapping one asks for the kid's PIN and then opens it. Nothing can be answered, marked as read or dismissed from the lock screen, and it can't be screenshotted. Each choice saves itself immediately.</p>
+        <p class="subtitle">Anyone holding the locked phone sees who wrote - also with the switch below off, and missed calls by their name in the phone book. With the switch on, a ticked SMS app's login codes show too.</p>
+        {% for note in lock_screen.notes %}
+        <div class="error">{{ note }}</div>
+        {% endfor %}
+        <form method="post" action="/devices/{{ device.id }}/lock-screen" id="lock-screen-text">
+            <label class="checkbox-row">
+                <input type="checkbox" name="show_text" value="on" {% if lock_screen.show_text %}checked{% endif %} onchange="this.form.submit()">
+                <span>Show the message text too, not just who it's from - anyone holding the locked phone can read it.</span>
+            </label>
+            <noscript><button type="submit" class="button-small">Save</button></noscript>
+        </form>
+        {% if lock_screen.unreadable %}
+        <div class="error">The apps shown on the lock screen couldn't be read - check the server log.</div>
+        {% else if lock_screen.apps.is_empty() %}
+        <p class="subtitle">{{ lock_screen.empty_text }}</p>
+        {% else %}
+        <div class="app-checkbox-list">
+            {% for app in lock_screen.apps %}
+            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps" id="lock-screen-app-{{ app.package_name }}">
+                <input type="hidden" name="package_name" value="{{ app.package_name }}">
+                <label class="checkbox-row">
+                    <input type="checkbox" name="on" value="on" {% if app.on %}checked{% endif %} onchange="this.form.submit()">
+                    <span>{{ app.label }}{% if let Some(note) = app.note %} <span class="app-status" style="white-space:normal;">{{ note }}</span>{% endif %}</span>
+                </label>
+                <noscript><button type="submit" class="button-small">Save</button></noscript>
+            </form>
             {% endfor %}
         </div>
         {% endif %}
@@ -369,7 +417,7 @@
             <input type="hidden" name="anchor" value="music">
             <label class="checkbox-row">
                 <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} onchange="this.form.submit()">
-                <span>The music app on this phone (installed and allowed like any app from the catalog) <span class="app-status" style="white-space:normal;">{{ app.status }}</span></span>
+                <span>The music app on this phone (installed and allowed like any app from the catalog; unticking uninstalls it) <span class="app-status" style="white-space:normal;">{{ app.status }}</span></span>
             </label>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
         </form>
@@ -427,12 +475,12 @@
         <div class="error">{{ notice }}</div>
         {% endif %}
         {% if music.sonos.all && music.sonos.rows.is_empty() %}
-        <p class="subtitle">The phone hasn't seen any speakers yet. Once the music app has found Sonos speakers on the home Wi-Fi, they show up here and the phone can be limited to some of them. Until then every room is allowed.</p>
+        <p class="subtitle">The phone hasn't seen any speakers yet. Once the music app has found Sonos speakers on the home Wi-Fi, they show up here and the phone can be limited to some of them. Until then every room is allowed - on any Wi-Fi: at a friend's house the phone would list their Sonos speakers too and could play on them.</p>
         {% else %}
         <form method="post" action="/devices/{{ device.id }}/music/sonos-rooms">
             <label class="checkbox-row">
                 <input type="checkbox" name="all" value="on" {% if music.sonos.all %}checked{% endif %} onchange="this.form.submit()">
-                <span>All rooms: the music app may play on every Sonos speaker it finds. Off: only on the rooms ticked below. Speakers the phone finds later aren't allowed until you tick them, and a group of speakers plays only when every room in it is ticked.</span>
+                <span>All rooms: the music app may play on every Sonos speaker it finds, on any Wi-Fi - at a friend's house on theirs too. Off: only on the rooms ticked below. Speakers the phone finds later aren't allowed until you tick them, and a group of speakers plays only when every room in it is ticked.</span>
             </label>
             {% if music.sonos.all %}
             {% for room in music.sonos.rows %}
@@ -467,7 +515,7 @@
         <h2>Launcher</h2>
         <p class="subtitle">The phone's home screen. Each choice saves itself immediately.</p>
         {% if badges_without_access %}
-        <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts, the notification filter is off, and Vibb music has no "Spilles nå" card on the home screen and no player on the lock screen. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build; a phone still on a launcher from before 2026-10-06 has <code>com.kidslauncher.mdm</code> there).</div>
+        <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts, the notification filter is off, the notifications on the lock screen are missed calls only, and Vibb music has no "Spilles nå" card on the home screen and no player on the lock screen. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build; a phone still on a launcher from before 2026-10-06 has <code>com.kidslauncher.mdm</code> there).</div>
         {% endif %}
         <label for="launcher_language">Language</label>
         <select id="launcher_language" name="language" onchange="this.form.submit()">
@@ -483,7 +531,8 @@
         <noscript><button type="submit">Save</button></noscript>
     </form>
 
-    <form method="post" action="/devices/{{ device.id }}/wallpapers" class="card">
+    <div class="card" id="wallpapers">
+    <form method="post" action="/devices/{{ device.id }}/wallpapers">
         <h2>Wallpapers</h2>
         <p class="subtitle">The backgrounds the child may choose from on this phone. Each choice saves itself immediately; unticking the one in use replaces it on the phone at once. Add your own photos on the <a href="/wallpapers">Wallpapers</a> page.</p>
         <div class="wallpaper-choices" style="display:flex;flex-wrap:wrap;gap:10px;">
@@ -500,13 +549,26 @@
         </div>
         <noscript><button type="submit">Save</button></noscript>
     </form>
+    <form method="post" action="/devices/{{ device.id }}/lock-wallpaper" id="lock-wallpaper">
+        <h3>Lock screen background</h3>
+        <p class="subtitle">By default the lock shows the same wallpaper as the home screen - a photo included, so anyone holding the locked phone sees it. Choose another one of the ticked wallpapers to give the lock its own.</p>
+        <label for="lock-wallpaper-select">Lock screen</label>
+        <select id="lock-wallpaper-select" name="wallpaper" onchange="this.form.submit()">
+            <option value="" {% if lock_same_as_home %}selected{% endif %}>Same as Home</option>
+            {% for w in wallpapers %}{% if w.checked %}
+            <option value="{{ w.id }}" {% if w.lock %}selected{% endif %}>{{ w.label }}</option>
+            {% endif %}{% endfor %}
+        </select>
+        <noscript><button type="submit">Save</button></noscript>
+    </form>
+    </div>
 
     <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card" id="screen-lock">
         <h2>Screen lock</h2>
         {% if let Some((text, warning)) = lock_notice %}
         <div class="{% if warning %}error{% else %}success{% endif %}">{{ text }}</div>
         {% endif %}
-        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the parent PIN - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
+        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Its first page shows the clock, the music and new missed calls and messages (Apps -> On the lock screen); "Lås opp" leads to the PIN. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the parent PIN - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
         <p class="subtitle">It keeps people around him out, but the phone no longer has an Android code: its storage is encrypted with a key that doesn't depend on a code, so someone who steals it and has forensic tools may read photos and messages - the kid's PIN is not a secret against that, so don't reuse it anywhere else. Apps that require a screen lock (some bank/ID apps, Google Wallet, passkeys) may refuse to work. Fingerprint unlock isn't available. Safe mode starts the phone without the launcher and so skips the lock - keep "Block safe mode" on (Phone hardening). Lock and wipe on the Locate page still work.</p>
         {% for line in lock.lines %}
         <p>{{ line }}</p>

@@ -13,7 +13,7 @@ can't see elsewhere, in particular the working rules the main session keeps in i
 - **Phase 1b (Sonos) is built on `music-1b-sonos`** (status 2026-10-12; spec and every step's status in
   `26a-sonos.md`): steps 1-4 (the `sonos/` core, the renderer axis, the renderer, lifecycle and phone rules, room
   scoping, the docs), each with QA's code review and its fix round; main merged in. **Not done yet:** the emulator
-  checks (`docs/testing/emulator.md` §6g) and the device checks on the Jelly Star with real speakers (26a "Device
+  checks (`docs/testing/emulator.md` §6h) and the device checks on the Jelly Star with real speakers (26a "Device
   checks" and each step's owed list); the merge to `main` is the user's; `music-v0.2.0-rc.1` is tagged on the merge
   commit after it (26a "Release").
 - **Read first:** root `CLAUDE.md`, `music/CLAUDE.md`, `docs/design/20-vibb-music.md` (its decision sections win over
@@ -33,6 +33,11 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   deviation is allowed only where the phone forces it (no server on the phone, the kiosk, Doze, the launcher as
   courier), and each one is listed with its reason. Read the vibb code before designing anything; don't re-derive
   what it already handles. **Spotify is the exception**: new ground (below).
+- **Port behaviour, not the Pi's platform hardening** (user, 2026-10-11). Much of vibb works around the Pi: the BT
+  reconnect ladder, bluealsa/PipeWire recovery, transport probes, shared-radio Wi-Fi contention, process respawns,
+  go-librespot/soloist. Android does its own Bluetooth, audio routing and process handling, so none of that is ported
+  unless a phone test shows the same problem. Port the rules a user notices (what plays, when, from where, what is kept),
+  and list each skipped workaround in one line with its reason.
 
 ## The phases, in order
 

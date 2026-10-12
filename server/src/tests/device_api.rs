@@ -319,6 +319,7 @@ async fn policy_json_keys_snapshot() {
             "kiosk_desired",
             "launcher_ui",
             "location_policy",
+            "lock_glance",
             "lock_task_features",
             "music",
             "notification_auto_cancel",
@@ -349,6 +350,7 @@ async fn policy_json_keys_snapshot() {
         "kiosk_desired",
         "launcher_ui",
         "location_policy",
+        "lock_glance",
         "lock_task_features",
         "music",
         "notification_auto_cancel",
@@ -384,8 +386,16 @@ async fn policy_json_keys_snapshot() {
     ui_keys.sort_unstable();
     assert_eq!(
         ui_keys,
-        ["app_display", "home_columns", "language", "wallpapers"]
+        [
+            "app_display",
+            "home_columns",
+            "language",
+            "lock_wallpaper",
+            "wallpapers"
+        ]
     );
+    // Design 25, "Lock background": always sent, null = the lock shows Home's wallpaper.
+    assert_eq!(launcher_ui["lock_wallpaper"], serde_json::json!(null));
     // Design 14 (QA #1): always a list, even when nothing is named.
     assert_eq!(launcher_ui["app_display"], serde_json::json!([]));
     assert!(
@@ -402,6 +412,13 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         object["location_policy"],
         serde_json::json!({"mode": "on_request", "interval_minutes": 30})
+    );
+
+    // The lock's glance page (design 25): always an object, a fresh phone's default - Element X,
+    // the sender only. The launcher's `lockGlancePolicy` decodes exactly this shape.
+    assert_eq!(
+        object["lock_glance"],
+        serde_json::json!({ "apps": ["io.element.android.x"], "show_text": false })
     );
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's

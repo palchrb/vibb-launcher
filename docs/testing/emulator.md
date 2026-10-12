@@ -53,14 +53,28 @@ P=me.vibb.launcher.debug
 adb install -r ~/repos/handy/launcher/app/build/outputs/apk/debug/app-debug.apk
 adb shell dpm set-device-owner $P/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
+# Security review L7: the incoming-call filter when the launcher isn't the phone app.
+adb shell cmd role add-role-holder android.app.role.CALL_SCREENING $P
 adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeListenerService
 # Design 19b: the launcher on the power-save allowlist ("battery: Unrestricted"); expect "Added: ...".
 # Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.
 adb shell dumpsys deviceidle whitelist +$P
 # Step 9 (B2): the device owner can't switch off the camera gesture - do it before enrolling
-# (Settings -> System -> Gestures -> "Quickly open camera" off), or with adb:
+# (Settings -> System -> Gestures -> "Quickly open camera" off), or with adb. Both keys (25b):
 adb shell settings put secure camera_double_tap_power_gesture_disabled 1
+adb shell settings put secure double_tap_power_button_gesture_enabled 0
 ```
+
+Power-button double press (bug 25b, read in AOSP 16 `GestureLauncherService`): Android 15 and older
+have only `camera_double_tap_power_gesture_disabled`. Android 16 adds `double_tap_power_button_gesture_enabled`
+(and `double_tap_power_button_gesture`: 0 camera, 1 wallet) for its "Double press power button: open
+camera or wallet" setting; where the build uses that multi-target mode (`config_doubleTapPowerGestureMode`
+= 2, AOSP 16's default, with the `launchWalletOptionOnPowerDoubleTap` flag on) the old key is **ignored**
+and the new one counts (unset = on) - so set both. Since 25b the lock is safe with the gesture on too (the cameras are off by policy
+while LOCKED, so SystemUI starts nothing); the keys only keep the camera from opening over Home. Check:
+`adb shell settings get secure double_tap_power_button_gesture_enabled` (`null` = the build's default).
+Five presses (Emergency SOS, `emergency_gesture_enabled`) stay on: since 25b the SOS app is pinned on the
+lock and the lock yields to it.
 
 Language and time zone (fix round 2026-10-06): adb provisioning doesn't set them - choose
 Android's language (e.g. Norsk bokmål) and time zone in Settings **before** `set-device-owner`/
@@ -267,7 +281,10 @@ adb shell dumpsys device_policy | grep -iE "keyguard|lockTask"
 ```
 
 Screen off/on: `adb shell input keyevent 26` (power). Each screen-off locks; the next
-screen-on must show the PIN lock straight away, never a frame of the app underneath.
+screen-on must show the PIN lock straight away, never a frame of the app underneath. Since design 25
+the lock comes up on its glance page (clock, date, the music tile, missed calls and messages):
+"Lås opp" (`<package>:id/lock_glance_unlock`) or a row leads to the keypad, which UI dumps don't show
+while the glance page covers it.
 
 1. **Lock appears**: in an allowed app, `input keyevent 26` twice -> PIN lock; the right PIN ->
    back in the same app with its state. Repeat 20x (kiosk on, then kiosk off: device page
@@ -301,8 +318,13 @@ screen-on must show the PIN lock straight away, never a frame of the app underne
    (onPasswordChanged), without a sync.
 9. **Crash guard** (debug only): three crashes of the lock screen within 2 minutes (`adb shell am
    crash $P` right after each screen-on) -> lock off, device page "crashed several times".
-10. Screenshots (320x568 dp and 411 dp, nb + en): `adb exec-out screencap -p > lock.png`;
-    `adb shell wm size 640x1136; adb shell wm density 320` for 320x568 dp, `wm size reset` after.
+10. Screenshots (320x568 dp and 411 dp, nb + en): the lock's window is `FLAG_SECURE` since design 25,
+    so `adb exec-out screencap` (and a screen recording) shows it black. Take them with the emulator
+    console instead - `adb emu screenrecord screenshot /path/on/the/emulator/host/lock.png` (the file is
+    written where the emulator runs; whether it captures secure windows is a device check of design
+    25) - and check the content with UI dumps (`adb exec-out uiautomator dump /dev/tty`: the rows are
+    accessibility-data-sensitive, which UiAutomation still reads). `adb shell wm size 640x1136; adb
+    shell wm density 320` for 320x568 dp, `wm size reset` after.
 
 ## 6d. Step 11: kiosk escapes - update fence, night update window, notifications
 
@@ -493,7 +515,54 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   paused, and one tap continues. The report the step-3 bridge will send is
   `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
 
-## 6g. Vibb music on Sonos (design 26a): the fake speaker
+## 6g. The launcher's security wave (`docs/review/security-review-2026-10-10.md`)
+
+Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - the wipe is real.
+
+1. **Remote wipe (M8)**, API 34 and API 36 images, launcher as device owner and enrolled, with `adb logcat -s
+   LocateCommands DevicePolicyManagerService` running: Locate page -> Wipe. Expect the emulator to reboot into the
+   factory reset (the AVD comes back at the setup wizard) and no "Failed to wipe device" in the log. If a wipe is
+   ever refused, the phone keeps running and the Locate page must say "Failed ...: wipe failed, the phone keeps its
+   data: <the exception>" - never "Done". Restore the snapshot after each run.
+   On API 34 also the update path (QA of the launcher wave, Low 4): install the build before this wave, make it device
+   owner and enroll, update it in place to this build *without a reboot*: the Locate page says "Remote wipe works after
+   the phone restarts once" (the report's `remote_wipe_ready` is false) and a Wipe comes back "Failed ...
+   SecurityException"; after one restart the warning is gone and the wipe works.
+   **Admin policies after an update** (the keyguard camera switch on an Android 16 emulator): with the build before
+   this fix as device owner, update in place to this one without a reboot. `adb logcat -s AppEnforcer` may still show
+   "Failed to set the keyguard camera feature" (on versions that check the admin's declared policy), and the device
+   page's "Play and kiosk" card says "Restart the phone once: ..." (the report's `admin_policies_pending`). Restart:
+   the log line is gone, the warning goes with the next report, and `adb shell dumpsys device_policy | grep -i
+   keyguard` shows the camera feature disabled. A fresh install with this build has nothing pending.
+2. **Command receipts (L12)**: Locate page -> Lock. The Recent commands row goes "Delivered ..., not confirmed yet" ->
+   "Done ... (locked ...)" within seconds; `adb logcat -s CommandAnswers MdmSyncWorker` shows no "Couldn't send". A
+   wipe (snapshot!) reads "Received ... - the phone is wiping now" before the emulator reboots. A lost answer: on the
+   server, `UPDATE device_commands SET received_at = NULL, acknowledged_at = NULL, result = NULL, delivered_at =
+   datetime('now', '-3 minutes') WHERE id = <the lock's id>`, then "Sync now" on the phone: the log says "delivered
+   again - confirmed, not run twice", the screen doesn't lock again, and the row reads "Received ...".
+3. **Catalog APK check (M10)**: a catalog app from a manual upload (Apps page), checked for the phone: it installs.
+   The server refuses a release with another key itself, so to see the phone's check, change the pin under the cached
+   release (no "Check now" - that would re-check the file): `UPDATE tracked_apps SET signer_sha256 = '<64 other hex>'`
+   for a new upload of the app that isn't installed yet. The phone downloads it, logs "refused before installing:
+   WRONG_SIGNER", doesn't install it, and the device page's row says "Refused - signed with another key than this
+   app's"; the same with `package_name = 'org.example.other'` says "another Android package". With
+   `signer_sha256 = NULL` the phone doesn't download it ("no package and signing key"). A key-rotated APK of a pinned
+   app (`apksigner rotate`, `--rotation-min-sdk-version 33`) installs on API 33+: the pin is the old key, in the lineage.
+   **No role prompt while the launcher is the phone app**: `adb shell dumpsys user | grep -i no_config_default_apps`
+   shows the restriction on, and Home shows no caller-ID or redirection prompt (Android refuses them under it).
+   Grant both roles with adb at provisioning (§4).
+4. **Call screening without the phone-app role (L7)**, calls managed, `CALL_SCREENING` granted (§4): `adb shell cmd
+   role get-role-holders android.app.role.CALL_SCREENING` lists the launcher. Device page -> Calls: no role warning.
+   Then `adb shell cmd role remove-role-holder android.app.role.CALL_SCREENING $P`: after the next sync the page says
+   "Call-screening role not active". Add it back, take the dialer role away (Calls unmanaged and managed again won't
+   do it - `adb shell cmd role add-role-holder android.app.role.DIALER com.android.dialer` while `Block USB debugging`
+   is off; the launcher takes the role back at its next apply, so call right away): `adb emu gsm call <unknown>` is
+   rejected without ringing, an allowed contact rings in the system dialer, and a report sent meanwhile makes the page
+   say "Incoming calls are still filtered". Without either role the page says "not filtered". Also call from a withheld
+   number in that state (`adb emu gsm call` with a restricted presentation, or a real SIM): if it is rejected, the
+   page's "withheld numbers may ring through" can become a firm statement.
+
+## 6h. Vibb music on Sonos (design 26a): the fake speaker
 
 The emulator's user-mode network carries no multicast (no SSDP) and every service on the host is `10.0.2.2` (the
 host's loopback), so the music app's speakers come from `scripts/fake-sonos.py` on the VM: N fake speakers on N
@@ -543,17 +612,20 @@ t+15 volume 60
   Stua -> Kjøkken -> phone (the fake's log shows one Stop per room left, a bookmark before it), the same tile, the
   grouped-away, taken-over and migration scripts, the sleep timer's 3-step ramp (three `SetVolume`, `Pause`, the volume
   back), the volume keys (`SetVolume` 0..100), an own-files entry ("Kan ikke spilles på Sonos", the phone stays) and a
-  failed start (the fake stopped, a stale row picked: "Kan ikke spilles på Sonos", back to the phone, paused). The
-  app binds every Sonos socket to the Wi-Fi network: use an image with the emulated Wi-Fi (`AndroidWifi`); without
-  it every room reads stale and nothing is tried. With step 3b: kill and restart the app while the fake plays (adopt:
-  only reads in the fake's log - no SetAVTransportURI, Play or Seek - the right item, Home's RESUME starts nothing
-  twice; a stopped or taken-over fake: the phone, paused), a Bluetooth play (`adb shell input keyevent MEDIA_PLAY`)
-  with a room and no queue (the speaker starts, Exo doesn't), a time rule's suspension with and without the service
-  (Stop, then `SetAVTransportURI x-rincon-queue:...`; `adb shell pm suspend` reaches `MY_PACKAGE_SUSPENDED` too), the
-  service going (the task swiped while paused: one Stop), the volume keys against the cap (set on the device page: no
-  `SetVolume` above it, the override lifts it at once; a `volume 90` script line is left alone), a call (`gsm call
-  <number>` in the emulator console: Pause, and Play after `gsm cancel` only when it played) and the locks (`adb shell
-  dumpsys power | grep vibb:sonos` while playing, gone 30 s after a pause). With step 3c (the parent's room scope):
+  failed start (the fake stopped, a stale row picked: "Kan ikke spilles på Sonos", back to the phone, paused). The app
+  talks to speakers only while a Wi-Fi network is up (a gate; no socket is bound to it, 26a §6.5): use an image with
+  the emulated Wi-Fi (`AndroidWifi`); without it every room reads stale and nothing is tried. With step 3b: kill and
+  restart the app while the fake plays (adopt: only reads in the fake's log - no SetAVTransportURI, Play or Seek - the
+  right item, Home's RESUME starts nothing twice; a stopped or taken-over fake: the phone, paused), a Bluetooth play
+  (`adb shell input keyevent MEDIA_PLAY`) with a room and no queue (the speaker starts, Exo doesn't), a time rule's
+  suspension with and without the service (Stop, then `SetAVTransportURI x-rincon-queue:...`; `adb shell pm suspend`
+  reaches `MY_PACKAGE_SUSPENDED` too), the service going (the task swiped while paused: one Stop), the volume keys
+  against the cap (set on the device page: no `SetVolume` above it, the override lifts it at once; a `volume 90`
+  script line is left alone; the override ending while the keys had the room above the cap: one `SetVolume` of the
+  cap), the start cap (the fake with `--volume 90`, a cap of 40: the fake's log shows `GetVolume`, `SetVolume 40`
+  before `SetAVTransportURI`; with `--group Stua+Kjøkken` both rooms get it), a call (`gsm call <number>` in the
+  emulator console: Pause, and Play after `gsm cancel` only when it played) and the locks (`adb shell dumpsys power |
+  grep vibb:sonos` while playing, gone 30 s after a pause). With step 3c (the parent's room scope):
   the device page's Music card shows "The phone hasn't seen any speakers yet" before the first report with rooms, then
   Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken unticked -> after the next sync the sheet lists only
   Stua, a session playing on Kjøkken got a bookmark and one Stop and came home paused ("Rommet er ikke lenger
@@ -562,7 +634,8 @@ t+15 volume 60
   session within a minute (the scope's topology read); with the
   sheet open while the sync lands, Kjøkken's row goes (the switch's own refusal - the message, nothing in the fake's
   log - is pinned in the JVM tests: the sheet no longer offers the room).
-- Real speakers stay a device check (design 26a, "Device checks"): SSDP, Wi-Fi binding, the NRK service, Doze.
+- Real speakers stay a device check (design 26a, "Device checks"): SSDP, discovery and control with the launcher's VPN
+  filter on (no `EPERM`), the NRK service, Doze.
 
 ## 6h. Vibb music with Storytel (design 26b): the fake Storytel
 

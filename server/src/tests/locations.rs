@@ -239,7 +239,7 @@ async fn a_delivered_command_is_not_shown_as_done() {
     assert!(row("wipe").contains("can"), "{}", row("wipe"));
     assert!(!row("wipe").contains("send it again"));
     assert!(
-        row("locate").contains("Done 2026-10-11 10:00:00 (ok)"),
+        row("locate").contains("Done 2026-10-11 10:00:00 UTC (ok)"),
         "{}",
         row("locate")
     );

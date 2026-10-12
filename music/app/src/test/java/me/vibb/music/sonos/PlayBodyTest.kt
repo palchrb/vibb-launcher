@@ -71,10 +71,19 @@ class PlayBodyTest {
     }
 
     @Test
-    fun `a public entry's item never from a private literal - a lan entry's may`() {
+    fun `a public entry's item never from a private literal - a lan entry's may, but not from the tailnet`() {
         for (host in listOf("192.168.1.5", "10.0.0.2", "100.100.1.1", "127.0.0.1", "[fd7a:115c:a1e0::1]", "[::1]")) {
             assertEquals(host, "private address", PlayBodies.speakerDropReason(entry(), item(url = "http://$host/ep.mp3")))
+        }
+        for (host in listOf("192.168.1.5", "10.0.0.2", "172.16.4.4", "[fd00::5]", "nas.tailnet.ts.net")) {
             assertTrue(host, PlayBodies.speakerPlayable(entry(lan = true), item(url = "http://$host/ep.mp3")))
+        }
+        // a speaker on the LAN never reaches the tailnet the phone (and the server) can (21b's lan covers both)
+        for (host in listOf("100.64.0.1", "100.100.1.1", "100.127.255.254", "[fd7a:115c:a1e0::1]", "[fd7a:115c:a1e0:ab12::7]")) {
+            assertEquals(host, "tailnet address", PlayBodies.speakerDropReason(entry(lan = true), item(url = "http://$host/ep.mp3")))
+        }
+        for (host in listOf("100.63.255.255", "100.128.0.1", "[fd7a:115c:a1e1::1]")) {
+            assertFalse(host, PlayBodies.tailnetLiteral(host))
         }
         assertTrue("a public literal", PlayBodies.speakerPlayable(entry(), item(url = "http://93.184.215.14/ep.mp3")))
         assertTrue("a name is never resolved here", PlayBodies.speakerPlayable(entry(), item(url = "http://nas.local/ep.mp3")))

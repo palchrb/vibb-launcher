@@ -18,11 +18,14 @@
     </div>
     {% endif %}
 
-    {% if !warnings.is_empty() %}
+    {% if !warnings.is_empty() || !hints.is_empty() %}
     <div class="card">
-        <h2>Check this phone</h2>
+        <h2>{% if warnings.is_empty() %}About this phone{% else %}Check this phone{% endif %}</h2>
         {% for warning in warnings %}
         <div class="error">{{ warning }}</div>
+        {% endfor %}
+        {% for hint in hints %}
+        <p class="subtitle">{{ hint }}</p>
         {% endfor %}
     </div>
     {% endif %}

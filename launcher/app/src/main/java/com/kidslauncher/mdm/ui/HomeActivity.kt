@@ -44,6 +44,7 @@ import com.kidslauncher.mdm.calls.MissedCallsRepo
 import com.kidslauncher.mdm.calls.MissedSummary
 import com.kidslauncher.mdm.calls.RuleContact
 import com.kidslauncher.mdm.calls.phoneBookView
+import com.kidslauncher.mdm.calls.rolePromptFor
 import com.kidslauncher.mdm.calls.shouldPromptForRole
 import com.kidslauncher.mdm.databinding.ActivityHomeBinding
 import com.kidslauncher.mdm.server.CachedPolicy
@@ -469,19 +470,18 @@ class HomeActivity : UIObjectActivity() {
     }
 
     /**
-     * The system's role prompts, at most once a day, for the parent to accept: the dialer role
-     * when the device-owner call couldn't take it (an error was recorded), and call redirection,
-     * which has no device-owner API (unless granted with adb at provisioning).
+     * The system's role prompts, at most once a day, for the parent to accept ([rolePromptFor]): the
+     * dialer role when the device-owner call couldn't take it (an error was recorded), call
+     * redirection and call screening (security review L7), which have no device-owner API (unless
+     * granted with adb at provisioning).
      */
     private fun promptForCallRoleIfNeeded() {
         val state = CallPolicyStore.state
         val now = System.currentTimeMillis()
-        val dialerHeld = CallSystem.dialerRoleHeld(this)
-        val role = when {
-            !dialerHeld && CallPrefs.lastError(this) != null -> RoleManager.ROLE_DIALER
-            dialerHeld && !CallSystem.redirectionRoleHeld(this) -> RoleManager.ROLE_CALL_REDIRECTION
-            else -> return
-        }
+        val roles = CallSystem.roles(this)
+        val role = rolePromptFor(
+            state, roles.dialerHeld, CallPrefs.lastError(this) != null, roles.redirectionHeld, roles.screeningHeld,
+        ) ?: return
         if (!shouldPromptForRole(state, roleHeld = false, now, CallPrefs.rolePromptLastMs(this))) return
         CallPrefs.rolePromptLastMs(this, now)
         try {

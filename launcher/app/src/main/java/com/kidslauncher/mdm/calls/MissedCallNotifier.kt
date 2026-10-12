@@ -49,11 +49,77 @@ object MissedCallNotifier {
     private val lock = Any()
     private var queued = false
     private var queuedMayPost = false
+    private var queuedMayClear = false
     private val waiting = mutableListOf<() -> Unit>()
 
-    /** What ours shows now (only this thread writes it); `null` after a cancel or a restart. */
+    /** What ours shows now (only this thread writes it); `null` after a cancel or a restart. The
+     * lock's glance page shows exactly this (design 25 §2.4): every change goes to [listeners]. */
     @Volatile
     private var lastPosted: MissedCallNotice? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            main.post { listeners.forEach { guarded(it) } }
+        }
+
+    /** What ours shows now: set on a post, cleared on every cancel, swipe or removal (design 25). */
+    val current: MissedCallNotice? get() = lastPosted
+
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val listeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+
+    /** [listener] runs on the main thread after every change of [current]. */
+    fun addListener(listener: () -> Unit) = listeners.add(listener)
+    fun removeListener(listener: () -> Unit) = listeners.remove(listener)
+
+    /** A glance fault must never crash the process (design 25 QA Medium 2): every listener is caught. */
+    private fun guarded(listener: () -> Unit) {
+        try {
+            listener()
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "A missed-call listener failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * A new process (design 25 §2.4): one re-learning recompute ([relearn]). From `Application.initRest`.
+     */
+    fun refreshAtStart(context: Context) = relearn(context)
+
+    /**
+     * A recompute that never posts anew and never clears (design 25): a notification still on screen
+     * is re-posted silently ([noticeStep]: shown, nothing remembered) and so known again as
+     * [current]. It counts against the call rules without a time rule's block ([noticeState]): a
+     * notification on screen during a no-calls rule was posted before it (code QA Low 3). Also when
+     * the time lock changes ([TimeRulesRuntime][com.kidslauncher.mdm.timerules.TimeRulesRuntime]) and
+     * when ours is posted again while [current] is unknown (a snooze that ended - [postedToShade]).
+     */
+    fun relearn(context: Context) = recompute(context, mayPost = false, mayClear = false)
+
+    /**
+     * Our notification was posted (our notification listener saw id [MISSED_CALL_NOTIFICATION_ID]):
+     * after anything queued, an unknown [current] is learned again - a snoozed notification coming
+     * back (code QA Low 3). Our own posts set [current] before this runs, so they cost nothing.
+     */
+    fun postedToShade(context: Context) {
+        val app = context.applicationContext
+        runThenDone(null) {
+            if (lastPosted == null) relearn(app)
+        }
+    }
+
+    /**
+     * Ours left the shade without our code knowing (QA Low 9: snoozed from the shade, cancelled by
+     * the system): our notification listener saw id [MISSED_CALL_NOTIFICATION_ID] removed. On this
+     * thread, after anything queued: [current] goes only when ours really isn't shown any more (a
+     * removal can trail our own re-post).
+     */
+    fun removedFromShade(context: Context) {
+        val app = context.applicationContext
+        runThenDone(null) {
+            if (!shown(app)) lastPosted = null
+        }
+    }
 
     /** Telecom's broadcast: [count] 0 = its count was cleared, anything else = look at the call log
      * again. [done] finishes the receiver's `goAsync` once the work for it has run. */
@@ -133,26 +199,30 @@ object MissedCallNotifier {
         }
     }
 
-    private fun recompute(context: Context, mayPost: Boolean, done: (() -> Unit)? = null) {
+    private fun recompute(context: Context, mayPost: Boolean, done: (() -> Unit)? = null, mayClear: Boolean = true) {
         val app = context.applicationContext
         synchronized(lock) {
             if (done != null) waiting += done
             queuedMayPost = queuedMayPost || mayPost
+            queuedMayClear = queuedMayClear || mayClear
             if (queued) return
             queued = true
         }
         executor.execute {
             val callbacks: List<() -> Unit>
             val post: Boolean
+            val clear: Boolean
             synchronized(lock) {
                 queued = false
                 post = queuedMayPost
                 queuedMayPost = false
+                clear = queuedMayClear
+                queuedMayClear = false
                 callbacks = waiting.toList()
                 waiting.clear()
             }
             try {
-                recomputeNow(app, post)
+                recomputeNow(app, post, clear)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Missed-call recompute failed", e)
             } finally {
@@ -161,11 +231,13 @@ object MissedCallNotifier {
         }
     }
 
-    private fun recomputeNow(context: Context, mayPost: Boolean) {
+    private fun recomputeNow(context: Context, mayPost: Boolean, mayClear: Boolean) {
         // The in-call service runs before the first unlock too: no call log, no CE prefs then.
         if (!CallPolicyStore.userUnlocked(context)) return
         CallPolicyStore.ensureLoaded(context)
-        val state = CallPolicyStore.effectiveState()
+        // A re-learning pass (mayClear false: every request of the run was one) counts against the
+        // rules without the time rule's block (code QA Low 3).
+        val state = noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear)
         val rules = (state as? CallPolicyState.Managed)?.rules
         // The bound first, then the log: every unread row up to it has been looked at.
         val unread = MissedCallsRepo.unreadMissed(context)
@@ -182,6 +254,7 @@ object MissedCallNotifier {
             notice = notice,
             mayMarkRead = rules?.callsEnabled == true,
             mayPost = mayPost,
+            mayClear = mayClear,
             shown = shown(context),
             lastPosted = lastPosted,
             unreadUpToId = unread.newestId,

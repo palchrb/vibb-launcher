@@ -44,6 +44,18 @@ class RecentsProviderCallersTest {
         assertPassed("lock/CameraLock.kt", "cameraLockTargets", "AppEnforcer.systemRecentsPackage(app)", 1)
     }
 
+    /** Bug 25b-H: the Emergency SOS package (also a defaulted parameter) - plan, new packages, the lock's helpers, the list. */
+    @Test
+    fun `enforcement passes the Emergency SOS package`() {
+        assertPassed("server/AppEnforcer.kt", "computeEnforcementPlan", "emergencySos = emergencySosPackage(context)", 1)
+        assertPassed("server/AppEnforcer.kt", "shouldSuspendNewPackage", "emergencySos = emergencySosPackage(context)", 2)
+        assertPassed("server/AppEnforcer.kt", "pinLockHelpers", "emergencySos = resolved[HelperKind.EMERGENCY_SOS]", 1)
+        // Raw text: the comment stripper trips over the documents helper's "*/*".
+        val raw = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/server/AppEnforcer.kt") }.first { it.exists() }.readText()
+        assertTrue(raw.contains("HelperKind.EMERGENCY_SOS to info(emergencySosPackage(context)),"))
+        assertPassed("apps/AppFilter.kt", "kidListable", "emergencySos", 1)
+    }
+
     @Test
     fun `the fence passes the provider - plan, release and orphan sweep`() {
         for (name in listOf("fencePlan", "runRelease", "orphanFenceTargets")) {

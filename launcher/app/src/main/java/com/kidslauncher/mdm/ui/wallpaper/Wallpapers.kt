@@ -92,6 +92,14 @@ fun effectiveWallpaper(allowed: List<Wallpaper>, pickedId: Long?, cachedHashes: 
 fun lockScreenFill(home: Wallpaper): WallpaperFill =
     if (home.fill is WallpaperFill.Image && !home.lockScreen) NAVY.fill else home.fill
 
+/**
+ * The PIN lock's background (design 25, "Lock background"): the parent's own lock wallpaper
+ * ([lockId]) when the phone may use it and can show it now, else Home's ([home]) - by default, and
+ * whenever the chosen one was unticked, deleted or isn't downloaded yet.
+ */
+fun lockWallpaper(allowed: List<Wallpaper>, lockId: Long?, home: Wallpaper, cachedHashes: Set<String>): Wallpaper =
+    allowed.firstOrNull { it.id == lockId && usable(it, cachedHashes) } ?: home
+
 /** The images this phone may cache: allowed images only - everything else is deleted. */
 fun wantedWallpaperHashes(allowed: List<Wallpaper>): Set<String> =
     allowed.mapNotNullTo(mutableSetOf()) { (it.fill as? WallpaperFill.Image)?.hash }

@@ -1,9 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Exactly the policies the launcher's DevicePolicyManager calls and callbacks need where Android
+     checks the admin's uses-policy rather than the device owner's permissions (AOSP without the
+     policy engine's flags) - AdminPoliciesTest pins this list against the sources and against
+     DECLARED_ADMIN_POLICIES. A policy added in an update may only count after the phone restarts
+     once: every status report says which aren't granted yet (admin_policies_pending). -->
 <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-policies>
+        <!-- DeviceAdminReceiver.onPasswordChanged: AOSP sends ACTION_PASSWORD_CHANGED only to
+             admins with limit-password (not watch-login, as this file used to say). An Android
+             screen lock removed switches handy's own lock on at once (QA 10 #15). -->
+        <limit-password />
+        <!-- DevicePolicyManager.lockNow (Find My Device's lock). -->
         <force-lock />
-        <!-- onPasswordChanged: an Android screen lock removed (step 10 migration) switches
-             handy's own lock on at once (QA 10 #15). -->
-        <watch-login />
+        <!-- wipeDevice (security review M8): AOSP 14 without the policy-engine flag accepts a
+             wipe only from an admin that declares it, device owner or not. -->
+        <wipe-data />
+        <!-- setKeyguardDisabledFeatures (the lock-screen camera, step 9 B2): refused without it
+             unless the keyguard coexistence flag is on - seen on an Android 16 emulator. -->
+        <disable-keyguard-features />
+        <!-- setCameraDisabled (bug 25b): while the PIN lock is up, and while the power-button
+             gesture's camera is suspended, the cameras are off by policy - SystemUI's camera
+             gesture then starts nothing (it crashed on a suspended camera before). -->
+        <disable-camera />
     </uses-policies>
 </device-admin>

@@ -104,8 +104,10 @@ The Pi keeps two axes apart (`renderer.py:1-13`): `output` (local|bt: where *our
   Never an ip in the UI.
 - `resolve(uid)` (`_speaker`, 246-264): the cached ip; `Soap.uidOf(ip)` (the `device_description` UDN) compared on
   the **play path only**; mismatch -> `UnknownUid`; unreachable -> let the poller classify.
-- **Network binding (QA M7):** SSDP and SOAP use clients bound to the Wi-Fi `Network` (`ConnectivityManager`); without
-  Wi-Fi the refresh is skipped and the sheet shows the cache as stale.
+- **Wi-Fi as a gate, never a binding (QA M7; corrected 2026-10-12, §6.5):** SSDP and SOAP run only while a Wi-Fi
+  `Network` is up (`ConnectivityManager` callback); without Wi-Fi the refresh is skipped and the sheet shows the cache
+  as stale. The sockets are **not** bound to that `Network`: the launcher's always-on VPN allows no bypass, so Android
+  refuses the bind (EPERM), and unbound sockets reach the LAN and the multicast group on the default route anyway.
 
 ### 2.2 SOAP (`Soap.kt`)
 - `call(ip, port, service, action, args: List<Pair<String,String>>): Map<String,String>`; POST
@@ -116,7 +118,8 @@ The Pi keeps two axes apart (`renderer.py:1-13`): `output` (local|bt: where *our
   JVM tests parse for real - `android.jar`'s `XmlPullParser` is a stub under `isReturnDefaultValues`) into the
   response's child elements; a `<s:Fault>` with
   `<errorCode>` -> `UpnpFault(code)`; transport errors -> `SpeakerUnreachable`. Timeouts: connect 2 s, read 5 s;
-  one OkHttp client with a connection pool (vibb's keep-alive session, 101-117), bound to Wi-Fi, and **no address
+  one OkHttp client with a connection pool (vibb's keep-alive session, 101-117), a fresh pool per Wi-Fi network, its
+  sockets bound to no network (§6.5), and **no address
   guard**: this is control traffic to the LAN (21b §2.7 is about audio origins; design 26 review #3).
 - Services: AVTransport (`/MediaRenderer/AVTransport/Control`, `urn:schemas-upnp-org:service:AVTransport:1`):
   `SetAVTransportURI(InstanceID=0, CurrentURI, CurrentURIMetaData)`, `Play(0, Speed=1)`, `Pause(0)`, `Stop(0)`,
@@ -252,7 +255,7 @@ all existing tests green.
   | armed, ours, PLAYING (or `optTr` PLAYING) | READY | true |
   | armed, ours, PAUSED (or `optTr` PAUSED) | READY | false |
   | TRANSITIONING, a pending verb's settle window, the first 3 failed polls | BUFFERING | last value held |
-  | grouped away / taken over / lost session | READY, at the last **ours** position | false |
+  | grouped away / taken over / lost session (fresh) | READY, **no position, no duration** (someone else's stream) | false |
   | UNREACHABLE past 3 polls | READY, last position held | false |
   | disarmed, or the queue ended | IDLE / ENDED | false |
 
@@ -283,8 +286,12 @@ all existing tests green.
   `scanning: Boolean` (from `RoomDirectory.state`, which also publishes the rows when a background round ends); commands
   `ROOMS_REFRESH` (the sheet opening) and `ROOMS_RESCAN` (the row).
 - `publish()` reads through `renderer`: `playing` on Sonos = fresh and PLAYING and reachable and ours (2605-2611);
-  **position and duration are shown only while ours** (2615-2621, `sonos_grouped.py` check 2); a stale snapshot shows
-  "not playing" but **keeps** the last ours position and duration (never zeroed, 2612-2621).
+  **position and duration are shown only while ours** (2615-2621, `sonos_grouped.py` check 2): a fresh snapshot of a
+  stream that isn't ours (grouped away, taken over, lost) shows position 0 with no duration (`hidesPosition`; vibb's
+  `position: None` - a member's RelTime is the coordinator's; vibb still showed the snapshot's `dur_s`, the parent's,
+  which the phone hides too); a stale snapshot shows "not playing" but **keeps** the last ours position and duration
+  (never zeroed, 2612-2621). (Corrected 2026-10-12: §3.2's table said "at the last ours position" for the not-ours
+  rows and steps 3a-4 shipped that; vibb and this paragraph hide it.)
 - `setNowPlaying.playing` over the bridge (`reportNowPlaying`, 845-868) = the same `playing` predicate: grouped away,
   taken over or stale report `false`, which is what screen time (listening = playing and in front) and the deferred
   install should see. `PlayerHub.position` and `PlayerHub.pause` lambdas point at the current renderer. `saveTick`
@@ -301,8 +308,9 @@ all existing tests green.
 ### 4.2 Starting an entry on the speaker (`sonos_start_target`, 1511-1566; `_sonos_play_entry`, 1324-1417)
 - The plan is the same `coverTapPlan`/`pickPlan` the local path uses (`M/logic/Queue.kt`), then the **speaker-playable
   filter** (1535-1538): keep items with an http(s) `url` whose host is not a private literal when the entry is
-  `publicOnly` (QA M7: the speaker fetches by itself, so the address guard moves here; `lan` feeds on 100.64/10 are
-  unreachable from a speaker anyway), excluding `hls` items unless the entry is an NRK series (then `nrk_program`);
+  `publicOnly` (QA M7: the speaker fetches by itself, so the address guard moves here) and, for a `lan` entry, whose
+  host is not a tailnet literal (100.64.0.0/10, fd7a:115c:a1e0::/48: the phone and the server reach the tailnet, a
+  speaker on the LAN never does - "tailnet address"; correction 2026-10-12, before it the item went out and failed), excluding `hls` items unless the entry is an NRK series (then `nrk_program`);
   own files (`fileId`), withdrawn items (`url == null`) drop out with a log line. Nothing left ->
   `Message.CANT_PLAY_ON_SONOS` and the renderer stays where it was (`nothing-remote-playable`).
 - Index and position: an explicit item -> its index and its saved position; else the bookmark (`rotateToBookmark`, as
@@ -427,8 +435,23 @@ existed because bursts computed from a stale base did nothing, daemon.py:1001-10
 config today** (`RestrictionKeys`, `M/bridge/BridgeConfig.kt:33-41`): the launcher publishes it as a new restriction
 `volume_cap_pct` (0 = none), re-pushed at every `AppEnforcer.apply` edge, read live like `mobile_data`. That is a
 launcher change and a contract change: both `bridge_contract.json` copies, `MusicPlanTest`/`BridgeTest`, one commit
-(QA H6). The speaker already above the cap is **not** pulled down (vibb never fights external changes, 995-998); only
-our own sets are clamped.
+(QA H6). **At a session's start** (a room picked, a start, a restart - `PlayWhy.START`; corrected 2026-10-12 after the
+main session's review) the speaker's volume is read once (`GetVolume`) and, when above the cap in force, set to the cap
+**before Play, inside the hush** (`SonosTransport.capVolume`): our stream never starts louder than the parent allows,
+whatever the last listener left. **A group row caps every room in it** (qa-26a-corrections M2): RenderingControl is
+one speaker's volume, so each member of the row (`roomMembers`, the cache's ips) gets its own `GetVolume`/`SetVolume`
+in the same hush, best effort within 1.5 s each - an unknown or silent member never holds the play up. No cap ->
+nothing is read. **During the session** a louder volume set from the Sonos app or the speaker's buttons is **not**
+pulled down (vibb never fights external changes, 995-998): a step, an advance, a poll and the adopt at start (zero
+transport commands) never touch it; only our own sets are clamped, the sleep ramp's leftover volume too. **A cap that
+goes down during the session** (the override or the restrictions pause ending, a parent's change; the
+`ACTION_APPLICATION_RESTRICTIONS_CHANGED` broadcast -> `PlayerHub.capChanged` -> `SonosController.capChanged`) pulls
+**our own** last set (`volOpt`) down to it once - 70 from the keys under a lifted cap becomes 40 - as the phone's own
+`STREAM_MUSIC` follows the cap at once (`L/music/VolumeCap.kt`); a volume we didn't set (`volOpt` null) or one at or
+below the cap is left alone (qa-26a-corrections M1). `volOpt` is always what we last set on the speaker: the start's
+cap, a ramp's leftover put back after it, or a key press sent while the start was in flight, whichever went out last
+(L1). Best effort: a speaker that won't answer `GetVolume` still plays (logged). The keys and the slider still reach
+the coordinator only (vibb's model, a group's own volume is the Sonos app's).
 
 ### 5.4 No server change for playback
 NRK series items carry their program id as the item key (§2.5), so the listing contract stays. The server sees no
@@ -456,6 +479,13 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
 - An allowed room that the household has grouped with a forbidden one leaves the sheet until it is ungrouped (from
   the Sonos app): playing it alone would break the household's group, playing the group would sound in the forbidden
   room.
+- **A member the phone can't name counts as forbidden** (correction 2026-10-12): a group naming a uid with no player
+  row in the cache gives no group row (§2.1), and its known rooms show alone - but each row's members are the whole
+  group as the topology has it, unknown uids included, so under a limited scope such a room is neither listed nor
+  playable (the scope lists only uids the phone reported). With every room allowed nothing changes.
+- **Every room means every room on any Wi-Fi**: with the default, at a friend's house the phone lists and can play on
+  that household's Sonos speakers too (the cache merges, the sheet lists what answers). The PWA's Sonos card says so
+  next to "All rooms"; a parent who doesn't want it restricts the phone to the home's rooms.
 - The tap-vs-sync race (qa-26a-step3c-code L8): a pick checked against the old library just before the sync applies
   a narrower one starts on the speaker, and the sync's leave stops it moments later - a second or two of sound, then
   a bookmarked Stop and the phone, paused. Bounded by the switch lock (the leave waits for the pick, never the other
@@ -469,12 +499,18 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    (`L/music/MusicSessions.kt:179-190`, design 21 step 4). On Sonos a pause from the session stays a `Pause` (vibb).
    `MY_PACKAGE_SUSPENDED` (`SuspendedReceiver`, `M/MusicApp.kt:64-68`) today posts `PlayerHub.pause`, which is null
    without the service. It becomes: `goAsync()`; if `renderer.json` says sonos, one live classify of the stored uid
-   (1.5 s budget, standalone when the service is gone, through the actor when it is up); ours (normUri against the
-   stored uri) and PLAYING/PAUSED -> bookmark, `stop`, then `SetAVTransportURI("x-rincon-queue:<uid>#0", "")` so the
-   speaker's own Play button plays the (empty) queue, not the episode from 0:00 (after a Stop the speaker keeps its
-   AVTransportURI, `sonosd.py:894-896`); disarm; `renderer.json` -> local. `playAllowed(suspended)` gates every Sonos
-   play path as it gates the local ones (`GuardsTest`). **Limit, documented:** the household's own Sonos apps and
-   grouping from them are out of reach; a kid with the parent's Sonos app is a household matter, not the phone's.
+   (1.5 s budget, standalone when the service is gone, through the actor when it is up; the standalone look is
+   **retried** while it got no answer - at most three looks, the later ones with everything left until 6.5 s into the
+   receiver's 9 s, so a slow speaker still gets its Stop - and reads **no group and no volume**, whose time is the
+   Stop's; correction 2026-10-12. The Stop and the park then get what is left until 8.5 s, at least 0.5 s, as one
+   budget for both SOAPs (qa-26a-corrections L2), so the receiver finishes inside its 9 s even after a late answer; a
+   Stop that fails or runs out is NO_ANSWER - the room stays recorded and the next look parks it); ours (normUri
+   against the stored uri) and PLAYING/PAUSED -> bookmark, `stop`, then `SetAVTransportURI("x-rincon-queue:<uid>#0",
+   "")` so the speaker's own Play button plays the (empty) queue, not the episode from 0:00 (after a Stop the speaker
+   keeps its AVTransportURI, `sonosd.py:894-896`); disarm; `renderer.json` -> local. `playAllowed(suspended)` gates
+   every Sonos play path as it gates the local ones (`GuardsTest`). **Limit, documented:** the household's own Sonos
+   apps and grouping from them are out of reach; a kid with the parent's Sonos app is a household matter, not the
+   phone's.
 2. **Process death while Sonos plays** leaves the speaker playing until the next start adopts (§4.7) or the next
    suspension edge stops it (1 above, which works without the service). `onDestroy` (`onTaskRemoved` too) does the
    full stop path: live refresh, bookmark, ours-gate, `stop` (vibb `_sonos_on_term`, 5340-5364). A crash does not.
@@ -491,12 +527,30 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    bookmark within 15 s of the truth, `vibb:sonos` held in `dumpsys power`, battery per hour (whether Wi-Fi stays up
    with the screen off is what this check finds out; the Wi-Fi lock is not counted on). If Doze still defers them, the launcher grants the music app
    the battery-optimisation exemption design 19b gives itself.
-4. **Network.** Clients bound to Wi-Fi (§2.1); Wi-Fi gone -> the speaker reads UNREACHABLE (backoff, disarm after
+4. **Network.** Only on Wi-Fi, never bound to it (§2.1, 5 below); Wi-Fi gone -> the speaker reads UNREACHABLE (backoff, disarm after
    600 s); the kid's phone away from home keeps the cache (the "cabin case", `sonosd.py:1050-1053`): the sheet lists
    home rooms marked stale and starts no scan without Wi-Fi.
-5. **Permissions:** `CHANGE_WIFI_MULTICAST_STATE` (the `MulticastLock`), `ACCESS_WIFI_STATE`, `WAKE_LOCK` (present).
-   The launcher's `KidVpnService` routes only `192.0.2.2/32`, so SSDP and LAN SOAP bypass the tun (design 26 review
-   #3); DNS is not involved (ips only). Still a [device check] with the VPN up. Android's coming local-network
+5. **Permissions and the VPN:** `CHANGE_WIFI_MULTICAST_STATE` (the `MulticastLock`), `ACCESS_WIFI_STATE`, `WAKE_LOCK`
+   (present). The launcher's `KidVpnService` (`L/server/KidVpnService.kt`) is the device's always-on VPN
+   (`setAlwaysOnVpnPackage(admin, pkg, lockdown = false)`, `L/server/AppEnforcer.kt`), covers every app (no allowed or
+   disallowed list), calls no `allowBypass()`, and routes only `192.0.2.2/32` (its fake DNS server). Two consequences
+   (corrected 2026-10-12 after the main session's review; the step 1-4 code bound every socket to the Wi-Fi `Network`):
+   - **No socket may be bound to the Wi-Fi `Network`.** For an app inside a VPN that doesn't allow bypass, Android
+     refuses `Network.bindSocket`/`bindProcessToNetwork` to any other network - netd answers EPERM
+     (`VpnService.Builder.allowBypass()`: "By default, all traffic from apps is forwarded through the VPN interface and
+     it is not possible for apps to side-step the VPN"); only the VPN app itself could (`protect()`). The music app is
+     not the VPN app, so a bound OkHttp socket factory failed every SOAP call and a bound SSDP socket every round
+     while the filter is on. `SourceScanTest` bans the binding APIs in `src/main`.
+   - **Unbound sockets reach the LAN and the multicast group.** The VPN's table holds only 192.0.2.2/32, and without
+     lockdown a lookup that finds no route there falls through to the default network's table (the launcher's own
+     design: "everything else flows over the real network untouched", `AppEnforcer.applyVpnRestrictions`). So SSDP to
+     239.255.255.250:1900 and SOAP to 192.168.x.x leave on Wi-Fi, and the `MulticastLock` lets the replies in
+     (design 26 review #3). DNS is not involved (ips only).
+   Wi-Fi stays a **gate**: no Wi-Fi network up -> nothing is tried, the speaker reads unreachable and the sheet stale.
+   Limit: if Wi-Fi is up but not the default network (a Wi-Fi without internet while mobile data is up, which Android
+   then prefers), the LAN traffic follows the default route and the speakers read unreachable; a home Wi-Fi with
+   internet is the case this is for. [device check] **VPN filter on: discovery and control still work** (the sheet
+   fills by SSDP, a play, a pause, the volume keys; logcat shows no `EPERM`). Android's coming local-network
    permission (`NEARBY_WIFI_DEVICES` on a later target SDK) is one the device owner can grant; noted for later.
 6. **Kiosk.** Nothing opens: no Sonos app, no links (`SourceScanTest`). The NRK service precondition is the
    household's, set once from a parent's Sonos app, not from the phone. The speaker resolves hosts outside the
@@ -548,7 +602,7 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
   `sonos_migrate.py:62-115`, `storytel_sonos.py` non-Storytel parts 178-203, 230-243, 255-299, 372-381, 409-432,
   446-470): a start posts one body, never touches Exo; fresh PLAYING -> playing, position ≈ rel + age, duration; stale
   -> not playing, position kept, UNREACHABLE; foreign -> TAKEN_OVER, position hidden; grouped away -> GROUPED_AWAY not
-  shadowed; switch back bookmarks before exactly one stop; a paused speaker comes home paused; same tile PLAYING
+  shadowed, position and duration hidden; switch back bookmarks before exactly one stop; a paused speaker comes home paused; same tile PLAYING
   no-op, PAUSED one resume, untrusted/stale/explicit -> start to our uid; pause freezes the extrapolated position; the
   bm hold keeps 3120 over 39 and releases after 120 s; the regression guard's table (3120->5 kept, 3120->2400 written,
   10800->9000 written, seeked 5 written, 200->5 written, a deliberate restart written); duration carry only for the
@@ -557,13 +611,16 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
   renderer, no-ops on same uid / other uid / stale / absent, a failed adopt changes nothing; a tick that throws never
   kills the poller; a headset event never touches the renderer; the state table of §3.2 (one failed poll stays
   BUFFERING, never IDLE); `availableCommands`; volume adjust from our own base and clamped to the cap, an external
-  higher volume left alone; the startup gate (RESUME before `rendererReady` waits; resumption on Sonos starts the
-  speaker, not Exo); suspension -> bookmark, stop, queue uri, disarm, also with no service.
+  higher volume left alone; the start cap (before Play, inside the hush, every room of a group, once per session, no
+  cap no read), a lowered cap pulling our own louder set down once, `volOpt` = what we last set; the startup gate (RESUME before `rendererReady` waits; resumption on Sonos starts the
+  speaker, not Exo); suspension -> bookmark, stop, queue uri, disarm, also with no service; the bedtime looks retried
+  in their budget without the aux reads, the Stop and park within what is left (`SonosLifecycleTest`).
 - `PlayBodyTest`: art only when http, NRK series -> `nrk_program` with `programId = item.key` and the slug from the
-  target, non-series `hls` filtered, a private-literal host of a `publicOnly` entry filtered, listing duration rides
-  along.
+  target, non-series `hls` filtered, a private-literal host of a `publicOnly` entry filtered, a tailnet-literal host of
+  a `lan` entry filtered, listing duration rides along.
 - Existing: `GuardsTest` pins updated (OUTPUT-to-Sonos in `PLAYS`, the receiver's path), `ReportTest` unchanged,
-  `FitTest` + the long labels, `SourceScanTest` (no `Uri.parse("http`, no screen wake lock), `ContractFilesTest`
+  `FitTest` + the long labels, `SourceScanTest` (no `Uri.parse("http`, no screen wake lock, no socket bound to a `Network`
+  in any built source set, §6.5), `ContractFilesTest`
   unchanged. Launcher: `MusicPlanTest`/`BridgeTest` for the new restriction, `MusicMediaPlanTest` for a remote session
   (position with update time, speed 1).
 
@@ -577,7 +634,7 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    `t+30 STOPPED ""` for a migration, `t+10 x-rincon:RINCON_B` for grouped-away, `t+5 drop` for unreachable), logs every
    SOAP call; no SSDP (the emulator's user-mode network carries no multicast and every host fake is 10.0.2.2), so the
    cache is seeded through the debug feed (`debug-feed/sonos.json` with ip, **port**, uid, name; `src/debug` only;
-   `checkReleaseHasNoDebugFeed`). `docs/testing/emulator.md` §6g.
+   `checkReleaseHasNoDebugFeed`). `docs/testing/emulator.md` §6h.
 2. **Renderer axis, local only**: `Renderer`, `LocalRenderer`, `saveNow`, `MediaSession.setPlayer`, the `Output` key
    widening, `rendererReady` (trivially complete), the `GuardsTest` pins; every existing music test green (135 today)
    plus the new ones; no behaviour change (emulator smoke: §6f).
@@ -699,10 +756,13 @@ NOTICE for the fake (§6.2, §4.6, §8, L7). The two user questions are §10 ite
   nothing; the lock's media view and Home card went away.
 - Screen off 1 h in Doze while Sonos plays: poll timestamps in logcat every 15 s, the bookmark after a forced stop
   within 15 s of the truth, battery per hour; the sleep timer's fade and the volume restored after it.
-- Volume keys: ±3 per press, the slider, the cap holds, a louder speaker set from the Sonos app is left alone.
+- Volume keys: ±3 per press, the slider, the cap holds; a speaker left louder than the cap starts at the cap (no loud
+  first second), every room of a group row too; the override ending while the keys had the room above the cap pulls
+  it down; a louder volume set from the Sonos app during the session is left alone.
 - An incoming phone call and an Element X voice/video call during Sonos playback and during local playback: paused
   at the ring, played again after only when it was playing; the kid's own pause during the call stays.
-- VPN filter on: discovery and control still work.
+- VPN filter on (the launcher's always-on `KidVpnService`): discovery and control still work - the sheet fills by
+  SSDP, a play, a pause, the volume keys; no `EPERM` in logcat (§6.5: no socket is bound to the Wi-Fi `Network`).
 - Room scope (step 3c, §5.5): the device card before the phone has seen a speaker ("The phone hasn't seen any speakers
   yet") and after (the real rooms under "All rooms"); "All rooms" off and one room unticked -> after the next sync the
   sheet lacks it, a session playing there was bookmarked, stopped and came home paused ("Rommet er ikke lenger
@@ -731,7 +791,7 @@ Android build** (the sandbox can't reach dl.google.com, so no Android SDK or Goo
 - **Fixtures and the fake**: 26 canned replies in `music/app/src/test/resources/sonos/` (§7's list, plus GetVolume,
   GetMute, an empty answer, `/status/accounts` and an NRK position); `scripts/fake-sonos.py` builds every answer from
   those files (`--selftest`, `--print-seed`, `--script` with grouped-away, takeover, migration, drop/back, stall and
-  volume events); the debug feed merges `debug-feed/sonos.json` into the cache; `docs/testing/emulator.md` §6g.
+  volume events); the debug feed merges `debug-feed/sonos.json` into the cache; `docs/testing/emulator.md` §6h.
 - **Tests**: 98 new JVM tests in 9 classes - `SonosFixturesTest` 11 (every fixture, the client on the wire against a
   loopback socket server), `DidlTest` 6 (expected strings printed by vibb's own `didl()`), `SonosUrisTest` 7 (values
   printed by vibb's own functions), `SsdpTest` 4, `TopologyTest` 12 (`sonos_groups.py` 1-4), `SpeakerCacheTest` 8
@@ -750,7 +810,7 @@ Android build** (the sandbox can't reach dl.google.com, so no Android SDK or Goo
   members they call (not the real SDK). A harness-only test drove the Kotlin client against `scripts/fake-sonos.py`
   (seed, topology refresh, a hushed play with a settled seek, polls, grouped away, the migration probe, adopt, pause,
   stop): green. `python3 -I scripts/fake-sonos.py --selftest`: OK.
-- **Device checks**: none new (the list above stands); the emulator's are in §6g, from step 3a on.
+- **Device checks**: none new (the list above stands); the emulator's are in §6h, from step 3a on.
 
 Choices made while building (each against the spec text, with its reason):
 1. **The port comes from the topology's `Location` too**, not only from the debug feed (§2.1 says only the feed sets
@@ -928,7 +988,7 @@ controller, `cd1fedf` the renderer, `5512865` the wiring and the UI), with the r
 `SonosActorTest`, +1 `PlayBodyTest`, +2 `GuardsTest`, +1 `FitTest`), lint 0 errors and the same 41 warnings;
 `python3 -I scripts/fake-sonos.py --selftest` OK. `SourceScanTest`, `ReportTest`, `BridgeTest` and
 `ContractFilesTest` are untouched and green; no launcher, AIDL, contract or server change. **Not run on an emulator
-or a phone** (no KVM here): §6g's 3a checks and §6f's smoke (the local sleep fade moved) are owed, listed below.
+or a phone** (no KVM here): §6h's 3a checks and §6f's smoke (the local sleep fade moved) are owed, listed below.
 
 - **The controller** (`M/sonos/SonosController.kt`, pure; `SonosBookmarks.kt`): main-thread state over an injected
   actor (`SonosWork`), clock and bookmark store (`SonosStore`). `load`/`playTile`/`playPause` (§4.2, §4.5: the body
@@ -1010,7 +1070,7 @@ Choices made while building (each against the spec text, with its reason):
 14. The SimpleBasePlayer is never `release()`d (`COMMAND_RELEASE` isn't offered); `SonosRenderer.release()` stops the
     poller and the actor and drops the posted callbacks.
 
-Owed checks: emulator §6g (now listing 3a's: the sheet, switch phone -> Stua -> Kjøkken -> phone with one Stop per
+Owed checks: emulator §6h (now listing 3a's: the sheet, switch phone -> Stua -> Kjøkken -> phone with one Stop per
 room left, same tile, grouped-away, taken-over and migration scripts, the ramp, the volume keys, an own-files
 entry, a failed start; the image needs the emulated Wi-Fi) and §6f (the local sleep fade, now in `LocalRenderer`);
 the device checks above stand.
@@ -1179,7 +1239,7 @@ Choices made while building (each against the spec text, with its reason):
     disarm; the FGS-timeout check below confirms it.
 
 Owed checks:
-- Emulator (§6g, now listing 3b's): adopt after a kill while the fake plays (reads only, the right item, Home's RESUME
+- Emulator (§6h, now listing 3b's): adopt after a kill while the fake plays (reads only, the right item, Home's RESUME
   starts nothing twice), a stopped or taken-over fake at start (the phone, paused), `MEDIA_PLAY` on a room with no
   queue, suspension with and without the service (`stop` then `seturi x-rincon-queue:`), the swipe while paused (one
   Stop), the volume keys against the cap and the override, `gsm call` / `gsm cancel`, the locks in `dumpsys power`.
@@ -1243,7 +1303,8 @@ shared files, root CLAUDE.md's rule) and this docs commit, with the real builds 
   existing `GuardsTest` pins follow the new `comeHome` caller, the `SonosRenderer` call and the belt), lint 0 errors
   and the same 40 warnings. `python3 -I scripts/fake-sonos.py --selftest` OK.
 - **Migration `0065_music_sonos_rooms.sql`**: numbered above both this branch (0062) and main (0064) - **renumber it
-  after the final rebase** if main has moved on (root rule).
+  after the final rebase** if main has moved on (root rule). (Renumbered `0071_music_sonos_rooms.sql` at the merge of
+  2026-10-12: main's 0065 is `0065_command_receipts.sql`.)
 
 What is in it:
 - **The phone reports the rooms it knows**: `music_state.sonos_rooms` = `[{uid, name}]` from the speaker cache's
@@ -1294,7 +1355,7 @@ Choices made while building (each against the spec text, with its reason):
    template, the migration and the tests: the form needs a route.
 
 Owed checks:
-- Emulator (§6g, now listing 3c's): the card without and with reported rooms, the scope narrowed while Kjøkken plays
+- Emulator (§6h, now listing 3c's): the card without and with reported rooms, the scope narrowed while Kjøkken plays
   (the bookmark and one Stop in the fake's log, home paused), `--group Kjøkken+Stua` with Kjøkken unticked (no group
   row).
 - Device (the list above): a restricted room refused, a group with a disallowed coordinator hidden, the card with and
@@ -1343,8 +1404,9 @@ Docs and the merge, no code change. Built on branch `music-1b-sonos`:
   design 25's spec. No conflicts; the six files both sides touched (root `CLAUDE.md`, `launcher/CLAUDE.md`,
   `server/CLAUDE.md`, design 26, `server/src/main.rs`'s routes, `device_detail.html`) merged by themselves in separate
   places. Main's migrations end at `0063_window_relock.sql` and `0064_unseen_boots.sql`, so
-  **`0065_music_sonos_rooms.sql` keeps its number**. Main changed none of the shared contract files
-  (`music_library.json`, `music_state.json`, the bridge AIDL and `bridge_contract.json`) and nothing in `music/`.
+  **`0065_music_sonos_rooms.sql` keeps its number** (until the next merge: it is `0071` since 2026-10-12). Main
+  changed none of the shared contract files (`music_library.json`, `music_state.json`, the bridge AIDL and
+  `bridge_contract.json`) and nothing in `music/`.
   After the merge: server `cargo test` **540 tests, 0 failures**, `cargo fmt --check` clean, `cargo clippy
   --all-targets` 12 warnings, none in this branch's or the merge's code (local Rust 1.97); launcher `assembleDebug
   testDebugUnitTest` (the tsnet stub) **900, 0 failures**; music `assembleDebug assembleRelease testDebugUnitTest
@@ -1359,19 +1421,265 @@ Docs and the merge, no code change. Built on branch `music-1b-sonos`:
   `daemon.py`'s controller, and what was written here); design 21's "Sonos is 1b" note points here; design 26's
   status; PLAN.md.
 
+## Correction round after the main session's review (2026-10-12)
+
+The main session reviewed the branch at `9ecdad8` (step 4) and asked for points 1-3, 7 and 8 (4-6 were its own).
+Built on `music-1b-sonos`, one commit per point (`c489ad4`, `8c43b0c`, `b4c04c6`, `0187c5d` + `c9f8881`, `6f5aca6`,
+the PWA line `122a53c`), then this section.
+
+1. **No socket bound to the Wi-Fi `Network` (the likely blocker) - the premise holds.** Checked, not assumed:
+   `L/server/KidVpnService.kt` builds its tun with `addAddress(192.0.2.1, 32)`, `addDnsServer(192.0.2.2)` and
+   `addRoute(192.0.2.2, 32)` only, `setBlocking(true)`, no `allowBypass()`, no `addAllowedApplication` /
+   `addDisallowedApplication` (so every app of the user is inside it); `AppEnforcer.applyVpnRestrictions` makes it the
+   always-on VPN with lockdown **off** (`setAlwaysOnVpnPackage(admin, pkg, false)`) whenever the filter is on.
+   Android: `VpnService.Builder.allowBypass()` documents that without it "it is not possible for apps to side-step the
+   VPN" and that only with it may apps use `bindProcessToNetwork`/the underlying network; netd enforces it per uid, so
+   `Network.bindSocket` (what `Network.getSocketFactory()`'s sockets call) fails with EPERM for an app inside a
+   non-bypassable VPN - only the VPN app itself can (`protect()`), and the music app is not the VPN app. So with the
+   filter on, every SOAP call (OkHttp on `network.socketFactory`) and every SSDP round (`wifi.bindSocket`) failed: the
+   sheet would only ever show the debug-seeded or stale cache and no play could go out - consistent with nothing
+   having run on a real phone yet. And unbound sockets work: the tun's table has only 192.0.2.2/32 and, without
+   lockdown, a lookup that finds no route there falls through to the default network's table (the launcher's
+   documented "everything else flows over the real network untouched", reproduced live there; design 26 review #3).
+   Done: `Soap.client()` takes no socket factory, `SsdpScanner.scan()` binds nothing, `SonosHome` keeps Wi-Fi as a
+   gate only (the callback; a fresh connection pool per Wi-Fi network) and the multicast lock stays; `SourceScanTest`
+   bans `bindSocket(`, `socketFactory(`, `.socketFactory`, `bindProcessToNetwork`, `setProcessDefaultNetwork` and
+   `.openConnection(` in `src/main` (no test pinned the binds before). §2.1, §2.2, §6.4, §6.5 rewritten; one limit
+   written down there (Wi-Fi up but not the default network - no internet on it while mobile data is up - sends LAN
+   traffic the default way, so the speakers read unreachable); the device check "VPN filter on: discovery and control
+   still work" stays and now names `EPERM`.
+2. **The volume cap at a session's start.** `SonosTransport.capVolume`: with a cap in force (1..99), a start
+   (`PlayWhy.START`: a pick, a start, a restart) reads `GetVolume` and, when the speaker is louder, sets the cap - after
+   the hush's mute, before `SetAVTransportURI`/`Play`; the controller takes it as `volOpt` (the next key press builds on
+   it) and the snapshot shows it. No cap: no read. Steps, advances, polls and the adopt never touch a louder volume
+   (vibb's rule within a session); the sleep ramp's leftover volume is put back no louder than the cap. A speaker that
+   won't answer `GetVolume` still plays (logged). §5.3, `music/CLAUDE.md`. Tests (`SonosControllerTest`): the order,
+   inside the hush, no cap / at the cap, once per session, a failing `GetVolume`, the ramp's leftover; one
+   `SonosLifecycleTest` case now sets the louder volume during the session (before, it set it before the start and
+   expected it left alone - exactly what the review asked to change).
+3. **The bedtime stop on the standalone path.** `suspensionStop` looks again while it got no answer: at most three
+   looks, the first 1.5 s, each later one with everything left of `lookMs` (`SonosSuspension.standalone`: until 6.5 s
+   after the path started, at least 1.5 s, so the Stop and the park keep ~2.5 s of the receiver's 9 s), 250 ms between;
+   a definite answer is never looked at again. The looks read no group and no volume (`classify(io, aux = false)`,
+   `adoptLive(..., aux = false)`; the aux sub-cadence is left alone). The service-up path (`handOff(park = true)`)
+   already sends its Stop from the last poll when the live read fails, so it is unchanged. Tests
+   (`SonosLifecycleTest`): a slow first look retried and the speaker stopped and parked (the budgets 1500 then 4250),
+   the looks' calls exactly `getposition, gettransport, stop, seturi`, no answer in the whole budget (two looks, nothing
+   sent, the room stays recorded), three refused looks at most, a foreign first answer looked at once; `GuardsTest`'s
+   pin follows the loop.
+7. **Tests.**
+   - **same_tile 3b/4/5/6/7**: one test each, each from vibb's `steady()` (a start, past the 8 s hold, a poll: fresh,
+     ours, nothing settling), then one thing broken. Deleting `s.fresh(now)` in `playTile` fails "same tile 5"
+     (checked by running the mutation); deleting `!settling` fails 4 (the optimistic resume hold). 3b's "url kind
+     without its queue mapping" has no reachable twin here - the controller's index and the speaker's item move
+     together - so it is ported as the shown item not being the speaker's (a skip while paused): the press is a full
+     start of the shown item, never a resume of the old one.
+   - **migrate 1**: the hint carries a uri different from the session's (vibb's signed CDN url); adopt goes out with the
+     hint's uri, the bookmark follows it, and `volOpt` (set to 40 before) is reset.
+   - **grouped 2**: §3.2's table said "READY, at the last ours position" for grouped away / taken over / lost, §3.3
+     and §7 said the position is shown only while ours; the code did the table. vibb hides it (`status`:
+     `position = ... if ours else None`, `sonos_grouped.py` check 2). Now a fresh, reachable snapshot of a stream that
+     isn't ours shows position 0 with no duration (`hidesPosition`; vibb kept the snapshot's `dur_s`, which for a member
+     is the coordinator's - hidden too, a small deviation in vibb's own direction); a stale one keeps the last ours
+     values (UNREACHABLE, as before); ours again, the position is back. The table, §3.3 and §7 now agree.
+   - **hold_scan 4**: the cached-but-silent case asserts `scanning` true (the view and the state) before the round ends.
+   - **`scripts/fake-sonos.py`**: GetPositionInfo answers from the fixture of its situation
+     (`position_{playing_ours,paused,transitioning,stopped_retained,stopped_empty,x_rincon}.xml`), GetTransportInfo from
+     `transport_<state>.xml`, a fault from its `fault_<code>.xml` (701's with the code when none exists, e.g. 401), the
+     topology in `zgs_wrapped.xml`'s shape (its wrapper, each member with the fixture member's attributes). 20 of the
+     26 fixtures now answer (the other six - foreign, NOT_IMPLEMENTED, NRK, `zgs_bare`, the two SSDP texts - are
+     JVM-only cases). The selftest checks every template and compares the stopped-empty, stopped and paused transport,
+     x-rincon and fault replies with their fixtures; `python3 -I scripts/fake-sonos.py --selftest` OK.
+8. **Lows.**
+   - **Unknown group members**: `SpeakerCache.rooms` kept only named members in a row's `members`, and a group with
+     fewer than two named rooms gave its named room a solo row with itself alone - so under a limited scope a room
+     grouped with a speaker the phone can't name passed. Every row's `members` is now the whole group (unknown uids
+     included; an unknown uid is never in the parent's list, which holds reported rooms only). `RoomScopeTest`,
+     `TopologyTest` 4. §5.5.
+   - **Tailnet audio**: a `lan` entry's item on 100.64.0.0/10 or fd7a:115c:a1e0::/48 drops out of the speaker-playable
+     filter ("tailnet address"; a name is never resolved and passes - the speaker's own DNS fails it). `PlayBodyTest`.
+     §4.2.
+   - **The "every room" default away from home**: one sentence in the PWA's Sonos card
+     (`server/templates/device_detail.html`, both the "hasn't seen any speakers" text and the "All rooms" switch): with
+     every room allowed, at a friend's house the phone lists and can play on their speakers too. That is the only place
+     parents read about room scoping (no `docs/` page covers it), so the line went there although the round's rules
+     said "server untouched": a template text change only (`cargo test` 540 passed, 0 failures, local Rust 1.97).
+     §5.5 says it too.
+
+Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **378 tests, 0
+failures**, lint clean (362 at `9ecdad8`); `python3 -I scripts/fake-sonos.py --selftest` OK; launcher not run (no file
+its tests read changed); server `cargo test` 540, 0 failures (only the template changed). Contract files and the AIDL
+untouched.
+
+Disagreements and limits: none with the review's points. Two notes: (a) 3b of `sonos_same_tile.py` is ported by
+meaning, not by state (above); (b) the start cap changes 26a's earlier "a speaker already above the cap is not pulled
+down" to "not during a session", which is what the review asked - the user's 2026-10-11 answer ("the keys control the
+speaker, with the parent's cap") reads either way, so the stricter one wins for a kid's phone. Device checks added or
+sharpened: the VPN line (no `EPERM`), the start cap ("a speaker left louder than the cap starts at the cap").
+
+### Fix round after QA's code review (qa-26a-corrections-code, 2026-10-12)
+
+`docs/design/qa-26a-corrections-code.md`: 0 High, 3 Medium, 5 Low, every one fixed (its "not worth fixing" list
+skipped, as the main session decided); all five points and both notes above were accepted.
+
+- **M1, a cap lowered during a session.** The restrictions broadcast (`MusicApp.applyConfig`, on the main thread) calls
+  `PlayerHub.capChanged`, which the service points at the room renderer's `SonosController.capChanged`: our own last
+  set (`volOpt`) above the cap in force -> one `SetVolume(cap)` through the actor; `volOpt` null (a volume we didn't
+  set) or at/below the cap, no session, or no cap -> nothing. §5.3. Tests: keys to 70 under a lifted cap, cap 40 ->
+  one `volume 40`, not twice, nothing when the cap lifts; the Sonos app's 80, ours at the cap, a stopped session ->
+  nothing.
+- **M2, a group row's other rooms.** The start cap goes to every member of the row (`SonosController(members =
+  roomMembers(...))`, `SonosTransport.play(body, cap, members)`): each member's own `GetVolume`/`SetVolume`, after the
+  coordinator's, inside the same hush, within `MEMBER_CAP_BUDGET_MS` (1.5 s) each; an unknown uid or a silent member is
+  logged and skipped. Steps cap no one. §5.3, the device check. Test: four speakers in one shared call log - the
+  coordinator and Stua set to 40, Bad at 30 only read, a silent and an unknown member skipped, all between `mute true`
+  and `seturi`; a step afterwards reads no volume.
+- **M3, the committed bytecode.** `scripts/__pycache__/fake-sonos.cpython-313.pyc` untracked, `__pycache__/` in the root
+  `.gitignore` (`36227df`).
+- **L1, `volOpt` is what we last set.** A play's job reports the last volume it set (`PlayResult.volume`: the ramp's
+  leftover when it was put back after the cap, `restored`), and a play's result takes it only when no key press of
+  ours went out after the play was sent (`volSets`); a leftover that failed to go back is kept for the next play (it
+  was cleared before). Tests: base 30 / cap 50 / speaker 80 -> `volume 50, seturi, play, volume 30`, `volOpt` 30, the
+  next "down" 27; the slider at 20 while the start's cap is in flight -> `volOpt` 20.
+- **L2, the bedtime Stop's time.** `suspensionStop(stopMs)`: the park (Stop + the queue uri) runs on one speaker budget
+  of what is left until `stopMs` (`SonosSuspension`: 8.5 s after the path started), at least 0.5 s; a Stop that fails
+  or runs out is NO_ANSWER (the room stays recorded, the next look parks it) instead of an exception out of the
+  receiver. §6.1. Tests: the park's budget after a slow first look (6250 of 8000), the 0.5 s floor after a late
+  answer, a failing Stop -> NO_ANSWER with the bookmark written first.
+- **L3, stale text.** `Ssdp.kt` (the header, `DatagramSsdpIo`), `Topology.kt`'s `location` doc, `emulator.md` §6h (Wi-Fi
+  is a gate, the device check names the VPN and `EPERM`); §7 lists the start cap, the lowered cap, `volOpt`, the
+  bedtime looks and park budget, the tailnet filter and the bind ban; §6h gains the start-cap check (the fake's new
+  `--volume 90`: `GetVolume`, `SetVolume 40` before `SetAVTransportURI`, both rooms with `--group`) and the lowered-cap
+  one.
+- **L4.** `tailnetLiteral` and its KDoc moved above `privateLiteral`'s, which is back on its function.
+- **L5, the bind ban.** `SourceScanTest` scans every built source set (`src/main`, `src/debug`; asserted present) and
+  also bans the bare `bindSocket` (a `Network::bindSocket` reference), `SocketFactory()` and `etSocketFactory`
+  (`getSocketFactory()`).
+
+Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **385 tests, 0
+failures**, lint clean (378 before this round); `python3 -I -B scripts/fake-sonos.py --selftest` OK. Launcher and
+server untouched in this round.
+
+## Merge of main (2026-10-12)
+
+`origin/main` at `444ca58` merged into `music-1b-sonos` (`0ba355b`, one merge commit, no rebase), then three commits:
+the migration (`0118da2`), the emulator section (`f58703a`), the adaptation (`9f70186`), and this section.
+
+**What came in:** the launcher security wave and its QA (command receipts, the remote wipe, the catalog APK check, call
+screening; the Gradle verification metadata and wrapper pins for `music/` with `BuildChainTest`, the wrapper validation
+in `launcher.yml`/`music.yml`); design 25 (the lock's glance page, `MusicLockPanel`, `lock/VisibleSender`) and 25f
+(the lock wallpaper), with migrations `0065_command_receipts.sql` to `0069_lock_wallpaper.sql`; design 27's spec
+(per-episode art and the Now Playing carousel - not built; the main session reserves migration 0070 for it - its spec
+still says "numbered after the final rebase" - and it plans Room version 2); and the
+music app's instant switch (`logic/Switch.kt`, `ui/SwitchViewTest`, `NowView.cover/itemTitle/ref`, `PrefetchCovers`,
+`coverShown`) and the always-light system bar icons. Main didn't touch `PlaybackService`, the AIDL,
+`bridge_contract.json` or the shared snapshots.
+
+**Conflicts and how they were resolved:**
+- Root `CLAUDE.md`, the CI paragraph: both lists kept (main's `launcher.yml` triggers on `music/gradle/` and
+  `music.yml`; this branch's `music.yml` trigger on `scripts/fake-sonos.py` and its selftest).
+- `music/CLAUDE.md`, "Build and test": main's verification-metadata sentence, then the fake-speaker paragraph.
+- `docs/testing/emulator.md`: both sides added a §6g. Main's (the security wave's device checks, cited from its review
+  docs and `launcher/CLAUDE.md`) keeps §6g; the fake-speaker section is **§6h**, and every reference on this side follows
+  (root and music `CLAUDE.md`, `music.yml`, `fake-sonos.py`, the debug feed's KDoc, this design (ten), design 26). QA
+  review records keep the numbers they were written against.
+- `music/.../ui/MusicRoot.kt`: `PlayerScreen`'s call takes main's `position` and this branch's `hub.rendererState`.
+- Merged by themselves and read through: `PlayerScreen.kt` (main's `now.cover`/`itemTitle`/`PrefetchCovers` beside the
+  room line), `MusicViewModel`, `MainActivity`, the launcher's `MusicSessions.kt` (main's `VisibleSender`), `music.yml`
+  (main's wrapper validation beside the selftest step), `launcher.yml`, `server/src/main.rs`, `device_detail.html`,
+  `server/CLAUDE.md`, PLAN.md, designs 21 and 26. The branch adds no Gradle dependency, so main's verification metadata
+  holds as it is.
+
+**The migration is `0071_music_sonos_rooms.sql`** (was 0065, which main's `0065_command_receipts.sql` now has; 0070 is
+reserved for design 27 by the main session - its spec still says "numbered after the final rebase"). Its content is unchanged but the header; `server/CLAUDE.md`, `music.rs`, PLAN.md and this design follow.
+
+**The adaptation (main's instant switch on the renderer axis).** Main shows a tap's item until the player is there, for
+at most 3 s (`SWITCH_HOLD_MS`). On a room the identity moves as fast as on the phone - `SonosController.load` and
+`stepTo` flip the index before any SOAP, and `publish` follows at once - but the command itself can wait: behind
+`rendererReady` (the adopt look at start, `ADOPT_MS` 4 s), a room switch's hand-off under the `switching` lock
+(`HANDOFF_MS` 15 s), or `lookAgainBeforePlaying`. The hold then ran out into the old item. So:
+- `PlayerHub.State.waiting`: a `Commands.MOVES` command (`PLAY_ENTRY`, `PLAY_ITEM`, `RESTORE`) is accepted and hasn't
+  run - counted in `onCustomCommand` before the coroutine, released in `invokeOnCompletion` (a cancel too).
+  `requestStands(..., waiting)` / `holdEndsAt` hold up to `SWITCH_WAIT_MAX_MS` (25 s since the fix round below) while it waits; once it ran, the
+  3 s hold again (a silent refusal shows the player within it; a refusal with a message clears the switch at once).
+- `playSwitch`/`skipSwitch(..., onRoom)` (the hub's output is a room): the room's queue holds only what a speaker can
+  play, a start it can't play moves to the next it can at 0 (`PlayBodies.speakerPlan`'s rule), nothing playable is no
+  switch (the service says "Kan ikke spilles på Sonos"); a step on a playing room starts at 0 (`stepTo`, open question
+  3a (a)), paused where the phone would. The skip target is counted in the hub's queue, which on a room is the
+  service's speaker-playable `Active.items` - the same count `skipNext`/`skipPrevious` use.
+- **The numbering seam**: `playerNumber(snap, now)` in `UiModel.kt` (after `listOrder`) is the player's "N av M" for
+  the player's own view and a tap's switch alike; unshuffled it counts the play order (items a speaker can't play
+  included), shuffled the queue. The Storytel branch's `playerNumber`/`countedOrder` has the same name, signature and
+  place and replaces it at that merge.
+- Tests: `SwitchTest` +1 (the waiting hold and its bound), `SwitchViewTest` +3 (a cover tap and a pick on a room,
+  nothing playable, next in the room's queue with the number agreeing, from 0 playing / the place paused),
+  `SonosControllerTest` +1 (a step on a playing room flips the index before the speaker answers and starts at 0 - the
+  switch counts on it), `GuardsTest` +1 (the waiting count's pins). `music/CLAUDE.md` has the rule.
+
+**Design 27 (not on main yet; for its implementer):** `SKIP_TO` and `THEN_SKIP_TO` are not on main. When they come:
+the swipe's skip goes through `goTo(a, index, forward)` -> `renderer.seekTo(index, startPos)` (a room: `stepTo`, from 0
+while playing), never ExoPlayer directly; `SKIP_TO` joins `Commands.MOVES` if it is a custom command (and `PLAYS` only
+if it can start playing), and `THEN_SKIP_TO` runs under `switching` like `THEN_NEXT`; the carousel's "pending skip"
+(1.5 s) should read `PlayerHub.State.waiting` too. Per-item art on a room: `SonosRenderer`'s `MediaItemData` takes the
+same `artworkUri` as `mediaItem()`, so `setNowPlaying`'s art follows without a Sonos change. Main's AIDL has no `wantArt`
+yet and 1b appended nothing (`git diff 0c9d6ca..dadea05 -- '*.aidl'` is empty), so 27 appends after the current last
+method; the copies are byte-identical (`BridgeTest`, `MusicPlanTest`). Room version: 1b doesn't change it.
+
+**Tests after the merge** (local Rust 1.97, JDK 17): server `cargo test` **594 passed, 0 failures** (540 before),
+`cargo fmt --check` clean, `cargo clippy --all-targets` the same 12 warnings, none in this branch's code; music
+`assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **410 tests, 0 failures** (385
+before; 404 with the merge alone, +6 for the adaptation), lint 0 errors and the same 40 warnings;
+`python3 -I -B scripts/fake-sonos.py --selftest` OK; launcher `assembleDebug testDebugUnitTest` (the tsnet stub) **1012 tests, 0 failures** (900 at step 4) - its
+`assembleRelease` now refuses to build without `app/libs/tsnet.aar` (main's security review L13,
+`checkReleaseHasTsnet`), which this sandbox can't build; CI builds the aar first. The AIDL copies, `bridge_contract.json` and the shared snapshots are byte-identical
+(`ContractFilesTest`, `BridgeTest`, `MusicPlanTest` green).
+
+### Fix round after QA's code review (qa-26a-merge-code, 2026-10-12)
+
+`docs/design/qa-26a-merge-code.md`: the merge is correct and can ship; 0 High, 1 Medium, 3 Low, all addressed.
+
+- **M1, the 0070 gap.** The number stays **0071**: the main session reserves 0070 for design 27, so this branch
+  doesn't take it. The wording is now accurate (design 27's spec claims no number itself - it still says "numbered
+  after the final rebase"; the reservation is the main session's) in the migration's header and above. The hazard QA
+  found is written down in the Release section and `server/CLAUDE.md`'s migrations paragraph:
+  `startup::pre_migration_backup` compares only `MAX(version)`, so a 0070 reaching a server that has already run 0071
+  is applied out of order by sqlx with no pre-migration backup. Design 27's server ships before or together with this
+  one, or the backup check compares the set of applied versions - a main-session change, only documented here.
+- **L1, the screens' wiring pinned.** `GuardsTest` ("the screens hold a tap's switch on the service's waiting and build
+  it for the room that plays"): `requestStands(..., hub.waiting)`, `hub.waiting` among the `LaunchedEffect` keys and in
+  `holdEndsAt`, `onRoom = hub.output.kind == OutputKind.SONOS`, and `onRoom` at all three switch call sites (exactly
+  three).
+- **L2, the bound.** `SWITCH_WAIT_MAX_MS` is **25 s**: at a fresh service start a tap waits for the destroyed service's
+  hand-off (`SonosTail.MAX_MS`, 16 s), the adopt's look (`ADOPT_MS`, 4 s) and the load; 20 s could end first. The KDoc
+  says so; `SwitchTest` checks it against `SonosTail.MAX_MS` + 4 s + 4 s.
+- **L3.** PLAN.md: phase 1 is released as `music-v0.0.2` (`music-v0.0.1` before it), its Jelly Star checks still to
+  come.
+
+Tests: music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **411 tests, 0 failures** (410
+before: +1 `GuardsTest`), lint 0 errors and the same 40 warnings;
+the launcher's tests read none of the changed files, not re-run; the server's change is a migration comment and docs
+(`cargo test` re-run: 594 passed, 0 failures; one earlier run had 1 failure that
+didn't reproduce in two re-runs - a time-dependent test, not this change).
+
 ## Release
 
 `music-v0.2.0-rc.1` is the user's tag, **on the merge commit on `main`** (`music.yml` refuses a tag whose commit isn't
 on `main`; root `CLAUDE.md`): versionName `0.2.0-rc.1`, versionCode 1999, a prerelease, never "latest". Design 26's
-review (#5) planned `music-v0.1.0` on `main` before 1b so phase 1's device checks test a fixed build; GitHub has no
-`music-v*` tag yet (2026-10-12), so if phase 1 is to keep a release of its own, tag it on `main` **before** merging this
-branch.
+review (#5) planned a phase 1 release on `main` before 1b so its device checks test a fixed build; phase 1 now has
+`music-v0.0.1` and `music-v0.0.2` (both on `22a6265`, main's design 25 merge; checked 2026-10-12 at the merge of
+main), and versionCode 1999 is above both.
 
 Deploy order:
-1. **Server.** 3c's server part (migration 0065, the card, the library's `sonos_rooms`, the report's rooms, the event)
-   rides in **0.24.0**: `server/Cargo.toml` says 0.24.0 on both sides and `server-v0.24.0` isn't tagged yet. If it is
-   tagged before this merge, bump `server/Cargo.toml` (and `Cargo.lock`) to 0.25.0 on `main` for the next one. Not
-   required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an
+1. **Server.** 3c's server part (migration **0071**, renumbered at the merge of main; the card, the library's
+   `sonos_rooms`, the report's rooms, the event) rides in **0.24.0**: `server/Cargo.toml` says 0.24.0 on `main` and
+   here (checked at the merge of main, 2026-10-12: the highest server tag is still `server-v0.19.0`), together with
+   main's 0065-0069. If `server-v0.24.0` is tagged before this branch lands, bump `server/Cargo.toml` (and `Cargo.lock`)
+   to 0.25.0 on `main` for the next one. **The 0070 hazard** (qa-26a-merge-code M1): 0070 is reserved for design 27
+   and still empty. If it lands on a server that has already run 0071, sqlx applies it out of order and
+   `startup::pre_migration_backup` - which compares only `MAX(version)` with the highest compiled one - takes no
+   pre-migration backup (design 22 §6's "no migration without its backup" broken, silently). So design 27's server
+   ships before or together with this one, or the backup check compares the set of applied versions (a main-session
+   change; documented here and in `server/CLAUDE.md`, not made). Not required before the RC: the music app reads the library's `sonos_rooms` leniently (absent = every room), so on an
    older server every room is allowed and the parent just has no card. Required before the parent can limit rooms,
    and the music catalog row (0.21.0+) before any **stable** `music-v*` (design 21 QA #11).
 2. **Launcher** (a `launcher-v*` on `main` after the merge), before or with the music RC: the `volume_cap_pct`
@@ -1382,7 +1690,7 @@ Deploy order:
 3. **Music app** `music-v0.2.0-rc.1`, installed through the catalog (the `release` environment's deployment rule must
    allow `music-v*` tags, design 21 §5). The stable `music-v0.2.0` after the emulator and device checks below.
 
-Owed before the stable tag: the emulator checks (`docs/testing/emulator.md` §6g with 3a's, 3b's and 3c's lists, and
+Owed before the stable tag: the emulator checks (`docs/testing/emulator.md` §6h with 3a's, 3b's and 3c's lists, and
 §6f's smoke for the local sleep fade) and the device checks (the "Device checks" section, plus 3b's Doze hour, the
 FGS timeout, bedtime with and without the app, calls, adopt after a kill, and 3c's fix round's group and regroup
 checks). Open questions still standing: 3a (a) steps on a room start at 0 (vibb) while the phone's resume an item's

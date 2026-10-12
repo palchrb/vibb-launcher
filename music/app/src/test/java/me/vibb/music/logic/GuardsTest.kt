@@ -43,6 +43,32 @@ class GuardsTest {
     }
 
     @Test
+    fun `a tap's command is waiting from its acceptance to its end, whatever ends it - the screens' switch holds on it`() {
+        // The instant switch (logic/Switch.kt) holds longer while PlayerHub.State.waiting: a room switch's
+        // hand-off or the look at a room delays the play by seconds (the merge of main, 2026-10-12).
+        val command = service.substringAfter("override fun onCustomCommand(").substringBefore("return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))")
+        assertTrue(command.contains("val moves = customCommand.customAction in Commands.MOVES"))
+        assertTrue("counted before the coroutine", command.indexOf("if (moves) waitingMoves(+1)") < command.indexOf("scope.launch {"))
+        assertTrue("and after it, also when cancelled", command.trimEnd().endsWith("}.invokeOnCompletion { if (moves) waitingMoves(-1) }"))
+        assertTrue(service.substringAfter("private fun publish() {").substringBefore("\n    }\n").contains("waiting = waitingMoves.get() > 0,"))
+        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE)"))
+    }
+
+    @Test
+    fun `the screens hold a tap's switch on the service's waiting and build it for the room that plays`() {
+        // qa-26a-merge-code L1: without these the 3 s hold runs out into the old item on a room again.
+        val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
+        assertTrue(root.contains("requestStands(it.request, current?.ref, SystemClock.elapsedRealtime(), hub.waiting)"))
+        assertTrue(root.contains("LaunchedEffect(switching, held != null, hub.waiting) {"))
+        assertTrue(root.contains("delay(holdEndsAt(switching.request, hub.waiting) - SystemClock.elapsedRealtime())"))
+        assertTrue(root.contains("val onRoom = hub.output.kind == OutputKind.SONOS"))
+        assertTrue(root.contains("vm.switching = playSwitch(s, id, null, current, SystemClock.elapsedRealtime(), onRoom)"))
+        assertTrue(root.contains("vm.switching = playSwitch(s, id, key, current, SystemClock.elapsedRealtime(), onRoom)"))
+        assertTrue(root.contains("vm.switching = skipSwitch(s, n, forward, position, SystemClock.elapsedRealtime(), onRoom)"))
+        assertEquals("every switch is built for the renderer", 3, Regex("""(playSwitch|skipSwitch)\(""").findAll(root).count())
+    }
+
+    @Test
     fun `the renderer changes in one place, which hands the service's events to the new one only`() {
         // qa-26a-step2-code M1: the old renderer is saved and paused before it is detached.
         val attach = service.substringAfter("private fun attach(next: Renderer) {").substringBefore("\n    }\n")
@@ -118,12 +144,13 @@ class GuardsTest {
         assertTrue(stop.indexOf("rendererReady.await()") < stop.indexOf("switching.withLock {"))
         assertTrue(stop.contains("withTimeoutOrNull(HANDOFF_MS) { sonos.park() } ?: run {"))
         assertTrue(stop.indexOf("sonos.park()") < stop.indexOf("comeHome(sonos, play = false)"))
-        // the standalone path: one classify, the bookmark from it, Stop and the park, renderer.json -> the phone
+        // the standalone path: the classify (retried in its budget, no aux), the bookmark from it, Stop and the park,
+        // renderer.json -> the phone
         val lifecycle = code("src/main/java/me/vibb/music/sonos/SonosLifecycle.kt")
         val seq = lifecycle.substringAfter("suspend fun suspensionStop(").substringBefore("\n}\n")
-        assertTrue(seq.contains("transport.adoptLive(uid, kindOfUri(uri), uri, budgetMs) { null }"))
-        assertTrue(seq.contains("val verdict = roomVerdict(choice, live, ofEntry)"))
-        assertTrue(seq.indexOf("bookmark(live!!.copy(ours = true))") < seq.indexOf("transport.park(uid)"))
+        assertTrue(seq.contains("live = transport.adoptLive(uid, kindOfUri(uri), uri, budget, aux = false) { null }"))
+        assertTrue(seq.contains("verdict = roomVerdict(choice, live, ofEntry)"))
+        assertTrue(seq.indexOf("bookmark(live!!.copy(ours = true))") < seq.indexOf("transport.park(uid, left)"))
         val standalone = code("src/main/java/me/vibb/music/sonos/SonosSuspension.kt")
         assertTrue("a tail first (L2)", standalone.indexOf("SonosTail.join(TAIL_WAIT_MS)") < standalone.indexOf("val home = SonosHome(app)"))
         assertTrue("the phone only on a definite answer (M1)", standalone.contains("if (verdict != RoomVerdict.NO_ANSWER) home.write(RendererChoice.local(choice))"))

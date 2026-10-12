@@ -92,14 +92,16 @@ fun PlayerScreen(
                 rendererState?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }
             }
         }
+        // Next and previous show their cover on the first frame (an own file's art differs per track).
+        PrefetchCovers(listOf(now.index + 1, now.index - 1).mapNotNull { i -> now.queue.getOrNull(Math.floorMod(i, now.queue.size))?.artHash }.distinct())
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Cover(
-                now.item.artHash ?: now.entry.cover, now.category, 26.dp, 104.dp,
+                now.cover, now.category, 26.dp, 104.dp,
                 Modifier.sizeIn(maxWidth = 224.dp, maxHeight = 224.dp).aspectRatio(1f).shadow(12.dp, RoundedCornerShape(26.dp)),
             )
         }
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Line(now.item.title, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
+            Line(now.itemTitle, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
             val numberText = when (kindOf(now.entry)) {
                 Kind.OWN -> R.string.track_of
                 Kind.AUDIOBOOK -> R.string.part_of

@@ -125,6 +125,16 @@ async fn policy_and_command_result_get_in_while_every_slot_is_busy() {
         )
         .await;
     assert_ne!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    // A wipe's receipt (security review L12) too.
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/command-receipt",
+            Some(&token),
+            Some(serde_json::json!({"command_id": 1})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
     // Everything else waits.
     let res = app
         .request(Method::GET, "/api/devices/apps", Some(&token), None)

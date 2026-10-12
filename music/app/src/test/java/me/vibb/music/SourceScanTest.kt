@@ -86,6 +86,29 @@ class SourceScanTest {
         }
     }
 
+    /**
+     * Design 26a §6.5: the launcher's KidVpnService is the always-on VPN without `allowBypass()`, so
+     * Android refuses to bind an app's socket to any other network (EPERM) - a Sonos socket bound to
+     * the Wi-Fi `Network` would fail every call while the filter is on. Wi-Fi is a gate only; the LAN
+     * and the SSDP multicast leave on the default route, which the VPN (192.0.2.2/32 only) never takes.
+     */
+    @Test
+    fun `no socket is bound to a Network - the always-on VPN refuses it`() {
+        val banned = listOf(
+            "bindSocket", "socketFactory(", ".socketFactory", "SocketFactory()", "etSocketFactory", "bindProcessToNetwork",
+            "setProcessDefaultNetwork", ".openConnection(",
+        )
+        // every source set the app is built from (src/debug too: a debug-only helper ships in debug builds)
+        val sets = moduleFile("src").listFiles()!!.filter { it.isDirectory && it.name != "test" && !it.name.startsWith("androidTest") }
+        assertTrue(sets.any { it.name == "debug" })
+        val files = sets.flatMap { set -> set.walk().filter { it.isFile && it.extension in setOf("kt", "java") }.toList() }
+        assertTrue(files.size > 30)
+        for (f in files) {
+            val text = code(f)
+            for (token in banned) if (text.contains(token)) fail("${f.name} references $token")
+        }
+    }
+
     // The debug feed (like the launcher's DebugHookAbsentTest); the built APKs are checked too
     // (checkReleaseHasNoDebugFeed, a dependency of assembleRelease).
 
