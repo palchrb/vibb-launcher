@@ -964,6 +964,33 @@ needed to manage the phone, delete on a schedule, never store notification or me
   and its throttled event; `/healthz` past every guard; shutdown ends streams on both listeners), `net::tests`,
   `gate::tests`, `streams::tests`.
 
+## The PWA's times, connection state and Attention (design 31 step 2, `docs/design/31-pwa-redesign.md` §3.8, §3.10)
+
+- **Local times** (`src/display_time.rs`, `chrono-tz` with the IANA data compiled in): `Zone::load` reads
+  `provisioning_settings.time_zone` (Phone Setup); an empty or unknown zone (`valid_time_zone` checks only the
+  characters, so "Europe/Olso" is stored) falls back to UTC and every clock time then says "UTC". `relative`
+  ("just now", "3 min ago", "2 h ago", "yesterday 21:40", "12 Oct") uses the server's clock only, never the
+  phone's; `exact` is for `title=`. `parse_db_utc` reads `datetime('now')` text and RFC 3339. The Settings hub's
+  "today" and backup time use it too. `parent_pin::when_text` remains for the cards the later steps move.
+- **Connection** (`streams::connection_state`, pure; `devices::connection_of` feeds it): last contact = the newest
+  of `limits::last_access`, `devices.last_seen_at` and an open stream's `since`. Online = a stream open and contact
+  <= `ONLINE_WINDOW_MINUTES` (60); Away = no stream and <= `AWAY_WINDOW_MINUTES` (45); else Offline; plus
+  Disconnected (enrolled, no token), Not seen yet, Not set up. The two windows come from the launcher's backstop
+  (`SyncSchedule.kt` 30/15 min, inexact alarms up to 1.75 x): a launcher change to the backstop must revisit them.
+  After a restart a phone shows Away until its stream reconnects (no special case).
+- **Lock badge and screen time** (`src/time_state.rs`, from the last `time_state`): the end ("until 14:30",
+  "until 07:00 tomorrow") only when the phone's `day` and the day before give the same end for the rule, counted
+  from the report's local time; a report from another day than the server's local today shows no end and no bar
+  ("at last report (yesterday 21:40)"); Offline always and Away after 15 min add "at last report".
+- **Attention** (`src/attention.rs`): `collect(state, device)` -> rows with a level (alarm/action), a typed title
+  (<= 8 words; `calls::CallProblem` types the call report's warnings) and a target (the device page's card
+  anchors until each card has its sub-page). The device page shows them in an "Attention" group at the top; the
+  Devices list shows their count as the badge - same function, so they agree (`tests::devices_list`).
+- **Devices list** (`devices_list.html`, `devices::list_row`): avatar + dot, name, "Online · seen 3 min ago" (or
+  the lock part while a rule locks it), the screen-time bar, the badge, Add Phone. The sign-in warnings are orange
+  rows at the top. Tests: `display_time::tests`, `streams::tests`, `time_state::tests`, `attention::tests`,
+  `src/tests/devices_list.rs`.
+
 ## Current status (2026-08-08, `v0.13.0`)
 
 Feature-complete relative to the original build plan and confirmed working end-to-end on both physical test phones (Pixel 4a 5G GrapheneOS, Moto G Play), not just built-and-reviewed: enrollment (now defaulting a new device to kiosk mode on, see below), allowlist, kiosk mode + full lock-task feature set, schedule (with working clear), WiFi/Bluetooth restrictions, offline override PIN, Settings PIN-gate, pause-all-restrictions kill-switch, mandatory 2FA admin login, scheduled backups + external-drive support, self-update, on-device DNS/content filtering (the old live-DNS-server/DoT-to-Pi approach fully retired - see the Phase A-E writeup above), Find My Device (locate/ring/lock/wipe/stop_ring + SSE instant push), and the Apps catalog with per-device install scoping.

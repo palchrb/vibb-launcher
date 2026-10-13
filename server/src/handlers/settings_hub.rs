@@ -7,17 +7,18 @@
 //! Updates shows no value (no check result is cached anywhere) and About shows `APP_VERSION`.
 //! `tests::settings_hub` checks that this file names no network client.
 //!
-//! Times ("Today 03:00") are the server's local time, like the Backups page next to it, until
-//! design 31 step 2's `display_time` (the Phone Setup time zone) replaces it.
+//! Times ("Today 03:00") and "today" are in the Phone Setup time zone (`display_time`, design 31
+//! §3.10), and say "UTC" when that zone is empty or unknown.
 
 use askama::Template;
 use axum::extract::State;
 use axum::response::{Html, IntoResponse};
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use sqlx::SqlitePool;
 use std::path::Path;
 
 use crate::AppState;
+use crate::display_time::Zone;
 use crate::handlers::backups::{BACKUP_DIR, is_safe_backup_filename};
 
 #[derive(Template)]
@@ -47,7 +48,8 @@ pub struct HubValues {
 }
 
 pub async fn settings_hub(State(state): State<AppState>) -> impl IntoResponse {
-    let values = hub_values(&state.db, Path::new(BACKUP_DIR), Local::now()).await;
+    let zone = Zone::load(&state.db).await;
+    let values = hub_values(&state.db, Path::new(BACKUP_DIR), &zone, Utc::now()).await;
     Html(
         SettingsHubTemplate {
             title: "Settings".to_string(),
@@ -59,7 +61,12 @@ pub async fn settings_hub(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// The hub's values: four counts from SQLite, one directory listing, the version.
-pub async fn hub_values(db: &SqlitePool, backup_dir: &Path, now: DateTime<Local>) -> HubValues {
+pub async fn hub_values(
+    db: &SqlitePool,
+    backup_dir: &Path,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> HubValues {
     let rules = count(
         db,
         "SELECT COUNT(*) FROM time_rules WHERE device_id IS NULL",
@@ -72,7 +79,7 @@ pub async fn hub_values(db: &SqlitePool, backup_dir: &Path, now: DateTime<Local>
         None,
     )
     .await;
-    let since = utc_start_of_day(now);
+    let since = utc_start_of_day(zone.local(now));
     let blocked = count(
         db,
         "SELECT COUNT(*) FROM device_dns_events WHERE received_at >= ?",
@@ -93,7 +100,7 @@ pub async fn hub_values(db: &SqlitePool, backup_dir: &Path, now: DateTime<Local>
         wallpapers: wallpapers.map(|n| n.to_string()),
         backups: newest_backup(backup_dir)
             .await
-            .map(|t| day_time_label(t, now.naive_local())),
+            .map(|t| backup_label(zone, t, now)),
         about: format!("Server {}", crate::APP_VERSION.trim_start_matches('v')),
     }
 }
@@ -137,8 +144,8 @@ fn utc_start_of_day<Tz: TimeZone>(now: DateTime<Tz>) -> String {
         .to_string()
 }
 
-/// The modification time of the newest backup zip, in local time.
-async fn newest_backup(dir: &Path) -> Option<NaiveDateTime> {
+/// The modification time of the newest backup zip.
+async fn newest_backup(dir: &Path) -> Option<DateTime<Utc>> {
     let mut entries = tokio::fs::read_dir(dir).await.ok()?;
     let mut newest: Option<std::time::SystemTime> = None;
     while let Ok(Some(entry)) = entries.next_entry().await {
@@ -152,7 +159,18 @@ async fn newest_backup(dir: &Path) -> Option<NaiveDateTime> {
             newest = Some(modified);
         }
     }
-    newest.map(|t| DateTime::<Local>::from(t).naive_local())
+    newest.map(DateTime::<Utc>::from)
+}
+
+/// The Backups row's value: [day_time_label] in `zone`, its clock time labelled "UTC" in the
+/// fallback zone.
+pub fn backup_label(zone: &Zone, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let label = day_time_label(zone.local(t).naive_local(), zone.local(now).naive_local());
+    if zone.is_fallback() && (label.starts_with("Today") || label.starts_with("Yesterday")) {
+        format!("{label} UTC")
+    } else {
+        label
+    }
 }
 
 /// "Today 03:00", "Yesterday 03:00", "12 Oct" (this year), "12 Oct 2025" (earlier); a time
@@ -188,6 +206,32 @@ mod tests {
         assert_eq!(day_time_label(at("2026-10-01 03:00"), now), "1 Oct");
         assert_eq!(day_time_label(at("2025-12-31 03:00"), now), "31 Dec 2025");
         assert_eq!(day_time_label(at("2026-10-14 03:00"), now), "14 Oct");
+    }
+
+    #[test]
+    fn backup_times_are_phone_setups_or_utc_labelled() {
+        let utc = |s: &str| at(s).and_utc();
+        let now = utc("2026-10-13 12:00");
+        // 01:00 UTC is 03:00 in Oslo.
+        let oslo = Zone::from_setting("Europe/Oslo");
+        assert_eq!(
+            backup_label(&oslo, utc("2026-10-13 01:00"), now),
+            "Today 03:00"
+        );
+        // 23:30 UTC the day before is already today in Oslo.
+        assert_eq!(
+            backup_label(&oslo, utc("2026-10-12 23:30"), now),
+            "Today 01:30"
+        );
+        let fallback = Zone::from_setting("");
+        assert_eq!(
+            backup_label(&fallback, utc("2026-10-12 23:30"), now),
+            "Yesterday 23:30 UTC"
+        );
+        assert_eq!(
+            backup_label(&fallback, utc("2026-10-01 01:00"), now),
+            "1 Oct"
+        );
     }
 
     #[test]

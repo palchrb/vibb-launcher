@@ -12,6 +12,7 @@ mod command_expiry;
 mod command_receipts;
 mod deploy_scripts;
 mod device_api;
+mod devices_list;
 mod dns_blocklist;
 mod docker;
 mod edge;

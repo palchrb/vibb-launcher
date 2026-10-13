@@ -7,25 +7,55 @@
 {% let tab = "devices" %}
 {% include "partials/app_header.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Devices</h1>
-        <a href="/devices/new" class="button">Add a device</a>
-    </div>
-    {% include "partials/login_warning.html" %}
-    <p class="subtitle">Add a device below, then use its own page to provision it by QR code or adb - each device's QR carries its own enrollment code plus the server URL/Tailscale key from <a href="/settings/provisioning">Settings › Phone Setup</a>.</p>
+    <h1 class="page-title">Devices</h1>
 
-    {% if devices.is_empty() %}
-    <p class="empty-state">No devices yet. Add one to get started.</p>
-    {% else %}
-    <div class="device-list">
+    {% if let Some(warning) = live_warning %}
+    <a class="attention attention-action" href="/account" id="live-warning">
+        <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        <span class="attention-text">{{ warning }}<span class="attention-sub">Change the password</span></span>
+        <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    {% endif %}
+    {% if let Some(warning) = login_warning %}
+    <div class="attention attention-action" id="login-warning">
+        <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        <a class="attention-text" href="/account">{{ warning }}<span class="attention-sub">Change the password</span></a>
+        <form method="post" action="/account/dismiss-warning">
+            <input type="hidden" name="back" value="{{ warning_back }}">
+            <button type="submit" class="attention-dismiss">Dismiss</button>
+        </form>
+    </div>
+    {% endif %}
+
+    {% if !devices.is_empty() %}
+    <h2 class="group-header">Phones</h2>
+    <div class="group group-avatars">
         {% for d in devices %}
-        <a class="device-card" href="/devices/{{ d.id }}">
-            <span class="device-name">{{ d.name }}</span>
-            <span class="device-status">{{ d.status_text }}</span>
+        <a class="row device-row" href="/devices/{{ d.id }}" data-device="{{ d.id }}">
+            <span class="avatar {{ d.avatar }}" aria-hidden="true">{{ d.initial }}<span class="avatar-dot dot-{{ d.connection.css() }}"></span></span>
+            <span class="row-label">
+                <span class="device-row-name">{{ d.name }}</span>
+                <span class="row-sub device-line" data-status="{{ d.connection.css() }}"><span class="state-{{ d.connection.css() }}">{{ d.connection.word() }}</span>{% if let Some(detail) = d.detail %} · {% if let Some(exact) = d.detail_title %}<span title="{{ exact }}">{{ detail }}</span>{% else %}{{ detail }}{% endif %}{% endif %}{% if let Some(lock) = d.lock %} · <span class="lock-part" data-lock>{{ lock }}</span>{% endif %}</span>
+                {% if let Some(st) = d.screen_time %}
+                {% if let Some(percent) = st.percent() %}<span class="meter device-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
+                <span class="row-sub" data-screen-time>{{ st.text() }}</span>
+                {% endif %}
+            </span>
+            {% if d.attention > 0 %}<span class="count" data-attention-count="{{ d.attention }}"><span aria-hidden="true">{{ d.attention }}</span><span class="visually-hidden">, {{ d.attention }} to check</span></span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {% endfor %}
     </div>
+    {% else %}
+    <p class="empty-state">No phones yet.</p>
     {% endif %}
+
+    <div class="group">
+        <a class="row row-button" href="/devices/new" data-row="add-phone">
+            <svg class="row-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 7v8M7 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span class="row-label">Add Phone</span>
+        </a>
+    </div>
 </main>
 </body>
 </html>

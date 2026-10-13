@@ -11,6 +11,18 @@
         <h1>{{ device.name }}</h1>
     </div>
 
+    {% if !attention.is_empty() %}
+    <section id="attention" aria-labelledby="attention-title">
+        <h2 class="group-header" id="attention-title">Attention</h2>
+        {% for item in attention %}
+        <a class="attention attention-{{ item.level_css() }}" href="{{ item.target }}" data-attention="{{ item.key() }}">
+            <span class="attention-text">{{ item.title }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endfor %}
+    </section>
+    {% endif %}
+
     {% if device.enrolled_at.is_none() %}
     <div class="card enrollment-card" id="access">
         <h2>Not enrolled yet</h2>
@@ -32,7 +44,7 @@
         </div>
     </div>
     {% else %}
-    <div class="card">
+    <div class="card" id="status">
         <h2>Status</h2>
         {% if let Some(status) = latest_status %}
         <p>Time lock at the last report: <strong>{% match status.lock_reason.as_str() %}{% when "NONE" %}none{% when "BEDTIME" %}bedtime{% when "SCHOOL" %}school{% when "SCREEN_TIME" %}screen time used up{% when "RULE" %}a time rule{% when other %}{{ other }}{% endmatch %}</strong></p>
@@ -226,7 +238,7 @@
         {% endif %}
     </div>
 
-    <div class="card">
+    <div class="card" id="time">
         <h2>Time rules</h2>
         <p class="subtitle">{% if time.custom %}This phone has its own time rules and screen time.{% else %}This phone follows the global time rules and screen time.{% endif %} Emergency calls always work.</p>
         {% if time.launcher_without_rules %}
@@ -512,7 +524,7 @@
         <a href="/music" class="button-small" style="margin-top:12px;">Music library</a>
     </div>
 
-    <form method="post" action="/devices/{{ device.id }}/launcher" class="card">
+    <form method="post" action="/devices/{{ device.id }}/launcher" class="card" id="launcher">
         <h2>Launcher</h2>
         <p class="subtitle">The phone's home screen. Each choice saves itself immediately.</p>
         {% if badges_without_access %}
@@ -651,7 +663,7 @@
         <noscript><button type="submit">Save</button></noscript>
     </form>
 
-    <form method="post" action="/devices/{{ device.id }}/hardening" class="card">
+    <form method="post" action="/devices/{{ device.id }}/hardening" class="card" id="hardening">
         <h2>Phone hardening</h2>
         <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The parent PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
         <label class="checkbox-row">

@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, see "Step 1 implementation status" at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -1944,3 +1944,56 @@ Choices made while building:
 5. `/updates` isn't fetched by the tab test (it asks GitHub when it renders); its tab is checked in the template.
 6. Not checked here: the 390 px light/dark/no-JS pass in a browser (no browser in the sandbox) - owed on a phone or
    desktop browser before merging.
+
+## Step 2 implementation status (2026-10-13)
+
+Built on branch `design-31-s2` (from `60872f24`); server only, no migration. New crate: `chrono-tz` 0.10.4
+(MIT/Apache-2.0, `std` only; adds `phf`, `phf_shared`, `siphasher` to `Cargo.lock`).
+- **`display_time`** (`src/display_time.rs`): `Zone::load` reads the Phone Setup zone; empty or unknown (case-sensitive
+  IANA ids, so "Europe/Olso" and "europe/oslo") is UTC and every clock time says "UTC". `parse_db_utc`
+  (`datetime('now')` text with or without a fraction, and RFC 3339), `local`, `clock` ("14:30"), `exact` for `title=`
+  ("2026-10-13 10:59:13 CEST"), `relative` (§3.10's steps; "12 Oct 2025" in another year; up to 5 min ahead is "just
+  now", further ahead its date). Unit tests: Oslo DST both ways, an empty and an unknown zone, yesterday, a time
+  2 min ahead, the steps. The Settings hub's "today" and backup time now use the Phone Setup zone (step 1 choice 3).
+- **`connection_state`** (`streams.rs`, pure, `ONLINE_WINDOW_MINUTES` 60 / `AWAY_WINDOW_MINUTES` 45 with their
+  derivation): Online, Away, Offline, Disconnected, Not seen yet, Not set up; last contact is the newest of last
+  access, `last_seen_at` and an open stream's `since`. `devices::connection_of` feeds it. Table tests for every row,
+  50 min / 61 min with a stream, 30 / 45 / 46 min without, revoked, the restart case.
+- **Lock badge and screen time** (`src/time_state.rs`): the typed `time_state` (`TimeReport`), `LockBadge` and
+  `ScreenTime` with §3.10's rules (M4): the end only when the phone's `day` and the day before give the same end,
+  counted from the report's local time ("until 07:00 tomorrow" across midnight); another day's report shows no end
+  and no bar and says "at last report (yesterday 21:40)"; Offline always and Away after 15 min add "at last report";
+  an end already passed drops the end and says "at last report".
+- **`attention::collect`** (`src/attention.rs`): §3.2's 11 alarms and 6 needs-action kinds from typed sources -
+  `kid_lock::lock_off` (new: a Child PIN set but the lock off on the phone), `calls::CallProblem` (new: the call
+  report's warnings typed, one per warning, each with a title of at most 8 words), the relock card's foreign access
+  and blocks, `admin_policy_notice`, the sound filter, the backup flag, the policy state, the boots, the rules.
+  `devices::managed_without_pin` and `launcher_without_rules` are shared with the device page.
+- **Devices list** (`devices_list.html`, `devices::list_row`): large title, the sign-in warnings as orange rows
+  (live: a link to Account; after sign-in: with Dismiss), "Phones" group (avatar with initial and connection dot,
+  name, "Online · seen 3 min ago" with the exact time in `title`, the lock part, the bar and "42 of 90 min today",
+  the red count), "No phones yet.", the Add Phone row. The intro paragraph moved to `device_add.html`.
+  `style.css?v=10` (avatar, dot, row, `.visually-hidden`, the warning rows' sub-line and Dismiss).
+- **Stub summary** (until step 10): the device page shows the Attention rows in an "Attention" group under its
+  title, linking to the cards (`#status`, `#time`, `#launcher`, `#hardening` are new ids; `#parent-pin`, `#access`,
+  `#screen-lock`, `#play-kiosk`; calls rows to `/devices/{id}/calls`). Each later step repoints its targets
+  (`attention::target`).
+- **Tests**: unit tests in `display_time`, `streams`, `time_state`, `attention`, `kid_lock`, `settings_hub`;
+  `tests/devices_list.rs` (every connection state on the list, the lock part and bar, yesterday's report, the badge
+  equal to the device page's rows, the UTC fallback, the empty list). `cargo test`: 703 passed; `node --test
+  jstest/*.test.js`: 16 passed; fmt clean; clippy: the same 13 warnings as before, none in the step's files.
+
+Choices made while building:
+1. **The list's status line**: Online with a lock shows the lock instead of "seen ..." (the Main mockup's "Online ·
+   Skole until 14:30"); Away and Offline keep "seen ..." and add the lock. When "at last report" would repeat the
+   seen time, the list leaves the time out ("Skole · at last report").
+2. **The bar**: shown with a limit; without a limit "42 min today" without a bar, and nothing at 0 min.
+3. **Calls rows** are orange (§3.2 lists "calls problems" under needs action), one per warning but not "waiting for
+   the phone"; "Anyone can call this phone" is the §4.5 #17 title.
+4. **`parent_pin::when_text`** is not folded in yet: its callers (Status notices, PIN events, relock and boot notes)
+   switch to `display_time` in the steps that rebuild their cards (3, 4, 10), and it goes with the last.
+5. **Attention's music and escapes sources**: §3.8 names them, but §3.2's list has no row for them; nothing added.
+6. **The avatars** use darker shades of the mockup's hues (white text 4.5:1 or more; decorative, `aria-hidden`); a
+   phone not set up is grey. The mockup's "+" in the top bar is left out: the brand bar is still there (step 15),
+   and the Add Phone row does the same.
+7. Not checked here: the 390 px light/dark/no-JS pass in a browser (no browser in the sandbox).

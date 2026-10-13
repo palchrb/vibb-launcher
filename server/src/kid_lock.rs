@@ -223,6 +223,26 @@ pub fn lock_card(
     card
 }
 
+/// A Child PIN is set, but the phone's own lock is off (design 31 L2, an Attention alarm): the
+/// reporting launcher doesn't have the lock, or reports it inactive for a reason other than "no
+/// PIN yet" - the [lock_card] warnings about the lock itself, typed.
+pub fn lock_off(
+    policy: &DevicePolicy,
+    state: Option<&LockState>,
+    capable: bool,
+    reported: bool,
+) -> bool {
+    if policy_kid_lock(policy).is_none() {
+        return false;
+    }
+    if reported && !capable {
+        return true;
+    }
+    state
+        .and_then(|s| s.inactive.as_deref())
+        .is_some_and(|inactive| inactive_warning(inactive).is_some())
+}
+
 /// The warning for a `lock_state.inactive` value; `no_pin` (the parent hasn't set one) is none.
 pub fn inactive_warning(inactive: &str) -> Option<String> {
     Some(match inactive {
@@ -297,6 +317,46 @@ mod tests {
             p.override_pin_salt = Some(s);
         }
         p
+    }
+
+    #[test]
+    fn the_lock_is_off_only_with_a_child_pin_and_a_reason() {
+        let with_pin = policy_with_pins(Some("1234"), Some("123456"));
+        let without = policy_with_pins(None, Some("123456"));
+        let inactive = |reason: Option<&str>| LockState {
+            inactive: reason.map(str::to_string),
+            ..Default::default()
+        };
+        // No Child PIN: nothing to be off.
+        assert!(!lock_off(
+            &without,
+            Some(&inactive(Some("crash_guard"))),
+            true,
+            true
+        ));
+        // An older launcher without the lock.
+        assert!(lock_off(&with_pin, None, false, true));
+        // Not reported yet.
+        assert!(!lock_off(&with_pin, None, false, false));
+        assert!(!lock_off(&with_pin, Some(&inactive(None)), true, true));
+        assert!(!lock_off(
+            &with_pin,
+            Some(&inactive(Some("no_pin"))),
+            true,
+            true
+        ));
+        for reason in [
+            "unmanaged",
+            "android_credential",
+            "crash_guard",
+            "bad_hash",
+            "odd",
+        ] {
+            assert!(
+                lock_off(&with_pin, Some(&inactive(Some(reason))), true, true),
+                "{reason}"
+            );
+        }
     }
 
     #[test]

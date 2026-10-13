@@ -8,6 +8,7 @@
 {% include "partials/app_header.html" %}
 <main class="container container-narrow">
     <h1>Add a device</h1>
+    <p class="subtitle">Give the phone a name. Its page then sets it up with a QR code or a setup code; the QR code also carries the server address and Tailscale key from <a href="/settings/provisioning">Settings › Phone Setup</a>.</p>
     <form method="post" action="/devices/new">
         <label for="name">What should we call this phone?</label>
         <input type="text" id="name" name="name" placeholder="e.g. Ava's phone" required autofocus>

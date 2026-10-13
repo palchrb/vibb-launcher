@@ -3,11 +3,13 @@ mod apk;
 mod app_display;
 mod app_downloads;
 mod app_icons;
+mod attention;
 mod audit;
 mod boot_witness;
 mod config;
 mod crashes;
 mod device_routes;
+mod display_time;
 mod dns_engine;
 mod enrollment;
 mod gate;
@@ -38,6 +40,7 @@ mod streams;
 #[cfg(test)]
 mod tests;
 mod time_rules;
+mod time_state;
 mod wallpapers;
 mod window_relock;
 
