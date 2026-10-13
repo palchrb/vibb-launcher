@@ -52,17 +52,21 @@
         <item name="android:windowAnimationStyle">@null</item>
     </style>
 
-    <!-- Handy's PIN lock (step 10), with the window preview on. Design 32 (decision 3, QA M3): the
-         lock draws only after a screen-on, so until its first frame WM shows its stand-in - the
-         starting window (splash), the window background and the app-theme snapshot with its bars.
-         Every one of them is pure black ("the lock or black"); the lock paints its own ground (25f),
-         and its task description is black too (PinLockActivity.onCreate). -->
+    <!-- Handy's PIN lock (step 10). Design 32 (decision 3, QA M3): the lock draws only after a
+         screen-on, so until its first frame WM shows its stand-in - the window background and the
+         app-theme snapshot with its bars. Every one of them is pure black ("the lock or black"); the
+         lock paints its own ground (25f), and its task description is black too
+         (PinLockActivity.onCreate). No starting window (design 32, the user's mash log): a lock
+         started with the screen on - a double press whose screen never went dark - showed its splash
+         and then animated in; now the old frame stays until the lock's first frame. The wake's
+         stand-in is the task's app-theme snapshot, which windowDisablePreview doesn't touch. The
+         splash colour stays black for a start from a system surface, which ignores the flag. -->
     <style name="PinLockTheme" parent="launcherBaseTheme">
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:windowSplashScreenBackground">@android:color/black</item>
         <item name="android:statusBarColor">@android:color/black</item>
         <item name="android:navigationBarColor">@android:color/black</item>
-        <item name="android:windowDisablePreview">false</item>
+        <item name="android:windowDisablePreview">true</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <!-- Bug 25b-B: no fade - at a screen-on the lock is there at once, never fading in over Home. -->

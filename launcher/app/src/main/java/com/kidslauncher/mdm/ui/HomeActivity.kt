@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.ui
 
 import android.app.ActivityManager
 import android.app.Dialog
+import android.app.KeyguardManager
 import android.content.Intent
 import android.content.SharedPreferences
 import android.database.ContentObserver
@@ -29,11 +30,13 @@ import androidx.recyclerview.widget.RecyclerView
 import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.lock.KeyguardCover
 import com.kidslauncher.mdm.lock.LockAsk
 import com.kidslauncher.mdm.lock.LockMode
 import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.lock.homeDarkResume
 import com.kidslauncher.mdm.lock.homeShowsContent
+import com.kidslauncher.mdm.lock.homeBootDismissDue
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.apps.AppFilter
 import com.kidslauncher.mdm.apps.AppInfo
@@ -471,6 +474,9 @@ class HomeActivity : UIObjectActivity() {
             // At the first start of a boot it waits while the mark shows for 3 s (design 16e) -
             // only from here on, with the night ground resumed, does the mark count as up.
             if (PinLockRuntime.mode == LockMode.LOCKED) {
+                // Design 32 step 2 (M4): after a reboot without ACTION_SHUTDOWN the cover's keyguard
+                // shows at boot - Home dismisses it, so its mark shows (only with the debug switch).
+                dismissBootKeyguard()
                 PinLockRuntime.onHomeMarkUp()
                 // A re-resume with the focus kept (a re-delivered HOME intent) gets no focus change.
                 PinLockRuntime.onHomeMarkShown(this, groundDrawn = night?.drawn == true, focused = hasWindowFocus())
@@ -494,7 +500,36 @@ class HomeActivity : UIObjectActivity() {
         resumeContent()
     }
 
+    /**
+     * Design 32 step 2 (M4, decision 4): the backstop for a reboot that kept the keyguard cover (a crash,
+     * power loss, `adb reboot` - no ACTION_SHUTDOWN): SystemUI's Swipe keyguard is up at boot, over
+     * Home's mark. Home asks for its dismissal while it is locked ([homeBootDismissDue]: the switch on,
+     * before the process's first lock resume with the screen on, no credential), again a second later
+     * while Home stays resumed - by state, never counted as the lock's failure.
+     */
+    private fun dismissBootKeyguard() {
+        refreshHandler.removeCallbacks(bootKeyguardRetry)
+        if (!KeyguardCover.switchOn) return
+        val keyguard = getSystemService(KeyguardManager::class.java) ?: return
+        val due = try {
+            homeBootDismissDue(KeyguardCover.switchOn, KeyguardCover.armed, keyguard.isDeviceSecure, keyguard.isKeyguardLocked)
+        } catch (e: Exception) {
+            false
+        }
+        if (!due) return
+        android.util.Log.i("HomeActivity", "The keyguard cover is up at boot: Home asks for its dismissal")
+        try {
+            keyguard.requestDismissKeyguard(this, null)
+        } catch (e: Exception) {
+            android.util.Log.w("HomeActivity", "requestDismissKeyguard failed", e)
+        }
+        refreshHandler.postDelayed(bootKeyguardRetry, com.kidslauncher.mdm.lock.DISMISS_CHECK_MS)
+    }
+
+    private val bootKeyguardRetry = Runnable { if (resumedNow) dismissBootKeyguard() }
+
     override fun onPause() {
+        refreshHandler.removeCallbacks(bootKeyguardRetry)
         // Design 16e (qa-16e-code #2): anything over the mark - even translucent - ends the boot's
         // wait, unless Home is resumed again at once (a re-delivered HOME intent pauses it).
         PinLockRuntime.onHomePaused(isChangingConfigurations)

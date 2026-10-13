@@ -222,7 +222,9 @@ object TimeRulesRuntime {
         try {
             val changedTo = reevaluateLockReasonFromCache(context)
             if (changedTo != null && changedTo != LockReason.NONE && !OngoingCalls.hasLiveCall) {
-                LockActivity.start(context)
+                // Design 32 step 2 (M5): not while the keyguard cover is locked (the screen-on's start
+                // under the lock) - it would un-occlude it; at once without the cover.
+                com.kidslauncher.mdm.lock.KeyguardCover.whenUnlocked(context, "the time-rule screen") { LockActivity.start(it) }
             }
             // The lock's glance page shows what our missed-call notification shows: a rule's start or
             // end re-learns it (design 25, code QA Low 3; never posts anew, never clears).

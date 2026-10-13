@@ -30,12 +30,17 @@ enum class LockUpStart {
  * the top task since the last lock-up (best effort, [lockOnTopAfter]); [callLive]: our call,
  * Telecom's or a VoIP phase other than NONE; [interactive]: the screen is on - a `SCREEN_OFF` that
  * waited in the broadcast queue past the next wake (QA L1) starts no visible Home.
+ * [coverOn]: design 32 step 2's keyguard cover is in force (debug switch) - the lock alone, no Home
+ * under it: while the cover's keyguard is locked nothing that isn't showWhenLocked can be on screen,
+ * so Home's stand-in adds nothing, and its start (a binder call, a transition) before the lock's would
+ * only widen the window in which SystemUI's lockscreen shows un-occluded at a quick wake.
  */
-fun lockUpStarts(showLock: Boolean, lockOnTop: Boolean, callLive: Boolean, interactive: Boolean): LockUpStart = when {
+fun lockUpStarts(showLock: Boolean, lockOnTop: Boolean, callLive: Boolean, interactive: Boolean, coverOn: Boolean = false): LockUpStart = when {
     !showLock -> LockUpStart.NONE
     interactive -> LockUpStart.LOCK
     callLive -> LockUpStart.LOCK
     lockOnTop -> LockUpStart.NONE
+    coverOn -> LockUpStart.LOCK
     else -> LockUpStart.HOME_THEN_LOCK
 }
 
@@ -53,6 +58,12 @@ enum class LockTopEvent {
 
     /** The UNLOCKED (or DISABLED) edge. */
     UNLOCKED,
+
+    /**
+     * The lock got a new intent ([PinLockRuntime.onLockNewIntent]). With `sameLockUp` the pause just
+     * before it was only that delivery's ([newIntentPauseKept]) - the lock never left the top.
+     */
+    NEW_INTENT,
 
     /**
      * A screen-on (or `USER_PRESENT`) that finds the lock not resumed and starts nothing - a call
@@ -80,7 +91,25 @@ fun lockOnTopAfter(current: Boolean, event: LockTopEvent, interactive: Boolean =
     LockTopEvent.START -> current && sameLockUp
     LockTopEvent.PAUSE, LockTopEvent.STOP -> current && !interactive
     LockTopEvent.DESTROY, LockTopEvent.UNLOCKED, LockTopEvent.SCREEN_ON_UNSHOWN -> false
+    LockTopEvent.NEW_INTENT -> current || sameLockUp
 }
+
+/** How soon after the ScreenOn backstop's start onto the lock on top its new-intent pause comes. */
+const val BACKSTOP_NEW_INTENT_MS = 1_000L
+
+/**
+ * The ScreenOn backstop races the lock's own resume at the wake. When it loses, its start lands on a
+ * lock that is resumed and the top task already (`START_DELIVERED_TO_TOP`), and Android pauses the lock
+ * to deliver the new intent (pause, onNewIntent, resume) - an interactive pause that cleared
+ * [lockOnTopAfter]'s mark, so the next screen-off started Home and the lock again while dark (the
+ * user's mash log, 2026-10-13: `wm_new_intent PinLock` 15-35 ms after each such wake, then
+ * HOME_THEN_LOCK with the lock on top). Such a pause - the mark was set ([wasOnTop]), a same-lock-up
+ * start onto it less than [BACKSTOP_NEW_INTENT_MS] before ([backstopAtMs], elapsed) - is held, and
+ * the new intent that follows puts the mark back ([LockTopEvent.NEW_INTENT]); a stop or a resume
+ * without the new intent drops it.
+ */
+fun newIntentPauseKept(wasOnTop: Boolean, backstopAtMs: Long?, nowMs: Long): Boolean =
+    wasOnTop && backstopAtMs != null && nowMs - backstopAtMs in 0..BACKSTOP_NEW_INTENT_MS
 
 /** qa-32-s1-code M1: the screen-on [event] found the lock not resumed and [showLock] started nothing. */
 fun screenOnUnshown(event: LockEvent, showLock: Boolean): Boolean =

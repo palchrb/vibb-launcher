@@ -309,7 +309,7 @@ androidComponents {
         val check = tasks.register<CheckDebugHook>(if (release) "check${cap}HasNoDebugHook" else "check${cap}HasDebugHook") {
             manifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
             apkDir.set(variant.artifacts.get(SingleArtifact.APK))
-            names.set(listOf("LockTaskOverride", "lock_task_debug_override", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver"))
+            names.set(listOf("LockTaskOverride", "lock_task_debug_override", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver", "KeyguardCoverDebugReceiver", "keyguard_cover_debug"))
             expectPresent.set(!release)
         }
         tasks.matching { it.name == "assemble$cap" }.configureEach { dependsOn(check) }

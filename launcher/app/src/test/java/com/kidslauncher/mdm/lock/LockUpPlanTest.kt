@@ -163,9 +163,9 @@ class LockUpPlanTest {
         assertTrue(dispatch.contains("show(context, wake = result.wake, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)"))
         val atScreenOff = body(code, "lockUpAtScreenOff")
         assertTrue(atScreenOff.contains("val callLive = event.ourCall || event.systemCall || event.voip != VoipPhase.NONE"))
-        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive)"))
+        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover)"))
         assertTrue(atScreenOff.indexOf("lockUp(context, start, lockAsk(event))") in 0 until atScreenOff.indexOf("Log.i("))
-        assertTrue(atScreenOff.contains("\"Lock-up at screen-off: \$start (call=\$callLive, interactive=\$interactive)\""))
+        assertTrue(atScreenOff.contains("\"Lock-up at screen-off: \$start (call=\$callLive, interactive=\$interactive, cover=\$cover)\""))
         val lockUp = body(code, "lockUp")
         val home = lockUp.indexOf("HomeFront.bring(context, \"under the lock (a lock-up while dark)\", animate = false)")
         val show = lockUp.indexOf("show(context, ask = ask, fromLockUp = true)")
@@ -179,14 +179,18 @@ class LockUpPlanTest {
         assertFalse(off.contains("HomeFront"))
         assertFalse(off.contains("show("))
         assertEquals("only dispatch calls lockUpAtScreenOff", 2, Regex("lockUpAtScreenOff\\(").findAll(code).count())
-        assertEquals("lockUp's definition and its one call", 2, Regex("\\blockUp\\(context").findAll(code).count())
+        // Design 32 step 2: plus the re-front check's dark lock-up under the keyguard cover (the lock alone).
+        assertEquals("lockUp's definition, the screen-off's call and the dark lock-up", 3, Regex("\\blockUp\\(context").findAll(code).count())
+        assertTrue(code.contains("lockUp(context, LockUpStart.LOCK, LockAsk.AT_ONCE)"))
     }
 
     @Test
     fun `show clears lockOnTop itself unless the lock-up calls it`() {
         val show = body(runtime, "show")
-        val clear = show.indexOf("if (!fromLockUp) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)")
-        assertTrue(show, clear >= 0)
+        val guard = show.indexOf("if (!fromLockUp) {")
+        val clear = show.indexOf("lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)")
+        assertTrue(show, guard >= 0 && clear > guard)
+        assertEquals(show, -1, show.substring(guard, clear).indexOf("}"))
         assertTrue(clear < show.indexOf("bootMarkHolds("))
         assertEquals(1, Regex("fromLockUp = true").findAll(runtime).count())
         assertEquals(1, Regex("sameLockUp = event is LockEvent.ScreenOn").findAll(runtime).count())
@@ -237,7 +241,8 @@ class LockUpPlanTest {
         assertTrue(body(rt, "dispatch").contains("if (result.mode != LockMode.LOCKED) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.UNLOCKED)"))
         assertTrue(body(code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt"), "onDestroy").contains("PinLockRuntime.onLockDestroyed()"))
         // The dark mark ends at an interactive resume of the lock or Home.
-        assertTrue(body(rt, "onLockResumed").contains("if (interactive(context)) darkLockUp = false"))
+        assertTrue(body(rt, "onLockResumed").contains("val interactiveNow = interactive(context)"))
+        assertTrue(body(rt, "onLockResumed").contains("if (interactiveNow) darkLockUp = false"))
         assertTrue(body(rt, "onHomeResumed").contains("if (interactive) darkLockUp = false"))
     }
 
@@ -321,5 +326,54 @@ class LockUpPlanTest {
             assertFalse(f.name, text.contains("drawn before the next screen-on"))
             assertFalse(f.name, text.contains("drawn before a quick screen-on"))
         }
+    }
+
+    // ---- the lock started with the screen on: the double press (the user's mash log) ----------------
+
+    @Test
+    fun `the backstop's new-intent pause keeps lockOnTop, nothing else does`() {
+        assertTrue(newIntentPauseKept(wasOnTop = true, backstopAtMs = 1_000L, nowMs = 1_040L))
+        assertTrue(newIntentPauseKept(true, 1_000L, 1_000L + BACKSTOP_NEW_INTENT_MS))
+        assertFalse("too late: something else paused it", newIntentPauseKept(true, 1_000L, 2_001L))
+        assertFalse("no backstop start onto it", newIntentPauseKept(true, null, 1_040L))
+        assertFalse("not on top before", newIntentPauseKept(false, 1_000L, 1_040L))
+        // The new intent puts a held mark back, and never sets one by itself.
+        assertTrue(lockOnTopAfter(false, LockTopEvent.NEW_INTENT, sameLockUp = true))
+        assertFalse(lockOnTopAfter(false, LockTopEvent.NEW_INTENT, sameLockUp = false))
+        assertTrue(lockOnTopAfter(true, LockTopEvent.NEW_INTENT, sameLockUp = false))
+        // The sequence: backstop start (kept), interactive pause (cleared, held), new intent (back).
+        val afterStart = lockOnTopAfter(true, LockTopEvent.START, sameLockUp = true)
+        val afterPause = lockOnTopAfter(afterStart, LockTopEvent.PAUSE, interactive = true)
+        assertFalse(afterPause)
+        assertTrue(lockOnTopAfter(afterPause, LockTopEvent.NEW_INTENT, sameLockUp = newIntentPauseKept(afterStart, 0L, 30L)))
+    }
+
+    @Test
+    fun `the new-intent wiring - set by the backstop's start, held by the pause, dropped by a stop or resume`() {
+        val rt = runtime
+        val show = body(rt, "show")
+        assertTrue(show.contains("backstopOntoTopAt = if (sameLockUp && lockOnTop) SystemClock.elapsedRealtime() else null"))
+        assertTrue(show.indexOf("backstopOntoTopAt =") < show.indexOf("lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)"))
+        assertTrue(body(rt, "onLockPaused").contains("newIntentPauseHeld = !lockOnTop && newIntentPauseKept(wasOnTop, backstopOntoTopAt, SystemClock.elapsedRealtime())"))
+        assertTrue(body(rt, "onLockStopped").contains("newIntentPauseHeld = false"))
+        assertTrue(body(rt, "onLockResumed").contains("newIntentPauseHeld = false"))
+        assertTrue(body(rt, "onLockDestroyed").contains("newIntentPauseHeld = false"))
+        assertTrue(body(rt, "onLockNewIntent").contains("lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.NEW_INTENT, sameLockUp = newIntentPauseHeld)"))
+        val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
+        assertTrue(body(activity, "onNewIntent").contains("PinLockRuntime.onLockNewIntent()"))
+    }
+
+    @Test
+    fun `every lock start has no starting window and no animation for any change`() {
+        val show = body(runtime, "show")
+        assertTrue(show.contains("Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),\n                lockStartOptions(context),"))
+        assertEquals(1, Regex("Intent\\(context, PinLockActivity::class.java\\)").findAll(runtime).count())
+        assertTrue(runtime.contains("android.app.ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()"))
+        val theme = file("res/values/styles.xml").readText().substringAfter("<style name=\"PinLockTheme\"").substringBefore("</style>")
+        assertTrue(theme.contains("<item name=\"android:windowDisablePreview\">true</item>"))
+        // The one place in the app that starts the lock.
+        val starts = file("java").walk().filter { it.isFile && it.extension == "kt" }
+            .filter { it.readText().contains("Intent(context, PinLockActivity::class.java)") }.map { it.name }.toList()
+        assertEquals(listOf("PinLockRuntime.kt"), starts)
     }
 }
