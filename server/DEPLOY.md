@@ -1,6 +1,6 @@
 # Deploying to a Raspberry Pi / DietPi
 
-These steps get Kids Device MDM running on a Raspberry Pi Zero 2 W. Only 64-bit (aarch64) is supported.
+These steps get the Vibb Phone server (the parent app, a PWA) running on a Raspberry Pi Zero 2 W. Only 64-bit (aarch64) is supported.
 
 ## 1. Install
 
@@ -58,7 +58,7 @@ proxy's `X-Forwarded-For`. So:
   password and the 2FA code alone**, facing the whole internet (phishing, password guessing, any bug in a web page).
   Set `SESSION_INACTIVITY_DAYS=7` as well.
 
-Which URL a phone uses is still set per phone for now - the setup QR's server URL (Settings > Provisioning) or the
+Which URL a phone uses is still set per phone for now - the setup QR's server URL (Settings > Phone Setup) or the
 launcher's Settings > Server URL (behind the PIN). A phone set up with the embedded Tailscale key sends every request
 through Tailscale: give it the tailnet URL. A public URL is for a phone set up without a Tailscale key. Automatic
 switching and fallback between the two come with the Connection page and a launcher update (design 22, later steps).
@@ -177,11 +177,11 @@ In every setup that gives phones a Tailscale key (tailnet only, or a phone liste
 path): a **one-time** (not reusable), **tagged** (`tag:kid`), pre-approved, non-ephemeral key, and a tailnet policy
 that lets `tag:kid` reach only the phones' port (`8444` above) on this box (security review M12).
 
-One-time means one key per phone setup. Settings > Provisioning holds a single key, and every setup QR carries it:
+One-time means one key per phone setup. Settings > Phone Setup holds a single key, and every setup QR carries it:
 before setting up a phone (or setting one up again), make a new key in the Tailscale admin console and paste it
 there. The phone uses it once; after that the key, and any photo of the QR, is worth nothing. Remove it from
 Provisioning afterwards if you like - it is dead either way. A phone already set up keeps working on its stored node
-state; the key only matters for a setup. The key is write-only on Settings > Provisioning since 0.23.0. The launcher
+state; the key only matters for a setup. The key is write-only on Settings > Phone Setup since 0.23.0. The launcher
 deletes its copy once the phone is on the tailnet (launcher security wave, M12) and comes up from the stored node state
 after that - its Settings then say "On the tailnet - the key was deleted". A phone whose node was removed from the
 tailnet may come back by scanning a new QR (tsnet logs in again with the key it was started with once its stored node
@@ -476,7 +476,7 @@ launcher reconnects after 300 s of silence. `SSE_KEEPALIVE_SECS=120` in `.env` r
 
 ## Vibb music library (server 0.21.0, design 21 step 1)
 
-The Music page (Apps | Music) holds the library for the Vibb music app; each phone's page has a Music card.
+The Music tab holds the library for the Vibb music app; each phone's page has a Music card.
 
 - **Order**: install this server (`server-v0.21.0` or later) **before any stable `music-v*` release** is published in
   the repo. Older servers don't know the `music-v` tag prefix, and their launcher row (blank asset filter) could pick
@@ -554,7 +554,7 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
   address) needs Tailscale, or `ADMIN_PUBLIC=on` knowingly.
 - Everyone is signed out once (the cookie's new name), and open enrollment codes stop working (only their hashes are
   stored now; typed codes last 15 minutes, setup-QR codes 30). The provisioning page makes its QR code with a button
-  now, and the Tailscale key is no longer shown on Settings > Provisioning.
+  now, and the Tailscale key is no longer shown on Settings > Phone Setup.
 - Limits on the phones' API: a phone's own token is never slowed by other clients; an address that keeps sending bad
   tokens or wrong typed codes gets 429 for 10 minutes. The device page's Access card shows when and how each phone last
   reached the server, and can revoke its access.
@@ -568,7 +568,7 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
   update adds it as a drop-in). A restore signs everyone out.
 - The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, also across a restart
   without internet (the server keeps each feed's last good copy in `data/dns_feeds/`). A feed that has never loaded
-  (a mistyped URL) is left out until it does, the rest still reaches the phones. The DNS/Filters page shows each
+  (a mistyped URL) is left out until it does, the rest still reaches the phones. The Web Filter page (Settings) shows each
   feed's state. Feeds may also be `127.0.0.1` hosts files or adblock `||domain^` lists.
 - **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
   (releases already cached are pinned at the first start): a later release of another package or signed with another
@@ -582,6 +582,20 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
 - **Signed releases**: from 0.24.0 on, root installs and runs only release files signed with the project's key
   ("Release signing" under "Updating"; the repo owner sets the key up once before tagging 0.24.0).
 - Rolling back to 0.23 means restoring the `update.sh` backup: 0.23 refuses a database that 0.24 migrated (0061, 0062).
+
+## The parent app is "Vibb Phone" (design 31, from the release after 0.24.0)
+
+Release note for the parent app's rename and new tab bar:
+
+> The parent app is now called **Vibb Phone**. On Android, the home-screen name updates by itself within a few days
+> (Chrome may ask you to accept it). **On iPhone and iPad the icon keeps its old name**: remove it and add it again
+> from Safari (Share › Add to Home Screen), or rename it by hand. Nothing else changes: you stay signed in, and your
+> bookmarks keep working.
+
+- The bottom bar has five tabs: **Devices · Apps · Locate · Music · Settings**. Time Rules, Web Filter (the old
+  DNS/Filters) and Blocked Activity are rows at the top of Settings; Provisioning is Settings › Phone Setup.
+- The manifest keeps its URL and gets `"id": "/"` (the id it already had implicitly), so an installed app is not
+  reinstalled. The two-factor issuer in authenticator apps stays "Kids Device MDM" (it only labels new entries).
 
 ## Useful commands on the Pi
 
@@ -599,7 +613,7 @@ Built in - see the **Backups** page under Settings in the admin UI. Create a bac
   of the admin (design 22).
 - Since 0.24.0 a backup (and the live mirror, and the pre-migration copy) holds **no admin sessions** and **no
   Tailscale key for the phones**, so a stolen copy signs no one in and joins nothing to the tailnet; a restore signs
-  everyone out, and the next phone's setup needs a new key in Settings > Provisioning (it is one-time anyway). Everything in `data/` is readable by the service user only, and the
+  everyone out, and the next phone's setup needs a new key in Settings > Phone Setup (it is one-time anyway). Everything in `data/` is readable by the service user only, and the
   copies on the external drive by root only. The drive itself isn't encrypted: keep it at home, or use an encrypted
   one.
 - Restoring a backup on the Pi keeps the database it replaces in `/var/backups/kid-phone-server-prerestore/<time>/`

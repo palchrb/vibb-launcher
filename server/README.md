@@ -1,4 +1,4 @@
-# Kids Device MDM
+# Vibb Phone server
 
 A self-hosted parental-control admin server for Android phones running in [Device Owner mode](https://developer.android.com/work/dpc/build-dpc). Built to pair with the launcher in [`../launcher`](../launcher) of the same [`palchrb/vibb-launcher`](https://github.com/palchrb/vibb-launcher) monorepo, a custom Android launcher that doubles as the on-device management agent - this repo is the parent-facing web app that controls it.
 

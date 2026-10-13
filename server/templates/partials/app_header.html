@@ -1,42 +1,29 @@
+{#- The brand bar and the 5-tab bar (design 31 §3.1). The page sets its tab before including this:
+    {% let tab = "devices" %} - one of devices, apps, locate, music, settings - and the server marks
+    that tab aria-current="page", so no script is needed. -#}
 <header class="app-header">
-    <a href="/" class="brand">Kids Device MDM</a>
+    <a href="/" class="brand">Vibb Phone</a>
 </header>
 
-<nav class="bottom-nav">
-    <a href="/schedules" class="bottom-nav-item" data-match="^/schedules">
-        <svg class="bottom-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <span>Time rules</span>
-    </a>
-    <a href="/devices" class="bottom-nav-item" data-match="^/devices(?!/locate)">
-        <svg class="bottom-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+<nav class="tab-bar" aria-label="Main">
+    <a href="/devices" class="tab" data-tab="devices"{% if tab == "devices" %} aria-current="page"{% endif %}>
+        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="11" height="21" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11.3 20h3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <span>Devices</span>
     </a>
-    <a href="/apps" class="bottom-nav-item" data-match="^/(apps|music)">
-        <svg class="bottom-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    <a href="/apps" class="tab" data-tab="apps"{% if tab == "apps" %} aria-current="page"{% endif %}>
+        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><rect x="3.5" y="3.5" width="8" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="14.5" y="3.5" width="8" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3.5" y="14.5" width="8" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="14.5" y="14.5" width="8" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
         <span>Apps</span>
     </a>
-    <a href="/devices/locate" class="bottom-nav-item" data-match="^/devices/locate">
-        <svg class="bottom-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+    <a href="/devices/locate" class="tab" data-tab="locate"{% if tab == "locate" %} aria-current="page"{% endif %}>
+        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><path d="M13 23s7.5-7 7.5-12.6A7.5 7.5 0 0 0 5.5 10.4C5.5 16 13 23 13 23z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="13" cy="10.5" r="2.7" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
         <span>Locate</span>
     </a>
-    <a href="/dns" class="bottom-nav-item" data-match="^/dns">
-        <svg class="bottom-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/><path d="M9.5 12l2 2 3.5-4"/></svg>
-        <span>DNS/Filters</span>
+    <a href="/music" class="tab" data-tab="music"{% if tab == "music" %} aria-current="page"{% endif %}>
+        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><path d="M10 19V5.5l11-2.5v13.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><ellipse cx="7.2" cy="19.2" rx="3" ry="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="18.2" cy="16.6" rx="3" ry="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        <span>Music</span>
     </a>
-    <a href="/settings" class="bottom-nav-item" data-match="^/(settings|backups|updates|security|account|wallpapers)">
-        <svg class="bottom-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    <a href="/settings" class="tab" data-tab="settings"{% if tab == "settings" %} aria-current="page"{% endif %}>
+        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><circle cx="13" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 2.8v2.6M13 20.6v2.6M2.8 13h2.6M20.6 13h2.6M5.8 5.8l1.8 1.8M18.4 18.4l1.8 1.8M5.8 20.2l1.8-1.8M18.4 7.6l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="13" cy="13" r="7.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
         <span>Settings</span>
     </a>
 </nav>
-
-<script>
-(function () {
-    var path = location.pathname;
-    document.querySelectorAll(".bottom-nav-item").forEach(function (el) {
-        var match = el.getAttribute("data-match");
-        if (match && new RegExp(match).test(path)) {
-            el.classList.add("active");
-        }
-    });
-})();
-</script>

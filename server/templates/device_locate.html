@@ -5,6 +5,7 @@
 <link rel="stylesheet" href="/static/leaflet/leaflet.css">
 </head>
 <body>
+{% let tab = "locate" %}
 {% include "partials/app_header.html" %}
 <main class="container">
     <div class="page-header">
@@ -52,13 +53,13 @@
         {% endif %}
         <form method="post" action="/devices/{{ device.id }}/location-policy" style="margin-top:12px;">
             <label for="location_mode">When the phone takes a location fix</label>
-            <select id="location_mode" name="mode" onchange="this.form.submit()">
+            <select id="location_mode" name="mode" data-autosave>
                 <option value="off" {% if location_mode == "off" %}selected{% endif %}>Off - location switched off on the phone</option>
                 <option value="on_request" {% if location_mode == "on_request" %}selected{% endif %}>Only when asked (Update location now, Ring)</option>
                 <option value="interval" {% if location_mode == "interval" %}selected{% endif %}>Regularly</option>
             </select>
             <label for="location_interval">Every (only for "Regularly")</label>
-            <select id="location_interval" name="interval_minutes" onchange="this.form.submit()">
+            <select id="location_interval" name="interval_minutes" data-autosave>
                 {% for m in intervals %}
                 <option value="{{ m }}" {% if *m == location_interval %}selected{% endif %}>{% if *m < 60 %}{{ m }} minutes{% else if *m == 60 %}1 hour{% else %}{{ m / 60 }} hours{% endif %}</option>
                 {% endfor %}
@@ -68,7 +69,7 @@
         </form>
         <form method="post" action="/devices/{{ device.id }}/location-retention" style="margin-top:12px;">
             <label for="location_retention">Keep the location history for</label>
-            <select id="location_retention" name="days" onchange="this.form.submit()">
+            <select id="location_retention" name="days" data-autosave>
                 {% for d in retention_choices %}
                 <option value="{{ d }}" {% if *d == location_retention %}selected{% endif %}>{% if *d == 1 %}1 day{% else %}{{ d }} days{% endif %}</option>
                 {% endfor %}

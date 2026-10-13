@@ -4,6 +4,7 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "settings" %}
 {% include "partials/app_header.html" %}
 
 {% macro rule_form(rule, scope) %}
@@ -112,7 +113,7 @@
         <h2>Per-device rules</h2>
         <p class="subtitle">Pick a device to give it its own rules and screen time instead of the global ones.</p>
         <form method="get" action="/schedules">
-            <select name="device" onchange="this.form.submit()" style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
+            <select name="device" data-autosave style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
                 <option value="">Select a device&hellip;</option>
                 {% for d in devices %}
                 <option value="{{ d.id }}" {% if d.selected %}selected{% endif %}>{{ d.name }}</option>

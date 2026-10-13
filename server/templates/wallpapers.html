@@ -9,6 +9,7 @@
 </style>
 </head>
 <body>
+{% let tab = "settings" %}
 {% include "partials/app_header.html" %}
 <main class="container">
     <div class="page-header">
@@ -52,7 +53,7 @@
                 {% if !w.builtin %}
                 <form method="post" action="/wallpapers/{{ w.id }}/lock-screen">
                     <label class="checkbox-row">
-                        <input type="checkbox" name="lock_screen" value="on" {% if w.lock_screen %}checked{% endif %} onchange="this.form.submit()">
+                        <input type="checkbox" name="lock_screen" value="on" {% if w.lock_screen %}checked{% endif %} data-autosave>
                         Also on the lock screen
                     </label>
                     <noscript><button type="submit" class="button-small">Save</button></noscript>

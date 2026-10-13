@@ -5,6 +5,7 @@
 {% if auto_refresh %}<meta http-equiv="refresh" content="5">{% endif %}
 </head>
 <body>
+{% let tab = "devices" %}
 {% include "partials/app_header.html" %}
 <main class="container">
     <div class="page-header">
@@ -34,19 +35,19 @@
         <h2>Settings</h2>
         <p class="subtitle">Each switch saves itself immediately.</p>
         <label class="checkbox-row">
-            <input type="checkbox" name="managed" value="on" {% if managed %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="managed" value="on" {% if managed %}checked{% endif %} data-autosave>
             Manage calls and SMS on this phone
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="calls_enabled" value="on" {% if calls_enabled %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="calls_enabled" value="on" {% if calls_enabled %}checked{% endif %} data-autosave>
             Calls on (only with the contacts below)
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="sms_enabled" value="on" {% if sms_enabled %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="sms_enabled" value="on" {% if sms_enabled %}checked{% endif %} data-autosave>
             SMS on (turning it off also blocks the phone's Messages app, because of RCS chat)
         </label>
         <label for="default_message_app">Message button opens, unless a contact says otherwise</label>
-        <select id="default_message_app" name="default_message_app" onchange="this.form.submit()">
+        <select id="default_message_app" name="default_message_app" data-autosave>
             {% for option in default_message_options %}
             <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
             {% endfor %}
@@ -72,7 +73,7 @@
                 {% endif %}
                 <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo" enctype="multipart/form-data">
                     <label>Photo
-                        <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" onchange="this.form.submit()">
+                        <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" data-autosave>
                     </label>
                     <noscript><button type="submit" class="button-small">Upload</button></noscript>
                 </form>
@@ -85,20 +86,20 @@
             <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}">
                 <strong>{{ contact.name }}</strong> <span class="subtitle">{{ contact.number }}</span>
                 <label class="checkbox-row">
-                    <input type="checkbox" name="inbound" value="on" {% if contact.inbound %}checked{% endif %} onchange="this.form.submit()"> In
+                    <input type="checkbox" name="inbound" value="on" {% if contact.inbound %}checked{% endif %} data-autosave> In
                 </label>
                 <label class="checkbox-row">
-                    <input type="checkbox" name="outbound" value="on" {% if contact.outbound %}checked{% endif %} onchange="this.form.submit()"> Out
+                    <input type="checkbox" name="outbound" value="on" {% if contact.outbound %}checked{% endif %} data-autosave> Out
                 </label>
                 <label class="checkbox-row">
-                    <input type="checkbox" name="show_on_home" value="on" {% if contact.show_on_home %}checked{% endif %} onchange="this.form.submit()"> Home
+                    <input type="checkbox" name="show_on_home" value="on" {% if contact.show_on_home %}checked{% endif %} data-autosave> Home
                 </label>
-                <select name="message_app" onchange="this.form.submit()">
+                <select name="message_app" data-autosave>
                     {% for option in contact.message_options %}
                     <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
                     {% endfor %}
                 </select>
-                <input type="text" name="message_address" value="{{ contact.message_address }}" placeholder="Matrix ID for Element, e.g. @name:matrix.org" maxlength="255" onchange="this.form.submit()">
+                <input type="text" name="message_address" value="{{ contact.message_address }}" placeholder="Matrix ID for Element, e.g. @name:matrix.org" maxlength="255" data-autosave>
                 <noscript><button type="submit" class="button-small">Save</button></noscript>
             </form>
             <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/remove">

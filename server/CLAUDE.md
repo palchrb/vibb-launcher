@@ -41,7 +41,7 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
 - **Language:** Rust, **Web framework:** Axum, **Database:** SQLite via `sqlx` (WAL mode)
 - **Templating:** Askama (compile-time-checked server-rendered HTML, no JS build step, no frontend framework) - templates are compiled into the binary, so editing one requires a rebuild, not just a file save. A plain `cargo run` dev server (no `cargo watch`) needs to be manually killed and restarted after any template/static change.
 - **Sessions/auth:** `tower-sessions` + `tower-sessions-sqlx-store`, `argon2` for the admin password, mandatory TOTP 2FA
-- **UI:** mobile-first bottom tab bar (Time rules / Devices / Apps / Locate / DNS/Filters / Settings, see `templates/partials/app_header.html`), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
+- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/app_header.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`, no script; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), `aarch64-unknown-linux-musl` cross-compiled via GitHub Actions on every `server-v*` tag (root `.github/workflows/server-release.yml`, uses `cross`) - `deploy/install.sh` downloads the newest `server-v*` release and sets up a systemd service
 
 ## About the developer
@@ -226,11 +226,12 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   posts and redirects back; `static/scroll-restore.js` (loaded, not deferred, by
   `templates/partials/head.html`, which every page template includes) remembers the scroll
   position when any form leaves the page (submit event, and a wrapped
-  `HTMLFormElement.prototype.submit` for the auto-saving `onchange="this.form.submit()"`
-  controls) per path in sessionStorage for 20 s, and restores it on the page that comes back; a
+  `HTMLFormElement.prototype.submit` for the auto-saving controls - marked `data-autosave` and
+  saved by `static/autosave.js` since design 31, which on a `<select>` changed from the keyboard
+  waits for Enter or blur) per path in sessionStorage for 20 s, and restores it on the page that comes back; a
   redirect with a `#fragment` (e.g. `#screen-lock` with a notice) keeps its anchor instead. A new
   page template must include the head partial (`pages_restore_scroll_after_auto_save` checks
-  every template and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
+  every template, subfolders too, and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
   installed - CI always runs them); a new form needs nothing else as long as it redirects back to
   its own page. External file, so a future CSP needs no inline-script exception.
 - **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of

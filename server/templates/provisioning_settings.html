@@ -4,10 +4,11 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "settings" %}
 {% include "partials/app_header.html" %}
 <main class="container container-narrow">
     <div class="page-header">
-        <h1>Provisioning</h1>
+        <h1>Phone Setup</h1>
     </div>
     <p class="subtitle">Embedded verbatim into every device's setup QR code (both Android's native zero-touch provisioning on stock/GMS devices, and the launcher's own in-app QR scanner for devices like GrapheneOS that need adb-based setup instead). One server covers every device. The Tailscale key is one-time: put a new one here before each phone's setup.</p>
 

@@ -179,7 +179,7 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
-fn is_safe_backup_filename(name: &str) -> bool {
+pub(crate) fn is_safe_backup_filename(name: &str) -> bool {
     name.starts_with("backup-")
         && name.ends_with(".zip")
         && !name.contains('/')
@@ -1013,7 +1013,7 @@ pub async fn upload_backup(
             &state,
             None,
             Some(
-                "That doesn't look like a Kids Device MDM backup (couldn't find \
+                "That doesn't look like a Vibb Phone backup (couldn't find \
                  kidphone.db inside the zip)."
                     .to_string(),
             ),

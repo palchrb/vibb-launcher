@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, see "Step 1 implementation status" at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -1873,3 +1873,59 @@ This revision makes the following changes:
 | L6 | Gaps in §3.9's map | §3.9 adds `offline_override_used`, `relock.notice`, `lock_screen.unreadable`/`empty_text`, `corrupt_rules`/`budget_corrupt` and `access.typed_paused`. The country code becomes a second form on Phone Setup. The per-photo wallpaper switch is kept (Q1). |
 | L7 | Move the inline `onchange` to one script | §5.2: `autosave.js` with `data-autosave`, in step 1. It also settles the keyboard behaviour of selects. |
 | L8 | Docs and cross-references | §8: each step updates the docs its pages rename (the six files listed). §5.1 now cites `devices.rs:1797` for `anchor=music`, not `music.rs:1798`. |
+
+---
+
+## Step 1 implementation status (2026-10-13)
+
+Built on branch `design-31-s1` (from `69aee48b`); server only, no new crate, no migration.
+- **Shell.** `partials/head.html`: "{title} · Vibb Phone", `color-scheme` meta, the two `theme-color` metas
+  (`#F9F9FA` / `#161618`), `apple-mobile-web-app-title` "Vibb Phone", `style.css?v=8`, `autosave.js` (deferred, after
+  the un-deferred `scroll-restore.js`). `partials/app_header.html`: the brand "Vibb Phone" and the 5-tab bar
+  (Devices · Apps · Locate · Music · Settings, 12px labels, `aria-hidden` icons from the TabBar mockup,
+  `data-tab` per item); every page sets `{% let tab = "…" %}` right before the include and the server writes
+  `aria-current="page"`; the active-tab script is gone. The Apps|Music switch and its inline CSS are gone from
+  `apps_list.html` and `music.html`.
+- **Settings hub** (`handlers::settings_hub`, `settings_hub.html`): the Settings mockup's four groups - Time Rules,
+  Web Filter, Blocked Activity, Wallpapers · Phone Setup, Backups, Software Updates · Account & Password, Security
+  Log, About · Sign Out (`POST /logout`) - with outline icons on tinted tiles. Values (M3): "2 rules" (everyone's
+  rules), "3 lists" / "Off" (enabled blocklists), "12 today" / "None today" (`device_dns_events.received_at` since
+  local midnight), the wallpaper count, the newest backup zip's time ("Today 03:00"), "Server 0.24.0"; Software
+  Updates has none. The hub's module takes only `state.db` and the backup directory.
+- **Rename** (§5.3): manifest `id "/"`, `name` and `short_name` "Vibb Phone", the new description, `theme_color`
+  `#F9F9FA`; `login.html`; `backups.rs`'s "not a Vibb Phone backup"; the start log line; `README.md`, `DEPLOY.md`
+  (with the release note under "The parent app is Vibb Phone"), `server/CLAUDE.md`. The 2FA issuer is unchanged.
+- **CSS** (`style.css`): tokens for light and dark (§5.4's L3 colours: the strong button `#0B66D6` in both themes,
+  switch on `#248A3D` with a bordered off track, lock-badge tokens), the components (`.group`, `.group-header`,
+  `.group-footer`, `.row` with `.row-label`/`.row-sub`/`.row-value`/`.chev`/`.tile`, `.cell` for a form or
+  `<details>` holding a row, `.row-button`/`.row-danger`, the switch `.sw` + sibling `.knob`, `select.pick`,
+  `details.info` + `.info-panel`, `.badge`/`.dot`/`.count`/`.meter`, `.attention-alarm|action|state|result`,
+  `.flash`, `details.confirm` + `.button-destructive`, `.field-error`, `.nav-back`, `.page-title`), and today's
+  `.card`, `.error`, `.success`, `.button-*`, inputs, tables and the device/app lists restyled with the tokens. Browser
+  floor (§5.7): no `:has()`, nesting, `color-mix()` or `gap` where Safari 14.0 needs it; `:focus` +
+  `:focus:not(:focus-visible)`; 1px hairlines, 0.5px under 2dppx; forced colours show a real checkbox; reduced motion
+  drops transitions; the tab bar is opaque unless `backdrop-filter` works. `register-sw.js` is ES5.
+- **`autosave.js`** (L7): the 54 `onchange="this.form.submit()"` are `data-autosave`; one delegated listener calls
+  `form.submit()` (so `music-cards.js`'s swapped cards keep working). A `<select>` changed from the keyboard waits
+  for Enter or blur. `jstest/autosave.test.js` (7 tests).
+- **Tests**: `tests/mod.rs` helpers `input_checked`, `autosaves`, `form_action_of`, `nav_current`,
+  `device_page(id, Section)` (Summary, Calls so far), `assert_redirect`; the `onchange` assertions in `hardening.rs`,
+  `music.rs` and `lock_glance.rs` and the pinned Locations in `enrollment.rs` and `parent_pin.rs` use them.
+  `tests/shell.rs`: `nav_current` on a landing and an inner page per tab, every template sets a valid tab, the name
+  and manifest, no inline auto-submit, the helpers, the hub's links and values, and that the hub names no network
+  client and fetches nothing. `pages_restore_scroll_after_auto_save` walks subfolders of `templates/`
+  (`template_files`). `cargo test`: 674 passed; fmt clean; clippy: no new warnings.
+
+Choices made while building:
+1. The brand bar ("Vibb Phone", 44px, no border) stays on every page until the sub-page header replaces it page by
+   page (§3.0); the mockups' tab pages start with the large title, which the hub now has (`.page-title`).
+2. The hub follows the mockup's grouping (four groups, no headers) rather than the table's Rules/Content/Server
+   labels; the labels are the spec's ("Software Updates", "Web Filter" with the list count, not the mockup's "On").
+3. "Today" and the backup time use the server's local time (as the Backups page does) until step 2's
+   `display_time` takes the Phone Setup zone.
+4. Pages whose name left the navigation were renamed in place: `/dns` is titled "Web Filter", `/settings/provisioning`
+   "Phone Setup", and links saying "DNS/Filters tab" / "Provisioning settings" point at Settings › Web Filter / Phone
+   Setup. Their content is unchanged (steps 14 and 15).
+5. `/updates` isn't fetched by the tab test (it asks GitHub when it renders); its tab is checked in the template.
+6. Not checked here: the 390 px light/dark/no-JS pass in a browser (no browser in the sandbox) - owed on a phone or
+   desktop browser before merging.

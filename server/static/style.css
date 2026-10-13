@@ -1,83 +1,878 @@
+/* Vibb Phone, the parent PWA (design 31). The look comes from the approved mockups
+   (docs/design/mockups/parent-pwa/), iOS Settings style. Browser floor (§5.7): Chrome/WebView 80+
+   and iOS Safari 14+ render the design; older ones get plain, working controls. Not used here:
+   :has(), color-mix(), CSS nesting, @layer, container queries, dvh. Bump ?v= in
+   templates/partials/head.html with every change. */
+
+/* ---- Tokens ------------------------------------------------------------------------------ */
+
 :root {
-    --color-bg: #f4f5f7;
-    --color-surface: #ffffff;
-    --color-text: #1f2430;
-    --color-text-muted: #6b7280;
-    --color-primary: #2563eb;
-    --color-primary-hover: #1d4ed8;
-    --color-border: #e2e4e9;
-    --color-danger: #dc2626;
-    --color-danger-bg: #fef2f2;
-    --radius: 10px;
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+    color-scheme: light dark;
+
+    --bg: #F2F2F7;
+    --surface: #FFFFFF;
+    --label: #000000;
+    --label-2: #6B6B70;
+    --label-3: #3A3A3C;
+    --sep: #C6C6C8;
+    --sep-light: #E1E1E6;
+    --chev: #C4C4C7;
+    --row-active: #E5E5EA;
+    --field-bg: #F2F2F7;
+
+    --tint: #0B66D6;
+    --tint-hover: #084C9E;
+    /* The filled button: #0B66D6 in both themes (white on it 5.4:1; §5.4, L3). */
+    --strong: #0B66D6;
+    --strong-hover: #0956B5;
+    --destructive: #D70015;
+    --destructive-hover: #B0001A;
+
+    --red: #D70015;
+    --red-text: #B0001A;
+    --red-bg: #FDECEE;
+    --orange: #B35A00;
+    --orange-text: #7A3D00;
+    --orange-bg: #FFF4E5;
+    --green: #1E7A35;
+    --green-text: #13612A;
+    --green-bg: #E7F6EB;
+    --grey-text: #3A3A3C;
+    --grey-bg: #E9E9EE;
+    --info-text: #1C2A3A;
+    --info-bg: #EEF4FC;
+    --lock-text: #3A36B8;
+    --lock-bg: #EEF0FF;
+
+    --dot-green: #34C759;
+    --dot-orange: #FF9500;
+    --dot-red: #FF3B30;
+    --dot-grey: #8E8E93;
+    --count-bg: #D70015;
+    --track: #E5E5EA;
+    --bar-fill: #34C759;
+
+    /* Switch (§5.4): on #248A3D (4.4:1), off keeps its fill with a #8E8E93 border. */
+    --switch-on: #248A3D;
+    --switch-off: #E3E3E8;
+    --switch-off-border: #8E8E93;
+    --knob: #FFFFFF;
+
+    /* Tab bar: opaque by default, translucent where backdrop-filter works. */
+    --bar: #F9F9FA;
+    --bar-translucent: rgba(249, 249, 250, 0.94);
+    --bar-line: #C6C6C8;
+    --tab-off: #6B6B70;
+    --tab-on: #0B66D6;
+
+    /* Old names, still used by inline styles on the pages not redesigned yet. */
+    --color-bg: var(--field-bg);
+    --color-surface: var(--surface);
+    --color-text: var(--label);
+    --color-text-muted: var(--label-2);
+    --color-primary: var(--tint);
+    --color-primary-hover: var(--tint-hover);
+    --color-border: var(--sep-light);
+    --color-danger: var(--red-text);
+    --color-danger-bg: var(--red-bg);
+    --radius: 12px;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --color-bg: #14161c;
-        --color-surface: #1c1f28;
-        --color-text: #e9eaef;
-        --color-text-muted: #9aa0ac;
-        --color-primary: #3b82f6;
-        --color-primary-hover: #60a5fa;
-        --color-border: #2c3040;
-        --color-danger: #f87171;
-        --color-danger-bg: #2a1414;
-        --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+        --bg: #000000;
+        --surface: #1C1C1E;
+        --label: #FFFFFF;
+        --label-2: #98989F;
+        --label-3: #D1D1D6;
+        --sep: #38383A;
+        --sep-light: #2C2C2E;
+        --chev: #5A5A5F;
+        --row-active: #2C2C2E;
+        --field-bg: #000000;
+
+        --tint: #4A9BFF;
+        --tint-hover: #7AB6FF;
+        --strong: #0B66D6;
+        --strong-hover: #1A75E5;
+        --destructive: #D70015;
+        --destructive-hover: #E5172B;
+
+        --red: #FF6961;
+        --red-text: #FF6961;
+        --red-bg: #3A1715;
+        --orange: #FFB340;
+        --orange-text: #FFB340;
+        --orange-bg: #33240E;
+        --green: #4CD964;
+        --green-text: #4CD964;
+        --green-bg: #123019;
+        --grey-text: #D1D1D6;
+        --grey-bg: #2C2C2E;
+        --info-text: #CFE0F5;
+        --info-bg: #1A2533;
+        --lock-text: #C7C5FF;
+        --lock-bg: #2A2950;
+
+        --dot-green: #30D158;
+        --dot-orange: #FF9F0A;
+        --dot-red: #FF453A;
+        --dot-grey: #8E8E93;
+        --track: #38383A;
+        --bar-fill: #30D158;
+
+        --switch-off: #39393D;
+        --knob: #FFFFFF;
+
+        --bar: #161618;
+        --bar-translucent: rgba(22, 22, 24, 0.94);
+        --bar-line: #38383A;
+        --tab-off: #98989F;
+        --tab-on: #4A9BFF;
     }
 }
+
+/* ---- Base -------------------------------------------------------------------------------- */
 
 * {
     box-sizing: border-box;
 }
 
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+}
+
 body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--color-bg);
-    color: var(--color-text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background: var(--bg);
+    color: var(--label);
     line-height: 1.5;
 }
 
 a {
-    color: var(--color-primary);
+    color: var(--tint);
 }
+
+a:hover {
+    color: var(--tint-hover);
+}
+
+/* Focus: :focus with an outline, reset by :focus:not(:focus-visible), so Safari before 15.4 (no
+   :focus-visible - the whole second rule is dropped there) still shows focus (§5.7). */
+a:focus,
+button:focus,
+input:focus,
+select:focus,
+textarea:focus,
+summary:focus {
+    outline: 2px solid var(--tint);
+    outline-offset: 2px;
+}
+
+a:focus:not(:focus-visible),
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+select:focus:not(:focus-visible),
+textarea:focus:not(:focus-visible),
+summary:focus:not(:focus-visible) {
+    outline: none;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+    accent-color: var(--switch-on);
+}
+
+/* ---- Shell: brand bar, page, tab bar -------------------------------------------------------- */
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 16px;
+    background: var(--bg);
+}
+
+.app-header .brand {
+    font-weight: 600;
+    font-size: 1.0625rem;
+    text-decoration: none;
+    color: var(--label);
+}
+
+.container {
+    max-width: 720px;
+    margin: 0 auto;
+    /* The tab bar is 56px plus the home indicator's inset. */
+    padding: 8px 16px 96px;
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+}
+
+.container-narrow {
+    max-width: 480px;
+}
+
+.page-title {
+    font-size: 2.125rem;
+    font-weight: 700;
+    line-height: 1.15;
+    margin: 4px 0 20px;
+    overflow-wrap: anywhere;
+}
+
+.page-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    margin: 4px 0 20px;
+}
+
+/* A long one-word title (an RSS feed's name) wraps instead of widening the page at 360 px
+   (qa-21-step1-code #4). */
+.page-header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+    margin: 0 12px 0 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.page-header > * {
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+/* The sub-page header (§3.0): a back link, then the large title. */
+.nav-back {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--tint);
+    font-size: 1.0625rem;
+    text-decoration: none;
+}
+
+.nav-back svg {
+    width: 12px;
+    height: 20px;
+    margin-right: 4px;
+}
+
+.tab-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    display: flex;
+    background: var(--bar);
+    border-top: 1px solid var(--bar-line);
+    padding: 4px 4px 4px;
+    padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+}
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .tab-bar {
+        background: var(--bar-translucent);
+        -webkit-backdrop-filter: saturate(180%) blur(20px);
+        backdrop-filter: saturate(180%) blur(20px);
+    }
+}
+
+.tab {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    color: var(--tab-off);
+    text-decoration: none;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.2;
+}
+
+.tab:hover {
+    color: var(--tab-off);
+}
+
+.tab[aria-current="page"],
+.tab[aria-current="page"]:hover {
+    color: var(--tab-on);
+}
+
+.tab-icon {
+    width: 26px;
+    height: 26px;
+    margin-bottom: 2px;
+}
+
+/* ---- Grouped list (§3.0) ------------------------------------------------------------------- */
+
+.group {
+    background: var(--surface);
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 0 0 20px;
+}
+
+.group-header {
+    font-size: 0.8125rem;
+    font-weight: 400;
+    color: var(--label-2);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 24px 16px 7px;
+}
+
+.group-footer {
+    font-size: 0.8125rem;
+    color: var(--label-2);
+    line-height: 1.38;
+    margin: -13px 16px 20px;
+}
+
+/* A row: label · value · chevron, a switch, an inline picker or an action. A .cell is a wrapper
+   (a form, a <details>) that holds one row. The children are spaced with margins, not gap, for
+   Safari 14.0. */
+.row {
+    display: flex;
+    align-items: center;
+    position: relative;
+    width: 100%;
+    min-height: 44px;
+    margin: 0;
+    padding: 11px 16px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--label);
+    font-family: inherit;
+    font-size: 1.0625rem;
+    font-weight: 400;
+    line-height: 1.25;
+    text-align: left;
+    text-decoration: none;
+}
+
+.row > * + * {
+    margin-left: 12px;
+}
+
+a.row:hover {
+    color: var(--label);
+}
+
+a.row:active,
+button.row:active,
+summary.row:active {
+    background: var(--row-active);
+}
+
+.cell {
+    position: relative;
+    margin: 0;
+}
+
+/* Hairlines between rows: 1px in a light colour, 0.5px only on 2x screens (§5.7). */
+.group > .row ~ .row::before,
+.group > .row ~ .cell::before,
+.group > .cell ~ .row::before,
+.group > .cell ~ .cell::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+
+.group-icons > .row ~ .row::before,
+.group-icons > .row ~ .cell::before,
+.group-icons > .cell ~ .row::before,
+.group-icons > .cell ~ .cell::before {
+    left: 57px;
+}
+
+.group-avatars > .row ~ .row::before,
+.group-avatars > .row ~ .cell::before,
+.group-avatars > .cell ~ .row::before,
+.group-avatars > .cell ~ .cell::before {
+    left: 72px;
+}
+
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+    .group > .row ~ .row::before,
+    .group > .row ~ .cell::before,
+    .group > .cell ~ .row::before,
+    .group > .cell ~ .cell::before {
+        border-top-width: 0.5px;
+        border-top-color: var(--sep);
+    }
+
+    .tab-bar {
+        border-top-width: 0.5px;
+    }
+}
+
+.row-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.row-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.8125rem;
+    color: var(--label-2);
+    line-height: 1.3;
+}
+
+.row-value {
+    flex: 0 1 auto;
+    min-width: 0;
+    color: var(--label-2);
+    font-size: 1rem;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+.chev {
+    flex: none;
+    width: 8px;
+    height: 14px;
+    color: var(--chev);
+}
+
+.tile {
+    flex: none;
+    width: 29px;
+    height: 29px;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #FFFFFF;
+}
+
+.tile svg {
+    width: 17px;
+    height: 17px;
+}
+
+.tile-indigo { background: #5E5CE6; }
+.tile-teal { background: #30B0C7; }
+.tile-red { background: #FF453A; }
+.tile-blue { background: #32ADE6; }
+.tile-green { background: #34C759; }
+.tile-grey { background: #8E8E93; }
+.tile-graphite { background: #636366; }
+
+/* An action row: blue text; .row-danger red. A <button class="row row-button"> resets the filled
+   button style. */
+.row-button {
+    justify-content: center;
+    color: var(--tint);
+    cursor: pointer;
+}
+
+.row-button:hover {
+    background: var(--row-active);
+    color: var(--tint);
+}
+
+.row-danger,
+.row-danger:hover {
+    color: var(--red);
+}
+
+/* ---- Switch (§5.7): a real checkbox and a sibling knob, never a pseudo-element on the input ---- */
+
+.sw {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: none;
+    position: relative;
+    width: 51px;
+    height: 31px;
+    margin: 0;
+    border: 1px solid var(--switch-off-border);
+    border-radius: 16px;
+    background: var(--switch-off);
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.sw:checked {
+    background: var(--switch-on);
+    border-color: var(--switch-on);
+}
+
+.sw:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.knob {
+    flex: none;
+    width: 27px;
+    height: 27px;
+    border-radius: 50%;
+    background: var(--knob);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+    transition: transform 0.2s;
+}
+
+/* Laid over the switch: 2px from its left edge, 20px further when on. */
+.sw + .knob,
+.row > .sw + .knob {
+    margin-left: -49px;
+    margin-right: 22px;
+}
+
+.sw:checked + .knob {
+    -webkit-transform: translateX(20px);
+    transform: translateX(20px);
+}
+
+.sw:disabled + .knob {
+    opacity: 0.7;
+}
+
+/* ---- Inline picker (§3.0): a native <select> at the end of its row ---- */
+
+select.pick {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 0 1 auto;
+    width: auto;
+    max-width: 60%;
+    margin: 0;
+    padding: 4px 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--label-2);
+    font: inherit;
+    font-size: 1rem;
+    text-align: right;
+    text-align-last: right;
+    cursor: pointer;
+}
+
+.pick-arrows {
+    flex: none;
+    width: 10px;
+    height: 16px;
+    color: var(--label-2);
+}
+
+.row > select.pick + .pick-arrows {
+    margin-left: 6px;
+}
+
+/* ---- "i" disclosure (§4.4) ---- */
+
+details.info > summary,
+details.confirm > summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+details.info > summary::-webkit-details-marker,
+details.confirm > summary::-webkit-details-marker {
+    display: none;
+}
+
+details.info > summary:not(.row) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    color: var(--tint);
+    vertical-align: middle;
+}
+
+.info-icon {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    color: var(--tint);
+}
+
+.info-panel {
+    background: var(--info-bg);
+    color: var(--info-text);
+    border-radius: 10px;
+    margin: 0 16px 12px;
+    padding: 10px 12px;
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
+.info-panel p {
+    margin: 0;
+}
+
+.info-panel p + p {
+    margin-top: 8px;
+}
+
+.group-footer details.info > summary:not(.row) {
+    min-width: 44px;
+    min-height: 44px;
+    margin: -12px -10px;
+}
+
+.group-footer .info-panel {
+    margin: 8px 0 0;
+}
+
+/* ---- Badges, dots, counts ---- */
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--grey-bg);
+    color: var(--grey-text);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.badge > * + * {
+    margin-left: 6px;
+}
+
+.badge svg {
+    width: 14px;
+    height: 14px;
+}
+
+.badge-green { background: var(--green-bg); color: var(--green-text); }
+.badge-orange { background: var(--orange-bg); color: var(--orange-text); }
+.badge-red { background: var(--red-bg); color: var(--red-text); }
+.badge-lock { background: var(--lock-bg); color: var(--lock-text); }
+
+.dot {
+    display: inline-block;
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--dot-grey);
+}
+
+.dot-green { background: var(--dot-green); }
+.dot-orange { background: var(--dot-orange); }
+.dot-red { background: var(--dot-red); }
+
+.state-online { color: var(--green); font-weight: 600; }
+.state-away { color: var(--orange); font-weight: 600; }
+.state-offline { color: var(--label-2); font-weight: 600; }
+
+.count {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 11px;
+    background: var(--count-bg);
+    color: #FFFFFF;
+    font-size: 0.8125rem;
+    font-weight: 700;
+}
+
+.meter {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--track);
+    overflow: hidden;
+}
+
+.meter > i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--bar-fill);
+}
+
+/* ---- Attention rows, four levels (§1.12, §3.0) ---- */
+
+.attention {
+    display: flex;
+    align-items: center;
+    margin: 0 0 8px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: var(--grey-bg);
+    color: var(--grey-text);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.3;
+    text-decoration: none;
+}
+
+.attention > * + * {
+    margin-left: 12px;
+}
+
+.attention .attention-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.attention .chev {
+    color: currentColor;
+    opacity: 0.6;
+}
+
+.attention-alarm,
+.attention-alarm:hover { background: var(--red-bg); color: var(--red-text); }
+.attention-action,
+.attention-action:hover { background: var(--orange-bg); color: var(--orange-text); }
+.attention-state,
+.attention-state:hover { background: var(--grey-bg); color: var(--grey-text); }
+.attention-result,
+.attention-result:hover { background: var(--green-bg); color: var(--green-text); }
+
+/* ---- Flash: one line inside the group whose form saved, under its rows (§3.0, H3) ---- */
+
+.flash {
+    margin: 0;
+    padding: 11px 16px;
+    background: var(--green-bg);
+    color: var(--green-text);
+    font-size: 0.9375rem;
+    line-height: 1.35;
+}
+
+.flash-error {
+    background: var(--red-bg);
+    color: var(--red-text);
+}
+
+/* ---- Confirm (§3.0): a <details> whose summary is the button ---- */
+
+details.confirm > summary.row {
+    justify-content: center;
+    color: var(--red);
+}
+
+.confirm-body {
+    padding: 4px 16px 16px;
+}
+
+.confirm-body p {
+    margin: 0 0 12px;
+    font-size: 0.9375rem;
+    line-height: 1.4;
+    color: var(--label-3);
+}
+
+.button-destructive {
+    display: block;
+    width: 100%;
+    padding: 13px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--destructive);
+    color: #FFFFFF;
+    font: inherit;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.button-destructive:hover {
+    background: var(--destructive-hover);
+}
+
+/* ---- Fields ---- */
+
+.field-label {
+    display: block;
+    margin: 0 4px 6px;
+    font-size: 0.9375rem;
+    font-weight: 600;
+}
+
+.field-error {
+    color: var(--red-text);
+    font-size: 0.8125rem;
+    margin: -10px 4px 16px;
+}
+
+[aria-invalid="true"] {
+    border-color: var(--red) !important;
+}
+
+/* ---- The pages not redesigned yet: today's classes on the new tokens ---- */
 
 .auth-page {
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: 24px 16px;
 }
 
 .card {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    padding: 32px;
-    margin-bottom: 24px;
+    background: var(--surface);
+    border: 0;
+    border-radius: 12px;
+    padding: 20px 16px;
+    margin-bottom: 20px;
 }
 
 .auth-page .card {
     width: 100%;
     max-width: 400px;
+    padding: 28px 20px;
 }
 
-.card h1, .card h2 {
+.card h1,
+.card h2 {
     margin-top: 0;
 }
 
+.card h2 {
+    font-size: 1.25rem;
+    line-height: 1.3;
+}
+
+.card h3 {
+    font-size: 1.0625rem;
+}
+
 .subtitle {
-    color: var(--color-text-muted);
-    font-size: 0.95rem;
+    color: var(--label-2);
+    font-size: 0.9375rem;
 }
 
 label {
     display: block;
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.9375rem;
     margin-bottom: 6px;
 }
 
@@ -85,20 +880,20 @@ input[type="text"],
 input[type="tel"],
 input[type="password"],
 input[type="time"],
-select {
+input[type="email"],
+input[type="url"],
+input[type="number"],
+select,
+textarea {
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    background: var(--color-bg);
-    color: var(--color-text);
+    border: 1px solid var(--sep-light);
+    border-radius: 10px;
+    background: var(--field-bg);
+    color: var(--label);
+    font-family: inherit;
     font-size: 1rem;
     margin-bottom: 16px;
-}
-
-input:focus {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 1px;
 }
 
 .qr-code {
@@ -109,124 +904,142 @@ input:focus {
 
 .qr-code img {
     border-radius: 8px;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--sep-light);
 }
 
 .hint {
-    color: var(--color-text-muted);
-    font-size: 0.85rem;
+    color: var(--label-2);
+    font-size: 0.875rem;
     margin-top: -10px;
     margin-bottom: 16px;
 }
 
 .secret-key {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
+    background: var(--field-bg);
+    border: 1px solid var(--sep-light);
+    border-radius: 10px;
     padding: 10px 12px;
     word-break: break-all;
     font-size: 0.9rem;
     margin-bottom: 16px;
 }
 
-button, .button {
+button,
+.button {
     display: inline-block;
-    background: var(--color-primary);
-    color: white;
+    background: var(--strong);
+    color: #FFFFFF;
     border: none;
     padding: 10px 18px;
-    border-radius: 8px;
+    border-radius: 10px;
+    font-family: inherit;
     font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
     text-decoration: none;
 }
 
-button:hover, .button:hover {
-    background: var(--color-primary-hover);
+button:hover,
+.button:hover {
+    background: var(--strong-hover);
+    color: #FFFFFF;
 }
 
-.button-secondary {
-    background: transparent;
-    color: var(--color-text);
-    border: 1px solid var(--color-border);
+.button-secondary,
+.button-secondary:hover {
+    background: var(--surface);
+    color: var(--tint);
+    border: 1px solid var(--sep-light);
 }
 
-.button-danger {
-    background: var(--color-danger-bg);
-    color: var(--color-danger);
-    border: 1px solid var(--color-danger);
+.button-secondary:hover {
+    background: var(--row-active);
 }
 
-.button-link {
+.button-danger,
+.button-danger:hover {
+    background: var(--red-bg);
+    color: var(--red-text);
+    border: 1px solid var(--red-text);
+}
+
+.button-link,
+.button-link:hover {
     background: none;
-    color: var(--color-text-muted);
+    color: var(--label-2);
     padding: 0;
     font-weight: normal;
     text-decoration: underline;
 }
 
-.error {
-    background: var(--color-danger-bg);
-    color: var(--color-danger);
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin-bottom: 16px;
-    font-size: 0.9rem;
-    overflow-wrap: anywhere;
-}
-
-.success {
-    background: #ecfdf5;
-    color: #059669;
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin-bottom: 16px;
-    font-size: 0.9rem;
-}
-
-@media (prefers-color-scheme: dark) {
-    .success {
-        background: #0f2a20;
-        color: #34d399;
-    }
-}
-
 .button-small {
     display: inline-block;
-    background: var(--color-primary);
-    color: white;
+    background: var(--strong);
+    color: #FFFFFF;
     border: none;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 0.85rem;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.875rem;
     font-weight: 600;
     cursor: pointer;
     text-decoration: none;
 }
 
 .button-small:hover {
-    background: var(--color-primary-hover);
+    background: var(--strong-hover);
+    color: #FFFFFF;
 }
 
-.button-small.button-danger {
-    background: var(--color-danger-bg);
-    color: var(--color-danger);
-    border: 1px solid var(--color-danger);
+.button-small.button-danger,
+.button-small.button-danger:hover {
+    background: var(--red-bg);
+    color: var(--red-text);
+    border: 1px solid var(--red-text);
 }
 
-.button-small.button-secondary {
-    background: transparent;
-    color: var(--color-text);
-    border: 1px solid var(--color-border);
+.button-small.button-secondary,
+.button-small.button-secondary:hover {
+    background: var(--surface);
+    color: var(--tint);
+    border: 1px solid var(--sep-light);
+}
+
+.button-small.button-secondary:hover {
+    background: var(--row-active);
+}
+
+/* Warnings and notes on the old pages: the alarm colours, until each page sorts them into the
+   four levels. */
+.error {
+    background: var(--red-bg);
+    color: var(--red-text);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 0.9375rem;
+    overflow-wrap: anywhere;
+}
+
+.success {
+    background: var(--green-bg);
+    color: var(--green-text);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 0.9375rem;
 }
 
 .admin-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
     flex-wrap: wrap;
+    margin: -4px;
+}
+
+.admin-actions > * {
+    margin: 4px;
 }
 
 table {
@@ -235,16 +1048,17 @@ table {
     font-size: 0.9rem;
 }
 
-th, td {
+th,
+td {
     text-align: left;
     padding: 8px 10px;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--sep-light);
 }
 
 th {
-    color: var(--color-text-muted);
+    color: var(--label-2);
     font-weight: 600;
-    font-size: 0.8rem;
+    font-size: 0.8125rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
 }
@@ -254,8 +1068,8 @@ th {
 }
 
 .drive-card {
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
+    border: 1px solid var(--sep-light);
+    border-radius: 10px;
     padding: 12px 16px;
     margin-top: 8px;
 }
@@ -263,106 +1077,6 @@ th {
 .section-title {
     margin-top: 28px;
     margin-bottom: 4px;
-}
-
-/* Navigation is the fixed bottom tab bar (.bottom-nav) below - the header
-   is just branding. */
-.app-header {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 14px 20px;
-    background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
-}
-
-.bottom-nav {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    display: flex;
-    background: var(--color-surface);
-    border-top: 1px solid var(--color-border);
-    padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
-    z-index: 20;
-}
-
-.bottom-nav-item {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    padding: 6px 2px;
-    color: var(--color-text-muted);
-    text-decoration: none;
-    font-size: 0.68rem;
-    font-weight: 600;
-    border-radius: 8px;
-}
-
-.bottom-nav-item.active {
-    color: var(--color-primary);
-}
-
-.bottom-nav-icon {
-    width: 22px;
-    height: 22px;
-}
-
-.icon-list {
-    display: flex;
-    flex-direction: column;
-    margin: 16px 0;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    overflow: hidden;
-}
-
-.icon-list-item {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 16px;
-    color: var(--color-text);
-    text-decoration: none;
-    border-bottom: 1px solid var(--color-border);
-}
-
-.icon-list-item:last-child {
-    border-bottom: none;
-}
-
-.icon-list-item:hover {
-    background: var(--color-bg);
-}
-
-.icon-list-icon {
-    flex-shrink: 0;
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.25rem;
-    color: white;
-}
-
-.icon-list-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.icon-list-text strong {
-    font-size: 1rem;
-}
-
-.icon-list-text span {
-    font-size: 0.85rem;
-    color: var(--color-text-muted);
 }
 
 .stat-tiles {
@@ -373,15 +1087,14 @@ th {
 }
 
 .stat-tile {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
+    background: var(--surface);
+    border-radius: 12px;
     padding: 16px;
 }
 
 .stat-tile .stat-label {
-    font-size: 0.8rem;
-    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+    color: var(--label-2);
     font-weight: 600;
 }
 
@@ -397,76 +1110,69 @@ th {
     align-items: center;
     justify-content: space-between;
     padding: 10px 0;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--sep-light);
 }
 
 .release-row:last-child {
     border-bottom: none;
 }
 
-.app-header .brand {
-    font-weight: 700;
-    font-size: 1.1rem;
-    text-decoration: none;
-    color: var(--color-text);
-}
-
-.container {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 32px 24px calc(32px + 64px);
-}
-
-.container-narrow {
-    max-width: 480px;
-}
-
-.page-header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px 12px;
-    margin-bottom: 24px;
-}
-
-/* A long one-word title (an RSS feed's name) wraps instead of widening the page at 360 px
-   (qa-21-step1-code #4). */
-.page-header h1 {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
-
 .empty-state {
-    color: var(--color-text-muted);
+    color: var(--label-2);
 }
 
+/* The Devices and Apps lists: one grouped list of rows. */
 .device-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    background: var(--surface);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 20px;
 }
 
 .device-card {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    padding: 16px 20px;
+    position: relative;
+    min-height: 44px;
+    padding: 12px 16px;
+    color: var(--label);
     text-decoration: none;
-    color: var(--color-text);
+}
+
+.device-card:hover {
+    color: var(--label);
+}
+
+.device-card:active {
+    background: var(--row-active);
+}
+
+.device-card + .device-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+}
+
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+    .device-card + .device-card::before {
+        border-top-width: 0.5px;
+        border-top-color: var(--sep);
+    }
 }
 
 .device-name {
     font-weight: 600;
+    margin-right: 12px;
 }
 
 .device-status {
-    color: var(--color-text-muted);
-    font-size: 0.9rem;
+    color: var(--label-2);
+    font-size: 0.9375rem;
+    text-align: right;
 }
 
 .enrollment-card {
@@ -484,9 +1190,12 @@ th {
 .checkbox-row {
     display: flex;
     align-items: center;
-    gap: 10px;
     font-weight: normal;
     margin-bottom: 12px;
+}
+
+.checkbox-row > * + * {
+    margin-left: 10px;
 }
 
 .checkbox-row input {
@@ -502,8 +1211,8 @@ th {
 .app-checkbox-list {
     max-height: 320px;
     overflow-y: auto;
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
+    border: 1px solid var(--sep-light);
+    border-radius: 10px;
     padding: 12px 16px;
     margin-bottom: 16px;
 }
@@ -512,9 +1221,9 @@ th {
     margin-left: auto;
     padding: 2px 8px;
     border-radius: 12px;
-    background: var(--color-border);
-    color: var(--color-text-muted);
-    font-size: 0.8rem;
+    background: var(--grey-bg);
+    color: var(--grey-text);
+    font-size: 0.8125rem;
     /* A short label stays one pill; a long one (a download's progress, a refused release's reason)
        wraps instead of being cut off at 360 px. */
     white-space: normal;
@@ -522,9 +1231,9 @@ th {
 }
 
 .app-status[data-failed="true"] {
-    background: var(--color-danger-bg);
-    color: var(--color-danger);
-    border: 1px solid var(--color-danger);
+    background: var(--red-bg);
+    color: var(--red-text);
+    border: 1px solid var(--red-text);
 }
 
 .schedule-grid {
@@ -542,7 +1251,7 @@ th {
 
 /* Calls & SMS page (device_calls.html): one block per contact. */
 .contact-row {
-    border-top: 1px solid var(--color-border);
+    border-top: 1px solid var(--sep-light);
     padding-top: 12px;
     margin-top: 12px;
 }
@@ -556,9 +1265,12 @@ th {
 .contact-photo-row {
     display: flex;
     align-items: center;
-    gap: 12px;
     flex-wrap: wrap;
-    margin-bottom: 8px;
+    margin: -6px -6px 2px;
+}
+
+.contact-photo-row > * {
+    margin: 6px;
 }
 
 .contact-avatar {
@@ -581,7 +1293,7 @@ th {
 
 /* "Name and icon" (design 14, partials/app_display_form.html). */
 .app-display {
-    border-top: 1px solid var(--color-border);
+    border-top: 1px solid var(--sep-light);
     padding: 10px 0;
 }
 
@@ -592,8 +1304,11 @@ th {
 .app-preview {
     display: flex;
     align-items: center;
-    gap: 12px;
     margin: 12px 0;
+}
+
+.app-preview > * + * {
+    margin-left: 12px;
 }
 
 .app-tile {
@@ -638,7 +1353,7 @@ th {
 .glyph-grid legend,
 .color-grid legend {
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.9375rem;
     margin-bottom: 6px;
 }
 
@@ -662,4 +1377,35 @@ th {
     width: 20px;
     height: 20px;
     border-radius: 50%;
+}
+
+/* ---- Accessibility media ---- */
+
+@media (forced-colors: active) {
+    .sw {
+        -webkit-appearance: auto;
+        appearance: auto;
+        width: auto;
+        height: auto;
+        border: 0;
+    }
+
+    .knob {
+        display: none;
+    }
+
+    .sw + .knob,
+    .row > .sw + .knob {
+        margin: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        transition: none !important;
+        animation: none !important;
+        scroll-behavior: auto !important;
+    }
 }

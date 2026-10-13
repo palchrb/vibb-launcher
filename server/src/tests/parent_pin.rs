@@ -62,10 +62,18 @@ async fn a_pin_is_saved_hashed_and_sent_with_a_nudge() {
     let (id, token) = app.enrolled_device("phone").await;
     let mut nudges = app.state.command_notify.subscribe();
 
-    let location = save(&app, &cookie, id, &[("new_pin", " 583920 ")]).await;
-    assert_eq!(
-        location,
-        format!("/devices/{id}?notice=parent_pin_saved#parent-pin")
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/parent-pin"),
+            Some(&cookie),
+            &[("new_pin", " 583920 ")],
+        )
+        .await;
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}?notice=parent_pin_saved"),
+        Some("parent-pin"),
     );
     let row = stored(&app, id).await;
     assert!(verifies(&row, "583920"));

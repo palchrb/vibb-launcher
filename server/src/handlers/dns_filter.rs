@@ -166,7 +166,7 @@ pub async fn show_dns_filter(
 
     Html(
         DnsFilterTemplate {
-            title: "DNS/Filters".to_string(),
+            title: "Web Filter".to_string(),
             settings,
             blocklists,
             blocked_domains,
