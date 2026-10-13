@@ -903,6 +903,144 @@ Play emulator: the store is the package verifier and is never suspended).
 - [ ] **P6**: in no case do Play services or GSF show. Install mode is unchanged (§6b): the store is in the drawer and
   on Home.
 
+## 6k. Debug build only: the keyguard cover (design 32 step 2)
+
+Design 32 (`docs/design/32-lock-flash.md` §8 step 2, §11): Android's own keyguard, as a bare Swipe screen with no
+credential and every feature off, is a cover across the sleep. Our lock is `showWhenLocked` and occludes it. While
+the keyguard is locked, AOSP shows no activity that isn't `showWhenLocked`, so no other app's content or snapshot can
+be on screen before the lock's first frame. The lock dismisses the keyguard after that frame. This is a device
+experiment behind a debug-only switch. The receiver and its prefs file `keyguard_cover_debug` live only in
+`src/debug` (`checkReleaseHasNoDebugHook`, `DebugHookAbsentTest`), and the release `KeyguardCoverDebug` is always
+off. It needs `android.permission.DUMP`, which shell has.
+
+```
+P=me.vibb.launcher.debug
+K=$P/com.kidslauncher.mdm.lock.KeyguardCoverDebugReceiver
+adb shell am broadcast -n $K --ez on true      # switch on (stored, survives restarts) + a full apply
+adb shell am broadcast -n $K --ez on false     # switch off: the keyguard as after step 1
+adb shell am broadcast -n $K                   # no change, just apply and report
+adb shell am broadcast -n $K --ez failDismiss true   # the lock "asks" without the call: each one fails
+adb shell am broadcast -n $K --ez skipDismiss true   # the lock never asks: the keyguard stays locked
+adb logcat -s KeyguardCover PinLock PinLockActivity HomeActivity ScreenTimeout
+adb shell dumpsys device_policy | grep -i -E "maximumTimeToLock|disabledKeyguardFeatures|keyguardDisabled"
+adb shell settings get system screen_off_timeout
+adb shell dumpsys window | grep -i -E "keyguard|occlud"
+adb shell dumpsys lock_settings | head -20     # no credential; the lockscreen not disabled under the cover
+```
+
+- **Every broadcast** runs a full apply. Its result data, and logcat `KeyguardCover`, say what is in force:
+  `on -> mode=COVER features=0x7fffffff maxTimeToLock=<T> disabled=false ... armed=true dismissTest=NONE`.
+  `failDismiss`/`skipDismiss` are memory only; any broadcast without them resets them, and so does a new process.
+- **Held off until a lock resume with the screen on.** A new process (a boot, an update, `am crash`) and a dismissal
+  fallback write DISABLED until the lock has resumed with the screen on (M4, M7). The log line then says
+  `held off until a lock resume with the screen on`. So switch it on with the PIN lock on screen and the screen on,
+  or lock and wake once after the broadcast. The fallback's re-arm also waits for the next dark screen-off, so the
+  dismissal falls back at most once per wake.
+- **A new process takes a leftover cover out** (qa-32-s2-code M2): prefs `keyguard_cover` `cover_written` says the
+  device policy may still hold the cover (an update, a crash, a reboot without `ACTION_SHUTDOWN`). The process start
+  then writes DISABLED at once (log `mode=DISABLED ... (a cover left by an earlier process)`), before any apply; the
+  cover comes back after the first apply at a lock resume with the screen on.
+- **"Stay awake" goes off.** DPMS writes `STAY_ON_WHILE_PLUGGED_IN = 0` whenever a max time to lock is set, and
+  nothing puts it back when T returns to 0. After switching the cover off, `adb shell svc power stayon true` again
+  where a check needs it (§6f, §6j).
+- **What it writes** (`lock/KeyguardCover`, the one writer of `setKeyguardDisabled`, the keyguard features and
+  `setMaximumTimeToLock`):
+  - the features first, read back (ALL), then T = the screen timeout in force, read back, then
+    `setKeyguardDisabled(false)`;
+  - any failure means today's disabled keyguard with the PIN lock active, and the log says
+    `The cover couldn't be set (<step>)` (H2);
+  - switched off, exactly the feature bits the cover added come out again (prefs `keyguard_cover`), and T goes
+    back to 0.
+- **T follows the screen timeout** (H1). In Enforce it is written with the parent's value; in Release (the pause, the
+  override) the observer follows the phone's own setting. A growing timeout writes the setting first, a shrinking one
+  T first. Log `maxTimeToLock=<T> (<why>)`. Expected side effect: with T set, Settings greys out timeouts longer than
+  T. In Release the kid can shorten the timeout but not lengthen it, while the cover is on.
+- **Under the cover, a lock-up starts the lock alone, without Home under it** (`Lock-up at screen-off: LOCK (...,
+  cover=true, kg=true)`), but only while the keyguard is locked at that screen-off (`kg=`, qa-32-s2-code L4); with
+  `kg=false` it is step 1's `HOME_THEN_LOCK`. Only `showWhenLocked` windows can show while the keyguard is locked, so
+  Home's black stand-in adds nothing. Its start ahead of the lock's would only widen the window in which SystemUI's
+  bare lockscreen shows at a quick wake.
+- **Don't combine with §6e.** A 16d override that clears `LOCK_TASK_FEATURE_KEYGUARD` makes `LockTaskController`
+  disable the keyguard in lock task (`setKeyguardState`), which silently turns the cover off (L5). (`LockTaskDebug`
+  never clears that bit, but `LOCK_TASK_FEATURE_KEYGUARD` must stay on for this experiment.)
+- Never on a kid's phone: release builds don't have it.
+
+**The frame-stepping rule** (every check below that records, §11):
+```
+adb shell screenrecord --bugreport --bit-rate 8000000 /sdcard/flash.mp4   # Ctrl+C to stop
+adb pull /sdcard/flash.mp4 && mkdir -p frames && ffmpeg -i flash.mp4 -vsync 0 frames/%05d.png
+```
+Step through every frame from the first lit one after each power-on to the lock's first frame. **A run fails on any
+frame with** app content; a status-bar time older than the live one (a snapshot, or a stale display buffer); Home's
+grid; or SystemUI's lockscreen. Black frames, with or without the live status bar, pass. When in doubt, use the
+§5 Perfetto layer trace in `docs/design/32-lock-flash.md`. Record with the device's own `screenrecord`, not the
+emulator window: one stale full-display frame at power-on, with an old status-bar time, was the emulator's host
+composer and not WM (2026-10-13). Check suspect frames with a different `-gpu` mode and on a real phone.
+
+**The checks** (switch on, kid PIN set, managed; §11 step 2):
+- [ ] The broadcast logs `mode=COVER features=0x7fffffff maxTimeToLock=<T> disabled=false`. `dumpsys device_policy`
+  has `maximumTimeToLock` equal to `settings get system screen_off_timeout`. Settings > Security shows Swipe.
+- [ ] Change the parent's "turn off after" (30 s -> 2 min -> 15 s), then start the pause and change the phone's own
+  timeout in Settings. After each change, T equals the setting (log `maxTimeToLock=`).
+- [ ] Right after a timeout screen-off: `dumpsys window | grep -i -E "keyguard|occlud"` shows the keyguard showing and
+  occluded within 1 s.
+- [ ] **(a) The power key**, 10 cycles (off, 3 s, on) from an app in front: the rule, no failing frame.
+- [ ] **(b) The screen timeout, then power within 1-4 s, 20 times** (H1, the user's case): no failing frame.
+- [ ] **(d) Quick presses: off and on within ~100 ms, 20 times**, from an app in front, the cover on:
+  `adb shell input keyevent KEYCODE_SLEEP KEYCODE_WAKEUP` (one `input` call; no camera gesture), or a physical double
+  press. Expected per AOSP reading, still to verify: SystemUI locks an insecure keyguard at once at the sleep, so even
+  a wake that cancels the screen-off fade (`SCREEN_OFF` with `interactive=true`, the lock started as a visible launch)
+  finds the keyguard locked. The app is then hidden, and at most SystemUI's bare lockscreen shows until the lock
+  occludes it. Count the frames with SystemUI's lockscreen (an accepted residual, §12) and fail on any frame of the
+  app. Note `Lock-up at screen-off: LOCK (call=false, interactive=true, cover=true, kg=...)`.
+- [ ] (L4) A test app holding a `KeyguardManager.KeyguardLock` (`disableKeyguard()`), a timeout sleep, a quick wake:
+  the log says `kg=false` and `HOME_THEN_LOCK`, and the wake shows no frame of the app.
+- [ ] (e) Mashing, 5 presses: SOS is still reachable.
+- [ ] After the lock's first frame, logcat shows `dismissed` and `dumpsys window` shows the keyguard not showing.
+  Then, as today: Recents, a VoIP call screen over the lock (sent only after the dismissal: `the VoIP call screen goes
+  now (dismissed)`), the time-rule screen, the emergency dialer, the alarm, SOS, and the camera double press (nothing
+  opens).
+- [ ] A VoIP call in progress, then power off and on: the call screen, no SystemUI lockscreen (log `mode=DISABLED
+  (VoIP IN_CALL)`). The call ends while dark: the cover comes back at the next lock resume with the screen on.
+- [ ] A system-dialer call that ends while dark, then wait 3 s and power on: black, then the lock (log `Lock-up while
+  dark: LOCK (the re-front check, the keyguard cover)`).
+- [ ] Our call: power off and on during it gives black, the lock, then the call screen - at once, not waiting for the
+  dismissal (it is `showWhenLocked`, qa-32-s2-code L5).
+- [ ] 20 wakes with the kiosk on: no "probably Emergency SOS" line, and no lock pause or stop after a dismissal (L9).
+- [ ] After the dismissal: no `LockActivity` start and no lock re-front from the late `USER_PRESENT` (L4). Note
+  whether the lock click and the unlock sound play.
+- [ ] `--ez failDismiss true`: `dismissal failed (state), n=1`, then `n=2` and `fallback` (`mode=DISABLED`). The next
+  lock resume with the screen on after a dark screen-off logs `re-armed` and `mode=COVER`, and the sleep after it is
+  covered.
+- [ ] A cover that can't be set (for example the `disable-keyguard-features` policy not granted yet): the lock stays
+  active, `mode=DISABLED`, and `The cover couldn't be set (features)` appears.
+- [ ] Switch off: Settings shows None, the keyguard features are back to what they were (a parent's bits kept), and
+  `maximumTimeToLock` is 0.
+- [ ] Boot via the power menu or `adb shell svc power reboot` (`ACTION_SHUTDOWN`, log `disabled now (shutdown)`): the
+  boot animation, then the 16b cover or Home's mark, then the lock, with no SystemUI lockscreen frame. `re-armed`
+  follows at the first lock resume with the screen on. `smoke-test.sh REBOOT=1` is green.
+- [ ] Boot via `adb reboot` (no shutdown broadcast): SystemUI's Swipe screen shows until the new process's start
+  writes DISABLED (`mode=DISABLED ... (a cover left by an earlier process)`), which dismisses it. This is the accepted
+  residual (Home can't dismiss it: it sleeps behind the keyguard, qa-32-s2-code L1).
+- [ ] An update (`adb install -r`) or `adb shell am crash $P` with the cover on: the new process logs the same
+  DISABLED write before its first apply; the cover is `re-armed` at the first lock resume with the screen on after
+  that apply, never `UNTOUCHED` (M2).
+- [ ] A crash-guard trip (a debug crash loop of the lock): `disabled now (crash guard)` at once, in the new process
+  where the guard trips (L8, M2).
+- [ ] The Jelly Star: note the Android version and its SystemUI's lock-after-timeout and notification behaviour. On
+  Android 13 (legacy transitions), repeat (b) and (d) carefully.
+
+**The lock started with the screen on** (the double press, all builds; `smoke-test.sh`'s "Double press" step
+automates the first point):
+- [ ] `adb shell input keyevent KEYCODE_SLEEP KEYCODE_WAKEUP` from an app, until the log says `interactive=true` (the
+  fade really cancelled): the lock comes up. **Known residual without the cover** (design 32 §12, qa-32-s2-code M1):
+  the lock's black splash (SystemUI logs `VRI[<last part of the package>]`, `debug` for the debug build) and Shell's
+  default close of the app the kid was already in (the card). Frame-step a screenrecord: the app, then that close and
+  black, then the lock - and no frame of any *other* app. With the cover on, see (d) above.
+- [ ] The next screen-off after a wake whose ScreenOn backstop re-started the lock on top (`START ... result code=3`,
+  `wm_new_intent PinLock`) logs `NONE`, not `HOME_THEN_LOCK`, and there is no `Set visible without transition
+  PinLock`.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and

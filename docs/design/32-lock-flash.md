@@ -4,7 +4,7 @@ Security bug, reported by the user on 2026-10-13. Android 16 Google Play emulato
 as device owner. At screen-on, a Play Store page shows for about 80 ms before handy's PIN lock covers it.
 The user's words: "this MUST be fixed properly".
 
-**Status:** step 1 is built (§14), not device-tested; steps 2 and 3 are not built.
+**Status:** step 1 is built (§14), not device-tested. Step 2 is built behind its debug switch (§15, with its code QA fix round), not device-tested; it also fixes the backstop re-start (all builds). The double press without the cover is a known residual (§12). Step 3 is not built.
 
 The investigation was code reading only; it changed no product code. AOSP references are to `android16-release` on
 android.googlesource.com, read 2026-10-13: `frameworks/base/services/core/java/com/android/server/...`, written below
@@ -904,8 +904,9 @@ It fails only where one of those two conditions doesn't hold yet at the wake.
 | Screen timeout with the lock in front (the user's case) | **yes** | the lock is the top and `showWhenLocked` before the sleep, so the keyguard is occluded from its first moment. No race |
 | Quick presses / mashing | **yes**, except the quick-wake residual | as the power key. SOS is `showWhenLocked` and exempt by design |
 | Boot, clean (power menu, OTA) | n/a by decision 4 | no keyguard at all (M4). The boot animation, then our own boot cover or Home's mark, then the lock - our own screens, no other app is running |
-| Boot after a crash / power loss / `adb reboot` | **no** | **Residual:** SystemUI's Swipe lockscreen from the end of the boot animation until Home dismisses it (M4). No app content: nothing else runs yet |
-| Our call | **yes** | `InCallActivity` and the lock are `showWhenLocked`. The call screen is sent only after the dismissal (M5) |
+| Boot after a crash / power loss / `adb reboot` | **no** | **Residual:** SystemUI's Swipe lockscreen from the end of the boot animation until the new process's first write takes the cover out (`setKeyguardDisabled(true)` dismisses it; qa-32-s2-code M2/L1 - Home can't, it sleeps behind the keyguard). No app content: nothing else runs yet |
+| Our call | **yes** | `InCallActivity` and the lock are `showWhenLocked`. The call screen is sent at once - it can't un-occlude the keyguard (qa-32-s2-code L5) |
+| Double press that cancels the screen-off fade (`SCREEN_OFF` with `interactive=true`) | cover: **yes** per AOSP reading, to verify; no cover: **residual** | Without the cover (step 1, release) the lock starts as a visible launch: its black splash and Shell's default task-close animation of the app the kid was already in (the "card"). Nothing hidden leaks - that app was on screen anyway. No public API avoids it: handy is the home process, so `windowDisablePreview` is skipped, and no `ActivityOptions` overrides a task change's transition (qa-32-s2-code M1). With the cover, SystemUI locks an insecure keyguard at once at the power-key sleep, so the app is hidden and at most SystemUI's lockscreen shows until the lock occludes it |
 | Telecom / system-dialer call in progress | exempt by design | the lock never covers it. Its in-call UI is `showWhenLocked` and is the intended front |
 | Telecom call ending while dark | **yes** after ≤ 2 s | the dark lock-up (M5). **Residual:** a wake within the 2 s re-check shows SystemUI's lockscreen (un-occluded) before the lock |
 | VoIP ring from dark | **yes** | the cover stays during RINGING; the lock and `VoipWakeActivity` are `showWhenLocked`; the FSI is sent after the dismissal |
@@ -921,6 +922,7 @@ It fails only where one of those two conditions doesn't hold yet at the wake.
 - Its honest residuals:
   - a wake that beats our lock to the top (SystemUI's bare lockscreen, never an app);
   - a non-clean reboot (SystemUI's Swipe screen);
+  - without the cover, the double press: the black splash and the close animation of the app already on screen;
   - the first wake after a VoIP call that ended in the dark;
   - the sleeps while the dismissal fallback is active.
 - Only the VoIP-end and fallback cases can still show app content, and only if step 1's Home stand-in doesn't
@@ -1057,3 +1059,170 @@ the emulator. Step 2 and step 3 are not built: the keyguard stays disabled exact
 - `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` (release with the throwaway tsnet stub,
   removed afterwards): green, 1093 unit tests (18 in `LockUpPlanTest`), 0 failures; `checkReleaseHasNoDebugHook`
   passes. Not device-tested.
+
+## 15. Step 2 implementation status (2026-10-13, branch `design-32-s2`)
+
+Branch `design-32-s2` from `main` at `a5d30b92` (step 1 merged). Not pushed, and not run on a device or the emulator.
+The release build writes the keyguard exactly as after step 1: the release `KeyguardCoverDebug.enabled` is `false`,
+so the cover is never COVER. Two step 1 defects from the user's device evidence are also fixed here (the double press
+and the backstop's re-start, below), in every build.
+
+- **The switch** (L5): `src/debug`'s `lock/KeyguardCoverDebugReceiver` (exported, DUMP) and `KeyguardCoverDebug`
+  (CE prefs `keyguard_cover_debug`). `--ez on true|false` stores the switch and runs a full apply. `--ez failDismiss
+  true` / `--ez skipDismiss true` set the dismissal knob, which is memory only and lives in main
+  (`KeyguardCover.dismissTest`, which only the receiver sets). It reports
+  `on|off -> mode=... features=... maxTimeToLock=... disabled=... armed=... dismissTest=...`. `src/release`'s
+  `KeyguardCoverDebug` has one `fun enabled(context: Context): Boolean = false`.
+  - `KeyguardCover` is its only caller: from its apply (`configure`), and once off the main thread at the process
+    start (`atProcessStart`, from `PinLockRuntime.init`'s IO pass; the fix round's M2 write).
+  - `CheckDebugHook` and `DebugHookAbsentTest` ban `KeyguardCoverDebugReceiver` and `keyguard_cover_debug`.
+  - Usage: `docs/testing/emulator.md` §6k.
+- **Pure** (`lock/KeyguardCoverPlan.kt`, `KeyguardCoverPlanTest`):
+  - `keyguardMode`, `keyguardDisabledFeatures(current, managed, cover, coverAdded)`, `maxTimeToLock`,
+    `timeoutWriteOrder`;
+  - `writeKeyguard(policy, wanted, managed, coverAdded, timeoutMs, storeCoverAdded)`: the whole write order and
+    its fallback, against the `KeyguardPolicy` interface (a fake DPM in the test);
+  - `dismissDue`, `dismissFailed`, `dismissFallback`, `coverRearmDue`, `sendAfterUnlock`, `homeBootDismissDue`;
+  - `RefrontAction.DarkLockUp`.
+  - The B2 camera rule stays `server/OwnPermissions.kt`'s `keyguardDisabledFeatures(current, managed)`, applied after
+    the cover's bits are taken out.
+- **One writer** (`lock/KeyguardCover`, H2, M6). `setKeyguardDisabled`, `setKeyguardDisabledFeatures` and
+  `setMaximumTimeToLock` appear only there (pinned). It is reached from four places:
+  - `PinLockRuntime.configure`, every apply. `AppEnforcer.applyKeyguardFeatures` is gone, and the crash guard's
+    re-arm now comes before the keyguard write;
+  - its own `rewrite`, on a single writer thread: the VoIP edge, the re-arm, the fallback;
+  - `followTimeout` / `timeoutChanged`, from `ScreenTimeout`;
+  - `disableNow`: `ACTION_SHUTDOWN` from `BootCover`'s receiver (synchronously), and the crash guard. Both act only
+    while the cover is on.
+  - COVER writes the features (`coverAdded` committed first to prefs `keyguard_cover`), reads them back (ALL), then
+    T, read back, then `setKeyguardDisabled(false)`. Any failure means DISABLED: `true` first, then the cover's bits
+    out and T 0, with `lockMayRun` (the `keyguardDisabled` input of `lockActivation`) true. `KEYGUARD_NOT_DISABLED`
+    keeps its meaning.
+  - DISABLED and UNTOUCHED write what step 1 wrote: `setKeyguardDisabled(want)`, and the features by B2's rule. Plus
+    one `getMaximumTimeToLock` read, which clears a T left from a cover.
+  - The log line is `mode=... features=... maxTimeToLock=... disabled=...` (tag `KeyguardCover`), only while the
+    switch or the cover is on.
+- **T** (H1). `ScreenTimeout` stays the only writer of `SCREEN_OFF_TIMEOUT`. Its one write goes through
+  `KeyguardCover.followTimeout`:
+  - shrinking: T first;
+  - growing: the setting first;
+  - then T is synced to the value in force (also after a failed write);
+  - a T that doesn't read back falls back.
+  - Under the cover the observer runs in Release too, and T follows the phone's own value (`timeoutChanged`).
+    `apply` re-syncs T at its end.
+  - Seen in the reading, not by the spec: with T set, Settings greys out longer timeouts. In Release (the pause, the
+    override) the kid can shorten the timeout but not lengthen it while the cover is on (§6k).
+- **Held off, the re-arm** (M4, M7). The cover is written only while `armed`. `armed` is set by the first lock resume
+  with the screen on in this process, and again after a fallback. So a boot (the keyguard off since
+  `ACTION_SHUTDOWN`), an update or a crash restart writes DISABLED until then. `DISABLED`'s `true` also dismisses a
+  keyguard that a non-clean reboot left up.
+  - Interpretation of `coverRearmDue`'s `wakePending`: the fallback's own wake. After a fallback, `wakePending`
+    stays until the next dark screen-off, so the re-arm comes at the first lock resume with the screen on after it.
+    A dismissal that keeps failing falls back at most once per wake. This is the brief's "until the next dark
+    screen-off".
+- **The dismissal** (M7, `PinLockActivity`):
+  - at each resume (switch on), a one-shot `OnDrawListener`; on the first frame, posted:
+    `requestDismissKeyguard(this, cb)` when `dismissDue`;
+  - the state check (`KeyguardCover.check`) 1 s after each request, and every second while the lock is resumed:
+    - unlocked: `dismissed`, the count resets, the waiting screens go;
+    - still locked 1 s after the request: `dismissal failed (state), n=`;
+    - at 2: `fallback` (DISABLED, `armed = false`);
+    - locked with no request open (a SystemUI restart, a late keyguard): ask again.
+  - The callbacks are only logged. A success also lets the waiting screens go at once.
+  - Home's boot path is gone (fix round, L1): Home sleeps behind an un-occluded keyguard. The process start's
+    DISABLED write takes a leftover cover out instead (M2).
+- **Waits for the unlock** (M5, `KeyguardCover.whenUnlocked`, one per key, newest kept):
+  - `showVoipCall` (`VoipCalls.reopenCall`) and `TimeRulesRuntime.recheck`'s `LockActivity.start` (every trigger,
+    the screen-on's included), each checked again when it runs later (fix round, L5); `showCall` goes at once
+    (`InCallActivity` is `showWhenLocked`, L5);
+  - the 17b ring screen: `sendVoipRingScreen` returns without spending the try while `mustWait`, and the lock looks
+    again;
+  - without the cover, everything runs at once, as before.
+- **VoIP** (M5): DISABLED while the phase isn't NONE. The phase is latched only with the screen on (the phase edge, or
+  the lock's resume with the screen on), so a ring from dark is still covered.
+- **The dark lock-up after a system-dialer call** (M5):
+  - `refrontAction`: while dark, under the cover and with the lock not on top, the exempt screens are still yielded
+    to, so `system_call` keeps looking every 2 s while dark;
+  - with none left: `DarkLockUp`, which runs `lockUp(LOCK)` once.
+  - Without the cover, the dark row is `Stop`, as before.
+- **The lock-up under the cover starts the lock alone** (coordinator's device evidence, 2026-10-13):
+  `lockUpStarts(..., coverLocked)` gives LOCK where step 1 gives HOME_THEN_LOCK, and the dark lock-up is LOCK too.
+  `coverLocked` is the cover in force **and** `isKeyguardLocked` read at the screen-off (fix round, L4); the log
+  line has `cover=` and `kg=`.
+  - While the cover's keyguard is locked, nothing that isn't `showWhenLocked` can be visible, so Home's black
+    stand-in adds nothing.
+  - Home's start (a binder start and its own transition, ahead of the lock's) only widens the window in which a
+    quick wake shows SystemUI's bare lockscreen un-occluded, and adds a Home transition while dark.
+  - With the cover not in force (switch off, held off, fallback), step 1's Home stays.
+- **The double press** (the user's mash log, all builds). Two presses ~60 ms apart cancelled the screen-off fade, so
+  `SCREEN_OFF` came with the screen on (`LOCK (interactive=true)`: the reading of `isInteractive` was right, a wake
+  had begun). The lock was then started as a visible launch:
+  - its splash (`VRI[debug]` in SystemUI) was the "loading screen";
+  - Shell's default open transition shrank the closing app into a card.
+  - The first build's two fixes (`windowDisablePreview=true`, `makeCustomAnimation(0, 0)`) were no-ops and are
+    gone (fix round, M1): handy is the home process, so every start of the lock counts as from a system surface and
+    `windowDisablePreview` is skipped (`ActivityRecord.validateStartingWindowTheme`); `NO_ANIMATION` aborts the
+    options, and a custom animation never reaches a task change anyway (`Transition`, Shell's
+    `DefaultTransitionHandler`). Without the cover this is a known residual (§12): the black splash and the close
+    animation of the app the kid was already in. The smoke step checks that the lock comes up after a press that
+    really cancelled the fade (`interactive=true`).
+  - Under the cover, per AOSP reading (to verify): SystemUI locks an insecure keyguard at once at the power-key
+    sleep, so in the double press the app is hidden. At most SystemUI's lockscreen shows until the lock occludes it
+    (the §12 quick-wake residual).
+- **The ScreenOn backstop's re-start** (the mash log: `START ... result code=3`, `wm_new_intent` 15-35 ms after the
+  wake, then HOME_THEN_LOCK at the next screen-off with the lock on top):
+  - The backstop is `ScreenOn`'s `show` while the lock isn't resumed yet. When the lock resumes first, Android pauses
+    it to deliver the new intent. That interactive pause cleared `lockOnTop`.
+  - Now a pause within `BACKSTOP_NEW_INTENT_MS` (1 s) of a backstop start onto the lock on top is held
+    (`newIntentPauseKept`), and the lock's `onNewIntent` puts the mark back (`LockTopEvent.NEW_INTENT`).
+  - A stop, a resume without the new intent, a destroy or any other start drops it.
+  - The backstop itself stays: it is the security backstop for a stale `lockOnTop`.
+- **Not taken from the coordinator's notes:**
+  - "The keyguard cover should make WM wait at the screen-on" (~3 black frames). Per L3 an *occluded* keyguard gates
+    nothing; the guarantee is visibility, so the gap stays black, which the rule allows.
+  - The one-frame "app glimpse" with an old status-bar time is a stale display buffer of the emulator's composer
+    (coordinator, 2026-10-13). No WM or keyguard change can touch it. §6k says to record on the device and to
+    re-check with another `-gpu` mode and on a real phone; step 3 waits for that.
+- **Reporting**: logcat only (§8 step 2 item 7 leaves the status field optional). No server change.
+- **Docs**: `docs/testing/emulator.md` §6k (the adb usage, the frame-stepping rule, §11's step 2 checks with the
+  quick-press pattern made explicit, and the double-press checks). Launcher `CLAUDE.md`'s "Lock flash" bullet.
+
+### Code QA fix round (`qa-32-s2-code.md`, 0 High, 2 Medium, 5 Low, 4 Nits, all taken)
+
+- **M1:** `PinLockTheme` is back to `windowDisablePreview=false` (step 1's black splash covers the old frame at once,
+  also in a new process); `lockStartOptions` is removed. Looked once more for a public way to avoid the visible start:
+  a start from a non-home process (our `:bootcover` process) would honour the flag, but needs a process start in the
+  lock's path; a `PendingIntent` is still sent from our process; `ActivityOptions` has no public task-transition
+  override. None is small and provable, so the double press without the cover is a residual (§12) - the keyguard
+  cover is the answer if step 3 promotes it. Pin: `LockUpPlanTest` "the lock start keeps its black splash and passes
+  no options".
+- **M2:** prefs `keyguard_cover` `cover_written` says the device policy may hold the cover: committed before
+  `setKeyguardDisabled(false)` (step `cover_written` - not stored, no cover), cleared after a `true` that worked or an
+  UNTOUCHED that took the cover's bits and T out (pure `writeKeyguard`'s `storeWritten`). Committed only on a change
+  (release never writes it).
+  - The process start (`KeyguardCover.atProcessStart`, `PinLockRuntime.init`'s IO pass): with the flag set and no
+    apply yet in this process (`processStartWrite`), DISABLED at once - `true` (it also dismisses a Swipe screen a
+    reboot without `ACTION_SHUTDOWN` left up), the cover's bits and T out, B2's camera bit kept.
+  - `rewrite` (re-arm, VoIP edge, fallback) writes nothing before the first apply (`rewriteDue`), so no UNTOUCHED
+    from empty inputs.
+  - `disableNow` decides under the monitor on `coverOn` or the stored flag (`disableNowDue`): the crash guard works
+    in the new process where it trips, and an update or crash before a clean reboot is covered. The shutdown sets
+    `shuttingDown` under the monitor: every later write is the cover off and nothing re-arms (M2.4).
+- **L1:** Home's boot dismissal is removed (M2's process-start write replaces it).
+- **L2:** pins for all six surviving mutations - `whenUnlocked`'s at-once path and `mustWait`'s `coverOn &&` (release
+  relies on them), `lockUpAtScreenOff`'s `val cover = KeyguardCover.coverOn` and `cover && kg`, `check`'s fallback,
+  `disableNow`'s `armed = false`, `write`'s `runWaiting` when the cover goes off, the receiver's `onScreenOff` after the
+  `ScreenOff` dispatch. Each mutation was applied, `KeyguardCoverPlanTest` went red, and it was reverted.
+- **L3:** the smoke step retries up to 5 times until the lock-up line says `interactive=true` (SKIP otherwise), then
+  requires the lock in front; the splash is recorded as the known residual, the animation stays a manual frame-step.
+- **L4:** the lock alone under the cover only when `isKeyguardLocked` is true at the screen-off (`kg=`); else step 1's
+  Home. §6k has the check with an app holding a `KeyguardLock`.
+- **L5:** our call screen goes at once (showWhenLocked); a queued VoIP call screen runs only if the lock is LOCKED, no
+  call of ours and VoIP still IN_CALL; a queued time-rule screen only if a rule still locks and no call is live.
+- **Nits:** (1) `setMaximumTimeToLock` turns "Stay awake" off and nothing turns it back on - §6k says so, with
+  `adb shell svc power stayon true` after switching off (not restored by code: the old value isn't ours to keep, and a
+  kid's phone has it off). (2) `off()` reports a throwing `setKeyguardDisabled`, features write or T clear in
+  `KeyguardWritten.errors`, logged whatever the switch says (the two release warnings are back). (3) the lock's state
+  check polls only while `coverOn`. (4) `backstopOntoTopAt` is cleared at the lock's stop and destroy (not at the
+  resume: the backstop's new-intent pause can follow the wake's resume); `describe()` after `disableNow` shows the
+  `true` it wrote.

@@ -27,6 +27,10 @@ data class RefrontInputs(
     val voipCall: Boolean = false,
     /** Probably Emergency SOS (five power presses) is in front ([sosGestureLikely], bug 25b-H). */
     val sosFlow: Boolean = false,
+    /** Design 32 step 2: the keyguard cover is on ([KeyguardCover.coverOn], debug switch only). */
+    val coverOn: Boolean = false,
+    /** Design 32: the lock is the top task since its lock-up ([lockOnTopAfter], best effort). */
+    val lockOnTop: Boolean = false,
 )
 
 /** How long after "Emergency call" the lock stays out of the way even without a call. */
@@ -45,6 +49,14 @@ sealed interface RefrontAction {
 
     /** Bring the lock back now and look again in [nextCheckMs]. */
     data class Refront(val nextCheckMs: Long) : RefrontAction
+
+    /**
+     * Design 32 step 2 (M5): while dark under the keyguard cover, with the lock not on top and nothing
+     * exempt any more (a system-dialer call ended in the dark): the lock-up once (the lock alone, as every
+     * lock-up under the cover - [lockUpStarts]' coverOn),
+     * so the cover's keyguard is occluded by the lock at the wake, not shown un-occluded. No next check.
+     */
+    data object DarkLockUp : RefrontAction
 }
 
 /** 0.5 s, 2 s, then every 5 s - never giving up (QA 10 #2: a cap would fail open). */
@@ -60,7 +72,11 @@ fun refrontDelayMs(attempt: Int): Long = when {
  * app relaunching itself, a full-screen intent, the camera gesture - loses, forever.
  */
 fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
-    !inputs.locked || inputs.lockResumed || !inputs.interactive -> RefrontAction.Stop
+    !inputs.locked || inputs.lockResumed -> RefrontAction.Stop
+    // The screen off: nothing - except under the keyguard cover with the lock not on top (design 32
+    // step 2, M5): the exempt screens are still yielded to (the system_call yield keeps looking every
+    // 2 s while dark), and once none is left the lock-up runs while dark ([RefrontAction.DarkLockUp]).
+    !inputs.interactive && !(inputs.coverOn && !inputs.lockOnTop) -> RefrontAction.Stop
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
     inputs.emergencyFlow -> RefrontAction.Yield("emergency")
@@ -71,6 +87,7 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     // Last (qa-25b-25f M2): a probable SOS never hides a woken alarm, a call or a VoIP call - their
     // yields end their own exemptions (the alarm's on a yield named "alarm").
     inputs.sosFlow -> RefrontAction.Yield("sos")
+    !inputs.interactive -> RefrontAction.DarkLockUp
     else -> RefrontAction.Refront(refrontDelayMs(attempt + 1))
 }
 

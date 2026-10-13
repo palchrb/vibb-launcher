@@ -88,6 +88,9 @@ object BootCover {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != Intent.ACTION_SHUTDOWN) return
             val app = context.applicationContext
+            // Design 32 step 2 (M4): a clean reboot has no keyguard - the cover's goes off now,
+            // synchronously, and is re-armed at the boot's first lock resume with the screen on.
+            KeyguardCover.onShutdown(app)
             val deviceOwner = try {
                 app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) == true
             } catch (e: Exception) {

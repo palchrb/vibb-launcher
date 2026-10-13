@@ -199,6 +199,11 @@ object PinLockRuntime {
      * best effort) - the next screen-off doesn't start it again. Main thread. */
     private var lockOnTop = false
 
+    /** The ScreenOn backstop's start onto the lock on top (elapsed), and its new-intent pause held
+     * ([newIntentPauseKept]). Main thread. */
+    private var backstopOntoTopAt: Long? = null
+    private var newIntentPauseHeld = false
+
     /**
      * Design 32 step 1 item 3 (QA M1): a HOME_THEN_LOCK lock-up since the last interactive resume of
      * the lock or Home, and ended by every other Home start ([HomeFront.bring]) - Home's resume
@@ -476,6 +481,9 @@ object PinLockRuntime {
             LockTaskChrome.prefetchHelpers(app)
             LockTaskChrome.prefetchRecentsPin(app)
             sosPackage = runCatching { emergencySosPackage(app) }.getOrNull()
+            // Design 32 step 2 (qa-32-s2-code M2): the switch, and a cover the device policy may still
+            // hold from an earlier process or boot goes off now - before the first apply.
+            KeyguardCover.atProcessStart(app)
         }
         // Design 16e (qa-16e-code #3): the boot cover's first frame, a device-protected file, read
         // once here - never by an ask on the main thread.
@@ -591,9 +599,20 @@ object PinLockRuntime {
             handler.removeCallbacks(refrontCheck)
             handler.postDelayed(refrontCheck, refrontDelayMs(0))
         }
+        // Our call screen at once: it is showWhenLocked, so it never un-occludes the keyguard cover
+        // (qa-32-s2-code L5) - a live call's screen doesn't wait for a dismissal.
         if (result.showCall) showCall(context)
-        // Design 17: the VoIP app's call screen back over the lock (sent from the resumed lock).
-        if (result.showVoipCall && !VoipCalls.reopenCall(context)) Log.i(LOG_TAG, "No VoIP call screen to bring back")
+        // Design 17: the VoIP app's call screen back over the lock (sent from the resumed lock). Design
+        // 32 step 2 (M5): not showWhenLocked, so it waits while the cover's keyguard is locked
+        // ([KeyguardCover.whenUnlocked]; at once without the cover) - and when it runs later, only if
+        // the lock and the VoIP call are still there (L5).
+        if (result.showVoipCall) {
+            KeyguardCover.whenUnlocked(context, "the VoIP call screen") {
+                if (mode == LockMode.LOCKED && !ourCall() && VoipCalls.phase == VoipPhase.IN_CALL) {
+                    if (!VoipCalls.reopenCall(it)) Log.i(LOG_TAG, "No VoIP call screen to bring back")
+                }
+            }
+        }
         // LOCKED but not shown (the system dialer's call): the re-front loop waits for it to end.
         if (result.mode == LockMode.LOCKED && !result.showLock && !result.showLockLater && !lockResumed && before != LockMode.LOCKED) {
             refrontAttempt = 0
@@ -611,9 +630,14 @@ object PinLockRuntime {
     private fun lockUpAtScreenOff(context: Context, event: LockEvent.ScreenOff, result: LockStep) {
         val callLive = event.ourCall || event.systemCall || event.voip != VoipPhase.NONE
         val interactive = interactive(context)
-        val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive), result.showLock)
+        // Design 32 step 2: under the keyguard cover with its keyguard locked at this sleep, the lock
+        // alone ([lockUpStarts]' coverLocked). Not locked - an app's KeyguardLock, a SystemUI restart -
+        // is step 1's Home under the lock (qa-32-s2-code L4). The binder read only with the cover.
+        val cover = KeyguardCover.coverOn
+        val kg = cover && KeyguardCover.keyguardLockedNow(context)
+        val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg), result.showLock)
         lockUp(context, start, lockAsk(event))
-        if (result.mode == LockMode.LOCKED) Log.i(LOG_TAG, "Lock-up at screen-off: $start (call=$callLive, interactive=$interactive)")
+        if (result.mode == LockMode.LOCKED) Log.i(LOG_TAG, "Lock-up at screen-off: $start (call=$callLive, interactive=$interactive, cover=$cover, kg=$kg)")
     }
 
     /**
@@ -717,6 +741,8 @@ object PinLockRuntime {
                     silencedRing = VoipCalls.ringId
                 }
                 dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app), VoipCalls.phase))
+                // Design 32 step 2: a dark screen-off ends the cover fallback's wake (after the start).
+                if (KeyguardCover.switchOn) KeyguardCover.onScreenOff(interactive(app))
                 syncVoipRinger(app)
                 ScreenTimeTracker.update(app)
                 // Bug 25b-B: the rest waits until the lock just started has had the main thread for
@@ -816,6 +842,8 @@ object PinLockRuntime {
         // (qa-16-17-code #1): no card and no wake over them, and the lock doesn't come back over them.
         val telecom = telecomInCall(app)
         updateCallForCamera(app, telecom)
+        // Design 32 step 2 (M5): no keyguard cover in a VoIP call or ring - written only with the screen on.
+        if (KeyguardCover.switchOn) KeyguardCover.onVoipPhase(app, after, interactive(app))
         val ours = ourCall()
         val emergency = emergencyFlowNow(telecom)
         val alarm = alarmNow(app)
@@ -905,6 +933,9 @@ object PinLockRuntime {
     fun sendVoipRingScreen(context: Context): Long? {
         if (!voipFsiDueNow(context)) return null
         val ringId = VoipCalls.ringId ?: return null
+        // Design 32 step 2 (M5): not while the cover's keyguard is locked - no try is spent; the lock
+        // looks again (the dismissal comes right after its first frame).
+        if (KeyguardCover.mustWait(context)) return VOIP_FSI_SETTLE_MS
         val sent = VoipCalls.showRingScreen(context)
         voipFsiTry = VoipFsiTry(ringId, SystemClock.elapsedRealtime(), sent)
         Log.i(LOG_TAG, if (sent) "VoIP ring screen sent" else "VoIP ring screen couldn't be sent: the card")
@@ -985,17 +1016,15 @@ object PinLockRuntime {
         } catch (e: Exception) {
             false
         }
-        val wantDisabled = wantKeyguardDisabled(managed, newConfig != null, deviceSecure)
-        val keyguardDisabled = try {
-            // false while a credential exists; true also re-dismisses a showing keyguard.
-            dpm.setKeyguardDisabled(admin, wantDisabled) && wantDisabled
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "setKeyguardDisabled($wantDisabled) failed", e)
-            false
-        }
         // The crash guard re-arms at a sync at most once every 10 minutes.
         val guard = guardRearm(PinLockStore.guard(app), System.currentTimeMillis())
         PinLockStore.saveGuard(app, guard)
+        // The one keyguard writer (design 32 step 2, [KeyguardCover]): `setKeyguardDisabled(true)` where
+        // today's code disables it ([wantKeyguardDisabled] - false while a credential exists; true also
+        // re-dismisses a showing keyguard), the features (B2's camera bit) and, only under the debug
+        // switch's cover, the Swipe keyguard with T. True: the cover is set or the keyguard disabled - a
+        // failed cover is today's disabled keyguard, never the lock off (H2).
+        val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null)
         val (active, why) = lockActivation(
             managed = managed,
             hasKidPin = newConfig != null,
@@ -1024,6 +1053,8 @@ object PinLockRuntime {
         val app = context.applicationContext
         Log.w(LOG_TAG, "PinLockActivity crashed repeatedly - lock off until the next sync (crash guard)")
         inactive = LockInactive.CRASH_GUARD
+        // Design 32 step 2 (L8): no Swipe keyguard without a handy lock - off at once (with the cover).
+        KeyguardCover.guardTripped(app)
         PinLockStore.saveConfig(app, config, active = false, inactive = LockInactive.CRASH_GUARD)
         onMain { dispatch(app, LockEvent.Configured(false)) }
         requestSync(app, "pin_lock_crash_guard")
@@ -1068,14 +1099,22 @@ object PinLockRuntime {
         sameLockUp: Boolean = false,
         fromLockUp: Boolean = false,
     ): Boolean {
-        if (!fromLockUp) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)
+        if (!fromLockUp) {
+            // The backstop's start onto the lock on top: its new-intent pause keeps the mark.
+            backstopOntoTopAt = if (sameLockUp && lockOnTop) SystemClock.elapsedRealtime() else null
+            newIntentPauseHeld = false
+            lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)
+        }
         if (bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)) return false
         var started = false
         try {
             context.startActivity(
                 // No open animation (bug 25b-B): started while the display sleeps, the lock's
                 // transition otherwise played at the next screen-on - Home (its last, unlocked
-                // frame) first, the lock sliding in over it.
+                // frame) first, the lock sliding in over it. Started with the screen on (a double
+                // press that cancels the screen-off fade, design 32 §12), the black splash and
+                // Shell's default close of the app the kid was in remain: the lock's own task is a
+                // task change, and no public option overrides its transition (qa-32-s2-code M1).
                 Intent(context, PinLockActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),
             )
@@ -1095,8 +1134,13 @@ object PinLockRuntime {
 
     fun onLockResumed(context: Context) {
         lockResumed = true
+        // A pause's new intent comes before the resume: a held pause without one stays cleared.
+        newIntentPauseHeld = false
+        val interactiveNow = interactive(context)
         // Design 32: an interactive resume ends a dark lock-up's mark for Home.
-        if (interactive(context)) darkLockUp = false
+        if (interactiveNow) darkLockUp = false
+        // Design 32 step 2: with the screen on, the keyguard cover's re-arm (M4, M7) and VoIP phase (M5).
+        KeyguardCover.onLockResumed(context, interactiveNow)
         skipBootMark("the lock is up")
         refrontAttempt = 0
         // Back in front after the alarm: its exemption ends now (qa-10-code #4).
@@ -1124,8 +1168,11 @@ object PinLockRuntime {
      * pauses it - the re-front check runs after [PAUSE_REFRONT_MS] (bug 25b-A). */
     fun onLockPaused(finishing: Boolean = false) {
         lockResumed = false
-        // Design 32: the sleep's own pause keeps the lock on top; an interactive one doesn't.
+        // Design 32: the sleep's own pause keeps the lock on top; an interactive one doesn't - unless
+        // it is the backstop's new-intent delivery ([newIntentPauseKept]; the new intent decides).
+        val wasOnTop = lockOnTop
         lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.PAUSE, interactive = interactiveOrUnknown())
+        newIntentPauseHeld = !lockOnTop && newIntentPauseKept(wasOnTop, backstopOntoTopAt, SystemClock.elapsedRealtime())
         if (!pauseStartsRefront(chromeLocked, finishing)) return
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
@@ -1137,6 +1184,8 @@ object PinLockRuntime {
      * the lock lost the front - bring it back ([refrontAction]). */
     fun onLockStopped(changingConfigurations: Boolean, finishing: Boolean) {
         lockResumed = false
+        newIntentPauseHeld = false
+        backstopOntoTopAt = null
         lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.STOP, interactive = interactiveOrUnknown())
         if (!stopStartsRefront(chromeLocked, changingConfigurations, finishing)) return
         noteProbableSos()
@@ -1149,7 +1198,17 @@ object PinLockRuntime {
 
     /** PinLockActivity.onDestroy: the next screen-off starts the lock again (design 32). */
     fun onLockDestroyed() {
+        newIntentPauseHeld = false
+        backstopOntoTopAt = null
         lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.DESTROY)
+    }
+
+    /** PinLockActivity.onNewIntent (design 32): after the backstop's new-intent pause the lock is still
+     * the top task ([newIntentPauseKept]). Main thread. */
+    fun onLockNewIntent() {
+        lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.NEW_INTENT, sameLockUp = newIntentPauseHeld)
+        newIntentPauseHeld = false
+        backstopOntoTopAt = null
     }
 
     /** The Emergency SOS app ([emergencySosPackage]), resolved off the main thread - at init and by
@@ -1197,6 +1256,8 @@ object PinLockRuntime {
             alarmRinging = alarmNow(context),
             voipCall = VoipCalls.phase != VoipPhase.NONE,
             sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),
+            coverOn = KeyguardCover.coverOn,
+            lockOnTop = lockOnTop,
         )
         val action = refrontAction(inputs, refrontAttempt)
         // qa-25b-25f H1: the mark ends on anything but its own yield; while it runs, only our
@@ -1223,6 +1284,14 @@ object PinLockRuntime {
                 // Design 16e: the boot's first lock may still wait for the mark (its backstop ends it).
                 if (show(context, ask = LockAsk.BOOT)) Log.i(LOG_TAG, "Re-fronting the lock (#$refrontAttempt)")
                 handler.postDelayed(refrontCheck, action.nextCheckMs)
+            }
+            RefrontAction.DarkLockUp -> {
+                // Design 32 step 2 (M5): a system-dialer call ended while dark under the keyguard cover -
+                // the lock-up the screen-off couldn't do, once, so the keyguard is occluded at the wake.
+                // The lock alone, as every lock-up under the cover ([lockUpStarts]' coverOn).
+                yielding = null
+                lockUp(context, LockUpStart.LOCK, LockAsk.AT_ONCE)
+                Log.i(LOG_TAG, "Lock-up while dark: LOCK (the re-front check, the keyguard cover)")
             }
         }
     }

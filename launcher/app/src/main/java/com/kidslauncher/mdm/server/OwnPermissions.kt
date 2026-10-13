@@ -69,7 +69,8 @@ const val KEYGUARD_DISABLE_SECURE_CAMERA = 2
  * The keyguard-disabled features to set (B2): the secure-keyguard camera off while the phone is
  * managed, ORed with whatever else is set (never clearing other bits); our bit cleared again when
  * unmanaged. Only helps with a screen lock: without a PIN the camera gesture opens the normal
- * camera, which only the runbook (gesture off before enrolling) stops.
+ * camera, which only the runbook (gesture off before enrolling) stops. Written only by the keyguard
+ * writer (`lock/KeyguardCover`, design 32 step 2), whose rule takes the cover's own bits out first.
  */
 fun keyguardDisabledFeatures(current: Int, managed: Boolean): Int =
     if (managed) current or KEYGUARD_DISABLE_SECURE_CAMERA else current and KEYGUARD_DISABLE_SECURE_CAMERA.inv()

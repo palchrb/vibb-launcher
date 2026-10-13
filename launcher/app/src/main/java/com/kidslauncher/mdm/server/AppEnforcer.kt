@@ -465,7 +465,8 @@ object AppEnforcer {
             pinLockHelpers = { resolvePinLockHelpers(context) },
         )
 
-        applyKeyguardFeatures(dpm, admin, managed = managed)
+        // The keyguard features (B2's camera bit) are written by the PIN lock's configure above - the one
+        // keyguard writer (design 32 step 2, lock/KeyguardCover).
 
         // Auto-lock: the parent's screen timeout (emulator run 2026-10-06), lifted by the override.
         ScreenTimeout.apply(
@@ -811,19 +812,6 @@ object AppEnforcer {
             ok = false
         }
         return ok
-    }
-
-    /** See [keyguardDisabledFeatures] - set only when it differs. */
-    private fun applyKeyguardFeatures(dpm: DevicePolicyManager, admin: ComponentName, managed: Boolean) {
-        try {
-            val current = dpm.getKeyguardDisabledFeatures(admin)
-            val wanted = keyguardDisabledFeatures(current, managed)
-            if (wanted != current) dpm.setKeyguardDisabledFeatures(admin, wanted)
-        } catch (e: Exception) {
-            // Without the disable-keyguard-features policy granted (an update that added it, before
-            // the phone restarted - AdminPolicies): retried at every apply, and reported.
-            Log.w(LOG_TAG, "Failed to set the keyguard camera feature", e)
-        }
     }
 
     /**

@@ -9,6 +9,7 @@ import android.os.Looper
 import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
+import com.kidslauncher.mdm.lock.KeyguardCover
 import java.util.concurrent.Executors
 
 private const val LOG_TAG = "ScreenTimeout"
@@ -57,7 +58,10 @@ fun previousToRestore(remembered: Long?, current: Long?): Long? = remembered?.ta
  * DO's own write isn't affected - it bypasses user restrictions), a [ContentObserver] puts the
  * value back whenever anything else changes it, and every [AppEnforcer.apply] re-checks it.
  * Handy's PIN lock locks on every screen-off, so this is the lock delay too. The effective
- * timeout can't exceed a `setMaximumTimeToLock` (we set none).
+ * timeout can't exceed a `setMaximumTimeToLock` - none, except under design 32 step 2's keyguard cover
+ * (debug switch), where it equals this setting (H1): every write of the setting goes through
+ * [KeyguardCover.followTimeout] (T in the safe order), and the observer also runs in Release then, so
+ * T follows the phone's own value. This stays the only writer of `SCREEN_OFF_TIMEOUT`.
  */
 object ScreenTimeout {
     @Volatile
@@ -74,13 +78,7 @@ object ScreenTimeout {
                 val prefs = prefs(context)
                 val remembered = if (prefs.contains(KEY_PREVIOUS)) prefs.getLong(KEY_PREVIOUS, 0L) else null
                 previousToRestore(remembered, currentMs(context))?.let { previous ->
-                    try {
-                        dpm.setSystemSetting(admin, Settings.System.SCREEN_OFF_TIMEOUT, previous.toString())
-                        Log.i(LOG_TAG, "Screen timeout put back to ${previous / 1000} s")
-                    } catch (e: Exception) {
-                        Log.w(LOG_TAG, "Couldn't put the screen timeout back", e)
-                        return
-                    }
+                    if (!write(context, dpm, admin, previous, "put back to")) return
                 }
                 if (remembered != null) prefs.edit().remove(KEY_PREVIOUS).commit()
             }
@@ -95,6 +93,12 @@ object ScreenTimeout {
                 setRestriction(dpm, admin, true)
             }
         }
+        // Design 32 step 2 (H1): under the cover T follows the setting in Release too - the observer
+        // runs whenever the cover is on, and T is re-checked against the value in force now.
+        if (KeyguardCover.coverOn) {
+            ensureObserver(context.applicationContext)
+            KeyguardCover.timeoutChanged(context, dpm, admin)
+        }
     }
 
     /** CE prefs: the phone's own timeout from before we first enforced one. */
@@ -106,6 +110,9 @@ object ScreenTimeout {
     /** The value in force now, seconds - for the status report. */
     fun currentSeconds(context: Context): Int? = currentMs(context)?.let { (it / 1000L).toInt() }
 
+    /** The screen timeout in force now, ms (design 32 step 2: T under the cover). */
+    fun effectiveMs(context: Context): Long? = currentMs(context)
+
     private fun currentMs(context: Context): Long? = try {
         Settings.System.getLong(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT)
     } catch (e: Exception) {
@@ -114,13 +121,22 @@ object ScreenTimeout {
 
     private fun enforce(context: Context, dpm: DevicePolicyManager, admin: ComponentName, millis: Long) {
         if (currentMs(context) == millis) return
-        try {
-            dpm.setSystemSetting(admin, Settings.System.SCREEN_OFF_TIMEOUT, millis.toString())
-            Log.i(LOG_TAG, "Screen timeout set to ${millis / 1000} s")
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't set the screen timeout", e)
-        }
+        write(context, dpm, admin, millis, "set to")
     }
+
+    /** The setting's only write - through the keyguard cover's T ([KeyguardCover.followTimeout]), which
+     * without the cover just writes it. */
+    private fun write(context: Context, dpm: DevicePolicyManager, admin: ComponentName, millis: Long, what: String): Boolean =
+        KeyguardCover.followTimeout(context, dpm, admin, currentMs(context), millis) {
+            try {
+                dpm.setSystemSetting(admin, Settings.System.SCREEN_OFF_TIMEOUT, millis.toString())
+                Log.i(LOG_TAG, "Screen timeout $what ${millis / 1000} s")
+                true
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't change the screen timeout ($what ${millis / 1000} s)", e)
+                false
+            }
+        }
 
     private fun setRestriction(dpm: DevicePolicyManager, admin: ComponentName, on: Boolean) {
         try {
@@ -134,19 +150,26 @@ object ScreenTimeout {
         }
     }
 
-    /** Once per process: puts the target back whenever the setting changes (off the main thread). */
+    /** Once per process: puts the target back whenever the setting changes (off the main thread);
+     * released, under the keyguard cover, T follows it (design 32 step 2). */
     @Synchronized
     private fun ensureObserver(context: Context) {
         if (observer != null) return
         val created = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                val target = targetMs ?: return
+                val target = targetMs
+                // Released: only the keyguard cover's T follows the phone's own value (design 32 step 2).
+                if (target == null && !KeyguardCover.coverOn) return
                 worker.execute {
                     try {
                         val dpm = context.getSystemService(DevicePolicyManager::class.java) ?: return@execute
                         if (!dpm.isDeviceOwnerApp(context.packageName)) return@execute
                         val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
-                        if (targetMs == target) enforce(context, dpm, admin, target)
+                        if (target == null) {
+                            if (targetMs == null) KeyguardCover.timeoutChanged(context, dpm, admin)
+                        } else if (targetMs == target) {
+                            enforce(context, dpm, admin, target)
+                        }
                     } catch (e: Exception) {
                         Log.w(LOG_TAG, "Re-applying the screen timeout failed", e)
                     }
