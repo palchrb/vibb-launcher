@@ -521,7 +521,17 @@ async fn admin_responses_carry_the_security_headers_and_cache_rules() {
             .to_str()
             .unwrap();
         assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
-        assert!(csp.contains("https://tile.openstreetmap.org"), "{csp}");
+        // Images: our own, data: URIs and OSM's tiles (design 33) - nothing broader.
+        let img_src: Vec<&str> = csp
+            .split(';')
+            .map(str::trim)
+            .filter(|directive| directive.starts_with("img-src"))
+            .collect();
+        assert_eq!(
+            img_src,
+            ["img-src 'self' data: https://tile.openstreetmap.org"],
+            "{csp}"
+        );
         assert_eq!(
             res.headers
                 .get(header::CACHE_CONTROL)
