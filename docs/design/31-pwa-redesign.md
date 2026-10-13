@@ -12,7 +12,13 @@ Word counts are counted on `main` at `5c1f40f6`.
 **The user's brief (final decisions):**
 - The PWA is "incredibly wordy, with DEBUG-like descriptions of every switch". It should be simpler, tidier and much
   more polished, in the style of iOS Settings and Screen Time.
-- **The bottom bar has 5 tabs: Devices · Apps · Music · Time · More.** More holds Locate, DNS/Filters and Settings.
+- **The bottom bar has 5 tabs: Devices · Apps · Locate · Music · Settings**, in that order (the user's final decision,
+  2026-10-13; it replaces the earlier "Devices · Apps · Music · Time · More").
+  - **Settings** holds Time Rules (near the top), Web Filter (today's DNS/Filters), Blocked Activity, Wallpapers,
+    Account, Security Log, Backups, Software Updates, Phone Setup, About and Sign Out.
+  - There is no More tab.
+  - **Locate** is a tab of its own, at `/devices/locate`.
+  - Per-phone time controls stay on the device page.
 - **The language stays English** (no i18n). Every text is rewritten: a short label, at most one short line of help
   where it is really needed, and the details behind an "i" or on a sub-page.
 - Mockups come first, for the user's review. The build follows page by page.
@@ -64,8 +70,10 @@ Word counts are counted on `main` at `5c1f40f6`.
   - The device page becomes a **summary**. Its header says **Online / Away / Offline · seen 3 min ago** (signal and
     thresholds in §3.10).
   - The time lock shows only while it is locking ("Bedtime until 07:00").
-  - The summary also has a few quick actions and an "Attention" group, plus **10 sub-pages**. **About This Phone**
-    holds sound, version and exact times. **Advanced** holds what a parent sets once or never.
+  - The summary also has a few quick actions and an "Attention" group, plus **9 sub-pages**. **About This Phone**
+    holds sound, version and exact times. **Advanced** holds what a parent sets once or never. The summary's
+    Location row opens the **Locate** tab on that phone.
+  - The tabs are **Devices · Apps · Locate · Music · Settings**. Time Rules and Web Filter are rows in Settings.
   - Every existing control keeps a place (§3.9). Seven questions for the user are in §7.
 
 ---
@@ -603,16 +611,23 @@ The ones marked † are 40 words or more.
 
 | Tab | Landing route | Highlights for (server-side) | Icon |
 |---|---|---|---|
-| **Devices** | `/devices` | `/devices…` except `/devices/locate` | phone |
+| **Devices** | `/devices` | `/devices…` except `/devices/locate…` | phone |
 | **Apps** | `/apps` | `/apps…` | grid |
+| **Locate** | `/devices/locate` | `/devices/locate…` (with or without `?device=`) | map pin |
 | **Music** | `/music` | `/music…` | note |
-| **Time** | `/schedules` (later alias `/time`) | `/schedules…` | clock |
-| **More** | `/more` (new hub) | `/more`, `/devices/locate`, `/dns…`, `/settings…`, `/backups`, `/updates`, `/security`, `/account`, `/wallpapers` | ellipsis |
+| **Settings** | `/settings` (the hub, rebuilt) | `/settings…`, `/schedules…`, `/dns…`, `/wallpapers`, `/account`, `/security`, `/backups`, `/updates` | gear |
 
 Rules for routes:
 - Existing POST routes stay as they are. Only the redirect targets change (§5.1).
 - New GET routes are added for the device sub-pages (§3.2).
 - `/` still redirects to `/devices`.
+- The tab is chosen on the server, from the request path, with the same prefixes as the table.
+- The device sub-pages under `/devices/{id}/…` stay in the **Devices** tab, including `/devices/{id}/time` and
+  `/devices/{id}/filter`, even though their global counterparts live under Settings.
+- `/devices/locate` must be matched **before** `/devices/{id}`. Today the router has the literal route at
+  `main.rs:840`, and the JS regex excludes it (`^/devices(?!/locate)`). The server-side matcher needs the same rule.
+- `/schedules` keeps its URL. Only its tab changes, from its own tab to Settings. No `/time` alias and no `/more`
+  route are needed.
 
 ### 3.2 Devices
 
@@ -666,13 +681,13 @@ Below the rows:
 
 | Row | Value example | Sub-page | Holds (from today's page) |
 |---|---|---|---|
-| Calls & Contacts | "8 contacts · SMS on" | `/devices/{id}/calls` (exists) | The Calls & SMS page, minus the country code (→ More › Settings) |
+| Calls & Contacts | "8 contacts · SMS on" | `/devices/{id}/calls` (exists) | The Calls & SMS page, minus the country code (→ Settings › Phone Setup) |
 | Apps | "14 allowed · 1 installing" | `/devices/{id}/apps` (new) | Allowed apps list (switches + status), App updates on Wi-Fi only, Names and icons (each app row → its own name/icon sheet), keyboard and accessibility note behind ⓘ |
 | Music | "6 in library · Storytel on" | `/devices/{id}/music` (new) | The Music card: music app, library ticks, mobile data, volume cap, Storytel, Sonos (its own sub-page when there are rooms) |
 | Time | "Everyone's rules · 90 min" | `/devices/{id}/time` (new) | Rule state, lifts table, extra time, own-rules switch, this phone's own rules and screen time (from `/schedules?device=`) |
 | Lock Screen & PINs | "Child PIN on · 1 min" | `/devices/{id}/lock` (new) | Child PIN, parent PIN (+ reported events), screen timeout, lock-screen notifications (text switch + apps), lock-screen background |
 | Home Screen | "4 per row · Norsk" | `/devices/{id}/home` (new) | Language, apps per row, wallpapers, Quick controls (swipe-left screen) |
-| Location | "Seen 10 min ago" | `/devices/{id}/location` (new; `/devices/locate?device=` redirects here) | Map, Update now, mode, interval, history, Ring / Stop / Lock / Erase…, recent commands with Cancel |
+| Location | "Seen 10 min ago" | **Not a sub-page.** It links to the Locate tab: `/devices/locate?device={id}` (§3.6) | Nothing moves here; the row is a shortcut |
 | Web Filter | "On · log off" | `/devices/{id}/filter` (new) | Filter on/off, this phone's blocklist overrides and domains (from `/dns?device=`), blocked log switch + log (from `/dns/log?device=`) |
 | About This Phone | "Vibb 0.23.6" | `/devices/{id}/about` (new) | See below |
 | Advanced | - | `/devices/{id}/advanced` (new) | See below |
@@ -757,9 +772,10 @@ The **entry page** keeps its cards, retitled and reordered: Cover + Name → Epi
 
 The **Storytel shelf** keeps its shape. Its intro shrinks to one line, with the rest behind ⓘ.
 
-### 3.5 Time
+### 3.5 Settings › Time Rules
 
-`/schedules` becomes the Screen-Time-like overview:
+Time Rules is not a tab. It is the **first content row in Settings** ("Time Rules · 2 rules ›"). It opens `/schedules`,
+which keeps its URL and becomes a Screen-Time-like sub-page, with the back link "‹ Settings":
 
 1. **Everyone** (the global scope):
    - **Rules**: one navigation row per rule, "Skole · Mon-Fri 08:15-14:30 · calls off ›", plus **Add rule**. The rule
@@ -774,25 +790,55 @@ The **Storytel shelf** keeps its shape. Its intro shrinks to one line, with the 
 
 The device picker select goes away; each phone is a link.
 
-### 3.6 More
+**Per-phone time stays on the device page.** The daily actions (add time, pause a rule, end a lift) are on the
+device summary. The full per-phone view is the device's **Time** sub-page (`/devices/{id}/time`). It holds:
+- the lifts;
+- extra time;
+- the own-rules switch;
+- this phone's own screen time and rules.
 
-`/more` is a new hub in grouped-list style:
+The Phones rows above are links into that sub-page; they open in the Devices tab. Settings › Time Rules owns only the
+rules and screen time that apply to everyone.
 
-| Group | Row | Goes to |
-|---|---|---|
-| **Find** | Locate | `/devices/locate`. With one phone it goes straight to that phone's Location page; with several it shows a list of phones with "Seen 10 min ago" + map thumbnail ›. |
-| **Content** | Web Filter | `/dns`: shared blocklists, blocked and allowed domains, the DNS server; per-phone parts → each phone's Web Filter page |
-| | Blocked Activity | `/dns/log`: a list of phones (log on/off) › each phone's Web Filter page |
-| | Wallpapers | `/wallpapers` (moved from Settings) |
-| **Settings** | Account | `/account` (password, two-factor, sign out everywhere) |
-| | Security Log | `/security` |
-| | Backups | `/backups` |
-| | Software Updates | `/updates` |
-| | Phone Setup | `/settings/provisioning` (server URL, Tailscale key, language, time zone), plus the **default country code** (moved from the calls page) |
-| | About | Server version (from `/updates`), links to the project |
-| | **Sign Out** | `POST /logout` |
+### 3.6 Settings and the Locate tab
 
-`/settings` redirects to `/more`, so bookmarks still work.
+**Settings (`/settings`)** replaces the old hub. It holds everything the first draft's More tab held, minus Locate (now a tab), plus Time
+Rules near the top. It is a
+grouped list with outline icons on tinted squares, not emoji:
+
+| Group | Row | Value (example) | Goes to |
+|---|---|---|---|
+| **Rules** | Time Rules | "2 rules · 90 min" | `/schedules` (§3.5) |
+| | Web Filter | "On · 3 lists" | `/dns`: shared blocklists, blocked and allowed domains, the DNS server. The per-phone parts are on each phone's Web Filter page |
+| | Blocked Activity | "Log on for 1 phone" | `/dns/log`: a list of phones (log on/off) › each phone's Web Filter page |
+| **Content** | Wallpapers | "8 · 2 photos" | `/wallpapers` |
+| **Server** | Account | "admin" | `/account` (password, two-factor, sign out everywhere) |
+| | Security Log | - | `/security` |
+| | Backups | "Last: today 03:00" | `/backups` |
+| | Software Updates | "Update available" (badge) | `/updates` |
+| | Phone Setup | - | `/settings/provisioning` (server URL, Tailscale key, language, time zone), plus the **default country code** (moved from the calls page) |
+| | About | "0.24.0" | Server version (from `/updates`), links to the project |
+| | **Sign Out** | - | `POST /logout` |
+
+`/settings` keeps its URL, so bookmarks still work.
+
+**Locate (`/devices/locate`)** is a tab of its own. It is the one place for a phone's location and its remote
+commands. There is no separate device sub-page for location.
+
+- **Phone switcher.** A segmented control or a row of links at the top, one per phone: "Anna · Emil".
+  - These are plain links to `?device={id}`. Today's `onchange` select needs JS and goes away.
+  - With one phone, that phone is shown at once.
+  - With several and no `?device=`, the page lists the phones with "Seen 10 min ago" ›.
+  - The device summary's Location row opens `/devices/locate?device={id}`, which switches to the Locate tab. That
+    tab switch is deliberate: location is one tap from both places.
+- **Map** (Leaflet, unchanged), with the last fix "10 min ago · ±12 m" under it, and **Update Location**.
+- **Actions**: Ring · Stop Ringing · Lock · Erase Phone… (the type-the-name confirm stays). One footer: "An offline
+  phone gets Ring and Locate within an hour, Lock and Erase whenever it's back."
+- **Location settings**, as a navigation row "Location · Only when asked · 7 days ›". It opens a section on the same
+  page or a `<details>` with the mode, interval and history. These are set once, so they go below the actions.
+- **Recent commands** as stacked rows: "Lock · today 10:58 · Done", Cancel on a waiting one. Raw command ids are
+  replaced by labels (§2.2b).
+- The wipe-not-ready and location-off warnings stay, as orange rows above the actions.
 
 ### 3.7 Login, setup and enrolment
 
@@ -834,9 +880,9 @@ Nothing is dropped. "→" names the new home; ⓘ means the text moves behind th
 | Play and kiosk (lines, warnings, kiosk app block) | Advanced › App screens; "Restart once" warning → Attention |
 | Launcher updates and notifications (3 switches) | Advanced › Updates & notifications |
 | Launcher crashes | About This Phone › Diagnostics |
-| Time rules card (state, lift, +min, lifts table, edit link) | Summary (state, quick actions, today) + Time sub-page (full) |
+| Time rules card (state, lift, +min, lifts table, edit link) | Summary (state, quick actions, today) + Device › Time sub-page (full); the edit link → Settings › Time Rules for everyone's rules |
 | Calls & SMS card | Summary row → Calls & Contacts |
-| Calls page: default country code | More › Phone Setup |
+| Calls page: default country code | Settings › Phone Setup |
 | Apps card: list, Wi-Fi only, downloads line, corrupt warning | Apps sub-page |
 | Apps card: On the lock screen | Lock Screen & PINs › Notifications |
 | Apps card: Names and icons | Apps sub-page, per app row |
@@ -850,22 +896,22 @@ Nothing is dropped. "→" names the new home; ⓘ means the text moves behind th
 | Quick Controls (4 boxes) | Home Screen › Quick controls |
 | Ad/content filtering (VPN) switch | Web Filter sub-page |
 | Remove this device | Advanced, bottom |
-| Locate page (all of it) | Device › Location; More › Locate as the entrance |
-| DNS: upstream, blocklists, custom lists | More › Web Filter |
+| Locate page (all of it) | **Locate tab** (`/devices/locate`, same URL); the summary's Location row links to it with `?device=` |
+| DNS: upstream, blocklists, custom lists | Settings › Web Filter |
 | DNS: per-device overrides | Device › Web Filter |
-| DNS log (switch + table) | Device › Web Filter; More › Blocked Activity as the entrance |
-| Schedules: global rules, global screen time | Time tab |
-| Schedules: per-device switch, screen time, rules | Device › Time (also from the Time tab) |
+| DNS log (switch + table) | Device › Web Filter; Settings › Blocked Activity as the entrance |
+| Schedules: global rules, global screen time | Settings › Time Rules (`/schedules`, same URL) |
+| Schedules: per-device switch, screen time, rules | Device › Time (also linked from Settings › Time Rules › Phones) |
 | Apps\|Music switch | Gone - Music is a tab |
 | Music page: add link, own files, Storytel shelf link | Music › Add |
 | Music page: sweep interval, Storytel login, music app row, orphans | Music › Settings |
 | Music page: categories | Music › Categories |
 | Music page: Import from Vibb | Music › Add › Import from Vibb |
 | Tracked app page (all cards) | App page top + Source & signing |
-| Settings hub (6 rows + Sign out) | More |
-| Wallpapers page | More › Wallpapers |
-| Provisioning page | More › Phone Setup (and linked from Add phone) |
-| Backups, Updates, Security, Account | More › Settings, unchanged inside apart from copy |
+| Settings hub (6 rows + Sign out) | Settings (rebuilt, §3.6) |
+| Wallpapers page | Settings › Wallpapers |
+| Provisioning page | Settings › Phone Setup (and linked from Add phone) |
+| Backups, Updates, Security, Account | Settings › Server, unchanged inside apart from copy |
 
 ### 3.10 "Online": which signal, which thresholds
 
@@ -947,7 +993,7 @@ Things never shown outside an ⓘ panel or Advanced:
 | launcher / Handy's lock | the phone, or "Vibb" where the software must be named (Q6) |
 | kid / the kid's PIN | child / **Child PIN** |
 | parent PIN / parent code / offline override / unlock code | **Parent PIN** everywhere in the PWA (the phone's own words are quoted only in ⓘ) |
-| Time rules | **Time** (tab), **rules** (things in it) |
+| Time rules | **Time Rules** (a Settings row), **rules** (things in it); a phone's own view is **Time** |
 | Lift a rule | **Pause a rule** |
 | +15 min screen time | **Add 15 min** |
 | Pause restrictions for 2 hours | **Unlock for 2 hours** |
@@ -1137,7 +1183,7 @@ How to handle them:
 | The 3 s auto-reload while installing | Lives on the device page; must follow the Apps sub-page and must not run on the summary | Move with the list |
 | `music-cards.js` | Finds `.music-status[data-entry]` and anchors on `.music-card, .card` | Keep the classes or update the script in the same commit |
 | `app-display.js` | Finds `form.app-display-form` and `data-preview-*` | Keep the partial's markup |
-| Locate JS | `locations.json`, `locate-result.json`, `location.replace('/devices/locate?device=…')` | Point at the new Location URL |
+| Locate JS | `locations.json`, `locate-result.json`, `location.replace('/devices/locate?device=…')` | The URL stays, so the script keeps working; recheck it after the layout change |
 | Askama | Templates compile into the binary; a missing variable is a build error | Build after every page |
 | `style.css?v=7` | Browsers cache `/static` hard | Bump `v` with every CSS change |
 | The list page's status | New per-phone reads on `/devices` | One query per phone is fine at 1-3 phones; no N+1 beyond that |
@@ -1145,7 +1191,7 @@ How to handle them:
 
 ---
 
-## 6. Mockup list (8 screens)
+## 6. Mockup list (9 screens)
 
 Every screen is a phone-width frame (390 pt), light mode first, with one dark-mode frame of the device summary. The
 data is realistic and taken from the code and tests: phones **Anna** and **Emil**; rules **Skole** and **Leggetid**;
@@ -1168,7 +1214,7 @@ library entries **Abels tårn**, **Ukas nyheter**, **Godnatt**; categories **Mus
 - **Add Phone** row.
 - Above the list, the password banner as it will look (an orange inset row "Change the generated password ›"), so the
   banner style is reviewed too.
-- Tab bar: **Devices** active · Apps · Music · Time · More.
+- Tab bar: **Devices** active · Apps · Locate · Music · Settings.
 
 ### M2 - Device summary (Anna)
 
@@ -1193,7 +1239,7 @@ library entries **Abels tårn**, **Ukas nyheter**, **Godnatt**; categories **Mus
    - Time "Everyone's rules";
    - Lock Screen & PINs "Child PIN on";
    - Home Screen "4 per row";
-   - Location "Seen 10 min ago";
+   - Location "Seen 10 min ago" (opens the Locate tab on Anna);
    - Web Filter "On";
    - About This Phone "Vibb 0.23.6";
    - Advanced.
@@ -1264,32 +1310,51 @@ This page best shows the ⓘ pattern and the PIN forms.
   - "Emil · 4 of 9 ›".
 - **Settings ›** and **Categories ›**.
 
-### M6 - Time (tab)
+### M6 - Settings › Time Rules
 
-- Large title "Time".
+- "‹ Settings", large title "Time Rules".
 - **Everyone › Rules**:
   - "Skole · Mon-Fri 08:15-14:30 · calls off ›";
   - "Leggetid · Every day 20:30-07:00 · calls on ›";
   - Add Rule.
 - **Everyone › Screen time**:
   - "Mon-Fri 90 min · Sat-Sun 120 min ›".
-- **Phones**:
+- **Phones** (links into the Devices tab):
   - "Anna · Everyone's rules ›";
   - "Emil · Own rules ›".
 - The footer "Emergency calls always work."
+- Tab bar: **Settings** active.
 - A second, small frame: **the rule editor for Skole**: name, kind, the "Calls with contacts" switch, the 7 day rows
   (Sat/Sun empty), "Apps that stay usable ›", Save, Delete Rule in red.
 
-### M7 - More
+### M7 - Settings
 
-- Large title "More". The grouped list from §3.6, with SF-Symbol-like outline icons on tinted squares (not emoji):
-  - **Find**: Locate;
-  - **Content**: Web Filter · Blocked Activity · Wallpapers;
-  - **Settings**: Account · Security Log · Backups · Software Updates · Phone Setup · About;
+- Large title "Settings". The grouped list from §3.6, with SF-Symbol-like outline icons on tinted squares (not emoji):
+  - **Rules**: Time Rules "2 rules · 90 min" · Web Filter "On · 3 lists" · Blocked Activity "Log on for 1 phone";
+  - **Content**: Wallpapers "8 · 2 photos";
+  - **Server**: Account "admin" · Security Log · Backups "Last: today 03:00" · Software Updates "Update available"
+    (blue badge) · Phone Setup · About "0.24.0";
   - **Sign Out** in red.
-- The values on the right: Backups "Last: today 03:00"; Software Updates "Update available" (blue badge).
+- Tab bar: Devices · Apps · Locate · Music · **Settings** active.
 
-### M8 - Patterns sheet
+### M8 - Locate (tab)
+
+- Large title "Locate".
+- Phone switcher at the top: **Anna** (selected) · Emil.
+- The map, about 45 % of the screen height: Anna's trail for today and a pin at the last fix. Under it: "10 min ago ·
+  ±12 m" and **Update Location**.
+- **Actions**: Ring · Stop Ringing · Lock · **Erase Phone…** in red. Footer: "An offline phone gets Ring and Locate
+  within an hour, Lock and Erase whenever it's back."
+- **Location** · "Only when asked · 7 days ›".
+- **Recent**:
+  - "Locate · today 10:58 · Done (±12 m)";
+  - "Ring · today 10:41 · Done";
+  - "Lock · waiting for the phone" with **Cancel**.
+- A second, small frame: Emil selected while he is Offline. The orange row "Erasing works after the phone restarts
+  once" above the actions; the map shows the last fix "3 h ago".
+- Tab bar: Devices · Apps · **Locate** active · Music · Settings.
+
+### M9 - Patterns sheet
 
 One frame of the pieces, so the reviewer can judge each of them alone:
 - a switch row with a one-line footer;
@@ -1310,12 +1375,14 @@ One frame of the pieces, so the reviewer can judge each of them alone:
 
    Should the per-photo switch go, now that each phone picks its own lock background? This is the only control the
    proposal would like to drop. It stays until you answer.
-2. **The DNS server choice (Cloudflare / Quad9).** It moves to More › Web Filter › Advanced, unchanged. Is it still
+2. **The DNS server choice (Cloudflare / Quad9).** It moves to Settings › Web Filter, at the bottom, unchanged. Is it still
    worth showing at all? It is sent to the phones as `dns_upstream_provider`.
 3. **"This is the launcher app" switch** on a catalog app. It moves into Source & signing. It should only ever be set
    once. Keep it visible, or hide it once a row is marked?
-4. **Locate as a tab.** It moves to More, as you decided. Should the device summary also get a "Locate" quick action?
-   The proposal says yes.
+4. **A Locate quick action on the summary.** Locate is now a tab of its own (your decision), and the summary's
+   Location row already opens it on that phone. So a "Locate" quick action is **optional**: it saves nothing over
+   the tab, but it puts the lost-phone path next to Lock and Ring. The proposal keeps it in the quick-action grid
+   (M2). Keep it, or drop it to make room?
 5. **Times.** Can the PWA show local time instead of UTC? Today the server labels times "UTC" because the Pi may
    have no time zone set. The proposal is to use the time zone from Phone Setup (`settings.time_zone`, e.g.
    `Europe/Oslo`) for display, and show relative times ("12 min ago") where they fit.
@@ -1334,14 +1401,15 @@ One frame of the pieces, so the reviewer can judge each of them alone:
 ## 8. Build order (suggested, page by page)
 
 1. **The shell.** The CSS tokens and components: grouped list, rows, switch, ⓘ, badges, Attention, flash. The
-   5-tab bar rendered on the server, and `/more`. The pages keep their content.
-2. **Devices list and device summary**, with the 10 sub-pages split out of `device_detail.html` and the redirect
+   5-tab bar (Devices · Apps · Locate · Music · Settings) rendered on the server, and the rebuilt `/settings`
+   hub. The pages keep their content.
+2. **Devices list and device summary**, with the 9 sub-pages split out of `device_detail.html` and the redirect
    targets updated (§5.1). This is the largest step. QA it alone.
-3. **Time.**
+3. **Settings › Time Rules** (`/schedules`) and the device Time sub-page.
 4. **Apps** (catalog + the app page).
 5. **Music** (library, settings, categories, import sub-page, entry page).
-6. **More**: Locate entrance, Web Filter, Blocked Activity, Wallpapers, Account, Security, Backups, Updates, Phone
-   Setup.
+6. **Locate** (the tab, with the phone switcher as links), then the rest of **Settings**: Web Filter, Blocked
+   Activity, Wallpapers, Account, Security, Backups, Updates, Phone Setup.
 7. **Add phone flow** and the sign-in pages.
 
 Each step rewrites its copy to §4, updates its tests (§5.5), keeps the no-JS path, and is checked at 390 px in light
