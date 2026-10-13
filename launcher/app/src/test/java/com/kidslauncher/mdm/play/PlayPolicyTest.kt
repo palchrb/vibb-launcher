@@ -139,6 +139,41 @@ class PlayPolicyTest {
         assertTrue(playPackageLaunchable(GAME, installModeActive = false))
     }
 
+    /** Design 28: the override and the pause lift every app restriction, so the store is listed. */
+    @Test
+    fun `the Play Store is listable in install mode and while the override or the pause is open`() {
+        assertFalse(playStoreListable(installMode = false, windowOpen = false))
+        assertTrue(playStoreListable(installMode = true, windowOpen = false))
+        assertTrue(playStoreListable(installMode = false, windowOpen = true))
+        assertTrue(playStoreListable(installMode = true, windowOpen = true))
+        for (windowOpen in listOf(false, true)) {
+            assertEquals(windowOpen, playPackageLaunchable(PLAY_STORE, playStoreListable(installMode = false, windowOpen)))
+        }
+    }
+
+    @Test
+    fun `Play services and GSF are never listable, in a window or not`() {
+        for (installMode in listOf(false, true)) {
+            for (windowOpen in listOf(false, true)) {
+                val listable = playStoreListable(installMode, windowOpen)
+                assertFalse(playPackageLaunchable(PLAY_SERVICES, listable))
+                assertFalse(playPackageLaunchable(GOOGLE_SERVICES_FRAMEWORK, listable))
+                assertTrue(playPackageOnHome(PLAY_SERVICES, installMode))
+            }
+        }
+    }
+
+    /** Design 28 (QA L8): in a window the store is in the drawer only. */
+    @Test
+    fun `the Play Store is on Home only in install mode`() {
+        assertFalse(playPackageOnHome(PLAY_STORE, installMode = false))
+        assertTrue(playPackageOnHome(PLAY_STORE, installMode = true))
+        for (installMode in listOf(false, true)) {
+            assertTrue(playPackageOnHome(GAME, installMode))
+            assertTrue(playPackageOnHome(null, installMode))
+        }
+    }
+
     // Update window
 
     @Test

@@ -64,6 +64,10 @@ object PlayRuntime {
     fun installModeActive(context: Context): Boolean =
         installModeActive(installModeStart(context), System.currentTimeMillis(), SystemClock.elapsedRealtime(), BootClock.bootCount())
 
+    /** Whether the drawer may list the Play Store (design 28): install mode, or the override or
+     * the pause open. Home's grid also asks [playPackageOnHome] with [installModeActive]. */
+    fun storeListable(context: Context): Boolean = playStoreListable(installModeActive(context), overrideActive())
+
     fun installModeUntil(context: Context): Long? =
         installModeStart(context)?.untilWallMs?.takeIf { installModeActive(context) }
 

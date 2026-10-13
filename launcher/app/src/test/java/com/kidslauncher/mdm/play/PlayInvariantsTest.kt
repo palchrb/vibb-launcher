@@ -62,4 +62,30 @@ class PlayInvariantsTest {
         assertTrue("Intent.CATEGORY_DEFAULT" in pin)
         assertTrue("PhoneBookActivity::class.java" in pin)
     }
+
+    /** Design 28: the drawer lists the Play Store while the override or the pause is open. */
+    @Test
+    fun `the filter asks the Play rule with the windows`() {
+        val filter = sources.walkTopDown().first { it.name == "AppFilter.kt" }.readText()
+        assertTrue("PlayRuntime.storeListable(context)" in filter)
+        assertTrue("PlayRuntime.installModeActive(" !in filter)
+    }
+
+    /** Design 28 (QA L8): in a window the store is in the drawer only, not on Home's grid. */
+    @Test
+    fun `Home drops the store outside install mode`() {
+        val home = sources.walkTopDown().first { it.name == "HomeActivity.kt" }.readText()
+        val refresh = home.substringAfter("private fun refreshApps(").substringBefore("\n    }\n")
+        assertTrue("playPackageOnHome(" in refresh)
+        assertTrue("PlayRuntime.installModeActive(context)" in refresh)
+    }
+
+    /** Design 28 (QA M1): the list refresh comes from the window's own edges, not from Play's
+     * suspension, which on a GMS phone never happens. */
+    @Test
+    fun `a window's edges reload the app list`() {
+        val app = sources.walkTopDown().first { it.name == "Application.kt" }.readText()
+        val initRest = app.substringAfter("private fun initRest(").substringBefore("\n    }\n")
+        assertTrue("WindowRelock.addListener { loadApps() }" in initRest)
+    }
 }

@@ -53,6 +53,8 @@ import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.TsnetClient
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.openAppsList
+import com.kidslauncher.mdm.play.PlayRuntime
+import com.kidslauncher.mdm.play.playPackageOnHome
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.requestNotificationPermission
 import com.kidslauncher.mdm.setDefaultHomeScreen
@@ -637,8 +639,16 @@ class HomeActivity : UIObjectActivity() {
         appsJob?.cancel()
         appsJob = CoroutineScope(Dispatchers.Main).launch {
             val result = withContext(Dispatchers.Default) {
+                // The drawer's filter lists the Play Store in a parent-PIN window too; Home's grid
+                // only in install mode (design 28). Unreadable = not in install mode.
+                val installMode = try {
+                    PlayRuntime.installModeActive(context)
+                } catch (e: Exception) {
+                    false
+                }
                 val visible = AppFilter(context).invoke(all)
                     .filter { (it.getRawInfo() as? AppInfo)?.packageName != packageName }
+                    .filter { playPackageOnHome((it.getRawInfo() as? AppInfo)?.packageName, installMode) }
                 val infos = visible.associateBy { it.getRawInfo().serialize() }
                 val list = infos.map { (key, info) ->
                     GridApp(key, info.getCustomLabel(context), (info.getRawInfo() as? AppInfo)?.packageName)
