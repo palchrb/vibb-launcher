@@ -1,5 +1,8 @@
 package com.kidslauncher.mdm.music
 
+import com.kidslauncher.mdm.server.DownloadGate
+import com.kidslauncher.mdm.server.NetCaps
+import com.kidslauncher.mdm.server.downloadGate
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -78,7 +81,7 @@ private val VERSION = Regex("[0-9a-f]{16}")
 /** An older server sends no `storage_limit_gb`: the music storage limit it means is this (design 30 §1.3). */
 const val DEFAULT_STORAGE_LIMIT_GB = 2
 
-/** The largest limit the launcher takes from the policy (design 30 §1.3); anything above refuses the object. */
+/** The largest limit the launcher takes from the policy (design 30 §1.3); anything above reads as [DEFAULT_STORAGE_LIMIT_GB]. */
 const val MAX_STORAGE_LIMIT_GB = 1000
 
 /**
@@ -119,14 +122,32 @@ fun musicPolicy(element: JsonElement?): MusicPolicy? {
         is JsonPrimitive -> c.intOrNull ?: return null
         else -> return null
     }
-    val limit = when (val l = o["storage_limit_gb"]) {
-        null -> DEFAULT_STORAGE_LIMIT_GB
-        is JsonNull -> null
-        is JsonPrimitive -> l.takeIf { !it.isString }?.intOrNull?.takeIf { it in 1..MAX_STORAGE_LIMIT_GB } ?: return null
-        else -> return null
-    }
+    val limit = storageLimitGb(o["storage_limit_gb"])
     val generation = (o["storytel_generation"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull?.takeIf { it >= 0 } ?: return null
     return MusicPolicy(version, stream, download, cap, limit, generation)
+}
+
+/**
+ * The storage limit in GB (design 30 §1.3, qa-30-s2-code L1): JSON `null` = no limit, an integer
+ * 1..[MAX_STORAGE_LIMIT_GB] = it, absent or anything else = [DEFAULT_STORAGE_LIMIT_GB] - lenient like
+ * the server's `storage_limit` and the music app, so the least important field never takes the
+ * rest of the music object down with it.
+ */
+fun storageLimitGb(element: JsonElement?): Int? = when (element) {
+    is JsonNull -> null
+    is JsonPrimitive -> element.takeIf { !it.isString }?.intOrNull?.takeIf { it in 1..MAX_STORAGE_LIMIT_GB } ?: DEFAULT_STORAGE_LIMIT_GB
+    else -> DEFAULT_STORAGE_LIMIT_GB
+}
+
+/**
+ * The policy's volume cap (design 26a §5.3) with a music object [musicPolicy] refuses kept closed
+ * (qa-30-s2-code L1): absent (an older server, or one that couldn't build it) = the policy's
+ * none; readable = its cap (null = off); present but refused = [remembered], the last cap read.
+ */
+fun policyCapPct(music: JsonElement?, remembered: Int?): Int? {
+    if (music == null) return null
+    val read = musicPolicy(music) ?: return remembered
+    return read.volumeCapPct
 }
 
 /**
@@ -346,6 +367,38 @@ fun artToFetch(
     val later = if (unmetered || downloadMobileData) want.later else emptyList()
     return (want.now + later).filter { it !in has && !artBackedOff(failures[it], nowMs) }.distinct().take(max)
 }
+
+/**
+ * [artToFetch] on the phone's network [caps] (design 27 §2.2, design 30 §1.1): online = INTERNET
+ * and a physical transport; `later` on an unmetered network, or with the policy's downloads switch
+ * and not roaming. [MusicCourier.artFetchable] only feeds it.
+ */
+fun artToFetchOn(
+    want: WantArt,
+    has: Set<String>,
+    failures: Map<String, ArtFailure>,
+    caps: NetCaps?,
+    music: MusicPolicy,
+    max: Int,
+    nowMs: Long,
+): List<String> = artToFetch(
+    want,
+    has,
+    failures,
+    online = caps != null && caps.internet && caps.physical,
+    unmetered = caps?.notMetered == true,
+    downloadMobileData = music.downloadMobileData && caps?.notRoaming == true,
+    max = max,
+    nowMs = nowMs,
+)
+
+/**
+ * The gate for one own file (design 13's [downloadGate], design 30 §1.1): Wi-Fi only unless the
+ * policy's downloads switch is on; no readable music object ([music] null) = Wi-Fi only.
+ * `MusicFileDownloads.gate` only feeds it.
+ */
+fun ownFileGate(caps: NetCaps?, music: MusicPolicy?, nowMs: Long, haveBytes: Long, totalBytes: Long, allocatableBytes: Long?): DownloadGate =
+    downloadGate(caps, wifiOnly = music?.downloadMobileData != true, anyNetworkAt = null, nowMs = nowMs, haveBytes = haveBytes, totalBytes = totalBytes, allocatableBytes = allocatableBytes)
 
 /** Cover files to delete: every one that is neither a library cover nor wanted (held until the music app copied it). */
 fun artToDelete(present: Set<String>, libraryCovers: Set<String>, want: WantArt): Set<String> {

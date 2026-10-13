@@ -127,7 +127,7 @@ that an older phone doesn't stream off Wi-Fi while only streaming is on. The PWA
 
 **Reading the limit:**
 - launcher: `storage_limit_gb` absent -> 2 (an older server); `null` -> no limit; an integer 1..1000 -> it; anything
-  else refuses the object;
+  else -> 2 (qa-30-s2-code L1: lenient like the server and the music app, so the limit never refuses the object);
 - music app: an Int 1..1000 -> that many GB; 0 -> no limit; absent or anything else -> 2 GB (an older launcher).
 
 | server | launcher | music app | result |
@@ -494,12 +494,14 @@ Design 27's rule is "a kept episode's picture stays as long as its audio". `artW
   - `MusicPolicy(libraryVersion, streamMobileData, downloadMobileData, volumeCapPct, storageLimitGb: Int?,
     storytelGeneration)`, where null = no limit;
   - `musicPolicy`: `mobile_data` still required. Each switch key: Boolean -> used, absent -> `mobile_data`, else null.
-    `storage_limit_gb`: absent -> 2, `null` -> no limit, an integer 1..1000 -> it, else null;
+    `storage_limit_gb`: absent -> 2, `null` -> no limit, an integer 1..1000 -> it, else 2 (qa-30-s2-code L1);
   - `restrictionsFor`: `mobile_data` = both, then the two switches and `storage_limit_gb` (`storageLimitRestriction`:
     the GB, 0 = no limit);
   - `artToFetch(..., downloadMobileData)`: the parameter is renamed, the rule is the same.
-- `music/MusicSync.kt`: `mobileData()` -> `downloadMobileData()`; `artFetchable` passes the downloads switch.
-- `music/MusicFileDownloads.kt`: the gate reads `MusicSync.downloadMobileData()`.
+- `music/MusicSync.kt`: `mobileData()` -> `cachedMusicPolicy()`; `artFetchable` passes the downloads switch (through the
+  pure `artToFetchOn`, qa-30-s2-code L2).
+- `music/MusicFileDownloads.kt`: the gate is the pure `ownFileGate(caps, MusicSync.cachedMusicPolicy(), ...)` (L2).
+- `music/VolumeCap.kt`: a music object `musicPolicy` refuses keeps the last cap read (`policyCapPct`, qa-30-s2-code L1).
 - `test/resources/bridge_contract.json` and `music/app/src/test/resources/bridge_contract.json`: `restrictions` gains
   `"stream_mobile_data": "boolean", "download_mobile_data": "boolean", "storage_limit_gb": "int"`. The same commit
   adds the three constants to the music app's `RestrictionKeys` and to `BridgeTest`'s key list; reading them is step
@@ -620,7 +622,7 @@ Launcher (`testDebugUnitTest`):
 - `MusicPlanTest`:
   - `the policy's music object - two switches, an older server's mobile_data for both, a malformed switch keeps what
     is there`;
-  - `the storage limit - absent is 2 GB, null is none, junk refuses`;
+  - `the storage limit - absent is 2 GB, null is none, a stray value is 2 GB`;
   - `the managed config carries both switches, the limit and mobile_data as both`;
   - `later pictures follow the downloads switch`;
   - `the managed config keys are the shared contract's` (existing, with the three keys);
@@ -849,7 +851,7 @@ music app's three constants; nothing of steps 3a or 3b (the music app reads none
     Boolean counts. `mobile_data` keeps today's lenient read (`booleanOrNull`, so a `"true"` string still passes), to
     change nothing for it.
   - `storage_limit_gb` must be a non-string JSON integer in 1..1000; `0`, a fraction, a string, a Boolean or anything
-    above 1000 refuses.
+    above 1000 refuses. (Changed in the code QA fix round below: they read as 2 GB.)
   - `MusicPolicy` keeps a `mobileData` getter (`stream && download`) for what the managed config's old key writes, so
     no caller computes the AND itself.
   - No `streamMobileData()` reader in `MusicSync`: the launcher has no streaming of its own.
@@ -865,3 +867,24 @@ music app's three constants; nothing of steps 3a or 3b (the music app reads none
   `testDebugUnitTest -PwarningsAsErrors=true`: 614 tests, 0 failures.
 - Docs: `launcher/CLAUDE.md` (`MusicSync`, its `musicPolicy` rules, `MusicFileDownloads`, `syncArt`).
 - Not device-tested: nothing of §8 is step 2's alone; check 11's "launcher from main" case is the old launcher.
+
+### Step 2 code QA fix round (2026-10-13, `qa-30-s2-code.md`)
+
+- **L1:** a refused music object no longer lifts the phone's volume cap. `VolumeCap.refresh` takes the policy's cap
+  through the pure `policyCapPct(music, remembered)`: no music object = none, a readable one = its cap, a refused one
+  = the last cap read, kept in CE prefs `volume_cap` (`policy_cap_pct`, -1 = none) so a process start with a refused
+  cached policy keeps it too. `storage_limit_gb` is now lenient (`storageLimitGb`): `null` = no limit, 1..1000 = it,
+  absent or anything else = 2 GB, so it can't refuse the object. The switches stay strict. Every other reader of a
+  refused object keeps what is there: `writeRestrictions` keeps the music app's config, the courier and `answerStorytel`
+  do nothing, and own files and `later` pictures wait for Wi-Fi (no switch read = Wi-Fi only).
+- **L2:** the downloads-switch choice is pure: `ownFileGate(caps, music, ...)` for own files and `artToFetchOn(want,
+  has, failures, caps, music, max, nowMs)` for pictures. The glue (`MusicFileDownloads.gate`, `MusicSync.cachedMusicPolicy`,
+  `MusicCourier.artFetchable`) is one call each, pinned whole with `assertEquals`. `MusicSync.downloadMobileData()` is
+  gone (`cachedMusicPolicy()` returns the read object).
+- Tests: `MusicMediaPlanTest` `a music object the launcher refuses keeps the last cap, never lifts it (qa-30-s2-code
+  L1)`; `MusicPlanTest` `the storage limit - absent is 2 GB, null is none, a stray value is 2 GB` and `later pictures
+  follow the downloads switch` (now through `artToFetchOn`, with the whole-call pin); `MusicFileDownloadsTest` `own
+  files follow the downloads switch` (through `ownFileGate`, a missing music object, the space check, the whole-call
+  pins). QA's M12 (`|| true` on the own-file Wi-Fi choice) re-run: red. Launcher `assembleDebug testDebugUnitTest
+  -PwarningsAsErrors=true`: 1079 tests, 0 failures. Music `testDebugUnitTest -PwarningsAsErrors=true`: 614 tests, 0
+  failures.

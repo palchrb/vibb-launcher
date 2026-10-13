@@ -12,7 +12,7 @@ sections) and its design QA `qa-30-design.md`. Also read against the code the st
 QA left no product change behind: the mutation edits below were reverted before this commit (`git status` clean after
 each run).
 
-**Result: mergeable as is. No High and no Medium findings; 2 Low.** The parse follows §1.3 exactly:
+**Result: mergeable as is. No High and no Medium findings; 2 Low** (both fixed, see "Fixes" at the end). The parse follows §1.3 exactly:
 - `mobile_data` is still required;
 - each new switch is a JSON Boolean, falls back to `mobile_data` when absent, and refuses the object otherwise;
 - the limit is 2 when absent, none when `null`, an integer 1..1000, and refuses the object otherwise.
@@ -170,3 +170,19 @@ pictures are unchanged. Neither Low finding is reachable with today's server:
 
      Better, move the choice into a pure function the gate calls, for example `ownFileWifiOnly(music: MusicPolicy?)`,
      and test that function.
+
+## Fixes (2026-10-13, branch `design-30-s2`)
+
+| Finding | Fix | Test |
+|---|---|---|
+| L1, a refused music object lifts the volume cap | `VolumeCap.refresh` reads the cap through the pure `policyCapPct(music, remembered)` (`MusicPlan.kt`): no music object = the policy's none, a readable one = its cap, a refused one = the last cap read. That cap is kept in CE prefs `volume_cap` (`policy_cap_pct`, -1 = none), so a process start with a refused cached policy keeps it too. `storage_limit_gb` is lenient (`storageLimitGb`): `null` = no limit, 1..1000 = it, absent or anything else = 2 GB, as the server's `storage_limit` and the music app read it. The switches stay strict. A refused object now keeps what is there everywhere: the music app's config (`writeRestrictions` skips), the library (no courier run), Storytel (no answer), the cap, and own files and `later` pictures on Wi-Fi only. Spec §1.3/§4 updated. | `MusicMediaPlanTest` `a music object the launcher refuses keeps the last cap, never lifts it (qa-30-s2-code L1)` (with a pin on `VolumeCap`'s glue); `MusicPlanTest` `the storage limit - absent is 2 GB, null is none, a stray value is 2 GB` |
+| L2, the glue pins are `contains` checks | The choice is pure: `ownFileGate(caps, music, nowMs, have, total, allocatable)` (Wi-Fi only unless `music?.downloadMobileData == true`) and `artToFetchOn(want, has, failures, caps, music, max, nowMs)`. `MusicFileDownloads.gate`, `MusicSync.cachedMusicPolicy()` (replaces `downloadMobileData()`) and `MusicCourier.artFetchable` are one call each, pinned whole with `assertEquals`. | `MusicFileDownloadsTest` `own files follow the downloads switch` (now through `ownFileGate`: no music object, the space check, the whole-call pins); `MusicPlanTest` `later pictures follow the downloads switch` (through `artToFetchOn`: roaming, Wi-Fi, no network, no physical transport, no internet; the whole-call pin). M12 re-run as `wifiOnly = ... != true \|\| true` in `ownFileGate`: red (`own files follow the downloads switch`). |
+
+Not done: the server's `music: null` (it couldn't build the object, a transient database error) arrives as an absent
+key in `PolicyResponse.music` and still lifts the cap, as before design 30 - QA's rule ("only a policy without `music`
+lifts it") keeps that, and the launcher can't tell the two apart.
+
+Ran (under the shared build lock): launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true`: 1079 tests,
+0 failures; music `testDebugUnitTest -PwarningsAsErrors=true`: 614 tests, 0 failures.
+
+**Status: both Low findings fixed.**

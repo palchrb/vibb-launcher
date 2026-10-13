@@ -117,18 +117,24 @@ class MusicPlanTest {
     }
 
     @Test
-    fun `the storage limit - absent is 2 GB, null is none, junk refuses`() {
+    fun `the storage limit - absent is 2 GB, null is none, a stray value is 2 GB`() {
         assertEquals("an older server", DEFAULT_STORAGE_LIMIT_GB, musicPolicy(policy30(limit = null))!!.storageLimitGb)
         assertEquals(2, DEFAULT_STORAGE_LIMIT_GB)
         assertNull("no limit", musicPolicy(policy30(limit = JsonNull))!!.storageLimitGb)
         for (gb in listOf(1, 2, 5, 10, MAX_STORAGE_LIMIT_GB)) assertEquals(gb, musicPolicy(policy30(limit = JsonPrimitive(gb)))!!.storageLimitGb)
         assertEquals(1000, MAX_STORAGE_LIMIT_GB)
-        for (bad in listOf(
-            JsonPrimitive(0), JsonPrimitive(-2), JsonPrimitive(1001), JsonPrimitive(2.5), JsonPrimitive("2"), JsonPrimitive(true),
+        // qa-30-s2-code L1: lenient like the server's storage_limit and the music app - a stray value
+        // reads as the default and never refuses the object (the cap, the courier and Storytel ride on it).
+        for (stray in listOf(
+            JsonPrimitive(0), JsonPrimitive(-2), JsonPrimitive(1001), JsonPrimitive(2.5), JsonPrimitive(0.5), JsonPrimitive("2"), JsonPrimitive(true),
             JsonPrimitive(10_000_000_000L), buildJsonObject { }, buildJsonArray { },
         )) {
-            assertNull("storage_limit_gb = $bad", musicPolicy(policy30(limit = bad)))
+            val read = musicPolicy(policy30(limit = stray, stream = JsonPrimitive(true)))
+            assertEquals("storage_limit_gb = $stray", MusicPolicy(null, true, false, null, DEFAULT_STORAGE_LIMIT_GB, 0), read)
+            assertEquals(DEFAULT_STORAGE_LIMIT_GB, storageLimitGb(stray))
         }
+        assertEquals(DEFAULT_STORAGE_LIMIT_GB, storageLimitGb(null))
+        assertNull(storageLimitGb(JsonNull))
     }
 
     @Test
@@ -232,18 +238,26 @@ class MusicPlanTest {
     fun `later pictures follow the downloads switch`() {
         val want = WantArt(listOf(pic(1)), listOf(pic(2)))
         val now = 1_800_000_000_000L
-        // As artFetchable passes them: the policy's downloads switch, never the streaming one, and not while roaming.
-        fun fetch(music: MusicPolicy, notRoaming: Boolean = true) =
-            artToFetch(want, emptySet(), emptyMap(), online = true, unmetered = false, downloadMobileData = music.downloadMobileData && notRoaming, max = 50, nowMs = now)
+        // artToFetchOn: the phone's network and the policy, as artFetchable passes them (qa-30-s2-code L2).
+        val metered = com.kidslauncher.mdm.server.NetCaps(internet = true, notMetered = false, notRoaming = true, physical = true)
+        fun fetch(music: MusicPolicy, caps: com.kidslauncher.mdm.server.NetCaps? = metered) = artToFetchOn(want, emptySet(), emptyMap(), caps, music, 50, now)
         val streamOnly = musicPolicy(policy30(stream = JsonPrimitive(true)))!!
         val downloadOnly = musicPolicy(policy30(download = JsonPrimitive(true)))!!
+        val neither = musicPolicy(policy30())!!
         assertEquals("streaming alone: now only", listOf(pic(1)), fetch(streamOnly))
         assertEquals("downloads: later too", listOf(pic(1), pic(2)), fetch(downloadOnly))
-        assertEquals("roaming: now only", listOf(pic(1)), fetch(downloadOnly, notRoaming = false))
+        assertEquals("roaming: now only", listOf(pic(1)), fetch(downloadOnly, metered.copy(notRoaming = false)))
+        assertEquals("Wi-Fi: later without either switch", listOf(pic(1), pic(2)), fetch(neither, metered.copy(notMetered = true)))
+        assertEquals("no network: nothing", emptyList<String>(), fetch(downloadOnly, null))
+        assertEquals("no physical transport: nothing", emptyList<String>(), fetch(downloadOnly, metered.copy(physical = false, notMetered = true)))
+        assertEquals("no internet: nothing", emptyList<String>(), fetch(downloadOnly, metered.copy(internet = false)))
+        // The glue is one call, pinned whole: nothing between the policy and artToFetchOn.
         val courier = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
-        val fetchable = courier.substringAfter("fun artFetchable(").substringBefore("\n    }\n")
-        assertTrue(fetchable, fetchable.contains("downloadMobileData = music.downloadMobileData && caps?.notRoaming == true"))
-        assertFalse(fetchable, fetchable.contains("streamMobileData"))
+        val fetchable = courier.substringAfter("fun artFetchable(app: Context, want: WantArt, music: MusicPolicy): List<String> =").substringBefore("\n\n").trim()
+        assertEquals(
+            "artToFetchOn(want, MusicStore.coversDir(app).list().orEmpty().toSet(), MusicStore.artFailures(app), AppDownloads.currentCaps(app), music, ART_PER_RUN, System.currentTimeMillis())",
+            fetchable,
+        )
     }
 
     @Test
