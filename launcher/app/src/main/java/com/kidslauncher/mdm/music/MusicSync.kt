@@ -143,9 +143,9 @@ object MusicSync {
     private fun sameBundle(a: Bundle, b: Bundle): Boolean =
         a.keySet() == b.keySet() && a.keySet().all { a.get(it) == b.get(it) }
 
-    /** The parent's mobile-data switch for music, as the cached policy says. */
-    fun mobileData(): Boolean = try {
-        musicPolicy(currentPolicyDecision().policy?.music)?.mobileData == true
+    /** The parent's downloads-on-mobile-data switch for music (design 30 §1.1), as the cached policy says. */
+    fun downloadMobileData(): Boolean = try {
+        musicPolicy(currentPolicyDecision().policy?.music)?.downloadMobileData == true
     } catch (e: Exception) {
         false
     }
@@ -318,7 +318,7 @@ object MusicCourier {
             failures = MusicStore.artFailures(app),
             online = caps != null && caps.internet && caps.physical,
             unmetered = caps?.notMetered == true,
-            mobileData = music.mobileData && caps?.notRoaming == true,
+            downloadMobileData = music.downloadMobileData && caps?.notRoaming == true,
             max = ART_PER_RUN,
             nowMs = System.currentTimeMillis(),
         )

@@ -52,20 +52,51 @@ object MusicRestrictions {
     const val MANAGED = "managed"
     const val LAUNCHER_PACKAGE = "launcher_package"
     const val LANGUAGE = "language"
+
+    /** Both switches at once (design 30 §1.3): what an older music app reads. */
     const val MOBILE_DATA = "mobile_data"
     const val LIBRARY_VERSION = "library_version"
     const val STORYTEL_GENERATION = "storytel_generation"
 
     /** The parent's volume cap in force (design 26a §5.3): 1..99 %, 0 = none. The music app clamps its own Sonos sets to it. */
     const val VOLUME_CAP_PCT = "volume_cap_pct"
+
+    /** Design 30 §1.1: streaming off Wi-Fi (an item that isn't downloaded). */
+    const val STREAM_MOBILE_DATA = "stream_mobile_data"
+
+    /** Design 30 §1.1: downloads off Wi-Fi, Storytel books included. */
+    const val DOWNLOAD_MOBILE_DATA = "download_mobile_data"
+
+    /** The parent's music storage limit in GB (design 30 §1.8): 1..1000, 0 = no limit. */
+    const val STORAGE_LIMIT_GB = "storage_limit_gb"
 }
 
 private val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
 private val HASH = Regex("[0-9a-f]{64}")
 private val VERSION = Regex("[0-9a-f]{16}")
 
-/** The policy's `music` object (21 §1.3). [libraryVersion] null = nothing ticked on this phone. */
-data class MusicPolicy(val libraryVersion: String?, val mobileData: Boolean, val volumeCapPct: Int?, val storytelGeneration: Long)
+/** An older server sends no `storage_limit_gb`: the music storage limit it means is this (design 30 §1.3). */
+const val DEFAULT_STORAGE_LIMIT_GB = 2
+
+/** The largest limit the launcher takes from the policy (design 30 §1.3); anything above refuses the object. */
+const val MAX_STORAGE_LIMIT_GB = 1000
+
+/**
+ * The policy's `music` object (21 §1.3, design 30 §1.3). [libraryVersion] null = nothing ticked on
+ * this phone. [streamMobileData] and [downloadMobileData] are the parent's two mobile-data switches;
+ * [storageLimitGb] null = no limit.
+ */
+data class MusicPolicy(
+    val libraryVersion: String?,
+    val streamMobileData: Boolean,
+    val downloadMobileData: Boolean,
+    val volumeCapPct: Int?,
+    val storageLimitGb: Int?,
+    val storytelGeneration: Long,
+) {
+    /** The old one-switch key (design 30 §1.3): both, so an older music app never spends data the parent turned off. */
+    val mobileData: Boolean get() = streamMobileData && downloadMobileData
+}
 
 /**
  * `PolicyResponse.music`; null when it isn't an object or any field isn't what 21 §1.3 sends (an
@@ -81,13 +112,32 @@ fun musicPolicy(element: JsonElement?): MusicPolicy? {
         else -> return null
     }
     val mobileData = (o["mobile_data"] as? JsonPrimitive)?.booleanOrNull ?: return null
+    val stream = mobileSwitch(o, "stream_mobile_data", mobileData) ?: return null
+    val download = mobileSwitch(o, "download_mobile_data", mobileData) ?: return null
     val cap = when (val c = o["volume_cap_pct"]) {
         null, is JsonNull -> null
         is JsonPrimitive -> c.intOrNull ?: return null
         else -> return null
     }
+    val limit = when (val l = o["storage_limit_gb"]) {
+        null -> DEFAULT_STORAGE_LIMIT_GB
+        is JsonNull -> null
+        is JsonPrimitive -> l.takeIf { !it.isString }?.intOrNull?.takeIf { it in 1..MAX_STORAGE_LIMIT_GB } ?: return null
+        else -> return null
+    }
     val generation = (o["storytel_generation"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull?.takeIf { it >= 0 } ?: return null
-    return MusicPolicy(version, mobileData, cap, generation)
+    return MusicPolicy(version, stream, download, cap, limit, generation)
+}
+
+/**
+ * One of design 30's two switches: a JSON Boolean is used; absent (an older server) falls back to
+ * [mobileData], which meant both; anything else (a string, a number, `null`) is malformed: null,
+ * and [musicPolicy] refuses the object like any other bad field.
+ */
+private fun mobileSwitch(o: JsonObject, key: String, mobileData: Boolean): Boolean? = when (val v = o[key]) {
+    null -> mobileData
+    is JsonPrimitive -> v.takeIf { !it.isString }?.booleanOrNull
+    else -> null
 }
 
 /** What the launcher reads of the library (21 §3): its version, covers, own files and listings. */
@@ -182,7 +232,13 @@ fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: Stri
     MusicRestrictions.LIBRARY_VERSION to policy.libraryVersion.orEmpty(),
     MusicRestrictions.STORYTEL_GENERATION to policy.storytelGeneration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
     MusicRestrictions.VOLUME_CAP_PCT to volumeCapRestriction(volumeCapPct),
+    MusicRestrictions.STREAM_MOBILE_DATA to policy.streamMobileData,
+    MusicRestrictions.DOWNLOAD_MOBILE_DATA to policy.downloadMobileData,
+    MusicRestrictions.STORAGE_LIMIT_GB to storageLimitRestriction(policy.storageLimitGb),
 )
+
+/** The restriction's value for the storage limit (design 30 §1.3): the GB, 0 = no limit. */
+fun storageLimitRestriction(limitGb: Int?): Int = limitGb?.takeIf { it > 0 } ?: 0
 
 /** The restriction's value for the cap in force: the percentage while it caps (1..99), else 0 ("none"). */
 fun volumeCapRestriction(capPct: Int?): Int = capPct?.takeIf { it in 1..99 } ?: 0
@@ -273,8 +329,8 @@ fun artBackedOff(failure: ArtFailure?, nowMs: Long): Boolean =
 /**
  * The pictures to fetch now, at most [max], `now` first: none without a network ([online]); `now` on
  * any network (roaming too: ~60 KB a picture); `later` only on an unmetered network or with the
- * parent's mobile-data switch (not roaming) - the audio's download gate, since kept art goes with
- * kept audio (21 §4.5). Never one the launcher [has], or one waiting out its failures.
+ * parent's downloads-on-mobile-data switch (not roaming; design 30 §1.1) - the audio's download
+ * gate, since kept art goes with kept audio (21 §4.5). Never one the launcher [has], or one waiting out its failures.
  */
 fun artToFetch(
     want: WantArt,
@@ -282,12 +338,12 @@ fun artToFetch(
     failures: Map<String, ArtFailure>,
     online: Boolean,
     unmetered: Boolean,
-    mobileData: Boolean,
+    downloadMobileData: Boolean,
     max: Int,
     nowMs: Long,
 ): List<String> {
     if (!online) return emptyList()
-    val later = if (unmetered || mobileData) want.later else emptyList()
+    val later = if (unmetered || downloadMobileData) want.later else emptyList()
     return (want.now + later).filter { it !in has && !artBackedOff(failures[it], nowMs) }.distinct().take(max)
 }
 

@@ -829,3 +829,39 @@ Branch `design-30-s1` from `c1b3068f` with `main` (designs 28 and 29) merged in,
   launcher carries `music` as a raw object, so the new keys break nothing.
 - Docs: `server/CLAUDE.md` (Vibb music library: data, PWA, wire; the Storytel note).
 - Not device-tested: §8 check 1.
+
+## Step 2 implementation status (2026-10-13, branch `design-30-s2`)
+
+Branch `design-30-s2` from step 1 (`97b197f1`). Not pushed. Launcher only (§4), plus the shared contract file and the
+music app's three constants; nothing of steps 3a or 3b (the music app reads none of the new keys yet).
+- `music/MusicPlan.kt`: `MusicRestrictions.STREAM_MOBILE_DATA`/`DOWNLOAD_MOBILE_DATA`/`STORAGE_LIMIT_GB`;
+  `MusicPolicy(libraryVersion, streamMobileData, downloadMobileData, volumeCapPct, storageLimitGb, storytelGeneration)`
+  with `mobileData` = both as a derived property; `musicPolicy` (the private `mobileSwitch`; `DEFAULT_STORAGE_LIMIT_GB`
+  = 2, `MAX_STORAGE_LIMIT_GB` = 1000); `restrictionsFor` appends the two switches and `storage_limit_gb`
+  (`storageLimitRestriction`, 0 = no limit) after `volume_cap_pct`, the contract's order; `artToFetch(...,
+  downloadMobileData, ...)`.
+- `music/MusicSync.kt`: `downloadMobileData()` replaces `mobileData()`; `artFetchable` passes the downloads switch.
+  `music/MusicFileDownloads.kt`: the gate reads it. `server/dto/PolicyResponse.kt`: the `music` KDoc names the keys.
+- `bridge_contract.json` (both copies, byte-identical): `restrictions` gains the three keys, appended. The music app's
+  `RestrictionKeys` gets the three constants and `BridgeTest`'s key list them, in the same commit.
+- **Interpreted:**
+  - A switch key that is present but a JSON string (`"true"`), a number or `null` refuses the object: only a JSON
+    Boolean counts. `mobile_data` keeps today's lenient read (`booleanOrNull`, so a `"true"` string still passes), to
+    change nothing for it.
+  - `storage_limit_gb` must be a non-string JSON integer in 1..1000; `0`, a fraction, a string, a Boolean or anything
+    above 1000 refuses.
+  - `MusicPolicy` keeps a `mobileData` getter (`stream && download`) for what the managed config's old key writes, so
+    no caller computes the AND itself.
+  - No `streamMobileData()` reader in `MusicSync`: the launcher has no streaming of its own.
+- Tests: `MusicPlanTest` `the policy's music object - two switches, an older server's mobile_data for both, a malformed
+  switch keeps what is there`, `the storage limit - absent is 2 GB, null is none, junk refuses`, `the managed config
+  carries both switches, the limit and mobile_data as both`, `later pictures follow the downloads switch` (behaviour,
+  plus a pin on `artFetchable`), the contract test and the existing managed-config tests with the new constructor;
+  `PolicyResponseCompatTest` `music never fails the policy and is carried as is (21)` (today's shape, read through
+  `musicPolicy`, and a malformed new key still decodes the policy); `MusicFileDownloadsTest` `own files follow the
+  downloads switch` (the gate on metered/roaming/Wi-Fi from the policy, plus a pin on the glue); music `BridgeTest`
+  (the contract's key set with the three constants). Launcher `testDebugUnitTest`: 1078 tests, 0 failures;
+  `assembleDebug assembleRelease -PwarningsAsErrors=true` green (release with the stub tsnet). Music
+  `testDebugUnitTest -PwarningsAsErrors=true`: 614 tests, 0 failures.
+- Docs: `launcher/CLAUDE.md` (`MusicSync`, its `musicPolicy` rules, `MusicFileDownloads`, `syncArt`).
+- Not device-tested: nothing of §8 is step 2's alone; check 11's "launcher from main" case is the old launcher.

@@ -192,7 +192,7 @@ object MusicFileDownloads {
     private fun gate(app: Context, file: LibraryFile): DownloadGate {
         val partial = MusicStore.partialFile(app, file.id)
         val have = if (partial.isFile) partial.length() else 0L
-        return downloadGate(AppDownloads.currentCaps(app), !MusicSync.mobileData(), null, System.currentTimeMillis(), have, file.size, allocatable(app))
+        return downloadGate(AppDownloads.currentCaps(app), !MusicSync.downloadMobileData(), null, System.currentTimeMillis(), have, file.size, allocatable(app))
     }
 
     private fun runLoop(app: Context) {

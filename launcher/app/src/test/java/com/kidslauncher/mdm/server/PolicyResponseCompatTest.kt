@@ -413,17 +413,27 @@ class PolicyResponseCompatTest {
     fun `music never fails the policy and is carried as is (21)`() {
         fun withMusic(music: String) = serverResponse.replaceFirst("{", "{\"music\": $music,")
         val today = withMusic(
-            """{"library_version": "0123456789abcdef", "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0}""",
+            """{"library_version": "0123456789abcdef", "mobile_data": false, "stream_mobile_data": true, "download_mobile_data": false, """ +
+                """"volume_cap_pct": null, "storage_limit_gb": 2, "storytel_generation": 0}""",
         )
         val policy = (decodeCached(today) as CachedPolicy.Ok).policy
         val music = policy.music!!.jsonObject
         assertEquals("0123456789abcdef", music["library_version"]!!.jsonPrimitive.content)
-        assertEquals(setOf("library_version", "mobile_data", "volume_cap_pct", "storytel_generation"), music.keys)
+        assertEquals(
+            setOf("library_version", "mobile_data", "stream_mobile_data", "download_mobile_data", "volume_cap_pct", "storage_limit_gb", "storytel_generation"),
+            music.keys,
+        )
+        // Design 30: the music sync reads it field by field.
+        assertEquals(
+            com.kidslauncher.mdm.music.MusicPolicy("0123456789abcdef", true, false, null, 2, 0),
+            com.kidslauncher.mdm.music.musicPolicy(policy.music),
+        )
         assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
         for (odd in listOf(
             "null", "{}", "5", "\"x\"", "[]",
             """{"library_version": 5, "mobile_data": "yes", "volume_cap_pct": "60", "storytel_generation": null}""",
+            """{"library_version": null, "mobile_data": false, "stream_mobile_data": "yes", "storage_limit_gb": "2", "storytel_generation": 0}""",
         )) {
             assertTrue(odd, decodeCached(withMusic(odd)) is CachedPolicy.Ok)
             assertTrue(odd, decodeFresh(withMusic(odd)) is FreshDecode.Ok)

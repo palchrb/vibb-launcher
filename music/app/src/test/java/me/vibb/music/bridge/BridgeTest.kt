@@ -99,12 +99,13 @@ class BridgeTest {
         val manifest = moduleFile("src/main/AndroidManifest.xml").readText()
         for (pkg in LAUNCHER_PACKAGES) assertTrue(manifest.contains(pkg + (contract["permission_suffix"] as JsonPrimitive).content))
         assertTrue(manifest.contains("android:name=\"" + (contract["action_bridge_changed"] as JsonPrimitive).content))
-        // The managed config: these keys with these types are what bridgeConfig reads.
+        // The managed config: these keys with these types are what bridgeConfig reads (design 30's three from step 3a).
         val types = (contract["restrictions"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
         val keys = listOf(
             RestrictionKeys.V, RestrictionKeys.MANAGED, RestrictionKeys.LAUNCHER_PACKAGE, RestrictionKeys.LANGUAGE,
             RestrictionKeys.MOBILE_DATA, RestrictionKeys.LIBRARY_VERSION, RestrictionKeys.STORYTEL_GENERATION,
-            RestrictionKeys.VOLUME_CAP_PCT,
+            RestrictionKeys.VOLUME_CAP_PCT, RestrictionKeys.STREAM_MOBILE_DATA, RestrictionKeys.DOWNLOAD_MOBILE_DATA,
+            RestrictionKeys.STORAGE_LIMIT_GB,
         )
         assertEquals(types.keys, keys.toSet())
         val sample: Map<String, Any> = types.mapValues { (key, type) ->

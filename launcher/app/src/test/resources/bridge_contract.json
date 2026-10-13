@@ -13,7 +13,10 @@
     "mobile_data": "boolean",
     "library_version": "string",
     "storytel_generation": "int",
-    "volume_cap_pct": "int"
+    "volume_cap_pct": "int",
+    "stream_mobile_data": "boolean",
+    "download_mobile_data": "boolean",
+    "storage_limit_gb": "int"
   },
   "report_state": ["report", "held_files", "held_sha256"],
   "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art"],

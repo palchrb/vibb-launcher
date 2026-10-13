@@ -41,6 +41,15 @@ object RestrictionKeys {
 
     /** The parent's volume cap in force (design 26a §5.3): 1..99 %, 0 = none. */
     const val VOLUME_CAP_PCT = "volume_cap_pct"
+
+    /** Design 30 §1.3: the streaming switch (a launcher from step 2 on writes it; read from step 3a). */
+    const val STREAM_MOBILE_DATA = "stream_mobile_data"
+
+    /** Design 30 §1.3: the downloads switch, Storytel books included (read from step 3a). */
+    const val DOWNLOAD_MOBILE_DATA = "download_mobile_data"
+
+    /** Design 30 §1.8: the parent's music storage limit in GB, 0 = none (read from step 3a). */
+    const val STORAGE_LIMIT_GB = "storage_limit_gb"
 }
 
 data class BridgeConfig(
