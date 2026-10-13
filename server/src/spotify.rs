@@ -77,6 +77,8 @@ pub const LOGIN_WARN_DAYS: i64 = 14;
 pub const DEV_MODE_USERS: usize = 5;
 /// An access token is used until this long before Spotify says it expires.
 pub const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
+/// The longest `expires_in` taken from the accounts service (Spotify's is 3600).
+pub const MAX_EXPIRES_IN: u64 = 86_400;
 /// A Web API read wants a token with at least this much left.
 pub const READ_MIN_LEFT: Duration = Duration::from_secs(60);
 /// A `Retry-After` up to this long is waited for, once.
@@ -543,27 +545,44 @@ fn host_ok(host: &str) -> bool {
 /// trusted proxy's `X-Forwarded-Host`, else `Host`. Plain http (by name or address) gets
 /// [LOOPBACK_REDIRECT].
 pub fn suggested_redirect(headers: &axum::http::HeaderMap, peer_trusted: bool) -> String {
-    let first = |name: &str| {
-        headers
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(|v| v.trim().to_ascii_lowercase())
-    };
-    let https = peer_trusted && first("x-forwarded-proto").as_deref() == Some("https");
-    if !https {
-        return LOOPBACK_REDIRECT.to_string();
-    }
-    let host = first("x-forwarded-host")
-        .filter(|h| host_ok(h))
-        .or_else(|| first("host").filter(|h| host_ok(h)));
-    match host {
-        Some(host) => {
-            let host = host.strip_suffix(":443").unwrap_or(&host);
-            format!("https://{host}{CALLBACK_PATH}")
-        }
+    let https =
+        peer_trusted && first_header(headers, "x-forwarded-proto").as_deref() == Some("https");
+    match request_host(headers, peer_trusted).filter(|_| https) {
+        Some(host) => format!("https://{host}{CALLBACK_PATH}"),
         None => LOOPBACK_REDIRECT.to_string(),
     }
+}
+
+/// A header's first comma-separated value, trimmed and lower-cased.
+fn first_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|v| v.trim().to_ascii_lowercase())
+}
+
+/// The address the browser used for this request: a trusted proxy's `X-Forwarded-Host`, else
+/// `Host` - lower-cased, `:443` dropped. `None` when neither is a usable host.
+pub fn request_host(headers: &axum::http::HeaderMap, peer_trusted: bool) -> Option<String> {
+    let host = first_header(headers, "x-forwarded-host")
+        .filter(|h| peer_trusted && host_ok(h))
+        .or_else(|| first_header(headers, "host").filter(|h| host_ok(h)))?;
+    Some(host.strip_suffix(":443").unwrap_or(&host).to_string())
+}
+
+/// An https redirect URI's host[:port] (lower case; the default port left out), `None` for the
+/// loopback one.
+pub fn redirect_host(redirect_uri: &str) -> Option<String> {
+    let url = reqwest::Url::parse(redirect_uri).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    let host = url.host_str()?.to_ascii_lowercase();
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
 }
 
 /// The app in effect: the environment's client ID (and redirect URI) over the PWA's row.
@@ -688,7 +707,9 @@ fn read_token_answer(response: &SourceResponse) -> Result<TokenAnswer, TokenErro
             let expires_in = body
                 .get("expires_in")
                 .and_then(Value::as_u64)
-                .filter(|s| *s > 0)
+                // At most a day (code QA L4): Spotify's are an hour, and an absurd value would
+                // overflow the expiry's `Instant`.
+                .filter(|s| (1..=MAX_EXPIRES_IN).contains(s))
                 .ok_or(TokenError::Other(SpotifyError::BadAnswer))?;
             Ok(TokenAnswer {
                 access: AccessToken(access),
@@ -1006,8 +1027,8 @@ impl LoginOutcome {
                 false,
             ),
             "expired" => (
-                "That login wasn't started in this browser, was already used, or took longer \
-                 than 10 minutes - log in again."
+                "That login wasn't started in this browser, was started at another address of \
+                 this server, was already used, or took longer than 10 minutes - log in again."
                     .to_string(),
                 false,
             ),
@@ -1130,11 +1151,15 @@ impl Accounts {
     }
 
     /// The unfinished login of `state`, taken out (a replay finds nothing); `None` when unknown
-    /// or older than [PENDING_TTL].
-    pub fn take_pending(&self, state: &str) -> Option<Pending> {
+    /// or older than [PENDING_TTL]. With `admin` (the paste) a login another admin started is
+    /// left in place (code QA L1): it isn't this admin's to finish, nor to use up.
+    pub fn take_pending(&self, state: &str, admin: Option<&str>) -> Option<Pending> {
         let now = self.now();
         let mut pending = lock(&self.pending);
         let index = pending.iter().position(|p| p.state == state)?;
+        if admin.is_some_and(|admin| admin != pending[index].admin) {
+            return None;
+        }
         let found = pending.remove(index)?;
         (now.saturating_duration_since(found.created) < PENDING_TTL).then_some(found)
     }
@@ -1373,18 +1398,43 @@ impl Accounts {
         account: i64,
         min_left: Duration,
     ) -> Result<Minted, SpotifyError> {
+        self.mint(state, account, min_left, None).await
+    }
+
+    /// [Accounts::access_token]; with `rejected` (a token the Web API answered 401 to) the kept
+    /// token is used only when it is another one - a concurrent 401 refreshed it already - else
+    /// it is refreshed (code QA L3: two 401s with one token make one refresh).
+    async fn mint(
+        &self,
+        state: &AppState,
+        account: i64,
+        min_left: Duration,
+        rejected: Option<&AccessToken>,
+    ) -> Result<Minted, SpotifyError> {
         let slot = self.slot(account);
         let mut slot = slot.lock().await;
         let Some(row) = sealed_row(&state.db, account).await? else {
             *slot = Slot::default();
             return Err(SpotifyError::NoAccount);
         };
+        // A rotated refresh token whose write failed is written again at every call, the
+        // cached path included (code QA L2): memory is its only copy until then.
+        if let Some((generation, token)) = slot.unsaved.take()
+            && generation == row.generation
+            && !write_refresh(state, account, &row, &token).await
+        {
+            slot.unsaved = Some((generation, token));
+        }
         let now = self.now();
         if let Some(access) = &slot.access
             && access.generation == row.generation
         {
             let left = access.expires.saturating_duration_since(now);
-            if left > Duration::ZERO && left >= min_left {
+            let usable = match rejected {
+                Some(rejected) => access.token.0 != rejected.0,
+                None => left >= min_left,
+            };
+            if left > Duration::ZERO && usable {
                 return Ok(Minted {
                     token: access.token.clone(),
                     left,
@@ -1448,37 +1498,12 @@ impl Accounts {
             }
         };
         // A rotated refresh token is written before the access token is used (a refresh that
-        // didn't rotate retries a write that failed earlier).
-        if let Some(token) = answer.refresh.or(kept) {
-            let (ciphertext, nonce) = match state.music_key.as_ref() {
-                Some(key) => {
-                    let (c, n) = key.seal_with(
-                        &aad(&key.fingerprint, &row.spotify_user),
-                        token.0.as_bytes(),
-                    );
-                    (c, Some((n, key.fingerprint.clone())))
-                }
-                None => (Vec::new(), None),
-            };
-            let written = match nonce {
-                Some((nonce, fingerprint)) => sqlx::query(
-                    "UPDATE music_spotify_accounts SET ciphertext = ?, nonce = ?, \
-                     key_fingerprint = ? WHERE id = ? AND generation = ?",
-                )
-                .bind(&ciphertext)
-                .bind(&nonce)
-                .bind(&fingerprint)
-                .bind(account)
-                .bind(row.generation)
-                .execute(&state.db)
-                .await
-                .map(|_| ()),
-                None => Err(sqlx::Error::RowNotFound),
-            };
-            if written.is_err() {
-                tracing::warn!(account, "spotify refresh token not saved");
-                slot.unsaved = Some((row.generation, token));
-            }
+        // didn't rotate retries a write that failed earlier). A write that keeps failing leaves
+        // it in memory, tried again at every call.
+        if let Some(token) = answer.refresh.or(kept)
+            && !write_refresh(state, account, &row, &token).await
+        {
+            slot.unsaved = Some((row.generation, token));
         }
         let stamped = sqlx::query(
             "UPDATE music_spotify_accounts SET refresh_ok_at = ?, refresh_error = NULL, \
@@ -1594,16 +1619,16 @@ impl Accounts {
         kind: Kind,
     ) -> Result<SourceResponse, SpotifyError> {
         let mut refreshed = false;
-        let mut force = false;
+        let mut rejected: Option<AccessToken> = None;
         let mut waited = false;
         loop {
             if self.quota_until().is_some() {
                 return Err(SpotifyError::Quota);
             }
-            // After a 401 the next token is a fresh one (min_left forced).
-            let min_left = if force { Duration::MAX } else { READ_MIN_LEFT };
-            force = false;
-            let minted = self.access_token(state, account, min_left).await?;
+            // After a 401 the next token is another one than the rejected (code QA L3).
+            let minted = self
+                .mint(state, account, READ_MIN_LEFT, rejected.take().as_ref())
+                .await?;
             let response = state
                 .music_fetch
                 .get(self.api_request(url, kind, &minted.token))
@@ -1615,7 +1640,7 @@ impl Accounts {
                 401 if !refreshed => {
                     tracing::info!(account, "spotify: 401 from the Web API, refreshing once");
                     refreshed = true;
-                    force = true;
+                    rejected = Some(minted.token.clone());
                 }
                 429 => {
                     if quota_exceeded(&response.body) {
@@ -1640,6 +1665,49 @@ impl Accounts {
             }
         }
     }
+}
+
+/// Writes a rotated refresh token, sealed with the current key, for this generation only; `true`
+/// when it is stored (or the row has moved on: a new login or a Remove wins). Tried three times
+/// at once (code QA L2): the database is its only durable home, and until it is written a
+/// restart loses it - if Spotify revoked the old token on rotation, the account then needs a new
+/// login (`invalid_grant` -> `needs_login`, recoverable). The failure is logged at `error`, with
+/// the account id only.
+async fn write_refresh(
+    state: &AppState,
+    account: i64,
+    row: &SealedRow,
+    token: &RefreshToken,
+) -> bool {
+    let Some(key) = state.music_key.as_ref() else {
+        tracing::error!(account, "spotify refresh token not saved (no music key)");
+        return false;
+    };
+    let (ciphertext, nonce) = key.seal_with(
+        &aad(&key.fingerprint, &row.spotify_user),
+        token.0.as_bytes(),
+    );
+    for attempt in 0..3u64 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(100 * attempt)).await;
+        }
+        let written = sqlx::query(
+            "UPDATE music_spotify_accounts SET ciphertext = ?, nonce = ?, key_fingerprint = ? \
+             WHERE id = ? AND generation = ?",
+        )
+        .bind(&ciphertext)
+        .bind(&nonce)
+        .bind(&key.fingerprint)
+        .bind(account)
+        .bind(row.generation)
+        .execute(&state.db)
+        .await;
+        if written.is_ok() {
+            return true;
+        }
+    }
+    tracing::error!(account, "spotify refresh token not saved");
+    false
 }
 
 /// `refresh_error` (a code, never text) and its time, for this generation only.
@@ -1907,12 +1975,21 @@ pub(crate) mod tests {
             br#"{"access_token":"","expires_in":3600}"#,
             br#"{"access_token":"x"}"#,
             br#"{"access_token":"x","expires_in":0}"#,
+            // Code QA L4: at most a day (an absurd value would overflow the expiry).
+            br#"{"access_token":"x","expires_in":86401}"#,
+            br#"{"access_token":"x","expires_in":18446744073709551615}"#,
         ] {
             assert_eq!(
                 read_token_answer(&response(200, junk)).err(),
                 Some(TokenError::Other(SpotifyError::BadAnswer))
             );
         }
+        let day = read_token_answer(&response(
+            200,
+            br#"{"access_token":"x","expires_in":86400}"#,
+        ))
+        .unwrap();
+        assert_eq!(day.expires_in, MAX_EXPIRES_IN);
         assert!(quota_exceeded(&fixture("quota.json")));
         assert!(quota_exceeded(br#"{"reason":"QUOTA_EXCEEDED"}"#));
         assert!(!quota_exceeded(&fixture("rate_limited.json")));
@@ -2293,6 +2370,19 @@ pub(crate) mod tests {
             .execute(&app.db)
             .await
             .unwrap();
+        // Code QA L2: the next call writes it, the cached path included - no token request.
+        app.fetch.clear_calls();
+        let cached = spotify
+            .access_token(&app.state, account, READ_MIN_LEFT)
+            .await
+            .unwrap();
+        assert_eq!(cached.token.secret(), "FAKE-ACCESS-3");
+        assert_eq!(app.fetch.count(), 0);
+        assert_eq!(
+            stored_refresh(&app, account).await.as_deref(),
+            Some("FAKE-REFRESH-3"),
+            "written by a cached call"
+        );
         app.fetch
             .answer(TOKEN_URL, 200, fixture("token_refresh.json"));
         app.fetch.clear_calls();
@@ -2305,12 +2395,11 @@ pub(crate) mod tests {
             String::from_utf8(body)
                 .unwrap()
                 .contains("refresh_token=FAKE-REFRESH-3"),
-            "the unsaved token is the one used"
+            "the written token is the one used next"
         );
         assert_eq!(
             stored_refresh(&app, account).await.as_deref(),
-            Some("FAKE-REFRESH-3"),
-            "and written now"
+            Some("FAKE-REFRESH-3")
         );
     }
 
@@ -2782,5 +2871,59 @@ pub(crate) mod tests {
         assert!(!row.login_ending(parse_stamp("2027-03-27 09:59:59").unwrap()));
         assert!(row.login_ending(parse_stamp("2027-03-27 10:00:00").unwrap()));
         assert!(row.login_ending(parse_stamp("2027-05-01 10:00:00").unwrap()));
+    }
+
+    /// Code QA L3: two reads that got a 401 with the same token make one refresh - the second
+    /// takes the token the first one got; a 401 for the new token refreshes again.
+    #[tokio::test]
+    async fn two_401s_refresh_once() {
+        let app = TestApp::new().await;
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        let account = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        app.fetch
+            .answer(TOKEN_URL, 200, fixture("token_refresh.json"));
+        let spotify = &app.state.spotify;
+        let rejected = spotify
+            .access_token(&app.state, account, READ_MIN_LEFT)
+            .await
+            .unwrap()
+            .token;
+        assert_eq!(rejected.secret(), "FAKE-ACCESS-2");
+        app.fetch
+            .answer(TOKEN_URL, 200, fixture("token_refresh_rotated.json"));
+        app.fetch.delay(20);
+        app.fetch.clear_calls();
+        let (a, b) = tokio::join!(
+            spotify.mint(&app.state, account, READ_MIN_LEFT, Some(&rejected)),
+            spotify.mint(&app.state, account, READ_MIN_LEFT, Some(&rejected)),
+        );
+        let (a, b) = (a.ok().unwrap(), b.ok().unwrap());
+        assert_eq!(a.token.secret(), "FAKE-ACCESS-3");
+        assert_eq!(b.token.secret(), "FAKE-ACCESS-3");
+        assert_eq!(token_calls(&app), 1, "one refresh for two 401s");
+        assert_eq!(
+            stored_refresh(&app, account).await.as_deref(),
+            Some("FAKE-REFRESH-2"),
+            "one rotation written"
+        );
+        // A 401 for the new token is a new refresh.
+        app.fetch
+            .answer(TOKEN_URL, 200, fixture("token_refresh.json"));
+        let c = spotify
+            .mint(&app.state, account, READ_MIN_LEFT, Some(&a.token))
+            .await
+            .ok()
+            .unwrap();
+        assert_eq!(c.token.secret(), "FAKE-ACCESS-2");
+        assert_eq!(token_calls(&app), 2);
+        // And through api_get: a read whose token gets a 401 once retries with a fresh one.
+        app.fetch.answer(ME_URL, 200, fixture("me_kid.json"));
+        app.fetch.answer_once(ME_URL, 401, "");
+        app.fetch.clear_calls();
+        spotify
+            .api_get(&app.state, account, ME_URL, Kind::Token)
+            .await
+            .unwrap();
+        assert_eq!((token_calls(&app), app.fetch.count()), (1, 3));
     }
 }

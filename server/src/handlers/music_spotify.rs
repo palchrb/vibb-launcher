@@ -87,6 +87,8 @@ struct SpotifyTemplate {
     app_error_field: &'static str,
     clear_error: Option<String>,
     login_error: Option<String>,
+    /// A refused start from another address (code QA M1): the page there.
+    login_elsewhere: Option<String>,
     paste_error: Option<String>,
     paste_value: String,
     /// After a save or a Clear.
@@ -103,6 +105,7 @@ struct Entered {
     app: Option<(String, String, String, &'static str)>,
     clear_error: Option<String>,
     login_error: Option<String>,
+    login_elsewhere: Option<String>,
     paste: Option<(String, String)>,
     remove: Option<(i64, String)>,
     /// The page's query (`?login=`, `?saved=`, ...).
@@ -284,6 +287,7 @@ async fn page(
         app_error_field,
         clear_error: entered.clear_error,
         login_error: entered.login_error,
+        login_elsewhere: entered.login_elsewhere,
         paste_error,
         paste_value,
         app_notice,
@@ -550,6 +554,31 @@ pub async fn login(
         return render(&state, &headers, trusted(&state, peer), status, entered).await;
     }
     let (client, redirect) = ready.expect("checked above");
+    // Spotify sends the browser back to the redirect URI's host, and the `spotify_login` cookie
+    // is this host's: a start from another address of this server could only end "expired"
+    // (code QA M1). The loopback redirect (the paste) works from anywhere.
+    let peer_trusted = trusted(&state, peer);
+    if let Some(target) = spotify::redirect_host(&redirect)
+        && let Some(here) = spotify::request_host(&headers, peer_trusted)
+        && here != target
+    {
+        let entered = Entered {
+            login_error: Some(format!(
+                "Spotify sends this login back to https://{target}: open this page there to log \
+                 in."
+            )),
+            login_elsewhere: Some(format!("https://{target}/music/spotify#accounts")),
+            ..Default::default()
+        };
+        return render(
+            &state,
+            &headers,
+            peer_trusted,
+            StatusCode::BAD_REQUEST,
+            entered,
+        )
+        .await;
+    }
     let started = state
         .spotify
         .start_login(&admin.username, &client, &redirect);
@@ -579,13 +608,11 @@ async fn finish(
 ) -> LoginOutcome {
     let Some(pending) = params
         .get("state")
-        .and_then(|s| state.spotify.take_pending(s))
+        .and_then(|s| state.spotify.take_pending(s, admin))
     else {
+        // Unknown, used, too old - or (the paste) another admin's, which stays in place.
         return LoginOutcome::Expired;
     };
-    if admin.is_some_and(|admin| admin != pending.admin) {
-        return LoginOutcome::Expired;
-    }
     let app = match spotify::app(state).await {
         Ok(app) => app,
         Err(err) => {

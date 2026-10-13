@@ -129,7 +129,7 @@ input, select { max-width: 100%; }
         <div class="sp-section">
             {% if ready && key_available %}
             <form method="post" action="/music/spotify/login">
-                {% if let Some(error) = login_error %}<div class="error">{{ error }}</div>{% endif %}
+                {% if let Some(error) = login_error %}<div class="error">{{ error }}{% if let Some(link) = login_elsewhere %} <a href="{{ link }}">Open it there</a>{% endif %}</div>{% endif %}
                 <button type="submit"{% if login_error.is_some() %} autofocus{% endif %}>Log in with Spotify</button>
             </form>
             <p class="hint" style="margin-top:8px;">Whoever is logged into Spotify in this browser logs in. To add your child's account, open this page in a private window (or log out of Spotify in this browser first) and log in as the child. Each logged-in account plays on one device at a time: give each child their own.</p>

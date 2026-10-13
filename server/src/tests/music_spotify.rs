@@ -7,7 +7,7 @@
 //! verifier reach no log line, event or page. `spotify::tests` holds the client's own.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
@@ -218,6 +218,23 @@ async fn routes_need_a_session() {
         "{}",
         res.text().replace("&#39;", "'")
     );
+    // Anything but a known outcome is "expired" (code QA L5): no reflection.
+    let res = app
+        .send_via(
+            &app.router,
+            super::LOOPBACK_PEER,
+            Request::builder()
+                .uri("/music/spotify/done?login=%22%3E%3Cscript%3E")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    let text = res.text();
+    assert!(
+        text.contains("content=\"0;url=/music/spotify?login=expired#accounts\""),
+        "{text}"
+    );
+    assert!(!text.contains("<script>") && !text.contains("%3Cscript"));
 }
 
 /// "Not configured" changes nothing else: the music page links to the Spotify page, the Spotify
@@ -525,7 +542,7 @@ async fn the_login_starts_with_pkce() {
         start(&app, &cookie).await;
     }
     assert_eq!(app.state.spotify.pending_count(), spotify::PENDING_MAX);
-    assert!(app.state.spotify.take_pending(&first).is_none());
+    assert!(app.state.spotify.take_pending(&first, None).is_none());
     // Without the music key: 503, nothing started.
     let mut keyless = app.state.clone();
     keyless.music_key = None;
@@ -668,24 +685,36 @@ async fn the_callback_needs_its_state_and_cookie() {
         );
     }
     assert_eq!(app.fetch.count(), 0);
-    // A missing cookie didn't use the login up: the right browser still completes it...
-    // ...but not after 10 minutes.
-    app.state.spotify.advance(spotify::PENDING_TTL);
+    // A missing or wrong cookie didn't use the login up: the right browser still completes it
+    // (code QA L5)...
     let res = callback(
         &app,
         &code_query(&state, "FAKE-CODE-1"),
         Some(&started.cookie),
     )
     .await;
+    assert_eq!(res.location(), Some("/music/spotify/done?login=ok"));
+    assert_eq!(account_rows(&app).await.len(), 1);
+    // ...but not after 10 minutes (another login).
+    let second = start(&app, &cookie).await;
+    app.fetch.clear_calls();
+    app.state.spotify.advance(spotify::PENDING_TTL);
+    let res = callback(
+        &app,
+        &code_query(&second.query["state"], "FAKE-CODE-2"),
+        Some(&second.cookie),
+    )
+    .await;
     assert_eq!(res.location(), Some("/music/spotify/done?login=expired"));
     assert_eq!(app.fetch.count(), 0);
-    assert!(account_rows(&app).await.is_empty());
+    assert_eq!(account_rows(&app).await.len(), 1);
     let page = app
         .get_page("/music/spotify?login=expired", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("took longer than 10 minutes"));
+    assert!(page.contains("was started at another address of this server"));
 }
 
 #[tokio::test]
@@ -963,6 +992,15 @@ async fn the_paste_finishes_a_loopback_login() {
         res.location(),
         Some("/music/spotify?login=expired#accounts")
     );
+    // ...and doesn't use it up (code QA L1): its own browser still finishes it.
+    assert_eq!(app.state.spotify.pending_count(), 1);
+    let res = callback(
+        &app,
+        &code_query(&state, "FAKE-CODE-2"),
+        Some(&other.cookie),
+    )
+    .await;
+    assert_eq!(res.location(), Some("/music/spotify/done?login=ok"));
     // The parent cancelled.
     let started = start(&app, &cookie).await;
     let res = paste(format!(
@@ -1184,12 +1222,39 @@ async fn the_six_month_line() {
     assert!(page.contains("Spotify doesn't accept this client ID any more"));
 }
 
-/// Everything an event or a log line writes, at every level (a capturing subscriber on this
-/// test's thread: `#[tokio::test]` runs every task here).
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<String>>>);
+thread_local! {
+    /// This thread's capture while [no_secret_in_logs_events_or_pages] runs, else `None`.
+    static CAPTURE: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+}
 
-impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Captured {
+/// A process-wide subscriber that records every event, at every level, of a thread whose
+/// [CAPTURE] is on (`#[tokio::test]` runs every task of a test on its thread), and nothing else.
+///
+/// Why not a scoped `set_default` (code QA L6): tracing caches each callsite's interest
+/// process-wide, computed from the dispatchers alive when the callsite registers. A scoped
+/// subscriber of this test racing a callsite's first use on another test's thread could leave
+/// that callsite "never" - measured: in a parallel run the first lines (`a login started`) were
+/// usually missed. A global subscriber, installed once and always registered, says
+/// "sometimes" for every callsite from then on, so no callsite is cached "never" and the
+/// capture is decided per event by [CAPTURE] alone.
+struct ThreadCapture;
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ThreadCapture {
+    fn register_callsite(
+        &self,
+        _: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        tracing::subscriber::Interest::sometimes()
+    }
+
+    fn enabled(
+        &self,
+        _: &tracing::Metadata<'_>,
+        _: tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
+        CAPTURE.with(|capture| capture.borrow().is_some())
+    }
+
     fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
         struct Fields(String);
         impl tracing::field::Visit for Fields {
@@ -1199,34 +1264,32 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Captured {
         }
         let mut fields = Fields(event.metadata().target().to_string());
         event.record(&mut fields);
-        self.0.lock().unwrap().push(fields.0);
+        CAPTURE.with(|capture| {
+            if let Some(lines) = capture.borrow_mut().as_mut() {
+                lines.push(fields.0);
+            }
+        });
     }
+}
+
+/// Installs [ThreadCapture] as the global default once (no other test sets one), and rebuilds
+/// every callsite's interest so callsites registered before it know it too.
+fn install_capture() {
+    use tracing_subscriber::layer::SubscriberExt;
+    static INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    INSTALLED.get_or_init(|| {
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(ThreadCapture))
+            .expect("no other global subscriber in the tests");
+    });
+    tracing::callsite::rebuild_interest_cache();
 }
 
 /// §7.1: the code, the tokens and the verifier reach no log line (any level, reqwest's floor
 /// aside), no event and no page - through a login, a paste, a failed exchange and refreshes.
 #[tokio::test]
 async fn no_secret_in_logs_events_or_pages() {
-    // tracing caches each callsite's interest process-wide, and another test's scoped subscriber
-    // can race this one's registration (a parallel run): a fresh subscriber registers again and
-    // rebuilds every callsite's interest, so a run that missed this code's lines is repeated.
-    for attempt in 1..=3 {
-        if secrets_stay_out(attempt == 3).await {
-            return;
-        }
-    }
-}
-
-/// [no_secret_in_logs_events_or_pages]'s run; `false` when the capture missed this code's lines
-/// (and `last` isn't set).
-async fn secrets_stay_out(last: bool) -> bool {
-    use tracing_subscriber::layer::SubscriberExt;
-    let captured = Captured::default();
-    let subscriber = tracing_subscriber::registry()
-        .with(tracing_subscriber::filter::LevelFilter::TRACE)
-        .with(captured.clone());
-    let _guard = tracing::subscriber::set_default(subscriber);
-
+    install_capture();
+    CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     set_up(&app, &cookie, HTTPS_REDIRECT).await;
@@ -1296,14 +1359,21 @@ async fn secrets_stay_out(last: bool) -> bool {
     )
     .await;
 
-    let mut texts: Vec<String> = captured.0.lock().unwrap().clone();
-    // The capture sees this code's lines (the probe works).
-    let seen = texts.iter().any(|t| t.contains("spotify: a login started"))
-        && texts.iter().any(|t| t.contains("spotify: a login failed"));
-    if !seen && !last {
-        return false;
+    let mut texts: Vec<String> = CAPTURE
+        .with(|capture| capture.borrow_mut().take())
+        .unwrap_or_default();
+    // The capture saw every line this run must log (the probe: a partial capture fails here,
+    // it never passes without having looked).
+    let count = |message: &str| texts.iter().filter(|t| t.contains(message)).count();
+    for (message, times) in [
+        ("spotify: a login started", 3),
+        ("spotify: an account logged in", 2),
+        ("spotify: a login failed", 1),
+        ("spotify: access token refreshed", 1),
+        ("spotify: a refresh failed", 1),
+    ] {
+        assert_eq!(count(message), times, "{message}: {texts:?}");
     }
-    assert!(seen, "the capture missed this code's lines: {texts:?}");
     let events: Vec<(String, Option<String>)> =
         sqlx::query_as("SELECT event_type, detail FROM security_events")
             .fetch_all(&app.db)
@@ -1334,5 +1404,82 @@ async fn secrets_stay_out(last: bool) -> bool {
             assert!(!text.contains(secret), "{secret} in {text}");
         }
     }
-    true
+}
+
+/// Code QA M1: with an https redirect, a login starts only from the redirect URI's address -
+/// elsewhere it would come back to a host without its cookie and end "expired".
+#[tokio::test]
+async fn a_login_starts_only_at_the_redirects_address() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    set_up(&app, &cookie, HTTPS_REDIRECT).await;
+    let start_from = |headers: Vec<(&'static str, &'static str)>| {
+        let cookie = cookie.clone();
+        let app = &app;
+        async move {
+            let mut builder = Request::builder()
+                .method(Method::POST)
+                .uri("/music/spotify/login")
+                .header(header::COOKIE, &cookie);
+            for (name, value) in headers {
+                builder = builder.header(name, value);
+            }
+            app.send_via(
+                &app.router,
+                super::LOOPBACK_PEER,
+                builder.body(Body::empty()).unwrap(),
+            )
+            .await
+        }
+    };
+    for headers in [
+        vec![("host", "pi.lan:8080")],
+        vec![("host", "192.168.1.5:3100")],
+        vec![
+            ("host", "127.0.0.1:3100"),
+            ("x-forwarded-host", "other.example.ts.net"),
+            ("x-forwarded-proto", "https"),
+        ],
+    ] {
+        let res = start_from(headers.clone()).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{headers:?}");
+        let page = res.text().replace("&#39;", "'");
+        assert!(
+            page.contains(
+                "Spotify sends this login back to https://pi.example.ts.net: open this page there \
+                 to log in."
+            ),
+            "{page}"
+        );
+        assert!(page.contains("href=\"https://pi.example.ts.net/music/spotify#accounts\""));
+        assert!(
+            set_cookies(&res)
+                .iter()
+                .all(|c| !c.starts_with("spotify_login="))
+        );
+        assert_eq!(app.state.spotify.pending_count(), 0);
+    }
+    // At the redirect's address (directly, or through the trusted proxy): started.
+    for headers in [
+        vec![("host", "pi.example.ts.net")],
+        vec![("host", "PI.example.ts.net:443")],
+        vec![
+            ("host", "127.0.0.1:3100"),
+            ("x-forwarded-host", "pi.example.ts.net"),
+            ("x-forwarded-proto", "https"),
+        ],
+    ] {
+        let res = start_from(headers.clone()).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{headers:?}");
+        assert!(
+            set_cookies(&res)
+                .iter()
+                .any(|c| c.starts_with("spotify_login="))
+        );
+    }
+    assert_eq!(app.state.spotify.pending_count(), 3);
+    // The loopback redirect (the paste) starts from any address.
+    set_up(&app, &cookie, LOOPBACK_REDIRECT).await;
+    let res = start_from(vec![("host", "pi.lan:8080")]).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
 }

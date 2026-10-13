@@ -221,7 +221,10 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
   lead nowhere) the suggestion is **the loopback fallback**: `http://127.0.0.1:43117/callback` (§2.3). The field is
   editable and validated: either `https://<host>[:port]/music/spotify/callback` or exactly the loopback form. The page
   shows the saved value large and copyable ("Paste exactly this into your app's Redirect URIs"); the authorize request
-  always uses the saved one, so the parent can later open the PWA from another address without breaking logins.
+  always uses the saved one. With an https redirect URI **a login must be started from that address**: Spotify sends
+  the browser back to the redirect URI's host, and the `spotify_login` cookie (§2.3) is the starting host's, so a start
+  from another address of the server (a LAN name, a second proxy name) is refused by the button with a link to the
+  right address (step 1's code QA M1). The loopback redirect (the paste) works from any address.
 - **The registration steps the page shows** (not configured, and behind a "How to set it up" toggle afterwards):
   1. Log in at developer.spotify.com/dashboard with a **Premium** account (dev-mode apps need a Premium owner; if that
      Premium lapses, the app stops working until it resumes) and create an app. Name: anything not starting with
@@ -1789,3 +1792,49 @@ sends `X-Forwarded-Proto` [unverified] (if not, the parent edits the field); the
 is from the cookie and CSP specifications, not a run. `server/CLAUDE.md`'s Spotify section is step 7's; for the main
 session's `DEPLOY.md`: `SPOTIFY_CLIENT_ID`, `SPOTIFY_REDIRECT_URI`, the two loopback-only base overrides, and that a
 login needs the PWA on https or the paste.
+
+### Fix round after QA's code review (qa-26c-step1-code, 2026-10-13)
+
+All seven findings fixed; none disputed. `cargo fmt --check` clean; `cargo clippy --all-targets` the same 12
+pre-existing warnings, none added; `cargo test` all pass but the pre-existing, time-dependent
+`tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list`. Spotify tests: `spotify::tests` 18,
+`tests::music_spotify` 15.
+- **M1** (a login from another address ends "expired"): `POST /music/spotify/login` refuses (400 by the button, nothing
+  pending, no cookie) when the redirect URI is https and the request's host - a trusted proxy's `X-Forwarded-Host`,
+  else `Host`, lower-cased, `:443` dropped (`spotify::request_host`, shared with `suggested_redirect`) - is known and
+  isn't the redirect URI's host[:port] (`spotify::redirect_host`): "Spotify sends this login back to https://<host>:
+  open this page there to log in." with a link to `https://<host>/music/spotify#accounts`; the loopback redirect is
+  unaffected. The `expired` sentence adds "was started at another address of this server"; §2.1's promise rewritten
+  (above). Test `a_login_starts_only_at_the_redirects_address`.
+- **L1** (the paste used up another admin's login): `Accounts::take_pending(state, admin)` compares the admin before it
+  removes anything; the refused paste leaves the login, which its own browser then completes (in
+  `the_paste_finishes_a_loopback_login`).
+- **L2** (an unsaved rotated token retried only at the next refresh): the safe ordering is "write, then use" with the
+  write retried at once - `write_refresh` tries three times (100 and 200 ms apart) before the access token is handed
+  out; if the database still refuses, the token stays in memory, the failure is logged at `error` (the account id
+  only), and **every** later `access_token` call - the cached path included - writes it again before anything else.
+  The database is its only durable home: while it refuses writes nothing can carry the token across a restart, and if
+  Spotify revoked the old token on rotation the account then comes back `invalid_grant` -> `needs_login` (a new login,
+  recoverable). Test: after the failed write, a cached call writes it with no token request.
+- **L3** (a 401's forced refresh not tied to the rejected token): `api_get` passes the token that got the 401 to the
+  private `Accounts::mint`, which under the account's lock takes the kept token when it is another one (a concurrent
+  401 refreshed already) and refreshes only when it is still the rejected one. Test `two_401s_refresh_once`: two
+  concurrent mints rejecting the same token make one token request and write one rotation (red with the old forced
+  refresh); a 401 for the new token refreshes again; `api_get`'s 401 still retries once. (Two concurrent `api_get`s
+  over CannedFetch can't pin it: the canned 401 is per URL, not per token, so a read already holding the new token can
+  draw the second queued 401.)
+- **L4** (an absurd `expires_in` panics): `expires_in` must be `1..=86_400` (`MAX_EXPIRES_IN`), else `bad_answer`; rows
+  in `token_answers_are_read` (86 400 taken; 86 401 and `u64::MAX` refused).
+- **L5** (three claims unpinned): `the_callback_needs_its_state_and_cookie` completes the login with the right cookie
+  after the missing/wrong-cookie attempts (red if those consumed it), then checks the 10 minutes on a second login;
+  `routes_need_a_session` pins `/music/spotify/done?login=%22%3E%3Cscript%3E` -> `login=expired`, nothing reflected;
+  the other admin's paste is L1's test.
+- **L6** (the log capture's retry, a partial probe): the race is fixed, not retried. The test no longer uses a scoped
+  `set_default`: tracing caches each callsite's interest process-wide from the dispatchers alive when it registers, and
+  a scoped subscriber racing a callsite's first use on another test's thread left it "never" (the first lines missed).
+  Instead one process-wide subscriber (`ThreadCapture`, installed once - no other test sets a global one - then
+  `rebuild_interest_cache`) answers "sometimes" for every callsite and records the events of a thread whose
+  thread-local capture is on. The probe requires all eight expected lines by count (`a login started` x3, `an account
+  logged in` x2, `a login failed`, `access token refreshed`, `a refresh failed`), so a partial capture fails rather
+  than passes. Six parallel runs of `cargo test tests::music` (149 tests) captured everything on the first try; a
+  mutation logging the code at `trace` fails the test.
