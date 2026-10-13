@@ -10,41 +10,31 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
-import android.webkit.ConsoleMessage
-import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.RenderProcessGoneDetail
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
+import android.view.ViewGroup
 import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.window.OnBackInvokedCallback
-import android.window.OnBackInvokedDispatcher
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 
 /**
- * Item 10: Spotify's Web Playback SDK (sdk.scdn.co/spotify-player.js, loaded at run time only) in
- * a WebView of this app, so the phone would need no Spotify app at all. The page is the asset
- * web-playback.html under an https origin; the token reaches it only through [Bridge.token].
+ * Item 10's screen: the token (PKCE login or pasted), the player's controls and its state. The
+ * player itself is [WebPlayer], owned by the keep-alive service: this activity only attaches its
+ * WebView while visible, so Back, the activity's destruction and the lock never stop the music.
  */
 class WebPlaybackActivity : Activity() {
     private lateinit var tokenField: EditText
     private lateinit var desktopUa: CheckBox
     private lateinit var status: TextView
     private lateinit var logStatus: TextView
-    private val refreshLogStatus: () -> Unit = { logStatus.text = SpikeLog.fileStatus() }
-    private lateinit var playerWeb: WebView
+    private lateinit var playerContainer: ViewGroup
     private lateinit var loginWeb: WebView
-    private var deviceId: String? = null
-    private var lastEvent: String = "-"
-    private var userAgent: String = "-"
     private var pkce: WebApi.Pkce? = null
+    private val refresh: () -> Unit = { render() }
 
     /** While the full-screen login is up, Back cancels it instead of closing the probe. */
     private val cancelLogin = OnBackInvokedCallback {
@@ -53,57 +43,18 @@ class WebPlaybackActivity : Activity() {
         hideLogin()
     }
 
-    /** The token the page gets (read on a WebView thread, so not from the EditText). */
-    @Volatile
-    private var pageToken: String = ""
-
-    @SuppressLint("SetJavaScriptEnabled") // The probe's whole point is running Spotify's JS SDK.
+    @SuppressLint("SetJavaScriptEnabled") // Spotify's login page needs JavaScript.
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_web)
         setTitle(R.string.web_title)
-        SpikeLog.log("WebPlaybackActivity onCreate")
+        SpikeLog.log("WebPlaybackActivity onCreate (${WebPlayer.status()})")
         tokenField = findViewById(R.id.token)
         desktopUa = findViewById(R.id.desktop_ua)
         status = findViewById(R.id.web_status)
         logStatus = findViewById(R.id.log_status)
-        playerWeb = findViewById(R.id.player_web)
+        playerContainer = findViewById(R.id.player_container)
         loginWeb = findViewById(R.id.login_web)
-
-        playerWeb.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            mediaPlaybackRequiresUserGesture = false
-        }
-        // Keep the renderer important while the screen is off (the screen-off run).
-        playerWeb.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(playerWeb, true)
-        playerWeb.addJavascriptInterface(Bridge(), "SpikeBridge")
-        playerWeb.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(request: PermissionRequest) {
-                val asked = request.resources.toList()
-                // The default client denies everything; EME needs the protected-media grant.
-                val grant = asked.filter { it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID }
-                SpikeLog.log("web: permission request from ${request.origin} for $asked -> granting $grant")
-                if (grant.isEmpty()) request.deny() else request.grant(grant.toTypedArray())
-            }
-
-            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                SpikeLog.log("web console ${message.messageLevel()}: ${message.message()} (${message.sourceId()}:${message.lineNumber()})")
-                return true
-            }
-        }
-        playerWeb.webViewClient = object : WebViewClient() {
-            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                SpikeLog.log("web: load error ${error.errorCode} '${error.description}' for ${request.url} (main frame ${request.isForMainFrame})")
-            }
-
-            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                SpikeLog.log("web: renderer GONE (crashed=${detail.didCrash()}, priority ${detail.rendererPriorityAtExit()})")
-                finish()
-                return true
-            }
-        }
 
         loginWeb.settings.javaScriptEnabled = true
         loginWeb.settings.domStorageEnabled = true
@@ -116,26 +67,20 @@ class WebPlaybackActivity : Activity() {
             }
         }
 
-        findViewById<CheckBox>(R.id.web_keep_alive).apply {
-            isChecked = KeepAliveService.running
+        findViewById<CheckBox>(R.id.web_wake_lock).apply {
+            isChecked = Prefs.wakeLock(this@WebPlaybackActivity)
             setOnCheckedChangeListener { _, on ->
-                if (on) {
-                    if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-                    }
-                    KeepAliveService.start(this@WebPlaybackActivity)
-                } else {
-                    KeepAliveService.stop(this@WebPlaybackActivity)
-                }
+                Prefs.setWakeLock(this@WebPlaybackActivity, on)
+                SpikeLog.log("wake lock option ${if (on) "ON" else "OFF"}")
+                KeepAliveService.wakeLockChanged()
             }
         }
         findViewById<Button>(R.id.btn_pkce).setOnClickListener { startLogin() }
         findViewById<Button>(R.id.btn_load).setOnClickListener { loadPlayer() }
         findViewById<Button>(R.id.btn_play_here).setOnClickListener { playHere() }
-        findViewById<Button>(R.id.btn_toggle).setOnClickListener { js("spikeToggle()") }
-        findViewById<Button>(R.id.btn_web_state).setOnClickListener { js("spikeState()") }
-        findViewById<Button>(R.id.btn_unload).setOnClickListener { unload() }
-        render()
+        findViewById<Button>(R.id.btn_toggle).setOnClickListener { WebPlayer.js("spikeToggle()") }
+        findViewById<Button>(R.id.btn_web_state).setOnClickListener { WebPlayer.js("spikeState()") }
+        findViewById<Button>(R.id.btn_unload).setOnClickListener { WebPlayer.unload("Unload button") }
     }
 
     private fun token(): String = tokenField.text.toString().trim().also { SpikeLog.secret(it) }
@@ -177,29 +122,21 @@ class WebPlaybackActivity : Activity() {
     }
 
     private fun loadPlayer() {
-        if (token().isBlank()) {
+        val token = token()
+        if (token.isBlank()) {
             SpikeLog.log("web: no access token (paste one or use Get token)")
             return
         }
-        deviceId = null
-        pageToken = token()
-        val settings = playerWeb.settings
-        val default = WebSettings.getDefaultUserAgent(this)
-        settings.userAgentString = if (desktopUa.isChecked) desktopUserAgent(default) else null
-        userAgent = settings.userAgentString
-        SpikeLog.log("web: loading the player page, ${if (desktopUa.isChecked) "DESKTOP" else "default WebView"} user agent: $userAgent")
-        val html = assets.open("web-playback.html").bufferedReader().use { it.readText() }
-        playerWeb.loadDataWithBaseURL("https://appassets.androidplatform.net/", html, "text/html", "utf-8", null)
-        render()
-    }
-
-    private fun desktopUserAgent(default: String): String {
-        val chrome = Regex("Chrome/([0-9.]+)").find(default)?.groupValues?.get(1) ?: "130.0.0.0"
-        return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$chrome Safari/537.36"
+        // The keep-alive service's notification needs this on Android 13+.
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+        WebPlayer.load(this, token, desktopUa.isChecked)
+        WebPlayer.attach(playerContainer)
     }
 
     private fun playHere() {
-        val id = deviceId
+        val id = WebPlayer.deviceId
         val uri = Prefs.playUri(this)
         when {
             id == null -> SpikeLog.log("web: no device id yet (wait for 'ready')")
@@ -209,41 +146,9 @@ class WebPlaybackActivity : Activity() {
         }
     }
 
-    private fun unload() {
-        js("spikeDisconnect()")
-        playerWeb.loadUrl("about:blank")
-        deviceId = null
-        SpikeLog.log("web: player unloaded")
-        render()
-    }
-
-    private fun js(code: String) = playerWeb.evaluateJavascript(code, null)
-
     private fun render() {
-        status.text = getString(R.string.web_status_fmt, deviceId ?: "-", userAgent, lastEvent)
-    }
-
-    /** Called by the page's JS on a WebView thread. */
-    inner class Bridge {
-        @JavascriptInterface
-        fun token(): String = pageToken
-
-        @JavascriptInterface
-        fun log(message: String) {
-            SpikeLog.log("web: $message")
-            runOnUiThread {
-                lastEvent = SpikeLog.redact(message).take(200)
-                render()
-            }
-        }
-
-        @JavascriptInterface
-        fun ready(id: String) {
-            runOnUiThread {
-                deviceId = id
-                render()
-            }
-        }
+        status.text = getString(R.string.web_status_fmt, WebPlayer.status(), WebPlayer.deviceId ?: "-", WebPlayer.userAgent, WebPlayer.lastEvent)
+        logStatus.text = SpikeLog.fileStatus()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -253,20 +158,22 @@ class WebPlaybackActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
-        SpikeLog.addListener(refreshLogStatus)
-        refreshLogStatus()
+        SpikeLog.addListener(refresh)
+        WebPlayer.addListener(refresh)
+        WebPlayer.attach(playerContainer)
+        render()
     }
 
     override fun onStop() {
-        SpikeLog.removeListener(refreshLogStatus)
-        // No WebView.onPause()/pauseTimers(): the player must keep running with the screen off.
-        SpikeLog.log("WebPlaybackActivity onStop (player keeps running)")
+        SpikeLog.removeListener(refresh)
+        WebPlayer.removeListener(refresh)
+        WebPlayer.detach(playerContainer)
+        SpikeLog.log("WebPlaybackActivity onStop (${WebPlayer.status()})")
         super.onStop()
     }
 
     override fun onDestroy() {
-        SpikeLog.log("WebPlaybackActivity onDestroy: player destroyed")
-        playerWeb.destroy()
+        SpikeLog.log("WebPlaybackActivity onDestroy (${WebPlayer.status()})")
         loginWeb.destroy()
         super.onDestroy()
     }

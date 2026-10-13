@@ -38,13 +38,13 @@ class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val refreshLog: () -> Unit = {
         logView.text = SpikeLog.recentText().lines().asReversed().joinToString("\n")
-        logStatus.text = SpikeLog.fileStatus()
+        logStatus.text = statusLine()
     }
     private val refreshState: () -> Unit = { renderState() }
     private val tick = object : Runnable {
         override fun run() {
             renderState()
-            logStatus.text = SpikeLog.fileStatus()
+            logStatus.text = statusLine()
             main.postDelayed(this, 1_000)
         }
     }
@@ -75,7 +75,7 @@ class MainActivity : Activity() {
             }
         }
         findViewById<CheckBox>(R.id.keep_alive).apply {
-            isChecked = KeepAliveService.running
+            isChecked = KeepAliveService.isHeldBy(KeepAliveService.HOLDER_CHECKBOX)
             setOnCheckedChangeListener { _, on -> keepAlive(on) }
         }
 
@@ -120,6 +120,8 @@ class MainActivity : Activity() {
         findViewById<Button>(id).setOnClickListener(View.OnClickListener { action() })
     }
 
+    private fun statusLine(): String = "${SpikeLog.fileStatus()}\n${WebPlayer.status()}"
+
     private fun save() {
         Prefs.save(this, clientId.text.toString(), playUri.text.toString(), skipIndex.text.toString(), seekMs.text.toString())
         SpikeLog.log("settings saved (client ID ${if (Prefs.clientId(this).isBlank()) "empty" else "set"})")
@@ -142,9 +144,9 @@ class MainActivity : Activity() {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
             }
-            KeepAliveService.start(this)
+            KeepAliveService.acquire(this, KeepAliveService.HOLDER_CHECKBOX)
         } else {
-            KeepAliveService.stop(this)
+            KeepAliveService.release(this, KeepAliveService.HOLDER_CHECKBOX)
         }
     }
 

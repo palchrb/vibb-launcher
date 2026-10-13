@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Vibb Spotify engine spike. Copyright (C) 2026 palchrb. SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- The probe's controls scroll above a fixed-height player WebView (always visible: a hidden or
-     0-height WebView can be throttled); the PKCE login WebView covers the whole screen on top. -->
+<!-- The probe's controls scroll above a fixed-height player area (the player is visible while the
+     screen is: a 0-height WebView can be throttled); the PKCE login WebView covers the whole screen
+     on top. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -50,11 +51,11 @@
         android:text="@string/desktop_ua" />
 
     <CheckBox
-        android:id="@+id/web_keep_alive"
+        android:id="@+id/web_wake_lock"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:minHeight="48dp"
-        android:text="@string/keep_alive" />
+        android:text="@string/wake_lock" />
 
     <LinearLayout
         style="?android:attr/buttonBarStyle"
@@ -136,8 +137,10 @@
 </LinearLayout>
 </ScrollView>
 
-    <WebView
-        android:id="@+id/player_web"
+    <!-- WebPlayer's WebView is attached here while the screen is visible (it lives in the
+         keep-alive service, not in this activity). -->
+    <FrameLayout
+        android:id="@+id/player_container"
         android:layout_width="match_parent"
         android:layout_height="240dp" />
 </LinearLayout>

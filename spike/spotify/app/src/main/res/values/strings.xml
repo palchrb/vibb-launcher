@@ -43,7 +43,8 @@
     <string name="keep_alive_title">Engine spike is keeping its connection alive</string>
 
     <string name="web_title">Web Playback probe</string>
-    <string name="web_intro">Spotify\'s Web Playback SDK in a WebView (item 10). Stay on this screen and press power for the screen-off run; Back unloads the player.</string>
+    <string name="web_intro">Spotify\'s Web Playback SDK in a WebView (item 10). The player lives in the keep-alive service: it keeps playing after Back, with the screen off and behind the lock; only Unload ends it.</string>
+    <string name="wake_lock">Also hold a partial wake lock while the keep-alive service runs (compare the polls under real Doze)</string>
     <string name="label_token">Access token (scopes streaming user-read-email user-read-private user-modify-playback-state; never logged)</string>
     <string name="desktop_ua">Desktop user agent (reload the player after changing)</string>
     <string name="pkce">Get token (PKCE)</string>
@@ -52,5 +53,5 @@
     <string name="toggle_play">Pause/resume</string>
     <string name="web_state">State</string>
     <string name="unload_player">Unload</string>
-    <string name="web_status_fmt">device id: %1$s\nuser agent: %2$s\nlast event: %3$s</string>
+    <string name="web_status_fmt">%1$s\ndevice id: %2$s\nuser agent: %3$s\nlast event: %4$s</string>
 </resources>

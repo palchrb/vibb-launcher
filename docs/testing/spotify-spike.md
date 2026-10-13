@@ -64,7 +64,9 @@ One screen (`MainActivity`) and the Web Playback screen. Everything goes into on
   time of the last update and its age), and a `getPlayerState` poll every 60 s while connected, so a long run reads
   from the log.
 - **Keep alive** (checkbox): a `mediaPlayback` foreground service that keeps the process alive like Vibb's playback
-  service would. Without it the spike is an ordinary background app (Android may freeze it).
+  service would. Without it the spike is an ordinary background app (Android may freeze it). The same service also
+  runs, without the checkbox, whenever a Web Playback player is loaded (it owns that player), and stops when neither
+  needs it.
 - **Probes**: **Spotify package** (installed / HIDDEN / SUSPENDED / stopped, also logged at every connect);
   **Media sessions** (the active sessions in the system's order, each session's state and where a tap on its card
   lands: `tap-><creator package> (activity=true)`); **Pause Spotify's session** (what handy's bedtime rule would do:
@@ -80,7 +82,14 @@ One screen (`MainActivity`) and the Web Playback screen. Everything goes into on
   `log file: <path>, <n> lines, last write <time>` (and `WRITES FAILING ...` while they do), so a dead file log is
   visible at once. Also logged: process start, the activity's lifecycle and **window focus** (a `window focus LOST` right
   after a kid-mode connect means something came up over the spike), screen on/off, network changes.
-- **Web Playback probe** (item 10): see §7, item 10.
+- **Web Playback probe** (item 10): the player is a WebView made with the application context and **owned by the
+  keep-alive service**, like Vibb's playback service owns its player. **Load player** starts the service; the probe
+  screen only shows the WebView while it is visible (attached in onStart, detached in onStop, never destroyed), so the
+  player keeps playing after Back, the screen's destruction, the screen going off and the launcher's lock - only
+  **Unload** (or the service stopping) destroys it. The option **Also hold a partial wake lock** (default off) makes
+  the service hold one (log `wake lock: held` / `released`). Both screens show
+  `web player: ALIVE since <time>, on screen | headless (no screen attached), keep-alive running` or `web player: none`,
+  and the log notes every attach, detach and destroy. Details in §7, item 10.
 
 The app can't see another app's activities, so whether Spotify showed anything is read from the system
 (§5, "Watching for Spotify").
@@ -351,7 +360,7 @@ piece is the app granting the page's protected-media permission (the default `We
 as "EMEError: No supported keysystem"). There is no published success with Spotify's SDK in a WebView, and Spotify
 lists the SDK for desktop browsers only - hence the probe. The spike's page runs under an https origin
 (`https://appassets.androidplatform.net/`, a secure context), grants only `RESOURCE_PROTECTED_MEDIA_ID`, allows media
-without a user gesture, keeps the renderer important with the screen off, and first probes
+without a user gesture, keeps the renderer important while no screen shows it, and first probes
 `requestMediaKeySystemAccess('com.widevine.alpha')` on its own.
 
 Setup: the dashboard app has **Web API** and **Web Playback SDK** checked (§4). Item 10 can run in **K-** (Spotify's
@@ -368,8 +377,15 @@ app hidden) - that is the point.
 4. **Play on this device** (Web API `PUT /v1/me/player/play?device_id=...` with the playlist): expected `HTTP 204`, then
    `player_state_changed: paused=false ...` and audio. **Pause/resume**, **State**.
 5. Tick **Desktop user agent**, **Load player** again, repeat 3-4. Record both results (the log names the UA used).
-6. Screen off: **Keep alive** on, playing, stay on the probe screen (Back unloads the player), power button; 30 min
-   (emulator: force Doze as in item 2). The page logs a `poll:` line a minute. Then wake and check.
+6. Screen off: playing (the keep-alive service runs since **Load player**), leave the probe screen with **Back** (the
+   status line on the main screen says `web player: ALIVE ... headless`), power button; 30 min (emulator: force Doze
+   as in item 2). The page logs a `poll:` line a minute. Then wake, unlock handy's lock and check that audio never
+   stopped. **Unload** ends the player.
+   **Jelly Star, real Doze, twice:** run A with **Also hold a partial wake lock** off, run B with it on (the log says
+   `wake lock: held`), each 60+ min with the screen off and the phone still (no charger: Doze needs it unplugged).
+   Compare the `poll:` lines in `adb logcat -s SpotifySpike` (and the file log): one a minute, or gaps? Gaps in A but
+   not in B while audio plays on = Vibb's web player needs a partial wake lock while playing; no gaps in A = it
+   doesn't. Note battery % at start and end of each run.
 7. Item 7's DNS log for the web path (expected: `sdk.scdn.co`, `api.spotify.com`, `accounts.spotify.com`, Spotify's
    CDNs and the Widevine licence host) - record what was blocked.
 
@@ -413,10 +429,13 @@ kiosk on, the spike ticked Allowed.**
     need it, a rebuilt one does.
 - **Still to run for item 10:** the desktop-user-agent variant, the DNS log (item 7's host list for the web path),
   and the same probe on the Jelly Star, where Doze is real. **Open question for the Jelly Star:** does the page's
-  JavaScript keep running under real Doze without a wake lock? The spike's Keep alive is a foreground service and
-  holds **no wake lock**. Read it from `adb logcat -s SpotifySpike`: a `poll:` line every minute = yes. If the
-  Jelly Star run shows gaps in the polls while audio continues, the design consequence is a partial wake lock held
-  while the web player plays.
+  JavaScript keep running under real Doze without a wake lock? The keep-alive service holds **no wake lock** unless
+  the probe's **Also hold a partial wake lock** option is on, so item 10 step 6 runs both and compares. Read it from
+  `adb logcat -s SpotifySpike`: a `poll:` line every minute = yes. If the run without the wake lock shows gaps in the
+  polls while audio continues, the design consequence is a partial wake lock held while the web player plays.
+- **Spike change after the night run:** the emulator log showed `WebPlaybackActivity onStop (player keeps running)`
+  then `onDestroy: player destroyed` after Back, and the music stopped - the WebView belonged to the activity. Since
+  then the keep-alive service owns the player (§2), so Back and the lock no longer end it; only **Unload** does.
 
 ## 8. What to send back
 

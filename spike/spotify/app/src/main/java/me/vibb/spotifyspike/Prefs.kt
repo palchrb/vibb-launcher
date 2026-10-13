@@ -16,6 +16,7 @@ object Prefs {
     private const val SKIP_INDEX = "skip_index"
     private const val SEEK_MS = "seek_ms"
     private const val AUTO_RECONNECT = "auto_reconnect"
+    private const val WAKE_LOCK = "wake_lock"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences("spike", Context.MODE_PRIVATE)
@@ -38,6 +39,13 @@ object Prefs {
             .putString(SKIP_INDEX, skipIndex.trim())
             .putString(SEEK_MS, seekMs.trim())
             .apply()
+    }
+
+    /** Item 10: the keep-alive service also holds a partial wake lock (default off). */
+    fun wakeLock(context: Context): Boolean = prefs(context).getBoolean(WAKE_LOCK, false)
+
+    fun setWakeLock(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(WAKE_LOCK, on).apply()
     }
 
     fun setAutoReconnect(context: Context, on: Boolean) {
