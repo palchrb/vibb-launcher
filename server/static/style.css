@@ -1920,3 +1920,31 @@ details.category-block[open] > summary .section-chev { -webkit-transform: rotate
 .import-skip { color: var(--red-text); }
 .st-books { list-style: none; padding: 0; margin: 0; }
 .st-books li { overflow-wrap: anywhere; padding: 2px 0; }
+
+/* ---- The Locate tab (design 31 step 13): the phone switcher, the map, the fix, the actions, Recent ---- */
+
+/* One link per phone, its state as a dot (and in its aria-label); wraps on a narrow screen. */
+.phone-switch { display: flex; flex-wrap: wrap; margin: 0 0 14px; padding: 2px; border-radius: 9px; background: var(--grey-bg); }
+.phone-switch a { flex: 1 1 30%; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 44px; margin: 0; padding: 0 8px; border-radius: 7px; color: var(--label); font-size: 0.9375rem; font-weight: 600; text-decoration: none; }
+.phone-switch a[aria-current="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.phone-switch .dot { width: 8px; height: 8px; margin-right: 6px; }
+.phone-switch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Its own stacking context: Leaflet's panes (z-index up to 1000) stay under the tab bar. */
+.map-box { position: relative; z-index: 0; overflow: hidden; height: 300px; margin: 0 0 12px; border-radius: 14px; background: var(--grey-bg); }
+.map-box #map { height: 100%; }
+.fix-age { display: block; font-size: 1.25rem; font-weight: 700; line-height: 1.25; }
+/* Ring, Stop Ringing, Lock: three tiles, as the mockup draws them. */
+.act-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-gap: 10px; gap: 10px; margin: 0 0 12px; }
+.act-grid form { margin: 0; }
+.act { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 68px; margin: 0; padding: 8px 4px; border: 0; border-radius: 14px; background: var(--surface); color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; line-height: 1.2; text-align: center; cursor: pointer; }
+.act:hover { background: var(--row-active); color: var(--tint); }
+.act svg { width: 24px; height: 24px; margin-bottom: 5px; }
+.tone-green { color: var(--green); font-weight: 600; }
+.tone-orange { color: var(--orange); font-weight: 600; }
+.tone-red { color: var(--red-text); font-weight: 600; }
+.tone-grey { color: var(--label-2); font-weight: 600; }
+/* Cancel at the end of a Recent row. */
+.row-form { flex: none; margin: 0; }
+.row-action { min-height: 44px; margin: -11px -8px -11px 0; padding: 0 8px; border: 0; background: none; color: var(--tint); font: inherit; font-size: 1rem; cursor: pointer; }
+.confirm-body input[type="text"] { margin-bottom: 12px; }
+.confirm-body .field-error { margin: -4px 4px 12px; }

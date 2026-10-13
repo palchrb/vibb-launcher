@@ -539,7 +539,7 @@ async fn update_location_now_queues_locate() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/locate?device={id}&requested=1").as_str())
+        Some(format!("/devices/locate?device={id}&requested=1#location").as_str())
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let p = policy(&app, &token).await;
@@ -550,7 +550,7 @@ async fn update_location_now_queues_locate() {
         .await;
     let text = page.text();
     assert!(text.contains("Waiting for a fresh fix"));
-    assert!(text.contains("Update location now"));
+    assert!(text.contains(">Update Location</button>"));
     assert!(!text.contains("couple of minutes"));
 
     app.request(
@@ -567,7 +567,8 @@ async fn update_location_now_queues_locate() {
     let page = app
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await;
-    assert!(page.text().contains("s ago (±12 m)"), "{}", page.text());
+    assert!(page.text().contains(">just now<"), "{}", page.text());
+    assert!(page.text().contains("Within 12 m"), "{}", page.text());
 }
 
 #[tokio::test]
@@ -1122,7 +1123,7 @@ async fn the_phones_locate_answer_is_shown() {
     let res = app
         .get_page(&format!("/devices/{id}/locate-result.json"), &cookie)
         .await;
-    assert_eq!(res.json(), json!({"id": cmd, "result": null}));
+    assert_eq!(res.json(), json!({"id": cmd, "result": null, "text": null}));
     app.request(
         Method::POST,
         "/api/devices/command-result",
@@ -1135,14 +1136,15 @@ async fn the_phones_locate_answer_is_shown() {
         .await;
     assert_eq!(
         res.json(),
-        json!({"id": cmd, "result": "location is off for this device"})
+        json!({"id": cmd, "result": "location is off for this device",
+               "text": "Location is off on the phone"})
     );
     let text = app
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await
         .text();
-    assert!(text.contains("location is off for this device"), "{text}");
-    assert!(text.contains("Off - location switched off on the phone"));
+    assert!(text.contains("Location is off on the phone"), "{text}");
+    assert!(text.contains("<option value=\"off\">Off</option>"));
 }
 
 /// Security review L5: a rule's name never lands inside script - it goes into a `data-` attribute
