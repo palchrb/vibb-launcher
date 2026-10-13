@@ -411,7 +411,7 @@ hash of the same URI, so a Pi bookmark file and our entry key match).
 | playlist | list (an account can read its items); else context | `GET /playlists/{id}?fields=name,snapshot_id,images,owner(id,display_name)` then `GET /playlists/{id}/items?limit=50&offset=N&additional_types=track` pages, each `items[].item` | the interval, items only when `snapshot_id` changed or a day passed (vibb `_precache_due`) | Spotify · spor N av M |
 | album | list | `GET /albums/{id}` (name, artists, images, the first 50 tracks) + `GET /albums/{id}/tracks?limit=50&offset=50..` | daily (immutable: vibb's daily re-ask) | Spotify · spor N av M |
 | track | list (one item) | `GET /tracks/{id}` | daily | Spotify |
-| artist | context (default); **option**: list as its albums' tracks | context: `GET /artists/{id}` (name, images) - top tracks are removed in dev mode [verified 2026-10-13]. Option: `GET /artists/{id}/albums?include_groups=album,single&limit=50` (not on the removed list; dev-mode paging [unverified]) then each album as the album row, newest album first, at most 20 albums and 500 tracks | daily | context: Spotify · Spotify velger; option: Spotify · spor N av M |
+| artist | context (default); **option**: list as its albums' tracks | context: `GET /artists/{id}` (name, images) - top tracks are removed in dev mode [verified 2026-10-13]. Option: `GET /artists/{id}/albums?include_groups=album,single&limit=10` (not on the removed list; the reference's `limit` is at most 10, default 5 [verified 2026-10-13, qa-26c-step2a-code M2]; dev-mode paging [unverified]) then each album as the album row, newest album first, at most 20 albums and 500 tracks | daily | context: Spotify · Spotify velger; option: Spotify · spor N av M |
 
 | show | list | `GET /shows/{id}` + `GET /shows/{id}/episodes?limit=50` newest first, the newest 100 kept | the interval | Spotify · episode N av M |
 | episode | list (one item) | `GET /episodes/{id}` | daily | Spotify |
@@ -476,8 +476,9 @@ Spotify page"), audiobook/collection targets skip with §3.1's sentence, `spotif
 - **Option: an artist as its albums' tracks** (QA L12; assumption 7; the server setting `SPOTIFY_ARTIST_ALBUMS`, read
   once at start, off by default - an environment variable, so QA checklist item 18 can switch it without a build): only
   `/artists/{id}/top-tracks` left dev mode; `GET /artists/{id}/albums` is not on the removed list. With the option on,
-  an artist is **list mode**: its albums and singles newest first (one request per page of 50 albums, then one per
-  album, the batch endpoints being gone), at most 20 albums and 500 tracks (`keep_end = 'first'`, `capped`), each
+  an artist is **list mode**: its albums and singles newest first (one request per page of 10 albums - the endpoint's
+  maximum, qa-26c-step2a-code M2 -, then one per album, the batch endpoints being gone), at most 20 albums and 500
+  tracks (`keep_end = 'first'`, `capped`), each
   album's tracks in order, titles and art as an album's (the album image per track, judged `own`), a daily check -
   resume, the order setting, NY and the track list then work as for an album. vibb listed artist contexts too
   (`context_tracks`). It stays off until QA checklist item 18 shows the albums endpoint paging for a dev-mode app; with
@@ -527,7 +528,9 @@ Spotify page"), audiobook/collection targets skip with §3.1's sentence, `spotif
 - **Errors** (`sweep_error_text("spotify", code)`): `spotify_off` "no Spotify app is set up on this server",
   `no_account` "no Spotify account is logged in", `reauthorize` "the Spotify logins need renewing", `app_refused`
   "Spotify doesn't accept this server's client ID any more", `not_found` "Spotify doesn't let this app open it (or it
-  was deleted)", `rate_limited`, `quota`, `network`, `timeout`, `http_<n>`, `too_big`, `bad_answer`.
+  was deleted)", `rate_limited`, `quota`, `network`, `timeout`, `http_<n>`, `too_big`, `bad_answer`, `key` "a saved
+  Spotify login was locked with another key - log in again", `no_items` "nothing in it can be played here" (the last
+  two added after step 2a, qa-26c-step2a-code).
 - `flag_reports` skips Spotify (a track the phone can't play is the phone's `unplayable`, §5.8; nothing to re-resolve).
 
 ### 3.5 Art (design 27)
@@ -627,8 +630,9 @@ BEGIN UPDATE music_library_revision SET revision = revision + 1 WHERE id = 1; EN
 ### 4.1 The library
 `Source.SPOTIFY` (`"spotify"`): the target must pass `spotifyTarget`
 (`^spotify:(playlist|album|track|artist|show|episode):[A-Za-z0-9]{1,64}$`, `M/spotify/SpotifyRef.kt`:
-`SpotifyRef(kind, id)`, `uriOf(kind, key)` - a show's items are `spotify:episode:<key>`, everything else's
-`spotify:track:<key>`), `cache` read as 0 whatever is sent, `lan` false, and the new optional field
+`SpotifyRef(kind, id)`, `uriOf(kind, key)` - a show's and an episode entry's items are `spotify:episode:<key>`,
+everything else's `spotify:track:<key>`; corrected after step 2a, qa-26c-step2a-code), `cache` read as 0 whatever is
+sent, `lan` false, and the new optional field
 **`spotify`**: `"list"` or `"context"` (`Entry.spotifyMode`, null for every other source; a Spotify entry without it, or
 with another value, is hidden with its id kept, phase 1's lenient rule). An older music app drops the whole entry
 (`else -> return null`) with its id kept, so nothing is pruned (qa-21-step2-code H1).
