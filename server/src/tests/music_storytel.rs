@@ -149,7 +149,7 @@ async fn save_probes_then_seals() {
     let res = save(&app, &cookie, EMAIL, PASSWORD).await;
     assert_eq!(
         res.location(),
-        Some("/music#storytel"),
+        Some("/music/settings#storytel"),
         "{}",
         res.text().replace("&#39;", "'")
     );
@@ -167,18 +167,18 @@ async fn save_probes_then_seals() {
     assert_eq!(events(&app, "storytel_login_saved").await.len(), 1);
     // The card: the notice once, the status line, the picker link; never the login.
     let page = app
-        .get_page("/music", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("Saved - Storytel shows 4 series and books."));
-    assert!(page.contains("Storytel accepted the login (10:02 UTC)."));
+    assert!(page.contains("Storytel accepted the login (12:02)."));
     assert!(page.contains("href=\"/music/storytel\""));
     assert!(page.contains("Storytel Family, which isn't supported yet"));
     assert!(page.contains("Use a password you use only for Storytel"));
-    assert_no_secret(&page, PASSWORD, "/music");
+    assert_no_secret(&page, PASSWORD, "/music/settings");
     let again = app
-        .get_page("/music", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -245,7 +245,7 @@ async fn save_probes_then_seals() {
         FetchError::Network("connection reset".to_string()),
     );
     let res = save(&app, &cookie, EMAIL, "nytt-pw").await;
-    assert_eq!(res.location(), Some("/music#storytel"));
+    assert_eq!(res.location(), Some("/music/settings#storytel"));
     let (_, generation, _, _, ok_at, error) = row(&app).await;
     assert_eq!(
         (generation, ok_at, error.as_deref()),
@@ -253,13 +253,13 @@ async fn save_probes_then_seals() {
     );
     assert_eq!(stored(&app).await, Some((EMAIL.into(), "nytt-pw".into())));
     let page = app
-        .get_page("/music", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("Saved, but Storytel couldn't be reached to check it."));
     assert!(
-        page.contains("Storytel couldn't be reached (10:02 UTC)."),
+        page.contains("Storytel couldn't be reached (12:02)."),
         "{page}"
     );
     let error_at: Option<String> = sqlx::query_scalar("SELECT login_error_at FROM music_storytel")
@@ -272,18 +272,18 @@ async fn save_probes_then_seals() {
         .answer(&login(EMAIL, "pw3"), 200, fixture("login_ok.json"));
     app.fetch.answer(BOOKSHELF, 503, "");
     let res = save(&app, &cookie, EMAIL, "pw3").await;
-    assert_eq!(res.location(), Some("/music#storytel"));
+    assert_eq!(res.location(), Some("/music/settings#storytel"));
     let (_, generation, _, _, ok_at, error) = row(&app).await;
     assert_eq!(
         (generation, ok_at.is_some(), error.as_deref()),
         (3, true, Some("http_503"))
     );
     assert!(
-        app.get_page("/music", &cookie)
+        app.get_page("/music/settings", &cookie)
             .await
             .text()
             .replace("&#39;", "'")
-            .contains("Storytel answered 503 (10:02 UTC).")
+            .contains("Storytel answered 503 (12:02).")
     );
 
     // A refusal in use starts the cooldown (shown with its times); a new save retries at once.
@@ -300,12 +300,12 @@ async fn save_probes_then_seals() {
         "{picker}"
     );
     let page = app
-        .get_page("/music", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
     assert!(page.contains(
-        "Storytel refused the login at 10:02 UTC. Nothing is tried again before 11:02 UTC - save \
+        "Storytel refused the login at 12:02. Nothing is tried again before 13:02 - save \
          the password again to try now."
     ));
     app.fetch.clear_calls();
@@ -324,7 +324,7 @@ async fn save_probes_then_seals() {
     assert_eq!(app.fetch.count(), 0, "inside the cooldown nothing is asked");
     storytel_takes(&app, EMAIL, PASSWORD);
     let res = save(&app, &cookie, EMAIL, PASSWORD).await;
-    assert_eq!(res.location(), Some("/music#storytel"));
+    assert_eq!(res.location(), Some("/music/settings#storytel"));
     let (_, generation, refused_at, refused_generation, _, error) = row(&app).await;
     assert_eq!(
         (generation, refused_at, refused_generation, error),
@@ -395,7 +395,7 @@ async fn picker_lists_groups() {
     assert!(
         page.text()
             .replace("&#39;", "'")
-            .contains("href=\"/music#storytel\"")
+            .contains("href=\"/music/settings#storytel\"")
     );
     assert_eq!(app.fetch.count(), 0);
 
@@ -458,9 +458,8 @@ async fn picker_lists_groups() {
         .text()
         .replace("&#39;", "'");
     assert!(text.contains("value=\"storytel:series:26175\" checked disabled"));
-    assert!(text.contains(&format!(
-        "<a href=\"/music#entry-{entry}\">In the library</a>"
-    )));
+    assert!(text.contains(&format!("href=\"/music#entry-{entry}\"")));
+    assert!(text.contains("In the library</a>"));
     assert!(text.contains("value=\"storytel:series:4242\">"));
 
     // An empty shelf, and a shelf with no kids' books.
@@ -714,7 +713,7 @@ async fn clear_drops_storytel_from_libraries() {
     let res = app
         .request_form(Method::POST, "/music/storytel/clear", Some(&cookie), &[])
         .await;
-    assert_eq!(res.location(), Some("/music#storytel"));
+    assert_eq!(res.location(), Some("/music/settings#storytel"));
     assert!(revision(&app).await > on);
     // The entry is gone from the library (phase 1's prune deletes the books), still ticked.
     let library = device_get(&app, "/api/devices/music/library", &token, &[]).await;
@@ -1233,7 +1232,7 @@ async fn the_sweep_lists_a_series_like_a_feed() {
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("3 books"), "{page}");
-    assert!(page.contains("1 book<"));
+    assert!(page.contains("Storytel book · 1 book ·"));
     assert!(!page.contains("newest: Kokosbananas"));
     assert!(page.contains(&format!("action=\"/music/entries/{series}/check\"")));
     assert!(page.contains("Storytel series"));
@@ -1519,16 +1518,17 @@ async fn library_gates_storytel() {
         (false, StatusCode::NOT_FOUND, StatusCode::NOT_FOUND)
     );
     // The library card says so per phone, and counts only the phone that gets it (QA L2).
-    let music = app
-        .get_page("/music", &cookie)
+    let entry_page = app
+        .get_page(&format!("/music/entries/{series}"), &cookie)
         .await
-        .text()
-        .replace("&#39;", "'");
-    assert!(
-        music.contains("other: not sent - Storytel is off on this phone"),
-        "{music}"
+        .text();
+    assert_eq!(
+        super::music::phone_line(&entry_page, "other").as_deref(),
+        Some("Not sent - Storytel is off on this phone"),
+        "{entry_page}"
     );
-    assert!(music.contains("on 1 phone<") || music.contains("on 1 phone "));
+    let music = app.get_page("/music", &cookie).await.text();
+    assert!(music.contains(" · 1 phone</span>"), "{music}");
     // Its device card says why.
     let page = app
         .get_page(&format!("/devices/{other}"), &cookie)
@@ -1568,14 +1568,19 @@ async fn library_gates_storytel() {
         .replace("&#39;", "'");
     assert!(page.contains("No Storytel login is saved: its Storytel entry isn't sent."));
     // After the clear: every phone's line says why, and a failed check doesn't promise the list.
-    let music = app
-        .get_page("/music", &cookie)
+    let entry_page = app
+        .get_page(&format!("/music/entries/{series}"), &cookie)
         .await
-        .text()
-        .replace("&#39;", "'");
-    assert!(music.contains("phone: not sent - no Storytel login is saved"));
-    assert!(music.contains("other: not sent - no Storytel login is saved"));
-    assert!(music.contains("on 0 phones"));
+        .text();
+    for phone in ["phone", "other"] {
+        assert_eq!(
+            super::music::phone_line(&entry_page, phone).as_deref(),
+            Some("Not sent - no Storytel login is saved"),
+            "{phone}"
+        );
+    }
+    let music = app.get_page("/music", &cookie).await.text();
+    assert!(music.contains(" · no phones</span>"), "{music}");
     let report = check(&app, series, chrono::Utc::now()).await;
     assert_eq!(report.error.as_deref(), Some("storytel_off"));
     let music = app
@@ -1631,14 +1636,14 @@ async fn the_cards_show_the_phones_storytel() {
         .await;
     assert!(res.status.is_success(), "{} {}", res.status, res.text());
     let page = app
-        .get_page("/music", &cookie)
+        .get_page(&format!("/music/entries/{series}"), &cookie)
         .await
-        .text()
-        .replace("&#39;", "'");
-    assert!(
-        page.contains(
-            "Ella: 1 of 3 books on the phone · waiting for the Storytel login on the phone · 2 \
-             failing (Storytel answered 403)"
+        .text();
+    assert_eq!(
+        super::music::phone_line(&page, "Ella").as_deref(),
+        Some(
+            "1 of 3 books on the phone · waiting for the Storytel login on the phone · 2 failing \
+             (Storytel answered 403)"
         ),
         "{page}"
     );

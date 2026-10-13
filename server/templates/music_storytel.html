@@ -2,98 +2,97 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
-<style>
-.st-row { border-top: 1px solid var(--color-border); padding: 10px 0; }
-.st-row:first-of-type { border-top: none; padding-top: 4px; }
-.st-pick { display: flex; align-items: flex-start; gap: 10px; font-weight: normal; margin: 0; }
-.st-pick input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; }
-.st-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.st-what { display: block; font-size: 0.85rem; color: var(--color-text-muted); }
-.st-note { margin: 4px 0 0 30px; font-size: 0.85rem; color: var(--color-text-muted); overflow-wrap: anywhere; }
-.st-row details { margin: 4px 0 0 30px; font-size: 0.85rem; }
-.st-row summary { cursor: pointer; color: var(--color-text-muted); }
-.st-books { list-style: none; padding: 0; margin: 4px 0 0; }
-.st-books li { overflow-wrap: anywhere; color: var(--color-text-muted); padding: 2px 0; }
-.st-filter { margin: 0 0 8px; font-size: 0.9rem; }
-select { max-width: 100%; }
-</style>
+{% include "partials/music_style.html" %}
 </head>
 <body>
 {% let tab = "music" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Storytel shelf</h1>
-        <a href="/music#storytel" class="button-small button-secondary">Back to Music</a>
-    </div>
-    <p class="subtitle">The family's Storytel bookshelf: add a series or a standalone book to the library, then tick it for a phone on that phone's page (Music card). The phone downloads the books itself, in reading order; this server only reads the shelf. Single books out of a series can't be picked - the entry's "first N books" setting limits what is downloaded.</p>
+    <a class="nav-back" href="/music"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Music</a>
+    <h1 class="page-title">Storytel Shelf</h1>
+    <div class="group-footer" style="margin: -8px 4px 20px;">Add a series or a book, then tick it on a phone's page. <details class="info"><summary aria-label="About the Storytel shelf"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The family's Storytel bookshelf. The phone downloads the books itself, in reading order; this server only reads the shelf.</p><p>Single books out of a series can't be picked - the entry's "first N books" setting limits what is downloaded. Durations are hours:minutes.</p></div></details></div>
 
     {% if let Some(count) = added %}
-    <div class="success" id="added">Added {{ count }} - tick them for a phone on its Music card.{% if full %} The library is full ({{ max_entries }} entries), so the rest wasn't added.{% endif %}</div>
+    <div class="group" id="added"><p class="flash" role="status">Added {{ count }} - tick them for a phone on its Music card.{% if full %} The library is full ({{ max_entries }} entries), so the rest wasn't added.{% endif %}</p></div>
     {% endif %}
 
     {% if no_login %}
-    <div class="card" id="shelf">
-        <p>No Storytel login is saved on this server. <a href="/music#storytel">Save the family's login</a> first.</p>
+    <div class="group" id="shelf">
+        <a class="row" href="/music/settings#storytel" data-row="login">
+            <span class="row-label">No Storytel login is saved<span class="row-sub">Save the family's login first.</span></span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
     </div>
     {% else %}
     {% if let Some(error) = error %}
-    <div class="card" id="shelf">
+    <div class="group" id="shelf">
         {% if let Some(form_error) = form_error %}
-        <div class="error">{{ form_error }}</div>
+        <p class="row text-alarm" data-flash="shelf">{{ form_error }}</p>
         {% endif %}
-        <div class="error">{{ error }}</div>
-        <p><a href="/music#storytel">The Storytel login</a> · <a href="/music/storytel{% if all %}?all=1{% endif %}">Try again</a></p>
+        <p class="row text-alarm">{{ error }}</p>
+        <a class="row" href="/music/settings#storytel"><span class="row-label">The Storytel Login</span><svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+        <a class="row row-button" href="/music/storytel{% if all %}?all=1{% endif %}">Try Again</a>
     </div>
     {% else %}
-    <form method="post" action="/music/storytel/add" class="card" id="shelf">
-        <h2>On the shelf</h2>
+    <form method="post" action="/music/storytel/add#shelf" id="shelf">
         {% if all %}
         <input type="hidden" name="all" value="1">
-        <p class="st-filter">All books · <a href="/music/storytel#shelf">Show kids' books only</a></p>
-        {% else %}
-        <p class="st-filter">Kids' books only · <a href="/music/storytel?all=1#shelf">Show all books</a></p>
         {% endif %}
-        {% if let Some(form_error) = form_error %}
-        <div class="error">{{ form_error }}</div>
-        {% endif %}
-        {% if rows.is_empty() %}
-        {% if shelf_total == 0 %}
-        <p class="subtitle">Nothing on the Storytel shelf yet. Books added to the shelf in Storytel's app show here.</p>
-        {% else %}
-        <p class="subtitle">No kids' books on the shelf - <a href="/music/storytel?all=1#shelf">show all books</a>.</p>
-        {% endif %}
-        {% else %}
-        {% for row in rows %}
-        <div class="st-row" id="group-{{ row.index }}">
-            <label class="st-pick">
-                <input type="checkbox" name="target" value="{{ row.target }}"{% if row.in_library.is_some() %} checked disabled{% else if row.checked %} checked{% endif %}{% if loop.first && form_error.is_some() %} autofocus{% endif %}>
-                <span class="st-text"><strong>{{ row.name }}</strong><span class="st-what">{{ row.what }}{% if row.kids %} · for kids{% endif %}</span></span>
-            </label>
-            {% if let Some(id) = row.in_library %}
-            <p class="st-note"><a href="/music#entry-{{ id }}">In the library</a></p>
+        <div class="group">
+            <div class="row" data-row="filter">
+                <span class="row-label">{% if all %}All books{% else %}Kids' books only{% endif %}</span>
+                {% if all %}<a href="/music/storytel#shelf">Kids' books only</a>{% else %}<a href="/music/storytel?all=1#shelf">Show all books</a>{% endif %}
+            </div>
+            {% if let Some(form_error) = form_error %}
+            <p class="row text-alarm" data-flash="shelf">{{ form_error }}</p>
             {% endif %}
-            {% for note in row.notes %}
-            <p class="st-note">{{ note }}</p>
-            {% endfor %}
-            <details>
-                <summary>The books</summary>
-                <ul class="st-books">
-                    {% for book in row.books %}
-                    <li>{% if !book.order.is_empty() %}{{ book.order }}. {% endif %}{{ book.title }}{% if !book.duration.is_empty() %} · {{ book.duration }}{% endif %}{% if !book.flags.is_empty() %} · {{ book.flags }}{% endif %}</li>
-                    {% endfor %}
-                </ul>
-            </details>
         </div>
-        {% endfor %}
-        <label for="storytel_category">Category</label>
-        <select id="storytel_category" name="category">
-            {% for (id, name) in categories %}
-            <option value="{{ id }}"{% if category == *id %} selected{% endif %}>{{ name }}</option>
+        {% if rows.is_empty() %}
+        <div class="group">
+        {% if shelf_total == 0 %}
+        <p class="row row-note">Nothing on the Storytel shelf yet. Books added to the shelf in Storytel's app show here.</p>
+        {% else %}
+        <p class="row row-note">No kids' books on the shelf - <a href="/music/storytel?all=1#shelf">show all books</a>.</p>
+        {% endif %}
+        </div>
+        {% else %}
+        <h2 class="group-header">On the shelf</h2>
+        <div class="group">
+            {% for row in rows %}
+            <div class="cell" id="group-{{ row.index }}">
+                <label class="row st-row">
+                    <input type="checkbox" name="target" value="{{ row.target }}"{% if row.in_library.is_some() %} checked disabled{% else if row.checked %} checked{% endif %}{% if loop.first && form_error.is_some() %} autofocus{% endif %}>
+                    <span class="row-label">{{ row.name }}<span class="row-sub">{{ row.what }}{% if row.kids %} · for kids{% endif %}{% for note in row.notes %} · {{ note }}{% endfor %}</span></span>
+                </label>
+                {% if let Some(id) = row.in_library %}
+                <a class="row row-note" href="/music#entry-{{ id }}" style="padding-left: 50px;">In the library</a>
+                {% endif %}
+                <details class="info cell">
+                    <summary class="row"><span class="row-label row-label-quiet" style="padding-left: 34px;">The books</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+                    <div class="info-panel">
+                        <ul class="st-books">
+                            {% for book in row.books %}
+                            <li>{% if !book.order.is_empty() %}{{ book.order }}. {% endif %}{{ book.title }}{% if !book.duration.is_empty() %} · {{ book.duration }}{% endif %}{% if !book.flags.is_empty() %} · {{ book.flags }}{% endif %}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </details>
+            </div>
             {% endfor %}
-        </select>
-        <button type="submit">Add checked</button>
-        <p class="hint" style="margin-top:8px;">Each one is added with every book downloaded, oldest first, continuing where it stopped - change it on its page. Durations are hours:minutes.</p>
+        </div>
+        <div class="group">
+            <label class="row" for="storytel_category">
+                <span class="row-label">Category</span>
+                <select id="storytel_category" name="category" class="pick">
+                    {% for (id, name) in categories %}
+                    <option value="{{ id }}"{% if category == *id %} selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+                <svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+        </div>
+        <p class="group-footer">Each is added with every book, oldest first, continuing where it stopped - change it on its page.</p>
+        <button type="submit" class="button-wide">Add Checked</button>
         {% endif %}
     </form>
     {% endif %}

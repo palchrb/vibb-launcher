@@ -7,8 +7,8 @@ use axum::http::{Method, StatusCode, header};
 use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::{Value, json};
 
-use super::TestApp;
 use super::music::{Canned, device_get, events, nudged, pretty_json, tick};
+use super::{TestApp, autosaves, form_action_of};
 use crate::music_net::FetchError;
 use crate::music_sweep::{self as sweep, CheckReport, parse_stamp, stamp};
 
@@ -1375,7 +1375,7 @@ async fn changes_wake_the_sweeper() {
             &[("hours", "3")],
         )
         .await;
-    assert_eq!(res.location(), Some("/music#sweep"));
+    assert_eq!(res.location(), Some("/music/settings"));
     assert!(app.state.music_sweep.woken().await, "the setting");
     assert_eq!(events(&app, "music_sweep_saved").await, ["every 3 hours"]);
     assert_eq!(sweep::sweep_hours(&app.db).await.unwrap(), 3);
@@ -2483,32 +2483,59 @@ async fn the_cards_say_what_the_sweep_knows() {
     .await
     .unwrap();
 
+    // The setting, on Music › Settings (design 31 §3.4): an inline picker, its hints behind ⓘ.
+    let settings = app.get_page("/music/settings", &cookie).await.text();
+    assert!(settings.contains("Check for new episodes"));
+    assert!(
+        settings.contains("Every 6 hours is what the Vibb Pi uses (NRK podcasts every 12 hours)")
+    );
+    assert!(settings.contains("value=\"6\" selected"));
+    assert!(autosaves(&settings, "hours"));
+    assert_eq!(form_action_of(&settings, "hours"), Some("/music/sweep"));
     let page = app.get_page("/music", &cookie).await.text();
-    assert!(page.contains("Check for new episodes"));
-    assert!(page.contains("6 hours is what the Vibb Pi uses (NRK podcasts every 12 hours)"));
     assert!(
         page.contains(
             "A public feed can never send the server or the phones to a private address."
         )
     );
-    assert!(page.contains("value=\"6\" selected"));
-    // The listed, capped, cut series.
-    assert!(page.contains("Radioteatret"), "the source's own title");
-    assert!(page.contains("98 episodes · newest: Andre del · 9 Oct"));
-    assert!(page.contains("first 100 episodes (the series has more)"));
-    assert!(page.contains("list cut to the first 98 (size limit)"));
+    // The listed, capped, cut series: its row counts, its page says the rest.
+    assert!(page.contains("98 episodes"));
     assert!(page.contains("Checked 2 h ago"));
-    assert!(page.contains(
-        "Ella: 2 of 5 offline · waiting for Wi-Fi · 1 failing (the source answered 403)"
-    ));
-    assert!(page.contains("Max: has an older list (as of 1 Oct 08:00 UTC)"));
-    assert!(page.contains("Ida: not reported yet"));
-    assert!(
-        page.contains("Ella: nothing on it reported yet"),
+    let ok_page = app
+        .get_page(&format!("/music/entries/{ok}"), &cookie)
+        .await
+        .text();
+    assert!(ok_page.contains("Radioteatret"), "the source's own title");
+    assert!(ok_page.contains("98 episodes · newest: Andre del · 9 Oct"));
+    assert!(ok_page.contains("first 100 episodes (the series has more)"));
+    assert!(ok_page.contains("list cut to the first 98 (size limit)"));
+    assert!(ok_page.contains("Checked 2 h ago"));
+    assert_eq!(
+        super::music::phone_line(&ok_page, "Ella").as_deref(),
+        Some("2 of 5 offline · waiting for Wi-Fi · 1 failing (the source answered 403)")
+    );
+    // An old report says when, in the Phone Setup zone (no "UTC").
+    assert_eq!(
+        super::music::phone_line(&ok_page, "Max").as_deref(),
+        Some("Has an older list (as of 1 Oct)")
+    );
+    assert_eq!(
+        super::music::phone_line(&ok_page, "Ida").as_deref(),
+        Some("Not reported yet")
+    );
+    assert!(!ok_page.contains("Times are UTC"));
+    let failing_page = app
+        .get_page(&format!("/music/entries/{failing}"), &cookie)
+        .await
+        .text();
+    assert_eq!(
+        super::music::phone_line(&failing_page, "Ella").as_deref(),
+        Some("Nothing on it reported yet"),
         "a report without the entry"
     );
+    assert!(failing_page.contains("On your home network or tailnet."));
     // The failing feed on the LAN, and the one never listed.
-    assert!(page.contains(", home network"));
+    assert!(page.contains(" · home network"));
     assert!(page.contains("Last check failed"));
     assert!(
         page.contains("the source answered 404. The phones keep the list from 8 Oct. Next try")

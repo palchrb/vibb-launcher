@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 11 (the Apps tab) on `design-31-s11`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -2233,3 +2233,101 @@ Choices made while building:
 | L7 | Add App's wrapper has no `role="radiogroup"`/`aria-labelledby` any more: the two radios with one name are the group. |
 | Nits | (1) the header partial says only definition counts ("set it to anything"); (2) `style.css?v=11` kept, `v=12` if step 3's CSS lands first; (3) `DEPLOY.md`'s launcher setup says Add App, "File name contains", "Tag starts with" and that the package is pinned from the APK; (4) "Check Now" in the refused-release detail; (5) `version_of` strips a leading "v" first, then takes the first "-v" before a digit (`v2.1.0-v8a` -> "2.1.0-v8a"); (6) phones sort by name the same way on the tab and the app page (the Devices list's binary order); (7) the launcher's row says "no phones" until one is set up (`the_launcher_is_on_all_phones_only_once_there_are_some`); (8) the two result ⓘ are labelled "More about the refused upload/package"; (9) `.group-tiles` is gone: step 2's `.group-avatars` hairline reads `--avatar-inset` (72px), `.group-small` sets 64px; the unstyled `.flash-line`, `.flash-info` and `.catalog-empty` hooks are gone; (10) the tab's phone rows still open the device page at its top until step 6 (choice 1); `device_detail.html` is step 3's. |
 | Mutations | Each surviving mutation the review lists now fails a test: confirm redirecting to `/apps` (the redirect table, the confirm test), 404 as `GithubError` (`github_answers_are_classified`), download errors re-kinded (`a_failed_download_leaves_no_file`), Forget's form outside its confirm (the app page test), `\|safe` on the failure detail, the catalog label or the shared result partial (the escaping test), Play's core counted (the tab test); and dropping the `#upload` fragment fails three tests. |
+
+## Step 12 implementation status (2026-10-13)
+
+Built on branch `design-31-s12` (from `main` at `571f86fa`, steps 1, 2, 3 and 11 in), in parallel with step 4; server
+only, no migration, no new crate, no API change (`server/testdata/music_*.json` unchanged), `style.css` unchanged
+(still `?v=12`): the tab's own CSS is `partials/music_style.html`, included by the six music pages.
+- **The tab** (`/music`, `music.html`, `handlers::music::show`): the large title and, with two entries or more, an
+  **Edit** link (top right, as the mockup) to `/music?edit=1#entries`; **Library**, the whole list (no "Show all"):
+  one row per entry (`partials/music_card.html`: a 44px cover or category tile, the name, "NRK series · 98 episodes ·
+  2 phones" - "Own files · 12 files · no phones", "· home network" for a LAN feed, "· 2 missing" in red -, the live
+  status as one coloured line, the row linking to the entry's page), then **Check now** (or "Check again after
+  14:20") and the **Offline** inline select (`data-autosave`, `<noscript>` Save) under it; in Edit mode ↑ ↓ instead,
+  and **Done**; the footer "2 of 200 entries…" (in Edit: the order is the phones' order). **Add**: Podcast or NRK
+  link and Upload your own files, each a `<details>` holding its form (open on a refusal, the error under the field
+  with `aria-invalid`), From Storytel › "Signed in" / "No login", Import from Vibb ›. **On phones**: one row per phone,
+  "Anna · 6 of 9" (its ticks of the whole library). **Categories ›** with the count, **Settings ›**.
+- **Music › Settings** (`/music/settings`, `music_settings.html`): Check for new episodes (an inline picker, "Every 6
+  hours"; the two old hints behind the footer's ⓘ), Storytel (Login "Saved 9 Oct 2026", On phones, the status line,
+  Pick Books from the Shelf ›, the e-mail/password form, the save's notice as the group's flash, **Remove Login…**
+  behind a confirm; without a key "Storytel is off" with the why behind ⓘ; a stale login "Enter the login again"),
+  The music app (its catalog row › with the release, or **Add to the App Catalog**), Files no entry uses (count,
+  size, **Delete Files…** behind a confirm).
+- **Music › Categories** (`/music/categories`, `music_categories.html`): today's `<details>` editors as rows (tile,
+  name, how many entries use it), unchanged inside apart from **Delete Category…** as a confirm (an unused one only;
+  "In use, so it can't be deleted" otherwise), and Add a category.
+- **Import from Vibb** (`/music/import`, `music_import.html`): GET is the form; `POST /music/import` renders this
+  page with the preview (sections as groups, a category picker each, a tick per row, the phones); the confirm's
+  result shows in the form's group (`#import`). The intro is one line, the rest behind ⓘ ("Storytel" no longer in
+  the list of what isn't brought over: design 26b imports it).
+- **Routes**: GET `/music/settings`, `/music/categories` (chained with its POST) and `/music/import` (chained with
+  the preview's POST, under the same body limit) (L5). No POST route changed.
+- **The entry page** (`music_entry.html`, 12b): the sub-page header ("‹ Music" back to the row), then Cover (the
+  picture with the kind and the source link, Upload a Photo in a `<details>`, Use the Source's Picture) → Episodes /
+  Books (`#status`: at the source, the episodes line, the capped/cut notes, LAN, the status, **Check Now** or "Check
+  again after") → Settings (**one form**: name, category, play order, offline - its hint behind ⓘ, "(the phone's Music
+  page)" (M7) -, the resume switch, Save; `#settings`) → Files (upload with its result in the group; each file's row
+  opens its **Delete File…** confirm) → On phones (one row per phone with what it reported about the entry as the
+  sub-line, linking to the phone) → **Delete Entry…**. "Times are UTC." is gone: times are local (below).
+- **The shelf** (`music_storytel.html`, 12b): the same shape in groups - a one-line intro with the rest behind ⓘ,
+  the filter row, one checkbox row per series or book (what it is, "for kids", the notes on the sub-line), "In the
+  library" linking to its row, The books behind a disclosure, the category picker, Add Checked. Its links to the login
+  go to `/music/settings#storytel`.
+- **Redirects** (§5.1, L5): `/music#app` → `/music/settings#app`, `#storytel` → `/music/settings#storytel`, `#sweep`
+  → `/music/settings` (no fragment: the picker is the page's first group, and scroll-restore keeps the place),
+  `#import` → `/music/import#import`, `#category-{id}` → `/music/categories#category-{id}`, `#categories` (a delete)
+  → `/music/categories` (no fragment), the orphans' delete → `/music/settings`, the entry save → `#settings`, the
+  move → `/music?edit=1#entry-{id}` (stays in Edit). Unchanged: `/music#entry-{id}` (Check now, Offline, an add),
+  `/music#entries` (a delete), the entry page's `#status`, `#cover`, `#files`, `#file-{id}`. Forms whose result
+  renders in the POST's answer post to an action with their group's fragment (`/music#add-link`,
+  `/music/own#add-own`, `/music/storytel#storytel`, `/music/categories#new-category`,
+  `/music/categories/{id}#category-{id}`, `/music/import#import-preview`, `/music/import/confirm#import-preview`, the
+  entry's `#settings`, `#cover`, `#files`, the shelf's `#shelf`), so a refusal lands where the parent was; every
+  form whose success redirect has no fragment has none in its action (a browser keeps the action's).
+- **Confirms** (§5.6, Q7): the five `confirm()` deletes on these pages (orphans, the Storytel login, a category, a
+  file, an entry) are `<details>` confirms; no music page calls `confirm()`.
+- **Rust**: the one music page builder is split into four (`music_page`, `settings_page`, `categories_page`,
+  `render_import`), each loading only what its page shows; the `Entered` bag of refused forms is gone (each refusal
+  renders its own page). `SweepCard.count` ("98 episodes", "4 books") is the row's count; `SweepView::phone_lines`
+  returns `(phone, line)` and the line no longer starts with the name ("Has an older list (as of 1 Oct)", "Not sent -
+  Storytel is off on this phone"). **Local times** (M4): `SweepView` and `storytel_status` take the Phone Setup zone,
+  `Zone::when` for what happened ("Storytel accepted the login (12:02)."), `Zone::until` for "Next try",
+  "Check again after" and the cooldown's end; `utc_time` is gone. `ImportCard.open` is gone (no card to open).
+- **Tests**: `tests/music.rs` `every_form_on_the_music_pages_returns_to_its_page` (this step's rows of §5.1's table:
+  it posts every form the tab, Edit, Settings, Categories, Import, the import's preview and two entry pages render,
+  and fails on a form it has no row for), `the_music_deletes_are_behind_a_confirm` (each delete's form inside its
+  `<details>`, after the summary; no `confirm(`), `the_library_rows_and_edit_mode` (the row's line, Check now, the
+  Offline select's form, ↑ ↓ only in Edit and in order, On phones "1 of 2", names escaped, a refused add opening its
+  form), `the_music_pages_render_and_link_both_ways` (every sub-page in the Music tab with a back link and no brand
+  bar); repointed: `music.rs` (import, orphans, Storytel, categories, the move), `music_sweep.rs` (the setting on
+  Settings through `autosaves`/`form_action_of`, the counts on the row, the details and phone lines on the entry page
+  through the new `tests::music::phone_line`), `music_storytel.rs` (the card on Settings in local time, the gate's
+  lines on the entry page), `music_art.rs` (the art count on the entry page). `cargo test` 753 passed; `node --test
+  jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files.
+
+Choices made while building:
+1. **One commit for 12a and 12b**: the handler and the tests are shared by both halves (the phone lines moved from
+   the library rows to the entry page), so a 12a without 12b would have needed a throwaway entry page.
+2. **Local times now, not with design 30 step 3a**: 30 step 3a is in `main`, and §3.4 drops "Times are UTC." with
+   local times. Only the times changed, no wording. `storytel::StorytelError`'s cooldown text on the shelf ("Nothing
+   is tried again before 11:02 UTC") still says UTC: it is built where no zone is at hand, and it says so.
+3. **The row's sub-line** drops the category (the mockup's "NRK series · 98 episodes · 2 phones"); the category is on
+   the entry page. Own files count files ("12 files"), Storytel counts books.
+4. **The status in the row is one line** (CSS ellipsis); the whole text is on the entry page. It stays inside the
+   row's link, so `music-cards.js` swaps it unchanged: its selectors (`.music-status[data-entry]`, `.music-card`) are
+   kept and the script and its `?v=1` are untouched.
+5. **Edit mode** (`?edit=1`) shows ↑ ↓ *instead of* Check now and Offline, and Done; Edit shows only with two
+   entries or more.
+6. **"On phones" rows** go to the device page's Music card (`/devices/{id}#music`) through one function,
+   `phone_music_href`, until step 7 builds `/devices/{id}/music`; the entry page's phone rows too. Every phone is
+   listed, set up or not ("0 of 9").
+7. **A file's delete**: the file's row is the `<details>` summary (with a red "Delete…"), so a long file list
+   doesn't double its rows.
+8. **The shelf's links** to an entry stay `/music#entry-{id}` (the row exists on the tab).
+9. **The device page's two links** to `/music#app` and `/music#storytel` (`device_detail.html`, the Music card) are
+   **not** moved: step 4 is rebuilding `device_detail.html` in parallel, and step 7 rebuilds that card. They still
+   open the Music tab, one tap from Settings.
+10. **Not checked here**: a browser pass (no headless Chromium on this VM) - 390 px light/dark, JS on and off, every
+    `<details>` opened - is owed before merging, with the real phones (iOS Safari 14, Chrome 80).

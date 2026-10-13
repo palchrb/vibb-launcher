@@ -947,6 +947,7 @@ pub fn build_admin_router(
         )
         .route("/music/own", post(handlers::music::add_own))
         .route("/music/sweep", post(handlers::music::save_sweep))
+        .route("/music/settings", get(handlers::music::show_settings))
         .route("/music/cards", get(handlers::music::cards))
         .route(
             "/music/entries/{id}/check",
@@ -962,9 +963,11 @@ pub fn build_admin_router(
         )
         .route(
             "/music/import",
-            post(handlers::music_import::preview).layer(DefaultBodyLimit::max(
-                music_import::MAX_IMPORT_BYTES + 64 * 1024,
-            )),
+            get(handlers::music::show_import)
+                .post(handlers::music_import::preview)
+                .layer(DefaultBodyLimit::max(
+                    music_import::MAX_IMPORT_BYTES + 64 * 1024,
+                )),
         )
         .route(
             "/music/import/confirm",
@@ -973,7 +976,10 @@ pub fn build_admin_router(
                 .layer(DefaultBodyLimit::max(4 * music_import::MAX_IMPORT_BYTES)),
         )
         .route("/music/catalog-row", post(handlers::music::add_catalog_row))
-        .route("/music/categories", post(handlers::music::add_category))
+        .route(
+            "/music/categories",
+            get(handlers::music::show_categories).post(handlers::music::add_category),
+        )
         .route(
             "/music/categories/{id}",
             post(handlers::music::save_category),
