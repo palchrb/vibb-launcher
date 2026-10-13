@@ -83,6 +83,62 @@ class LockUpPlanTest {
         assertFalse(lockOnTopAfter(true, LockTopEvent.UNLOCKED))
         assertFalse("a re-front, TimeRuleShown, CallsEnded, VoIP, a process start", lockOnTopAfter(true, LockTopEvent.START, sameLockUp = false))
         assertFalse(lockOnTopAfter(true, LockTopEvent.START, interactive = true))
+        assertFalse("a screen-on that finds the lock gone and starts nothing", lockOnTopAfter(true, LockTopEvent.SCREEN_ON_UNSHOWN))
+    }
+
+    /**
+     * qa-32-s1-code M1: every way another window comes over a lock that is already sleep-stopped (no
+     * pause or stop of the lock reports it) ends with the mark cleared, so the next screen-off starts
+     * the lock again - never NONE with something else in front. [afterScreenOn] is `dispatch`'s
+     * ScreenOn handling (pinned below): a start keeps the mark (the lock is on top again), no start
+     * with the lock not resumed clears it.
+     */
+    @Test
+    fun `lockOnTop - every cover over a sleep-stopped lock clears it before the next screen-off`() {
+        fun afterScreenOn(current: Boolean, event: LockEvent.ScreenOn): Boolean {
+            val showLock = step(LockMode.LOCKED, event).showLock
+            return when {
+                showLock -> lockOnTopAfter(current, LockTopEvent.START, sameLockUp = true)
+                screenOnUnshown(event, showLock) -> lockOnTopAfter(current, LockTopEvent.SCREEN_ON_UNSHOWN)
+                else -> current
+            }
+        }
+        fun nextScreenOff(onTop: Boolean) = lockUpStarts(showLock = true, lockOnTop = onTop, callLive = false, interactive = false)
+
+        // The system dialer's call rings from dark over the lock (our dialer role not held), the kid
+        // stays in the dialer's UI after it: SCREEN_ON starts nothing - cleared, the next lock-up starts.
+        val systemCall = afterScreenOn(true, LockEvent.ScreenOn(lockShowing = false, systemCall = true))
+        assertFalse(systemCall)
+        assertEquals(LockUpStart.HOME_THEN_LOCK, nextScreenOff(systemCall))
+        // A VoIP call (in the call, or ringing - the ring's own start clears it too).
+        assertFalse(afterScreenOn(true, LockEvent.ScreenOn(lockShowing = false, voip = VoipPhase.IN_CALL)))
+        assertFalse(afterScreenOn(true, LockEvent.ScreenOn(lockShowing = false, voip = VoipPhase.RINGING)))
+        assertTrue(step(LockMode.LOCKED, LockEvent.VoipRinging()).showLock)
+        assertFalse("VoIP ring: its own start", lockOnTopAfter(true, LockTopEvent.START))
+        // Our call, an alarm or another app's turn-screen-on activity: SCREEN_ON starts the lock over
+        // it - on top again, kept; the call screen then comes over the resumed lock: an interactive pause.
+        assertTrue(afterScreenOn(true, LockEvent.ScreenOn(lockShowing = false, ourCall = true)))
+        assertTrue(afterScreenOn(true, LockEvent.ScreenOn(lockShowing = false)))
+        assertFalse("our call screen over the resumed lock", lockOnTopAfter(true, LockTopEvent.PAUSE, interactive = true))
+        // The time-rule screen started while dark (a rule's boundary alarm): TimeRuleShown starts the lock.
+        assertTrue(step(LockMode.LOCKED, LockEvent.TimeRuleShown).showLock)
+        assertFalse("TimeRuleShown", lockOnTopAfter(true, LockTopEvent.START))
+        // Another Home start while dark (an update, a relock, the lock asking Home to root lock task):
+        // Home's usual locked resume shows the lock - a start that isn't the lock-up's.
+        assertFalse("Home's locked resume", lockOnTopAfter(true, LockTopEvent.START))
+        // The lock resumed and on top at the wake: kept, the next screen-off skips the start.
+        assertTrue(afterScreenOn(true, LockEvent.ScreenOn(lockShowing = true)))
+        assertEquals(LockUpStart.NONE, nextScreenOff(afterScreenOn(true, LockEvent.ScreenOn(lockShowing = true))))
+        // screenOnUnshown is only the ScreenOn event with the lock not resumed and nothing started.
+        assertTrue(screenOnUnshown(LockEvent.ScreenOn(lockShowing = false, systemCall = true), showLock = false))
+        assertFalse(screenOnUnshown(LockEvent.ScreenOn(lockShowing = true), showLock = false))
+        assertFalse(screenOnUnshown(LockEvent.ScreenOn(lockShowing = false), showLock = true))
+        assertFalse(screenOnUnshown(LockEvent.ScreenOff(), showLock = false))
+        // dispatch applies it when nothing was started.
+        val dispatch = body(runtime, "dispatch")
+        val unshown = dispatch.indexOf("} else if (screenOnUnshown(event, result.showLock)) {")
+        assertTrue(dispatch, unshown > dispatch.indexOf("} else if (result.showLock) {"))
+        assertTrue(dispatch.substring(unshown).substringBefore("\n        }").contains("lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.SCREEN_ON_UNSHOWN)"))
     }
 
     // ---- homeDarkResume -------------------------------------------------------------------------
@@ -136,6 +192,42 @@ class LockUpPlanTest {
         assertEquals(1, Regex("sameLockUp = event is LockEvent.ScreenOn").findAll(runtime).count())
     }
 
+    /** qa-32-s1-code L4: a start that threw is no start - the lock-up marks no lock on top. */
+    @Test
+    fun `show reports a failed start as not started`() {
+        val show = body(runtime, "show")
+        val start = show.indexOf("Intent(context, PinLockActivity::class.java)")
+        val started = show.indexOf("started = true")
+        assertTrue(show, show.indexOf("var started = false") in 0 until start)
+        assertTrue(show, started > start && started < show.indexOf("if (wake) {"))
+        assertTrue(show.indexOf("catch (e: Exception)") > started)
+        assertTrue(show.trimEnd().endsWith("return started"))
+        assertFalse(show.contains("return true"))
+        assertTrue(body(runtime, "lockUp").contains("if (show(context, ask = ask, fromLockUp = true)) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.LOCK_UP)"))
+    }
+
+    /** qa-32-s1-code L3: the leave's call guard, its VoIP term, the glance's Home below and the
+     * fail-safe "unknown" answers. */
+    @Test
+    fun `the unlock never lands on Home over a live call - the wiring`() {
+        val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
+        assertTrue(body(activity, "leave").contains("go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this)))"))
+        assertEquals(1, Regex("lockLeave\\(").findAll(body(activity, "leave")).count())
+        val live = body(runtime, "callLiveNow")
+        assertTrue(live, live.contains("ourCall() || telecomInCall(context.applicationContext) || VoipCalls.phase != VoipPhase.NONE"))
+        // The glance's send check counts Home below exactly when the leave started it.
+        assertTrue(body(activity, "go").contains("GlanceOpener.open(this, it, homeBelow = plan.homeFirst)"))
+        val opener = code("java/com/kidslauncher/mdm/lock/GlanceOpener.kt")
+        assertTrue(opener.contains("fun open(activity: Activity, pending: PendingOpen, homeBelow: Boolean) = guarded { run(activity, pending, GlanceOpenFrom.LOCK, homeBelow) }"))
+        assertTrue(body(opener, "run").contains("watchSend(activity, pending, from, homeBelow)"))
+        assertTrue(body(opener, "watchSend").contains("val confirmable = from == GlanceOpenFrom.TIME_RULE_SCREEN || homeBelow"))
+        assertFalse(body(opener, "watchSend").contains("kioskOn"))
+        // Unknown counts as interactive: the runtime clears lockOnTop, Home takes its usual path.
+        assertTrue(runtime.contains("private fun interactiveOrUnknown(): Boolean = appContext?.let { interactive(it) } ?: true"))
+        val home = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt")
+        assertTrue(home.contains("private fun interactive(): Boolean = getSystemService(PowerManager::class.java)?.isInteractive != false"))
+    }
+
     @Test
     fun `lockOnTop follows the lock's pause, stop, destroy and the unlock`() {
         val rt = runtime
@@ -150,7 +242,7 @@ class LockUpPlanTest {
     }
 
     @Test
-    fun `Home's resume while dark - the night ground and lock task, nothing else, first`() {
+    fun `Home's resume while dark - the night ground, nothing else, first`() {
         val home = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt")
         assertTrue(body(home, "darkUnderLock").contains("homeDarkResume(PinLockRuntime.darkLockUp, interactive(), PinLockRuntime.mode == LockMode.LOCKED)"))
         val resume = body(home, "onResume")
@@ -160,7 +252,8 @@ class LockUpPlanTest {
         assertEquals("super.onResume(), resumedNow only", listOf("super.onResume()", "resumedNow = true"),
             before.substringAfter("{").lines().map { it.trim() }.filter { it.isNotEmpty() })
         val dark = resume.substring(branch).substringAfter("{").substringBefore("}")
-        assertEquals(listOf("showNight()", "reconcileKioskMode()", "return"), dark.lines().map { it.trim() }.filter { it.isNotEmpty() })
+        // qa-32-s1-code L1: no lock task here - the lock's task is the focused one by then.
+        assertEquals(listOf("showNight()", "return"), dark.lines().map { it.trim() }.filter { it.isNotEmpty() })
         // Everything else comes after it: the boot mark, the update fence, the time-rule screen, the lock.
         for (after in listOf("PinLockRuntime.onHomeResumed(interactive())", "UpdateFence.onFront", "redirectToLockScreenIfLocked()",
             "PinLockRuntime.show(", "PinLockRuntime.onHomeMarkUp()", "TsnetClient.connectFromPreferences")) {

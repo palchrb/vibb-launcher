@@ -2,6 +2,8 @@ package com.kidslauncher.mdm.lock
 
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 
 private const val LOG_TAG = "HomeFront"
@@ -24,6 +26,8 @@ private const val LOG_TAG = "HomeFront"
  */
 object HomeFront {
 
+    private val main = Handler(Looper.getMainLooper())
+
     fun intent(context: Context, animate: Boolean = true): Intent =
         Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
@@ -31,22 +35,33 @@ object HomeFront {
             .addFlags(if (animate) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
 
     /**
-     * Starts our Home; `false` if the platform refused. Any thread (device owner + HOME may start
-     * activities from the background). [animate] false: no open transition - only design 32's
-     * lock-up passes it. Every other start ends the lock-up's dark mark first
+     * Starts our Home; `false` if the platform refused. [animate] false: no open transition - only
+     * design 32's lock-up passes it. Every other start ends the lock-up's dark mark first
      * ([PinLockRuntime.darkLockUp]): that Home is wanted in front - the lock asking it to root lock
      * task, an update, a relock - and its locked resume shows the lock again, as before design 32.
+     *
+     * Any thread, but such a start from another thread runs on the main thread (qa-32-s1-code L2):
+     * the lock-up marks and starts there in one pass, so a background end-and-start can't land
+     * between them and leave Home, with the dark mark, over the lock. Posted, it answers `true` (the
+     * background callers ignore the answer; the boot's, which reads it, runs on the main thread).
      */
-    fun bring(context: Context, why: String, animate: Boolean = true): Boolean = if (BootCover.shuttingDown) {
-        Log.i(LOG_TAG, "Not bringing Home to the front during shutdown: $why")
-        false
-    } else try {
-        if (animate) PinLockRuntime.endDarkLockUp()
-        context.startActivity(intent(context, animate))
-        Log.i(LOG_TAG, "Home brought to the front: $why")
-        true
-    } catch (e: Exception) {
-        Log.w(LOG_TAG, "Couldn't bring Home to the front ($why)", e)
-        false
+    fun bring(context: Context, why: String, animate: Boolean = true): Boolean {
+        if (animate && Looper.myLooper() != Looper.getMainLooper()) {
+            val app = context.applicationContext
+            main.post { bring(app, why) }
+            return true
+        }
+        return if (BootCover.shuttingDown) {
+            Log.i(LOG_TAG, "Not bringing Home to the front during shutdown: $why")
+            false
+        } else try {
+            if (animate) PinLockRuntime.endDarkLockUp()
+            context.startActivity(intent(context, animate))
+            Log.i(LOG_TAG, "Home brought to the front: $why")
+            true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't bring Home to the front ($why)", e)
+            false
+        }
     }
 }

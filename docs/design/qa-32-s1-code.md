@@ -360,3 +360,33 @@ and "Home recreated at the unlock" as the brief asked.
   variants green) and in `DebugHookAbsentTest`. The release stub is a pass-through.
 - **Comments:** no "drawn before the next screen-on" is left in `lock/` (pinned). Design 10 §3 and the launcher
   `CLAUDE.md` point to design 32.
+
+## Fixes (implementer, 2026-10-13, branch `design-32-s1`)
+
+All six findings are fixed on `design-32-s1`, on top of this review's `d9e7929b`.
+
+| # | Fix | Test |
+|---|---|---|
+| M1 | `LockTopEvent.SCREEN_ON_UNSHOWN` (-> false) and pure `screenOnUnshown(event, showLock)` (`lock/LockUpPlan.kt`). `dispatch` clears `lockOnTop` when a `ScreenOn` finds the lock not resumed and starts nothing (`} else if (screenOnUnshown(event, result.showLock)) {`). I re-checked every way a window comes over a sleep-stopped lock: a system-dialer call and VoIP (cleared there), our call / an alarm / another turn-screen-on activity (the backstop's start puts the lock on top again; a call screen over the resumed lock is an interactive pause), the time-rule screen (`TimeRuleShown`'s start), another Home start (Home's locked resume's start). The racy cover in the instant of the screen-off is a residual in the spec's §12, bounded by the backstop | `LockUpPlanTest` "every cover over a sleep-stopped lock clears it before the next screen-off": a row per path through `step` and `lockOnTopAfter`, the next screen-off's plan, `screenOnUnshown`'s rows, and the `dispatch` pin. `SCREEN_ON_UNSHOWN` row in the "cleared by" test |
+| L1 | Home's dark branch runs only `showNight()`; the `reconcileKioskMode()` call is gone, the comment, `homeDarkResume`'s and `darkLockUp`'s KDoc, the spec's §8 3, §9 and §14 are corrected. Chosen over an unanimated dark `START_HOME`: the dropped call was a no-op or a caught throw at run time, so removing it changes nothing on the phone; the other option would add a second kind of dark Home start, tying design 16's lock-task rooting to the dark mark, for a rare case (kiosk on, nothing rooting lock task) that behaves as before design 32. The spec's §11 has the check you proposed | `LockUpPlanTest` "Home's resume while dark": the branch is exactly `showNight()`, `return` |
+| L2 | `HomeFront.bring` with `animate = true` from a thread other than the main one posts itself to the main thread (`main.post { bring(app, why) }`) before anything else, so its `endDarkLockUp()` + start can't land between `lockUp`'s mark and starts. Posted, it answers `true`: the background callers (`PlayRuntime`, `AppEnforcer`, `WindowRelock`, `SelfUpdate`) ignore the answer, and `BootHome`, which reads it, runs on the main thread. `WindowRelock`'s `LockActivity.start` was already posted after the bring, so their order is kept | `HomeFrontTest`: the hop comes first in `bring`, before `endDarkLockUp()`, and posts `bring(app, why)` |
+| L3 | Pins for each batch-A gap | `LockUpPlanTest` "the unlock never lands on Home over a live call - the wiring": `leave` passes `PinLockRuntime.callLiveNow(this)`; `callLiveNow`'s three terms; `go` passes `homeBelow = plan.homeFirst`, `open` -> `run` -> `watchSend`, whose `confirmable` uses `homeBelow` and not `kioskOn`; `interactiveOrUnknown`'s `?: true`; Home's `interactive()` `!= false` |
+| L4 | `show` returns `started`, set right after the lock's `startActivity` returns (before the wake activity's start), so a start that threw answers `false` and `lockUp` sets no `lockOnTop` for a lock that never came. The re-front's "Re-fronting the lock" log follows it too | `LockUpPlanTest` "show reports a failed start as not started" |
+| L5 | The spec's §14 explains the time-rule screen at a dark lock-up (singleTask clear-top, back at the unlock or Home's next interactive resume); §11 step 1 lists the expected visible changes (the black frame at an unlock, the Android 13 bar strips, the time-rule screen) and the M1/L1 checks; §12 has step 1's residuals (the quick press, the racy cover). The launcher `CLAUDE.md` bullet says the same | docs |
+
+**Batch A re-run** (each mutation alone, the lock tests and `LockGlanceGuardTest`; then reverted, and the four files
+compared byte for byte with a copy taken before):
+
+| Mutation | Result |
+|---|---|
+| A1 `leave`: `PinLockRuntime.callLiveNow(this)` -> `false` | red: `LockUpPlanTest` "the wiring" |
+| A2 `callLiveNow` without `\|\| VoipCalls.phase != VoipPhase.NONE` | red: the same |
+| A3 `interactiveOrUnknown`: `?: true` -> `?: false` | red: the same |
+| A4 `GlanceOpener`: `\|\| homeBelow` -> `\|\| LockTaskChrome.kioskOn` | red: the same |
+| A5 `HomeActivity.interactive()`: `!= false` -> `== true` | red: the same |
+
+No other test failed in any of the five runs.
+
+**Full suite** after the fixes: `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` (release with
+the throwaway tsnet stub, removed afterwards): BUILD SUCCESSFUL, **1093 tests, 0 failures** (18 in `LockUpPlanTest`),
+`checkReleaseHasNoDebugHook: no debug hook`.

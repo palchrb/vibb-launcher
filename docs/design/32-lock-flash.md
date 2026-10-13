@@ -464,16 +464,18 @@ Each step is one sitting, green on its own, with its tests.
 3. **Home's resume while dark does almost nothing** (M1).
    - `lockUp(HOME_THEN_LOCK)` sets the runtime mark `darkLockUp`, cleared at the next interactive resume of the
      lock or Home.
-   - `HomeActivity.onResume` with `darkLockUp` and `!interactive` shows the night ground and runs
-     `reconcileKioskMode()` and nothing else. With the kiosk on, Home must still root lock task; otherwise the
-     lock's `ensureLockTask` starts Home again at the wake, visibly.
+   - `HomeActivity.onResume` with `darkLockUp` and `!interactive` shows the night ground and nothing else.
+     Corrected after code QA (qa-32-s1-code L1): it does **not** run `reconcileKioskMode()`. `lockUp` starts the
+     lock in the same main-thread pass, so by Home's resume the lock's task is the focused one and
+     `startLockTask()` from Home can only throw ("Invalid task, not in foreground"). With the kiosk on and no lock
+     task running, the lock's own `ensureLockTask` asks Home to root it (`START_HOME`), as before design 32.
    - It runs no `UpdateFence.onFront`, no `redirectToLockScreenIfLocked` (so no `LockActivity` over the lock while
      dark, M1.3), no `PinLockRuntime.show` and no boot-mark calls.
    - `onStart`'s card renders and listener registrations are skipped while `darkLockUp && !interactive`. They run
      at the next interactive start or resume.
    - Pure: `homeDarkResume(darkLockUp, interactive, locked): Boolean`. The branch is pinned in a test.
    - The lock's own main-thread work while dark is unchanged (25b-B's 400 ms deferral stands). Home's dark resume
-     adds only `reconcileKioskMode`'s binder calls before the lock's `onCreate`.
+     adds only the night ground before the lock's `onCreate`.
 4. **`lockOnTop`, best effort, with its own debug toggle** (M1, §5 H2).
    - Set by `lockUp(HOME_THEN_LOCK)` and by `lockUp(LOCK)`.
    - Not cleared by lock starts that belong to the same lock-up: those that come before the next interactive resume
@@ -696,8 +698,8 @@ The release behaviour stays exactly as after step 1. Everything new is reachable
   `animate = false`.
 - `HomeFront`: `animate = false` adds `FLAG_ACTIVITY_NO_ANIMATION`; the intent stays typed HOME (`HomeFrontTest`).
 - `show` clears `lockOnTop` unless called from `lockUp`.
-- `HomeActivity.onResume` has the `homeDarkResume` branch first, and that branch calls only the night ground and
-  `reconcileKioskMode`. `onStart` skips its renders on the same condition.
+- `HomeActivity.onResume` has the `homeDarkResume` branch first, and that branch calls only the night ground
+  (qa-32-s1-code L1). `onStart` skips its renders on the same condition.
 - `PinLockTheme`'s four items are `@android:color/black`.
 - `PinLockActivity.onCreate` and `HomeActivity.onCreate` each call `setTaskDescription` with black background, status
   and navigation bar colours. Home calls `setRecentsScreenshotEnabled(false)`.
@@ -816,6 +818,17 @@ adb pull /sdcard/flash.mp4 && ffmpeg -i flash.mp4 -vsync 0 frames/%05d.png
 - [ ] Recents after the unlock: no `BlockedAppActivity` (16d); `smoke-test.sh` green.
 - [ ] The lock's stand-in, splash and bars are black (frame-step a cold lock-up after an unlock, M3).
 - [ ] VoIP ring from dark, alarm from dark, SOS: unchanged.
+- [ ] (qa-32-s1-code M1) Our dialer role not held, a system-dialer call from dark, left in the dialer's own UI after
+  the hang-up; then power off and on: the log says `HOME_THEN_LOCK`, not `NONE`.
+- [ ] (qa-32-s1-code L1) Kiosk on, lock task stopped (`adb shell am task lock stop`, or the 16d override), a lock-up
+  while dark: at the wake at most Home's black stand-in, then the lock (the lock's `START_HOME` roots lock task).
+- [ ] Expected visible changes, not regressions (qa-32-s1-code L5):
+  - Home's black app-theme snapshot is also its starting window whenever Home comes to the front interactively:
+    every unlock, kiosk on and off - a black frame where Home's old screenshot was.
+  - On Android 13 (the Jelly Star) the theme's black `statusBarColor`/`navigationBarColor` paint black strips above
+    and below the drawn lock (decision 3). With `targetSdk 36` on Android 15+ the window's bar colours are ignored
+    (edge-to-edge), so the emulator doesn't show them.
+  - During a time rule the time-rule screen is gone after a dark lock-up and comes back at the unlock (§14).
 - [ ] H2 experiment: with `LockUpDebug`'s `skipRestart` on, compare the flash with and without the `result=3`
   start.
 
@@ -913,6 +926,15 @@ It fails only where one of those two conditions doesn't hold yet at the wake.
 - Only the VoIP-end and fallback cases can still show app content, and only if step 1's Home stand-in doesn't
   catch it.
 
+**Step 1's own residuals** (qa-32-s1-code M1, L5; step 1 promises no strict "lock or black"):
+- **A quick press.** When the screen is back on before Home's resume transaction runs, Home takes its usual locked
+  resume over a lock that is already started: the update fence, possibly `LockActivity` (then `TimeRuleShown`
+  re-fronts the lock) and `show(BOOT)`, which clears `lockOnTop`. All ours, a few milliseconds.
+- **A cover in the instant of the screen-off.** An activity that comes over a *resumed* lock in the milliseconds
+  after `isInteractive` flipped (Recents, the emergency dialer, an app's full-screen intent) has its pause taken for
+  the sleep's own, so `lockOnTop` stays true and the next screen-off may start nothing. The wake's `ScreenOn`
+  backstop still starts the lock (the lock isn't resumed), so it is bounded by the backstop; best effort, §8 4.
+
 ## 13. Design QA (`qa-32-design.md`, 2026-10-13) - the change for each finding
 
 | # | Finding | Change in this doc |
@@ -965,7 +987,7 @@ the emulator. Step 2 and step 3 are not built: the keyguard stays disabled exact
     passes `animate = false` (pinned).
   - `callLiveNow(context)` for the leave.
 - **Home** (`HomeActivity`): `onResume`'s first branch (after `resumedNow`) is `darkUnderLock()` -> `showNight()`,
-  `reconcileKioskMode()`, return. `onStart` returns on the same condition; its work moved to `startWork()`
+  return (no `reconcileKioskMode()` since the fix round, L1). `onStart` returns on the same condition; its work moved to `startWork()`
   (idempotent per start through `started`), which `onResume` also calls, so a dark start's renders and listeners come
   at the next interactive start or resume. `onCreate`: `setRecentsScreenshotEnabled(false)` and the black
   `TaskDescription`. The live bars and the 16e launch splash are unchanged.
@@ -1001,4 +1023,37 @@ the emulator. Step 2 and step 3 are not built: the keyguard stays disabled exact
   `ScreenOff` cases are unchanged. `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` (the
   release build with the throwaway tsnet stub): green, 1090 unit tests (15 in `LockUpPlanTest`), 0 failures;
   `checkReleaseHasNoDebugHook` and the debug positive control pass.
+- **The time-rule screen at a dark lock-up** (qa-32-s1-code L5): `HomeActivity` is `singleTask` and `LockActivity`
+  (default affinity) lives in Home's task above it, so the lock-up's Home start clears it (singleTask clear-top).
+  That is why §11's "Home's task top is `HomeActivity`, also during a time rule" holds, and it keeps the time-rule
+  screen's real screenshot out of the stand-in. It comes back at the unlock (`afterUnlock` -> `LockActivity.start`)
+  or at Home's next interactive resume (`redirectToLockScreenIfLocked`, e.g. after a call that skipped
+  `afterUnlock`'s start).
 - **Not device-tested**: §11's step 1 list.
+
+### Code QA fix round (`qa-32-s1-code.md`, 0 High, 1 Medium, 5 Low, all fixed)
+
+- **M1:** `LockTopEvent.SCREEN_ON_UNSHOWN` (-> false) and pure `screenOnUnshown(event, showLock)`: a `ScreenOn` that
+  finds the lock not resumed and starts nothing clears `lockOnTop` in `dispatch`. Every way another window comes
+  over a sleep-stopped lock has a test row: a system-dialer call (cleared here), VoIP in call or ringing (cleared
+  here; the ring's own start too), our call / an alarm / another turn-screen-on activity (the backstop starts the
+  lock; the call screen then pauses it interactively), the time-rule screen (`TimeRuleShown`'s start), another Home
+  start (Home's locked resume's start). The racy cover at the screen-off is listed in §12 as a residual.
+- **L1:** Home's dark branch runs only `showNight()`; comment, §8 3, §9 and this section corrected. Chosen over an
+  unanimated `START_HOME` while dark: the dropped call was a no-op or a caught throw at run time, so removing it
+  changes nothing on the phone, while a second kind of dark Home start would tie design 16's lock-task rooting to
+  the dark mark for a rare case (kiosk on, nothing rooting lock task) that behaves as before design 32. §11 has the
+  check.
+- **L2:** an animated `HomeFront.bring` from another thread posts itself to the main thread (end the mark, start),
+  so it is ordered against `lockUp`'s mark-and-starts; posted, it answers `true` (only the boot's caller reads the
+  answer, and it runs on the main thread). Pinned in `HomeFrontTest`.
+- **L3:** pins for the leave's `callLiveNow(this)`, `callLiveNow`'s three terms, the glance's `homeBelow` through
+  `open` -> `run` -> `watchSend`'s `confirmable`, `interactiveOrUnknown`'s `?: true` and Home's
+  `interactive()` (`!= false`). QA's batch-A mutations each go red (the `Fixes` table in `qa-32-s1-code.md`).
+- **L4:** `show` returns `started`, true only when the lock's `startActivity` didn't throw; `lockUp` sets
+  `lockOnTop` only then. Pinned.
+- **L5:** this section's time-rule note, §11's expected visible changes and §12's step 1 residuals; the launcher
+  `CLAUDE.md` bullet.
+- `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` (release with the throwaway tsnet stub,
+  removed afterwards): green, 1093 unit tests (18 in `LockUpPlanTest`), 0 failures; `checkReleaseHasNoDebugHook`
+  passes. Not device-tested.

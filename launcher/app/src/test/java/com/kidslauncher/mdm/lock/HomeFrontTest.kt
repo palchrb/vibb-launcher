@@ -94,6 +94,12 @@ class HomeFrontTest {
         assertTrue(text.contains("fun bring(context: Context, why: String, animate: Boolean = true): Boolean"))
         val bring = text.substringAfter("fun bring(")
         assertTrue(bring.indexOf("if (animate) PinLockRuntime.endDarkLockUp()") in 0 until bring.indexOf("context.startActivity(intent(context, animate))"))
+        // qa-32-s1-code L2: such a start from another thread runs on the main thread, where the
+        // lock-up marks and starts in one pass - first thing, before the mark is ended.
+        val hop = bring.indexOf("if (animate && Looper.myLooper() != Looper.getMainLooper()) {")
+        assertTrue(bring, hop in 0 until bring.indexOf("PinLockRuntime.endDarkLockUp()"))
+        assertTrue(bring.substring(hop).substringBefore("return true").contains("main.post { bring(app, why) }"))
+        assertTrue(text.contains("private val main = Handler(Looper.getMainLooper())"))
         // Only the lock-up starts Home unanimated - every other start ends its dark mark.
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()
         val unanimated = sources.filter { code(it).contains("animate = false") }.map { it.name }

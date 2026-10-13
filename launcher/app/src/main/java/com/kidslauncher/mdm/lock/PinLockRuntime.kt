@@ -201,8 +201,8 @@ object PinLockRuntime {
 
     /**
      * Design 32 step 1 item 3 (QA M1): a HOME_THEN_LOCK lock-up since the last interactive resume of
-     * the lock or Home - Home's resume while dark then only shows its night ground and roots lock
-     * task ([homeDarkResume]). Main thread.
+     * the lock or Home, and ended by every other Home start ([HomeFront.bring]) - Home's resume
+     * while dark then only shows its night ground ([homeDarkResume]). Main thread.
      */
     @Volatile
     var darkLockUp = false
@@ -555,6 +555,10 @@ object PinLockRuntime {
             lockUpAtScreenOff(context, event, result)
         } else if (result.showLock) {
             show(context, wake = result.wake, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)
+        } else if (screenOnUnshown(event, result.showLock)) {
+            // qa-32-s1-code M1: the lock isn't resumed and nothing starts it (a system-dialer or VoIP
+            // call came over the sleep-stopped lock) - nobody knows what is on top now.
+            lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.SCREEN_ON_UNSHOWN)
         }
         if (lockedEdge && !chromeFirst) refreshChromeNow(context)
         // Home was started first (design 16): the re-front check shows the lock if Home didn't.
@@ -1051,7 +1055,8 @@ object PinLockRuntime {
      *
      * [ask] (design 16e): [LockAsk.BOOT] may be held while the boot's mark shows - then nothing is
      * started and `false` is returned (the backstop shows it); every other ask, and a wake, ends the
-     * wait and shows the lock at once.
+     * wait and shows the lock at once. `false` too when the start threw (qa-32-s1-code L4): the
+     * lock-up then marks no lock on top that never came.
      *
      * Design 32 (QA L6): every start but [lockUp]'s own ([fromLockUp]) clears [lockOnTop] here, so no
      * call site can forget it - except the ScreenOn backstop of the same lock-up ([sameLockUp]).
@@ -1065,6 +1070,7 @@ object PinLockRuntime {
     ): Boolean {
         if (!fromLockUp) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)
         if (bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)) return false
+        var started = false
         try {
             context.startActivity(
                 // No open animation (bug 25b-B): started while the display sleeps, the lock's
@@ -1073,6 +1079,7 @@ object PinLockRuntime {
                 Intent(context, PinLockActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),
             )
+            started = true
             if (wake) {
                 voipWakeAskedAt = SystemClock.elapsedRealtime()
                 voipWakeGone = false
@@ -1081,7 +1088,7 @@ object PinLockRuntime {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't start the lock screen", e)
         }
-        return true
+        return started
     }
 
     private val refrontCheck = Runnable { runRefrontCheck() }

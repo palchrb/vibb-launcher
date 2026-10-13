@@ -113,7 +113,7 @@ private const val MAX_OVERLAYS = 8
  * Design 32: at a lock-up while dark Home is brought under the lock, so what WM shows before the
  * lock's first frame at the next screen-on is Home's snapshot - plain black (no recents screenshot,
  * a black task description), never the app the kid was in. That resume only shows the night ground
- * and roots lock task ([homeDarkResume]); the rest waits for an interactive start or resume.
+ * ([homeDarkResume]); the rest waits for an interactive start or resume.
  */
 class HomeActivity : UIObjectActivity() {
 
@@ -438,13 +438,14 @@ class HomeActivity : UIObjectActivity() {
     override fun onResume() {
         super.onResume()
         resumedNow = true
-        // Design 32 (QA M1): brought under the lock while dark - the night ground and, kiosk on, lock
-        // task rooted here (else the lock's ensureLockTask would start Home again at the wake,
-        // visibly). No update fence, no time-rule screen over the lock, no lock start, no boot mark:
-        // the lock's own start follows at once, and nothing slow may come before its creation.
+        // Design 32 (QA M1): brought under the lock while dark - the night ground only. No update
+        // fence, no time-rule screen over the lock, no lock start, no boot mark: the lock's own start
+        // came right after Home's in the same pass, and nothing slow may come before its creation.
+        // No lock task either (qa-32-s1-code L1): the lock's task is the focused one by now, so
+        // `startLockTask` here could only throw; with the kiosk on and no lock task running, the
+        // lock's own resume asks Home to root it (START_HOME), as before design 32.
         if (darkUnderLock()) {
             showNight()
-            reconcileKioskMode()
             return
         }
         startWork()

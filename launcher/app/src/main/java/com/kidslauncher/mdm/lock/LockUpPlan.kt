@@ -53,6 +53,13 @@ enum class LockTopEvent {
 
     /** The UNLOCKED (or DISABLED) edge. */
     UNLOCKED,
+
+    /**
+     * A screen-on (or `USER_PRESENT`) that finds the lock not resumed and starts nothing - a call
+     * the system dialer shows, a VoIP call (qa-32-s1-code M1). Something came over the lock while
+     * it was already sleep-stopped, which the lock never hears of, and no start puts it back on top.
+     */
+    SCREEN_ON_UNSHOWN,
 }
 
 /**
@@ -64,18 +71,26 @@ enum class LockTopEvent {
  *   resume at the wake). An interactive pause before it has cleared the mark already.
  * - Cleared by an interactive pause or stop (something came over the lock, or it left), the lock's
  *   destroy, the unlock, and every other start - something was over the lock, or is about to be.
+ * - Cleared by a screen-on that finds the lock not resumed and starts nothing
+ *   ([LockTopEvent.SCREEN_ON_UNSHOWN]): whatever is in front came over the sleep-stopped lock
+ *   without a callback, and a stale mark would make the next screen-off start nothing at all.
  */
 fun lockOnTopAfter(current: Boolean, event: LockTopEvent, interactive: Boolean = false, sameLockUp: Boolean = false): Boolean = when (event) {
     LockTopEvent.LOCK_UP -> true
     LockTopEvent.START -> current && sameLockUp
     LockTopEvent.PAUSE, LockTopEvent.STOP -> current && !interactive
-    LockTopEvent.DESTROY, LockTopEvent.UNLOCKED -> false
+    LockTopEvent.DESTROY, LockTopEvent.UNLOCKED, LockTopEvent.SCREEN_ON_UNSHOWN -> false
 }
+
+/** qa-32-s1-code M1: the screen-on [event] found the lock not resumed and [showLock] started nothing. */
+fun screenOnUnshown(event: LockEvent, showLock: Boolean): Boolean =
+    event is LockEvent.ScreenOn && !event.lockShowing && !showLock
 
 /**
  * Design 32 step 1 item 3 (QA M1): Home brought under the lock while dark only shows its night
- * ground and roots lock task (kiosk on) - no update fence, no time-rule screen over the lock, no
- * lock start and no boot-mark calls before the lock's own creation. [darkLockUp]: a HOME_THEN_LOCK
+ * ground - no lock task (qa-32-s1-code L1: the lock's task is focused by then), no update fence, no
+ * time-rule screen over the lock, no lock start and no boot-mark calls before the lock's own
+ * creation. [darkLockUp]: a HOME_THEN_LOCK
  * lock-up since the last interactive resume of the lock or Home.
  */
 fun homeDarkResume(darkLockUp: Boolean, interactive: Boolean, locked: Boolean): Boolean =
