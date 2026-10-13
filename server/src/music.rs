@@ -1536,6 +1536,12 @@ pub struct MusicState {
     /// The library version the music app has applied.
     pub library_version: Option<String>,
     pub cache_bytes: Option<i64>,
+    /// The music app's audio cache (downloads, played extras and partials, Storytel books
+    /// included): what the parent's storage limit counts (design 30 §1.10). Sent from step 3a on.
+    pub audio_bytes: Option<i64>,
+    /// The played extras' bytes in [Self::audio_bytes] (design 30 §1.8). Sent from the app's step
+    /// 3a on, 0 when none: its presence marks a phone that reads both mobile-data switches (§1.3).
+    pub extra_bytes: Option<i64>,
     pub downloads_waiting: Option<i64>,
     pub entry_errors: Vec<EntryError>,
     /// The Storytel login on the phone ("ok", "none", "login_failed", ...).
@@ -1606,6 +1612,8 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
         bridge: word(state.bridge),
         library_version: state.library_version.filter(|v| is_version(v)),
         cache_bytes: state.cache_bytes.map(|b| b.clamp(0, 10_000_000_000_000)),
+        audio_bytes: state.audio_bytes.map(|b| b.clamp(0, 10_000_000_000_000)),
+        extra_bytes: state.extra_bytes.map(|b| b.clamp(0, 10_000_000_000_000)),
         downloads_waiting: state.downloads_waiting.map(|n| n.clamp(0, 1_000_000)),
         entry_errors: state
             .entry_errors
@@ -2083,6 +2091,32 @@ mod tests {
         let stored = sanitize_music_state(&fixture).unwrap();
         let kept: serde_json::Value = serde_json::from_str(&stored).unwrap();
         assert_eq!(kept, fixture);
+    }
+
+    /// Design 30 §1.10: `audio_bytes` and `extra_bytes` are clamped like `cache_bytes`; an app
+    /// from before step 3a sends neither, and they stay absent.
+    #[test]
+    fn music_state_clamps_audio_and_extra_bytes() {
+        let state = |raw: serde_json::Value| {
+            parse_music_state(sanitize_music_state(&raw).as_deref()).unwrap()
+        };
+        let clamped = state(serde_json::json!({
+            "cache_bytes": 5, "audio_bytes": -1, "extra_bytes": i64::MAX
+        }));
+        assert_eq!(clamped.audio_bytes, Some(0));
+        assert_eq!(clamped.extra_bytes, Some(10_000_000_000_000));
+        let kept = state(serde_json::json!({"audio_bytes": 980_000_000, "extra_bytes": 0}));
+        assert_eq!(
+            (kept.audio_bytes, kept.extra_bytes),
+            (Some(980_000_000), Some(0))
+        );
+        let older = state(serde_json::json!({"cache_bytes": 1_000_000}));
+        assert_eq!((older.audio_bytes, older.extra_bytes), (None, None));
+        // Not a number: the report is refused like any malformed field (as `cache_bytes`).
+        assert_eq!(
+            sanitize_music_state(&serde_json::json!({"extra_bytes": "many"})),
+            None
+        );
     }
 
     #[test]

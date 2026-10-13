@@ -77,7 +77,10 @@ is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`).
 
 - Nothing ever starts playback by itself: a restart brings the now-playing bar back paused (`NowPlayingRow`).
 - Playback never waits for the network: a copy plays as it is, a stream only through the gate (Wi-Fi unless the
-  parent's mobile-data switch, never roaming), else "Ikke lastet ned - trenger Wi-Fi" and the queue moves on.
+  parent's "streaming may use mobile data" switch, never roaming), else "Ikke lastet ned - trenger Wi-Fi" and the
+  queue moves on. The download job follows the other switch, "downloads may use mobile data" (design 30 §1.1:
+  `streamAllowed`/`downloadAllowed` in `logic/NetGate.kt`, one formula, `Store.streamMobileData` /
+  `downloadMobileData`).
 - Prune only on a parsed listing, and only what the library no longer names: an entry or file the app can't read is
   hidden with everything kept (qa-21-step2-code H1). Positions and bookmarks are never deleted except by vibb's
   `clear_state` at a queue's natural end (partial positions only). Above depth 0 the bookmarked item is never
@@ -91,8 +94,13 @@ is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`).
   in every sync (library, changed listings, covers, own files copied + checked + released, the Storytel login sealed
   under a Keystore key) and `push` sends the report (with the own files held) at its end; `LiveBridge` sends
   `setNowPlaying`/`setForeground` and retries a bind. Bind only the restrictions' launcher, and only when it is
-  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. `mobile_data` and `volume_cap_pct` (the
-  parent's cap on our own Sonos volume sets, design 26a §5.3) are read live from the managed config. The AIDL is
+  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. The two mobile-data switches
+  (`stream_mobile_data`, `download_mobile_data`; a launcher from before design 30 writes neither, and then the old
+  `mobile_data` counts for both - `mobileSwitch`), the storage limit (`storage_limit_gb`, 0 = none, absent or junk =
+  2 GB - `storageLimit`; read from design 30 step 3a, used from 3b) and `volume_cap_pct` (the parent's cap on our own
+  Sonos volume sets, design 26a §5.3) are read live from the managed config. The report always carries
+  `audio_bytes` (the audio cache) and `extra_bytes` (0 until design 30 step 3b): their presence tells the PWA the app
+  reads both switches (design 30 §1.3). The AIDL is
   byte-identical with `launcher/` - append, never reorder; shared names are in `bridge_contract.json`.
 - The launcher's media surfaces (design 21 step 4) read the platform session and `setNowPlaying` (also sent with
   every 15 s position save while playing); its Home card opens `MainActivity` with `EXTRA_OPEN` = player and, on its
@@ -146,8 +154,8 @@ is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`).
   `NotConfigured`, `Refused` and `LoginFailed` stop Storytel for the run with no item error; `NoAudio` is `no_audio`
   (a day); `Failed`/`Unreachable` are transient (`http_<n>`/`network`, 2 min doubling, at most 6 h). A failure after
   the partial grew by at least max(1 MiB, 1 %) since the last one counts as the first again (`grewEnough`,
-  `GROWTH_FLOOR_BYTES`; every source). **With the parent's mobile-data switch on, Storytel books download over mobile
-  data like every other download** (often several hundred MB each; the device card says so). The report's
+  `GROWTH_FLOOR_BYTES`; every source). **With the parent's "downloads may use mobile data" switch on, Storytel books
+  download over mobile data like every other download** (often several hundred MB each; the device card says so). The report's
   `storytel` is `StorytelAccount.state()` (`none`/`ok`/`refused`) and a Storytel entry's `waiting` is
   `storytelWaiting` (`login`, `storage` below the floor, else the shared rule).
 - **Storytel secrets** (design 26b §0, §6.1): the password, `pwd=` (AES with a public key: as good as the password),

@@ -383,8 +383,29 @@ class GuardsTest {
     }
 
     @Test
+    fun `the stream switch is read live from the managed config`() {
+        // design 30 §1.1, §5.2: the player asks the streaming switch, the download job and the sync the downloads switch
+        val store = code("src/main/java/me/vibb/music/data/Store.kt")
+        assertTrue(store.contains("get() = Bridge.config(app).takeIf { it.managed }?.streamMobileData ?: unmanagedSwitch(RestrictionKeys.STREAM_MOBILE_DATA)"))
+        assertTrue(store.contains("get() = Bridge.config(app).takeIf { it.managed }?.downloadMobileData ?: unmanagedSwitch(RestrictionKeys.DOWNLOAD_MOBILE_DATA)"))
+        assertFalse("the one old switch is gone", Regex("\\bmobileData\\b").containsMatchIn(store))
+        assertTrue(service.contains("streamMobileData: Boolean = store.streamMobileData"))
+        assertTrue(service.contains("val streamMobileData = store.streamMobileData"))
+        assertTrue(service.contains("!streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)"))
+        assertFalse(service.contains("downloadMobileData"))
+        val downloads = code("src/main/java/me/vibb/music/sync/Downloads.kt")
+        val sync = code("src/main/java/me/vibb/music/sync/Sync.kt")
+        assertTrue(downloads.contains(".setRequiredNetworkType(if (downloadMobileData) NetworkType.NOT_ROAMING else NetworkType.UNMETERED)"))
+        assertTrue(downloads.contains("downloadWaiting(netCaps(applicationContext), store.downloadMobileData, false)"))
+        assertTrue(sync.contains("downloadWaiting(netCaps(context), store.downloadMobileData, storageLow)"))
+        assertEquals(2, Regex("Downloads\\.enqueue\\(context, store\\.downloadMobileData").findAll(sync).count())
+        assertEquals(2, Regex("Downloads\\.enqueue\\(applicationContext, store\\.downloadMobileData").findAll(downloads).count())
+        for (text in listOf(downloads, sync)) assertFalse(text.contains("streamMobileData"))
+    }
+
+    @Test
     fun `the parent's volume cap reaches every volume set of our own on a Sonos room`() {
-        // design 26a §5.3: read live from the managed config, as mobile_data
+        // design 26a §5.3: read live from the managed config, as the mobile-data switches
         val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
         assertTrue(renderer.contains("cap = { Bridge.config(context).volumeCapPct },"))
         val set = sonos.substringAfter("fun setVolume(volume: Int) {").substringBefore("\n    }\n")

@@ -89,6 +89,10 @@ fun stateReport(
     versionCode: Long,
     libraryVersion: String?,
     cacheBytes: Long,
+    /** The audio cache (`MediaCache.totalBytes`): what the parent's storage limit counts (design 30 §1.10). */
+    audioBytes: Long,
+    /** The played extras' bytes in it (design 30 §1.8); 0 until step 3b keeps any. */
+    extraBytes: Long,
     entryErrors: List<EntryError>,
     itemErrors: List<ItemError>,
     downloads: List<DownloadState>,
@@ -100,6 +104,9 @@ fun stateReport(
     put("version_code", versionCode)
     put("library_version", libraryVersion)
     put("cache_bytes", cacheBytes)
+    // Always sent, 0 included (design 30 §1.10): their presence tells the PWA this app reads both switches.
+    put("audio_bytes", audioBytes)
+    put("extra_bytes", extraBytes)
     put("downloads_waiting", downloads.sumOf { (it.want - it.have).coerceAtLeast(0) })
     put("entry_errors", buildJsonArray {
         for (e in entryErrors.take(ENTRY_ERRORS_MAX)) add(buildJsonObject { put("entry", e.entry); put("error", e.error) })

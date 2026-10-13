@@ -22,6 +22,37 @@ class NetTest {
     private val vpnOnly = wifi.copy(physical = false)
 
     @Test
+    fun `streaming follows the streaming switch only`() {
+        assertTrue(streamAllowed(mobile, streamMobileData = true))
+        assertFalse(streamAllowed(mobile, streamMobileData = false))
+        assertEquals(Playability.STREAM, playability(hasCopy = false, hasUrl = true, caps = mobile, streamMobileData = true))
+        assertEquals(Playability.NEEDS_NETWORK, playability(hasCopy = false, hasUrl = true, caps = mobile, streamMobileData = false))
+        assertEquals("a copy plays anywhere", Playability.LOCAL, playability(hasCopy = true, hasUrl = true, caps = roaming, streamMobileData = false))
+    }
+
+    @Test
+    fun `downloads follow the downloads switch only`() {
+        assertTrue(downloadAllowed(mobile, downloadMobileData = true))
+        assertFalse(downloadAllowed(mobile, downloadMobileData = false))
+        assertNull(downloadWaiting(mobile, downloadMobileData = true, storageLow = false))
+        assertEquals(Waiting.WIFI, downloadWaiting(mobile, downloadMobileData = false, storageLow = false))
+    }
+
+    @Test
+    fun `neither while roaming, both on Wi-Fi`() {
+        for (on in listOf(true, false)) {
+            assertTrue(streamAllowed(wifi, on))
+            assertTrue(downloadAllowed(wifi, on))
+            assertNull(downloadWaiting(wifi, on, false))
+            assertFalse(streamAllowed(roaming, on))
+            assertFalse(downloadAllowed(roaming, on))
+            assertEquals(Waiting.ROAMING, downloadWaiting(roaming, on, false))
+            assertFalse("no physical network", downloadAllowed(vpnOnly, on))
+            assertFalse(downloadAllowed(null, on))
+        }
+    }
+
+    @Test
     fun `streams need a physical network, no roaming, and Wi-Fi unless mobile data is on`() {
         assertTrue(streamAllowed(wifi, false))
         assertFalse(streamAllowed(mobile, false))

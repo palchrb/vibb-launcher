@@ -182,9 +182,9 @@ object Sync {
             dao.deleteDownload(row.entryId, row.itemKey)
         }
         if (plan.wanted.isNotEmpty()) {
-            Downloads.enqueue(context, store.mobileData)
+            Downloads.enqueue(context, store.downloadMobileData)
         } else {
-            plan.nextRetryAt?.let { Downloads.enqueue(context, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
+            plan.nextRetryAt?.let { Downloads.enqueue(context, store.downloadMobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
         }
         NewNotifier.update(context, store.snapshot())
         writeReport(context)
@@ -241,7 +241,7 @@ object Sync {
         val snap = store.snapshot()
         val plan = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis())
         val storageLow = store.ownDir.parentFile!!.usableSpace < LOW_STORAGE_BYTES
-        val waiting = downloadWaiting(netCaps(context), store.mobileData, storageLow)
+        val waiting = downloadWaiting(netCaps(context), store.downloadMobileData, storageLow)
         // The phone's Storytel login: none, refused (the cooldown runs) or ok (design 26b §4.5).
         val storytel = StorytelAccount.get(context).state()
         val storytelEntries = snap.library?.entries.orEmpty().filter { it.source == Source.STORYTEL }.map { it.id }.toSet()
@@ -249,10 +249,14 @@ object Sync {
         val errors = store.db.itemErrors().map { ItemError(it.entryId, it.version, it.itemKey, it.error) }
         // Own files and the cover files (episode pictures included, design 27 §2.3).
         val ownBytes = store.ownDir.listFiles().orEmpty().sumOf { it.length() } + store.coversDir.listFiles().orEmpty().sumOf { it.length() }
+        // The audio cache: what the parent's storage limit counts (design 30 §1.10); no played extras before step 3b.
+        val audioBytes = MediaCache.totalBytes(context)
         val report = stateReport(
             BuildConfig.VERSION_CODE.toLong(),
             snap.library?.version,
-            MediaCache.totalBytes(context) + ownBytes,
+            audioBytes + ownBytes,
+            audioBytes,
+            0,
             readEntryErrors(store),
             errors,
             states,

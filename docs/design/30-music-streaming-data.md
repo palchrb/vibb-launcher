@@ -865,3 +865,53 @@ music app's three constants; nothing of steps 3a or 3b (the music app reads none
   `testDebugUnitTest -PwarningsAsErrors=true`: 614 tests, 0 failures.
 - Docs: `launcher/CLAUDE.md` (`MusicSync`, its `musicPolicy` rules, `MusicFileDownloads`, `syncArt`).
 - Not device-tested: nothing of §8 is step 2's alone; check 11's "launcher from main" case is the old launcher.
+
+## Step 3a implementation status (2026-10-13, branch `design-30-s3a`)
+
+Branch `design-30-s3a` from step 2 (`777e4434`). Not pushed. The music app reads the two switches and the limit, the
+gate and the download job follow them, and the `audio_bytes`/`extra_bytes` contract commit across `server/`,
+`launcher/` and `music/` (M4); nothing of step 3b (no cache-through, extras, eviction or Room change).
+- `bridge/BridgeConfig.kt`: `streamMobileData`/`downloadMobileData` replace `mobileData`; `storageLimitGb: Int?`
+  (default `DEFAULT_STORAGE_LIMIT_GB` = 2, null = none); the pure `mobileSwitch(values, key)` and
+  `storageLimit(values)` (`MAX_STORAGE_LIMIT_GB` = 1000, the launcher's bound).
+- `logic/NetGate.kt`: `streamAllowed(caps, streamMobileData)`, `downloadAllowed(caps, downloadMobileData)` (one
+  private formula), `downloadWaiting(caps, downloadMobileData, storageLow)` through `downloadAllowed`,
+  `playability(..., streamMobileData)`; the header names both switches.
+- `logic/Report.kt`: `stateReport(versionCode, libraryVersion, cacheBytes, audioBytes, extraBytes, ...)`, both always
+  `put` after `cache_bytes`. `Sync.writeReport` sends `MediaCache.totalBytes` and 0 (the download job writes the
+  report through the same function).
+- `data/Store.kt`: `streamMobileData`, `downloadMobileData`, `storageLimitGb` (live from the managed config;
+  unmanaged, the debug feed's prefs). `DebugFeedReceiver`: `config.json`'s `stream_mobile_data`,
+  `download_mobile_data`, `storage_limit_gb`; a bare `mobile_data` sets both switches.
+- Callers: `PlaybackService.playable`/`playableFrom`/`onError` read the streaming switch; `Downloads.enqueue`'s network
+  constraint, `DownloadWorker` and `Sync` (`enqueue`, `downloadWaiting`) the downloads switch.
+- The contract commit: `server/testdata/music_state.json` (`"audio_bytes": 100000000, "extra_bytes": 23456789` after
+  `cache_bytes`); `music.rs` `MusicState.audio_bytes`/`extra_bytes`, clamped like `cache_bytes`; `handlers/music.rs`
+  `device_card` passes the report's values to `storage_line` and `older_phone_note` (step 1's two marked call sites);
+  the launcher's `musicState` key list.
+- **Interpreted:**
+  - `audioBytes`/`extraBytes` are required parameters of `stateReport` (no defaults), so no caller can leave them out.
+  - The music app's switch read: a key the launcher wrote counts as `== true` (a non-Boolean is off, as every
+    restriction); only an absent key falls back to `mobile_data`. The limit: only an `Int` counts (a `Long` is junk,
+    read as 2 GB; the launcher writes an Int, qa-21-step3-code H1).
+  - Unmanaged (the debug feed), a switch never set falls back to the old `mobile_data` pref, so an emulator fed before
+    this step keeps its setting.
+  - `Store.storageLimitGb` is read by nothing yet (3b's eviction).
+  - A report whose `audio_bytes`/`extra_bytes` isn't a number is refused whole by the server, as `cache_bytes` is.
+  - In 3a `extra_bytes` is 0, so the card's warning reads the whole audio cache as kept; true until 3b keeps extras.
+- Tests: music `BridgeTest` `the managed config the launcher writes`, `an older launcher's mobile_data sets both
+  switches and the limit is 2 GB`, `the storage limit - 0 is none, junk is 2 GB`, the contract test (the three keys
+  read), the report-keys fixture test; `NetTest` `streaming follows the streaming switch only`, `downloads follow the
+  downloads switch only`, `neither while roaming, both on Wi-Fi`; `ReportTest` `audio_bytes and extra_bytes are always
+  in the report` (+ the key set); `GuardsTest` `the stream switch is read live from the managed config`; launcher
+  `MusicPlanTest` `music_state passes audio_bytes and extra_bytes` (and the fixture end-to-end test); server
+  `music::tests` `music_state_keeps_every_field_the_phone_sends` (the new fixture), `music_state_clamps_audio_and_
+  extra_bytes`; `src/tests/music.rs` `the_card_says_an_older_phone_uses_mobile_data_only_with_both` (now with a
+  report that has `extra_bytes`), `the_storage_line_shows_the_limit_and_the_extras` (a 3a report through the card,
+  the line and the warning, then a higher limit).
+  Server `cargo test`: 671 passed, `fmt --check` clean, `clippy --all-targets` 13 warnings, all in code this step doesn't
+  touch (none new). Launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true`: 1079 tests, 0 failures. Music
+  `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`: 621 tests, 0 failures.
+- Docs: `music/CLAUDE.md` (the gate rule, the bridge's keys and report fields, Storytel's switch), `server/CLAUDE.md`
+  (the storage line), `launcher/CLAUDE.md` (`music_state`), `docs/testing/emulator.md` §6f (`config.json`'s keys).
+- Not device-tested: §8 checks 2, 3, 4 and 11 are 3a's (with 3b's write-through for check 2's `du`).

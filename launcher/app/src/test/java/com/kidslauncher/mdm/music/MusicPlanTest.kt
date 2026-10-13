@@ -428,6 +428,18 @@ class MusicPlanTest {
         assertEquals(fixture, musicState("me.vibb.music", 1000000, fromApp, now - 1_000, now))
     }
 
+    /** Design 30 §1.3/§1.10 (M4): a step 3a music app's two fields pass, 0 included; an older app sends neither. */
+    @Test
+    fun `music_state passes audio_bytes and extra_bytes`() {
+        val now = 1_800_000_000_000L
+        val report = buildJsonObject { put("cache_bytes", 5); put("audio_bytes", 4); put("extra_bytes", 0) }
+        val state = musicState("me.vibb.music", 1000000, report, now - 60_000, now)!!
+        assertEquals(JsonPrimitive(4), state["audio_bytes"])
+        assertEquals("0 is sent and passed: it marks a phone that reads both switches", JsonPrimitive(0), state["extra_bytes"])
+        val older = musicState("me.vibb.music", 1000000, buildJsonObject { put("cache_bytes", 5) }, now - 60_000, now)!!
+        assertFalse(older.containsKey("audio_bytes") || older.containsKey("extra_bytes"))
+    }
+
     // The contract with the music app, spelled once (bridge_contract.json, byte-identical in both apps).
 
     private val contract by lazy {

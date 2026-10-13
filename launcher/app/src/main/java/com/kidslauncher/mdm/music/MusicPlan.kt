@@ -269,13 +269,18 @@ fun bridgeWord(lastReportAt: Long?, nowMs: Long): String =
 
 /**
  * `music_state` (21 §1.3, 21b §4.3, 26a §5.5): the music app's last report (known keys only - the
- * server checks them again; `sonos_rooms` = the speakers it knows, for the parent's room scope)
- * plus the launcher's own view: the package, its version code and the bridge.
+ * server checks them again; `sonos_rooms` = the speakers it knows, for the parent's room scope;
+ * `audio_bytes`/`extra_bytes` from a design 30 music app, whose presence tells the PWA the phone reads
+ * both mobile-data switches, design 30 §1.3) plus the launcher's own view: the package, its version
+ * code and the bridge.
  * Null when no music app is installed.
  */
 fun musicState(packageName: String?, versionCode: Long?, report: JsonObject?, lastReportAt: Long?, nowMs: Long): JsonObject? {
     packageName ?: return null
-    val keys = listOf("library_version", "cache_bytes", "downloads_waiting", "entry_errors", "item_errors", "downloads", "storytel", "sonos_rooms")
+    val keys = listOf(
+        "library_version", "cache_bytes", "audio_bytes", "extra_bytes", "downloads_waiting", "entry_errors", "item_errors",
+        "downloads", "storytel", "sonos_rooms",
+    )
     return buildJsonObject {
         put("package", packageName)
         put("version_code", versionCode)

@@ -30,8 +30,11 @@ import java.io.File
  *   debug-feed/items/<entry id>.json  listings (/music/entries/<id>/items)
  *   debug-feed/files/<file id>        own files' audio (size + SHA-256 checked against the library)
  *   debug-feed/covers/<hash>          cover JPEGs and episode pictures (checked against their hash)
- *   debug-feed/config.json            optional: {"mobile_data": true, "storytel_base": "http://10.0.2.2:8730"}
- *                                     (storytel_base: the fake Storytel, design 26b §4.6 - the one debug
+ *   debug-feed/config.json            optional: {"stream_mobile_data": true, "download_mobile_data": false,
+ *                                     "storage_limit_gb": 2, "storytel_base": "http://10.0.2.2:8730"}
+ *                                     (design 30: the two switches - a bare "mobile_data" sets both - and
+ *                                     the storage limit in GB, 0 = none;
+ *                                     storytel_base: the fake Storytel, design 26b §4.6 - the one debug
  *                                     switch; also read at every process start, DebugStartup)
  *   debug-feed/storytel.json          optional: {"email": "k@example.invalid", "password": "hemmelig"} - FAKE
  *                                     values only: seeds a Storytel login for a run without a launcher (the
@@ -68,7 +71,15 @@ class DebugFeedReceiver : BroadcastReceiver() {
         val store = Store.get(context)
         File(dir, "config.json").takeIf { it.isFile }?.let { f ->
             val config = JSON.parseToJsonElement(f.readText()) as? JsonObject
-            config?.get("mobile_data")?.jsonPrimitive?.booleanOrNull?.let { store.mobileData = it }
+            // Design 30: the two switches and the storage limit (GB, 0 = none); a bare mobile_data (an
+            // old script) sets both switches, a key of their own wins.
+            config?.get("mobile_data")?.jsonPrimitive?.booleanOrNull?.let {
+                store.streamMobileData = it
+                store.downloadMobileData = it
+            }
+            config?.get("stream_mobile_data")?.jsonPrimitive?.booleanOrNull?.let { store.streamMobileData = it }
+            config?.get("download_mobile_data")?.jsonPrimitive?.booleanOrNull?.let { store.downloadMobileData = it }
+            config?.get("storage_limit_gb")?.jsonPrimitive?.intOrNull?.let { store.storageLimitGb = it.takeIf { gb -> gb != 0 } }
         }
         DebugStorytel.applyBase(context)
         File(dir, "storytel.json").takeIf { it.isFile }?.let { f -> DebugStorytel.seedLogin(context, f) }

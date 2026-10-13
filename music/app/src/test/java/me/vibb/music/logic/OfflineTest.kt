@@ -254,9 +254,9 @@ class OfflineTest {
 
     @Test
     fun `offline, a copy plays and a stream waits for the network`() {
-        assertEquals(Playability.LOCAL, playability(hasCopy = true, hasUrl = true, caps = null, mobileData = false))
-        assertEquals(Playability.NEEDS_NETWORK, playability(hasCopy = false, hasUrl = true, caps = null, mobileData = false))
+        assertEquals(Playability.LOCAL, playability(hasCopy = true, hasUrl = true, caps = null, streamMobileData = false))
+        assertEquals(Playability.NEEDS_NETWORK, playability(hasCopy = false, hasUrl = true, caps = null, streamMobileData = false))
         val wifi = NetCaps(internet = true, notMetered = true, notRoaming = true, physical = true)
-        assertEquals(Playability.STREAM, playability(hasCopy = false, hasUrl = true, caps = wifi, mobileData = false))
+        assertEquals(Playability.STREAM, playability(hasCopy = false, hasUrl = true, caps = wifi, streamMobileData = false))
     }
 }

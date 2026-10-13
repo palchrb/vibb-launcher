@@ -1413,8 +1413,17 @@ async fn the_card_says_an_older_phone_uses_mobile_data_only_with_both() {
     assert!(!music_card(&app, &cookie, device).await.contains(NOTE));
     save_switches(&app, &cookie, device, false, false).await;
     assert!(!music_card(&app, &cookie, device).await.contains(NOTE));
-    // A report with `extra_bytes` (design 30 step 3a) is a phone that reads both switches: the
-    // pure rule is `music::tests::older_phone_note_needs_an_app_report_without_extra_bytes`.
+    // A report with `extra_bytes` (design 30 step 3a; 0 counts, it is always sent) is a phone
+    // that reads both switches: no note while they differ.
+    save_switches(&app, &cookie, device, true, false).await;
+    report_music_state(
+        &app,
+        &token,
+        json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 1_000_000,
+               "audio_bytes": 900_000, "extra_bytes": 0}),
+    )
+    .await;
+    assert!(!music_card(&app, &cookie, device).await.contains(NOTE));
 }
 
 #[tokio::test]
@@ -1448,7 +1457,45 @@ async fn the_storage_line_shows_the_limit_and_the_extras() {
         );
         assert!(!card.contains("Music downloads:") && !card.contains("Kept episodes"));
     }
-    // With `audio_bytes`/`extra_bytes` (they reach `MusicState` in step 3a), the pure line:
+    // A design 30 app (step 3a on) reports `audio_bytes` and `extra_bytes`: the line with the
+    // limit and the extras, and the warning when the kept items alone pass the limit.
+    report_music_state(
+        &app,
+        &token,
+        json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 3_500_000_000_i64,
+               "audio_bytes": 3_400_000_000_i64, "extra_bytes": 200_000_000}),
+    )
+    .await;
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{device}/music"),
+        Some(&cookie),
+        &[("v", "2"), ("storage_limit", "2")],
+    )
+    .await;
+    let card = music_card(&app, &cookie, device).await;
+    assert!(
+        card.contains(
+            "Stored on the phone: 3500.0 MB. Music downloads: 3400.0 MB of the 2 GB limit, \
+             200.0 MB of it played beyond the offline depth (kept while there is room)."
+        ),
+        "{card}"
+    );
+    assert!(
+        card.contains("Kept episodes and books alone use 3.2 GB of the 2 GB limit"),
+        "{card}"
+    );
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{device}/music"),
+        Some(&cookie),
+        &[("v", "2"), ("storage_limit", "5")],
+    )
+    .await;
+    let card = music_card(&app, &cookie, device).await;
+    assert!(card.contains("3400.0 MB of the 5 GB limit"), "{card}");
+    assert!(!card.contains("Kept episodes"), "{card}");
+    // The pure line's variants:
     use crate::music::storage_line;
     assert_eq!(
         storage_line(1_234_500_000, Some(980_000_000), Some(210_000_000), Some(2)),

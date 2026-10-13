@@ -71,9 +71,10 @@ object Downloads {
      * be lost); a waiting one is replaced, so a sync never sits behind a retry delay
      * (qa-21-step2-code M4). Call off the main thread.
      */
-    fun enqueue(context: Context, mobileData: Boolean, delayMs: Long = 0) {
+    fun enqueue(context: Context, downloadMobileData: Boolean, delayMs: Long = 0) {
+        // The downloads switch (design 30 §1.1): off Wi-Fi only with it, never while roaming.
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(if (mobileData) NetworkType.NOT_ROAMING else NetworkType.UNMETERED)
+            .setRequiredNetworkType(if (downloadMobileData) NetworkType.NOT_ROAMING else NetworkType.UNMETERED)
             .setRequiresStorageNotLow(true)
             .build()
         val request = OneTimeWorkRequestBuilder<DownloadWorker>()
@@ -145,9 +146,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
             if (todo.isEmpty()) break
             for (w in todo) {
                 tried += w.entry.id to w.item.key
-                if (downloadWaiting(netCaps(applicationContext), store.mobileData, false) != null) {
+                if (downloadWaiting(netCaps(applicationContext), store.downloadMobileData, false) != null) {
                     // The constraints, not a backoff, wait for the network.
-                    Downloads.enqueue(applicationContext, store.mobileData)
+                    Downloads.enqueue(applicationContext, store.downloadMobileData)
                     NewNotifier.update(applicationContext, store.snapshot())
                     Sync.writeReport(applicationContext)
                     return@withContext Result.success()
@@ -162,7 +163,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         }
         // A refused Storytel login: back when its cooldown is over (one login an hour at most).
         val back = listOfNotNull(nextRetryAt, run.storytelRefusedUntil).minOrNull()
-        back?.let { Downloads.enqueue(applicationContext, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
+        back?.let { Downloads.enqueue(applicationContext, store.downloadMobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
         // A new book counts in the Nytt notification once its copy is on the phone (design 26b §3.4):
         // after the download, not at the next sync (qa-26b-step3-code M1).
         NewNotifier.update(applicationContext, store.snapshot())

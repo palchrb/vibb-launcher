@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import me.vibb.music.bridge.Bridge
+import me.vibb.music.bridge.RestrictionKeys
+import me.vibb.music.bridge.storageLimit
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.coversToDelete
 import me.vibb.music.logic.isArtHash
@@ -23,8 +25,8 @@ import java.io.File
 /**
  * Where the app keeps what it received and what it plays: the library file, received listings
  * (applied into Room by the sync), covers, own files' copies (noBackupFilesDir, never backed up),
- * the report, and the one setting from the launcher's restrictions (`mobile_data`; step 2's debug
- * feed sets it).
+ * the report, and the parent's settings from the launcher's restrictions (design 30's two mobile-data
+ * switches and the storage limit; unmanaged, the debug feed sets them).
  */
 class Store private constructor(context: Context) {
     private val app = context.applicationContext
@@ -58,11 +60,32 @@ class Store private constructor(context: Context) {
         return libraryState.value
     }
 
-    /** May downloads and streams use mobile data (the parent's switch, 21 §1.1)? Read live from the
+    /** May a stream use mobile data (design 30 §1.1, the streaming switch)? Read live from the
      * launcher's managed config (qa-21-step3-code S2); unmanaged, the debug feed's setting. */
-    var mobileData: Boolean
-        get() = Bridge.config(app).takeIf { it.managed }?.mobileData ?: prefs.getBoolean("mobile_data", false)
-        set(value) = prefs.edit().putBoolean("mobile_data", value).apply()
+    var streamMobileData: Boolean
+        get() = Bridge.config(app).takeIf { it.managed }?.streamMobileData ?: unmanagedSwitch(RestrictionKeys.STREAM_MOBILE_DATA)
+        set(value) = prefs.edit().putBoolean(RestrictionKeys.STREAM_MOBILE_DATA, value).apply()
+
+    /** May the download job use mobile data, Storytel books included (design 30 §1.1, the downloads
+     * switch)? Read live like [streamMobileData]. */
+    var downloadMobileData: Boolean
+        get() = Bridge.config(app).takeIf { it.managed }?.downloadMobileData ?: unmanagedSwitch(RestrictionKeys.DOWNLOAD_MOBILE_DATA)
+        set(value) = prefs.edit().putBoolean(RestrictionKeys.DOWNLOAD_MOBILE_DATA, value).apply()
+
+    /** The parent's music storage limit in GB, null = none (design 30 §1.8). Read live like [streamMobileData];
+     * unmanaged, the debug feed's (0 = none), else 2 GB. */
+    var storageLimitGb: Int?
+        get() {
+            val config = Bridge.config(app)
+            if (config.managed) return config.storageLimitGb
+            val key = RestrictionKeys.STORAGE_LIMIT_GB
+            return storageLimit(if (prefs.contains(key)) mapOf(key to prefs.getInt(key, 0)) else emptyMap())
+        }
+        set(value) = prefs.edit().putInt(RestrictionKeys.STORAGE_LIMIT_GB, value ?: 0).apply()
+
+    /** An unmanaged phone's switch: the debug feed's, else its old one `mobile_data` (a feed from before design 30). */
+    private fun unmanagedSwitch(key: String): Boolean =
+        if (prefs.contains(key)) prefs.getBoolean(key, false) else prefs.getBoolean(RestrictionKeys.MOBILE_DATA, false)
 
     private fun loadLibrary(): Library? = runCatching { libraryFile.readText() }.getOrNull()?.let(LibraryParser::parse)
 

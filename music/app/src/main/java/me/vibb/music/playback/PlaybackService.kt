@@ -700,18 +700,18 @@ class PlaybackService : MediaSessionService() {
 
     private fun hasCopy(a: Active, item: PlayItem) = item.fileId != null || item.key in a.copies
 
-    private fun playable(a: Active, index: Int, caps: NetCaps? = netCaps(this), mobileData: Boolean = store.mobileData): Boolean {
+    private fun playable(a: Active, index: Int, caps: NetCaps? = netCaps(this), streamMobileData: Boolean = store.streamMobileData): Boolean {
         // A speaker fetches by itself and its queue holds only what it can play (§4.2): the phone's gate is the phone's.
         if (renderer.kind == RendererKind.SONOS) return true
         val item = a.items[index]
-        return playability(hasCopy(a, item), item.url != null, caps, mobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
+        return playability(hasCopy(a, item), item.url != null, caps, streamMobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
     }
 
     /** The first index from [index] on (or back) that can play now; null when none. */
     private fun playableFrom(a: Active, index: Int, forward: Boolean, wrap: Boolean): Int? {
         val caps = netCaps(this)
-        val mobileData = store.mobileData
-        return firstPlayable(a.items.size, index, forward, wrap) { playable(a, it, caps, mobileData) }
+        val streamMobileData = store.streamMobileData
+        return firstPlayable(a.items.size, index, forward, wrap) { playable(a, it, caps, streamMobileData) }
     }
 
     /** A copy plays without holding Wi-Fi awake; a stream needs it (qa-21-step2-code L18). */
@@ -1163,7 +1163,7 @@ class PlaybackService : MediaSessionService() {
             }
             item.url != null -> scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }
         }
-        val offline = copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.mobileData)
+        val offline = copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)
         PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
         renderer.saveNow()
         val nextIndex = if (index + 1 < a.items.size) playableFrom(a, index + 1, forward = true, wrap = false) else null

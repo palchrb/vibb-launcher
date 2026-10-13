@@ -42,15 +42,21 @@ object RestrictionKeys {
     /** The parent's volume cap in force (design 26a §5.3): 1..99 %, 0 = none. */
     const val VOLUME_CAP_PCT = "volume_cap_pct"
 
-    /** Design 30 §1.3: the streaming switch (a launcher from step 2 on writes it; read from step 3a). */
+    /** Design 30 §1.3: the streaming switch (a launcher from design 30 step 2 on writes it). */
     const val STREAM_MOBILE_DATA = "stream_mobile_data"
 
-    /** Design 30 §1.3: the downloads switch, Storytel books included (read from step 3a). */
+    /** Design 30 §1.3: the downloads switch, Storytel books included. */
     const val DOWNLOAD_MOBILE_DATA = "download_mobile_data"
 
-    /** Design 30 §1.8: the parent's music storage limit in GB, 0 = none (read from step 3a). */
+    /** Design 30 §1.8: the parent's music storage limit in GB, 0 = none. */
     const val STORAGE_LIMIT_GB = "storage_limit_gb"
 }
+
+/** The limit without a word from the launcher (an older one): 2 GB (design 30 §1.3, §1.8). */
+const val DEFAULT_STORAGE_LIMIT_GB = 2
+
+/** The largest limit read; anything above is junk, read as [DEFAULT_STORAGE_LIMIT_GB] (the launcher's bound). */
+const val MAX_STORAGE_LIMIT_GB = 1000
 
 data class BridgeConfig(
     /** The launcher manages this phone (v1 config present). */
@@ -59,7 +65,10 @@ data class BridgeConfig(
     val launcherPackage: String?,
     /** "nb", "en" or "" (follow the phone). */
     val language: String,
-    val mobileData: Boolean,
+    /** May an item that isn't on the phone stream off Wi-Fi (design 30 §1.1)? Never while roaming. */
+    val streamMobileData: Boolean,
+    /** May the download job run off Wi-Fi, Storytel books included (design 30 §1.1)? Never while roaming. */
+    val downloadMobileData: Boolean,
     /** The library's version; "" = nothing ticked on this phone (an empty library). */
     val libraryVersion: String?,
     val storytelGeneration: Long,
@@ -68,9 +77,11 @@ data class BridgeConfig(
      * override and pause), or null: a Sonos room's volume our own sets never exceed (design 26a §5.3).
      */
     val volumeCapPct: Int? = null,
+    /** The parent's music storage limit in GB (design 30 §1.8), null = no limit. */
+    val storageLimitGb: Int? = DEFAULT_STORAGE_LIMIT_GB,
 ) {
     companion object {
-        val UNMANAGED = BridgeConfig(false, null, "", false, null, 0)
+        val UNMANAGED = BridgeConfig(false, null, "", false, false, null, 0)
     }
 }
 
@@ -81,11 +92,34 @@ fun bridgeConfig(values: Map<String, Any?>): BridgeConfig {
         managed = true,
         launcherPackage = (values[RestrictionKeys.LAUNCHER_PACKAGE] as? String)?.takeIf { it in LAUNCHER_PACKAGES },
         language = (values[RestrictionKeys.LANGUAGE] as? String)?.takeIf { it in setOf("nb", "en") }.orEmpty(),
-        mobileData = values[RestrictionKeys.MOBILE_DATA] == true,
+        streamMobileData = mobileSwitch(values, RestrictionKeys.STREAM_MOBILE_DATA),
+        downloadMobileData = mobileSwitch(values, RestrictionKeys.DOWNLOAD_MOBILE_DATA),
         libraryVersion = values[RestrictionKeys.LIBRARY_VERSION] as? String,
         storytelGeneration = (values[RestrictionKeys.STORYTEL_GENERATION] as? Int)?.toLong() ?: 0,
         volumeCapPct = (values[RestrictionKeys.VOLUME_CAP_PCT] as? Int)?.takeIf { it in 1..99 },
+        storageLimitGb = storageLimit(values),
     )
+}
+
+/**
+ * One of design 30's two switches ([key]): when the launcher wrote it, `true` is on and anything else
+ * off (as every restriction); when it didn't (a launcher from before design 30), the one old switch
+ * `mobile_data`, which such a launcher sets for both (design 30 §1.3).
+ */
+fun mobileSwitch(values: Map<String, Any?>, key: String): Boolean =
+    if (key in values) values[key] == true else values[RestrictionKeys.MOBILE_DATA] == true
+
+/**
+ * The parent's storage limit in GB (design 30 §1.3): an Int 1..[MAX_STORAGE_LIMIT_GB] is that many,
+ * 0 is no limit (null); absent (an older launcher) or anything else is [DEFAULT_STORAGE_LIMIT_GB].
+ */
+fun storageLimit(values: Map<String, Any?>): Int? = when (val gb = values[RestrictionKeys.STORAGE_LIMIT_GB]) {
+    is Int -> when (gb) {
+        0 -> null
+        in 1..MAX_STORAGE_LIMIT_GB -> gb
+        else -> DEFAULT_STORAGE_LIMIT_GB
+    }
+    else -> DEFAULT_STORAGE_LIMIT_GB
 }
 
 /**

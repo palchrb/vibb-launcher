@@ -3556,9 +3556,13 @@ pub(crate) async fn device_card(
                 lines.push(format!("Downloads waiting: {waiting}"));
             }
             if let Some(bytes) = report.cache_bytes {
-                // `audio_bytes`/`extra_bytes` reach `MusicState` in design 30 step 3a; until then
-                // every phone gets today's line (design 30 §1.10).
-                let (line, warning) = music::storage_line(bytes, None, None, storage_limit);
+                // An app from before design 30 step 3a sends no `audio_bytes`: today's line (§1.10).
+                let (line, warning) = music::storage_line(
+                    bytes,
+                    report.audio_bytes,
+                    report.extra_bytes,
+                    storage_limit,
+                );
                 lines.push(line);
                 warnings.extend(warning);
             }
@@ -3611,13 +3615,12 @@ pub(crate) async fn device_card(
         ticks,
         stream_mobile_data: policy.music_stream_mobile_data,
         download_mobile_data: policy.music_download_mobile_data,
-        // `extra_bytes` reaches `MusicState` in design 30 step 3a; until then no phone reads the
-        // two switches, so every app report gets the note while they differ (§3).
+        // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
         data_note: music::older_phone_note(
             policy.music_stream_mobile_data,
             policy.music_download_mobile_data,
             state_report.as_ref().and_then(|report| report.cache_bytes),
-            None,
+            state_report.as_ref().and_then(|report| report.extra_bytes),
         ),
         volume_cap: music::volume_cap(policy.music_volume_cap_pct),
         volume_caps: VOLUME_CAPS
