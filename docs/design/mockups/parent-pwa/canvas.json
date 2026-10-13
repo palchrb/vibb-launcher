@@ -1,0 +1,45 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-10-13T11:30:00Z"},
+  "title": "Vibb Parent App Redesign",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 390, "h": 844, "title": "Devices", "is_interactive": true},
+    "DeviceSummary.dc.html": {"x": 470, "y": 0, "w": 390, "h": 1560, "title": "Device summary · Anna", "is_interactive": true},
+    "HeaderStates.dc.html": {"x": 940, "y": 0, "w": 390, "h": 560, "title": "Header states"},
+    "About.dc.html": {"x": 1410, "y": 0, "w": 390, "h": 1040, "title": "About This Phone", "is_interactive": true},
+    "LockScreen.dc.html": {"x": 1880, "y": 0, "w": 390, "h": 1160, "title": "Lock Screen & PINs", "is_interactive": true},
+    "Apps.dc.html": {"x": 0, "y": 1980, "w": 390, "h": 960, "title": "Apps", "is_interactive": true},
+    "AnnaApps.dc.html": {"x": 470, "y": 1980, "w": 390, "h": 900, "title": "Anna › Apps", "is_interactive": true},
+    "Locate.dc.html": {"x": 940, "y": 1980, "w": 390, "h": 844, "title": "Locate", "is_interactive": true},
+    "Music.dc.html": {"x": 1410, "y": 1980, "w": 390, "h": 1080, "title": "Music", "is_interactive": true},
+    "Settings.dc.html": {"x": 1880, "y": 1980, "w": 390, "h": 960, "title": "Settings", "is_interactive": true},
+    "Time.dc.html": {"x": 2350, "y": 1980, "w": 390, "h": 900, "title": "Settings › Time Rules", "is_interactive": true},
+    "RuleEditor.dc.html": {"x": 2820, "y": 1980, "w": 390, "h": 1100, "title": "Rule · Skole", "is_interactive": true},
+    "Patterns.dc.html": {"x": 0, "y": 3500, "w": 390, "h": 1500, "title": "Patterns"},
+    "TabBar.dc.html": {"x": 470, "y": 3500, "w": 390, "h": 84, "title": "Tab bar"}
+  },
+  "order": [
+    "Main.dc.html",
+    "DeviceSummary.dc.html",
+    "HeaderStates.dc.html",
+    "About.dc.html",
+    "LockScreen.dc.html",
+    "Apps.dc.html",
+    "AnnaApps.dc.html",
+    "Locate.dc.html",
+    "Music.dc.html",
+    "Settings.dc.html",
+    "Time.dc.html",
+    "RuleEditor.dc.html",
+    "Patterns.dc.html",
+    "TabBar.dc.html"
+  ],
+  "notes": {
+    "t1": {"x": 0, "y": -300, "text": "Devices: the list, one phone, its sub-pages", "kind": "title1", "maxW": 2270},
+    "t2": {"x": 0, "y": 1680, "text": "The other tabs: Apps · Locate · Music · Settings", "kind": "title1", "maxW": 3210},
+    "t3": {"x": 0, "y": 3200, "text": "Building blocks", "kind": "title1", "maxW": 860}
+  },
+  "designSystems": []
+}

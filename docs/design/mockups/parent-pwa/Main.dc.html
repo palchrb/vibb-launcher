@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Devices</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{--bg:#F2F2F7;--card:#FFFFFF;--label:#000000;--sub:#6B6B70;--sep:#D1D1D6;--tint:#0B66D6;--off:#E3E3E8;--red:#D70015;--org:#A85200;--orgbg:#FFF4E5;--grn:#1E7A35;width:390px;box-sizing:border-box;background:var(--bg);color:var(--label);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;position:relative;overflow:hidden}
+a{color:#0B66D6;text-decoration:none}a:hover{color:#084C9E}
+.top{display:flex;justify-content:flex-end;align-items:center;height:44px;padding:0 16px}
+.lt{font-size:34px;font-weight:700;margin:4px 16px 12px;line-height:1.15}
+.sh{font-size:13px;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin:24px 32px 7px}
+.grp{background:var(--card);border-radius:12px;margin:0 16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:11px 16px;box-sizing:border-box;position:relative;color:var(--label);font-size:17px;line-height:1.25}
+.row+.row:before{content:"";position:absolute;top:0;left:72px;right:0;border-top:.5px solid var(--sep)}
+.lbl{flex:1;min-width:0}
+.s2{display:block;font-size:14px;color:var(--sub);margin-top:2px}
+.chev{flex:none;color:#C4C4C7}
+.av{flex:none;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:600;color:#fff;position:relative}
+.av .dot{position:absolute;right:-1px;bottom:-1px;width:13px;height:13px;border-radius:50%;border:2.5px solid #fff}
+.bar{height:4px;border-radius:2px;background:#E5E5EA;margin-top:7px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:2px;background:#34C759}
+.cnt{flex:none;min-width:22px;height:22px;border-radius:11px;background:var(--red);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 6px;box-sizing:border-box}
+.ban{display:flex;align-items:center;gap:12px;background:var(--orgbg);color:#7A3D00;border-radius:12px;margin:0 16px;padding:12px 16px;font-size:15px;font-weight:500}
+.tabwrap{position:absolute;left:0;right:0;bottom:0}
+</style>
+</helmet>
+<div class="scr" style="height: 844px">
+  <div class="top">
+    <a href="#add" aria-label="Add phone" style="display: flex; padding: 8px">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </a>
+  </div>
+  <h1 class="lt">Devices</h1>
+
+  <a class="ban" href="More.dc.html">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="#B35A00" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="#B35A00" stroke-width="1.9" stroke-linecap="round"/></svg>
+    <span style="flex: 1">Change the generated password</span>
+    <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true" style="color: #B87A3D"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+
+  <div class="sh">Phones</div>
+  <div class="grp">
+    <a class="row" href="DeviceSummary.dc.html" style="padding-top: 12px; padding-bottom: 12px">
+      <span class="av" style="background: #5E5CE6">A<span class="dot" style="background: #34C759"></span></span>
+      <span class="lbl">
+        <span style="font-weight: 600">Anna</span>
+        <span class="s2"><span style="color: #1E7A35; font-weight: 600">Online</span> · Skole until 14:30</span>
+        <span class="bar" style="width: 210px"><i style="width: 47%"></i></span>
+        <span class="s2" style="font-size: 13px; margin-top: 4px">42 of 90 min today</span>
+      </span>
+      <span class="cnt" aria-label="1 issue">1</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="DeviceSummary.dc.html" style="padding-top: 12px; padding-bottom: 12px">
+      <span class="av" style="background: #FF7A45">E<span class="dot" style="background: #AEAEB2"></span></span>
+      <span class="lbl">
+        <span style="font-weight: 600">Emil</span>
+        <span class="s2">Offline · seen 3 h ago</span>
+        <span class="bar" style="width: 210px"><i style="width: 12%"></i></span>
+        <span class="s2" style="font-size: 13px; margin-top: 4px">15 of 120 min today</span>
+      </span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="DeviceSummary.dc.html" style="padding-top: 12px; padding-bottom: 12px">
+      <span class="av" style="background: #30B0C7">E<span class="dot" style="background: #FF9500"></span></span>
+      <span class="lbl">
+        <span style="font-weight: 600">Ella</span>
+        <span class="s2"><span style="color: #A85200; font-weight: 600">Away</span> · seen 12 min ago</span>
+        <span class="bar" style="width: 210px"><i style="width: 70%"></i></span>
+        <span class="s2" style="font-size: 13px; margin-top: 4px">63 of 90 min today</span>
+      </span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+
+  <div class="grp" style="margin-top: 20px" id="add">
+    <a class="row" href="#add" style="color: #0B66D6">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 7v8M7 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span class="lbl">Add Phone</span>
+    </a>
+  </div>
+
+  <div class="tabwrap">
+    <dc-import name="TabBar" active="devices" hint-size="390px,84px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

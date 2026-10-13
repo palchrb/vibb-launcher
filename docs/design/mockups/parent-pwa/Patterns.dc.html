@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Patterns</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{width:390px;box-sizing:border-box;background:#F2F2F7;color:#000;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;position:relative;overflow:hidden;padding-bottom:24px}
+a{color:#0B66D6;text-decoration:none}a:hover{color:#084C9E}
+.lt{font-size:34px;font-weight:700;margin:40px 16px 4px;line-height:1.15}
+.sh{font-size:13px;color:#6B6B70;text-transform:uppercase;letter-spacing:.4px;margin:24px 32px 7px}
+.grp{background:#FFFFFF;border-radius:12px;margin:0 16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:11px 16px;box-sizing:border-box;position:relative;color:#000;font-size:17px;line-height:1.25}
+.row+.row:before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid #D1D1D6}
+.lbl{flex:1;min-width:0}
+.val{color:#6B6B70;font-size:16px}
+.ft{font-size:13px;color:#6B6B70;margin:7px 32px 0;line-height:1.38}
+.chev{flex:none;color:#C4C4C7}
+.sw{appearance:none;-webkit-appearance:none;flex:none;width:51px;height:31px;border-radius:16px;background:#E3E3E8;position:relative;margin:0;cursor:pointer}
+.sw:before{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2)}
+.sw:checked{background:#34C759}
+.sw:checked:before{left:22px}
+details.info>summary{list-style:none;cursor:pointer;color:#0B66D6;display:flex;align-items:center}
+details.info>summary::-webkit-details-marker{display:none}
+.panel{background:#EEF4FC;border-radius:10px;margin:0 16px 12px;padding:10px 12px;font-size:14px;line-height:1.4;color:#1C2A3A}
+.att{display:flex;align-items:center;gap:12px;border-radius:12px;margin:0 16px 8px;padding:12px 16px;font-size:15px;font-weight:600}
+.conf>summary{list-style:none;cursor:pointer}
+.conf>summary::-webkit-details-marker{display:none}
+.danger-btn{display:block;width:100%;border:none;border-radius:12px;background:#D70015;color:#fff;font:inherit;font-size:17px;font-weight:600;padding:13px;cursor:pointer}
+.field{display:block;width:100%;box-sizing:border-box;border:1.5px solid #D70015;border-radius:10px;padding:11px 12px;font:inherit;font-size:17px;background:#fff}
+.err{color:#B0001A;font-size:13px;margin:6px 4px 0}
+select.pick{appearance:none;-webkit-appearance:none;border:none;background:none;font:inherit;font-size:16px;color:#6B6B70;text-align:right;padding-right:4px;cursor:pointer}
+.dark-bg{background:#000;padding:0}
+</style>
+</helmet>
+<div class="scr" style="height: 1500px">
+  <h1 class="lt">Patterns</h1>
+
+  <div class="sh">Switch with a footer</div>
+  <div class="grp">
+    <label class="row"><span class="lbl">Show message text</span><input class="sw" type="checkbox" role="switch"></label>
+  </div>
+  <div class="ft">Anyone holding the phone can read it.</div>
+
+  <div class="sh">More info, closed and open</div>
+  <div class="grp">
+    <details class="info">
+      <summary class="row"><span class="lbl" style="color: #000">Restrictions pause</span><svg width="20" height="20" viewBox="0 0 20 20" aria-label="More about the restrictions pause" role="img"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+      <div class="panel">Hidden text.</div>
+    </details>
+    <details class="info" open>
+      <summary class="row"><span class="lbl" style="color: #000">Offline unlock</span><svg width="20" height="20" viewBox="0 0 20 20" aria-label="More about offline unlock" role="img"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+      <div class="panel">If the phone can't reach this server, the parent PIN on the phone lifts every rule for 2 hours.</div>
+    </details>
+  </div>
+
+  <div class="sh">Attention, four levels</div>
+  <div class="att" style="background: #FDECEE; color: #B0001A">Phone not locked: Vibb lost device owner</div>
+  <div class="att" style="background: #FFF4E5; color: #7A3D00">2 new apps wait for your OK</div>
+  <div class="att" style="background: #E9E9EE; color: #3A3A3C">Changes wait until Emil is back online</div>
+  <div class="att" style="background: #E7F6EB; color: #13612A">PIN saved</div>
+
+  <div class="sh">Destructive, with a confirm</div>
+  <div class="grp" style="padding: 0">
+    <details class="conf" open>
+      <summary class="row" style="color: #D70015; justify-content: center">Erase Phone…</summary>
+      <div style="padding: 4px 16px 16px">
+        <p style="margin: 0 0 12px; font-size: 15px; line-height: 1.4; color: #3A3A3C">Erase Anna's phone? Everything on it is deleted. It can't be undone.</p>
+        <button class="danger-btn" type="button">Erase Phone</button>
+      </div>
+    </details>
+  </div>
+
+  <div class="sh">Field with an error</div>
+  <div style="margin: 0 16px">
+    <label for="pin" style="display: block; font-size: 15px; font-weight: 600; margin: 0 4px 6px">New child PIN</label>
+    <input class="field" id="pin" type="text" inputmode="numeric" value="12" aria-invalid="true" aria-describedby="pin-err">
+    <div class="err" id="pin-err">Use 4 to 8 digits.</div>
+  </div>
+
+  <div class="sh">Picker</div>
+  <div class="grp">
+    <label class="row">
+      <span class="lbl">Music storage limit</span>
+      <select class="pick" aria-label="Music storage limit">
+        <option>1 GB</option>
+        <option selected>2 GB</option>
+        <option>5 GB</option>
+        <option>10 GB</option>
+        <option>No limit</option>
+      </select>
+      <svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true" style="color: #6B6B70"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </label>
+  </div>
+  <div class="ft">Played episodes beyond the kept ones are removed first.</div>
+
+  <div class="sh">Tab bar, light and dark</div>
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <dc-import name="TabBar" active="devices" hint-size="390px,84px"></dc-import>
+    <dc-import name="TabBar" active="music" dark="{{true}}" hint-size="390px,84px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1500}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

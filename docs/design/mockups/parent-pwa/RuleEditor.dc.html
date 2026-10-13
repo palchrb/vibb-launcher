@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rule Skole</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{width:390px;box-sizing:border-box;background:#F2F2F7;color:#000;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;position:relative;overflow:hidden}
+a{color:#0B66D6;text-decoration:none}a:hover{color:#084C9E}
+.top{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 16px}
+.back{display:flex;align-items:center;gap:4px;font-size:17px;color:#0B66D6}
+.save{border:none;background:none;font:inherit;font-size:17px;font-weight:600;color:#0B66D6;cursor:pointer;padding:8px 0}
+.lt{font-size:34px;font-weight:700;margin:4px 16px 4px;line-height:1.15}
+.sh{font-size:13px;color:#6B6B70;text-transform:uppercase;letter-spacing:.4px;margin:24px 32px 7px}
+.grp{background:#FFFFFF;border-radius:12px;margin:0 16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:11px 16px;box-sizing:border-box;position:relative;color:#000;font-size:17px;line-height:1.25}
+.row+.row:before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid #D1D1D6}
+.lbl{flex:1;min-width:0}
+.val{color:#6B6B70;text-align:right;font-size:16px}
+.ft{font-size:13px;color:#6B6B70;margin:7px 32px 0;line-height:1.38}
+.chev{flex:none;color:#C4C4C7}
+.fld{border:none;font:inherit;font-size:17px;flex:1;outline:none;background:none;color:#000;padding:0}
+.time{border:none;background:#EEEEF2;border-radius:7px;font:inherit;font-size:16px;padding:5px 8px;color:#000}
+.sw{appearance:none;-webkit-appearance:none;flex:none;width:51px;height:31px;border-radius:16px;background:#E3E3E8;position:relative;margin:0;cursor:pointer;transition:background .2s}
+.sw:before{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:left .2s}
+.sw:checked{background:#34C759}
+.sw:checked:before{left:22px}
+.sw:focus-visible{outline:3px solid #0B66D6;outline-offset:2px}
+.day{width:44px;flex:none;font-weight:600}
+.tabwrap{position:absolute;left:0;right:0;bottom:0}
+</style>
+</helmet>
+<div class="scr" style="height: 1100px">
+  <div class="top">
+    <a class="back" href="Time.dc.html">
+      <svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Time Rules
+    </a>
+    <button class="save" type="button">Save</button>
+  </div>
+  <h1 class="lt">Skole</h1>
+
+  <div class="sh">Rule</div>
+  <div class="grp">
+    <label class="row"><span style="width: 80px">Name</span><input class="fld" type="text" value="Skole"></label>
+    <a class="row" href="#kind">
+      <span class="lbl">Type</span><span class="val">School</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <label class="row"><span class="lbl">Calls with contacts</span><input class="sw" type="checkbox" role="switch"></label>
+  </div>
+  <div class="ft">The phone is locked while the rule runs. Emergency calls always work.</div>
+
+  <div class="sh">When</div>
+  <div class="grp">
+    <div class="row"><span class="day">Mon</span><input class="time" type="time" value="08:15" aria-label="Monday start"><span style="color: #6B6B70">–</span><input class="time" type="time" value="14:30" aria-label="Monday end"></div>
+    <div class="row"><span class="day">Tue</span><input class="time" type="time" value="08:15" aria-label="Tuesday start"><span style="color: #6B6B70">–</span><input class="time" type="time" value="14:30" aria-label="Tuesday end"></div>
+    <div class="row"><span class="day">Wed</span><input class="time" type="time" value="08:15" aria-label="Wednesday start"><span style="color: #6B6B70">–</span><input class="time" type="time" value="13:00" aria-label="Wednesday end"></div>
+    <div class="row"><span class="day">Thu</span><input class="time" type="time" value="08:15" aria-label="Thursday start"><span style="color: #6B6B70">–</span><input class="time" type="time" value="14:30" aria-label="Thursday end"></div>
+    <div class="row"><span class="day">Fri</span><input class="time" type="time" value="08:15" aria-label="Friday start"><span style="color: #6B6B70">–</span><input class="time" type="time" value="14:30" aria-label="Friday end"></div>
+    <div class="row"><span class="day">Sat</span><span style="color: #6B6B70; flex: 1">Off</span><a href="#add-sat" style="font-size: 15px">Add</a></div>
+    <div class="row"><span class="day">Sun</span><span style="color: #6B6B70; flex: 1">Off</span><a href="#add-sun" style="font-size: 15px">Add</a></div>
+  </div>
+
+  <div class="sh">Exceptions</div>
+  <div class="grp">
+    <a class="row" href="#apps">
+      <span class="lbl">Apps that still work</span><span class="val">Klokke, Kalkulator</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+
+  <div class="grp" style="margin-top: 32px">
+    <button class="row" type="button" style="width: 100%; border: none; background: none; font: inherit; color: #D70015; justify-content: center; cursor: pointer">Delete Rule</button>
+  </div>
+
+  <div class="tabwrap">
+    <dc-import name="TabBar" active="settings" hint-size="390px,84px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1100}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
